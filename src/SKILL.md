@@ -17,7 +17,7 @@ captain-app commands    # available commands, arguments and descriptions
 `ls` and `status` talk to the running window, not a new app. `commands`
 prints the built-in command list even without an open window. Do not launch bare
 `captain-app` to inspect it: that opens or raises the window. Do not stop,
-signal or restart the person's app or core. A window closing does not kill
+signal or restart the person's app or hc. A window closing does not kill
 its terminals.
 
 `app.check_updates` checks for newer releases. Settings reports "Up to date"
@@ -149,5 +149,5 @@ The person reviews and sends it; it does not silently send feedback.
 
 Never experiment with pointer/key automation on the person's real display.
 When developing the app on Linux, its `scripts/sandbox` provides an isolated
-home, core and display: `up`, `do`, `status`, `shot`, then `down` when done.
+home, hc and display: `up`, `do`, `status`, `shot`, then `down` when done.
 Never stop a server or session you didn't start.

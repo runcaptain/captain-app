@@ -710,7 +710,7 @@ impl AppWindow {
             loop {
                 let Ok(core) = this.update(cx, |this, _| this.core.clone()) else { break };
                 core.closed().await;
-                tracing::warn!("lost the core; reconnecting");
+                tracing::warn!("lost the terminals connection; reconnecting");
                 crate::telemetry::count("core_lost");
                 let fresh = loop {
                     cx.background_executor().timer(Duration::from_millis(1000)).await;
@@ -802,7 +802,7 @@ impl AppWindow {
     }
 
     fn reconnected(&mut self, core: Arc<Core>, cx: &mut Context<Self>) {
-        tracing::info!("reconnected to the core");
+        tracing::info!("reconnected to the terminals");
         self.core_generation += 1;
         self.documents_watching = false;
         for (machine, slot) in &mut self.documents {
@@ -1966,7 +1966,7 @@ impl AppWindow {
                 let Some(name) = machine["name"].as_str() else { continue };
                 let state = machine["state"].as_str().unwrap_or("unavailable");
                 let reason = (state != "connected").then(|| machine["why"].as_str().map(str::to_owned).unwrap_or_else(|| match state {
-                    "needs_update" => format!("{name} needs a core update; run hc machine update {name}"),
+                    "needs_update" => format!("{name} needs a newer hc; run hc machine update {name}"),
                     "needs_login" => format!("{name} needs login; run hc machine login {name}"),
                     _ => format!("{name} is {state}"),
                 }));
@@ -5075,7 +5075,7 @@ mod tests {
             assert_eq!(calls, 1);
         }
         let mut calls = 0;
-        assert!(super::run_following_folder("inherited".into(), true, None, |_| { calls += 1; Err(anyhow::anyhow!("lost the core")) }).is_err());
+        assert!(super::run_following_folder("inherited".into(), true, None, |_| { calls += 1; Err(anyhow::anyhow!("lost the terminals connection")) }).is_err());
         assert_eq!(calls, 1);
         let mut calls = 0;
         let result = super::run_following_folder("existing".into(), true, None, |_| { calls += 1; Ok("t1".into()) }).unwrap();

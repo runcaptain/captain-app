@@ -489,6 +489,7 @@ export default class Settings extends View {
       .child(div().h(18))
       .child(this.heading(t, "Theme"))
       .child(this.row(t, "Appearance", "Light or dark, or as your system is now.", this.appearancePicker(t, cx)))
+      .child(this.row(t, "Cloud and compute", "Which cloud this workspace works with, and where its work runs.", this.button(t, "st-cloud", "Open", () => run("mod.open", { name: "captain-cloud" })))) // CAPTAIN: Captain's cloud screen
       .child(div().pt(12).pb(8).text_size(12.5).text_color(t.dim).child("For the layout you're in: each layout keeps its own light and dark theme."))
       .child(div().pb(6).text_size(12.5).font_medium().text_color(t.muted).child("Dark"))
       .child(this.themePicker(t, false))

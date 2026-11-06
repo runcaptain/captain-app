@@ -296,7 +296,7 @@ fn ensure_core_bundle(version: &str) -> Result<(), String> {
     let out = cmd
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("cannot finish core bundle installation: {e}"))?;
+        .map_err(|e| format!("cannot finish installing hc: {e}"))?;
     if out.status.success() {
         Ok(())
     } else {

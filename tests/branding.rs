@@ -64,7 +64,8 @@ fn visible(path: &str, text: &str) -> Vec<(usize, String)> {
                 break;
             }
             let t = line.trim_start();
-            if t.starts_with("//") {
+            // Comments and log lines are for developers, not people.
+            if t.starts_with("//") || line.contains("tracing::") {
                 continue;
             }
             for m in lit.find_iter(line).flatten() {
@@ -176,17 +177,22 @@ fn the_scanner_catches_branding_and_lets_identifiers_through() {
 }
 
 /// Edgar: "what is this engine? ... why is there an engine?" Captain's backend
-/// is never a concept a person sees: no visible "engine" or "daemon". Checked in
+/// is never a concept a person sees: no visible "engine", "daemon" or "core". Checked in
 /// what people read: string literals in mods and Rust, and the docs the app
 /// writes. Identifiers (`captain.daemon`, the shared key mods read) and Codex's
 /// literal `--no-daemon` flag aren't prose.
 fn backend_words(path: &str, text: &str) -> Vec<String> {
-    let word = fancy_regex::Regex::new(r"(?i)\b(engine|daemon)s?\b").unwrap();
-    let allowed = fancy_regex::Regex::new(r"captain\.daemon(\.retry)?|--no-daemon").unwrap();
+    // "core" too, where it means hc's terminal runtime ("reconnecting to core").
+    let word = fancy_regex::Regex::new(r"(?i)\b(engine|daemon|core)s?\b").unwrap();
+    let allowed = fancy_regex::Regex::new(r"captain\.daemon(\.retry)?|--no-daemon|herdr-core|`[^`]*`|^\W*core\W*$|dev\.herdr\.core|Herdr Core\.app|core/|[\w]+-core[\w-]*|core-[\w-]+").unwrap();
     let lit = fancy_regex::Regex::new(r#""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`"#).unwrap();
     let mut out = Vec::new();
     let prose = path.ends_with(".md");
     for (n, line) in visible(path, text) {
+        // Log lines are for developers, not people.
+        if line.contains("tracing::") {
+            continue;
+        }
         let parts: Vec<String> = if prose { vec![line.clone()] } else { lit.find_iter(&line).flatten().map(|m| m.as_str().to_owned()).collect() };
         for p in parts {
             let p = allowed.replace_all(&p, "").into_owned();
@@ -219,7 +225,7 @@ fn no_engine_or_daemon_a_person_sees() {
         let Ok(text) = std::fs::read_to_string(&f) else { continue };
         found.extend(backend_words(&r, &text));
     }
-    assert!(found.is_empty(), "\"engine\" or \"daemon\" a person can see ({}):\n{}", found.len(), found.join("\n"));
+    assert!(found.is_empty(), "\"engine\", \"daemon\" or \"core\" a person can see ({}):\n{}", found.len(), found.join("\n"));
 }
 
 #[test]
