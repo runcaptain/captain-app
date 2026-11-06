@@ -4,7 +4,7 @@
 //   props {menu: true}        the New menu: every task, icon and one line each
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
-import { theme, props, closeOverlay, openOverlay, notify } from "herdr";
+import { theme, props, closeOverlay, openOverlay, notify, shared } from "herdr";
 import { palette, isDark, FONT } from "./kit/tokens.js";
 import { Button, Badge, ServiceError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -12,7 +12,10 @@ import { TASKS } from "./tasks.js";
 
 export default class CaptainForms extends View {
   init(_props, cx) {
-    this.task = TASKS.find((t) => t.id === props()?.task) ?? null;
+    // Test hook: opened bare (`captain-app do mod.open`), shared "captain.forms.preview" picks a form,
+    // so a test copy can show any form on screen. People never set it.
+    const want = props()?.task ?? (props()?.menu ? null : shared("captain.forms.preview"));
+    this.task = TASKS.find((t) => t.id === want) ?? null;
     this.values = {};
     this.states = {};
     this.options = {};
@@ -25,6 +28,8 @@ export default class CaptainForms extends View {
 
   start(cx) {
     for (const f of this.task.fields) if (f.default !== undefined) this.values[f.key] = f.default;
+    // Text inputs keep state, which gpui-kit only lets a view create outside render.
+    this.ensureStates();
     cx.spawn(async (cx) => {
       if (this.task.load) this.ctx = await this.task.load();
       await this.loadOptions(cx);
@@ -38,7 +43,23 @@ export default class CaptainForms extends View {
       this.options[f.key] = o ?? [];
       if (this.values[f.key] === undefined && this.options[f.key].length === 1 && f.required) this.values[f.key] = this.options[f.key][0].value;
     }
+    // Fields the services describe (a sign-in's, a compute kind's) appear with the choice.
+    this.ensureStates();
     cx.notify();
+  }
+
+  /** Make the input state for every text field that's shown now. Never call it from render. */
+  ensureStates() {
+    for (const f of this.shown()) {
+      if (f.kind === "choice" || f.kind === "toggle" || this.states[f.key]) continue;
+      const long = f.kind === "long";
+      const st = long ? TextareaState.new({ placeholder: f.placeholder ?? "", rows: 4 }) : InputState.new({ placeholder: f.placeholder ?? "" });
+      if (f.kind === "secret") st.set_masked?.(true);
+      const start = this.values[f.key] ?? f.default;
+      if (start !== undefined) st.set_value(String(start));
+      st.on("change", () => { this.values[f.key] = st.value(); delete this.errors[f.key]; });
+      this.states[f.key] = st;
+    }
   }
 
   // Fields shown now, with the services' own fields (a sign-in's, a compute kind's) expanded.
@@ -51,19 +72,6 @@ export default class CaptainForms extends View {
       } else out.push(f);
     }
     return out;
-  }
-
-  text(f) {
-    if (!this.states[f.key]) {
-      const long = f.kind === "long";
-      const s = long ? TextareaState.new({ placeholder: f.placeholder ?? "", rows: 4 }) : InputState.new({ placeholder: f.placeholder ?? "" });
-      if (f.kind === "secret") s.set_masked?.(true);
-      const start = this.values[f.key] ?? f.default;
-      if (start !== undefined) s.set_value(String(start));
-      s.on("change", () => { this.values[f.key] = s.value(); delete this.errors[f.key]; });
-      this.states[f.key] = s;
-    }
-    return this.states[f.key];
   }
 
   field(c, f) {
@@ -93,7 +101,8 @@ export default class CaptainForms extends View {
       control = div().id(`f-${f.key}`).when(!long, (e) => e.h(32).flex().items_center()).when(long, (e) => e.min_h(84).py(6)).px(10)
         .bg(c.surface).border_1().border_color(err ? c.fail : c.grey300).cursor_text()
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .child(long ? Textarea.new(this.text(f)).w_full().text_size(13).text_color(c.navy) : Input.new(this.text(f)).w_full().text_size(13).text_color(c.navy));
+        .child(!this.states[f.key] ? div().h(14).w(120).bg(c.surface2)
+          : long ? Textarea.new(this.states[f.key]).w_full().text_size(13).text_color(c.navy) : Input.new(this.states[f.key]).w_full().text_size(13).text_color(c.navy));
     }
     return v_flex().gap(5).child(label).child(control)
       .when(Boolean(err), (e) => e.child(div().text_size(12).text_color(c.fail).child(err)))
