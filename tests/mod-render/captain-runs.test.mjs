@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
+import { metricWords } from '../../defaults/captain/kit/words.js';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
@@ -45,7 +46,7 @@ for (const b of fx('backtests')) assert.ok(text.includes(b.name), `lists ${b.nam
 for (const row of h.byIdPrefix('backtests-')) assert.ok(h.has(row, 'svg'), 'icon on a backtest row');
 const run = fx('run');
 const primary = run.comparisons.find((c) => c.primary);
-assert.ok(text.includes(`${primary.metric}, B minus A`), 'primary comparison');
+assert.ok(text.includes(`${metricWords(primary.metric)}, B minus A`), 'primary comparison, in words');
 assert.ok(text.includes(primary.verdict.toUpperCase()), 'verdict badge');
 // Shown as the name plus a version chip, never "name@v1".
 assert.ok(text.includes(run.arms[0].arm.replace(/@v(\d+)$/, ' | v$1')), 'arm table: name plus version chip');

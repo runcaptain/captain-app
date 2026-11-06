@@ -11,7 +11,9 @@ import { theme, shared, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
-import { askAgent, copyPrompt } from "./kit/agent.js";
+import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
+import { metricWords, warningIcon } from "./kit/words.js";
+import { icon as kitIcon } from "./kit/icons.js";
 
 const PAGE = 200;
 const ROW = 28;
@@ -59,6 +61,21 @@ function queryPrompt(run, row, d) {
     d ? `Under A (${bare(d.a?.arm)}) its nDCG@10 is ${d.a?.ndcg10}, under B (${bare(d.b?.arm)}) it is ${d.b?.ndcg10}.` : "",
     "Compare the two ranked lists, say why B ranks the way it does, and whether this is a real regression or a judging gap",
     "(unjudged products count as not relevant). Use the cst CLI to read the run. Change nothing without asking me.",
+  ].filter(Boolean).join(" ");
+}
+
+/** A backend sentence as a sentence: capital first, full stop at the end. */
+const sentence = (t) => { const s = String(t ?? "").trim(); return s ? `${s[0].toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}` : ""; };
+
+/** What an agent should look into for a whole comparison. */
+function runPrompt(ref, r, compat) {
+  const p = (r.comparisons ?? []).find((x) => x.primary) ?? r.comparisons?.[0];
+  return [
+    `In Captain, look at the backtest run ${ref}${r.mode === "imported" ? ", imported from a readout" : ""}: it compares ${(r.arms ?? []).map((a) => bare(a.arm)).join(" against ")}.`,
+    p ? `The main result is ${metricWords(p.metric)}: B minus A is ${p.delta}, 95% interval [${p.ci_low}, ${p.ci_high}], verdict ${p.verdict}.` : "",
+    (compat?.warnings ?? []).length ? `Captain warns: ${compat.warnings.map((w) => w.text).join("; ")}.` : "",
+    "Tell me whether to trust it, what would make it conclusive, and what to try next.",
+    "Use the cst CLI to read the run. Change nothing without asking me.",
   ].filter(Boolean).join(" ");
 }
 
@@ -286,8 +303,9 @@ export default class CaptainCompare extends View {
     return v_flex().flex_none().mx(20).mt(12).p(10).gap(4).border_1().border_color(this.compat.trustworthy ? c.grey300 : c.fail).bg(this.compat.trustworthy ? c.surface2 : c.surface)
       .child(h_flex().gap(6).items_center().text_size(12.5).font_medium().text_color(this.compat.trustworthy ? c.navy : c.fail)
         .child(this.icon("alert", 14)).child(div().child(this.compat.trustworthy ? "Read with care" : "Not a trustworthy comparison")))
-      .children(w.map((x) => h_flex().id(`warn-${x.code}`).gap(6).text_size(12).text_color(c.grey900)
-        .child(div().flex_none().w(110).font_family(MONO).text_color(c.grey500).child(x.code)).child(div().flex_1().min_w(0).child(x.text))));
+      .children(w.map((x) => h_flex().id(`warn-${x.code}`).gap(8).items_start().text_size(12).text_color(c.grey900)
+        .child(div().flex_none().pt(2).child(svg(kitIcon(warningIcon(x.code))).size(13).text_color(this.compat.trustworthy ? c.grey500 : c.fail)))
+        .child(div().flex_1().min_w(0).child(sentence(x.text)))));
   }
 
   overview(c, w) {
@@ -296,9 +314,12 @@ export default class CaptainCompare extends View {
     const p = cmps.find((x) => x.primary) ?? cmps[0];
     const cost = p?.cost;
     return v_flex().id("overview").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(14)
+      .child(h_flex().gap(8)
+        .child(Button(c, "run-agent", "Open an agent in this space", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, runPrompt(this.runRef(), r, this.compat))), { small: true }))
+        .child(Button(c, "run-prompt", "Copy prompt", (_e, cx) => copyPrompt(cx, runPrompt(this.runRef(), r, this.compat)), { kind: "quiet", small: true })))
       .when(!!p, (e) => e.child(h_flex().flex_wrap().gap(10).items_center().p(12).border_1().border_color(c.rule)
         .child(this.icon(p.delta > 0 ? "up" : p.delta < 0 ? "down" : "flat", 18, p.verdict === "win" ? c.blue : p.verdict === "loss" ? c.fail : c.grey500))
-        .child(div().text_size(13).font_medium().child(`${p.metric}, B minus A`))
+        .child(div().id("primary-metric").text_size(13).font_medium().tooltip(p.metric).child(`${metricWords(p.metric)}, B minus A`))
         .child(div().text_size(15).font_family(MONO).child(fmtD(p.delta)))
         .child(div().text_size(12).font_family(MONO).text_color(c.grey900).child(`[${fmtD(p.ci_low)}, ${fmtD(p.ci_high)}]`))
         .child(this.badge(c, p.verdict, p.verdict))
@@ -320,7 +341,7 @@ export default class CaptainCompare extends View {
         .children(cmps.map((x, i) => h_flex().id(`cmp-${i}`).h(30).items_center().border_b(1).border_color(c.rule).text_size(12.5).whitespace_nowrap()
           .child(h_flex().flex_1().min_w(160).px(10).gap(6).items_center()
             .child(this.icon(x.delta > 0 ? "up" : x.delta < 0 ? "down" : "flat", 13, x.verdict === "win" ? c.blue : x.verdict === "loss" ? c.fail : c.grey500))
-            .child(div().min_w(0).truncate().child(x.metric)).when(!!x.primary, (e) => e.child(div().text_size(10.5).text_color(c.blue).child("primary"))))
+            .child(div().id(`metric-${i}`).min_w(0).truncate().tooltip(x.metric).child(metricWords(x.metric))).when(!!x.primary, (e) => e.child(div().text_size(10.5).text_color(c.blue).child("primary"))))
           .child(div().w(90).flex_none().px(8).text_right().font_family(MONO).child(fmtD(x.delta)))
           .child(div().w(170).flex_none().px(8).text_right().font_family(MONO).text_color(c.grey900).child(`[${fmtD(x.ci_low)}, ${fmtD(x.ci_high)}]`))
           .child(h_flex().w(90).flex_none().px(8).justify_end().child(this.badge(c, x.verdict, x.verdict)))))))
@@ -351,17 +372,17 @@ export default class CaptainCompare extends View {
 
   armTable(c, r) {
     const metrics = ["ndcg@10", "p@10", "mrr"].filter((m) => (r.arms ?? []).some((a) => a.offline?.[m] !== undefined));
-    const width = 200 + metrics.length * 84 + 84 + 96 + 110;
+    const width = 200 + metrics.length * 104 + 84 + 96 + 110;
     return div().id("arms-x").w_full().overflow_x_scrollbar().child(v_flex().min_w(width).border_1().border_color(c.rule)
       .child(h_flex().h(28).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().whitespace_nowrap()
         .child(h_flex().flex_1().min_w(200).px(10).gap(6).child(this.icon("arms", 13, c.grey500)).child(div().child("Arm")))
-        .children(metrics.map((m) => div().w(84).flex_none().px(8).text_right().child(m)))
+        .children(metrics.map((m) => div().id(`armh-${m}`).w(104).flex_none().px(8).text_right().truncate().tooltip(m).child(metricWords(m))))
         .child(div().w(84).flex_none().px(8).text_right().child("judged@10"))
         .child(div().w(96).flex_none().px(8).text_right().child("per 1k"))
         .child(div().w(110).flex_none().px(8).text_right().child("p50 / p99 ms")))
       .children((r.arms ?? []).map((a, i) => h_flex().id(`arm-${i}`).h(30).items_center().border_b(1).border_color(c.rule).text_size(12.5).whitespace_nowrap()
         .child(h_flex().flex_1().min_w(200).px(10).gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(named(c, a.arm)))
-        .children(metrics.map((m) => div().w(84).flex_none().px(8).text_right().font_family(MONO).child(fmt4(a.offline?.[m]))))
+        .children(metrics.map((m) => div().w(104).flex_none().px(8).text_right().font_family(MONO).child(fmt4(a.offline?.[m]))))
         .child(div().w(84).flex_none().px(8).text_right().font_family(MONO).text_color((a.judged_at_10 ?? 1) < 0.9 ? c.fail : c.navy).child(pct(a.judged_at_10)))
         .child(div().w(96).flex_none().px(8).text_right().truncate().font_family(MONO).text_color(a.cost?.serve_usd_per_1k != null ? c.navy : c.grey500).child(usd(a.cost?.serve_usd_per_1k) ?? "none"))
         .child(div().w(110).flex_none().px(8).text_right().truncate().font_family(MONO).text_color(c.grey900)
@@ -539,7 +560,7 @@ export default class CaptainCompare extends View {
             .child(failed ? this.badge(c, `${failed} guardrail${failed === 1 ? "" : "s"} failed`, "fail") : this.badge(c, "guardrails ok", "blue")))
           .child(div().px(10).py(6).text_size(12).text_color(c.grey900).child(`queries ${s.queries}, judgments ${s.judgments}`))
           .children((s.comparisons ?? []).map((x, i) => h_flex().id(`scmp-${s.surface}-${i}`).px(10).py(4).gap(8).items_center().text_size(12.5)
-            .child(div().child(x.metric)).child(div().font_family(MONO).child(fmtD(x.delta)))
+            .child(div().id(`scmp-name-${s.surface}-${i}`).tooltip(x.metric).child(metricWords(x.metric))).child(div().font_family(MONO).child(fmtD(x.delta)))
             .child(div().font_family(MONO).text_color(c.grey900).child(`[${fmtD(x.ci_low)}, ${fmtD(x.ci_high)}]`)).child(this.badge(c, x.verdict, x.verdict))))
           .children((s.guardrails ?? []).map((g, i) => h_flex().id(`guard-${s.surface}-${i}`).px(10).py(5).gap(8).items_center().border_t(1).border_color(c.rule).text_size(12.5)
             .child(this.icon(g.ok ? "ok" : "failed", 14, g.ok ? c.blue : c.fail))
@@ -554,7 +575,15 @@ export default class CaptainCompare extends View {
     const pw = Math.max(200, Math.min(280, Math.floor(w * 0.22)));
     const r = this.run;
     // Never blank: the header always shows, and the body says what is happening.
-    const body = this.error ? v_flex().flex_1() : this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true)) : !this.sel ? (this.backtests?.length === 0 ? v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("No backtests yet.") : v_flex().flex_1().child(Skeleton(c, 8)))
+    const body = this.error ? v_flex().flex_1() : this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true)) : !this.sel ? (this.backtests?.length === 0 ? v_flex().flex_1().items_center().justify_center().gap(10).p(24)
+        .child(this.icon("compare", 22, c.grey500))
+        .child(div().text_size(15).font_medium().child("Nothing to compare yet"))
+        .child(div().max_w(460).text_center().text_size(12.5).line_height("19px").text_color(c.grey900)
+          .child("A comparison shows whether one version of your search really beats another: the difference, how sure Captain is, and query by query why. Run a backtest to get one."))
+        .child(h_flex().gap(8)
+          .child(Button(c, "first-backtest", "Run a backtest", () => openForm("backtest"), { kind: "primary" }))
+          .child(Button(c, "first-demo", "Try the demo store", () => openForm("demo"))))
+        : v_flex().flex_1().child(Skeleton(c, 8)))
       : !r ? v_flex().flex_1().child(Skeleton(c, 8))
       : r.error ? v_flex().flex_1().p(24).text_size(13).text_color(c.fail).child(r.error)
       : this.tab === "overview" ? this.overview(c, w - pw)
