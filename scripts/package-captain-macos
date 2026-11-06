@@ -5,20 +5,18 @@
 #
 # Captain.app carries what it runs, so installing it is one step:
 #   Contents/Resources/cst/   a python-build-standalone CPython with captain-search
-#                             installed from a captain-ide checkout, and bin/cst
+#                             installed from backend/ in this repo, and bin/cst
 #   Contents/Resources/hc/    the herdr-core (hc) binary and its notices
 # Settings:
-#   CAPTAIN_IDE=<captain-ide checkout>   default ~/Code/workbench/CaptainSearchTools
-#   CAPTAIN_IDE_REF=<git ref>            default origin/main (the checkout itself isn't touched)
-#   CAPTAIN_PYTHON=<version>             default 3.14 (what captain-ide's core runs on)
+#   CAPTAIN_BACKEND=<folder>             default backend/ in this repo (the Captain Search backend and cst CLI)
+#   CAPTAIN_PYTHON=<version>             default 3.14 (what backend/core runs on)
 #   CAPTAIN_HC=<path to herdr-core>      default the hc on PATH or in ~/.local/bin
 set -euo pipefail
 
 [[ $(uname -s) == Darwin ]] || { echo 'Captain.app builds on macOS only.' >&2; exit 1; }
 cd "$(dirname "$0")/.."
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-ide=${CAPTAIN_IDE:-$HOME/Code/workbench/CaptainSearchTools}
-ref=${CAPTAIN_IDE_REF:-origin/main}
+backend=${CAPTAIN_BACKEND:-backend}
 pyver=${CAPTAIN_PYTHON:-3.14}
 cargo build --release --locked --bin captain-app
 
@@ -52,20 +50,20 @@ PLIST
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
 # The Captain Search backend: a relocatable CPython (python-build-standalone, through uv)
-# with captain-search installed into it from captain-ide at $ref.
+# with captain-search installed into it from backend/, with every database driver (the warehouses extra).
 command -v uv >/dev/null || { echo "uv is needed to fetch the Python runtime: https://docs.astral.sh/uv/" >&2; exit 1; }
 uv python install "$pyver" >/dev/null
 pybin=$(uv python find --managed-python "$pyver")
 pyroot=$(cd "$(dirname "$pybin")/.." && pwd -P)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-git -C "$ide" fetch -q origin 2>/dev/null || true
-git -C "$ide" archive "$ref" core | tar -x -C "$work"
-commit=$(git -C "$ide" rev-parse --short "$ref")
+cp -R "$backend/core" "$work/core"
+rm -rf "$work/core/.venv" "$work/core/"*.egg-info
+commit=$(git rev-parse --short HEAD)$(git diff --quiet HEAD -- "$backend" || echo "-dirty")
 mkdir -p "$app/Contents/Resources/cst/bin"
 cp -R "$pyroot" "$app/Contents/Resources/cst/python"
 py="$app/Contents/Resources/cst/python/bin/python3"
-uv pip install --quiet --python "$py" --break-system-packages "$work/core"
+uv pip install --quiet --python "$py" --break-system-packages "$work/core[warehouses]"
 # Parts of CPython Captain never runs: the test suite, IDLE, Tk, ensurepip and pip.
 stdlib=$(echo "$app/Contents/Resources/cst/python/lib/python3."*)
 rm -rf "$stdlib/test" "$stdlib/idlelib" "$stdlib/tkinter" "$stdlib/turtledemo" "$stdlib/ensurepip" "$stdlib/site-packages/pip" "$stdlib/site-packages/pip-"*
@@ -82,7 +80,7 @@ here=$(cd "$(dirname "$self")/.." && pwd -P)
 exec "$here/python/bin/python3" -c 'import sys; sys.argv[0] = "cst"; from captain_search.cli.main import app; sys.exit(app())' "$@"
 LAUNCHER
 chmod +x "$app/Contents/Resources/cst/bin/cst"
-echo "captain-ide $commit, Python $("$py" -c 'import platform; print(platform.python_version())')" > "$app/Contents/Resources/cst/VERSION"
+echo "backend $commit, Python $("$py" -c 'import platform; print(platform.python_version())')" > "$app/Contents/Resources/cst/VERSION"
 "$app/Contents/Resources/cst/bin/cst" --help >/dev/null
 
 # The terminal runtime: herdr-core (Apache-2.0), with its notices. Captain runs it in its
@@ -97,4 +95,4 @@ cp "$(readlink -f "$hc" 2>/dev/null || echo "$hc")" "$app/Contents/Resources/hc/
 
 codesign --force --deep --sign - "$app"
 codesign --verify --strict "$app"
-echo "Built $app ($version): $(du -sh "$app" | cut -f1); cst from captain-ide $commit; $(cat "$app/Contents/Resources/hc/VERSION"). Not installed or opened."
+echo "Built $app ($version): $(du -sh "$app" | cut -f1); backend from $commit; $(cat "$app/Contents/Resources/hc/VERSION"). Not installed or opened."
