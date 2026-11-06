@@ -81,10 +81,7 @@
           "id": "comparisons",
           "type": "block",
           "content": {
-            "webview": {
-              "url": "{cst}/?embedded=1&screen=comparisons&theme=system#token={cst_token}",
-              "id": "comparisons"
-            }
+            "mod": "captain-compare"
           }
         },
         {
