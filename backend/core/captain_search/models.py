@@ -77,7 +77,7 @@ def scan(uri: str, profile: str | None = None, s3=None) -> dict:
         index_md = ""
     models = []
     for k in sorted(keys):
-        m = re.match(r"^(arch-[^/]+)/([^/]+)/([^/]+)/MANIFEST\.yaml$", k)
+        m = re.match(r"^([^/]+)/([^/]+)/([^/]+)/MANIFEST\.yaml$", k)
         if not m:
             continue
         arch, brand, label = m.groups()
@@ -94,7 +94,7 @@ def scan(uri: str, profile: str | None = None, s3=None) -> dict:
             "what_changed": man.get("what_changed"), "path": f"s3://{bucket}/{pfx}{base}",
             "files": sorted(files, key=lambda f: f["path"]), "bytes": sum(f["bytes"] for f in files), "manifest": man,
         })
-    archs = sorted({k.split("/")[0] for k in keys if k.startswith("arch-")})
+    archs = sorted({m["architecture"] for m in models})
     arch_docs = {}
     for a in archs:
         if f"{a}/ARCHITECTURE.md" in keys:
@@ -114,7 +114,8 @@ def import_registry(ctx: Context, uri: str | None = None, profile: str | None = 
         m["parent_ids"] = [f"{m['brand']}@{p}" for p in m["parents"]]
         m["parent_id"] = m["parent_ids"][0] if m["parent_ids"] else None
         m["parent_registered"] = [pid in ids for pid in m["parent_ids"]]
-    name = re.sub(r"[^a-z0-9._-]+", "-", urlparse(uri).netloc.lower())
+    u = urlparse(uri)
+    name = re.sub(r"[^a-z0-9._-]+", "-", f"{u.netloc}-{u.path.strip('/')}".strip("-").lower())[:100].strip("-.")
     snap = RegistrySnapshot(org=ctx.workspace.org, workspace=ctx.workspace.name, created_by=whoami(), name=name,
                             version=0, uri=uri, index_md=data["index_md"], models=data["models"],
                             tags={"architectures": ",".join(data["architectures"])},
@@ -128,27 +129,47 @@ def latest(ctx: Context) -> RegistrySnapshot | None:
     return max(snaps, key=lambda s: s.created_at) if snaps else None
 
 
+def latest_for(ctx: Context, uri: str) -> RegistrySnapshot | None:
+    snaps = [s for s in (ctx.registry.load("registry", n) for n in ctx.registry.names("registry")) if s.uri.rstrip("/") == uri.rstrip("/")]
+    return max(snaps, key=lambda s: s.created_at) if snaps else None
+
+
+def all_latest(ctx: Context) -> list[RegistrySnapshot]:
+    """The newest snapshot of every attached registry (or of every registry ever read, if none are attached)."""
+    from .attach import _read
+
+    uris = [r["uri"] for r in _read(ctx)[0]["registries"]]
+    if not uris:
+        snaps = [ctx.registry.load("registry", n) for n in ctx.registry.names("registry")]
+        uris = sorted({s.uri for s in snaps})
+    return [s for s in (latest_for(ctx, u) for u in uris) if s]
+
+
 def listing(ctx: Context) -> list[dict]:
-    s = latest(ctx)
-    if s is None:
-        return []
-    return [{k: v for k, v in m.items() if k not in ("manifest", "files")} for m in s.models]
+    out = []
+    for s in all_latest(ctx):
+        out += [{**{k: v for k, v in m.items() if k not in ("manifest", "files")}, "registry": s.uri} for m in s.models]
+    return out
 
 
 def detail(ctx: Context, model_id: str) -> dict:
-    s = latest(ctx)
-    m = next((m for m in (s.models if s else []) if m["id"] == model_id), None)
+    m = next((m for s in all_latest(ctx) for m in s.models if m["id"] == model_id), None)
     if m is None:
         from .storage.backend import NotFound
 
-        raise NotFound(f"no model {model_id!r} in the imported registry. Import it first.")
+        raise NotFound(f"no model {model_id!r} in any attached registry")
     return m
 
 
 def lineage(ctx: Context) -> dict:
-    s = latest(ctx)
-    if s is None:
+    snaps = all_latest(ctx)
+    if not snaps:
         return {"nodes": [], "edges": []}
+
+    class _All:  # every attached registry's models as one graph
+        models = [m for x in snaps for m in x.models]
+
+    s = _All
     nodes, edges = {}, []
     order = sorted({m["architecture"] for m in s.models}, key=lambda a: int(re.search(r"arch-v(\d+)", a).group(1)) if re.search(r"arch-v(\d+)", a) else 99)
     for i, a in enumerate(order):
@@ -168,4 +189,5 @@ def lineage(ctx: Context) -> dict:
             did = f"demo:{m['brand']}"
             nodes.setdefault(did, {"id": did, "kind": "demo", "label": f"{m['brand']} demo", "brand": m["brand"]})
             edges.append({"src": nid, "dst": did, "relation": "attached"})
-    return {"nodes": list(nodes.values()), "edges": edges, "snapshot": f"{s.name}@v{s.version}", "uri": s.uri}
+    return {"nodes": list(nodes.values()), "edges": edges, "snapshots": [f"{x.name}@v{x.version}" for x in snaps],
+            "registries": [x.uri for x in snaps]}
