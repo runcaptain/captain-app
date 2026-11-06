@@ -1,16 +1,16 @@
 // CAPTAIN: Comparisons, native. One backtest run, read in depth: what can be trusted (compatibility warnings, shown
 // above any winner), the arms with their cost, every comparison, the per-query delta distribution, the queries
-// themselves (paged and sorted by the daemon) with any query side by side, the segments and the surfaces.
+// themselves (paged and sorted by the backend) with any query side by side, the segments and the surfaces.
 // Runs hands a run over through shared "captain.compare" = {backtest, version}.
 //
 // Per-query rows come in pages of 200 from GET /api/runs/{run}/queries; the histogram comes pre-binned. The mod never
 // holds or sorts a whole result set (docs/captain/RISKS.md).
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
-import { theme, shared } from "herdr";
-import { api } from "./kit/cst.js";
+import { theme, shared, props as layoutProps } from "herdr";
+import { api, retry, details } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
-import { Loading } from "./kit/ui.js";
+import { Loading, Skeleton, Button } from "./kit/ui.js";
 
 const PAGE = 200;
 const ROW = 28;
@@ -22,9 +22,31 @@ const pct = (x) => (x === null || x === undefined ? "none" : `${Math.round(x * 1
 const usd = (x, d = 4) => (x === null || x === undefined ? null : `$${Number(x).toFixed(d)}`);
 const GRADE_TONE = { 0: "grey", 1: "partial", 2: "relevant", 3: "exact" };
 
+/** A failed call in words for people: the backend's own sentence when it answered, else a plain one. Transport
+ *  details (hosts, ports, tool output) never show: they go behind Copy details. */
+function say(r, fallback) {
+  const e = String(r?.error ?? "");
+  if (r?.status && e && !/^HTTP \d+$/.test(e)) return e;
+  if (/time ?out|timed out/i.test(e)) return "This took too long.";
+  return fallback;
+}
+
+/** A section that couldn't load: one plain sentence, Retry, and Copy details. A skeleton while still starting. */
+function trouble(c, id, r, fallback, onRetry) {
+  if (r?.starting) return Skeleton(c);
+  return v_flex().w_full().p(14).gap(10).bg(c.failLight).border_1().border_color(c.fail)
+    .child(div().text_size(13).text_color(c.fail).child(say(r, fallback)))
+    .child(h_flex().gap(8)
+      .child(Button(c, `${id}-retry`, "Retry", (_e, cx) => { if (!r?.status) retry(); onRetry?.(cx); }, { kind: "primary", small: true }))
+      .when(!r?.status, (e) => e.child(Button(c, `${id}-copy`, "Copy details", (_e, cx) => cx.write_to_clipboard(details(r?.error ?? null)), { small: true }))));
+}
+
 export default class CaptainCompare extends View {
-  init(_props, cx) {
-    this.tab = "overview";
+  init(_p, cx) {
+    const props = { ...(layoutProps?.() ?? {}), ...(_p ?? {}) };
+    // Props: {backtest, version, tab, query} open that run on that tab, with that query side by side.
+    this.wantProps = props ?? {};
+    this.tab = props?.tab ?? "overview";
     this.width = 1000;
     this.backtests = null;
     this.sel = null; // {backtest, version}
@@ -38,7 +60,7 @@ export default class CaptainCompare extends View {
     this.handed = null;
     this.loadBacktests(cx);
     cx.timer.every(150, (cx) => this.pump(cx));
-    // Until the engine answers, ask again every 3 s.
+    // Until the backend answers, ask again every 3 s.
     cx.timer.every(3000, (cx) => { if (this.starting) this.loadBacktests(cx); });
   }
 
@@ -47,10 +69,11 @@ export default class CaptainCompare extends View {
       const r = await api("/api/backtests");
       this.starting = !r.ok && !!r.starting;
       if (this.starting) { cx.notify(); return; }
-      this.backtests = r.ok ? r.data ?? [] : [];
-      this.error = r.ok ? null : r.error;
-      const h = shared("captain.compare");
-      const first = h?.backtest ? h : this.backtests[0] ? { backtest: this.backtests[0].name, version: this.backtests[0].latest } : null;
+      if (r.ok) this.backtests = r.data ?? [];
+      this.error = r.ok ? null : say(r, "Couldn't load backtests.");
+      this.errorR = r;
+      const h = shared("captain.compare") ?? (this.wantProps.backtest ? { backtest: this.wantProps.backtest, version: this.wantProps.version ?? 1 } : null);
+      const first = h?.backtest ? h : this.backtests?.[0] ? { backtest: this.backtests[0].name, version: this.backtests[0].latest } : null;
       if (h) this.handed = `${h.backtest}@${h.version}`;
       if (first) this.open(cx, first.backtest, first.version);
       cx.notify();
@@ -80,9 +103,14 @@ export default class CaptainCompare extends View {
         api(`/api/runs/${enc(ref)}/histogram?bins=21`),
       ]);
       if (this.runRef() !== ref) return;
-      this.run = r.ok ? r.data : { error: r.error };
+      this.run = r.ok ? r.data : { error: say(r, "Couldn't load this run.") };
       this.compat = c.ok ? c.data : null;
       this.hist = h.ok ? h.data : null;
+      if (this.wantProps.query) {
+        const q = this.wantProps.query;
+        this.wantProps.query = null;
+        this.openSide(cx, { query_id: q, query: "" });
+      }
       cx.notify();
     });
     cx.notify();
@@ -126,7 +154,7 @@ export default class CaptainCompare extends View {
       const r = await api(this.url(page * PAGE));
       if (this.q.seq !== seq) return;
       this.q.inflight = null;
-      if (!r.ok) this.q.error = r.error;
+      if (!r.ok) this.q.error = say(r, "Couldn't load the queries.");
       else {
         this.q.pages.set(page, r.data.rows ?? []);
         this.q.total = r.data.total ?? 0;
@@ -143,7 +171,8 @@ export default class CaptainCompare extends View {
     cx.spawn(async (cx) => {
       const r = await api(`/api/runs/${enc(ref)}/queries/${encodeURIComponent(row.query_id)}?k=20`);
       if (this.side?.row !== row) return;
-      this.side.data = r.ok ? r.data : { error: r.error };
+      this.side.data = r.ok ? r.data : { error: say(r, "Couldn't load this query.") };
+      if (r.ok && !row.query) row.query = r.data?.query ?? row.query_id;
       cx.notify();
     });
     cx.notify();
@@ -184,8 +213,8 @@ export default class CaptainCompare extends View {
   /** The runs to pick from, as a short list of backtests with their versions. */
   picker(c, w) {
     return v_flex().id("compare-runs").w(w).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
-      .when(!!this.error, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child(this.error)))
-      .when(this.backtests === null && !this.error, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("Loading")))
+      .when(!!this.error, (e) => e.child(div().p(10).child(trouble(c, "backtests-load", this.errorR, this.error, (cx) => this.loadBacktests(cx)))))
+      .when(this.backtests === null && !this.error, (e) => e.child(div().child(Skeleton(c, 8))))
       .when(Array.isArray(this.backtests) && !this.backtests.length, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("No backtests yet.")))
       .children((this.backtests ?? []).map((b) => {
         const active = this.sel?.backtest === b.name;
@@ -270,7 +299,7 @@ export default class CaptainCompare extends View {
           .child(a.cost?.p50_ms != null ? `${Number(a.cost.p50_ms).toFixed(a.cost.p50_ms < 1 ? 2 : 0)} / ${Number(a.cost.p99_ms ?? 0).toFixed(a.cost.p99_ms < 1 ? 2 : 0)}` : "")))));
   }
 
-  /** The per-query delta distribution, from the daemon's bins: bars around zero. */
+  /** The per-query delta distribution, from the backend's bins: bars around zero. */
   histogram(c, w) {
     const h = this.hist;
     if (!h?.counts?.length) return div();
@@ -295,6 +324,8 @@ export default class CaptainCompare extends View {
   queryPane(c, w) {
     const q = this.q;
     const side = this.side;
+    // Narrow (beside a terminal): the query opens in place of the list, and its close button brings the list back.
+    const narrow = !!side && w < 980;
     const listW = side ? Math.max(360, Math.floor(w * 0.5)) : w;
     const chip = (id, label, n) => h_flex().id(`only-${id ?? "all"}`).h(26).px(8).gap(6).items_center().cursor_pointer().text_size(12)
       .border_1().border_color(q.only === id ? c.blue : c.grey300).bg(q.only === id ? c.blueLight : c.surface).text_color(q.only === id ? c.blue : c.navy)
@@ -321,7 +352,7 @@ export default class CaptainCompare extends View {
       const out = [];
       for (let i = range.start; i < range.end; i++) {
         const r = rowAt(i);
-        if (!r) { out.push(h_flex().h(ROW).px(8).text_size(12).text_color(c.grey500).child(q.total === 0 ? "" : "Loading")); continue; }
+        if (!r) { out.push(h_flex().h(ROW).px(8).items_center().when(q.total !== 0, (e) => e.child(div().h(10).w("40%").bg(c.surface2)))); continue; }
         const on = side?.row?.query_id === r.query_id;
         out.push(h_flex().id(`q-${r.query_id}`).h(ROW).border_b(1).border_color(c.rule).text_size(12.5).items_center().cursor_pointer()
           .bg(on ? c.blueLight : c.surface).hover((s) => (on ? s : s.bg(c.surface2)))
@@ -347,9 +378,9 @@ export default class CaptainCompare extends View {
         .child(div().text_size(12).text_color(c.grey900).child(q.total === null ? "" : `${total.toLocaleString("en-US")} of ${(q.unfiltered ?? total).toLocaleString("en-US")} queries`)))
       .when(!!q.error, (e) => e.child(div().px(20).text_size(12.5).text_color(c.fail).child(q.error)))
       .child(h_flex().flex_1().min_h(0).px(20).pb(10).gap(12)
-        .child(v_flex().w(side ? listW : "100%").flex_none().when(!side, (e) => e.flex_1()).min_w(0).h_full().border_1().border_color(c.rule)
+        .when(!narrow, (e) => e.child(v_flex().w(side ? listW : "100%").flex_none().when(!side, (e) => e.flex_1()).min_w(0).h_full().border_1().border_color(c.rule)
           .child(head)
-          .child(div().flex_1().min_h(0).relative().child(list.size_full()).child(Scrollbar.vertical("compare-queries").viewport_from_layout().absolute().inset_0())))
+          .child(div().flex_1().min_h(0).relative().child(list.size_full()).child(Scrollbar.vertical("compare-queries").viewport_from_layout().absolute().inset_0()))))
         .when(!!side, (e) => e.child(this.sideBySide(c, side))));
   }
 
@@ -382,7 +413,7 @@ export default class CaptainCompare extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(14).font_medium().child(side.row.query))
         .child(div().id("side-close").cursor_pointer().text_color(c.grey500).hover((s) => s.text_color(c.navy)).tooltip("Close")
           .on_click((_e, cx) => { this.side = null; cx.notify(); }).child(this.icon("x", 14))))
-      .when(!d, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("Loading")))
+      .when(!d, (e) => e.child(Skeleton(c, 6)))
       .when(!!d?.error, (e) => e.child(div().text_size(12.5).text_color(c.fail).child(d.error)))
       .when(!!d && !d.error, (e) => e
         .child(h_flex().flex_1().min_h(0).gap(8)
@@ -451,8 +482,8 @@ export default class CaptainCompare extends View {
     const pw = Math.max(200, Math.min(280, Math.floor(w * 0.22)));
     const r = this.run;
     // Never blank: the header always shows, and the body says what is happening.
-    const body = this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true)) : !this.sel ? v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child(this.backtests?.length === 0 ? "No backtests yet." : "Loading")
-      : !r ? v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Loading the run")
+    const body = this.error ? v_flex().flex_1() : this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true)) : !this.sel ? (this.backtests?.length === 0 ? v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("No backtests yet.") : v_flex().flex_1().child(Skeleton(c, 8)))
+      : !r ? v_flex().flex_1().child(Skeleton(c, 8))
       : r.error ? v_flex().flex_1().p(24).text_size(13).text_color(c.fail).child(r.error)
       : this.tab === "overview" ? this.overview(c, w - pw)
       : this.tab === "queries" ? this.queryPane(c, w - pw - 40)

@@ -35,7 +35,8 @@ const h = harness(Mod);
 // First the engine is still starting: the screen says so instead of drawing nothing, and keeps asking.
 globalThis.__starting = true;
 await h.start();
-assert.ok(/Starting Captain's engine/i.test(h.text()), `starting state shows: ${h.text().slice(0, 120)}`);
+// A quiet skeleton: the header, and no words about what is starting.
+assert.ok(!/engine|daemon|starting|loading/i.test(h.text()), `starting state shows words: ${h.text().slice(0, 160)}`);
 globalThis.__starting = false;
 await h.layoutLists({});
 const rows0 = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'rows0.json'), 'utf8'));

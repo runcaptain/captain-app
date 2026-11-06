@@ -15,6 +15,11 @@ if [[ ${#MODS[@]} -eq 0 ]]; then
   for m in captain-data captain-runs captain-compare; do [[ -d defaults/mods/$m ]] && MODS+=("$m"); done
 fi
 block_of() { case "$1" in captain-data) echo data ;; captain-runs) echo runs ;; captain-compare) echo comparisons ;; *) echo "" ;; esac; }
+# Extra views after the plain ones: a query side by side (props the mods read at init).
+EXTRA=()
+for m in "${MODS[@]}"; do
+  case "$m" in captain-compare) EXTRA+=("captain-compare:side") ;; esac
+done
 
 # A short home: the window's control socket must fit in a Unix socket path.
 HOME_DIR=$(mktemp -d /tmp/cshot.XXXX)
@@ -60,36 +65,51 @@ if covered; then
 fi
 covered && { echo "an overlay still covers the window: $(app status | python3 -c "import json,sys; print(json.load(sys.stdin).get('overlays'))")"; exit 1; }
 
+# Props for a view: the scratch workspace's first query of the seeded replay, read from its own serve.
+props_of() {
+  case "$1" in
+    captain-compare:side) python3 tests/mod-render/first-query.py "$WORK/cst" ;;
+    *) echo '{}' ;;
+  esac
+}
+
 fail=0
-for m in "${MODS[@]}"; do
+for view in "${MODS[@]}" "${EXTRA[@]}"; do
+  m=${view%%:*}
+  props=$(props_of "$view")
   block=$(block_of "$m")
   [[ -n "$block" ]] || { echo "$m: no section block known"; fail=1; continue; }
   rm -rf "$HOME_DIR/mods/$m"
-  mkdir -p "$HOME_DIR/mods"
+  mkdir -p "$HOME_DIR/mods" "$HOME_DIR/layouts"
   cp -R "defaults/mods/$m" "$HOME_DIR/mods/$m"
   rm -f "$HOME_DIR/mods/$m/gpui-kit.d.ts" "$HOME_DIR/mods/$m/jsconfig.json"
-  python3 - "$HOME_DIR/layouts/captain.json" "$block" "$m" <<'EOF'
+  # Captain's own layout can't be edited (edits land in a copy), so each view gets its own personal layout,
+  # a copy of the shipped one with this block set; switching to a new layout builds its mods fresh.
+  n_view=$((${n_view:-0} + 1))
+  python3 - defaults/layouts/captain.json "$HOME_DIR/layouts/shot$n_view.json" "$block" "$m" "$props" <<'EOF'
 import json, sys
-p, block, mod = sys.argv[1:]
-d = json.load(open(p))
+src, p, block, mod, props = sys.argv[1:]
+d = json.load(open(src))
 def find(n):
     if n.get("id") == block: return n
     for c in n.get("children", []):
         r = find(c)
         if r: return r
 n = find(d)
-n["content"] = {"mod": mod}
+n["content"] = {"mod": mod, "props": json.loads(props)} if json.loads(props) else {"mod": mod}
 json.dump(d, open(p, "w"), indent=2)
 EOF
   sleep 2
+  app do layout.switch "{\"name\":\"shot$n_view\"}" >/dev/null
+  sleep 1
   app do layout.select "{\"stack\":\"sections\",\"child\":\"$block\"}" >/dev/null
   ok=0
   for i in $(seq 1 12); do
     sleep 1.5
-    app shot "$OUT/$m.png" >/dev/null
-    if python3 tests/mod-render/shot-busy.py "$OUT/$m.png"; then ok=1; break; fi
+    app shot "$OUT/${view/:/-}.png" >/dev/null
+    if python3 tests/mod-render/shot-busy.py "$OUT/${view/:/-}.png"; then ok=1; break; fi
   done
   errs=$(app status | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('errors', [])))")
-  if [[ $ok == 1 && $errs == 0 ]]; then echo "$m: drawn ($OUT/$m.png)"; else echo "$m: BLANK or errors ($errs) ($OUT/$m.png)"; app status; fail=1; fi
+  if [[ $ok == 1 && $errs == 0 ]]; then echo "$view: drawn ($OUT/${view/:/-}.png)"; else echo "$view: BLANK or errors ($errs) ($OUT/${view/:/-}.png)"; app status; fail=1; fi
 done
 exit $fail

@@ -1,13 +1,13 @@
 // CAPTAIN: Runs, native. Backtests and their runs, workflows and their run history, human grading, and replays
 // over randomized logs, in the Captain Search desktop app's look. It replaces the web view of those screens.
 // Every list here is short (backtests, workflows, queues, replays); anything long (a run's per-query numbers) is
-// for Comparisons, which pages it from the daemon.
+// for Comparisons, which pages it from the backend.
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, run, setShared } from "herdr";
-import { api } from "./kit/cst.js";
+import { api, retry, details } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
-import { Loading, ErrorState } from "./kit/ui.js";
+import { Loading, Skeleton, Button } from "./kit/ui.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
 const enc = (name) => name.split("/").map(encodeURIComponent).join("/");
@@ -30,6 +30,25 @@ function cronEnglish(cron) {
   return `${at}, days ${p[4]}`;
 }
 
+/** A failed call in words for people: the backend's own sentence when it answered, else a plain one. Transport
+ *  details (hosts, ports, tool output) never show: they go behind Copy details. */
+function say(r, fallback) {
+  const e = String(r?.error ?? "");
+  if (r?.status && e && !/^HTTP \d+$/.test(e)) return e;
+  if (/time ?out|timed out/i.test(e)) return "This took too long.";
+  return fallback;
+}
+
+/** A section that couldn't load: one plain sentence, Retry, and Copy details. A skeleton while still starting. */
+function trouble(c, id, r, fallback, onRetry) {
+  if (r?.starting) return Skeleton(c);
+  return v_flex().w_full().p(14).gap(10).bg(c.failLight).border_1().border_color(c.fail)
+    .child(div().text_size(13).text_color(c.fail).child(say(r, fallback)))
+    .child(h_flex().gap(8)
+      .child(Button(c, `${id}-retry`, "Retry", (_e, cx) => { if (!r?.status) retry(); onRetry?.(cx); }, { kind: "primary", small: true }))
+      .when(!r?.status, (e) => e.child(Button(c, `${id}-copy`, "Copy details", (_e, cx) => cx.write_to_clipboard(details(r?.error ?? null)), { small: true }))));
+}
+
 export default class CaptainRuns extends View {
   init(_props, cx) {
     this.tab = "backtests";
@@ -46,7 +65,7 @@ export default class CaptainRuns extends View {
     this.keys = cx.focus_handle();
     this.load(cx, "backtests");
     cx.timer.every(1000, (cx) => this.pollJob(cx));
-    // Until the engine answers, ask again every 3 s.
+    // Until the backend answers, ask again every 3 s.
     cx.timer.every(3000, (cx) => { if (this.starting) this.load(cx, this.tab); });
   }
 
@@ -58,9 +77,10 @@ export default class CaptainRuns extends View {
       const r = await api(path);
       this.starting = !r.ok && !!r.starting;
       if (this.starting) { cx.notify(); return; }
-      this.data[tab] = r.ok ? r.data ?? [] : [];
-      this.error = r.ok ? null : r.error;
-      const list = this.data[tab];
+      if (r.ok) this.data[tab] = r.data ?? [];
+      this.error = r.ok ? null : say(r, `Couldn't load ${tab}.`);
+      this.errorR = r;
+      const list = this.data[tab] ?? [];
       const key = (x) => x.name;
       if (list.length && !list.some((x) => key(x) === this.sel[tab])) this.pick(cx, tab, key(list[0]));
       cx.notify();
@@ -75,7 +95,7 @@ export default class CaptainRuns extends View {
       cx.spawn(async (cx) => {
         const r = await api(`/api/backtests/${enc(name)}`);
         if (this.sel.backtests !== name) return;
-        this.detail.backtest = r.ok ? r.data : { error: r.error };
+        this.detail.backtest = r.ok ? r.data : { error: say(r, "Couldn't load this backtest.") };
         const v = r.ok ? r.data.runs?.at(-1)?.version : null;
         if (v) this.pickRun(cx, name, v);
         cx.notify();
@@ -87,7 +107,7 @@ export default class CaptainRuns extends View {
       cx.spawn(async (cx) => {
         const [w, rs] = await Promise.all([api(`/api/workflows/${enc(name)}`), api(`/api/workflows/${enc(name)}/runs`)]);
         if (this.sel.workflows !== name) return;
-        this.detail.workflow = w.ok ? w.data : { error: w.error };
+        this.detail.workflow = w.ok ? w.data : { error: say(w, "Couldn't load this workflow.") };
         this.detail.wfRuns = rs.ok ? rs.data ?? [] : [];
         cx.notify();
       });
@@ -101,7 +121,7 @@ export default class CaptainRuns extends View {
     cx.spawn(async (cx) => {
       const r = await api(`/api/runs/${enc(name)}?v=${v}`);
       if (this.sel.backtests !== name || this.detail.runV !== v) return;
-      this.detail.run = r.ok ? r.data : { error: r.error };
+      this.detail.run = r.ok ? r.data : { error: say(r, "Couldn't load this run.") };
       cx.notify();
     });
   }
@@ -110,7 +130,7 @@ export default class CaptainRuns extends View {
     this.job = { label, status: "queued", message: null, after };
     cx.spawn(async (cx) => {
       const r = await api(path, { method: "POST", body: {} });
-      if (!r.ok) this.job = { label, status: "failed", message: r.error };
+      if (!r.ok) this.job = { label, status: "failed", message: say(r, "Couldn't start it.") };
       else this.job.id = r.data?.job;
       cx.notify();
     });
@@ -144,7 +164,7 @@ export default class CaptainRuns extends View {
     cx.spawn(async (cx) => {
       const r = await api(`/api/grading/${encodeURIComponent(g.name)}/next`);
       g.next = r.ok ? r.data : null;
-      g.error = r.ok ? null : r.error;
+      g.error = r.ok ? null : say(r, "Couldn't load the next pair.");
       cx.notify();
     });
   }
@@ -157,7 +177,7 @@ export default class CaptainRuns extends View {
     cx.spawn(async (cx) => {
       const r = await api(`/api/grading/${encodeURIComponent(g.name)}/grade`, { method: "POST", body: { pair: g.next.pair.id, grade: value, ...(note ? { note } : {}) } });
       g.busy = false;
-      if (!r.ok) g.error = r.error;
+      if (!r.ok) g.error = say(r, "Couldn't save the grade.");
       else {
         g.count++;
         this.gradeNote.set_value("");
@@ -174,7 +194,7 @@ export default class CaptainRuns extends View {
     this.published = { queue: q.name, status: "working" };
     cx.spawn(async (cx) => {
       const r = await api(`/api/grading/${encodeURIComponent(q.name)}/publish`, { method: "POST", body: { into } });
-      this.published = r.ok ? { queue: q.name, status: "done", ref: `${r.data.name}@v${r.data.version}` } : { queue: q.name, status: "failed", error: r.error };
+      this.published = r.ok ? { queue: q.name, status: "done", ref: `${r.data.name}@v${r.data.version}` } : { queue: q.name, status: "failed", error: say(r, "Couldn't publish.") };
       this.load(cx, "grading");
       cx.notify();
     });
@@ -246,8 +266,8 @@ export default class CaptainRuns extends View {
   /** The left list of a tab: an icon on every row, the name, a second line, and a status at the right. */
   list(c, w, tab, rows, icon, sub, right) {
     return v_flex().id(`${tab}-list`).w(w).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
-      .when(!!this.error, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child(this.error)))
-      .when(this.data[tab] === undefined && !this.error, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("Loading")))
+      .when(!!this.error, (e) => e.child(div().p(10).child(trouble(c, `${tab}-load`, this.errorR, this.error, (cx) => this.load(cx, tab)))))
+      .when(this.data[tab] === undefined && !this.error, (e) => e.child(div().child(Skeleton(c, 8))))
       .when(Array.isArray(this.data[tab]) && !rows.length, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("Nothing here yet.")))
       .children(rows.map((x) => {
         const active = x.name === this.sel[tab];
@@ -276,7 +296,7 @@ export default class CaptainRuns extends View {
   backtestDetail(c) {
     const b = this.detail.backtest;
     if (!this.sel.backtests) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick a backtest.");
-    if (!b) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Loading");
+    if (!b) return v_flex().flex_1().child(Skeleton(c, 8));
     if (b.error) return v_flex().flex_1().p(24).text_size(13).text_color(c.fail).child(b.error);
     const name = this.sel.backtests;
     const r = this.detail.run;
@@ -302,7 +322,7 @@ export default class CaptainRuns extends View {
           .when(x.independent === false, (e) => e.child(div().text_color(c.fail).child("not independent")))
           .when(x.complete === false, (e) => e.child(div().text_color(c.fail).child("incomplete")));
       })))
-      .child(!r ? div().text_size(12.5).text_color(c.grey500).child((b.runs ?? []).length ? "Loading the run" : "No runs yet.") : r.error ? div().text_size(12.5).text_color(c.fail).child(r.error) : this.runSummary(c, name, r));
+      .child(!r ? ((b.runs ?? []).length ? Skeleton(c, 4) : div().text_size(12.5).text_color(c.grey500).child("No runs yet.")) : r.error ? div().text_size(12.5).text_color(c.fail).child(r.error) : this.runSummary(c, name, r));
   }
 
   runSummary(c, name, r) {
@@ -350,7 +370,7 @@ export default class CaptainRuns extends View {
   workflowDetail(c) {
     const w = this.detail.workflow;
     if (!this.sel.workflows) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick a workflow. Make one with New, Workflow.");
-    if (!w) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Loading");
+    if (!w) return v_flex().flex_1().child(Skeleton(c, 8));
     if (w.error) return v_flex().flex_1().p(24).text_size(13).text_color(c.fail).child(w.error);
     const name = this.sel.workflows;
     const runs = this.detail.wfRuns ?? [];
@@ -446,7 +466,7 @@ export default class CaptainRuns extends View {
         .child(div().text_size(12.5).text_color(c.grey900).child(n ? (n.done ? "All graded" : `${n.remaining} left`) : "").when(g.count > 0, (e) => e.child(`, ${g.count} graded now`))))
       .child(v_flex().id("grader-body").flex_1().min_h(0).overflow_y_scrollbar().px(28).py(20).gap(16).max_w(900)
         .when(!!g.error, (e) => e.child(div().text_size(12.5).text_color(c.fail).child(g.error)))
-        .when(!n && !g.error, (e) => e.child(div().text_size(13).text_color(c.grey500).child("Loading")))
+        .when(!n && !g.error, (e) => e.child(Skeleton(c, 6)))
         .when(!!n?.done, (e) => e.child(div().text_size(14).child("You graded every pair in this queue. Publish it from the list.")))
         .when(!!n?.pair, (e) => e
           .child(v_flex().gap(2)
