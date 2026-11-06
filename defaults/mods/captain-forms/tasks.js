@@ -2,14 +2,36 @@
 // the palette and onboarding all open these. The CLI is for agents; nothing here shows
 // a command name or a flag.
 import { api } from "./kit/cst.js";
+import { exec, home } from "herdr";
 
 const list = async (path, map) => {
   const r = await api(path);
   return r.ok && Array.isArray(r.data) ? r.data.map(map) : [];
 };
-const ok = (r, done) => (r.ok && !r.data?.error && !r.data?.exit_code ? { ok: true, message: done } : { ok: false, error: r.data?.error ?? r.error ?? "That didn't work." });
+// Errors in plain words: no CLI advice ("Pass --replace to change it"), no SHOUTED_CONSTANTS.
+export function plain(text) {
+  return String(text ?? "That didn't work.")
+    .replace(/\s*Pass --[a-z-]+[^.]*\.?/g, "")
+    .replace(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b|\b[A-Z]{4,}\b/g, (w) => w.toLowerCase().replace(/_/g, " "))
+    .trim();
+}
+const ok = (r, done) => {
+  if (r.ok && !r.data?.error && !r.data?.exit_code) return { ok: true, message: done };
+  if (r.failed) return { ok: false, error: r.error };
+  if (r.status >= 500) return { ok: false, error: `Captain's services hit a problem (error ${r.status}). Try again; if it keeps happening, tell us.` };
+  return { ok: false, error: plain(r.data?.error ?? r.error) };
+};
 // Through the services' command runner, for the few tasks without their own route.
 const run = (path, args) => api("/api/commands/run", { body: { path, args }, timeout: 590 });
+
+// A file import, after checking the file is there (the services' own error is a database message).
+async function importFile(v) {
+  const path = v.file.trim().replace(/^~(?=\/|$)/, home());
+  let there = false;
+  try { there = (await exec("test", ["-f", path])).code === 0; } catch {}
+  if (!there) return { ok: false, error: `There's no file at ${v.file.trim()}.` };
+  return ok(await run(["data", "snapshot"], { path, name: v.name, kind: v.kind }), `Imported ${v.name}.`);
+}
 
 export const TASKS = [
   {
@@ -38,7 +60,7 @@ export const TASKS = [
     ],
     submit: async (v) => (v.from === "sql"
       ? ok(await api("/api/sql", { body: { conn: v.conn, sql: v.sql, save: v.name, kind: v.kind } }), `Saved ${v.name}.`)
-      : ok(await run(["data", "snapshot"], { path: v.file, name: v.name, kind: v.kind }), `Imported ${v.name}.`)),
+      : await importFile(v)),
   },
   {
     id: "database", label: "Connect a database", icon: "server",
@@ -52,11 +74,17 @@ export const TASKS = [
       { key: "writable", label: "Allow writes", kind: "toggle", default: false, help: "Off keeps Captain read-only on this database." },
     ],
     submit: async (v) => {
-      let url = v.url;
+      const taken = (await api("/api/connections")).data ?? [];
+      if (taken.some((c) => c.name === v.name)) return { ok: false, error: `A database named ${v.name} is already connected. Pick another name.` };
+      let url = v.url.trim();
       if (v.password) {
-        const s = await api("/api/secrets", { body: { name: `${v.name}-password`, value: v.password } });
-        if (!s.ok) return { ok: false, error: s.status === 404 ? "This version of Captain can't save database passwords yet. Connect without one, or ask an agent to add it." : s.error };
-        url = url.replace(/^([a-z+]+:\/\/)([^@/:]+)@/, `$1$2:{secret:${v.name}-password}@`);
+        // The password goes to the keychain (POST /api/secrets) and nowhere else; the address names it.
+        const secret = `${v.name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_PASSWORD`;
+        const m = url.match(/^([a-z0-9+]+:\/\/)([^@/:]+)(?::[^@/]*)?@(.*)$/i);
+        if (!m) return { ok: false, error: "Put the user name in the address, like postgresql://reader@db.internal:5432/shop, so Captain knows where the password goes." };
+        const s = await api("/api/secrets", { body: { name: secret, value: v.password } });
+        if (!s.ok) return { ok: false, error: s.error ?? "Couldn't save the password to your keychain." };
+        url = `${m[1]}${m[2]}:{secret:${secret}}@${m[3]}`;
       }
       // cst calls the database kind its engine.
       return ok(await run(["conn", "add"], { name: v.name, engine: v.db, url, writable: Boolean(v.writable) }), `Connected ${v.name}.`);
@@ -77,6 +105,7 @@ export const TASKS = [
     ],
     submit: async (v, ctx) => {
       const spec = ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).find((a) => a.mode === v.auth)?.fields ?? [];
+      if (((await api("/api/cloud/profiles")).data ?? []).some((p) => p.name === v.name)) return { ok: false, error: `You already have a cloud account named ${v.name}. Pick another name.` };
       const fields = {}, secrets = {};
       for (const f of spec) if (v[`af:${f.name}`]) (f.secret ? secrets : fields)[f.name] = v[`af:${f.name}`];
       const r = await api("/api/cloud/profiles", { body: { name: v.name, provider: v.provider, auth: v.auth, region: v.region || undefined, fields, secrets } });
@@ -96,6 +125,7 @@ export const TASKS = [
       { key: "*kind-fields", kind: "dynamic", fields: (ctx, v) => ((ctx.kinds ?? []).find((k) => k.kind === v.kind)?.fields ?? []) },
     ],
     submit: async (v, ctx) => {
+      if (((await api("/api/compute")).data ?? []).some((t) => t.name === v.name)) return { ok: false, error: `There's already a place to run work named ${v.name}. Pick another name.` };
       const spec = (ctx.kinds ?? []).find((k) => k.kind === v.kind)?.fields ?? [];
       const config = {};
       for (const f of spec) if (v[`af:${f.name}`] !== undefined && v[`af:${f.name}`] !== "") config[f.name] = v[`af:${f.name}`];
@@ -113,7 +143,7 @@ export const TASKS = [
     submit: async (v) => {
       const r = await api("/api/deploy/promote", { body: { pipeline: v.pipeline, env: v.env, confirm: true, override_reason: v.reason || undefined } });
       if (r.status === 409) {
-        const failed = (r.data?.gate_results ?? []).filter((g) => !g.ok).map((g) => `${String(g.gate).replace(/_/g, " ")}: ${g.detail ?? "failed"}`);
+        const failed = (r.data?.gate_results ?? []).filter((g) => !g.ok).map((g) => `${String(g.gate).replace(/_/g, " ")}: ${plain(g.detail ?? "failed")}`);
         return { ok: false, error: `Not ready. ${failed.join(". ")}` };
       }
       return ok(r, "Handed off. Record the deployment once your process has run it.");
@@ -126,8 +156,11 @@ export const TASKS = [
     fields: [
       { key: "outcome", label: "Decision", kind: "choice", required: true,
         options: [{ value: "continue", label: "Continue" }, { value: "online-test", label: "Run an online test" }, { value: "reject", label: "Reject" }, { value: "inconclusive", label: "Inconclusive" }] },
-      { key: "claim", label: "What the evidence shows", kind: "long", required: true },
-      { key: "interpretation", label: "What it means", kind: "long", optional: true },
+      { key: "claim", label: "What the evidence shows", kind: "choice", required: true,
+        options: [{ value: "offline-improvement", label: "Better offline" }, { value: "offline-regression", label: "Worse offline" }, { value: "no-detectable-change", label: "No detectable change" },
+          { value: "online-lift", label: "Better online, on real traffic" }, { value: "none", label: "Nothing yet" }],
+        help: "Better online needs results from real traffic attached to the runs." },
+      { key: "interpretation", label: "What it means", kind: "long", required: true },
       { key: "limitations", label: "What it doesn't show", kind: "long", optional: true },
       { key: "next_step", label: "Next step", optional: true },
     ],
