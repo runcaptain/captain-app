@@ -1,4 +1,4 @@
-// Context menus (Herdr's items). Opened as a popup with
+// Context menus (Captain's items). Opened as a popup with
 // props { tab: "pane" | "tab" | "space" | "global", target }.
 // ↑/↓ move, Enter runs, Esc closes. An item is [label, command, args];
 // a command "worktree" opens the worktree dialog instead.
@@ -46,7 +46,7 @@ function items(p, git) {
         ...(term
           ? [
               toProgram
-                ? ["Use Herdr right-click menu", "terminal.right_click", { terminal: term.address, to: "menu" }]
+                ? ["Use Captain right-click menu", "terminal.right_click", { terminal: term.address, to: "menu" }]
                 : ["Send right-clicks to pane", "terminal.right_click", { terminal: term.address, to: "program" }],
             ]
           : []),

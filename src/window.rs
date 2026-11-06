@@ -136,6 +136,8 @@ fn launch_failure(record: &Value, output: &str) -> Option<String> {
 /// sidebar, tab bar).
 const LAYOUTS: &[(&str, &str)] = &[
     ("main", include_str!("../defaults/layouts/main.json")),
+    // CAPTAIN: the Captain window: nav, the section web views, terminals on the right.
+    ("captain", include_str!("../defaults/layouts/captain.json")),
     ("terminals", include_str!("../defaults/layouts/terminals.json")),
     ("win98", include_str!("../defaults/layouts/win98.json")),
 ];
@@ -469,8 +471,9 @@ impl AppWindow {
         let mut w = AppWindow {
             core,
             runtime,
-            chrome: default_layout("main"),
-            layout_name: "main".into(),
+            // CAPTAIN: the Captain window first (brand.rs).
+            chrome: default_layout(crate::brand::DEFAULT_LAYOUT),
+            layout_name: crate::brand::DEFAULT_LAYOUT.into(),
             agent: None,
             agent_focused: None,
             swapped: HashMap::new(),
@@ -494,7 +497,7 @@ impl AppWindow {
             hidden_fit: Default::default(),
             drag: None,
             written_layout: String::new(),
-            file_chrome: default_layout("main"),
+            file_chrome: default_layout(crate::brand::DEFAULT_LAYOUT),
             written_state: String::new(),
             picked_theme: None,
             layout_file_ok: true,
@@ -575,7 +578,7 @@ impl AppWindow {
         // A layout whose mods are gone (Zen, T4, ADE after the update took
         // theirs) starts on Herdr's instead of a wall of "did not load".
         let gone = name.as_deref().map(missing_mods).unwrap_or_default();
-        w.load_layout(if gone.is_empty() { name.as_deref().unwrap_or("main") } else { "main" });
+        w.load_layout(if gone.is_empty() { name.as_deref().unwrap_or(crate::brand::DEFAULT_LAYOUT) } else { crate::brand::DEFAULT_LAYOUT });
         w.apply_look(window, cx);
         w.show_layout_notes(window, cx);
         if let (Some(n), false) = (&name, gone.is_empty()) {
@@ -3703,7 +3706,8 @@ impl AppWindow {
         self.watched.keys = None;
         install_layouts();
         self.drop_layout_copies(window, cx);
-        self.load_layout("main");
+        // CAPTAIN: back to the Captain window (brand.rs).
+        self.load_layout(crate::brand::DEFAULT_LAYOUT);
         self.apply_look(window, cx);
         self.focused_pane = None;
         self.agent_focused = None;

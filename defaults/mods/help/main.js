@@ -1,4 +1,4 @@
-// The keybind list (Herdr's prefix+?), grouped, filterable by typing.
+// The keybind list (Captain's prefix+?), grouped, filterable by typing.
 // Reads keys.json through keys(); edit keys.json to change any of them.
 
 import { View, div } from "gpui-kit";

@@ -322,7 +322,7 @@ export default class MachineAdd extends View {
           .text_size(12.8)
           .line_height("19px")
           .text_color(t.muted)
-          .child("A VPS, a Mac mini, a box at home: Herdr reaches it over ssh, and agents there keep running while your laptop sleeps."),
+          .child("A VPS, a Mac mini, a box at home: Captain reaches it over ssh, and agents there keep running while your laptop sleeps."),
       )
       .child(div().pt(16).pb(6).text_size(11.5).font_medium().text_color(t.dim).child(hosts.length ? "From your ssh config" : "Your ssh config lists no hosts"))
       .child(

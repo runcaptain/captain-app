@@ -33,8 +33,10 @@ mod sprites;
 mod telemetry;
 // CAPTAIN: names, ids, paths and endpoints of this fork.
 mod brand;
-// CAPTAIN: webview blocks.
+// CAPTAIN: webview blocks, and the Captain Search daemon behind them.
 mod webview;
+#[cfg(unix)]
+mod cst;
 mod feedback;
 mod terminal;
 mod update;
@@ -184,6 +186,9 @@ fn main() {
                     }
                 }
                 mods::finish_shared();
+                // CAPTAIN: stop the Captain Search daemon the web views used.
+                #[cfg(unix)]
+                cst::stop();
                 telemetry::quit();
                 update::apply();
                 async {}

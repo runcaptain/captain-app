@@ -31,6 +31,8 @@ pub const SOCKET: &str = "captain-app.sock";
 pub const CORE_SESSION: &str = "captain";
 /// Picks another core session for Captain.
 pub const CORE_SESSION_ENV: &str = "CAPTAIN_CORE_SESSION";
+/// The layout a new home opens with, and where the escape hatch goes back to.
+pub const DEFAULT_LAYOUT: &str = "captain";
 /// Where the source and the issue tracker live.
 pub const REPO: &str = "https://github.com/runcaptain/captain-app";
 /// Shown in the About panel.

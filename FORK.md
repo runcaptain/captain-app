@@ -41,6 +41,18 @@ Never contacts herdr.dev:
   it and restarts the core. The setup screen shows the core's own install command for the person to run.
 - Release-note media is not fetched. The bundled notes are Herdr's and link to media.herdr.dev.
 
+Captain features (new files where possible):
+- Webview blocks (`src/webview.rs`): `{"webview": {"url", "id"}}` puts a WKWebView over a block. Localhost only,
+  plus settings.json `webview_hosts`. Hidden while a dialog, popup, overlay window or floating block covers it.
+  The page hands the escape hatch and global/layout keys back to the window. Commands `webview.reload` and
+  `webview.devtools`. Upstream touch points: `Content::Webview` (layout.rs), `Request::Keystroke` (mods.rs),
+  a cover canvas on each overlay and the end-of-frame pass (window.rs).
+- The Captain Search daemon (`src/cst.rs`): `{cst}` and `{cst_token}` in a webview URL start `cst serve --port 0`
+  on first use, with a guard process that stops it if Captain dies. Stopped at quit.
+- The `captain` layout (`defaults/layouts/captain.json`) and the `captain-nav` mod. It's the default layout, and
+  where the escape hatch goes back to (`brand::DEFAULT_LAYOUT`). Herdr's `main` is shipped as "Spaces".
+- Shipped mods and frame screens say Captain and show the Captain icon (`frame/welcome/captain.png`).
+
 Kept as upstream, on purpose:
 - The mod module name `herdr` and `herdr.d.ts`, so upstream mods run unchanged.
 - Internal key contexts (`Herdr`), the core document name `herdr-app` (inside Captain's own session) and most

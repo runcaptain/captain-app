@@ -669,7 +669,7 @@ fn local_state_and_overlay_initial_descriptions(cx: &mut TestAppContext) {
             Some(&format!("this.page = {page};")),
         )
         .unwrap();
-        let expected = ["Herdr runs your terminals in the background", "Add your other machines", "Choose your panels", "Make it yours"][page - 1];
+        let expected = ["Captain runs your terminals in the background", "Add your other machines", "Choose your panels", "Make it yours"][page - 1];
         assert!(tree.contains(expected), "welcome page {page}: {tree}");
     }
     for setup in ["", "this.sent = true;", "this.error = 'Fixture error';"] {

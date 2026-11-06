@@ -225,13 +225,27 @@ impl Webviews {
             self.views.retain(|id, _| live.contains(id));
             self.errors.retain(|id, _| live.contains(id));
             for (id, seen) in &frame {
-                if let Err(e) = allowed(&seen.spec.url, hosts) {
+                // `{cst}` / `{cst_token}`: the Captain Search daemon, started on first use (cst.rs).
+                if seen.spec.url.contains("{cst") && crate::cst::state() == crate::cst::State::Idle {
+                    crate::cst::ensure(|| crate::mods::request(crate::mods::Request::Refresh));
+                }
+                let url = match crate::cst::fill(&seen.spec.url, &crate::cst::state()) {
+                    crate::cst::Url::Ready(u) => u,
+                    crate::cst::Url::Waiting(m) | crate::cst::Url::Failed(m) => {
+                        self.errors.insert(id.clone(), m);
+                        if let Some(v) = self.views.get_mut(id) {
+                            v.show(false);
+                        }
+                        continue;
+                    }
+                };
+                if let Err(e) = allowed(&url, hosts) {
                     self.views.remove(id);
                     self.errors.insert(id.clone(), e);
                     continue;
                 }
                 if !self.views.contains_key(id) {
-                    match imp::View::new(window, id, &seen.spec.url, seen.bounds, &keys, self.keys.clone(), hosts) {
+                    match imp::View::new(window, id, &url, seen.bounds, &keys, self.keys.clone(), hosts) {
                         Ok(v) => {
                             self.errors.remove(id);
                             self.views.insert(id.clone(), v);
@@ -243,7 +257,8 @@ impl Webviews {
                     }
                 }
                 let view = self.views.get_mut(id).expect("just made");
-                view.load(&seen.spec.url, hosts);
+                self.errors.remove(id);
+                view.load(&url, hosts);
                 view.zoom(zoom);
                 if keys != self.sent_keys {
                     view.set_keys(&keys);

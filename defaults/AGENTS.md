@@ -60,7 +60,8 @@ commands. They're rewritten on every start to match this version.
   in the app.
 - **Escape hatch:** `ctrl-alt-shift-escape` always works: it sets the shown
   layout and `keys.json` aside (`*.reset-<time>`) and goes back to the
-  default `main` layout. Nothing can rebind it.
+  default `captain` layout. Nothing can rebind it, and it works while a web
+  page has the keyboard.
 
 ## Seeing the window
 
@@ -171,7 +172,11 @@ the highlighted line shows where it will land.
 
 Each file is one whole window. `layout.switch` (`ctrl-shift-l`) cycles
 through them, `layout.switch {name}` picks one; `shared("layout")` is the
-shown one's name. Captain ships `main` ("Captain": spaces by machine and the
+shown one's name. Captain opens with `captain` ("Captain": the `captain-nav`
+sidebar with Explore, Pipelines, Evaluate, Deploys and Workflows; a `sections`
+stack of webview blocks, one per section, from the Captain Search daemon;
+terminal tabs and panes on the right). A webview URL may say `{cst}` (the
+daemon, which Captain starts on first use) and `{cst_token}`. It also ships `main` ("Spaces": spaces by machine and the
 agents list on the left, `workspace-chrome`; tabs as pills with a + menu
 that starts a terminal or any installed agent, `new-menu`; panes as cards
 with a header; Files and Changes panels on the right, `files` and
