@@ -18,11 +18,9 @@ use std::sync::Arc;
 const ICON: &[u8] = include_bytes!("../assets/icons/captain-ui-icon.png");
 // CAPTAIN: Captain is built from source (FORK.md); there is no installer to fetch.
 const APP_INSTALL: &str = "build the latest Captain from https://github.com/runcaptain/captain-app";
-#[cfg(not(windows))]
-const CORE_INSTALL: &str = "curl -fsSL https://releases.herdr.dev/core/install.sh | sh";
-#[cfg(windows)]
-const CORE_INSTALL: &str = "powershell -c \"irm https://releases.herdr.dev/core/install.ps1 | iex\"";
-const CORE_PLACE: &str = if cfg!(windows) { r"%LOCALAPPDATA%\Programs\herdr-core" } else { "~/.local/bin" };
+// CAPTAIN: hc ships inside Captain.app (scripts/package-captain-macos). A build without it
+// (run from target/) points at a build that has it, or at settings.json `core`.
+const CORE_INSTALL: &str = "build Captain.app with scripts/package-captain-macos, or set core in settings.json to an hc binary";
 
 /// What's missing before the main window can open.
 pub enum Need {
@@ -140,7 +138,7 @@ impl Setup {
             Need::Install => (
                 "Captain needs hc".into(),
                 "The hc runs your terminals and agents, and keeps them alive when this window closes. Captain couldn't find it on this computer.".into(),
-                format!("Captain does not download it. Install it with its own installer in a terminal, into {CORE_PLACE}: {CORE_INSTALL}"),
+                format!("This Captain has no hc of its own: {CORE_INSTALL}."),
             ),
             Need::Connect(error) => (
                 "Captain can't connect to hc".into(),
