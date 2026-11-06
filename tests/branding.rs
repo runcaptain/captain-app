@@ -129,13 +129,15 @@ fn nothing_a_person_sees_says_herdr() {
     let mut files = Vec::new();
     walk(&root().join("defaults"), &mut files);
     walk(&root().join("src"), &mut files);
+    // What's New shows these notes.
+    files.push(root().join("CHANGELOG-captain.md"));
     let mut found = Vec::new();
     for f in files {
         let r = rel(&f);
         if NOT_SHIPPED.iter().any(|n| r.starts_with(n)) || PENDING.contains(&r.as_str()) {
             continue;
         }
-        let shown = r.starts_with("defaults/") || r == "src/SKILL.md" || r.ends_with(".rs");
+        let shown = r.starts_with("defaults/") || r == "src/SKILL.md" || r == "CHANGELOG-captain.md" || r.ends_with(".rs");
         if !shown || r.contains("_tests.rs") || r.ends_with("tests.rs") {
             continue;
         }

@@ -141,7 +141,8 @@ pub fn has(version: &str) -> bool {
 }
 
 fn all() -> Vec<Note> {
-    let mut notes = parse(include_str!("../CHANGELOG.md"));
+    // CAPTAIN: Captain's own notes; Herdr's CHANGELOG.md is never shown.
+    let mut notes = parse(include_str!("../CHANGELOG-captain.md"));
     let fetched = FETCHED.lock().unwrap().get_or_insert_with(|| {
         std::fs::read_to_string(path("update-notes-cache.md")).map(|s| parse(&s)).unwrap_or_default()
     }).clone();
@@ -410,6 +411,6 @@ mod tests {
         assert_eq!(notes[1].items[0].detail, "Another thing");
         assert!(notes[1].items[0].headline.is_empty());
         assert!(!notes[1].items[0].fixed);
-        assert_eq!(parse(include_str!("../CHANGELOG.md"))[0].version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(parse(include_str!("../CHANGELOG-captain.md"))[0].version, env!("CARGO_PKG_VERSION"));
     }
 }

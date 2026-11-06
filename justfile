@@ -46,6 +46,12 @@ test:
     bun test scripts/files.test.ts scripts/picker.test.ts scripts/palette.test.ts scripts/agents.test.ts scripts/spaces.test.ts scripts/worktree.test.ts
     cargo test --locked
 
+# CAPTAIN: opens throwaway "Captain (test)" windows and fails if any form or section draws blank or an error.
+# Needs a logged-in Mac session, so it isn't part of `test`. Run it before pushing a change to a mod.
+screens: build
+    tests/mod-render/forms-check.sh target/debug/captain-app
+    tests/mod-render/shot-check.sh target/debug/captain-app
+
 docs-generate: build
     bun scripts/docs.ts generate
 

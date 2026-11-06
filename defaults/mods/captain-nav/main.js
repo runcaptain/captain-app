@@ -53,6 +53,9 @@ const TASK_ENTRIES = [
   ["cloud", "Connect a cloud account", "aws gcp azure login credentials"],
   ["compute", "Add a place to run work", "compute cloud run backtests serve"],
   ["handoff", "Hand off a candidate", "promote deploy ship release"],
+  ["backtest", "Run a backtest", "compare evaluate offline experiment ndcg"],
+  ["grading", "Start grading", "judgments labels relevance human"],
+  ["dataset-class", "New dataset class", "class type role catalog queries judgments"],
   ["demo", "Try the demo store", "sample example data"],
 ];
 const go = (section, extra) => ({ mod: "captain-go", kind: "popup", width: 1, height: 1, props: { section, ...extra } });
@@ -72,8 +75,12 @@ export function staticEntries(sections) {
 }
 
 /** "Open <name>" for datasets and investigations, from the workspace. */
-export function openEntries(datasets, investigations) {
+export function openEntries(datasets, investigations, backtests = []) {
   return [
+    ...backtests.slice(0, 200).flatMap((b) => [
+      { group: "Captain", title: `Open ${b.name}`, words: "backtest run", overlay: go("runs", { backtest: b.name }) },
+      { group: "Captain", title: `Compare ${b.name}`, words: "backtest comparison results", overlay: go("comparisons", { backtest: b.name }) },
+    ]),
     ...datasets.slice(0, 200).map((d) => ({ group: "Captain", title: `Open ${d.name}`, words: `dataset ${d.kind ?? ""}`, overlay: go("data", { dataset: d.name }) })),
     ...investigations.slice(0, 200).map((i) => ({ group: "Captain", title: `Open investigation: ${i.title ?? i.id}`, words: `investigation ${i.state ?? ""}`, overlay: go("investigations", { investigation: i.id }) })),
   ];
@@ -138,9 +145,10 @@ export default class CaptainNav extends View {
           this.counts[it.id] = r.ok && Array.isArray(r.data) ? r.data.length : 0;
         }
         if (ws.ok && (this.tick ?? 0) % 10 === 0) {
-          const [ds, inv] = await Promise.all([api("/api/datasets"), api("/api/investigations")]);
+          const [ds, inv, bt] = await Promise.all([api("/api/datasets"), api("/api/investigations"), api("/api/backtests")]);
           const extra = { ...(shared("palette.extra") ?? {}) };
-          extra.captain = openEntries(Array.isArray(ds.data) ? ds.data : [], Array.isArray(inv.data) ? inv.data : []);
+          const arr = (r) => (Array.isArray(r.data) ? r.data : []);
+          extra.captain = openEntries(arr(ds), arr(inv), arr(bt));
           setShared("palette.extra", extra);
         }
       } finally {
