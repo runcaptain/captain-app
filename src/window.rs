@@ -3720,6 +3720,29 @@ impl AppWindow {
             Request::OpenOverlay { id, spec } => self.open_overlay(id, spec, window, cx),
             Request::CloseOverlay { id } => self.close_overlay(&id, window, cx),
             Request::Refresh => self.refresh_mods(cx),
+            // CAPTAIN: a shot draws a fresh frame first. macOS stops the frame clock of a window that's fully
+            // covered, so the last frame drawn can predate whatever arrived since, and the shot saved that: a
+            // test window behind other apps showed screens "stuck" on their skeleton that were already loaded.
+            // Drawn after this update returns, because drawing renders this view.
+            Request::Control { cmd, reply } if cmd.get("shot").and_then(Value::as_str).is_some() => {
+                let path = cmd["shot"].as_str().unwrap_or_default().to_owned();
+                cx.spawn_in(window, async move |_, cx| {
+                    let saved = cx.update(|window, cx| {
+                        window.refresh();
+                        window.draw(cx).clear(cx);
+                        let saved = crate::control::save_shot(window, std::path::Path::new(&path));
+                        // That frame wasn't presented: the next tick of the clock draws and shows it.
+                        window.refresh();
+                        saved
+                    });
+                    let _ = reply.send(match saved {
+                        Ok(Ok(())) => json!({ "path": path }),
+                        Ok(Err(error)) => json!({ "error": format!("cannot save screenshot: {error:#}") }),
+                        Err(error) => json!({ "error": format!("cannot save screenshot: {error:#}") }),
+                    });
+                })
+                .detach();
+            }
             Request::Control { cmd, reply } => {
                 let _ = reply.send(self.control(cmd, window, cx));
             }
