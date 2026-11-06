@@ -8,7 +8,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { theme } from "herdr";
-import { api, retry, details } from "./kit/cst.js";
+import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 
@@ -73,6 +73,16 @@ export default class CaptainData extends View {
     cx.timer.every(120, (cx) => this.pump(cx));
     // Until the backend answers, ask again every 3 s: the screen never stays on "starting" by itself.
     cx.timer.every(3000, (cx) => { if (this.starting || (this.list === null && this.loadedOnce)) this.load(cx); });
+    // Another space, another workspace: start over on its datasets and labels.
+    // Answers can stall until the next redraw in the app: redraw while any request waits.
+    keepAwake(cx);
+    watchWorkspace(cx, (cx) => {
+      this.list = null; this.sel = null; this.detail = null; this.labels = null; this.labelSel = null; this.preview = null;
+      this.cls = null; this.classes = [];
+      this.resetGrid();
+      this.load(cx);
+      cx.notify();
+    });
   }
 
   // ---- data ---------------------------------------------------------------------------------------------------
@@ -432,7 +442,7 @@ export default class CaptainData extends View {
       .child(v_flex().id("label-list").w(listW).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
         .when(ls === null, (e) => e.child(div().child(Skeleton(c, 8))))
         .when(!!this.labelsError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child(this.labelsError)))
-        .when(ls !== null && !ls.length, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("No labels yet. Define one with cst label define.")))
+        .when(ls !== null && !ls.length, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("No labels yet. A label turns logged events into judgments, such as a click or a purchase counting as relevant. Ask an agent in this space to define one.")))
         .children((ls ?? []).map((x) => {
           const active = x.name === this.labelSel;
           return h_flex().id(`label-${x.name}`).w_full().h(40).flex_none().px(10).gap(8).items_center().cursor_pointer()

@@ -34,19 +34,44 @@ export function workspace() {
 
 /** Call fn(cx) whenever the shown space's workspace changes (reload, reset the view). */
 export function watchWorkspace(cx, fn) {
+  // Only a real switch counts: a reading with no focused space (null) is ignored, and a new workspace must read the
+  // same twice in a row. Without this, a window that isn't focused reads null now and then, and every screen reset
+  // itself each second and never finished loading (seen in a real window, 2026-11-06).
   let last = workspace();
+  let seen = null;
   cx.timer.every(1000, (cx) => {
     const now = workspace();
-    if (now !== last) {
-      last = now;
-      fn(cx);
-    }
+    if (now === null || now === last) { seen = null; return; }
+    if (seen !== now) { seen = now; return; }
+    seen = null;
+    const first = last === null;
+    last = now;
+    if (!first) fn(cx);
   });
 }
 
 /** Call Captain's services. Resolves {ok, status, data, error, starting, failed}; never rejects.
  *  starting: still coming up (show a skeleton). failed: give up and show ServiceError. */
-export async function api(path, { method = "GET", body, timeout = 20 } = {}) {
+export async function api(path, opts) {
+  INFLIGHT++;
+  try {
+    return await call(path, opts);
+  } finally {
+    INFLIGHT--;
+  }
+}
+
+// Requests still waiting on an answer, across this mod.
+let INFLIGHT = 0;
+
+/** Redraw a screen every 250 ms while any of its requests is still waiting. Workaround: in the app, an answer that
+ *  arrives inside cx.spawn may not reach the screen until something else redraws it, so a screen with nothing else
+ *  going on sat on its skeleton for good (Comparisons, "Loading the run", 2026-11-06). Costs nothing when idle. */
+export function keepAwake(cx) {
+  cx.timer.every(250, (cx) => { if (INFLIGHT > 0) cx.notify(); });
+}
+
+async function call(path, { method = "GET", body, timeout = 20 } = {}) {
   const d = await services();
   if (!d.base) return d.error ? { ok: false, failed: true, error: `Captain couldn't start its services: ${d.error}` } : notUp("they didn't respond.");
   let r;

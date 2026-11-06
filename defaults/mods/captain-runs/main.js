@@ -5,7 +5,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, run, setShared } from "herdr";
-import { api, retry, details } from "./kit/cst.js";
+import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 
@@ -49,6 +49,23 @@ function trouble(c, id, r, fallback, onRetry) {
       .when(!r?.status, (e) => e.child(Button(c, `${id}-copy`, "Copy details", (_e, cx) => cx.write_to_clipboard(details(r?.error ?? null)), { small: true }))));
 }
 
+/** What a workflow step does, in words: "Run backtest demo-tuned-vs-bm25", never the command line. */
+function stepWords(command) {
+  const parts = (command ?? []).filter((x) => !String(x).startsWith("-"));
+  const [noun, verb, ...rest] = parts.map(String);
+  const what = rest.length ? ` ${rest.join(" ")}` : "";
+  const VERBS = {
+    "backtest run": "Run backtest", "backtest plan": "Plan backtest", "dataset import": "Import dataset",
+    "dataset create": "Create dataset", "label define": "Define label", "label build": "Build label",
+    "grade start": "Start grading", "grading start": "Start grading", "replay run": "Run replay",
+    "pipeline publish": "Publish pipeline", "deploy promote": "Promote", "handoff create": "Hand off",
+  };
+  const known = VERBS[`${noun} ${verb}`];
+  if (known) return `${known}${what}`;
+  const words = [verb, noun].filter(Boolean).join(" ");
+  return words ? `${words[0].toUpperCase()}${words.slice(1)}${what}` : "Step";
+}
+
 export default class CaptainRuns extends View {
   init(_props, cx) {
     this.tab = "backtests";
@@ -67,6 +84,14 @@ export default class CaptainRuns extends View {
     cx.timer.every(1000, (cx) => this.pollJob(cx));
     // Until the backend answers, ask again every 3 s.
     cx.timer.every(3000, (cx) => { if (this.starting) this.load(cx, this.tab); });
+    // Another space, another workspace: drop what was shown and load this tab again.
+    // Answers can stall until the next redraw in the app: redraw while any request waits.
+    keepAwake(cx);
+    watchWorkspace(cx, (cx) => {
+      this.data = {}; this.sel = {}; this.detail = {}; this.open = {}; this.grader = null; this.error = null;
+      this.load(cx, this.tab);
+      cx.notify();
+    });
   }
 
   // ---- data ---------------------------------------------------------------------------------------------------
@@ -388,10 +413,10 @@ export default class CaptainRuns extends View {
         .child(this.commandIcon(s.command, c.navy))
         .child(v_flex().flex_1().min_w(0)
           .child(h_flex().gap(8).child(div().font_family(MONO).text_size(12.5).font_medium().child(s.id))
-            .child(div().min_w(0).truncate().text_size(12).text_color(c.grey900).child(`cst ${s.command.join(" ")}`)))
+            .child(div().min_w(0).truncate().text_size(12).text_color(c.grey900).child(stepWords(s.command))))
           .when((s.needs ?? []).length > 0 || !!s.when, (e) => e.child(div().truncate().text_size(11).text_color(c.grey500)
             .child([(s.needs ?? []).length ? `after ${s.needs.join(", ")}` : null, s.when ? `only when ${s.when}` : null].filter(Boolean).join(" · ")))))
-        .tooltip(`cst ${s.command.join(" ")}`))))
+        .tooltip(stepWords(s.command)))))
       .child(div().text_size(13).font_medium().child(`Runs (${runs.length})`))
       .when(!runs.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("Not run yet.")))
       .children(runs.slice(0, 20).map((r) => {

@@ -8,7 +8,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { theme, shared, props as layoutProps } from "herdr";
-import { api, retry, details } from "./kit/cst.js";
+import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 
@@ -41,6 +41,15 @@ function trouble(c, id, r, fallback, onRetry) {
       .when(!r?.status, (e) => e.child(Button(c, `${id}-copy`, "Copy details", (_e, cx) => cx.write_to_clipboard(details(r?.error ?? null)), { small: true }))));
 }
 
+/** A ref (name@v2) as a name and a version chip. */
+function refChip(c, ref) {
+  const m = /^(.*)@v(\d+)$/.exec(String(ref ?? ""));
+  const name = m ? m[1] : String(ref ?? "");
+  return h_flex().min_w(0).gap(6).items_center()
+    .child(div().min_w(0).truncate().font_family(MONO).child(name))
+    .when(!!m, (e) => e.child(div().flex_none().px(5).border_1().border_color(c.grey300).text_size(10.5).font_family(MONO).text_color(c.grey900).child(`v${m[2]}`)));
+}
+
 export default class CaptainCompare extends View {
   init(_p, cx) {
     const props = { ...(layoutProps?.() ?? {}), ...(_p ?? {}) };
@@ -62,6 +71,15 @@ export default class CaptainCompare extends View {
     cx.timer.every(150, (cx) => this.pump(cx));
     // Until the backend answers, ask again every 3 s.
     cx.timer.every(3000, (cx) => { if (this.starting) this.loadBacktests(cx); });
+    // Another space, another workspace: back to its first run.
+    // Answers can stall until the next redraw in the app: redraw while any request waits.
+    keepAwake(cx);
+    watchWorkspace(cx, (cx) => {
+      this.sel = null; this.run = null; this.compat = null; this.hist = null; this.side = null; this.backtests = null; this.error = null;
+      this.q = this.freshQueries();
+      this.loadBacktests(cx);
+      cx.notify();
+    });
   }
 
   loadBacktests(cx) {
@@ -96,15 +114,22 @@ export default class CaptainCompare extends View {
     this.side = null;
     this.q = this.freshQueries();
     const ref = this.runRef();
+    // The run record first, on its own: the overview draws from it alone. The warnings and the histogram fill in
+    // when they come, and a failing or slow one never holds the screen (imported runs have no histogram at all).
     cx.spawn(async (cx) => {
-      const [r, c, h] = await Promise.all([
-        api(`/api/runs/${enc(backtest)}?v=${version}`),
-        api(`/api/runs/${enc(ref)}/compatibility`),
-        api(`/api/runs/${enc(ref)}/histogram?bins=21`),
-      ]);
+      const c = await api(`/api/runs/${enc(ref)}/compatibility`);
+      if (this.runRef() !== ref) return;
+      this.compat = c.ok ? c.data : null;
+      cx.notify();
+    });
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/runs/${enc(backtest)}?v=${version}`);
       if (this.runRef() !== ref) return;
       this.run = r.ok ? r.data : { error: say(r, "Couldn't load this run.") };
-      this.compat = c.ok ? c.data : null;
+      cx.notify();
+      if (!r.ok || r.data?.mode === "imported") return;
+      const h = await api(`/api/runs/${enc(ref)}/histogram?bins=21`);
+      if (this.runRef() !== ref) return;
       this.hist = h.ok ? h.data : null;
       if (this.wantProps.query) {
         const q = this.wantProps.query;
@@ -141,7 +166,7 @@ export default class CaptainCompare extends View {
       this.open(cx, h.backtest, h.version);
     }
     const q = this.q;
-    if (this.tab !== "queries" || !this.sel || q.inflight !== null || q.error) return;
+    if (this.tab !== "queries" || !this.sel || q.inflight !== null || q.error || this.run?.mode === "imported") return;
     const [a, b] = q.want;
     const first = Math.floor(a / PAGE), last = Math.floor(Math.max(a, b - 1) / PAGE);
     for (const k of [...q.pages.keys()]) if (k < first - 3 || k > last + 3) q.pages.delete(k);
@@ -207,7 +232,7 @@ export default class CaptainCompare extends View {
           .bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
           .on_click((_e, cx) => { this.tab = id; cx.notify(); })
           .child(this.icon(icon, 13)).child(div().child(label)))))
-      .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(c.grey900).child(this.runRef() ?? ""));
+      .child(div().flex_1());
   }
 
   /** The runs to pick from, as a short list of backtests with their versions. */
@@ -264,7 +289,8 @@ export default class CaptainCompare extends View {
         .when(cost.extra_monthly_usd != null, (e) => e.child(div().text_color(c.grey900).child(`extra ${usd(cost.extra_monthly_usd, 0)} a month`)))
         .when(cost.extra_serve_usd_per_1k != null, (e) => e.child(div().text_color(c.grey900).child(`B costs ${usd(Math.abs(cost.extra_serve_usd_per_1k))} per 1k ${cost.extra_serve_usd_per_1k < 0 ? "less" : "more"}`)))
         .when(!!cost.needs, (e) => e.child(div().text_color(c.grey500).child(cost.needs)))))
-      .child(this.armTable(c, r))
+      .when(r.mode === "imported", (e) => e.child(this.importedCard(c, r)))
+      .when(r.mode !== "imported", (e) => e.child(this.armTable(c, r)))
       .child(div().text_size(13).font_medium().child("Every comparison"))
       .child(div().id("cmps-x").w_full().overflow_x_scrollbar().child(v_flex().min_w(520).border_1().border_color(c.rule)
         .child(h_flex().h(28).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().whitespace_nowrap()
@@ -278,6 +304,28 @@ export default class CaptainCompare extends View {
           .child(div().w(170).flex_none().px(8).text_right().font_family(MONO).text_color(c.grey900).child(`[${fmtD(x.ci_low)}, ${fmtD(x.ci_high)}]`))
           .child(h_flex().w(90).flex_none().px(8).justify_end().child(this.badge(c, x.verdict, x.verdict)))))))
       .child(this.histogram(c, w - 40));
+  }
+
+  /** An imported run: only its readout came in. Where from, and which arms, without empty metric columns. */
+  importedCard(c, r) {
+    return v_flex().gap(8).p(12).border_1().border_color(c.rule).bg(c.surface2)
+      .child(h_flex().gap(6).items_center().text_size(13).font_medium().child(this.icon("backtest", 14)).child(div().child("Imported from a readout")))
+      .child(div().text_size(12.5).text_color(c.grey900).child("Captain kept the readout's intervals and verdicts. Per-query results weren't part of it."))
+      .when(!!r.source, (e) => e.child(h_flex().id("imp-source").gap(8).text_size(12).child(div().flex_none().w(60).text_color(c.grey500).child("Source"))
+        .child(div().flex_1().min_w(0).truncate().font_family(MONO).child(r.source)).tooltip(r.source)))
+      .children((r.arms ?? []).map((a, i) => h_flex().gap(8).items_center().text_size(12.5)
+        .child(div().flex_none().w(60).text_color(c.grey500).child(i === 0 ? "A" : "B"))
+        .child(refChip(c, a.arm))));
+  }
+
+  /** What there is to see on a tab an imported run can't fill. */
+  importedEmpty(c, what) {
+    return v_flex().flex_1().items_center().justify_center().gap(8).p(24)
+      .child(this.icon("backtest", 20, c.grey500))
+      .child(div().text_size(13.5).font_medium().child(`No ${what} for this run`))
+      .child(div().max_w(420).text_center().text_size(12.5).text_color(c.grey900)
+        .child(`This run was imported from a readout, so ${what} aren't available. The Overview has its intervals and verdicts.`))
+      .child(Button(c, "imp-overview", "Go to Overview", (_e, cx) => { this.tab = "overview"; cx.notify(); }, { small: true }));
   }
 
   armTable(c, r) {
@@ -458,7 +506,7 @@ export default class CaptainCompare extends View {
   surfaces(c) {
     const ss = this.run.surfaces ?? [];
     return v_flex().id("surfaces").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(12)
-      .when(!ss.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("This run has no surfaces. Plan one with --surface and --guardrail.")))
+      .when(!ss.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("This run has no surfaces. Add one, with its guardrail, when you plan a backtest.")))
       .children(ss.map((s) => {
         const failed = (s.guardrails ?? []).filter((g) => !g.ok).length;
         return v_flex().id(`surface-${s.surface}`).border_1().border_color(failed ? c.fail : c.rule)
@@ -486,6 +534,7 @@ export default class CaptainCompare extends View {
       : !r ? v_flex().flex_1().child(Skeleton(c, 8))
       : r.error ? v_flex().flex_1().p(24).text_size(13).text_color(c.fail).child(r.error)
       : this.tab === "overview" ? this.overview(c, w - pw)
+      : r.mode === "imported" ? this.importedEmpty(c, this.tab === "queries" ? "per-query results" : this.tab === "segments" ? "segment results" : "surface results")
       : this.tab === "queries" ? this.queryPane(c, w - pw - 40)
       : this.tab === "segments" ? this.segments(c)
       : this.surfaces(c);

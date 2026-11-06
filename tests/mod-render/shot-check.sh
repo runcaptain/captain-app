@@ -18,7 +18,7 @@ block_of() { case "$1" in captain-data) echo data ;; captain-runs) echo runs ;; 
 # Extra views after the plain ones: a query side by side (props the mods read at init).
 EXTRA=()
 for m in "${MODS[@]}"; do
-  case "$m" in captain-compare) EXTRA+=("captain-compare:side") ;; esac
+  case "$m" in captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries") ;; esac
 done
 
 # A short home: the window's control socket must fit in a Unix socket path.
@@ -34,6 +34,8 @@ cleanup() {
   for p in $(pgrep -f "cst serve" || true); do
     if ps eww -p "$p" | tr ' ' '\n' | grep -qx "CST_HOME=$WORK/cst"; then kill "$p" 2>/dev/null || true; fi
   done
+  # The window's shared state, kept with the shots for debugging (no secrets: the backend token is not in it).
+  cp "$HOME_DIR/shared.json" "$OUT/shared.json" 2>/dev/null || true
   rm -rf "$HOME_DIR"
 }
 trap cleanup EXIT
@@ -41,6 +43,9 @@ trap cleanup EXIT
 echo "seeding a scratch workspace"
 CST_HOME=$WORK/cst cst init shot --storage "$WORK/store" >/dev/null 2>&1
 CST_HOME=$WORK/cst cst demo seed >/dev/null 2>&1
+# An imported run (a readout only, no per-query rankings), as `cst demos import` makes them.
+CST_PY=$(head -1 "$(command -v cst)" | sed 's/^#!//')
+CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-imported.py >/dev/null
 
 # Skip the first-start welcome (it opens over everything while shared "frame.welcomed" is unset).
 echo '{"frame.welcomed":"skipped"}' > "$HOME_DIR/shared.json"
@@ -69,12 +74,14 @@ covered && { echo "an overlay still covers the window: $(app status | python3 -c
 props_of() {
   case "$1" in
     captain-compare:side) python3 tests/mod-render/first-query.py "$WORK/cst" ;;
+    captain-compare:imported) echo '{"backtest": "demos/shot/imported-readout", "version": 1}' ;;
+    captain-compare:imported-queries) echo '{"backtest": "demos/shot/imported-readout", "version": 1, "tab": "queries"}' ;;
     *) echo '{}' ;;
   esac
 }
 
 fail=0
-for view in "${MODS[@]}" "${EXTRA[@]}"; do
+for view in "${MODS[@]}" ${EXTRA[@]+"${EXTRA[@]}"}; do
   m=${view%%:*}
   props=$(props_of "$view")
   block=$(block_of "$m")
@@ -106,6 +113,10 @@ EOF
   ok=0
   for i in $(seq 1 12); do
     sleep 1.5
+    # A window in the background may not draw a new frame after its data arrives, and shot saves the last frame
+    # drawn: ask for the same section again, which draws one.
+    app do layout.select "{\"stack\":\"sections\",\"child\":\"$block\"}" >/dev/null || true
+    sleep 0.5
     app shot "$OUT/${view/:/-}.png" >/dev/null
     if python3 tests/mod-render/shot-busy.py "$OUT/${view/:/-}.png"; then ok=1; break; fi
   done
