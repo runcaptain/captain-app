@@ -68,19 +68,7 @@
           "id": "data",
           "type": "block",
           "content": {
-            "mod": "captain-soon",
-            "props": {
-              "title": "Data and signals",
-              "about": "Datasets (classes, grid, labels as code) and the signals you rank with.",
-              "prefixes": [
-                "data",
-                "queries",
-                "labels",
-                "signal",
-                "sql",
-                "catalog"
-              ]
-            }
+            "mod": "captain-data"
           }
         },
         {
