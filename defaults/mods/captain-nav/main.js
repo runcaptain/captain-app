@@ -20,6 +20,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { theme, run, layout, props, agents, shared, setShared, openOverlay, window as win } from "herdr";
 import { api } from "./kit/cst.js";
 import { isDark, palette } from "./kit/tokens.js";
+import { getAppearance, setAppearance } from "./kit/appearance.js";
 
 const ITEMS = [
   { id: "investigations", label: "Investigations", icon: "search", badge: "/api/proposals?status=proposed", badgeLabel: "proposals to review" },
@@ -58,6 +59,8 @@ export default class CaptainNav extends View {
     this.counts = {};
     this.agentsOpen = true;
     this.state = "starting";
+    this.appearance = "system";
+    cx.spawn(async (cx) => { this.appearance = await getAppearance(); cx.notify(); });
     // The onboarding, in the palette from the start (the commands join when the engine is up).
     if (props()?.part !== "brand") {
       setShared("palette.extra", { ...(shared("palette.extra") ?? {}), "captain-app": [
@@ -128,6 +131,34 @@ export default class CaptainNav extends View {
         .tooltip(`${count} ${it.badgeLabel ?? ""}`.trim()).child(String(count))));
   }
 
+  // Light, Dark, System: the Captain Search desktop app's segmented control.
+  // In the rail, one icon that steps through them.
+  themeSwitch(c, rail) {
+    const MODES = [["light", "Light", "sun"], ["dark", "Dark", "moon"], ["system", "System", "monitor"]];
+    const set = (v) => (_e, cx) => {
+      this.appearance = v;
+      cx.notify();
+      cx.spawn(async () => { await setAppearance(v); });
+    };
+    if (rail) {
+      const i = MODES.findIndex(([v]) => v === this.appearance);
+      const [, label, icon] = MODES[i < 0 ? 2 : i];
+      const next = MODES[((i < 0 ? 2 : i) + 1) % MODES.length][0];
+      return h_flex().id("theme-cycle").h(32).w_full().justify_center().items_center().cursor_pointer().text_color(c.grey900)
+        .hover((s) => s.text_color(c.navy)).tooltip(`${label} (click for ${next})`).on_click(set(next))
+        .child(svg(`mods/captain-nav/${icon}.svg`).size(14));
+    }
+    return h_flex().id("theme-switch").mx(14).my(6).h(28).border_1().border_color(c.grey300).children(MODES.map(([v, label, icon], k) => {
+      const on = this.appearance === v;
+      return h_flex().id(`theme-${v}`).flex_1().h_full().gap(5).items_center().justify_center().cursor_pointer().text_size(12)
+        .when(k < MODES.length - 1, (e) => e.border_r(1).border_color(c.grey300))
+        .bg(on ? c.navy : c.surface).text_color(on ? c.surface : c.grey900)
+        .when(!on, (e) => e.hover((s) => s.text_color(c.navy)))
+        .tooltip(label).on_click(set(v))
+        .child(svg(`mods/captain-nav/${icon}.svg`).size(13)).child(label);
+    }));
+  }
+
   agentRows(c, rail) {
     const list = agents();
     if (props()?.agents === false || !list.length) return null;
@@ -179,6 +210,7 @@ export default class CaptainNav extends View {
         .children(this.items().map((it) => this.row(c, it, it.id === active, rail, go(it)))))
       .child(this.agentRows(c, rail) ?? div())
       .child(v_flex().w_full().flex_none().py(8).border_t(1).border_color(c.rule)
+        .child(this.themeSwitch(c, rail))
         .child(this.row(c, { id: "terminals", label: "Terminals", icon: "terminal" }, !find(layout(), "work")?.hidden, rail, () => run("layout.toggle", { id: "work" })))
         .child(this.row(c, { id: "settings", label: "Settings", icon: "settings" }, false, rail, () => run("app.settings"))));
   }

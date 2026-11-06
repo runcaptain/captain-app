@@ -1,6 +1,10 @@
 {
   "id": "root",
   "type": "row",
+  "theme": {
+    "light": "captain-light",
+    "dark": "captain-dark"
+  },
   "titlebar": "none",
   "traffic_lights": [
     12,
@@ -189,6 +193,39 @@
                   }
                 }
               }
+            },
+            {
+              "id": "panel",
+              "type": "column",
+              "hidden": true,
+              "size": {
+                "px": 368
+              },
+              "min": 280,
+              "max": 900,
+              "children": [
+                {
+                  "id": "panel-body",
+                  "type": "stack",
+                  "active": "files",
+                  "children": [
+                    {
+                      "id": "files",
+                      "type": "block",
+                      "content": {
+                        "mod": "files"
+                      }
+                    },
+                    {
+                      "id": "changes",
+                      "type": "block",
+                      "content": {
+                        "mod": "changes"
+                      }
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },

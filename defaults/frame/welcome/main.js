@@ -9,7 +9,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar } from "gpui-base";
-import { theme, props, closeOverlay, setShared, keys, openOverlay, appHome } from "herdr";
+import { theme, props, closeOverlay, setShared, keys, openOverlay, appHome, spaces, run } from "herdr";
 import { api } from "./kit/cst.js";
 import { isDark, palette } from "./kit/tokens.js";
 
@@ -57,6 +57,8 @@ export default class Welcome extends View {
   }
 
   finish(outcome) {
+    // The shells start with a space to type in, not "No space open".
+    if (!spaces().length) run("space.new", { name: "Captain" });
     setShared("frame.welcomed", outcome);
     closeOverlay(props().overlay);
   }
