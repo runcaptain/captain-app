@@ -1,0 +1,1 @@
+{"error":"the filter is not valid SQL: Required keyword: 'expression' missing for <class 'sqlglot.expressions.core.BitwiseLeftShift'>. Line 1, Col: 24.\n  select 1 where price <<\u001b[4m<\u001b[0m 3"}

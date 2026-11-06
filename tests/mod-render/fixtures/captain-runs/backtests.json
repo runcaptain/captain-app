@@ -1,0 +1,1 @@
+[{"name":"demo-historic-replay","latest":1,"arms":["demo-bm25@v1","demo-tuned@v1"],"primary_metric":"ndcg@10_tw","runs":1},{"name":"demo-tuned-vs-bm25","latest":1,"arms":["demo-bm25@v1","demo-tuned@v1"],"primary_metric":"ndcg@10","runs":2},{"name":"wf-backtest","latest":1,"arms":["demo-bm25@v1","demo-tuned@v1"],"primary_metric":"ndcg@10","runs":1}]
