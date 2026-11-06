@@ -88,3 +88,12 @@ What this means for native Captain screens:
 - When a mod must sort locally, sort an index over typed arrays, or split the work across timer ticks.
 - The 50 ms and 500 ms limits are fixed in vendored gpui-kit, not settings. Raising them would be a fork change,
   and a long call blocks the whole window anyway, because mods run on the UI thread.
+
+## Packaging (2026-11-06)
+
+- Captain.app is 528 MB: pyarrow 126 MB, DuckDB 48 MB, pandas 45 MB, the app 57 MB, hc 7 MB. CPython's test suite,
+  IDLE, Tk and pip are pruned. Slimming further means changing captain-search's dependencies.
+- The whole bundle is signed ad hoc with --deep. It runs on the Mac that built it. Shipping to others needs a
+  Developer ID signature, hardened runtime entitlements for the bundled Python, and notarization.
+- The packaged hc replaces herdr-core's own signature with the ad-hoc one. Captain runs it in its own session, so
+  Herdr's core and binary are unaffected.

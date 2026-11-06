@@ -7,7 +7,7 @@ export const ICONS = [
   "monitor", "flask-conical", "waypoints", "tag", "square-check", "rewind", "workflow", "compass", "rocket", "layers",
   "file-text", "table", "bar-chart-3", "chart-line", "activity", "bot", "user", "copy", "refresh-cw", "triangle-alert",
   "circle-check", "circle-x", "x", "check", "chevron-right", "chevron-left", "chevron-down", "external-link", "link",
-  "clock", "filter", "arrow-up-down", "boxes", "sparkles",
+  "clock", "filter", "arrow-up-down", "boxes", "sparkles", "cloud", "server",
 ];
 
 /** The home path of a Captain icon, for svg(). Unknown names fall back to "search". */

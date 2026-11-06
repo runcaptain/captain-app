@@ -2,7 +2,7 @@
 // The app starts them at launch and keeps shared "captain.daemon" current:
 // {state: "ready", base, token, home}, or {state: "starting" | "missing" | "failed", error}.
 // Requests go through fetch, in-process, so the token never shows up in `ps`.
-import { readTextFile, home, shared, setShared } from "herdr";
+import { readTextFile, home, shared, setShared, focused } from "herdr";
 
 // When this copy of the mod started: services get ~15 s to come up before a screen says so.
 const BORN = Date.now();
@@ -28,6 +28,26 @@ function notUp(reason) {
   return { ok: false, failed: true, error: `Captain couldn't start its services: ${reason}` };
 }
 
+/** The cst workspace the shown space is bound to (shared "captain.spaces"), or null
+ *  for the services' current one. Every request carries it, so switching spaces
+ *  switches what the screens read. */
+export function workspace() {
+  const bound = (shared("captain.spaces") ?? {})[focused()?.space];
+  return bound?.workspace ?? null;
+}
+
+/** Call fn(cx) whenever the shown space's workspace changes (reload, reset the view). */
+export function watchWorkspace(cx, fn) {
+  let last = workspace();
+  cx.timer.every(1000, (cx) => {
+    const now = workspace();
+    if (now !== last) {
+      last = now;
+      fn(cx);
+    }
+  });
+}
+
 /** Call Captain's services. Resolves {ok, status, data, error, starting, failed}; never rejects.
  *  starting: still coming up (show a skeleton). failed: give up and show ServiceError. */
 export async function api(path, { method = "GET", body, timeout = 20 } = {}) {
@@ -36,6 +56,8 @@ export async function api(path, { method = "GET", body, timeout = 20 } = {}) {
   let r;
   try {
     const headers = { Authorization: `Bearer ${d.token}` };
+    const ws = workspace();
+    if (ws) headers["X-CST-Workspace"] = ws;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     r = await fetch(d.base + path, { method: body !== undefined && method === "GET" ? "POST" : method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
   } catch (e) {

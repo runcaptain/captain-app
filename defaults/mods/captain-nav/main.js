@@ -18,7 +18,8 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, layout, props, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
-import { api, retry } from "./kit/cst.js";
+import { api, retry, workspace, watchWorkspace } from "./kit/cst.js";
+import { icon } from "./kit/icons.js";
 import { isDark, palette } from "./kit/tokens.js";
 import { getAppearance, setAppearance } from "./kit/appearance.js";
 
@@ -69,6 +70,7 @@ export default class CaptainNav extends View {
         { name: "captain-nav.theme-dark", args: {}, group: "Captain", title: "Theme: Dark", words: "appearance dark mode night" },
         { name: "captain-nav.theme-system", args: {}, group: "Captain", title: "Theme: System", words: "appearance system auto" },
         { name: "captain-nav.space-new", args: {}, group: "Captain", title: "New space for this workspace", words: "space workspace terminals" },
+        { group: "Captain", title: "Captain: Cloud and compute", words: "aws gcp azure login profile region compute targets", overlay: { mod: "captain-cloud", kind: "dialog", width: 760, height: 640 } },
       ] });
       // Commands the palette and keys send this mod (captain-nav.<name>).
       cx.spawn(async (cx) => {
@@ -85,6 +87,7 @@ export default class CaptainNav extends View {
       });
     }
     this.refresh(cx);
+    watchWorkspace(cx, (cx) => { this.cloud = null; this.refresh(cx); });
     // Every 3 s until Captain's services answer, then every 15 s.
     this.tick = 0;
     cx.timer.every(3000, (cx) => { this.tick++; if (this.state !== "ready" || this.tick % 5 === 0) this.refresh(cx); });
@@ -104,8 +107,12 @@ export default class CaptainNav extends View {
         this.error = ws.ok ? null : ws.error;
         if (ws.ok) {
           this.workspace = ws.data?.name ?? null;
-          // The app names new spaces and sets terminals' CST_WORKSPACE from this.
-          if (this.workspace && shared("captain.workspace") !== this.workspace) setShared("captain.workspace", this.workspace);
+          // The services' current workspace names new spaces and is unbound terminals' CST_WORKSPACE.
+          if (!workspace() && this.workspace && shared("captain.workspace") !== this.workspace) setShared("captain.workspace", this.workspace);
+          const all = await api("/api/workspaces");
+          if (all.ok && Array.isArray(all.data)) this.workspaces = all.data.map((w) => w.name);
+          const cloud = await api("/api/cloud/summary");
+          this.cloud = cloud.ok ? cloud.data : null;
         }
         await this.ensureSpace();
         for (const it of this.items().filter((i) => i.badge)) {
@@ -137,15 +144,15 @@ export default class CaptainNav extends View {
   }
 
   /** A space for this workspace (or an investigation in it), bound so its terminals know. */
-  async newSpace(investigation) {
-    const name = investigation?.title ?? this.workspace ?? "Captain";
+  async newSpace(investigation, ws = this.workspace) {
+    const name = investigation?.title ?? ws ?? "Captain";
     const folder = await this.agentFolder();
     const before = new Set(spaces().map((s) => s.id));
     run("space.new", folder ? { name, folder } : { name });
     const made = spaces().find((s) => !before.has(s.id));
     if (made) {
       const map = { ...(shared("captain.spaces") ?? {}) };
-      map[made.id] = { workspace: this.workspace, ...(investigation ? { investigation: investigation.id } : {}) };
+      map[made.id] = { workspace: ws, ...(investigation ? { investigation: investigation.id } : {}) };
       setShared("captain.spaces", map);
     }
   }
@@ -191,9 +198,9 @@ export default class CaptainNav extends View {
           .on_click((_e, cx) => { run("space.select", { id: sp.id }); this.spacesOpen = false; cx.notify(); })
           .child(div().flex_1().min_w(0).truncate().child(sp.name))
           .children(dots(sp.id).slice(0, 4).map((a) => div().size(6).rounded_full().bg(dot(a.status))))))
-        .child(h_flex().id("space-new").h(28).px(16).gap(6).items_center().cursor_pointer().text_size(12.5).text_color(c.blue)
-          .hover((s) => s.bg(c.blueLight)).on_click((_e, cx) => { this.spacesOpen = false; cx.spawn(async (cx) => { await this.newSpace(); cx.notify(); }); })
-          .child(svg("mods/captain-nav/plus.svg").size(12)).child(`New space${this.workspace ? ` for ${this.workspace}` : ""}`))
+        .children((this.workspaces?.length ? this.workspaces : [this.workspace]).map((w) => h_flex().id(`space-new-${w ?? "default"}`).h(28).px(16).gap(6).items_center().cursor_pointer().text_size(12.5).text_color(c.blue)
+          .hover((s) => s.bg(c.blueLight)).on_click((_e, cx) => { this.spacesOpen = false; cx.spawn(async (cx) => { await this.newSpace(undefined, w); cx.notify(); }); })
+          .child(svg("mods/captain-nav/plus.svg").size(12)).child(`New space${w ? ` for ${w}` : ""}`)))
         .when(Boolean(current), (x) => x.child(h_flex().id("space-rename").h(28).px(16).items_center().cursor_pointer().text_size(12.5).text_color(c.grey900)
           .hover((s) => s.bg(c.surface2)).on_click((_e, cx) => { this.spacesOpen = false; cx.notify();
             openOverlay({ mod: "prompt", kind: "dialog", width: 380, props: { title: "Rename space", hint: current.name, command: { name: "space.rename", args: { id: current.id } } } }); })
@@ -256,6 +263,26 @@ export default class CaptainNav extends View {
     }));
   }
 
+  // Which cloud this workspace works with (GET /api/cloud/summary): provider, account,
+  // region, and whether the last check of the login passed. Opens Cloud and compute.
+  cloudChip(c, rail) {
+    const s = this.cloud;
+    if (!s && this.state !== "ready") return null;
+    const a = s?.active;
+    const short = { aws: "AWS", gcp: "GCP", azure: "Azure" }[a?.provider] ?? a?.label ?? a?.provider;
+    const dot = !a ? c.grey300 : a.last_test?.ok ? c.good : a.last_test ? c.fail : c.grey300;
+    const text = a ? [short, a.account_hint, a.region].filter(Boolean).join(" \u00b7 ") : "No cloud connected";
+    const tip = a ? (a.last_test ? (a.last_test.ok ? `Signed in as ${a.last_test.identity ?? "?"}` : `Last check failed: ${a.last_test.error ?? ""}`) : "Not checked yet") : "Connect a cloud login";
+    const open = () => (a ? openOverlay({ mod: "captain-cloud", kind: "dialog", width: 760, height: 640 })
+      : openOverlay({ mod: "captain-commands", kind: "dialog", width: 560, props: { path: ["cloud", "add"] } }));
+    return h_flex().id("cloud-chip").mx(rail ? 0 : 14).my(4).h(30).gap(8).items_center().cursor_pointer()
+      .when(rail, (e) => e.w_full().justify_center()).when(!rail, (e) => e.px(8).border_1().border_color(c.grey300))
+      .hover((x) => x.bg(c.surface2)).tooltip(`${text}. ${tip}`).on_click(open)
+      .child(svg(icon("cloud")).size(14).text_color(a ? c.navy : c.grey500))
+      .when(!rail, (e) => e.child(div().flex_1().min_w(0).truncate().text_size(12).text_color(a ? c.navy : c.grey500).child(text)))
+      .child(div().size(7).rounded_full().bg(dot));
+  }
+
   agentRows(c, rail) {
     const list = agents();
     if (props()?.agents === false || !list.length) return null;
@@ -301,6 +328,7 @@ export default class CaptainNav extends View {
         .children(this.items().map((it) => this.row(c, it, it.id === active, rail, go(it)))))
       .child(this.agentRows(c, rail) ?? div())
       .child(v_flex().w_full().flex_none().py(8).border_t(1).border_color(c.rule)
+        .child(this.cloudChip(c, rail) ?? div())
         .child(this.themeSwitch(c, rail))
         .child(this.row(c, { id: "terminals", label: "Terminals", icon: "terminal" }, !find(layout(), "work")?.hidden, rail, () => run("layout.toggle", { id: "work" })))
         .child(this.row(c, { id: "settings", label: "Settings", icon: "settings" }, false, rail, () => run("app.settings"))));

@@ -678,6 +678,9 @@ What's about the user, never a look:
 - `core`: the hc binary to use, when it isn't where Captain looks
   (PATH, the login shell's PATH, `~/.local/bin`, Homebrew, mise, Nix,
   cargo). Read at start.
+- `cst`: a Captain Search `cst` to run instead of the one packaged in Captain.app,
+  for development (default: the packaged one; a build without one uses `cst`
+  on PATH).
 - `font`, `font_size`, `ui_font`: used where the layout doesn't set its
   own. Captain (main) leaves these unset. Bigger panels: `zoom`.
 - `font_ligatures`: programming ligatures are off by default; set `true` to

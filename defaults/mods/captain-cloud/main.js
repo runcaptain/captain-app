@@ -1,0 +1,105 @@
+// CAPTAIN: Cloud and compute: which cloud this workspace works with. Opened from the
+// sidebar's cloud chip and the palette. GET /api/cloud/summary (no cloud calls), and
+// Test runs POST /api/cloud/profiles/{name}/test. Profile fields carry no secrets, and
+// none are shown.
+import { View, div, svg } from "gpui-kit";
+import { h_flex, v_flex } from "gpui-base";
+import { theme, props, closeOverlay, openOverlay } from "herdr";
+import { api, watchWorkspace } from "./kit/cst.js";
+import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
+import { Card, Badge, Button, Empty, Problem } from "./kit/ui.js";
+import { icon } from "./kit/icons.js";
+
+const SHORT = { aws: "AWS", gcp: "Google Cloud", azure: "Azure", local: "This computer" };
+
+function ago(t) {
+  if (!t) return null;
+  const s = (Date.now() - new Date(t).getTime()) / 1000;
+  if (!isFinite(s)) return String(t);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} days ago`;
+}
+
+const form = (path) => () => openOverlay({ mod: "captain-commands", kind: "dialog", width: 560, props: { path } });
+
+export default class CaptainCloud extends View {
+  init(_props, cx) {
+    this.summary = null;
+    this.problem = null;
+    this.testing = {};
+    this.load(cx);
+    watchWorkspace(cx, (cx) => this.load(cx));
+    cx.timer.every(15000, (cx) => this.load(cx));
+  }
+
+  load(cx) {
+    cx.spawn(async (cx) => {
+      const r = await api("/api/cloud/summary");
+      if (r.ok) { this.summary = r.data; this.problem = null; } else this.problem = r;
+      cx.notify();
+    });
+  }
+
+  test(name, cx) {
+    this.testing[name] = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      await api(`/api/cloud/profiles/${encodeURIComponent(name)}/test`, { method: "POST", body: {}, timeout: 60 });
+      this.testing[name] = false;
+      this.load(cx);
+    });
+  }
+
+  login(c, p, active) {
+    const t = p.last_test;
+    const status = t ? (t.ok ? `Signed in as ${t.identity ?? "?"}, checked ${ago(t.at) ?? "earlier"}` : `Last check failed ${ago(t.at) ?? ""}: ${t.error ?? ""}`) : "Not checked yet";
+    return v_flex().gap(4).pb(10).border_b(1).border_color(c.rule)
+      .child(h_flex().gap(8).items_center()
+        .child(svg(icon("cloud")).size(15).text_color(c.navy))
+        .child(div().text_size(13.5).font_semibold().text_color(c.navy).child(p.name))
+        .child(Badge(c, SHORT[p.provider] ?? p.label ?? p.provider, "neutral"))
+        .when(active, (e) => e.child(Badge(c, "in use", "blue")))
+        .child(div().flex_1())
+        .child(div().size(8).rounded_full().bg(!t ? c.grey300 : t.ok ? c.good : c.fail))
+        .child(Button(c, `test-${p.name}`, this.testing[p.name] ? "Testing..." : "Test", (_e, cx) => this.test(p.name, cx), { small: true, disabled: Boolean(this.testing[p.name]) })))
+      .child(div().pl(23).text_size(12.5).text_color(c.grey900).child([p.auth_label ?? p.auth, p.region, p.account_hint].filter(Boolean).join(", ")))
+      .child(div().pl(23).text_size(12.5).text_color(t && !t.ok ? c.fail : c.grey500).child(status));
+  }
+
+  render() {
+    const c = palette(isDark(theme()));
+    const s = this.summary;
+    const head = h_flex().h(52).flex_none().px(20).gap(10).items_center().border_b(1).border_color(c.rule)
+      .child(div().flex_1().text_size(16).font_semibold().text_color(c.navy).child(`Cloud and compute${s?.workspace ? `: ${s.workspace}` : ""}`))
+      .when(Boolean(props()?.overlay), (e) => e.child(div().id("cloud-close").cursor_pointer().text_size(13).text_color(c.grey500).hover((x) => x.text_color(c.navy)).on_click(() => closeOverlay(props().overlay)).child("Close")));
+    let body;
+    if (!s) body = Problem(c, this.problem ?? { starting: true }, (cx) => this.load(cx));
+    else {
+      const profiles = s.profiles ?? [];
+      const compute = s.compute ?? [];
+      body = v_flex().gap(14)
+        .child(Card(c, { title: "Storage" },
+          h_flex().gap(10).items_center().child(Badge(c, s.storage_provider_label ?? SHORT[s.storage_provider] ?? s.storage_provider ?? "local", "neutral"))
+            .child(div().flex_1().min_w(0).truncate().font_family(MONO).text_size(12).text_color(c.navy).child(String(s.storage ?? "")))
+            .when(Boolean(s.storage_profile), (e) => e.child(div().text_size(12).text_color(c.grey500).child(`through ${s.storage_profile}`)))))
+        .child(Card(c, { title: `Logins (${profiles.length})`, actions: [Button(c, "cloud-add", "Add a login", form(["cloud", "add"]), { small: true, kind: "primary" })] },
+          ...(profiles.length ? profiles.map((p) => this.login(c, p, p.name === s.active?.name))
+            : [Empty(c, "No cloud connected", "Add a login for AWS, Google Cloud or Azure. Secrets stay in your keychain.")])))
+        .child(Card(c, { title: `Compute targets (${compute.length})`, actions: [Button(c, "compute-add", "Add target", form(["compute", "add"]), { small: true })] },
+          ...(compute.length ? compute.map((t) => h_flex().gap(8).items_center().pb(8).border_b(1).border_color(c.rule)
+            .child(svg(icon("server")).size(14).text_color(c.navy))
+            .child(div().text_size(13).font_semibold().text_color(c.navy).child(t.name))
+            .child(Badge(c, t.kind, "neutral"))
+            .child(div().flex_1().text_size(12).text_color(c.grey500).child([SHORT[t.provider] ?? t.provider, t.region, t.profile && `login ${t.profile}`].filter(Boolean).join(", ")))
+            .child(div().text_size(12).text_color(c.grey500).child((t.purposes ?? []).join(", "))))
+            : [div().text_size(12.5).text_color(c.grey500).child("No compute targets yet.")]),
+          ...(s.can_run_in_cloud ? [] : [div().text_size(12.5).text_color(c.grey900).child(`Backtests run on this computer. Add a compute target to run them in ${SHORT[s.active?.provider] ?? "the cloud"}.`)])))
+        .children((s.notes ?? []).map((n) => div().text_size(12.5).line_height("18px").text_color(c.grey900).child(String(n))));
+    }
+    return v_flex().size_full().bg(c.canvas).font_family(FONT).text_color(c.navy)
+      .child(head)
+      .child(div().id("cloud-body").flex_1().min_h(0).overflow_y_scroll().p(20).child(body));
+  }
+}
