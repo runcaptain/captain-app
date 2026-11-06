@@ -324,10 +324,12 @@ export default class CaptainData extends View {
   status(c) {
     const g = this.grid;
     const [a, b] = g.want;
-    const shown = g.end ? `rows ${fmtInt(Math.min(a + 1, g.end))} to ${fmtInt(Math.min(b, g.end))}` : g.inflight !== null ? "loading" : "no rows";
-    const of = g.total !== null ? ` of ${fmtInt(g.total)}` : g.hasMore && g.end ? ` of ${fmtInt(g.end)}+` : "";
+    // Until the list reports what it shows (first frame), just the total: never "rows 1 to 0".
+    const of = g.total !== null ? fmtInt(g.total) : g.hasMore && g.end ? `${fmtInt(g.end)}+` : g.end ? fmtInt(g.end) : "";
+    const seen = Math.min(b, g.end);
+    const shown = !g.end ? (g.inflight !== null ? "" : "no rows") : seen > a ? `rows ${fmtInt(a + 1)} to ${fmtInt(seen)} of ${of}` : `${of} rows`;
     return h_flex().flex_none().h(32).px(20).gap(12).items_center().border_t(1).border_color(c.rule).text_size(12).text_color(c.grey900)
-      .child(div().child(shown + of))
+      .child(div().child(shown))
       .when(g.ms !== null, (e) => e.child(div().font_family(MONO).text_color(c.grey500).child(`${g.ms} ms`)))
       .when(!!g.search || !!g.where, (e) => e.child(div().text_color(c.blue).child("filtered")))
       .when(g.total === null && !g.error, (e) => e.child(h_flex().id("grid-count").h(24).px(8).gap(5).items_center().cursor_pointer()
