@@ -67,6 +67,21 @@ signals, Runs, Comparisons, Handoff, a Terminals toggle that hides the shells wi
 It's the default layout and the escape hatch's target (`brand::DEFAULT_LAYOUT`). Herdr's `main` ships as
 "Spaces". New sections are built as native gpui-kit mods first; the web view only carries existing screens.
 
+**Native Captain parts** (mods; no fork code beyond the palette hook):
+- `captain-nav`: the sidebar in the Captain Search desktop app's look (its NavItem and index.css tokens, Inter
+  shipped in the mod), with workspace name, New, five sections, badges, Agents, Terminals, Settings and a rail.
+  Props reorder or add items.
+- `captain-commands`: every cst command as a native form (GET /api/commands, POST /api/commands/run), and the New
+  menu. The palette lists them under "Captain".
+- The onboarding replaces Herdr's welcome frame (`defaults/frame/welcome/main.js`): three interface pages and a
+  live checklist from GET /api/onboarding.
+- `defaults/captain/cst.js` is the daemon client every Captain mod copies (mods can't import across folders).
+- Palette hook (`defaults/frame/palette/main.js`): entries mods publish under shared `palette.extra`, and entries
+  that open an overlay.
+- Keys: a `layout:captain` section in `defaults/keys.macos.json` (cmd-k palette, cmd-j shells, cmd-b sidebar). The
+  upstream 0.1.13 file is kept as a shipped original, so untouched keys files upgrade.
+- What gets ported next, and in what order: docs/captain/PORT-PLAN.md.
+
 **Visible strings in shipped mods and frame screens** say Captain and show the Captain icon
 (`frame/welcome/captain.png`): welcome, settings, palette, What's New, help, menu, feedback, the spaces and
 workspace-chrome mods, machine-add. These are single-word edits in upstream files, because the strings are

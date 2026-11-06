@@ -18,5 +18,7 @@ fn every_captain_mod_has_the_same_daemon_client() {
             seen += 1;
         }
     }
+    // The onboarding (the welcome frame) reads the daemon too.
+    assert_eq!(std::fs::read_to_string(root.join("defaults/frame/welcome/cst.js")).unwrap(), source, "defaults/frame/welcome/cst.js differs: copy it again");
     assert!(seen >= 2, "expected the captain mods to carry cst.js");
 }

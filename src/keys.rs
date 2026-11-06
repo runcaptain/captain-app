@@ -44,6 +44,8 @@ const SHIPPED_KEYS: &[&str] = &[
 const SHIPPED_MACOS_KEYS: &[&str] = &[
     include_str!("keys/shipped/v0.1.4-keys.macos.json"),
     include_str!("keys/shipped/v0.1.5-keys.macos.json"),
+    // CAPTAIN: upstream 0.1.13, the file Captain's first builds wrote.
+    include_str!("keys/shipped/v0.1.13-keys.macos.json"),
 ];
 
 #[derive(serde::Deserialize)]

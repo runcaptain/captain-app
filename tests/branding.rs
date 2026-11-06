@@ -35,10 +35,7 @@ const ALLOWED: &[&str] = &[
 const NOT_SHIPPED: &[&str] = &["defaults/mods/win98", "defaults/layouts/win98.json", "defaults/layouts/win98.svg"];
 
 /// Files on their way out, each with the commit that removes it. Keep this empty.
-const PENDING: &[&str] = &[
-    // Herdr's welcome; the Captain onboarding replaces it.
-    "defaults/frame/welcome/main.js",
-];
+const PENDING: &[&str] = &[];
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

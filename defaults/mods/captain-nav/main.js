@@ -57,6 +57,12 @@ export default class CaptainNav extends View {
     this.counts = {};
     this.agentsOpen = true;
     this.state = "starting";
+    // The onboarding, in the palette from the start (the commands join when the engine is up).
+    if (props()?.part !== "brand") {
+      setShared("palette.extra", { ...(shared("palette.extra") ?? {}), "captain-app": [
+        { name: "app.welcome", args: {}, group: "Captain", title: "Captain: onboarding", words: "welcome tour checklist start setup" },
+      ] });
+    }
     this.refresh(cx);
     cx.timer.every(15000, (cx) => this.refresh(cx));
   }

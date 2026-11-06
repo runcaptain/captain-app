@@ -6,3 +6,6 @@
 /defaults/mods/*/gpui-kit.d.ts
 /defaults/mods/*/jsconfig.json
 /defaults/mods/*/herdr.d.ts
+/defaults/frame/*/gpui-kit.d.ts
+/defaults/frame/*/jsconfig.json
+/defaults/frame/*/herdr.d.ts
