@@ -49,14 +49,55 @@ fn is_executable(p: &Path) -> bool {
     p.is_file() && p.metadata().map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
-/// $CST_BIN, then ~/.local/bin/cst (where captain-ide's install.sh links it), then PATH.
+/// $CST_BIN, then settings.json `cst` (for development), then the cst packaged inside
+/// Captain.app. Only a build without one (run from target/) looks in ~/.local/bin and PATH.
 fn find() -> Option<PathBuf> {
     if let Some(b) = std::env::var_os("CST_BIN").map(PathBuf::from).filter(|b| is_executable(b)) {
+        return Some(b);
+    }
+    if let Some(b) = crate::settings::load_person().ok().and_then(|p| p.cst).filter(|c| !c.is_empty()) {
+        let b = match b.strip_prefix("~/") { Some(rest) => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(rest)).unwrap_or_else(|| PathBuf::from(&b)), None => PathBuf::from(&b) };
+        if is_executable(&b) {
+            return Some(b);
+        }
+    }
+    if let Some(b) = crate::brand::bundled("cst/bin/cst").filter(|b| is_executable(b)) {
         return Some(b);
     }
     let local = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/bin/cst"));
     let on_path = std::env::var_os("PATH").into_iter().flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).map(|d| d.join("cst"));
     local.into_iter().chain(on_path).find(|c| is_executable(c))
+}
+
+/// Offer the packaged cst on the command line as ~/.local/bin/cst, so agents in
+/// terminals use the same version. Only when there's no cst there yet, or the link
+/// already points into a Captain.app: a cst the person installed is never replaced.
+pub fn link_cli() {
+    let (Some(target), Some(home)) = (crate::brand::bundled("cst/bin/cst"), std::env::var_os("HOME")) else { return };
+    let link = PathBuf::from(home).join(".local/bin/cst");
+    if let Err(e) = link_cli_at(&link, &target) {
+        tracing::warn!("cannot link {}: {e}", link.display());
+    }
+}
+
+pub fn link_cli_at(link: &Path, target: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(link) {
+        Ok(m) if m.file_type().is_symlink() => {
+            let now = std::fs::read_link(link)?;
+            if now == target {
+                return Ok(());
+            }
+            if !now.components().any(|c| c.as_os_str().to_string_lossy().ends_with(".app")) || !now.to_string_lossy().contains("/Contents/Resources/cst/") {
+                return Ok(()); // someone else's cst
+            }
+            std::fs::remove_file(link)?;
+        }
+        Ok(_) => return Ok(()), // a real file: someone else's
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    std::fs::create_dir_all(link.parent().unwrap())?;
+    std::os::unix::fs::symlink(target, link)
 }
 
 /// The first stdout line of `cst serve --port 0`.
@@ -297,6 +338,28 @@ pub fn fill(url: &str, state: &State) -> Url {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cli_link_never_replaces_someone_elses_cst() {
+        let dir = std::env::temp_dir().join(format!("captain-cst-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        let ours = dir.join("Captain.app/Contents/Resources/cst/bin/cst");
+        let link = dir.join("bin/cst");
+        link_cli_at(&link, &ours).unwrap();
+        assert_eq!(std::fs::read_link(&link).unwrap(), ours);
+        // An older Captain's link is updated.
+        let newer = dir.join("Other/Captain.app/Contents/Resources/cst/bin/cst");
+        link_cli_at(&link, &newer).unwrap();
+        assert_eq!(std::fs::read_link(&link).unwrap(), newer);
+        // The person's own cst (install.sh's venv) stays.
+        std::fs::remove_file(&link).unwrap();
+        let theirs = dir.join("share/captain-search/venv/bin/cst");
+        std::os::unix::fs::symlink(&theirs, &link).unwrap();
+        link_cli_at(&link, &ours).unwrap();
+        assert_eq!(std::fs::read_link(&link).unwrap(), theirs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn reads_the_discovery_line() {

@@ -95,6 +95,15 @@ and GPUI key-context names. "Herdr 98" (`win98`) isn't shipped (build.rs `NOT_SH
 keep their names, so their release scripts work, but hold the Captain C. One visible herdr.dev URL remains: the
 terminal engine's install command on the setup screen, until captain-ide's install.sh installs hc.
 
+**Captain.app carries what it runs** (`scripts/package-captain-macos`): a python-build-standalone CPython (through
+uv) with captain-search installed from a captain-ide checkout at `origin/main` (`git archive`, the checkout isn't
+touched) in `Contents/Resources/cst/`, with a `bin/cst` launcher that works through a symlink; and the herdr-core
+(hc, Apache-2.0) binary with its `--licenses` output in `Contents/Resources/hc/`. Captain starts the packaged cst
+and hc (`brand::bundled`). settings.json `cst` / `core` or `CST_BIN` point elsewhere for development. At launch it
+offers the packaged cst as `~/.local/bin/cst` only when there's none, or the link already points into a
+Captain.app: a cst the person installed is never replaced, and `~/.local/bin/herdr-core` is never touched.
+Captain's services are never named to the person: no "engine" or "daemon" in visible text (tests/branding.rs).
+
 Kept as upstream, on purpose:
 - The mod module name `herdr` and `herdr.d.ts`, so upstream mods run unchanged.
 - Internal key contexts (`Herdr`), the core document name `herdr-app` (inside Captain's own session) and most

@@ -152,6 +152,9 @@ fn main() {
     };
     #[cfg(target_os = "macos")]
     core_bin::install_cli_link();
+    // CAPTAIN: offer the packaged cst as ~/.local/bin/cst (never replacing the person's own).
+    #[cfg(target_os = "macos")]
+    cst::link_cli();
     if core.is_ok() {
         update::after_update();
     }

@@ -66,6 +66,20 @@ pub fn pin_core_session() {
     unsafe { std::env::set_var("HC_SESSION", session) };
 }
 
+/// The app bundle's Resources folder (Captain.app/Contents/Resources), where the
+/// packaging script puts the bundled cst (`cst/bin/cst`) and hc (`hc/herdr-core`).
+/// None for a build run from target/.
+pub fn resources() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let dir = exe.parent()?.parent()?.join("Resources");
+    dir.is_dir().then_some(dir)
+}
+
+/// A file the packaging script bundled, if this build has it.
+pub fn bundled(rel: &str) -> Option<std::path::PathBuf> {
+    resources().map(|r| r.join(rel)).filter(|p| p.is_file())
+}
+
 /// Captain's own release server, if this build was pointed at one
 /// (CAPTAIN_RELEASES_URL). None: no app updates. Captain never checks or
 /// downloads herdr.dev releases.

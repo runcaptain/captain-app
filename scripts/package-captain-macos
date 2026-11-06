@@ -2,11 +2,24 @@
 # CAPTAIN: build dist/Captain.app. It only builds: it doesn't install, register
 # with Launch Services, link the CLI or open the app. Ad-hoc signed (no
 # notarization), so it runs on this Mac only. See FORK.md.
+#
+# Captain.app carries what it runs, so installing it is one step:
+#   Contents/Resources/cst/   a python-build-standalone CPython with captain-search
+#                             installed from a captain-ide checkout, and bin/cst
+#   Contents/Resources/hc/    the herdr-core (hc) binary and its notices
+# Settings:
+#   CAPTAIN_IDE=<captain-ide checkout>   default ~/Code/workbench/CaptainSearchTools
+#   CAPTAIN_IDE_REF=<git ref>            default origin/main (the checkout itself isn't touched)
+#   CAPTAIN_PYTHON=<version>             default 3.14 (what captain-ide's core runs on)
+#   CAPTAIN_HC=<path to herdr-core>      default the hc on PATH or in ~/.local/bin
 set -euo pipefail
 
 [[ $(uname -s) == Darwin ]] || { echo 'Captain.app builds on macOS only.' >&2; exit 1; }
 cd "$(dirname "$0")/.."
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+ide=${CAPTAIN_IDE:-$HOME/Code/workbench/CaptainSearchTools}
+ref=${CAPTAIN_IDE_REF:-origin/main}
+pyver=${CAPTAIN_PYTHON:-3.14}
 cargo build --release --locked --bin captain-app
 
 app=dist/Captain.app
@@ -37,5 +50,51 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 plutil -lint "$app/Contents/Info.plist" >/dev/null
-codesign --force --sign - "$app"
-echo "Built $app ($version). Not installed or opened."
+
+# The Captain Search backend: a relocatable CPython (python-build-standalone, through uv)
+# with captain-search installed into it from captain-ide at $ref.
+command -v uv >/dev/null || { echo "uv is needed to fetch the Python runtime: https://docs.astral.sh/uv/" >&2; exit 1; }
+uv python install "$pyver" >/dev/null
+pybin=$(uv python find --managed-python "$pyver")
+pyroot=$(cd "$(dirname "$pybin")/.." && pwd -P)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+git -C "$ide" fetch -q origin 2>/dev/null || true
+git -C "$ide" archive "$ref" core | tar -x -C "$work"
+commit=$(git -C "$ide" rev-parse --short "$ref")
+mkdir -p "$app/Contents/Resources/cst/bin"
+cp -R "$pyroot" "$app/Contents/Resources/cst/python"
+py="$app/Contents/Resources/cst/python/bin/python3"
+uv pip install --quiet --python "$py" --break-system-packages "$work/core"
+# Parts of CPython Captain never runs: the test suite, IDLE, Tk, ensurepip and pip.
+stdlib=$(echo "$app/Contents/Resources/cst/python/lib/python3."*)
+rm -rf "$stdlib/test" "$stdlib/idlelib" "$stdlib/tkinter" "$stdlib/turtledemo" "$stdlib/ensurepip" "$stdlib/site-packages/pip" "$stdlib/site-packages/pip-"*
+rm -rf "$app/Contents/Resources/cst/python/lib/"{libtcl,libtk,tcl,tk,itcl,thread}* "$app/Contents/Resources/cst/python/share"
+cat > "$app/Contents/Resources/cst/bin/cst" <<'LAUNCHER'
+#!/bin/sh
+# Captain's packaged cst. Resolves its own path, so a symlink to it (~/.local/bin/cst) works.
+self=$0
+while [ -L "$self" ]; do
+  next=$(readlink "$self")
+  case $next in /*) self=$next ;; *) self=$(dirname "$self")/$next ;; esac
+done
+here=$(cd "$(dirname "$self")/.." && pwd -P)
+exec "$here/python/bin/python3" -c 'import sys; sys.argv[0] = "cst"; from captain_search.cli.main import app; sys.exit(app())' "$@"
+LAUNCHER
+chmod +x "$app/Contents/Resources/cst/bin/cst"
+echo "captain-ide $commit, Python $("$py" -c 'import platform; print(platform.python_version())')" > "$app/Contents/Resources/cst/VERSION"
+"$app/Contents/Resources/cst/bin/cst" --help >/dev/null
+
+# The terminal runtime: herdr-core (Apache-2.0), with its notices. Captain runs it in its
+# own session; the person's ~/.local/bin/herdr-core is never replaced.
+hc=${CAPTAIN_HC:-$(command -v herdr-core || echo "$HOME/.local/bin/herdr-core")}
+hc=$(cd "$(dirname "$hc")" && pwd -P)/$(basename "$hc")
+[[ -x "$hc" ]] || { echo "no herdr-core at $hc (set CAPTAIN_HC)" >&2; exit 1; }
+mkdir -p "$app/Contents/Resources/hc"
+cp "$(readlink -f "$hc" 2>/dev/null || echo "$hc")" "$app/Contents/Resources/hc/herdr-core"
+"$app/Contents/Resources/hc/herdr-core" --licenses > "$app/Contents/Resources/hc/LICENSES.txt"
+"$app/Contents/Resources/hc/herdr-core" --version > "$app/Contents/Resources/hc/VERSION"
+
+codesign --force --deep --sign - "$app"
+codesign --verify --strict "$app"
+echo "Built $app ($version): $(du -sh "$app" | cut -f1); cst from captain-ide $commit; $(cat "$app/Contents/Resources/hc/VERSION"). Not installed or opened."

@@ -407,6 +407,9 @@ pub struct Person {
     pub theme: Option<crate::layout::ThemeChoice>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub colors: BTreeMap<String, String>,
+    /// CAPTAIN: a cst to run instead of the one packaged in Captain.app (development).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cst: Option<String>,
     /// CAPTAIN: hosts a webview block may load besides localhost (webview.rs).
     /// On the person, not the layout, so a shared layout can't widen it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -461,6 +464,7 @@ impl Default for Person {
             ui_font: None,
             telemetry: true,
             clipboard_write: true,
+            cst: None,
             webview_hosts: Vec::new(),
             pane_scrollbars: true,
             minimum_contrast: 1.0,
@@ -953,7 +957,7 @@ mod tests {
     /// settings.json key.
     #[test]
     fn the_guide_explains_every_setting() {
-        let all = Person { core: Some(String::new()), font: Some(String::new()), font_size: Some(1.0), ui_font: Some(String::new()), telemetry: false, clipboard_write: false, webview_hosts: vec![String::new()], appearance: Appearance::Light, theme: Some(crate::layout::ThemeChoice::One(String::new())), colors: [("text".into(), String::new())].into(), ..Person::default() };
+        let all = Person { core: Some(String::new()), font: Some(String::new()), font_size: Some(1.0), ui_font: Some(String::new()), telemetry: false, clipboard_write: false, cst: Some(String::new()), webview_hosts: vec![String::new()], appearance: Appearance::Light, theme: Some(crate::layout::ThemeChoice::One(String::new())), colors: [("text".into(), String::new())].into(), ..Person::default() };
         let keys: Vec<String> = serde_json::to_value(&all).unwrap().as_object().unwrap().keys().cloned().collect();
         let guide = include_str!("../defaults/AGENTS.md");
         let section = guide.split("## The person").nth(1).and_then(|s| s.split("\n## ").next()).unwrap_or_default();
