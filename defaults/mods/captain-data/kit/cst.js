@@ -2,23 +2,19 @@
 // The app starts them at launch and keeps shared "captain.daemon" current:
 // {state: "ready", base, token, home}, or {state: "starting" | "missing" | "failed", error}.
 // Requests go through fetch, in-process, so the token never shows up in `ps`.
-import { readTextFile, home, shared, setShared, focused } from "herdr";
+// Where they listen comes only from the app (shared "captain.daemon").
+import { shared, setShared, focused } from "herdr";
 
 // When this copy of the mod started: services get ~15 s to come up before a screen says so.
 const BORN = Date.now();
 const PATIENCE_MS = 15000;
 
-/** Where the services listen, or why they aren't there. */
+/** Where the services listen, or why they aren't there. Only the app says where:
+ *  never guess from a serve.json, which can belong to another copy or another home. */
 export async function services() {
   const d = shared("captain.daemon");
   if (d?.base && d?.token) return { base: d.base, token: d.token };
   if (d?.state === "missing" || d?.state === "failed") return { error: d.error };
-  // Homes from before the app kept shared state fall back to serve.json.
-  const text = await readTextFile(`${home()}/.config/captain-search/serve.json`);
-  try {
-    const j = text ? JSON.parse(text) : null;
-    if (j?.port && j?.token) return { base: `http://127.0.0.1:${j.port}`, token: j.token };
-  } catch {}
   return { waiting: true };
 }
 

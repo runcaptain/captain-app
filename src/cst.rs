@@ -164,8 +164,31 @@ fn running() -> Option<(u16, String)> {
         return None;
     }
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(300)).ok()?;
-    Some((port, token))
+    let mut stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(300)).ok()?;
+    // An older cst (another app's) lacks what Captain's screens need: per-request
+    // workspaces and the cloud summary arrived together. Reuse only one that has them.
+    new_enough(&mut stream, &token).then_some((port, token))
+}
+
+/// Ask a running cst for a route Captain needs; true on any 2xx.
+fn new_enough(stream: &mut std::net::TcpStream, token: &str) -> bool {
+    use std::io::Write;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+    let req = format!("GET {PROBE} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut head = [0u8; 32];
+    let n = stream.read(&mut head).unwrap_or(0);
+    status_ok(&head[..n])
+}
+
+/// The route whose presence means a cst serves what Captain's screens read.
+const PROBE: &str = "/api/cloud/summary";
+
+fn status_ok(head: &[u8]) -> bool {
+    let line = String::from_utf8_lossy(head);
+    line.split_whitespace().nth(1).and_then(|c| c.parse::<u16>().ok()).is_some_and(|c| (200..300).contains(&c))
 }
 
 /// Start the daemon once, in the background, unless one is up. Calls `ready` when its state settles.
@@ -386,6 +409,13 @@ mod tests {
         assert_eq!(ready["token"], "t");
         assert_eq!(shared_value(&State::Starting)["state"], "starting");
         assert!(shared_value(&State::Missing)["error"].as_str().unwrap().contains("install.sh"));
+    }
+
+    #[test]
+    fn only_a_new_enough_cst_is_reused() {
+        assert!(status_ok(b"HTTP/1.1 200 OK\r\n"));
+        assert!(!status_ok(b"HTTP/1.1 404 Not Found\r\n"));
+        assert!(!status_ok(b""));
     }
 
     #[test]
