@@ -8,7 +8,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { theme, openOverlay } from "herdr";
 import { api, watchWorkspace } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
-import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, toneOf } from "./kit/ui.js";
+import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
 
 const TABS = [["readiness", "Readiness"], ["evidence", "Evidence"], ["candidate", "Candidate"], ["links", "Deployments"], ["outcomes", "Online outcomes"]];
 const words = (s) => String(s ?? "").replace(/[_-]/g, " ");
@@ -28,7 +28,7 @@ export function readiness(h) {
   return { ok: gates.filter((g) => g.ok).length, all: gates.length, overridden: (h.readiness?.overridden ?? []).length };
 }
 
-const form = (path, args) => () => openOverlay({ mod: "captain-commands", kind: "dialog", width: 560, props: { path, args } });
+const task = (id, args) => () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: id, args } });
 
 export default class CaptainHandoff extends View {
   init(_props, cx) {
@@ -41,7 +41,7 @@ export default class CaptainHandoff extends View {
       onRow: (r, cx) => this.show(r.id, cx),
       empty: "No handoffs yet.",
       columns: [
-        { key: "pipeline", label: "Candidate", mono: true, render: (r) => r.pipeline ?? r.id },
+        { key: "pipeline", label: "Candidate", render: (r, c) => RefChip(c, r.pipeline ?? r.id) },
         { key: "environment", label: "Environment", width: 150, render: (r) => `${r.environment ?? ""}${r.tier ? ` (${r.tier})` : ""}` },
         { key: "stage", label: "Stage", width: 110, render: (r, c) => Badge(c, words(stage(r)), stage(r) === "live" ? "good" : stage(r) === "deployed" ? "blue" : "neutral") },
         { key: "readiness", label: "Readiness", width: 120, render: (r, c) => { const x = readiness(r); return Badge(c, x.overridden ? `${x.ok}/${x.all}, overridden` : `${x.ok}/${x.all} passed`, x.overridden ? "warn" : x.ok === x.all ? "good" : "bad"); } },
@@ -77,6 +77,9 @@ export default class CaptainHandoff extends View {
   }
 
   field(c, label, value, mono = false) {
+    if (typeof value === "string" && /@v?\d+$/.test(value)) {
+      return h_flex().gap(12).items_center().py(4).child(div().w(170).flex_none().text_size(12).text_color(c.grey500).child(label)).child(RefChip(c, value));
+    }
     return h_flex().gap(12).items_start().py(4)
       .child(div().w(170).flex_none().text_size(12).text_color(c.grey500).child(label))
       .child(div().flex_1().min_w(0).text_size(13).text_color(c.navy).when(mono, (e) => e.font_family(MONO).text_size(12)).child(value == null || value === "" ? "none" : String(value)));
@@ -123,8 +126,8 @@ export default class CaptainHandoff extends View {
     const list = events.filter((e) => e.kind === kind);
     if (!list.length) {
       return this.tab === "links"
-        ? Empty(c, "Not deployed yet", "Deploy this candidate through your own system, then record the deployment so Captain knows what's live.", Button(c, "ho-link", "Record a deployment", form(["handoff", "link"], { hid: this.open }), { kind: "primary" }))
-        : Empty(c, "No online outcomes", "Attach results from your experiment system. They count as REAL_TRAFFIC evidence.", Button(c, "ho-out", "Add an outcome", form(["handoff", "outcome"], { hid: this.open }), { kind: "primary" }));
+        ? Empty(c, "Not deployed yet", "Deploy this candidate through your own system, then record the deployment so Captain knows what's live.", Button(c, "ho-link", "Record a deployment", task("record-deployment", { id: this.open }), { kind: "primary" }))
+        : Empty(c, "No online outcomes", "Attach results from your experiment system. They count as REAL_TRAFFIC evidence.", Button(c, "ho-out", "Add an outcome", task("add-outcome", { id: this.open }), { kind: "primary" }));
     }
     return Card(c, { title: this.tab === "links" ? `Deployments (${list.length})` : `Online outcomes (${list.length})` }, ...list.slice().reverse().map((e) => v_flex().gap(4).pb(8).border_b(1).border_color(c.rule)
       .child(h_flex().gap(8).items_center()
@@ -148,9 +151,9 @@ export default class CaptainHandoff extends View {
       .child(v_flex().flex_none().px(24).pt(16).gap(10)
         .child(h_flex().child(back))
         .child(h_flex().gap(10).items_center()
-          .child(div().flex_1().min_w(0).truncate().text_size(20).font_semibold().font_family(MONO).text_color(c.navy).child(h.pipeline ?? this.open))
-          .child(Button(c, "ho-link2", "Record a deployment", form(["handoff", "link"], { hid: this.open })))
-          .child(Button(c, "ho-out2", "Add an outcome", form(["handoff", "outcome"], { hid: this.open }), { kind: "primary" })))
+          .child(div().flex_1().min_w(0).child(RefChip(c, h.pipeline ?? this.open)))
+          .child(Button(c, "ho-link2", "Record a deployment", task("record-deployment", { id: this.open })))
+          .child(Button(c, "ho-out2", "Add an outcome", task("add-outcome", { id: this.open }), { kind: "primary" })))
         .child(h_flex().gap(8).items_center()
           .child(Badge(c, words(stage(h)), stage(h) === "live" ? "good" : stage(h) === "deployed" ? "blue" : "neutral"))
           .child(Badge(c, x.overridden ? `${x.ok}/${x.all} checks, overridden` : `${x.ok}/${x.all} checks passed`, x.overridden ? "warn" : x.ok === x.all ? "good" : "bad"))
@@ -165,7 +168,7 @@ export default class CaptainHandoff extends View {
         .child(v_flex().flex_1().gap(2)
           .child(div().text_size(20).font_semibold().text_color(c.navy).child("Handoff"))
           .child(div().text_size(12.5).text_color(c.grey500).child("Captain hands candidates to your deployment process and deploys nothing itself. What went live, and how it did, is recorded here.")))
-        .child(Button(c, "ho-new", "Hand off a candidate", form(["deploy", "promote"]), { kind: "primary" })))
+        .child(Button(c, "ho-new", "Hand off a candidate", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "handoff" } }), { kind: "primary" })))
       .child(div().flex_1().min_h(0).child(this.table.render(c)));
   }
 

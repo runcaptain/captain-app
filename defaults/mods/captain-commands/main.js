@@ -3,13 +3,14 @@
 //                                      (GET /api/commands), Run posts
 //                                      POST /api/commands/run; the result shows here
 //                                      and as a toast.
-//   props {menu: "new"}                the New menu: commands that make things
-//                                      (shared "captain.commands", from captain-nav).
-// The palette lists every command (captain-nav publishes them).
+//   props {menu: "all"}                every cst command, for power users ("Run a cst
+//                                      command..." in the palette). People use New and
+//                                      the screens; agents use the CLI.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, props, closeOverlay, notify, shared } from "herdr";
 import { api } from "./kit/cst.js";
+import { Skeleton } from "./kit/ui.js";
 import { isDark, palette } from "./kit/tokens.js";
 
 const title = (path) => `cst ${path.join(" ")}`;
@@ -24,6 +25,7 @@ export default class CaptainCommands extends View {
     this.busy = false;
     this.error = null;
     if (this.path) this.load(cx);
+    if (props()?.menu) this.loadAll(cx);
   }
 
   close() {
@@ -121,28 +123,43 @@ export default class CaptainCommands extends View {
     return v_flex().gap(4).child(label).child(control);
   }
 
+  // Every cst command, for people who want the CLI's full reach (agents use the CLI itself).
+  loadAll(cx) {
+    if (this.all || this.loadingAll) return;
+    this.loadingAll = true;
+    cx.spawn(async (cx) => {
+      const r = await api("/api/commands");
+      this.all = r.ok && Array.isArray(r.data) ? r.data : [];
+      this.loadingAll = false;
+      cx.notify();
+    });
+  }
+
   menu(c) {
-    const list = shared("captain.commands") ?? [];
+    const list = this.all ?? [];
     const groups = new Map();
     for (const cmd of list) {
       const g = cmd.path[0];
       if (!groups.has(g)) groups.set(g, []);
       groups.get(g).push(cmd);
     }
-    return v_flex().size_full().bg(c.surface).text_color(c.navy).font_family("Inter").py(6)
-      .child(div().px(12).pb(4).text_size(11).font_medium().text_color(c.grey500).child("NEW"))
-      .when(!list.length, (e) => e.child(div().px(12).py(8).text_size(12.5).text_color(c.grey500).child("The list fills in in a moment.")))
-      .child(v_flex().id("new-list").flex_1().min_h(0).overflow_y_scroll().children([...groups.entries()].map(([g, cmds]) => v_flex()
-        .child(div().px(12).pt(8).pb(2).text_size(11).text_color(c.grey500).child(g))
-        .children(cmds.map((cmd) => h_flex().id(`new-${cmd.path.join("-")}`).h(30).px(12).gap(8).items_center().cursor_pointer()
-          .hover((s) => s.bg(c.surface2)).on_click((_e, cx) => { this.menuMode = false; this.pick(cmd.path, cx); })
-          .child(div().text_size(13).child(cmd.path.slice(1).join(" ") || cmd.path[0]))
+    return v_flex().size_full().bg(c.surface).text_color(c.navy).font_family("Inter")
+      .child(h_flex().h(48).flex_none().px(16).items_center().border_b(1).border_color(c.rule)
+        .child(div().flex_1().text_size(14).font_semibold().child("Run a cst command"))
+        .child(div().id("cmd-close").cursor_pointer().text_color(c.grey500).hover((s) => s.text_color(c.navy)).on_click(() => this.close()).child("Close")))
+      .child(div().px(16).py(8).text_size(12).text_color(c.grey500).child("Everything the command line can do, as forms. Most people use New and the screens; agents use these in a terminal."))
+      .when(!this.all, (e) => e.child(div().px(16).py(8).child(Skeleton(c, 6))))
+      .child(v_flex().id("all-list").flex_1().min_h(0).overflow_y_scroll().children([...groups.entries()].map(([g, cmds]) => v_flex()
+        .child(div().px(16).pt(8).pb(2).text_size(11).text_color(c.grey500).child(g))
+        .children(cmds.map((cmd) => h_flex().id(`all-${cmd.path.join("-")}`).h(30).px(16).gap(8).items_center().cursor_pointer()
+          .hover((s) => s.bg(c.surface2)).on_click((_e, cx) => this.pick(cmd.path, cx))
+          .child(div().font_family("JetBrains Mono").text_size(12.5).child(cmd.path.join(" ")))
           .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(cmd.help ?? "")))))));
   }
 
   render() {
     const c = palette(isDark(theme()));
-    if (!this.path && props()?.menu === "new") return this.menu(c);
+    if (!this.path && props()?.menu) return this.menu(c);
     const cmd = this.command;
     return v_flex().size_full().bg(c.surface).text_color(c.navy).font_family("Inter")
       .child(h_flex().h(48).flex_none().px(16).gap(10).items_center().border_b(1).border_color(c.rule)

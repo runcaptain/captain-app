@@ -20,7 +20,7 @@ const ICON: &[u8] = include_bytes!("../assets/icons/captain-ui-icon.png");
 const APP_INSTALL: &str = "build the latest Captain from https://github.com/runcaptain/captain-app";
 // CAPTAIN: hc ships inside Captain.app (scripts/package-captain-macos). A build without it
 // (run from target/) points at a build that has it, or at settings.json `core`.
-const CORE_INSTALL: &str = "build Captain.app with scripts/package-captain-macos, or set core in settings.json to an hc binary";
+const CORE_INSTALL: &str = "build Captain.app with scripts/package-captain-macos, or set `core` in settings.json to an hc binary";
 
 /// What's missing before the main window can open.
 pub enum Need {

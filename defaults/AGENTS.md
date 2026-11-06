@@ -98,7 +98,7 @@ If `shared.json` is invalid, Captain logs a warning and keeps it as
 ## The model: spaces, tabs, terminals
 
 Every layout shows the same world; a layout may show less, never a
-different one. Each machine keeps its spaces, tabs and splits in its core's
+different one. Each machine keeps its spaces, tabs and splits in its hc's
 `captain-app` document. Connected screens share that layout and live terminals,
 not their focus, zoom or attention. Use commands to change structure; there
 is no `spaces.json`. On simultaneous edits the newest accepted document wins
@@ -136,19 +136,19 @@ the highlighted line shows where it will land.
   the keyboard when clicked, and is saved with its tab; its `props` tell
   it what to show (a file, a folder). Closing a terminal pane ends its
   terminal, and a program exiting closes its pane, even if Captain was closed.
-  Terminal panes are kept by their machine's core (`keep: true`). A lost
-  terminal (core crash, reboot, logout) gets a shell in its last folder,
+  Terminal panes are kept by their machine's hc (`keep: true`). A lost
+  terminal (hc crash, reboot, logout) gets a shell in its last folder,
   with the same address; its original command is never run again. Splits
   and mod panes stay. An exited or killed terminal is closed, not restarted.
   Focus, zoom, recent spaces, settled tabs and seen attention stay on this screen.
-- Every terminal is a core terminal. Captain labels the ones it starts with
+- Every terminal is a hc terminal. Captain labels the ones it starts with
   `herdr.space=<id>` and `herdr.tab=<id>`. **A terminal with those
   labels shows up there**, even one you start yourself:
   `hc run --keep --label herdr.space=<id> --label herdr.tab=<id> -- claude`.
   Labels use ids local to that machine; remote ids shown by the app have a
   `<machine>/` prefix (strip it when writing labels on that machine). Adoption
-  also enables core keep; `terminal.park` removes the pane and disables keep.
-  When a core change is needed, `terminal.keep` / `terminal.park` acknowledge
+  also enables hc keep; `terminal.park` removes the pane and disables keep.
+  When a hc change is needed, `terminal.keep` / `terminal.park` acknowledge
   with `pending: true`, then apply after the machine replies; failures show a toast.
   Normal quit waits for pending terminal changes and layout writes; remote waits are bounded.
   An id Captain doesn't know becomes a new space or tab (unnamed: Captain's names).
@@ -159,7 +159,7 @@ the highlighted line shows where it will land.
   `working`, `blocked`, `idle`, or `done` = finished while the user wasn't
   looking (it becomes `idle` once they look). A space's and a tab's
   status is the most urgent of its agents: blocked > done > working > idle.
-- **Sub-agents** are terminals an agent started with `hc run`: the core
+- **Sub-agents** are terminals an agent started with `hc run`: hc
   records the starter as `parent` (see `terminals()`). They belong to their
   parent's tab without a pane; the `agents` mod shows them,
   `terminal.peek` opens one, `terminal.keep` gives one a pane.
@@ -234,14 +234,6 @@ A layout is a tree of nodes. Four types:
   terminals as it arranges them), or `{ "agent": "focused" }` (one agent's
   terminal, full size: the one chosen with `agent.focus` / `agent.next`, else
   the focused pane's agent, else the first agent).
-  Captain adds `{ "webview": { "url": "http://localhost:4000/ui", "id": "explore" } }`:
-  a web page over the block (macOS). It loads localhost only, unless
-  settings.json lists the host in `webview_hosts`, and it can't navigate
-  elsewhere or open windows. A dialog, popup, overlay window or floating block
-  over it hides the page while it's open (they draw under it). While the page
-  has the keyboard, the escape hatch and your `global` and `layout:<name>` keys
-  still work (not cmd-a/c/v/x/z, which the page keeps). `captain-app shot`
-  doesn't include the page.
 - `row` / `column`: children side by side / stacked.
 - `stack`: shows one child (`"active": "<child id>"`), with an optional
   `"header"` (a mod that draws tabs, or `"tabs"` for a plain built-in strip).
@@ -557,7 +549,7 @@ The main ones:
   splits stay there; `spaces()` gives each space's `machine`, null here),
   `space.close {id?, confirmed?}`, `space.rename {id?, name}` ("": Captain's name again),
   `space.move {id, index}`, `space.select {index | id}`, `space.next`, `space.prev`.
-  With no `argv`, the target core chooses that machine's default shell (PowerShell 7 when available on Windows).
+  With no `argv`, the target hc chooses that machine's default shell (PowerShell 7 when available on Windows).
 - Tabs: `tab.new {name?, space?, folder?, argv?, task?}` (argv: an
   agent to run, task: its first message). Agents run in your interactive
   shell (including fish), which stays open after the agent exits. A terminal
@@ -633,14 +625,11 @@ The main ones:
   Add machine lists all named ssh-config hosts in a scrollable list. Setup
   prompts open above the picker; close the setup terminal to return to the
   updated list and any machine-specific guidance. If a remote machine was rebuilt
-  or replaced and a different core answers there, its sidebar offers Connect:
+  or replaced and a different hc answers there, its sidebar offers Connect:
   explicitly forget the old identity and pair again with the same name and target.
   Other unreachable machines don't offer this.
 - Window: `window.minimize`, `window.maximize` (or back), `window.close`.
 - macOS: `app.quit`, `app.hide`, `app.hide_others`, `app.show_all`.
-- Web views: `webview.reload {id?}`, `webview.devtools {id?}` (the web
-  inspector). `id` is the webview's `id` (else its block's); without one, the
-  only web view.
 
 When the user runs a command without a required name (a key, a click), Captain
 asks them. **You never get a dialog**: pass every required argument, or the
@@ -697,7 +686,7 @@ What's about the user, never a look:
   waiting, the next launch installs it before opening a window. The first
   start after an app update also updates hc
   to the latest release of the same generation, keeping terminals running.
-  Settings → Updates keeps app and core actions together;
+  Settings → Updates keeps app and hc actions together;
   its What's new button opens the waiting update's release range, or this
   version's notes, in the What's new window. Reading never clears the waiting-update dot.
   Rare spotlight releases open What’s new after restart, once; otherwise a
@@ -742,9 +731,6 @@ What's about the user, never a look:
   `p` writes Linux primary selection. `s` is ignored; cut buffers `0`–`7`
   are treated as the system clipboard.
   Clipboard reads (`?`) are never allowed.
-- `webview_hosts`: hosts a webview block may load besides localhost, e.g.
-  `["app.captain.dev"]` (default none). Exact host names; it's here, not in a
-  layout, so a layout someone shares can't widen it.
 - `pane_scrollbars`: `false` hides the scroll position thumb at a terminal
   pane's right edge (default `true`). It shows only when the pane has
   scrollback — never on the alternate screen (editors, pagers) — and
@@ -966,7 +952,7 @@ All of it is in `herdr.d.ts`. In short:
   the first read even if it fails, and offline machines are unavailable),
   `agents()` (status, app, space, tab, pinned, focused; "done" turns "idle"
   once someone looks at it on any Captain client), `terminals()`
-  (every core terminal), `focused()`, `layout()`, `theme()` (every color by
+  (every hc terminal), `focused()`, `layout()`, `theme()` (every color by
   name: background (the terminals', cards), canvas (behind cards), chrome
   (sidebars, bars), surface, popover, raised, hover, selected, border,
   input (a stronger border), foreground, muted, dim, accent,

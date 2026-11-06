@@ -7,10 +7,10 @@
 // own field, never inferred from another.
 import { div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { theme, openOverlay, notify, run, spaces, focused, shared, setShared, exec } from "herdr";
+import { theme, openOverlay, notify, run, spaces, focused, shared, setShared, exec, knownAgents } from "herdr";
 import { api, query, watchWorkspace } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
-import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, toneOf } from "./kit/ui.js";
+import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
 import { View } from "gpui-kit";
 
 const STATES = [["", "All"], ["draft", "Draft"], ["running", "Running"], ["ready_for_review", "Ready for review"], ["decided", "Decided"]];
@@ -65,6 +65,14 @@ export default class CaptainInvestigations extends View {
     // Another space's workspace: back to the list, read from there.
     watchWorkspace(cx, (cx) => { this.open = null; this.detail = null; this.bound = undefined; this.table.load(cx); cx.notify(); });
     cx.timer.every(10000, (cx) => (this.open ? this.load(this.open, cx) : this.table.load(cx)));
+    // "Open investigation: ..." from the palette (captain-go sets shared "captain.open").
+    cx.timer.every(500, (cx) => {
+      const o = shared("captain.open");
+      if (o?.section === "investigations" && o.investigation && o.at !== this.opened) {
+        this.opened = o.at;
+        this.show(o.investigation, cx);
+      }
+    });
     // A space bound to an investigation opens it here when you switch to that space.
     cx.timer.every(1500, (cx) => {
       const bound = (shared("captain.spaces") ?? {})[focused()?.space]?.investigation ?? null;
@@ -114,6 +122,22 @@ export default class CaptainInvestigations extends View {
     });
   }
 
+  /** Start Claude Code or Codex in this space's terminal, with this investigation's prompt. */
+  askAgent(cx) {
+    cx.spawn(async (cx) => {
+      const [p, agents] = await Promise.all([api(`/api/investigations/${encodeURIComponent(this.open)}/prompt?ask=investigate`), knownAgents()]);
+      const agent = ["claude", "codex"].map((id) => agents.find((a) => a.installed && (a.id === id || a.name?.toLowerCase().startsWith(id) || a.run?.[0] === id))).find(Boolean);
+      if (!p.ok || !p.data?.prompt) return notify({ title: "Couldn't build the prompt", body: String(p.error ?? ""), level: "error" });
+      if (!agent) {
+        cx.write_to_clipboard(p.data.prompt);
+        return notify({ title: "No agent installed here", body: "The prompt is on the clipboard: paste it into Claude Code, Codex, Cursor or Devin.", level: "info" });
+      }
+      run("tab.new", { name: agent.name ?? "Agent", argv: agent.run, task: p.data.prompt });
+      run("layout.show", { id: "work" });
+      cx.notify();
+    });
+  }
+
   copyPrompt(cx) {
     cx.spawn(async (cx) => {
       const r = await api(`/api/investigations/${encodeURIComponent(this.open)}/prompt?ask=investigate`);
@@ -143,7 +167,7 @@ export default class CaptainInvestigations extends View {
         .child(div().flex_1().text_size(20).font_semibold().text_color(c.navy).child("Investigations"))
         .child(div().id("inv-search").w(260).h(32).px(10).flex().items_center().bg(c.surface).border_1().border_color(c.grey300).cursor_text()
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.search).w_full().text_size(13).text_color(c.navy)))
-        .child(Button(c, "inv-new", "New investigation", () => openOverlay({ mod: "captain-commands", kind: "dialog", width: 560, props: { path: ["investigate", "new"] } }), { kind: "primary" })))
+        .child(Button(c, "inv-new", "New investigation", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "investigation" } }), { kind: "primary" })))
       .child(Tabs(c, "inv-state", STATES.map(([id, label]) => ({ id, label })), this.state, (id, cx) => { this.state = id; this.reload(cx); }))
       .child(div().flex_1().min_h(0).child(this.table.render(c)));
   }
@@ -164,10 +188,10 @@ export default class CaptainInvestigations extends View {
       const ev = d.evidence ?? [];
       return ev.length ? Card(c, { title: `Evidence (${ev.length})` }, ...ev.map((e) => h_flex().gap(10).items_start().pb(8).border_b(1).border_color(c.rule)
         .child(Badge(c, words(e.kind), "neutral")).child(v_flex().flex_1().min_w(0).gap(2)
-          .child(div().font_family(MONO).text_size(12).text_color(c.navy).truncate().child(String(e.ref ?? "")))
+          .child(RefChip(c, e.ref))
           .when(Boolean(e.note), (x) => x.child(div().text_size(12.5).text_color(c.grey900).child(e.note))))))
         : Empty(c, "No evidence attached", "Datasets, runs, slices, queries, signals and notes attached to this investigation show here.",
-          Button(c, "ev-add", "Attach evidence", () => openOverlay({ mod: "captain-commands", kind: "dialog", width: 560, props: { path: ["investigate", "evidence"], args: { id: this.open } } })));
+          Button(c, "ev-add", "Attach evidence", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "evidence", args: { id: this.open } } })));
     }
     if (tab === "signals") {
       const sig = d.signals ?? [];
@@ -181,7 +205,7 @@ export default class CaptainInvestigations extends View {
     if (tab === "runs") {
       return runs.length ? Card(c, { title: `Runs (${runs.length})` }, ...runs.slice().reverse().map((r) => v_flex().gap(4).pb(8).border_b(1).border_color(c.rule)
         .child(h_flex().gap(8).items_center()
-          .child(div().font_family(MONO).text_size(12).text_color(c.navy).child(String(r.run ?? r.id ?? "")))
+          .child(RefChip(c, r.run ?? r.id))
           .child(Badge(c, words(r.status), toneOf(r.status)))
           .child(div().text_size(12).text_color(c.grey500).child(`rev ${r.rev ?? "?"}`))
           .child(div().flex_1())
@@ -195,7 +219,7 @@ export default class CaptainInvestigations extends View {
       ...[["Claim", dec.claim], ["Interpretation", dec.interpretation], ["Limitations", Array.isArray(dec.limitations) ? dec.limitations.join("; ") : dec.limitations], ["Next step", dec.next_step]]
         .filter(([, v]) => v).map(([k, v]) => v_flex().gap(2).child(div().text_size(11.5).font_medium().text_color(c.grey500).child(k)).child(div().text_size(13).line_height("19px").text_color(c.navy).child(String(v)))))
       : Empty(c, "No decision yet", "Only a person records the decision: continue, online test, reject or inconclusive.",
-        Button(c, "decide", "Record a decision", () => openOverlay({ mod: "captain-commands", kind: "dialog", width: 560, props: { path: ["investigate", "decide"], args: { id: this.open } } }), { kind: "primary" }));
+        Button(c, "decide", "Record a decision", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "decision", args: { id: this.open } } }), { kind: "primary" }));
   }
 
   detailView(c) {
@@ -208,6 +232,7 @@ export default class CaptainInvestigations extends View {
         .child(h_flex().child(back))
         .child(h_flex().gap(10).items_center()
           .child(div().flex_1().min_w(0).truncate().text_size(20).font_semibold().text_color(c.navy).child(d.title ?? this.open))
+          .child(Button(c, "inv-agent", "Open an agent in this space", (_e, cx) => this.askAgent(cx)))
           .child(Button(c, "inv-space", "Open a space for this investigation", (_e, cx) => this.openSpace(d, cx)))
           .child(Button(c, "inv-prompt", this.copied ? "Copied" : "Copy prompt", (_e, cx) => this.copyPrompt(cx)))
           .child(Button(c, "inv-run", "Run", (_e, cx) => this.run(cx), { kind: "primary" })))

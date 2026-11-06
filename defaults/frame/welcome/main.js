@@ -5,7 +5,7 @@
 //
 // Pages 1-3: the interface. Page 4: their work, a live checklist read from the
 // Captain Search daemon (GET /api/onboarding): each step done or next, the one
-// command that does it, and a button that runs it natively (captain-commands).
+// command behind "Show the command", and a Do it button that opens a designed form.
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar } from "gpui-base";
@@ -25,15 +25,14 @@ const SECTIONS = [
   ["send", "Handoff", "Candidates you export, serving contracts, linked deployments and their online outcomes."],
 ];
 
-// Each checklist step's command, when Captain can run it here as a form.
-const STEP_COMMAND = {
-  cloud: ["cloud", "add"],
-  data: ["data", "snapshot"],
-  pipeline: ["pipeline", "new"],
-  investigation: ["investigate", "new"],
-  run: ["investigate", "run"],
-  decision: ["investigate", "decide"],
-  agent: ["investigate", "prompt"],
+// What each checklist step's "Do it" opens: a designed form (captain-forms), or the
+// screen where it's done. The command stays behind "Show the command".
+const STEP_DO = {
+  cloud: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "cloud" } },
+  data: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "dataset" } },
+  investigation: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "investigation" } },
+  run: { mod: "captain-go", kind: "popup", width: 1, height: 1, props: { section: "investigations" } },
+  decision: { mod: "captain-go", kind: "popup", width: 1, height: 1, props: { section: "investigations" } },
 };
 
 // The key bound to an action in the captain layout or globally, as people press it.
@@ -146,7 +145,7 @@ export default class Welcome extends View {
       .child(this.title(c, "Shells on the right, when you want them", "The right side holds real terminals: zsh, Claude Code, Codex or any agent. Agents there report their status, and the sidebar's Agents list shows who needs you."))
       .child(v_flex().gap(10)
         .child(keyRow(shells ?? "Terminals", shells ? "Shows or hides the shells. So does Terminals in the sidebar." : "Terminals in the sidebar shows or hides the shells."))
-        .child(keyRow(pal ?? "Palette", "The palette: every Captain command and every cst command, by name.")))
+        .child(keyRow(pal ?? "Palette", "The palette: everything you can do and every place you can go, by name.")))
       .child(div().pt(16).child(this.para(c, "Hiding the shells keeps every session running, so an agent keeps working while you read results. Closing a pane ends the program in it.")));
   }
 
@@ -167,7 +166,8 @@ export default class Welcome extends View {
   }
 
   step(c, s, i) {
-    const path = STEP_COMMAND[s.id];
+    const todo = STEP_DO[s.id];
+    this.shownCmd ??= {};
     const first = this.steps.findIndex((x) => !x.done);
     const next = !s.done && (this.next ? this.next === s.id : i === first);
     const command = String(s.command ?? "").split("  (or:")[0];
@@ -179,12 +179,13 @@ export default class Welcome extends View {
         .child(div().flex_1().min_w(0).text_size(13.5).font_semibold().text_color(s.done ? c.grey500 : c.navy).child(s.title))
         .when(next, (e) => e.child(div().px(6).text_size(11).bg(c.blueLight).text_color(c.blue).child("next")))
         .when(Boolean(s.optional) && !s.done, (e) => e.child(div().text_size(11).text_color(c.grey500).child("optional")))
-        .when(!s.done && Boolean(path), (e) => e.child(this.button(c, `do-${s.id}`, "Do it", next, () =>
-          openOverlay({ mod: "captain-commands", kind: "dialog", width: 560, props: { path } })))))
+        .when(!s.done && Boolean(todo), (e) => e.child(this.button(c, `do-${s.id}`, "Do it", next, () => openOverlay(todo)))))
       .child(div().pl(28).text_size(12.5).text_color(c.grey900).child(s.detail ?? ""))
-      .when(!s.done && Boolean(command), (e) => e.child(div().pl(28).child(this.code(c, `cmd-${s.id}`, command))))
+      .when(!s.done && Boolean(command), (e) => e.child(div().pl(28).child(this.shownCmd[s.id]
+        ? this.code(c, `cmd-${s.id}`, command)
+        : div().id(`show-${s.id}`).text_size(12).text_color(c.blue).cursor_pointer().on_click((_e, cx) => { this.shownCmd[s.id] = true; cx.notify(); }).child("Show the command"))))
       .when(s.id === "agent", (e) => e.child(div().pl(28).child(this.para(c,
-        "Every investigation has Copy prompt: it copies a brief an agent can act on. An agent in a shell here, or in Cursor, Devin or any terminal, works with Captain through cst. Set CST_AGENT=<its name> in its environment and every record it makes says which agent made it."))));
+        "Every investigation has Copy prompt and Open an agent in this space. An agent in a terminal here, or in Cursor, Devin or any terminal, can do everything Captain can. Records it makes say which agent made them."))));
   }
 
   pageWork(c) {
@@ -199,7 +200,7 @@ export default class Welcome extends View {
       .child(this.title(c, "Your work", `${this.workspace ? `Workspace ${this.workspace}. ` : ""}From a dataset to a decision, read from your real records: a step is done only when it is.`))
       .when(empty, (e) => e.child(h_flex().gap(12).items_center().p(12).mb(6).bg(c.blueLight)
         .child(div().flex_1().min_w(0).child(this.para(c, "No data yet? The demo seeds a small catalog, queries, judgments and a baseline to try every step on.")))
-        .child(this.button(c, "demo-seed", this.seeding ? "Seeding..." : "Try the demo", true, (_e, cx) => this.seed(cx)))))
+        .child(this.button(c, "demo-seed", this.seeding ? "Setting it up..." : "Try the demo store", true, (_e, cx) => this.seed(cx)))))
       .when(Boolean(this.error), (e) => e.child(div().pb(6).text_size(12.5).text_color(c.fail).child(this.error)))
       .children(this.steps.map((s, i) => this.step(c, s, i)));
   }

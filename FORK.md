@@ -43,24 +43,9 @@ Never contacts herdr.dev:
 
 Captain features (new files where possible):
 
-**The webview patch** (one isolated feature; retire it as screens are ported to native mods). Every file it
-touches:
-- New: `src/webview.rs` (the views, URL rule, key hand-back, page messages), `src/cst.rs` (the daemon).
-- `src/layout.rs`: the `Content::Webview` variant and `WebviewSpec`.
-- `src/window.rs`: the `webviews` field, the `Content::Webview` arm of `render_block`, `render_webview`,
-  `webview_pass` (the root's last child), a `cover:<id>` canvas on each overlay, `Request::Keystroke` handling,
-  and the `webview.reload` / `webview.devtools` commands.
-- `src/mods.rs`: the `Request::Keystroke` variant. `src/commands.rs`: the two commands.
-- `src/settings.rs`: `webview_hosts`. `src/main.rs`: the module lines and `cst::stop()` at quit.
-- `Cargo.toml`, `Cargo.lock`, `THIRD-PARTY-NOTICES`: wry 0.57.1 (macOS only) and url.
-- `defaults/AGENTS.md`: the block, the commands and the setting.
-
-What it does: `{"webview": {"url", "id"}}` puts a WKWebView over a block. Localhost only, plus settings.json
-`webview_hosts`. Hidden while a dialog, popup, overlay window or floating block covers it. The page hands the
-escape hatch and global/layout keys back to the window (window-level, never a system shortcut). A page may post
-`{type: "captain:navigate", screen}` to `window.webkit.messageHandlers.captain` to switch the `sections` stack.
-`{cst}` and `{cst_token}` in a URL come from the Captain Search daemon: a live one from `serve.json` is reused
-(and never stopped), else Captain starts `cst serve --port 0` with a guard process and stops it at quit.
+**The webview patch was removed** (2026-11-06): every section became a native screen, so wry, `src/webview.rs`,
+the `{"webview": ...}` block, its commands and `webview_hosts` are gone, and the fork delta with them.
+`src/cst.rs` stays: it starts or reuses the Captain Search backend and tells mods where it is.
 
 **The Captain window:** `defaults/layouts/captain.json` and the `captain-nav` mod (Investigations, Data and
 signals, Runs, Comparisons, Handoff, a Terminals toggle that hides the shells without ending them, Settings).

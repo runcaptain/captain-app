@@ -12,9 +12,9 @@
 //   agents: false            hide the Agents section
 //   stack: "sections"        the stack the items switch
 //
-// It also publishes the daemon's commands for the palette (shared "palette.extra")
-// and the New menu (shared "captain.commands"): this mod is always shown, so it's
-// the one that stays up to date.
+// It also publishes the palette's Captain entries (shared "palette.extra"): tasks,
+// places and "Open <name>", in plain words. This mod is always shown, so it's the one
+// that keeps them current.
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, layout, props, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
@@ -43,15 +43,40 @@ function find(node, id) {
 }
 
 // Commands people make things with, for the New menu.
-const MAKES = /^(new|create|add|snapshot|import|gen|generate|sweep|publish|seed|init|link|propose)$/;
 
-/** cst commands as palette entries: each opens the native command form. */
-export function paletteEntries(list) {
-  return list.map((c) => ({
-    name: "captain.command", group: "Captain", title: `cst ${c.path.join(" ")}`,
-    words: `${c.help ?? ""} ${c.path.join(" ")}`,
-    overlay: { mod: "captain-commands", kind: "dialog", width: 560, props: { path: c.path } },
-  }));
+// The palette speaks in tasks and places, not commands (Edgar: "not a CLI wrapper").
+// Raw cst commands sit behind one "Run a cst command..." entry; agents use the CLI.
+const TASK_ENTRIES = [
+  ["investigation", "New investigation", "question hypothesis start"],
+  ["dataset", "Import a dataset", "file csv parquet sql upload catalog queries judgments"],
+  ["database", "Connect a database", "postgres snowflake bigquery mysql redshift sql"],
+  ["cloud", "Connect a cloud account", "aws gcp azure login credentials"],
+  ["compute", "Add a place to run work", "compute cloud run backtests serve"],
+  ["handoff", "Hand off a candidate", "promote deploy ship release"],
+  ["demo", "Try the demo store", "sample example data"],
+];
+const go = (section, extra) => ({ mod: "captain-go", kind: "popup", width: 1, height: 1, props: { section, ...extra } });
+
+export function staticEntries(sections) {
+  return [
+    ...TASK_ENTRIES.map(([task, title, words]) => ({ group: "Captain", title, words, overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task } } })),
+    ...sections.map((s) => ({ group: "Captain", title: `Go to ${s.label}`, words: `section ${s.label}`, overlay: go(s.id) })),
+    { name: "captain-nav.theme-light", args: {}, group: "Captain", title: "Switch to light", words: "appearance theme light mode" },
+    { name: "captain-nav.theme-dark", args: {}, group: "Captain", title: "Switch to dark", words: "appearance theme dark mode night" },
+    { name: "captain-nav.theme-system", args: {}, group: "Captain", title: "Match the system appearance", words: "appearance theme system auto" },
+    { name: "captain-nav.space-new", args: {}, group: "Captain", title: "New space for this workspace", words: "space workspace terminals" },
+    { name: "app.welcome", args: {}, group: "Captain", title: "Show the Captain tour", words: "onboarding welcome checklist start setup" },
+    { group: "Captain", title: "Cloud and compute", words: "aws gcp azure login profile region compute", overlay: { mod: "captain-cloud", kind: "dialog", width: 760, height: 640 } },
+    { group: "Captain", title: "Run a cst command...", words: "cli advanced power command", overlay: { mod: "captain-commands", kind: "dialog", width: 560, height: 560, props: { menu: "all" } } },
+  ];
+}
+
+/** "Open <name>" for datasets and investigations, from the workspace. */
+export function openEntries(datasets, investigations) {
+  return [
+    ...datasets.slice(0, 200).map((d) => ({ group: "Captain", title: `Open ${d.name}`, words: `dataset ${d.kind ?? ""}`, overlay: go("data", { dataset: d.name }) })),
+    ...investigations.slice(0, 200).map((i) => ({ group: "Captain", title: `Open investigation: ${i.title ?? i.id}`, words: `investigation ${i.state ?? ""}`, overlay: go("investigations", { investigation: i.id }) })),
+  ];
 }
 
 export default class CaptainNav extends View {
@@ -64,14 +89,7 @@ export default class CaptainNav extends View {
     cx.spawn(async (cx) => { this.appearance = await getAppearance(); cx.notify(); });
     // The onboarding, in the palette from the start (the commands join once Captain's services answer).
     if (props()?.part !== "brand") {
-      setShared("palette.extra", { ...(shared("palette.extra") ?? {}), "captain-app": [
-        { name: "app.welcome", args: {}, group: "Captain", title: "Captain: onboarding", words: "welcome tour checklist start setup" },
-        { name: "captain-nav.theme-light", args: {}, group: "Captain", title: "Theme: Light", words: "appearance light mode" },
-        { name: "captain-nav.theme-dark", args: {}, group: "Captain", title: "Theme: Dark", words: "appearance dark mode night" },
-        { name: "captain-nav.theme-system", args: {}, group: "Captain", title: "Theme: System", words: "appearance system auto" },
-        { name: "captain-nav.space-new", args: {}, group: "Captain", title: "New space for this workspace", words: "space workspace terminals" },
-        { group: "Captain", title: "Captain: Cloud and compute", words: "aws gcp azure login profile region compute targets", overlay: { mod: "captain-cloud", kind: "dialog", width: 760, height: 640 } },
-      ] });
+      setShared("palette.extra", { ...(shared("palette.extra") ?? {}), "captain-app": staticEntries(this.items()), captain: [] });
       // Commands the palette and keys send this mod (captain-nav.<name>).
       cx.spawn(async (cx) => {
         for (;;) {
@@ -119,14 +137,11 @@ export default class CaptainNav extends View {
           const r = await api(it.badge);
           this.counts[it.id] = r.ok && Array.isArray(r.data) ? r.data.length : 0;
         }
-        if (ws.ok && !this.published) {
-          const r = await api("/api/commands");
-          if (r.ok && Array.isArray(r.data)) {
-            const extra = { ...(shared("palette.extra") ?? {}), captain: paletteEntries(r.data) };
-            setShared("palette.extra", extra);
-            setShared("captain.commands", r.data.filter((c) => MAKES.test(c.path[c.path.length - 1])).map((c) => ({ path: c.path, help: c.help })));
-            this.published = true;
-          }
+        if (ws.ok && (this.tick ?? 0) % 10 === 0) {
+          const [ds, inv] = await Promise.all([api("/api/datasets"), api("/api/investigations")]);
+          const extra = { ...(shared("palette.extra") ?? {}) };
+          extra.captain = openEntries(Array.isArray(ds.data) ? ds.data : [], Array.isArray(inv.data) ? inv.data : []);
+          setShared("palette.extra", extra);
         }
       } finally {
         this.loading = false;
@@ -186,7 +201,7 @@ export default class CaptainNav extends View {
           .child(svg("mods/captain-nav/chevron-down.svg").size(12).text_color(c.grey500)))
         .child(div().id("nav-new").h(24).px(8).flex().items_center().gap(4).border_1().border_color(c.grey300).cursor_pointer()
           .text_size(12).text_color(c.navy).hover((s) => s.border_color(c.blue).text_color(c.blue)).tooltip("New")
-          .on_click(() => openOverlay({ mod: "captain-commands", kind: "popup", width: 300, height: 420, props: { menu: "new" } }))
+          .on_click(() => openOverlay({ mod: "captain-forms", kind: "popup", width: 340, height: 520, props: { menu: true } }))
           .child(svg("mods/captain-nav/plus.svg").size(12)).child("New")))
       .when(failed && !this.spacesOpen, (e) => e.child(h_flex().px(16).pb(8).gap(8).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(c.fail).tooltip(this.error ?? "").child("Captain couldn't start its services"))
@@ -274,7 +289,7 @@ export default class CaptainNav extends View {
     const text = a ? [short, a.account_hint, a.region].filter(Boolean).join(" \u00b7 ") : "No cloud connected";
     const tip = a ? (a.last_test ? (a.last_test.ok ? `Signed in as ${a.last_test.identity ?? "?"}` : `Last check failed: ${a.last_test.error ?? ""}`) : "Not checked yet") : "Connect a cloud login";
     const open = () => (a ? openOverlay({ mod: "captain-cloud", kind: "dialog", width: 760, height: 640 })
-      : openOverlay({ mod: "captain-commands", kind: "dialog", width: 560, props: { path: ["cloud", "add"] } }));
+      : openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "cloud" } }));
     return h_flex().id("cloud-chip").mx(rail ? 0 : 14).my(4).h(30).gap(8).items_center().cursor_pointer()
       .when(rail, (e) => e.w_full().justify_center()).when(!rail, (e) => e.px(8).border_1().border_color(c.grey300))
       .hover((x) => x.bg(c.surface2)).tooltip(`${text}. ${tip}`).on_click(open)

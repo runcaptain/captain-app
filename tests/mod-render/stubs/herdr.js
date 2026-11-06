@@ -9,7 +9,8 @@ export const agents = () => [];
 export const openOverlay = () => 1;
 export const closeOverlay = () => {};
 export const notify = () => {};
-export const exec = async () => ({ code: 1, stdout: '', stderr: 'no exec in tests' });
+// A test that needs real programs (forms-e2e.mjs) sets globalThis.__exec.
+export const exec = async (...a) => (globalThis.__exec ? globalThis.__exec(...a) : { code: 1, stdout: '', stderr: 'no exec in tests' });
 export const readTextFile = async () => null;
 export const home = () => '/tmp';
 export const window = () => ({ platform: 'macos', fullscreen: false });

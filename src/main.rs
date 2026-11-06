@@ -33,8 +33,7 @@ mod sprites;
 mod telemetry;
 // CAPTAIN: names, ids, paths and endpoints of this fork.
 mod brand;
-// CAPTAIN: webview blocks, and the Captain Search daemon behind them.
-mod webview;
+// CAPTAIN: the Captain Search backend Captain's screens read.
 #[cfg(unix)]
 mod cst;
 mod feedback;

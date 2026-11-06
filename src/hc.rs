@@ -188,7 +188,7 @@ impl RpcError {
 }
 impl std::fmt::Display for RpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0.get("message").and_then(Value::as_str).unwrap_or("core call failed"))?;
+        write!(f, "{}", self.0.get("message").and_then(Value::as_str).unwrap_or("hc call failed"))?;
         if let Some(hint) = self.0.pointer("/data/hint").and_then(Value::as_str) { write!(f, " ({hint})")?; }
         Ok(())
     }
@@ -310,7 +310,7 @@ impl Core {
             stdin.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"hello\",\"params\":{\"framed\":true}}\n")?;
             let mut line = String::new();
             reader.read_line(&mut line)?;
-            serde_json::from_str(&line).context("bad hello reply from core")
+            serde_json::from_str(&line).context("bad hello reply from hc")
         })();
         let hello = match hello {
             Ok(hello) => hello,
@@ -322,7 +322,7 @@ impl Core {
             }
         };
         if let Some(err) = hello.get("error") {
-            bail!("core refused hello: {err}");
+            bail!("hc refused hello: {err}");
         }
 
         let (writer, frames) = mpsc::channel::<Vec<u8>>();
@@ -384,7 +384,7 @@ impl Core {
                 let _ = tx.try_send(Stream::Lost);
             }
             for (_, tx) in r.replies.drain() {
-                let _ = tx.send(Err(json!({"message": "lost the core"})));
+                let _ = tx.send(Err(json!({"message": "lost the terminals connection"})));
             }
         })?;
         Ok(core)
@@ -408,7 +408,7 @@ impl Core {
         let (tx, rx) = mpsc::channel();
         {
             let mut routes = self.routes.lock().unwrap();
-            if routes.closed { bail!("{method}: lost the core"); }
+            if routes.closed { bail!("{method}: lost the terminals connection"); }
             routes.replies.insert(id, tx);
         }
         let req = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
@@ -418,7 +418,7 @@ impl Core {
             Ok(Err(e)) => Err(anyhow::Error::new(RpcError(e)).context(method.to_owned())),
             Err(_) => {
                 self.routes.lock().unwrap().replies.remove(&id);
-                Err(anyhow!("{method}: no reply from core"))
+                Err(anyhow!("{method}: no reply from the terminals"))
             },
         }
     }
@@ -642,7 +642,7 @@ mod tests {
             lost,
         };
         let start = std::time::Instant::now();
-        assert!(core.call("doc.get", json!({"name":"herdr-app"})).unwrap_err().to_string().contains("lost the core"));
+        assert!(core.call("doc.get", json!({"name":"herdr-app"})).unwrap_err().to_string().contains("lost the terminals connection"));
         assert!(start.elapsed() < Duration::from_secs(1));
         assert!(core.routes.lock().unwrap().replies.is_empty());
     }

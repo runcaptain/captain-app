@@ -396,7 +396,7 @@ impl TerminalView {
                 Some(attached.stream)
             }
             // Gone for good (removed, finished, unknown) versus a connection problem.
-            Err(e) if crate::hc::error_kind(&e) == Some("unavailable") || format!("{e:#}").contains("lost the core") || format!("{e:#}").contains("no reply") => {
+            Err(e) if crate::hc::error_kind(&e) == Some("unavailable") || format!("{e:#}").contains("lost the terminals connection") || format!("{e:#}").contains("no reply") => {
                 self.lost = true;
                 None
             }
@@ -1887,7 +1887,7 @@ impl Render for TerminalView {
         let grid_paint = self.grid.clone();
         let selection_view = cx.entity().downgrade();
         let (input_focus, input_view) = (self.focus.clone(), cx.entity());
-        let ended = self.ended.clone().or_else(|| self.lost.then(|| "reconnecting to core…".to_owned()));
+        let ended = self.ended.clone().or_else(|| self.lost.then(|| "Reconnecting terminals…".to_owned()));
         let search_input = self.search_open.then(|| self.search_input.clone()).flatten();
         let search_progress = self.grid.borrow().vt.search_progress();
         let search_label = if self.search_query.is_empty() {
