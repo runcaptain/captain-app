@@ -49,3 +49,14 @@ no Captain window was opened. The first supervised launch must check each of the
 - Each OS window keeps its own web views. Two windows showing the same layout get two pages.
 - Linux and Windows show "web views need macOS in this build" in the block.
 - wry adds ~70 crates to Cargo.lock (most for other platforms) and 3 MPL-2.0 entries to THIRD-PARTY-NOTICES.
+
+## Daemon and page messages (step 4)
+
+- Captain reuses a daemon listed in serve.json when its pid lives and its port answers, and never stops one it
+  didn't start. If that daemon goes away while Captain runs, the pages show a load error until a reload; the
+  state isn't re-checked.
+- wry gives pages only `window.ipc`. The page script adds `window.webkit.messageHandlers.captain` as a relay.
+  If WebKit refuses the extra property, `captain:navigate` silently does nothing: check on first launch.
+- Live theme changes (`captain:theme`) are not sent yet. Pages load with `theme=system`.
+- OSC 7501 (agent status): untouched. src/model.rs, src/programs.rs, src/terminal.rs and src/vt.rs are
+  identical to upstream.

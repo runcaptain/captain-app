@@ -51,56 +51,56 @@
     {
       "id": "sections",
       "type": "stack",
-      "active": "explore",
+      "active": "investigations",
       "min": 520,
       "children": [
         {
-          "id": "explore",
+          "id": "investigations",
           "type": "block",
           "content": {
             "webview": {
-              "url": "{cst}/ui/explore?embed=1",
-              "id": "explore"
+              "url": "{cst}/?embedded=1&screen=investigations&theme=system#token={cst_token}",
+              "id": "investigations"
             }
           }
         },
         {
-          "id": "pipelines",
+          "id": "data",
           "type": "block",
           "content": {
             "webview": {
-              "url": "{cst}/ui/pipelines?embed=1",
-              "id": "pipelines"
+              "url": "{cst}/?embedded=1&screen=data&theme=system#token={cst_token}",
+              "id": "data"
             }
           }
         },
         {
-          "id": "evaluate",
+          "id": "runs",
           "type": "block",
           "content": {
             "webview": {
-              "url": "{cst}/ui/evaluate?embed=1",
-              "id": "evaluate"
+              "url": "{cst}/?embedded=1&screen=runs&theme=system#token={cst_token}",
+              "id": "runs"
             }
           }
         },
         {
-          "id": "deploys",
+          "id": "comparisons",
           "type": "block",
           "content": {
             "webview": {
-              "url": "{cst}/ui/deploys?embed=1",
-              "id": "deploys"
+              "url": "{cst}/?embedded=1&screen=comparisons&theme=system#token={cst_token}",
+              "id": "comparisons"
             }
           }
         },
         {
-          "id": "workflows",
+          "id": "handoff",
           "type": "block",
           "content": {
             "webview": {
-              "url": "{cst}/ui/workflows?embed=1",
-              "id": "workflows"
+              "url": "{cst}/?embedded=1&screen=handoff&theme=system#token={cst_token}",
+              "id": "handoff"
             }
           }
         }

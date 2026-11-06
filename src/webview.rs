@@ -120,6 +120,19 @@ pub fn forwarded_keys(listing: &[(String, String, String)], layout: &str) -> Vec
     out.into_iter().collect()
 }
 
+/// The sections a page may switch to (the `sections` stack in layouts/captain.json).
+pub const SECTIONS: &[&str] = &["investigations", "data", "runs", "comparisons", "handoff"];
+
+/// A message the page posted to `messageHandlers.captain`, as a command to run.
+/// Only `captain:navigate` to a known section does anything.
+pub fn page_message(msg: &serde_json::Value) -> Option<(String, serde_json::Value)> {
+    if msg.get("type")?.as_str()? != "captain:navigate" {
+        return None;
+    }
+    let screen = msg.get("screen")?.as_str()?;
+    SECTIONS.contains(&screen).then(|| ("layout.select".to_owned(), serde_json::json!({ "stack": "sections", "child": screen })))
+}
+
 /// Is this view under something GPUI draws (which it would hide)?
 pub fn covered(view: &Bounds<Pixels>, covers: &[Bounds<Pixels>]) -> bool {
     covers.iter().any(|c| c.intersects(view) && c.size.width.as_f32() > 0.0 && c.size.height.as_f32() > 0.0)
@@ -150,6 +163,14 @@ fn page_script(keys: &[String]) -> String {
     window.ipc.postMessage(JSON.stringify({{ key: s }}));
   }}, true);
   window.__captainKeys = (list) => {{ keys.clear(); for (const k of list) keys.add(k); }};
+  // The React app posts {{type: "captain:navigate", ...}} to messageHandlers.captain.
+  // wry only gives pages window.ipc, so relay that handler into it.
+  const relay = {{ postMessage: (m) => window.ipc.postMessage(JSON.stringify({{ captain: m }})) }};
+  try {{
+    const h = window.webkit && window.webkit.messageHandlers;
+    if (h && !h.captain) Object.defineProperty(h, "captain", {{ value: relay }});
+    else if (!window.webkit) window.webkit = {{ messageHandlers: {{ captain: relay }} }};
+  }} catch (_) {{}}
 }})();"#
     )
 }
@@ -361,6 +382,10 @@ mod imp {
                 })
                 .with_ipc_handler(move |req| {
                     let Ok(msg) = serde_json::from_str::<serde_json::Value>(req.body()) else { return };
+                    if let Some((name, args)) = msg.get("captain").and_then(page_message) {
+                        crate::mods::request(crate::mods::Request::Run { name, args });
+                        return;
+                    }
                     let Some(key) = msg.get("key").and_then(|k| k.as_str()) else { return };
                     // Only keys the window bound: a page can't press anything else.
                     if allowed_keys.borrow().contains(key) {
@@ -502,6 +527,15 @@ mod tests {
         let s = page_script(&["cmd-k".into(), "ctrl-alt-shift-escape".into()]);
         assert!(s.contains(r#"new Set(["cmd-k","ctrl-alt-shift-escape"])"#), "{s}");
         assert!(s.contains("window.ipc.postMessage"));
+    }
+
+    #[test]
+    fn a_page_can_switch_sections_and_nothing_else() {
+        use serde_json::json;
+        assert_eq!(page_message(&json!({"type": "captain:navigate", "screen": "runs", "tab": "x"})), Some(("layout.select".into(), json!({"stack": "sections", "child": "runs"}))));
+        assert_eq!(page_message(&json!({"type": "captain:navigate", "screen": "settings"})), None);
+        assert_eq!(page_message(&json!({"type": "captain:run", "screen": "runs"})), None);
+        assert!(page_script(&[]).contains("messageHandlers"));
     }
 
     #[test]

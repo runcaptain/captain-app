@@ -42,16 +42,35 @@ Never contacts herdr.dev:
 - Release-note media is not fetched. The bundled notes are Herdr's and link to media.herdr.dev.
 
 Captain features (new files where possible):
-- Webview blocks (`src/webview.rs`): `{"webview": {"url", "id"}}` puts a WKWebView over a block. Localhost only,
-  plus settings.json `webview_hosts`. Hidden while a dialog, popup, overlay window or floating block covers it.
-  The page hands the escape hatch and global/layout keys back to the window. Commands `webview.reload` and
-  `webview.devtools`. Upstream touch points: `Content::Webview` (layout.rs), `Request::Keystroke` (mods.rs),
-  a cover canvas on each overlay and the end-of-frame pass (window.rs).
-- The Captain Search daemon (`src/cst.rs`): `{cst}` and `{cst_token}` in a webview URL start `cst serve --port 0`
-  on first use, with a guard process that stops it if Captain dies. Stopped at quit.
-- The `captain` layout (`defaults/layouts/captain.json`) and the `captain-nav` mod. It's the default layout, and
-  where the escape hatch goes back to (`brand::DEFAULT_LAYOUT`). Herdr's `main` is shipped as "Spaces".
-- Shipped mods and frame screens say Captain and show the Captain icon (`frame/welcome/captain.png`).
+
+**The webview patch** (one isolated feature; retire it as screens are ported to native mods). Every file it
+touches:
+- New: `src/webview.rs` (the views, URL rule, key hand-back, page messages), `src/cst.rs` (the daemon).
+- `src/layout.rs`: the `Content::Webview` variant and `WebviewSpec`.
+- `src/window.rs`: the `webviews` field, the `Content::Webview` arm of `render_block`, `render_webview`,
+  `webview_pass` (the root's last child), a `cover:<id>` canvas on each overlay, `Request::Keystroke` handling,
+  and the `webview.reload` / `webview.devtools` commands.
+- `src/mods.rs`: the `Request::Keystroke` variant. `src/commands.rs`: the two commands.
+- `src/settings.rs`: `webview_hosts`. `src/main.rs`: the module lines and `cst::stop()` at quit.
+- `Cargo.toml`, `Cargo.lock`, `THIRD-PARTY-NOTICES`: wry 0.57.1 (macOS only) and url.
+- `defaults/AGENTS.md`: the block, the commands and the setting.
+
+What it does: `{"webview": {"url", "id"}}` puts a WKWebView over a block. Localhost only, plus settings.json
+`webview_hosts`. Hidden while a dialog, popup, overlay window or floating block covers it. The page hands the
+escape hatch and global/layout keys back to the window (window-level, never a system shortcut). A page may post
+`{type: "captain:navigate", screen}` to `window.webkit.messageHandlers.captain` to switch the `sections` stack.
+`{cst}` and `{cst_token}` in a URL come from the Captain Search daemon: a live one from `serve.json` is reused
+(and never stopped), else Captain starts `cst serve --port 0` with a guard process and stops it at quit.
+
+**The Captain window:** `defaults/layouts/captain.json` and the `captain-nav` mod (Investigations, Data and
+signals, Runs, Comparisons, Handoff, a Terminals toggle that hides the shells without ending them, Settings).
+It's the default layout and the escape hatch's target (`brand::DEFAULT_LAYOUT`). Herdr's `main` ships as
+"Spaces". New sections are built as native gpui-kit mods first; the web view only carries existing screens.
+
+**Visible strings in shipped mods and frame screens** say Captain and show the Captain icon
+(`frame/welcome/captain.png`): welcome, settings, palette, What's New, help, menu, feedback, the spaces and
+workspace-chrome mods, machine-add. These are single-word edits in upstream files, because the strings are
+literals there; expect small merge conflicts in them.
 
 Kept as upstream, on purpose:
 - The mod module name `herdr` and `herdr.d.ts`, so upstream mods run unchanged.

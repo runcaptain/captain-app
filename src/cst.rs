@@ -7,6 +7,11 @@
 //! stopped with the app. A small watcher process stops it too when the app dies
 //! by any route (a crash, SIGKILL), because it holds a pipe only the app writes.
 //! Ported from the Captain Search Tools Tauri shell (app/src-tauri/src/lib.rs).
+//!
+//! A daemon that is already up is reused: `cst serve` writes `serve.json`
+//! (`{port, token, pid, ui}`) in its home (`$CST_HOME`, else
+//! ~/.config/captain-search), and the Tauri app's daemon serves the same
+//! workspace. Captain only ever stops a daemon it started itself.
 
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Read};
@@ -61,10 +66,42 @@ pub fn parse_discovery(line: &str) -> Option<(u16, String)> {
     Some((port, token))
 }
 
-/// Start the daemon once, in the background. Calls `ready` when its state settles.
+fn serve_json() -> Option<PathBuf> {
+    let home = std::env::var_os("CST_HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/captain-search")))?;
+    Some(home.join("serve.json"))
+}
+
+/// `serve.json` as `(port, token, pid)`.
+pub fn parse_serve_json(text: &str) -> Option<(u16, String, i32)> {
+    let (port, token) = parse_discovery(text)?;
+    let v: Value = serde_json::from_str(text).ok()?;
+    let pid = i32::try_from(v.get("pid")?.as_u64()?).ok().filter(|p| *p > 0)?;
+    Some((port, token, pid))
+}
+
+/// A daemon someone else started that is still up: its pid lives and its port answers.
+fn running() -> Option<(u16, String)> {
+    let (port, token, pid) = parse_serve_json(&std::fs::read_to_string(serve_json()?).ok()?)?;
+    if unsafe { libc::kill(pid, 0) } != 0 {
+        return None;
+    }
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(300)).ok()?;
+    Some((port, token))
+}
+
+/// Start the daemon once, in the background, unless one is up. Calls `ready` when its state settles.
 pub fn ensure(ready: impl Fn() + Send + 'static) {
     let mut d = DAEMON.lock().unwrap();
     if d.state != State::Idle {
+        return;
+    }
+    if let Some((port, token)) = running() {
+        // Not ours: reuse it, never stop it.
+        d.state = State::Ready { port, token };
+        drop(d);
+        ready();
         return;
     }
     let Some(bin) = find() else {
@@ -189,6 +226,13 @@ mod tests {
         assert_eq!(parse_discovery("no config found"), None);
         assert_eq!(parse_discovery(r#"{"port": 0, "token": "t"}"#), None);
         assert_eq!(parse_discovery(r#"{"port": 70000, "token": "t"}"#), None);
+    }
+
+    #[test]
+    fn reads_serve_json() {
+        assert_eq!(parse_serve_json(r#"{"port": 4100, "token": "t", "pid": 77, "ui": true}"#), Some((4100, "t".into(), 77)));
+        assert_eq!(parse_serve_json(r#"{"port": 4100, "token": "t"}"#), None);
+        assert_eq!(parse_serve_json("{"), None);
     }
 
     #[test]

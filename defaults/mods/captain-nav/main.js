@@ -1,17 +1,19 @@
-// CAPTAIN: the Captain side nav. Five sections; each is a child of the
-// "sections" stack in layouts/captain.json (a webview block today, a native
-// mod later). Clicking one runs layout.select, like any key or mod could.
+// CAPTAIN: the Captain side nav. Five sections (docs/product/design-from-user-stories.md
+// in captain-ide); each is a child of the "sections" stack in layouts/captain.json
+// (a webview block today, a native mod later). Clicking one runs layout.select,
+// like any key or agent could. Terminals toggles the shells column: hiding it
+// keeps every session running.
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, window, layout, props } from "herdr";
 
 const STACK = "sections";
 const SECTIONS = [
-  { id: "explore", label: "Explore", icon: "compass" },
-  { id: "pipelines", label: "Pipelines", icon: "workflow" },
-  { id: "evaluate", label: "Evaluate", icon: "flask-conical" },
-  { id: "deploys", label: "Deploys", icon: "rocket" },
-  { id: "workflows", label: "Workflows", icon: "waypoints" },
+  { id: "investigations", label: "Investigations", icon: "search" },
+  { id: "data", label: "Data and signals", icon: "database" },
+  { id: "runs", label: "Runs", icon: "play" },
+  { id: "comparisons", label: "Comparisons", icon: "git-compare" },
+  { id: "handoff", label: "Handoff", icon: "send" },
 ];
 
 function find(node, id) {
@@ -50,6 +52,7 @@ export default class CaptainNav extends View {
         .children(SECTIONS.map(s => this.row(t, `nav-${s.id}`, s.icon, s.label, s.id === active,
           () => run("layout.select", { stack: STACK, child: s.id })))))
       .child(v_flex().flex_none().px(8).pt(4).pb(8).border_t(1).border_color(t.border)
+        .child(this.row(t, "nav-terminals", "terminal", "Terminals", !find(layout(), "work")?.hidden, () => run("layout.toggle", { id: "work" })))
         .child(this.row(t, "nav-settings", "settings", "Settings", false, () => run("app.settings"))));
   }
 }

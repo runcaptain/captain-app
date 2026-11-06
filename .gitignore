@@ -2,3 +2,6 @@
 /dist
 /.brain
 /AGENTS.local.md
+# CAPTAIN: written by `captain-app check` into a mod folder; per user, not shipped.
+/defaults/mods/*/gpui-kit.d.ts
+/defaults/mods/*/jsconfig.json

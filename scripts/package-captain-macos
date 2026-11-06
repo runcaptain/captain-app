@@ -1,0 +1,41 @@
+#!/bin/bash
+# CAPTAIN: build dist/Captain.app. It only builds: it doesn't install, register
+# with Launch Services, link the CLI or open the app. Ad-hoc signed (no
+# notarization), so it runs on this Mac only. See FORK.md.
+set -euo pipefail
+
+[[ $(uname -s) == Darwin ]] || { echo 'Captain.app builds on macOS only.' >&2; exit 1; }
+cd "$(dirname "$0")/.."
+version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+cargo build --release --locked --bin captain-app
+
+app=dist/Captain.app
+rm -rf "$app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp target/release/captain-app "$app/Contents/MacOS/Captain"
+cp assets/icons/Captain.icns "$app/Contents/Resources/Captain.icns"
+cp LICENSE NOTICE THIRD-PARTY-NOTICES "$app/Contents/Resources/"
+cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleExecutable</key><string>Captain</string>
+    <key>CFBundleIdentifier</key><string>dev.captain.app</string>
+    <key>CFBundleName</key><string>Captain</string>
+    <key>CFBundleDisplayName</key><string>Captain</string>
+    <key>CFBundleIconFile</key><string>Captain</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>$version</string>
+    <key>CFBundleVersion</key><string>$version</string>
+    <key>NSHumanReadableCopyright</key><string>Captain is a modified version of Herdr (https://github.com/herdrdev/herdr-app), Apache 2.0.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Terminal programs running in Captain can use the microphone, for example for voice input.</string>
+    <key>NSCameraUsageDescription</key><string>Terminal programs running in Captain can use the camera.</string>
+    <key>NSAppleEventsUsageDescription</key><string>Terminal programs running in Captain can use AppleScript to control other apps.</string>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>LSMinimumSystemVersion</key><string>11.0</string>
+</dict></plist>
+PLIST
+plutil -lint "$app/Contents/Info.plist" >/dev/null
+codesign --force --sign - "$app"
+echo "Built $app ($version). Not installed or opened."
