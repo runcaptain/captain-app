@@ -13,4 +13,4 @@ export const exec = async () => ({ code: 1, stdout: '', stderr: 'no exec in test
 export const readTextFile = async () => null;
 export const home = () => '/tmp';
 export const window = () => ({ platform: 'macos', fullscreen: false });
-export const focused = () => true;
+export const focused = () => ({ space: globalThis.__space ?? "s1" });
