@@ -9,6 +9,7 @@ import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
+import { metricWords } from "./kit/words.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
 const enc = (name) => name.split("/").map(encodeURIComponent).join("/");
@@ -85,7 +86,7 @@ function backtestPrompt(name, b, r) {
   return [
     `In Captain, look at the backtest ${name}: it compares ${(b.arms ?? []).map(bare).join(" against ")}.`,
     b.preregistration?.hypothesis ? `The hypothesis was: ${b.preregistration.hypothesis}` : "",
-    p ? `On ${p.metric}, B minus A is ${p.delta} with a 95% interval of [${p.ci_low}, ${p.ci_high}], verdict ${p.verdict}.` : "",
+    p ? `On ${metricWords(p.metric)}, B minus A is ${p.delta} with a 95% interval of [${p.ci_low}, ${p.ci_high}], verdict ${p.verdict}.` : "",
     "Explain what drives the difference: which queries moved and why, and whether the result can be trusted.",
     "Use the cst CLI to read the run. Change nothing without asking me.",
   ].filter(Boolean).join(" ");
@@ -410,20 +411,20 @@ export default class CaptainRuns extends View {
     return v_flex().gap(10)
       .when(!!p, (e) => e.child(h_flex().flex_wrap().gap(10).items_center().p(12).border_1().border_color(c.rule)
         .child(this.icon(p.delta > 0 ? "up" : p.delta < 0 ? "down" : "flat", 16, p.verdict === "win" ? c.blue : p.verdict === "loss" ? c.fail : c.grey500))
-        .child(div().text_size(13).font_medium().child(`${p.metric}, B minus A`))
+        .child(div().id("bt-primary").text_size(13).font_medium().tooltip(p.metric).child(`${metricWords(p.metric)}, B minus A`))
         .child(div().text_size(14).font_family(MONO).child(fmtD(p.delta)))
         .child(div().text_size(12).font_family(MONO).text_color(c.grey900).child(`[${fmtD(p.ci_low)}, ${fmtD(p.ci_high)}]`))
         .child(this.badge(c, p.verdict, p.verdict))
         .when(!!p.evidence, (e) => e.child(this.badge(c, p.evidence)))
         .child(div().flex_1())
         .child(div().text_size(12).text_color(c.grey500).child([r.wall_s != null ? `ran in ${Math.round(r.wall_s)} s` : null, r.cost_usd != null ? `cost $${Number(r.cost_usd).toFixed(2)}` : null].filter(Boolean).join(" · ")))))
-      .child(div().id("arm-table-x").w_full().overflow_x_scrollbar().child(v_flex().min_w(200 + cols.length * 92).border_1().border_color(c.rule)
+      .child(div().id("arm-table-x").w_full().overflow_x_scrollbar().child(v_flex().min_w(200 + cols.length * 104).border_1().border_color(c.rule)
         .child(h_flex().h(28).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().whitespace_nowrap()
           .child(div().flex_1().min_w(200).px(10).child("Arm"))
-          .children(cols.map((m) => div().w(92).flex_none().px(8).text_right().truncate().child(m))))
+          .children(cols.map((m) => div().id(`armh-${m}`).w(104).flex_none().px(8).text_right().truncate().tooltip(m).child(metricWords(m)))))
         .children((r.arms ?? []).map((a, i) => h_flex().id(`arm-${i}`).h(30).border_b(1).border_color(c.rule).text_size(12.5).items_center().whitespace_nowrap()
           .child(h_flex().flex_1().min_w(200).px(10).gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(named(c, a.arm)))
-          .children(metrics.map((m) => div().w(92).flex_none().px(8).text_right().font_family(MONO).child(a.offline?.[m] !== undefined ? Number(a.offline[m]).toFixed(4) : "")))
+          .children(metrics.map((m) => div().w(104).flex_none().px(8).text_right().font_family(MONO).child(a.offline?.[m] !== undefined ? Number(a.offline[m]).toFixed(4) : "")))
           .child(div().w(92).flex_none().px(8).text_right().font_family(MONO).text_color((a.judged_at_10 ?? 1) < 0.9 ? c.fail : c.navy).child(a.judged_at_10 != null ? `${Math.round(a.judged_at_10 * 100)}%` : "none"))
           .child(div().w(92).flex_none().px(8).text_right().truncate().font_family(MONO).text_color(a.cost?.serve_usd_per_1k != null ? c.navy : c.grey500).child(a.cost?.serve_usd_per_1k != null ? `$${Number(a.cost.serve_usd_per_1k).toFixed(4)}` : "none"))))))
       .child(h_flex().gap(8)

@@ -1,5 +1,8 @@
 # Herdr
 
+<!-- CAPTAIN: pointer to the fork's own docs -->
+> **This is Captain, a fork of Herdr.** To build and try Captain, read [docs/captain/TRY.md](docs/captain/TRY.md). What the fork changes is in [FORK.md](FORK.md).
+
 Herdr is a desktop app for terminals and coding agents. Keep work in spaces, see which agents need you, and leave terminals running when you close the window.
 
 ## Install

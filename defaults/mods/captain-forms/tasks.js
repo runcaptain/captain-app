@@ -202,10 +202,10 @@ export const TASKS = [
       { key: "depth", label: "Results per query", default: "10" },
       { key: "sample", label: "How many queries", optional: true, placeholder: "all of them" },
     ],
-    submit: async (v) => ok(await run(["grade", "queue"], {
+    submit: async (v) => ok(await api("/api/grading", { body: {
       name: v.name.trim(), queries: v.queries, pipelines: [v.a, v.b].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(","),
       depth: Number(v.depth) || 10, ...(Number(v.sample) > 0 ? { sample: Number(v.sample) } : {}),
-    }), "Queue ready. Grade it in Runs, under Grading."),
+    } }), "Queue ready. Grade it in Runs, under Grading."),
   },
   {
     id: "handoff", label: "Hand off a candidate", icon: "send",

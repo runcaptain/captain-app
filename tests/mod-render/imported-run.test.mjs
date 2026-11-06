@@ -33,9 +33,9 @@ let text = h.text();
 if (process.env.SHOW) console.log('overview ::', text.replace(/\s+/g, ' ').slice(0, 700));
 assert.ok(globalThis.__asked.some((p) => /^\/api\/runs\/demos\/aptdeco\/ab6c-seg\?v=0/.test(p)), `opened v0: ${globalThis.__asked.join(' ')}`);
 assert.ok(!/Loading/.test(text), 'not stuck loading');
-assert.ok(text.includes('conversion.rel'), 'comparisons from the record');
+assert.ok(text.includes('Conversion (relative)') && !text.includes('conversion.rel'), 'comparisons from the record, in words');
 assert.ok(/imported/i.test(text), 'says it was imported');
-assert.ok(text.indexOf('imported from a readout') < text.indexOf('conversion.rel'), 'warnings above the result');
+assert.ok(text.includes('Imported from a readout: no per-query rankings') && text.indexOf('Imported from a readout: no per-query rankings') < text.indexOf('Conversion (relative), B minus A'), 'warnings above the result');
 assert.ok(!/stored rankings|HTTP 400/.test(text), 'no backend error on the overview');
 for (const t of ['tab-queries', 'tab-segments', 'tab-surfaces']) {
   await h.click(t);
