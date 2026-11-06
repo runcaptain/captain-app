@@ -32,6 +32,15 @@ export function toneOf(state) {
   return "neutral";
 }
 
+/** A versioned thing ("makro-catalog@v3") as its name and a version chip, never raw syntax. */
+export function RefChip(c, ref) {
+  const m = String(ref ?? "").match(/^(.*)@v?(\d+)$/);
+  const name = m ? m[1] : String(ref ?? "");
+  return h_flex().min_w(0).gap(6).items_center()
+    .child(div().min_w(0).truncate().text_size(13).text_color(c.navy).child(name))
+    .when(Boolean(m), (e) => e.child(Badge(c, `v${m[2]}`, "neutral")));
+}
+
 /** A button. kind: primary, secondary or quiet. */
 export function Button(c, id, label, onClick, { kind = "secondary", disabled = false, small = false } = {}) {
   const h = small ? 26 : 32;
