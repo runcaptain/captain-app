@@ -74,10 +74,7 @@
           "id": "runs",
           "type": "block",
           "content": {
-            "webview": {
-              "url": "{cst}/?embedded=1&screen=runs&theme=system#token={cst_token}",
-              "id": "runs"
-            }
+            "mod": "captain-runs"
           }
         },
         {
