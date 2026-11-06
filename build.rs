@@ -9,8 +9,13 @@
 
 use std::path::Path;
 
+// CAPTAIN: folders Captain doesn't ship (Herdr-branded: "Herdr 98").
+const NOT_SHIPPED: &[&str] = &["win98"];
+
 fn walk(dir: &Path, base: &Path, root: &Path, out: &mut Vec<String>) {
-    let mut entries: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).collect();
+    let mut entries: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path())
+        .filter(|p| !(p.is_dir() && p.parent() == Some(root) && p.file_name().is_some_and(|n| NOT_SHIPPED.iter().any(|s| n == *s))))
+        .collect();
     entries.sort();
     for p in entries {
         if p.is_dir() {

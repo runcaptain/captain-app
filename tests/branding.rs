@@ -1,0 +1,179 @@
+//! CAPTAIN: no Herdr branding anywhere a person can see it.
+//!
+//! Scans what Captain ships and shows: every shipped mod, frame screen, layout,
+//! theme and doc under defaults/ (as embedded by build.rs, so not the
+//! NOT_SHIPPED folders), the agent skill, and the user-facing strings in src/.
+//! Any /herdr/i left after removing the allowed spots fails the test, with the
+//! file and line.
+//!
+//! Allowed, because they are attribution or identifiers people don't read as
+//! the product's name (see FORK.md):
+//! - the notice: "a modified version of Herdr (https://github.com/herdrdev/herdr-app)";
+//! - the mod module `herdr` (`from "herdr"`, `herdr.d.ts`): renaming it breaks every mod;
+//! - `herdr-core`, the terminal engine's real binary and package name, which a person
+//!   has to type to install or find it, and its install URL on the setup screen;
+//! - `herdr.<label>` terminal labels shared with the core, and `HERDR_*` variables;
+//! - GPUI key-context names (`"Herdr"`, `"Herdr layout = {}"`), which never render.
+
+use std::path::{Path, PathBuf};
+
+const ALLOWED: &[&str] = &[
+    r"modified version of Herdr \(https://github\.com/herdrdev/herdr-app\)",
+    r#"from "herdr""#,
+    r"from 'herdr'",
+    r"herdr\.d\.ts",
+    r"`herdr`",
+    r"The `herdr` module",
+    r"herdr-core",
+    r"Herdr Core\.app",
+    r"herdr\.(space|tab|pinned|right-click)",
+    r"HERDR_[A-Z0-9_]+",
+    r"dev\.herdr\.core",
+];
+
+/// Folders build.rs doesn't ship (keep in step with NOT_SHIPPED there).
+const NOT_SHIPPED: &[&str] = &["defaults/mods/win98", "defaults/layouts/win98.json", "defaults/layouts/win98.svg"];
+
+/// Files on their way out, each with the commit that removes it. Keep this empty.
+const PENDING: &[&str] = &[
+    // Herdr's welcome; the Captain onboarding replaces it.
+    "defaults/frame/welcome/main.js",
+];
+
+fn root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() { walk(&p, out) } else { out.push(p) }
+    }
+}
+
+fn rel(p: &Path) -> String {
+    p.strip_prefix(root()).unwrap().to_string_lossy().replace('\\', "/")
+}
+
+/// Text a person can read in this file: JS without comments, Rust string
+/// literals outside tests, everything in Markdown, JSON and .d.ts files.
+fn visible(path: &str, text: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    if path.ends_with(".rs") {
+        let lit = fancy_regex::Regex::new(r#""(?:[^"\\]|\\.)*""#).unwrap();
+        for (i, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("#[cfg(test)]") {
+                break;
+            }
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            for m in lit.find_iter(line).flatten() {
+                let s = m.as_str();
+                if s == "\"Herdr\"" || s.starts_with("\"Herdr layout = ") {
+                    continue;
+                }
+                out.push((i + 1, s.to_owned()));
+            }
+        }
+        return out;
+    }
+    let js = path.ends_with(".js") || path.ends_with(".ts") && !path.ends_with(".d.ts");
+    let mut in_block = false;
+    for (i, line) in text.lines().enumerate() {
+        let mut l = line.to_owned();
+        if js {
+            if in_block {
+                match l.find("*/") { Some(e) => { l = l[e + 2..].to_owned(); in_block = false } None => continue }
+            }
+            if let Some(s) = l.find("/*") {
+                match l[s..].find("*/") { Some(e) => l.replace_range(s..s + e + 2, ""), None => { l.truncate(s); in_block = true } }
+            }
+            if l.trim_start().starts_with("//") {
+                continue;
+            }
+            // A trailing comment after code (not inside a string like "https://").
+            if let Some(c) = l.find(" // ") { l.truncate(c) }
+        }
+        out.push((i + 1, l));
+    }
+    out
+}
+
+fn hits(path: &str, text: &str) -> Vec<String> {
+    let allowed: Vec<fancy_regex::Regex> = ALLOWED.iter().map(|a| fancy_regex::Regex::new(a).unwrap()).collect();
+    // In Rust only the product word, the site and the CLI's message prefix can
+    // reach a person; lowercase herdr-* there are temp names and protocol markers.
+    let herdr = fancy_regex::Regex::new(if path.ends_with(".rs") { r"Herdr|herdr\.dev|herdr-app:" } else { r"(?i)herdr" }).unwrap();
+    let mut out = Vec::new();
+    for (n, mut line) in visible(path, text) {
+        for a in &allowed {
+            line = a.replace_all(&line, "").into_owned();
+        }
+        if path == "src/setup.rs" {
+            line = line.replace("releases.herdr.dev/core/install", "");
+        }
+        // Matching release-note URLs, never fetched (brand::releases is unset).
+        if path == "src/update_notes.rs" {
+            line = line.replace("https://media.herdr.dev/", "");
+        }
+        if herdr.is_match(&line).unwrap() {
+            out.push(format!("{path}:{n}: {}", line.trim()));
+        }
+    }
+    out
+}
+
+#[test]
+fn nothing_a_person_sees_says_herdr() {
+    let mut files = Vec::new();
+    walk(&root().join("defaults"), &mut files);
+    walk(&root().join("src"), &mut files);
+    let mut found = Vec::new();
+    for f in files {
+        let r = rel(&f);
+        if NOT_SHIPPED.iter().any(|n| r.starts_with(n)) || PENDING.contains(&r.as_str()) {
+            continue;
+        }
+        let shown = r.starts_with("defaults/") || r == "src/SKILL.md" || r.ends_with(".rs");
+        if !shown || r.contains("_tests.rs") || r.ends_with("tests.rs") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&f) else { continue };
+        found.extend(hits(&r, &text));
+    }
+    assert!(found.is_empty(), "Herdr branding a person can see ({}):\n{}", found.len(), found.join("\n"));
+}
+
+#[test]
+fn no_sheep_ships() {
+    let mut files = Vec::new();
+    walk(&root().join("defaults"), &mut files);
+    for f in &files {
+        let r = rel(f);
+        if NOT_SHIPPED.iter().any(|n| r.starts_with(n)) {
+            continue;
+        }
+        let name = f.file_name().unwrap().to_string_lossy().to_lowercase();
+        assert!(!name.contains("herdr") || name == "herdr.d.ts", "{r}: a Herdr asset ships");
+    }
+    // Upstream's release scripts keep their file names; the bytes are the Captain C.
+    let same = |a: &str, b: &str| std::fs::read(root().join(a)).unwrap() == std::fs::read(root().join(b)).unwrap();
+    assert!(same("assets/icons/Herdr.icns", "assets/icons/Captain.icns"));
+    assert!(same("assets/icons/herdr-app.ico", "assets/icons/captain-app.ico"));
+    assert!(same("assets/icons/herdr-ui-icon-clean.png", "assets/icons/captain-ui-icon.png"));
+    assert!(same("assets/icons/herdr-ui-icon-clean.svg", "assets/icons/captain-ui-icon.svg"));
+}
+
+#[test]
+fn the_scanner_catches_branding_and_lets_identifiers_through() {
+    assert_eq!(hits("defaults/mods/x/main.js", "div().child(\"Welcome to Herdr\")").len(), 1);
+    assert!(hits("defaults/mods/x/main.js", "// Herdr draws this\nimport { run } from \"herdr\";").is_empty());
+    assert!(hits("defaults/AGENTS.md", "Captain is a modified version of Herdr (https://github.com/herdrdev/herdr-app), Apache 2.0.").is_empty());
+    assert_eq!(hits("defaults/AGENTS.md", "share at herdr.dev/mods").len(), 1);
+    assert!(hits("src/x.rs", "let c = key_context(\"Herdr\");\n// Herdr\n").is_empty());
+    assert_eq!(hits("src/x.rs", "fail(\"no Herdr window\")").len(), 1);
+    assert!(hits("src/x.rs", "#[cfg(test)]\nfn t() { \"Herdr\"; \"in Herdr\"; }").is_empty());
+}

@@ -58,7 +58,7 @@ Usage:
   captain-app feedback <text>        draft feedback for the person to review and send
   captain-app commands               every command, its arguments, what it does
   captain-app status                 what the window shows, and any errors
-  captain-app shot [file.png]        save the last window frame (default: herdr-shot.png)
+  captain-app shot [file.png]        save the last window frame (default: captain-shot.png)
   captain-app check <mod folder>     load a mod once and report what's wrong
   captain-app --skill                Agent Skill: driving the window, and where hc fits
   captain-app --version
@@ -144,7 +144,7 @@ fn main() {
                 // One that can't serve this app gets the screen that fixes it.
                 Ok(core) => hc::check(&core.hello).map(|()| core).map_err(setup::Need::Fix),
                 Err(e) => {
-                    eprintln!("herdr-app: {e:#}");
+                    eprintln!("captain-app: {e:#}");
                     Err(setup::Need::Connect(format!("{e:#}")))
                 }
             }
@@ -159,7 +159,7 @@ fn main() {
     telemetry::start(settings::telemetry_setting(&person));
     bench::start();
     if let Err(e) = mods::write_workspace() {
-        eprintln!("herdr-app: cannot write {}: {e}", mods::app_dir().display());
+        eprintln!("captain-app: cannot write {}: {e}", mods::app_dir().display());
     }
 
     gpui_platform::application()

@@ -54,7 +54,7 @@ tiffutil -cathidpicheck "$root/distribution/macos/dmg/background.png" \
   "$root/distribution/macos/dmg/background@2x.png" -out "$work/background.tiff"
 # create-dmg handles Finder's layout on macOS CI runners too. Do not use
 # --skip-jenkins: it silently drops the background and icon positions.
-create-dmg --volname Herdr --volicon "$root/assets/icons/Herdr.icns" \
+create-dmg --volname Captain --volicon "$root/assets/icons/Herdr.icns" \
   --window-size 660 400 --background "$work/background.tiff" \
   --icon-size 128 --icon Herdr.app 165 190 --hide-extension Herdr.app \
   --app-drop-link 495 190 "$work/Herdr.dmg" "$work/source"

@@ -20,7 +20,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 
-pub const INSTALL: &str = "uv tool install captain-search";
+/// Not `uv tool install captain-search`: that PyPI name is an unrelated package.
+pub const INSTALL: &str = "git clone git@github.com:runcaptain/captain-ide.git && cd captain-ide && ./install.sh";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum State {
@@ -48,14 +49,14 @@ fn is_executable(p: &Path) -> bool {
     p.is_file() && p.metadata().map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
-/// $CST_BIN, then PATH, then ~/.local/bin (an app opened from the Dock has a short PATH).
+/// $CST_BIN, then ~/.local/bin/cst (where captain-ide's install.sh links it), then PATH.
 fn find() -> Option<PathBuf> {
     if let Some(b) = std::env::var_os("CST_BIN").map(PathBuf::from).filter(|b| is_executable(b)) {
         return Some(b);
     }
-    let on_path = std::env::var_os("PATH").into_iter().flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).map(|d| d.join("cst"));
     let local = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/bin/cst"));
-    on_path.chain(local).find(|c| is_executable(c))
+    let on_path = std::env::var_os("PATH").into_iter().flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).map(|d| d.join("cst"));
+    local.into_iter().chain(on_path).find(|c| is_executable(c))
 }
 
 /// The first stdout line of `cst serve --port 0`.

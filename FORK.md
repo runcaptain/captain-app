@@ -72,6 +72,14 @@ It's the default layout and the escape hatch's target (`brand::DEFAULT_LAYOUT`).
 workspace-chrome mods, machine-add. These are single-word edits in upstream files, because the strings are
 literals there; expect small merge conflicts in them.
 
+**No Herdr branding a person can see** (`tests/branding.rs` enforces it). It scans every shipped mod, frame,
+layout, theme and doc, `src/SKILL.md`, and Rust string literals outside tests. It fails on /herdr/i except the
+allowlist at its top: the notice, the `herdr` mod module and `herdr.d.ts`, `herdr-core` (the terminal engine's
+real binary name; prose calls it "the terminal engine (hc)"), `herdr.<label>` core labels, `HERDR_*` variables
+and GPUI key-context names. "Herdr 98" (`win98`) isn't shipped (build.rs `NOT_SHIPPED`). Upstream's icon files
+keep their names, so their release scripts work, but hold the Captain C. One visible herdr.dev URL remains: the
+terminal engine's install command on the setup screen, until captain-ide's install.sh installs hc.
+
 Kept as upstream, on purpose:
 - The mod module name `herdr` and `herdr.d.ts`, so upstream mods run unchanged.
 - Internal key contexts (`Herdr`), the core document name `herdr-app` (inside Captain's own session) and most

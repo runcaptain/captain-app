@@ -784,6 +784,10 @@ fn shipped_layouts_and_keys() {
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
+        // CAPTAIN: win98 stays in the tree for merges but isn't shipped (build.rs NOT_SHIPPED).
+        if path.file_stem().and_then(|e| e.to_str()) == Some("win98") {
+            continue;
+        }
         let text = std::fs::read_to_string(&path).unwrap();
         serde_json::from_str::<Node>(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         references(&serde_json::from_str::<Value>(&text).unwrap(), &mods);

@@ -30,7 +30,7 @@ fn write(path: &Path, text: &str, expected: Option<&str>) -> Result<(), String> 
     }
     if read(path)?.as_deref() != expected {
         return Err(
-            "The file changed outside Herdr. Reload before saving; your draft is still here."
+            "The file changed outside Captain. Reload before saving; your draft is still here."
                 .into(),
         );
     }

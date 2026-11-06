@@ -1,6 +1,6 @@
 # captain-app: drive the person's window
 
-Captain shows spaces, tabs and panes. herdr-core (`hc`) runs their terminals
+Captain shows spaces, tabs and panes. the terminal engine (`hc`) runs their terminals
 and keeps them alive when the window closes. Use `captain-app` only to change
 what the person sees. For starting, reading, messaging, waiting on or cleaning
 up agents and programs, read `hc --skill` and use hc.
@@ -136,7 +136,7 @@ shown correctly in the running window with `shot`; don't claim a visual
 check you haven't made.
 
 `captain-app shot [file.png]` saves the window's last frame and prints its
-absolute path (default: `herdr-shot.png` in your current folder). It is the
+absolute path (default: `captain-shot.png` in your current folder). It is the
 app's own rendering at full pixel size: terminals, images, overlays and
 floats included, even when the window is covered or minimized. No screen
 capture or permissions. It needs a running window that has drawn a frame;

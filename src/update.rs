@@ -294,7 +294,7 @@ fn check_from(root: &Path, releases: &str) -> Result<Option<String>, String> {
     let (Some(url), Some(sha)) = (entry["url"].as_str(), entry["sha256"].as_str()) else {
         return Ok(None);
     };
-    tracing::info!("downloading Herdr {version}");
+    tracing::info!("downloading {} {version}", crate::brand::NAME);
     let work = beside(root, ".download");
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
@@ -389,7 +389,7 @@ fn run(cmd: &mut Command) -> Result<(), String> {
 
 fn exe_in(app: &Path) -> PathBuf {
     if cfg!(target_os = "macos") {
-        app.join("Contents/MacOS/Herdr")
+        app.join("Contents/MacOS").join(crate::brand::BUNDLE_EXE)
     } else {
         app.join(format!("herdr-app{}", std::env::consts::EXE_SUFFIX))
     }
@@ -537,7 +537,7 @@ fn relaunch_expected(expected: Option<&str>) -> bool {
     let Some(root) = root() else { return false };
     // LaunchServices need not preserve the startup guard or an isolated home.
     let open = if cfg!(target_os = "macos") {
-        if expected.is_some() { "exec \"$1/Contents/MacOS/Herdr\"" } else { "open \"$1\"" }
+        if expected.is_some() { "exec \"$1/Contents/MacOS/Captain\"" } else { "open \"$1\"" }
     } else {
         "exec \"$1/herdr-app\""
     };

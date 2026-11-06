@@ -39,7 +39,7 @@ const NAMED = [
   ["space.next", {}, "Space", "Next space", "workspace"],
   ["space.prev", {}, "Space", "Previous space", "workspace"],
   ["layout.switch", {}, "Layout", "Next layout", "look switch"],
-  ["layout.reset", {}, "Layout", "Reset layout", "new version default restore herdr's"],
+  ["layout.reset", {}, "Layout", "Reset layout", "new version default restore shipped"],
   ["layout.clone", {}, "Layout", "Duplicate layout", "clone copy customize"],
   ["mod.clone", {}, "Layout", "Duplicate mod", "clone copy customize"],
   ["terminal.open", {}, "Terminal", "New terminal", "shell"],
@@ -84,7 +84,7 @@ function entries() {
     .filter(([n]) => !(mac && n.startsWith("window.")))
     .map(([name, args, group, title, words]) => ({ name, args, group, title, words }));
   for (const l of layouts()) {
-    const t = { captain: "Captain", main: "Spaces", terminals: "Terminals", win98: "Herdr 98" }[l] ?? l.charAt(0).toUpperCase() + l.slice(1);
+    const t = { captain: "Captain", main: "Spaces", terminals: "Terminals" }[l] ?? l.charAt(0).toUpperCase() + l.slice(1);
     list.push({ name: "layout.switch", args: { name: l }, group: "Layout", title: `Layout: ${t}`, words: `look ${l}` });
   }
   // Anything new in the app shows up too, until it gets a better name here.

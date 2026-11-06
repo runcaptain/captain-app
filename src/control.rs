@@ -20,7 +20,7 @@ fn socket() -> PathBuf {
 pub fn listen(tx: async_channel::Sender<Request>) {
     let path = socket();
     if UnixStream::connect(&path).is_ok() {
-        tracing::warn!("another Herdr is serving {}; `herdr-app do` goes there", path.display());
+        tracing::warn!("another Captain is serving {}; `captain-app do` goes there", path.display());
         return;
     }
     let _ = std::fs::remove_file(&path);
@@ -77,7 +77,7 @@ pub fn client(args: &[String]) -> i32 {
     }
     let cmd = match args {
         [verb, rest @ ..] if verb == "shot" && rest.len() <= 1 => {
-            let path = PathBuf::from(rest.first().map(String::as_str).unwrap_or("herdr-shot.png"));
+            let path = PathBuf::from(rest.first().map(String::as_str).unwrap_or("captain-shot.png"));
             let path = match std::path::absolute(path) {
                 Ok(path) => path,
                 Err(e) => return fail(&format!("cannot resolve screenshot path: {e}")),
@@ -101,10 +101,10 @@ pub fn client(args: &[String]) -> i32 {
         Err(_) if args.first().is_some_and(|v| v == "feedback") => {
             let body = crate::feedback::draft(&args[1], "", 0, "agent", "other");
             println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
-            eprintln!("Herdr must be open to review and send this feedback. Nothing was sent; core version and layout will reflect the open window.");
+            eprintln!("Captain must be open to review and send this feedback. Nothing was sent; core version and layout will reflect the open window.");
             return 1;
         }
-        Err(e) => return fail(&format!("no Herdr window at {}: {e}", socket().display())),
+        Err(e) => return fail(&format!("no Captain window at {}: {e}", socket().display())),
     };
     let _ = stream.set_read_timeout(Some(Duration::from_secs(35)));
     let mut line = String::new();
@@ -157,7 +157,7 @@ pub fn save_shot(window: &gpui::Window, path: &std::path::Path) -> anyhow::Resul
         encoder.write_header()?.write_image_data(image.as_raw())?;
     }
     // A sibling temporary file keeps publication on the same filesystem.
-    let temporary = path.with_file_name(format!(".herdr-shot-{}.png", std::process::id()));
+    let temporary = path.with_file_name(format!(".captain-shot-{}.png", std::process::id()));
     let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary)?;
     let result = (|| -> anyhow::Result<()> {
         file.write_all(&bytes)?;

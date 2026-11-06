@@ -19,12 +19,12 @@ from the same parts you have.
 ## Two programs
 
 - **`captain-app`**, the window: spaces, tabs, layouts, panels.
-- **herdr-core (`hc`)**, which runs every terminal and agent. They keep
+- **the terminal engine (`hc`)**, which runs every terminal and agent. They keep
   running when the window closes or updates. You can use `hc` yourself:
   start a terminal, read its screen, send it text, wait for an agent
   (`hc --help`). The Captain app is one client of it.
 
-`captain-app` controls this app; `hc` controls herdr-core.
+`captain-app` controls this app; `hc` controls the terminal engine.
 
 ## What you can and can't do
 
@@ -66,7 +66,7 @@ commands. They're rewritten on every start to match this version.
 ## Seeing the window
 
 `captain-app shot [file.png]` saves the last rendered window frame as a PNG
-and prints its absolute path (default: `herdr-shot.png` in your current
+and prints its absolute path (default: `captain-shot.png` in your current
 folder). Use it when debugging mod UIs: inspect spacing, colors, terminal
 images, overlays, popups and floats. It captures the app, not the desktop,
 at the window’s physical pixel size, even when covered or minimized. No
@@ -183,8 +183,7 @@ with a header; Files and Changes panels on the right, `files` and
 `changes`, opened from the tab bar and remembered per space (which ones:
 shared `"workspace.panels"`, set by the welcome); a status bar,
 `workspace-status`), and as examples `terminals` ("Terminals": tabs in
-the title bar, panes as cards, a space picker) and `win98`
-("Herdr 98": a whole desktop in one mod, `win98`). Add a layout by
+the title bar, panes as cards, a space picker). Add a layout by
 writing a new file. The Files panel supports Windows folder paths with spaces,
 parentheses and apostrophes, and preserves Unicode file and folder names
 (including Chinese). Directory links expand as folders; their contents load
@@ -193,7 +192,7 @@ only when expanded.
 **Captain's own layouts and mods are read-only.** They are replaced whole
 on every start. Use settings.json for look (fonts, sizes, theme, colors,
 sounds), where the layout leaves them unset. Captain (main) has no look of
-its own, so your settings decide it; Herdr 98 and Terminals bring their own
+its own, so your settings decide it; Terminals brings its own
 look. The theme picker overrides any layout. To change a shipped layout's
 look beyond that, or its structure/code, clone it and edit the clone:
 
@@ -341,14 +340,12 @@ layout's look and a block can differ:
 - `font` / `font_size`: the terminals' (px at zoom 1); `ui_font`: the mods'
   (their text sizes are their own, in px, and follow zoom). Optional: without
   them a layout uses settings.json's, else Captain's (JetBrains Mono 14, Geist).
-  Captain (main) leaves these unset; Terminals sets text size 15, and Herdr 98
-  brings its own fonts.
+  Captain (main) leaves these unset; Terminals sets text size 15.
   JetBrains Mono, Geist Mono and Geist ship with Captain; any installed font
   works (a terminal font the machine lacks falls back to JetBrains Mono).
   A layout brings its own fonts: `.ttf`/`.otf` files in a mod's `fonts/`
   folder (or the home's `fonts/`) load at start and on the next look change,
-  so a layout and its mod folder travel together (Herdr 98's do: its pixel
-  fonts are in `mods/win98/fonts/`).
+  so a layout and its mod folder travel together.
 - `pane_scrollbars` in settings.json (default `true`): show terminal scrollback
   with a slim thumb and track. Drag the thumb or click the track to jump there.
   With little or no terminal padding, the hit lane overlays the last 8px;
@@ -436,14 +433,13 @@ the tabs also leave room for the window buttons when the sidebar is narrower.
 
 ### Layouts and mods other people made
 
-People share layouts at herdr.dev/layouts and mods at herdr.dev/mods. Each
+People share layouts and mods as folders on GitHub. Each
 is a folder laid out like this home: a layout has `layouts/<name>.json` and
 the `mods/<name>/` it needs; a mod is a piece for the person's own window,
 so it has only `mods/<name>/` and maybe a `keys.json` with the keys it
 expects. Both have a `RECIPE.md` (the brief to build it from scratch) and a
 `preview.png`. The files are one build of the recipe. Asked to add one
-(`herdr.dev/layouts/<owner>/<name>`, `herdr.dev/mods/<owner>/<name>`, or a
-folder on GitHub):
+(a folder on GitHub, or one the person sends):
 
 1. Read the recipe and every file before writing anything. Before adding,
    tell the person if a mod reaches the network, runs programs (`exec`,
@@ -464,9 +460,8 @@ folder on GitHub):
 
 To share one: put that folder in a public GitHub repo (one folder each if
 there are several), write its `RECIPE.md`, save a screenshot of it as
-`preview.png` and add the repo topic `herdr-layout` for a layout or
-`herdr-mod` for a mod. It shows up at herdr.dev/layouts or herdr.dev/mods
-within the hour.
+`preview.png` and add the repo topic `captain-layout` for a layout or
+`captain-mod` for a mod.
 
 A `RECIPE.md` is a brief: another agent with an empty folder builds the
 layout or mod from it. Write it from the real files, in this order:
@@ -627,7 +622,7 @@ The main ones:
   `layout.clone {name, as?}` (duplicate, then switch; default `<name>-copy`).
 - App: `mod.clone {name, as?}` (duplicate; default `<name>-copy`), `mod.open {name}` (again: closes it), `overlay.close {id?}`, `app.help` (again: closes it), `app.palette` (again: closes it), `app.settings {section?}`
   (sections: `look`, `machines`, `alerts`, `updates`, `privacy`; Machines lists, updates, renames and removes ssh machines; settings edit the same files you do).
-  `app.check_updates` (only a successful check reports Up to date; a failed check clears the checked time and can be retried), `app.update_core` (a newer herdr-core of this generation, terminals kept;
+  `app.check_updates` (only a successful check reports Up to date; a failed check clears the checked time and can be retried), `app.update_core` (a newer hc of this generation, terminals kept;
   never one a package manager owns), `app.welcome`, `app.whats_new`, `app.feedback {message?, from?}` (from `"person"` or `"agent"`; opens a review window, where the person can paste up to 3 screenshots; never sends until the person clicks Send), `app.reset`,
   `app.theme {name}`, `app.zoom_in`, `app.zoom_out`, `app.zoom_reset`,
   `app.update` (restart into a downloaded update).
@@ -676,7 +671,7 @@ What's about the user, never a look:
   goes there when clicked. `done` / `blocked` replace the bundled MP3s
   (path absolute or relative to `~/.config/captain-app`). Changes apply live,
   including the Play buttons in Settings > Alerts.
-- `core`: the herdr-core binary to use, when it isn't where Captain looks
+- `core`: the hc binary to use, when it isn't where Captain looks
   (PATH, the login shell's PATH, `~/.local/bin`, Homebrew, mise, Nix,
   cargo). Read at start.
 - `font`, `font_size`, `ui_font`: used where the layout doesn't set its
@@ -693,7 +688,7 @@ What's about the user, never a look:
 - Updates: an installed app downloads them by itself and offers Restart and
   What changed. If the app crashes or is killed with a verified newer update
   waiting, the next launch installs it before opening a window. The first
-  start after an app update also updates herdr-core
+  start after an app update also updates hc
   to the latest release of the same generation, keeping terminals running.
   Settings → Updates keeps app and core actions together;
   its What's new button opens the waiting update's release range, or this
@@ -710,11 +705,6 @@ What's about the user, never a look:
   Notes expose `items` with `headline`, `detail`, `fixed`, and cached `media`
   objects (`path`, pixel `width`, pixel `height`). Highlights use matching cards:
   edge-to-edge media at its original aspect ratio, then headline and detail.
-  For local release-media previews only, launch with
-  `HERDR_NOTES_MEDIA_DIR=/var/tmp/herdr-notes-media`: URLs under
-  `https://media.herdr.dev/<version>/<scene>.webp` use that directory's
-  `<version>/<scene>.webp` instead of downloading. Without the variable,
-  media uses the normal HTTPS cache.
   Mods use `updates().notes` and `presentUpdateNotes([version])` only
   for spotlight entries actually shown expanded, not collapsed headlines.
   macOS releases require Apple Silicon; Intel Macs must build from source.
@@ -846,7 +836,7 @@ has 120 programs (agents, editors, runtimes, tools, databases, infra);
   action: "new" | "open" | "remove"}` (the repo: folder, else where the
   space's first terminal is), or with `{branch, tab?, argv?}` to make one at once with
   that first tab; checkouts go to
-  `~/.herdr/worktrees/<repo>/<branch>` on the space's machine, a constant
+  `~/.captain/worktrees/<repo>/<branch>` on the space's machine, a constant
   at its top; the
   `spaces` sidebar nests worktree spaces under their repo's and shows each
   space's repo, branch, ahead/behind and uncommitted changes). Shipped mods
@@ -1034,11 +1024,11 @@ Mods are trusted code: commands and network access (including `fetch`) are unres
 Other built-ins: `localStorage` (per mod copy), `console.log`, `fetch`,
 `import * as fs from "fs/promises"` (read in home, write under `~/.config/captain-app`).
 
-## herdr-core (`hc`)
+## the terminal engine (`hc`)
 
 `captain-app --skill` prints the manual for driving this window;
 `hc --skill` prints the manual for running and coordinating programs and agents,
-including a small herdr-core skill you can install with the user's permission.
+including a small hc skill you can install with the user's permission.
 `captain-app commands` lists app commands and arguments without needing an open window.
 
 - `hc ls --json`, `hc read t3 --lines 50`, `hc run --json --cwd <dir> --label k=v -- <cmd>`,

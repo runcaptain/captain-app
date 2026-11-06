@@ -65,7 +65,7 @@ pub fn startup(args: &[String]) {
         let result = args.get(2).zip(args.get(3)).ok_or_else(|| io::Error::other("missing checker job directory or target"))
             .and_then(|(dir, target)| worker(Path::new(dir), target));
         if let Err(error) = result {
-            eprintln!("herdr-app: checker job failed: {error}");
+            eprintln!("captain-app: checker job failed: {error}");
             std::process::exit(1);
         }
         std::process::exit(0);
@@ -86,7 +86,7 @@ pub fn startup(args: &[String]) {
         Err(error) => {
             let signal = INTERRUPTED.load(Ordering::Relaxed);
             if signal != 0 { std::process::exit(128 + signal); }
-            eprintln!("herdr-app: launchd checker submission failed; checking in this process (shares the caller's coalition): {error}");
+            eprintln!("captain-app: launchd checker submission failed; checking in this process (shares the caller's coalition): {error}");
         }
     }
 }
@@ -268,7 +268,7 @@ fn submit(args: &[String]) -> io::Result<i32> {
         Ok(code) => Ok(code),
         Err(error) => {
             let _ = relay(&job.dir, "worker-stderr", &mut io::stderr().lock());
-            eprintln!("herdr-app: isolated checker failed: {error}");
+            eprintln!("captain-app: isolated checker failed: {error}");
             Ok(1)
         }
     }

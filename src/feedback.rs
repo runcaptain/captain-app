@@ -45,7 +45,7 @@ pub fn attach(bytes: &[u8]) -> Result<String, String> {
     let (bytes, ext) = match sniff(bytes) {
         Some(ext) => (bytes.to_vec(), ext),
         None => {
-            let img = image::load_from_memory(bytes).map_err(|_| "That isn't an image Herdr can read.".to_owned())?;
+            let img = image::load_from_memory(bytes).map_err(|_| "That isn't an image Captain can read.".to_owned())?;
             let mut png = std::io::Cursor::new(Vec::new());
             img.write_to(&mut png, image::ImageFormat::Png).map_err(|_| "Couldn't convert that image.".to_owned())?;
             (png.into_inner(), "png")
