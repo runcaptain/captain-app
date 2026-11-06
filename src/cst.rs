@@ -1,9 +1,8 @@
-//! CAPTAIN: the Captain Search daemon (`cst serve`) behind the webview blocks.
+//! CAPTAIN: the Captain Search backend (`cst serve`) behind Captain's native screens.
 //!
-//! A webview URL may say `{cst}` (the daemon's base URL, `http://127.0.0.1:<port>`)
-//! and `{cst_token}` (its bearer token). The first time one is needed, Captain
-//! starts `cst serve --port 0`, reads its first stdout line (`{"port", "token",
-//! "pid"}`) and fills them in. The daemon runs in its own process group and is
+//! At launch Captain starts `cst serve --port 0` (or reuses a new-enough one),
+//! reads its first stdout line (`{"port", "token", "pid"}`) and tells the mods where
+//! it is through shared "captain.daemon". The daemon runs in its own process group and is
 //! stopped with the app. A small watcher process stops it too when the app dies
 //! by any route (a crash, SIGKILL), because it holds a pipe only the app writes.
 //! Ported from the Captain Search Tools Tauri shell (app/src-tauri/src/lib.rs).
@@ -336,28 +335,6 @@ pub fn tick() {
     });
 }
 
-/// What a webview URL resolves to right now.
-#[derive(Debug, PartialEq)]
-pub enum Url {
-    Ready(String),
-    /// Shown in the block while waiting.
-    Waiting(String),
-    Failed(String),
-}
-
-/// Fill `{cst}` and `{cst_token}` in a webview URL from `state`.
-pub fn fill(url: &str, state: &State) -> Url {
-    if !url.contains("{cst}") && !url.contains("{cst_token}") {
-        return Url::Ready(url.to_owned());
-    }
-    match state {
-        State::Ready { port, token } => Url::Ready(url.replace("{cst}", &format!("http://127.0.0.1:{port}")).replace("{cst_token}", token)),
-        State::Idle | State::Starting => Url::Waiting("Starting Captain Search (cst serve)...".into()),
-        State::Missing => Url::Failed(format!("Captain Search is not installed. Install it with: {INSTALL}")),
-        State::Failed(e) => Url::Failed(e.clone()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,12 +402,4 @@ mod tests {
         assert_eq!(parse_serve_json("{"), None);
     }
 
-    #[test]
-    fn fills_the_daemon_into_urls() {
-        let ready = State::Ready { port: 4100, token: "abc".into() };
-        assert_eq!(fill("{cst}/ui/explore?embed=1#token={cst_token}", &ready), Url::Ready("http://127.0.0.1:4100/ui/explore?embed=1#token=abc".into()));
-        assert_eq!(fill("http://localhost:3000/", &State::Idle), Url::Ready("http://localhost:3000/".into()));
-        assert!(matches!(fill("{cst}/ui", &State::Starting), Url::Waiting(_)));
-        assert!(matches!(fill("{cst}/ui", &State::Missing), Url::Failed(m) if m.contains(INSTALL)));
-    }
 }

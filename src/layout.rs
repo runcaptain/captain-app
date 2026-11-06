@@ -28,18 +28,6 @@ pub enum Content {
     },
     /// An agent's terminal, full size (`"focused"`: the selected agent).
     Agent { agent: String },
-    /// CAPTAIN: a native web view over the block (webview.rs):
-    /// `{"webview": {"url": "http://localhost:3000/", "id": "explore"}}`.
-    Webview { webview: WebviewSpec },
-}
-
-/// CAPTAIN: what a webview block loads. `id` names it for `webview.reload`
-/// and `webview.devtools`; without one, the block's id does.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WebviewSpec {
-    pub url: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
 }
 
 /// Which side of its node a floating block sits on. Left/right make it

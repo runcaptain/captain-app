@@ -234,14 +234,6 @@ A layout is a tree of nodes. Four types:
   terminals as it arranges them), or `{ "agent": "focused" }` (one agent's
   terminal, full size: the one chosen with `agent.focus` / `agent.next`, else
   the focused pane's agent, else the first agent).
-  Captain adds `{ "webview": { "url": "http://localhost:4000/ui", "id": "explore" } }`:
-  a web page over the block (macOS). It loads localhost only, unless
-  settings.json lists the host in `webview_hosts`, and it can't navigate
-  elsewhere or open windows. A dialog, popup, overlay window or floating block
-  over it hides the page while it's open (they draw under it). While the page
-  has the keyboard, the escape hatch and your `global` and `layout:<name>` keys
-  still work (not cmd-a/c/v/x/z, which the page keeps). `captain-app shot`
-  doesn't include the page.
 - `row` / `column`: children side by side / stacked.
 - `stack`: shows one child (`"active": "<child id>"`), with an optional
   `"header"` (a mod that draws tabs, or `"tabs"` for a plain built-in strip).
@@ -638,9 +630,6 @@ The main ones:
   Other unreachable machines don't offer this.
 - Window: `window.minimize`, `window.maximize` (or back), `window.close`.
 - macOS: `app.quit`, `app.hide`, `app.hide_others`, `app.show_all`.
-- Web views: `webview.reload {id?}`, `webview.devtools {id?}` (the web
-  inspector). `id` is the webview's `id` (else its block's); without one, the
-  only web view.
 
 When the user runs a command without a required name (a key, a click), Captain
 asks them. **You never get a dialog**: pass every required argument, or the
@@ -742,9 +731,6 @@ What's about the user, never a look:
   `p` writes Linux primary selection. `s` is ignored; cut buffers `0`–`7`
   are treated as the system clipboard.
   Clipboard reads (`?`) are never allowed.
-- `webview_hosts`: hosts a webview block may load besides localhost, e.g.
-  `["app.captain.dev"]` (default none). Exact host names; it's here, not in a
-  layout, so a layout someone shares can't widen it.
 - `pane_scrollbars`: `false` hides the scroll position thumb at a terminal
   pane's right edge (default `true`). It shows only when the pane has
   scrollback — never on the alternate screen (editors, pagers) — and

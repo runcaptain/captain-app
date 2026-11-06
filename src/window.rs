@@ -382,8 +382,6 @@ pub struct AppWindow {
     /// Mods placed once; later the layout decides where (or whether) they show.
     seen: BTreeSet<String>,
     bounds: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
-    /// CAPTAIN: native web views over webview blocks (webview.rs).
-    webviews: Rc<RefCell<crate::webview::Webviews>>,
     hidden_fit: pane_size::HiddenFit,
     drag: Option<Drag>,
     written_layout: String,
@@ -493,7 +491,6 @@ impl AppWindow {
             folders: mods::scan().into_iter().map(|f| (f.id.clone(), f)).collect(),
             seen,
             bounds: Default::default(),
-            webviews: Default::default(),
             hidden_fit: Default::default(),
             drag: None,
             written_layout: String::new(),
@@ -3372,15 +3369,6 @@ impl AppWindow {
                 return;
             }
             "app.check_updates" => crate::update::check_now(),
-            // CAPTAIN: webview blocks (webview.rs).
-            "webview.reload" | "webview.devtools" => {
-                let views = self.webviews.borrow();
-                let result = views.pick(Self::arg(a, "id")).and_then(|id| if name == "webview.reload" { views.reload(&id) } else { views.devtools(&id) });
-                drop(views);
-                if let Err(e) = result {
-                    return self.fail(e);
-                }
-            }
             "app.update_core" => {
                 if crate::update::core().ready.is_none() && crate::update::core().error.is_none() {
                     return self.fail("herdr-core is up to date");
@@ -3732,13 +3720,6 @@ impl AppWindow {
             Request::OpenOverlay { id, spec } => self.open_overlay(id, spec, window, cx),
             Request::CloseOverlay { id } => self.close_overlay(&id, window, cx),
             Request::Refresh => self.refresh_mods(cx),
-            // CAPTAIN: a key a web page handed back (webview.rs): run it as if the window had it.
-            Request::Keystroke { keys, webview } => {
-                if let Ok(k) = Keystroke::parse(&keys) {
-                    window.dispatch_keystroke(k, cx);
-                }
-                self.webviews.borrow().return_focus(&webview);
-            }
             Request::Control { cmd, reply } => {
                 let _ = reply.send(self.control(cmd, window, cx));
             }
@@ -4120,7 +4101,6 @@ impl AppWindow {
                 None => div().into_any_element(),
             },
             Content::Mod { .. } => self.render_slot(&n.id, cx),
-            Content::Webview { webview } => self.render_webview(&n.id, webview),
             Content::Agent { .. } => match self.shown_agent() {
                 Some(addr) => match self.agent_view(&n.id, &addr) {
                     Some(t) => div().size_full().child(shown_terminal(&t.view, cx)).into_any_element(),
@@ -4151,53 +4131,6 @@ impl AppWindow {
                 }
             },
         }
-    }
-
-    /// CAPTAIN: a webview block. GPUI draws only what's under the native view
-    /// (its background, or why it couldn't load); the view itself is placed by
-    /// `webview_pass` from the bounds this canvas reports.
-    fn render_webview(&self, block: &str, spec: &crate::layout::WebviewSpec) -> AnyElement {
-        let id = crate::webview::view_id(block, spec);
-        let error = self.webviews.borrow().error(&id).map(str::to_owned);
-        let (views, spec) = (self.webviews.clone(), spec.clone());
-        let report = canvas(move |b, _, _| views.borrow_mut().saw(id, spec, b), |_, _, _, _| {}).absolute().size_full();
-        div()
-            .relative()
-            .size_full()
-            .bg(c("background"))
-            .child(report)
-            .when_some(error, |d, e| d.flex().items_center().justify_center().p(settings::z(16.0)).text_color(c("dim")).child(e))
-            .into_any_element()
-    }
-
-    /// CAPTAIN: the root's last child. It paints after everything else has laid
-    /// out, so every block's and overlay's bounds for this frame are known.
-    fn webview_pass(&self) -> AnyElement {
-        let mut live = HashSet::new();
-        let mut floats = Vec::new();
-        for n in self.chrome.walk() {
-            if let Some(Content::Webview { webview }) = n.content() {
-                live.insert(crate::webview::view_id(&n.id, webview));
-            }
-            floats.extend(n.floating.iter().filter(|f| !f.hidden).map(|f| floats::slot(&f.id)));
-        }
-        let covers: Vec<String> = self.overlays.iter().filter(|o| o.kind != OverlayKind::Toast).map(|o| format!("cover:{}", o.id)).chain(floats).collect();
-        let keys = crate::webview::forwarded_keys(&crate::keys::listing(), &self.layout_name);
-        let (views, bounds) = (self.webviews.clone(), self.bounds.clone());
-        let hosts = settings::get().webview_hosts.clone();
-        let zoom = settings::zoom();
-        // The pages follow Captain's native theme (captain:theme).
-        let theme = if settings::theme_is_light(&settings::get().theme) { "light" } else { "dark" };
-        canvas(|_, _, _| (), move |_, _, window, _| {
-            let rects: Vec<Bounds<Pixels>> = {
-                let b = bounds.borrow();
-                covers.iter().filter_map(|k| b.get(k).copied()).collect()
-            };
-            views.borrow_mut().sync(window, &rects, &live, keys, zoom, &hosts, theme);
-        })
-        .absolute()
-        .size_0()
-        .into_any_element()
     }
 
     fn render_slot(&self, slot: &str, cx: &mut Context<Self>) -> AnyElement {
@@ -4394,12 +4327,7 @@ impl AppWindow {
                 // Scroll, hover and cursor stop here, not on the pane behind.
                 .occlude()
                 .when(o.kind != OverlayKind::Window, |d| d.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()))
-                .child(content)
-                // CAPTAIN: where it's drawn, so web views under it hide (webview.rs).
-                .child({
-                    let (bounds_map, key) = (self.bounds.clone(), format!("cover:{}", o.id));
-                    canvas(move |b, _, _| { bounds_map.borrow_mut().insert(key, b); }, |_, _, _, _| {}).absolute().size_full()
-                });
+                .child(content);
             match o.kind {
                 OverlayKind::Window => out.push(self.render_window(o, body, viewport, cx)),
                 OverlayKind::Dialog => out.push(
@@ -5040,7 +4968,6 @@ impl Render for AppWindow {
             .children(tracker)
             .children(win_tracker)
             .child(pane_drag)
-            .child(self.webview_pass())
             .child(crate::bench::frame_end())
     }
 }
