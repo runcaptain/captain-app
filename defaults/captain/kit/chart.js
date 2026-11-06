@@ -36,7 +36,7 @@ export function Chart(c, { mark = "bar", points = [], xLabel = "", yLabel = "" }
   const xs = numericX ? points.map((p) => num(p.x)) : null;
   const xlo = xs ? Math.min(...xs) : 0, xspan = xs ? Math.max(...xs) - xlo || 1 : 1;
   const X = (i) => (xs ? ((xs[i] - xlo) / xspan) * 92 + 4 : ((i + 0.5) / points.length) * 92 + 4);
-  const plot = div().absolute().top(0).bottom(18).left(44).right(8);
+  const plot = div().absolute().top(0).bottom(18).left(56).right(8);
   const paint = globalThis.window?.paint_path;
   if (mark === "bar") {
     const w = Math.max(0.4, (92 / points.length) * 0.7);
@@ -53,10 +53,10 @@ export function Chart(c, { mark = "bar", points = [], xLabel = "", yLabel = "" }
   const first = String(points[0].x ?? ""), last = String(points[points.length - 1].x ?? "");
   return v_flex().w_full().gap(4)
     .child(box
-      .child(div().absolute().left(44).right(8).top(`${Y(0) * (1 - 18 / height)}%`).h(1).bg(c.rule))
-      .children(ticks.map((t) => div().absolute().left(4).w(36).top(`${Y(t) * (1 - 18 / height)}%`).mt(-7).text_right().text_size(10).font_family(MONO).text_color(c.grey500).child(short(t))))
+      .child(div().absolute().left(56).right(8).top(`${Y(0) * (1 - 18 / height)}%`).h(1).bg(c.rule))
+      .children(ticks.map((t) => div().absolute().left(2).w(50).top(`${Y(t) * (1 - 18 / height)}%`).mt(-7).text_right().whitespace_nowrap().text_size(10).font_family(MONO).text_color(c.grey500).child(short(t))))
       .child(plot)
-      .child(h_flex().absolute().left(44).right(8).bottom(2).text_size(10).font_family(MONO).text_color(c.grey500)
+      .child(h_flex().absolute().left(56).right(8).bottom(2).text_size(10).font_family(MONO).text_color(c.grey500)
         .child(div().min_w(0).truncate().child(first)).child(div().flex_1()).child(div().min_w(0).truncate().child(points.length > 1 ? last : ""))))
     .child(h_flex().gap(10).text_size(11).text_color(c.grey500)
       .child(div().child(`${yLabel} by ${xLabel}`))

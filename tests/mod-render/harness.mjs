@@ -23,7 +23,9 @@ export function harness(Mod) {
   }
   function render() {
     const t0 = performance.now();
-    tree = mod.render(cx);
+    // The app refuses InputState.new and EditorState.new while drawing (stubs/gpui-base.js throws the same).
+    globalThis.__rendering = true;
+    try { tree = mod.render(cx); } finally { globalThis.__rendering = false; }
     timings.push(performance.now() - t0);
     return tree;
   }
@@ -34,7 +36,9 @@ export function harness(Mod) {
       const [id, count, , , draw] = e.args;
       const [a, b] = ranges[id] ?? [0, Math.min(count, 20)];
       const t0 = performance.now();
-      const rows = draw({ start: a, end: Math.min(b, count) }, cx);
+      globalThis.__rendering = true;
+      let rows;
+      try { rows = draw({ start: a, end: Math.min(b, count) }, cx); } finally { globalThis.__rendering = false; }
       timings.push(performance.now() - t0);
       for (const r of rows) walk(r, f, ranges);
     }

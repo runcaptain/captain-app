@@ -7,7 +7,7 @@
 // grid keeps a few pages of 200 rows around what is on screen and drops the rest.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
-import { theme, shared } from "herdr";
+import { theme, shared, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button, Badge } from "./kit/ui.js";
@@ -92,6 +92,14 @@ export default class CaptainData extends View {
     this.where.on("submit", (_e, cx) => this.query(cx, { where: this.where.value().trim() }));
     this.resetGrid();
     this.nb = new Notebooks();
+    // Layout props (a layout, or the real-window check): {tab: "notebooks", notebook, runAll}.
+    const p = layoutProps?.() ?? {};
+    if (p.tab === "notebooks") {
+      this.tab = "notebooks";
+      this.nb.want = p.notebook ?? null;
+      this.nb.runOnOpen = !!p.runAll;
+      this.nb.load(cx);
+    }
     this.load(cx);
     // The notebook: autosave its draft, and keep a running cell's clock moving.
     cx.timer.every(500, (cx) => { if (this.tab === "notebooks") this.nb.tick(cx); });

@@ -8,9 +8,9 @@
 // Writes through a SQL connection are refused unless that connection is writable: the backend's read-only guard.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input, EditorState, Editor } from "gpui-base";
-import { readTextFile, writeTextFile, home } from "herdr";
+import { readTextFile, writeTextFile, home, theme } from "herdr";
 import { api } from "./kit/cst.js";
-import { MONO } from "./kit/tokens.js";
+import { MONO, palette, isDark } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Kernel } from "./kit/kernel.js";
@@ -62,7 +62,9 @@ export class Notebooks {
       this.listError = nb.ok ? null : "Couldn't load notebooks.";
       this.conns = cs.ok && Array.isArray(cs.data) ? cs.data : [];
       this.formats = fs.ok && Array.isArray(fs.data) ? fs.data.filter((f) => f.export) : [];
-      if (!this.open && this.list[0]) this.openNotebook(cx, this.list[0].name);
+      const want = this.want && this.list.some((n) => n.name === this.want) ? this.want : this.list[0]?.name;
+      this.want = null;
+      if (!this.open && want) this.openNotebook(cx, want);
       cx.notify();
     });
   }
@@ -85,6 +87,8 @@ export class Notebooks {
       this.open = { name, version: r.data.version, base: r.data.notebook, draft: !!r.data.draft };
       this.cells = fromNotebook(r.data.notebook);
       if (!this.cells.length) this.cells = [newCell("sql", [], this.conns[0]?.name)];
+      for (const cell of this.cells) this.prepare(cell);
+      if (this.runOnOpen) { this.runOnOpen = false; this.runAll(cx); }
       cx.notify();
     });
     cx.notify();
@@ -292,6 +296,7 @@ export class Notebooks {
     }
     const i = after ? this.cells.indexOf(after) + 1 : this.cells.length;
     this.cells.splice(i, 0, cell);
+    this.prepare(cell);
     if (kind === "markdown") this.editing.add(cell.id);
     this.edited();
     cx.notify();
@@ -314,27 +319,22 @@ export class Notebooks {
     cx.notify();
   }
 
-  editor(c, cell) {
-    let st = this.editors.get(cell.id);
-    if (!st) {
-      st = EditorState.new({
+  /** A cell's editor and name field. The app only lets state be made outside drawing: on load, on add. */
+  prepare(cell) {
+    const c = palette(isDark(theme()));
+    if (cell.kind !== "chart" && !this.editors.has(cell.id)) {
+      const st = EditorState.new({
         language: LANG[cell.kind] ?? "python", value: cell.source, font_family: MONO, font_size: 13, line_numbers: true, soft_wrap: cell.kind === "markdown",
         syntax: { keyword: c.blue, string: c.good, comment: c.grey500, number: c.warn, function: c.navy, type: c.navy, constant: c.warn, boolean: c.warn, operator: c.grey900 },
       });
       st.on("change", (_e, cx) => { cell.source = st.value(); this.edited(); cx.notify(); });
       this.editors.set(cell.id, st);
     }
-    return st;
-  }
-
-  nameInput(cell) {
-    let st = this.inputs.get(cell.id);
-    if (!st) {
-      st = InputState.new({ placeholder: "df_1", value: cell.meta.var ?? "" });
+    if (cell.kind === "sql" && !this.inputs.has(cell.id)) {
+      const st = InputState.new({ placeholder: "df_1", value: cell.meta.var ?? "" });
       st.on("change", (_e, cx) => { cell.meta.var = st.value().trim().replace(/[^A-Za-z0-9_]/g, "_") || null; this.edited(); cx.notify(); });
       this.inputs.set(cell.id, st);
     }
-    return st;
   }
 
   onKey(e, cx) {
@@ -344,7 +344,8 @@ export class Notebooks {
   // ---- drawing ---------------------------------------------------------------------------------------------------
 
   icon(name, size, color) {
-    return svg(icon(name)).size(size).flex_none().when(!!color, (e) => e.text_color(color));
+    // chevron-up isn't in the shared set yet: it ships with this mod.
+    return svg(name === "chevron-up" ? "mods/captain-data/icons/chevron-up.svg" : icon(name)).size(size).flex_none().when(!!color, (e) => e.text_color(color));
   }
 
   render(c, w) {
@@ -448,14 +449,13 @@ export class Notebooks {
     const code = cell.kind === "sql" || cell.kind === "python";
     const head = h_flex().flex_none().h(34).px(10).gap(8).items_center().bg(c.surface2).border_b(1).border_color(c.rule)
       .child(this.icon(ic, 13, c.navy)).child(div().text_size(12).font_medium().child(label))
-      .when(cell.kind === "sql", (e) => e.child(this.connPicker(c, cell)))
       .child(div().flex_1())
       .child(this.status(c, cell))
       .when(code && !running, (e) => e.child(this.tool(c, `run-${cell.id}`, "play", "Run (Cmd-Enter)", (_e, cx) => this.runCell(cx, cell))))
       .when(running, (e) => e.child(this.tool(c, `stop-${cell.id}`, "circle-x", "Stop", () => this.stop())))
       .when(cell.kind === "markdown", (e) => e.child(this.tool(c, `edit-${cell.id}`, this.editing.has(cell.id) ? "check" : "file-text", this.editing.has(cell.id) ? "Done" : "Edit",
         (_e, cx) => { if (this.editing.has(cell.id)) this.editing.delete(cell.id); else this.editing.add(cell.id); cx.notify(); })))
-      .child(this.tool(c, `up-${cell.id}`, "chevron-left", "Move up", (_e, cx) => this.move(cx, cell, -1), i === 0))
+      .child(this.tool(c, `up-${cell.id}`, "chevron-up", "Move up", (_e, cx) => this.move(cx, cell, -1), i === 0))
       .child(this.tool(c, `down-${cell.id}`, "chevron-down", "Move down", (_e, cx) => this.move(cx, cell, 1), i === this.cells.length - 1))
       .child(this.tool(c, `del-${cell.id}`, "x", "Delete cell", (_e, cx) => this.remove(cx, cell)));
     const lines = Math.max(3, Math.min(24, cell.source.split("\n").length + 1));
@@ -467,9 +467,11 @@ export class Notebooks {
       })
       .child(head)
       .when(cell.kind === "sql", (e) => e.child(h_flex().flex_none().h(28).px(10).gap(6).items_center().border_b(1).border_color(c.rule).text_size(11.5).text_color(c.grey500)
-        .child(div().child("Result in Python as"))
-        .child(div().w(120).h(22).px(6).flex().items_center().border_1().border_color(c.grey300).child(Input.new(this.nameInput(cell)).w_full().text_size(11.5).font_family(MONO).text_color(c.navy)))))
-      .when(showSource, (e) => e.child(div().flex_none().w_full().h(lines * 19 + 14).child(Editor.new(this.editor(c, cell)).size_full())))
+        .child(div().flex_none().child("On"))
+        .child(div().flex_1().min_w(0).child(this.connPicker(c, cell)))
+        .child(div().flex_none().child("result in Python as"))
+        .child(div().w(120).h(22).px(6).flex().items_center().border_1().border_color(c.grey300).when(this.inputs.has(cell.id), (e) => e.child(Input.new(this.inputs.get(cell.id)).w_full().text_size(11.5).font_family(MONO).text_color(c.navy))))))
+      .when(showSource && this.editors.has(cell.id), (e) => e.child(div().flex_none().w_full().h(lines * 19 + 14).child(Editor.new(this.editors.get(cell.id)).size_full())))
       .when(cell.kind === "markdown" && !this.editing.has(cell.id), (e) => e.child(this.markdown(c, cell)))
       .when(cell.kind === "chart", (e) => e.child(this.chart(c, cell)))
       .children(cell.outputs.map((o, k) => this.output(c, cell, o, k, w)));
