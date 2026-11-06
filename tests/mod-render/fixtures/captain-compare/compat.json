@@ -1,0 +1,1 @@
+{"run":"surf-e2e@v1","trustworthy":true,"warnings":[{"code":"offline","text":"offline evidence (SIMULATED): not proof of online or business impact"},{"code":"small-slices","text":"1 slice result(s) rest on fewer than 5 queries"}],"queries":"demo-queries@v2:holdout","judgments":"demo-judgments@v1","mode":"simulated"}

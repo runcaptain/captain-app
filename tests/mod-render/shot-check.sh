@@ -37,11 +37,28 @@ echo "seeding a scratch workspace"
 CST_HOME=$WORK/cst cst init shot --storage "$WORK/store" >/dev/null 2>&1
 CST_HOME=$WORK/cst cst demo seed >/dev/null 2>&1
 
-CAPTAIN_APP_HOME=$HOME_DIR HC_SESSION=test-shot-$$ CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
-APP_PID=$!
-for _ in $(seq 1 60); do [[ -S $HOME_DIR/captain-app.sock ]] && break; sleep 0.5; done
-[[ -S $HOME_DIR/captain-app.sock ]] || { echo "the window did not start: $(tail -5 "$WORK/app.log")"; exit 1; }
+# Skip the first-start welcome (it opens over everything while shared "frame.welcomed" is unset).
+echo '{"frame.welcomed":"skipped"}' > "$HOME_DIR/shared.json"
+launch() {
+  CAPTAIN_APP_HOME=$HOME_DIR HC_SESSION=test-shot-$$ CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
+  APP_PID=$!
+  for _ in $(seq 1 60); do [[ -S $HOME_DIR/captain-app.sock ]] && break; sleep 0.5; done
+  [[ -S $HOME_DIR/captain-app.sock ]] || { echo "the window did not start: $(tail -5 "$WORK/app.log")"; exit 1; }
+}
+launch
 app() { CAPTAIN_APP_HOME=$HOME_DIR "$BIN" "$@"; }
+# A new home's first start opens What's New (or the welcome) over everything, and those close only by id.
+# The second start in the same home opens nothing, so restart the window once if anything covers it.
+covered() { app status | python3 -c "import json,sys; o=json.load(sys.stdin).get('overlays', []); sys.exit(0 if any(x != 'toast' for x in o) else 1)"; }
+sleep 3
+if covered; then
+  kill "$APP_PID" 2>/dev/null || true
+  for _ in $(seq 1 20); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.5; done
+  rm -f "$HOME_DIR/captain-app.sock"
+  launch
+  sleep 3
+fi
+covered && { echo "an overlay still covers the window: $(app status | python3 -c "import json,sys; print(json.load(sys.stdin).get('overlays'))")"; exit 1; }
 
 fail=0
 for m in "${MODS[@]}"; do
