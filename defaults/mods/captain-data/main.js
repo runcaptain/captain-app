@@ -34,6 +34,9 @@ function cellText(v) {
 /** A failed call in words for people: the backend's own sentence when it answered, else a plain one. Transport
  *  details (hosts, ports, tool output) never show: they go behind Copy details. */
 function say(r, fallback) {
+  // The services went away or never came up: the kit's own plain sentence ("Captain's services stopped.").
+  // Belt and braces: anything that reads like a tool's or transport's output never shows.
+  if (r?.failed && r.error && !/curl|127\.0|localhost|\bport\b|https?:|error sending|traceback|engine|daemon/i.test(r.error)) return String(r.error);
   const e = String(r?.error ?? "");
   if (r?.status && e && !/^HTTP \d+$/.test(e)) return e;
   if (/time ?out|timed out/i.test(e)) return "This took too long.";
@@ -106,7 +109,7 @@ export default class CaptainData extends View {
     // Pages the grid asked for while drawing are fetched here, outside render.
     cx.timer.every(120, (cx) => this.pump(cx));
     // Until the backend answers, ask again every 3 s: the screen never stays on "starting" by itself.
-    cx.timer.every(3000, (cx) => { if (this.starting || (this.list === null && this.loadedOnce)) this.load(cx); });
+    cx.timer.every(3000, (cx) => { if (this.starting || (this.list === null && this.loadedOnce) || (this.listError && !this.listR?.status)) this.load(cx); });
     // "Open <dataset>" from the palette: captain-go sets shared "captain.open" {section: "data", dataset, at}.
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
@@ -338,7 +341,7 @@ export default class CaptainData extends View {
         .child(this.chip(c, "All", null, !this.cls, (_e, cx) => { this.cls = null; this.load(cx); }))
         .children(this.classes.map((k) => this.chip(c, k.name, k.color, this.cls === k.name, (_e, cx) => { this.cls = this.cls === k.name ? null : k.name; this.load(cx); }, k.datasets))))
       .child(v_flex().id("data-list").flex_1().min_h(0).overflow_y_scrollbar()
-        .when(!!this.listError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child(this.listError)))
+        .when(!!this.listError, (e) => e.child(div().p(10).child(trouble(c, "datasets-list", this.listR, this.listError, (cx) => this.load(cx)))))
         .when(this.list !== null && rows.length === 0 && !this.listError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child(this.cls ? "No datasets in this class." : "No datasets yet.")))
         .when(this.list === null && !this.listError, (e) => e.child(div().child(Skeleton(c, 8))))
         .children(rows.map((d) => {

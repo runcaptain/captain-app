@@ -75,7 +75,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "seeding a scratch workspace"
-CST_HOME=$WORK/cst cst init shot --storage "$WORK/store" >/dev/null 2>&1
+CST_HOME=$WORK/cst cst init test --storage "$WORK/store" >/dev/null 2>&1
 CST_HOME=$WORK/cst cst demo seed >/dev/null 2>&1
 # An imported run (a readout only, no per-query rankings), as `cst demos import` makes them.
 CST_PY=$(head -1 "$(command -v cst)" | sed 's/^#!//')
@@ -87,7 +87,7 @@ CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-notebook.py >/dev/null
 echo '{"frame.welcomed":"skipped"}' > "$HOME_DIR/shared.json"
 launch() {
   # "Captain (test)" in the title bar, so nobody mistakes this window for their own Captain.
-  CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
+  CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
   APP_PID=$!
   for _ in $(seq 1 60); do [[ -S $HOME_DIR/captain-app.sock ]] && break; sleep 0.5; done
   [[ -S $HOME_DIR/captain-app.sock ]] || { echo "the window did not start: $(tail -5 "$WORK/app.log")"; exit 1; }

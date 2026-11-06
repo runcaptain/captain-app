@@ -35,6 +35,9 @@ function cronEnglish(cron) {
 /** A failed call in words for people: the backend's own sentence when it answered, else a plain one. Transport
  *  details (hosts, ports, tool output) never show: they go behind Copy details. */
 function say(r, fallback) {
+  // The services went away or never came up: the kit's own plain sentence ("Captain's services stopped.").
+  // Belt and braces: anything that reads like a tool's or transport's output never shows.
+  if (r?.failed && r.error && !/curl|127\.0|localhost|\bport\b|https?:|error sending|traceback|engine|daemon/i.test(r.error)) return String(r.error);
   const e = String(r?.error ?? "");
   if (r?.status && e && !/^HTTP \d+$/.test(e)) return e;
   if (/time ?out|timed out/i.test(e)) return "This took too long.";
@@ -116,7 +119,9 @@ export default class CaptainRuns extends View {
     this.load(cx, "backtests");
     cx.timer.every(1000, (cx) => this.pollJob(cx));
     // Until the backend answers, ask again every 3 s.
-    cx.timer.every(3000, (cx) => { if (this.starting) this.load(cx, this.tab); });
+    // Until the list loads, ask again every 3 s: while the services start, and after any failure that wasn't the
+    // backend answering (they stopped or restarted).
+    cx.timer.every(3000, (cx) => { if (this.starting || (this.error && !this.errorR?.status)) this.load(cx, this.tab); });
     // Opened by name (palette): shared "captain.open" {section: "runs", backtest, at}.
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");

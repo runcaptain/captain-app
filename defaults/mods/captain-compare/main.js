@@ -28,6 +28,9 @@ const GRADE_TONE = { 0: "grey", 1: "partial", 2: "relevant", 3: "exact" };
 /** A failed call in words for people: the backend's own sentence when it answered, else a plain one. Transport
  *  details (hosts, ports, tool output) never show: they go behind Copy details. */
 function say(r, fallback) {
+  // The services went away or never came up: the kit's own plain sentence ("Captain's services stopped.").
+  // Belt and braces: anything that reads like a tool's or transport's output never shows.
+  if (r?.failed && r.error && !/curl|127\.0|localhost|\bport\b|https?:|error sending|traceback|engine|daemon/i.test(r.error)) return String(r.error);
   const e = String(r?.error ?? "");
   if (r?.status && e && !/^HTTP \d+$/.test(e)) return e;
   if (/time ?out|timed out/i.test(e)) return "This took too long.";
@@ -99,7 +102,12 @@ export default class CaptainCompare extends View {
     this.loadBacktests(cx);
     cx.timer.every(150, (cx) => this.pump(cx));
     // Until the backend answers, ask again every 3 s.
-    cx.timer.every(3000, (cx) => { if (this.starting) this.loadBacktests(cx); });
+    // Until the list loads, ask again every 3 s: while the services start, and after any failure that wasn't the
+    // backend answering (they stopped or restarted). A run record lost the same way is asked for again too.
+    cx.timer.every(3000, (cx) => {
+      if (this.starting || (this.error && !this.errorR?.status)) this.loadBacktests(cx);
+      else if (this.sel && this.run?.error && !this.runR?.status) this.open(cx, this.sel.backtest, this.sel.version);
+    });
     // Opened by name (palette): shared "captain.open" {section: "comparisons", backtest, version, at}.
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
@@ -164,6 +172,7 @@ export default class CaptainCompare extends View {
       const r = await api(`/api/runs/${enc(backtest)}?v=${version}`);
       if (this.runRef() !== ref) return;
       this.run = r.ok ? r.data : { error: say(r, "Couldn't load this run.") };
+      this.runR = r;
       cx.notify();
       if (!r.ok || r.data?.mode === "imported") return;
       const h = await api(`/api/runs/${enc(ref)}/histogram?bins=21`);
