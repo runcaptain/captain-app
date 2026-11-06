@@ -75,37 +75,14 @@
           "id": "runs",
           "type": "block",
           "content": {
-            "mod": "captain-soon",
-            "props": {
-              "title": "Runs",
-              "about": "Every execution with its manifest, logs, artifacts and reproducibility: backtests, replays, grading jobs and workflows.",
-              "prefixes": [
-                "backtest",
-                "replay",
-                "grade",
-                "workflow",
-                "jobs",
-                "run",
-                "runs"
-              ]
-            }
+            "mod": "captain-runs"
           }
         },
         {
           "id": "comparisons",
           "type": "block",
           "content": {
-            "mod": "captain-soon",
-            "props": {
-              "title": "Comparisons",
-              "about": "Metrics, slices, queries side by side, and the limits of what a result shows.",
-              "prefixes": [
-                "compare",
-                "segments",
-                "surfaces",
-                "diff"
-              ]
-            }
+            "mod": "captain-compare"
           }
         },
         {
