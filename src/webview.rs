@@ -139,10 +139,16 @@ pub fn covered(view: &Bounds<Pixels>, covers: &[Bounds<Pixels>]) -> bool {
 }
 
 /// Runs in every page before its own scripts: hands bound keys back.
-fn page_script(keys: &[String]) -> String {
+fn page_script(keys: &[String], theme: &str) -> String {
     let list = serde_json::to_string(keys).unwrap_or_else(|_| "[]".into());
+    let theme = serde_json::to_string(theme).unwrap_or_else(|_| "\"system\"".into());
     format!(
         r#"(() => {{
+  // Captain's theme (light or dark), so the page follows the app's native setting.
+  window.__captainTheme = {theme};
+  const sendTheme = () => window.postMessage({{ type: "captain:theme", value: window.__captainTheme }}, "*");
+  addEventListener("DOMContentLoaded", sendTheme);
+  addEventListener("load", sendTheme);
   const keys = new Set({list});
   const named = {{ Escape: "escape", Enter: "enter", Tab: "tab", Backspace: "backspace", Delete: "delete",
     ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", PageUp: "pageup",
@@ -190,6 +196,7 @@ pub struct Webviews {
     /// Shared with each page's message handler: what it may hand back.
     keys: std::rc::Rc<std::cell::RefCell<HashSet<String>>>,
     sent_keys: Vec<String>,
+    sent_theme: String,
     #[cfg(target_os = "macos")]
     views: HashMap<String, imp::View>,
 }
@@ -236,7 +243,7 @@ impl Webviews {
     /// End of a frame: place, show and hide every view (see the module doc).
     /// `live`: ids of every webview block in the layout, shown or not.
     #[allow(clippy::too_many_arguments)]
-    pub fn sync(&mut self, window: &gpui::Window, covers: &[Bounds<Pixels>], live: &HashSet<String>, keys: Vec<String>, zoom: f32, hosts: &[String]) {
+    pub fn sync(&mut self, window: &gpui::Window, covers: &[Bounds<Pixels>], live: &HashSet<String>, keys: Vec<String>, zoom: f32, hosts: &[String], theme: &str) {
         let frame = std::mem::take(&mut self.frame);
         if keys != self.sent_keys {
             *self.keys.borrow_mut() = keys.iter().cloned().collect();
@@ -266,7 +273,7 @@ impl Webviews {
                     continue;
                 }
                 if !self.views.contains_key(id) {
-                    match imp::View::new(window, id, &url, seen.bounds, &keys, self.keys.clone(), hosts) {
+                    match imp::View::new(window, id, &url, seen.bounds, &keys, self.keys.clone(), hosts, theme) {
                         Ok(v) => {
                             self.errors.remove(id);
                             self.views.insert(id.clone(), v);
@@ -284,6 +291,9 @@ impl Webviews {
                 if keys != self.sent_keys {
                     view.set_keys(&keys);
                 }
+                if theme != self.sent_theme {
+                    view.set_theme(theme);
+                }
                 if covered(&seen.bounds, covers) {
                     view.show(false);
                 } else {
@@ -299,13 +309,14 @@ impl Webviews {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (window, covers, zoom, hosts);
+            let _ = (window, covers, zoom, hosts, theme);
             for id in frame.keys() {
                 self.errors.insert(id.clone(), "web views need macOS in this build".into());
             }
             self.errors.retain(|id, _| live.contains(id));
         }
         self.sent_keys = keys;
+        self.sent_theme = theme.to_owned();
     }
 
     pub fn reload(&self, id: &str) -> Result<(), String> {
@@ -358,7 +369,8 @@ mod imp {
     }
 
     impl View {
-        pub fn new(window: &gpui::Window, id: &str, url: &str, bounds: Bounds<Pixels>, keys: &[String], allowed_keys: Rc<RefCell<HashSet<String>>>, hosts: &[String]) -> Result<Self, String> {
+        #[allow(clippy::too_many_arguments)]
+        pub fn new(window: &gpui::Window, id: &str, url: &str, bounds: Bounds<Pixels>, keys: &[String], allowed_keys: Rc<RefCell<HashSet<String>>>, hosts: &[String], theme: &str) -> Result<Self, String> {
             let hosts = Rc::new(RefCell::new(hosts.to_vec()));
             let nav_hosts = hosts.clone();
             let view_id = id.to_owned();
@@ -368,7 +380,7 @@ mod imp {
                 .with_visible(false)
                 .with_devtools(true)
                 .with_accept_first_mouse(true)
-                .with_initialization_script(page_script(keys))
+                .with_initialization_script(page_script(keys, theme))
                 .with_navigation_handler(move |to| {
                     let ok = allowed(&to, &nav_hosts.borrow()).is_ok();
                     if !ok {
@@ -440,6 +452,12 @@ mod imp {
         pub fn set_keys(&self, keys: &[String]) {
             let list = serde_json::to_string(keys).unwrap_or_else(|_| "[]".into());
             let _ = self.web.evaluate_script(&format!("window.__captainKeys && window.__captainKeys({list})"));
+        }
+
+        /// Tell the page the app's theme changed.
+        pub fn set_theme(&self, theme: &str) {
+            let v = serde_json::to_string(theme).unwrap_or_else(|_| "\"system\"".into());
+            let _ = self.web.evaluate_script(&format!("window.__captainTheme = {v}; window.postMessage({{ type: \"captain:theme\", value: {v} }}, \"*\")"));
         }
 
         pub fn reload(&self) -> Result<(), String> {
@@ -524,7 +542,8 @@ mod tests {
 
     #[test]
     fn the_page_script_lists_its_keys() {
-        let s = page_script(&["cmd-k".into(), "ctrl-alt-shift-escape".into()]);
+        let s = page_script(&["cmd-k".into(), "ctrl-alt-shift-escape".into()], "dark");
+        assert!(s.contains(r#"window.__captainTheme = "dark""#), "{s}");
         assert!(s.contains(r#"new Set(["cmd-k","ctrl-alt-shift-escape"])"#), "{s}");
         assert!(s.contains("window.ipc.postMessage"));
     }
@@ -535,7 +554,7 @@ mod tests {
         assert_eq!(page_message(&json!({"type": "captain:navigate", "screen": "runs", "tab": "x"})), Some(("layout.select".into(), json!({"stack": "sections", "child": "runs"}))));
         assert_eq!(page_message(&json!({"type": "captain:navigate", "screen": "settings"})), None);
         assert_eq!(page_message(&json!({"type": "captain:run", "screen": "runs"})), None);
-        assert!(page_script(&[]).contains("messageHandlers"));
+        assert!(page_script(&[], "light").contains("messageHandlers"));
     }
 
     #[test]

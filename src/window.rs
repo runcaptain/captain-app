@@ -4179,12 +4179,14 @@ impl AppWindow {
         let (views, bounds) = (self.webviews.clone(), self.bounds.clone());
         let hosts = settings::get().webview_hosts.clone();
         let zoom = settings::zoom();
+        // The pages follow Captain's native theme (captain:theme).
+        let theme = if settings::theme_is_light(&settings::get().theme) { "light" } else { "dark" };
         canvas(|_, _, _| (), move |_, _, window, _| {
             let rects: Vec<Bounds<Pixels>> = {
                 let b = bounds.borrow();
                 covers.iter().filter_map(|k| b.get(k).copied()).collect()
             };
-            views.borrow_mut().sync(window, &rects, &live, keys, zoom, &hosts);
+            views.borrow_mut().sync(window, &rects, &live, keys, zoom, &hosts, theme);
         })
         .absolute()
         .size_0()
