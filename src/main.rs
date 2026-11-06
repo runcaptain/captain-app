@@ -223,7 +223,8 @@ pub fn open_main(core: std::sync::Arc<hc::Core>, requests: async_channel::Receiv
                 // macOS: always see-through, so a layout can draw its own title bar
                 // live; the app drags the window (window/titlebar.rs).
                 titlebar: Some(TitlebarOptions {
-                    title: Some(brand::NAME.into()),
+                    // CAPTAIN: CAPTAIN_WINDOW_TITLE marks a scratch copy ("Captain (test)").
+                    title: Some(std::env::var("CAPTAIN_WINDOW_TITLE").ok().filter(|t| !t.is_empty()).unwrap_or_else(|| brand::NAME.into()).into()),
                     // Windows: hidden for good (it can't change live); the app draws it.
                     appears_transparent: cfg!(any(target_os = "macos", windows)),
                     traffic_light_position: cfg!(target_os = "macos").then(|| point(px(12.0), px(7.0))),

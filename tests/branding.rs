@@ -174,3 +174,57 @@ fn the_scanner_catches_branding_and_lets_identifiers_through() {
     assert_eq!(hits("src/x.rs", "fail(\"no Herdr window\")").len(), 1);
     assert!(hits("src/x.rs", "#[cfg(test)]\nfn t() { \"Herdr\"; \"in Herdr\"; }").is_empty());
 }
+
+/// Edgar: "what is this engine? ... why is there an engine?" Captain's backend
+/// is never a concept a person sees: no visible "engine" or "daemon". Checked in
+/// what people read: string literals in mods and Rust, and the docs the app
+/// writes. Identifiers (`captain.daemon`, the shared key mods read) and Codex's
+/// literal `--no-daemon` flag aren't prose.
+fn backend_words(path: &str, text: &str) -> Vec<String> {
+    let word = fancy_regex::Regex::new(r"(?i)\b(engine|daemon)s?\b").unwrap();
+    let allowed = fancy_regex::Regex::new(r"captain\.daemon(\.retry)?|--no-daemon").unwrap();
+    let lit = fancy_regex::Regex::new(r#""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`"#).unwrap();
+    let mut out = Vec::new();
+    let prose = path.ends_with(".md");
+    for (n, line) in visible(path, text) {
+        let parts: Vec<String> = if prose { vec![line.clone()] } else { lit.find_iter(&line).flatten().map(|m| m.as_str().to_owned()).collect() };
+        for p in parts {
+            let p = allowed.replace_all(&p, "").into_owned();
+            if word.is_match(&p).unwrap() {
+                out.push(format!("{path}:{n}: {}", p.trim()));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn no_engine_or_daemon_a_person_sees() {
+    let mut files = Vec::new();
+    walk(&root().join("defaults"), &mut files);
+    walk(&root().join("src"), &mut files);
+    let mut found = Vec::new();
+    for f in files {
+        let r = rel(&f);
+        if NOT_SHIPPED.iter().any(|n| r.starts_with(n)) || r.contains("/fonts/") || r.ends_with(".d.ts") {
+            continue;
+        }
+        // Captain's own surfaces: its mods and frame screens, the docs the app writes, and Rust strings.
+        let captain_js = r.starts_with("defaults/mods/captain-") || r.starts_with("defaults/frame/") || r.starts_with("defaults/captain/kit/");
+        let doc = r == "defaults/AGENTS.md" || r == "src/SKILL.md";
+        let rust = r.ends_with(".rs") && !r.contains("tests.rs") && !r.contains("_tests");
+        if !(captain_js && r.ends_with(".js") || doc || rust) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&f) else { continue };
+        found.extend(backend_words(&r, &text));
+    }
+    assert!(found.is_empty(), "\"engine\" or \"daemon\" a person can see ({}):\n{}", found.len(), found.join("\n"));
+}
+
+#[test]
+fn the_backend_word_check_reads_only_prose() {
+    assert_eq!(backend_words("defaults/mods/captain-x/main.js", r#"div().child("Starting Captain's engine")"#).len(), 1);
+    assert!(backend_words("defaults/mods/captain-x/main.js", "const d = shared(\"captain.daemon\"); // the daemon").is_empty());
+    assert!(backend_words("defaults/AGENTS.md", "Codex starts as `codex --no-daemon`.").is_empty());
+}

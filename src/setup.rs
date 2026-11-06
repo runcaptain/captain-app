@@ -105,21 +105,21 @@ impl Setup {
     }
 
     fn install(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.run("Looking for the terminal engine…", || crate::core_bin::install().map(Some), window, cx);
+        self.run("Looking for hc…", || crate::core_bin::install().map(Some), window, cx);
     }
 
     fn update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.run("Updating the terminal engine… your terminals keep running.", || crate::core_bin::update().map(|_| None), window, cx);
+        self.run("Updating hc… your terminals keep running.", || crate::core_bin::update().map(|_| None), window, cx);
     }
 
     fn choose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some("Use this terminal engine (hc)".into()) });
+        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some("Use this hc binary".into()) });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else { return };
             let Some(bin) = paths.into_iter().next() else { return };
             let _ = this.update_in(cx, |this, window, cx| {
                 if crate::core_bin::version(&bin).is_none() {
-                    this.state = State::Failed(format!("{} isn't the terminal engine (it should answer `--version` with `hc …`)", bin.display()));
+                    this.state = State::Failed(format!("{} isn't hc (it should answer `--version` with `hc …`)", bin.display()));
                     cx.notify();
                     return;
                 }
@@ -138,28 +138,28 @@ impl Setup {
     fn words(&self) -> (String, String, String) {
         match &self.need {
             Need::Install => (
-                "Captain needs its terminal engine".into(),
-                "The terminal engine (hc) runs your terminals and agents, and keeps them alive when this window closes. Captain couldn't find it on this computer.".into(),
+                "Captain needs hc".into(),
+                "The hc runs your terminals and agents, and keeps them alive when this window closes. Captain couldn't find it on this computer.".into(),
                 format!("Captain does not download it. Install it with its own installer in a terminal, into {CORE_PLACE}: {CORE_INSTALL}"),
             ),
             Need::Connect(error) => (
-                "Captain can't connect to its terminal engine".into(),
+                "Captain can't connect to hc".into(),
                 error.clone(),
                 "Once you've resolved this, try again.".into(),
             ),
             Need::Fix(Mismatch::TooOld { have, need }) => (
-                "Captain needs a newer terminal engine".into(),
+                "Captain needs a newer hc".into(),
                 format!("Yours is {have}; this Captain needs {need} or newer. Updating keeps your terminals running."),
                 "Or update it yourself: hc update".into(),
             ),
             Need::Fix(Mismatch::Missing(methods)) => (
-                "Captain needs a newer terminal engine".into(),
-                format!("Your terminal engine can't do everything this Captain needs ({}). Updating keeps your terminals running.", methods.join(", ")),
+                "Captain needs a newer hc".into(),
+                format!("Your hc can't do everything this Captain needs ({}). Updating keeps your terminals running.", methods.join(", ")),
                 "Or update it yourself: hc update".into(),
             ),
             Need::Fix(Mismatch::Newer { generation }) => (
-                "This Captain is older than your terminal engine".into(),
-                format!("Your terminal engine speaks a newer protocol (generation {generation}) than this Captain understands. Update Captain; your terminals keep running."),
+                "This Captain is older than your hc".into(),
+                format!("Your hc speaks a newer protocol (generation {generation}) than this Captain understands. Update Captain; your terminals keep running."),
                 format!("Update Captain: {APP_INSTALL}"),
             ),
         }
@@ -200,7 +200,7 @@ impl Render for Setup {
             Need::Fix(_) => div()
                 .flex()
                 .gap(px(10.0))
-                .child(button("update", "Update the terminal engine", true).when(!busy, |d| d.on_click(cx.listener(|this, _, w, cx| this.update(w, cx))))),
+                .child(button("update", "Update hc", true).when(!busy, |d| d.on_click(cx.listener(|this, _, w, cx| this.update(w, cx))))),
         };
         div()
             .size_full()

@@ -4462,7 +4462,7 @@ impl AppWindow {
         let core = crate::update::core();
         let core = core.ready.filter(|_| !core.updating);
         match (crate::update::ready(), core) {
-            (Some(a), Some(c)) => Some(format!("{} {a} and the terminal engine {c} are ready", crate::brand::NAME)),
+            (Some(a), Some(c)) => Some(format!("{} {a} and hc {c} are ready", crate::brand::NAME)),
             (Some(a), None) => Some(format!("{} {a} is ready", crate::brand::NAME)),
             (None, Some(c)) => Some(format!("herdr-core {c} is ready")),
             (None, None) => None,

@@ -6,7 +6,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { theme, props, openOverlay } from "herdr";
 import { api } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
-import { Card, Loading, ErrorState } from "./kit/ui.js";
+import { Card, Problem } from "./kit/ui.js";
 
 export default class CaptainSoon extends View {
   init(_props, cx) {
@@ -24,8 +24,7 @@ export default class CaptainSoon extends View {
         this.commands = r.data.filter((c) => prefixes.includes(c.path[0]));
         this.error = null;
       } else {
-        this.starting = r.starting;
-        this.error = r.error;
+        this.problem = r;
       }
       cx.notify();
     });
@@ -45,6 +44,6 @@ export default class CaptainSoon extends View {
           .on_click(() => openOverlay({ mod: "captain-commands", kind: "dialog", width: 560, props: { path: cmd.path } }))
           .child(div().w(220).flex_none().font_family(MONO).text_size(12.5).child(`cst ${cmd.path.join(" ")}`))
           .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(cmd.help ?? ""))))
-        : this.error && !this.starting ? ErrorState(c, this.error) : Loading(c, "", true));
+        : Problem(c, this.problem ?? { starting: true }, (cx) => this.load(cx)));
   }
 }

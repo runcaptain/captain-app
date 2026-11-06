@@ -3,6 +3,7 @@
 import { div, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar } from "gpui-base";
 import { FONT, MONO } from "./tokens.js";
+import { retry, details } from "./cst.js";
 
 /** A bordered panel with an optional title row and actions. */
 export function Card(c, { title, actions, pad = 16 } = {}, ...children) {
@@ -69,11 +70,35 @@ export function ErrorState(c, message, retry) {
     .when(Boolean(retry), (e) => e.child(retry));
 }
 
-/** Waiting on the daemon. starting: the engine itself isn't up yet. */
+/** Grey placeholder bars where content will be: no words while things load. */
+export function Skeleton(c, rows = 6) {
+  return v_flex().w_full().p(12).gap(10).children([...Array(rows)].map((_, i) => h_flex().gap(12)
+    .child(div().h(12).w(`${38 + ((i * 17) % 40)}%`).bg(c.surface2))
+    .child(div().h(12).w(`${12 + ((i * 7) % 14)}%`).bg(c.surface2))));
+}
+
+/** Waiting for data. While Captain's services start (starting), a quiet skeleton. */
 export function Loading(c, label = "Loading...", starting = false) {
+  if (starting) return Skeleton(c);
   return h_flex().w_full().py(24).gap(10).items_center().justify_center()
     .child(div().size(7).rounded_full().bg(c.blue))
-    .child(div().text_size(13).text_color(c.grey500).child(starting ? "Starting Captain's engine..." : label));
+    .child(div().text_size(13).text_color(c.grey500).child(label));
+}
+
+/** Captain's services didn't come up: one plain sentence, Retry, and Copy details. */
+export function ServiceError(c, message, onRetry) {
+  return v_flex().w_full().p(14).gap(10).bg(c.failLight).border_1().border_color(c.fail)
+    .child(div().text_size(13).line_height("19px").text_color(c.fail).child(String(message)))
+    .child(h_flex().gap(8)
+      .child(Button(c, "svc-retry", "Retry", (_e, cx) => { retry(); onRetry?.(cx); }, { kind: "primary", small: true }))
+      .child(Button(c, "svc-copy", "Copy details", (_e, cx) => cx.write_to_clipboard(details(message)), { small: true })));
+}
+
+/** What a failed api() call shows: ServiceError if the services are down, else the error. */
+export function Problem(c, r, onRetry) {
+  if (r?.starting) return Skeleton(c);
+  if (r?.failed) return ServiceError(c, r.error, onRetry);
+  return ErrorState(c, r?.error ?? "Something went wrong.");
 }
 
 /** Horizontal bars from a pre-totalled series [{label, value, tone?}]. */
@@ -136,7 +161,7 @@ export class Table {
       try { r = await this.fetch({ offset, limit: this.pageSize, sort: this.sort, desc: this.desc }); }
       catch (e) { r = { error: String(e) }; }
       if (token !== this.request) return;
-      if (r?.error) { this.state = r.starting ? "starting" : "error"; this.error = r.error; }
+      if (r?.error || r?.starting || r?.failed) { this.state = r.starting ? "starting" : r.failed ? "failed" : "error"; this.error = r.error; }
       else { this.rows = r.rows ?? []; this.total = r.total ?? this.rows.length; this.state = "ready"; this.error = null; }
       cx.notify();
     });
@@ -179,7 +204,8 @@ export class Table {
 
   render(c) {
     const body = this.state === "error" ? div().p(12).child(ErrorState(c, this.error))
-      : this.state === "starting" ? Loading(c, "", true)
+      : this.state === "failed" ? div().p(12).child(ServiceError(c, this.error))
+      : this.state === "starting" ? Skeleton(c)
       : (this.state === "loading" || this.state === "idle") && !this.rows.length ? Loading(c)
       : !this.rows.length ? Empty(c, this.empty)
       : div().flex_1().min_h(0).relative()

@@ -639,7 +639,7 @@ export default class Settings extends View {
           .child(div().text_size(14).text_color(t.foreground).child(m.name))
           .child(div().text_size(12.5).text_color(t.dim).child(`${m.target ?? ""} · ${state} · ${m.version ? `hc ${m.version}` : "hc version unknown"}`)))
         .child(controls.flex_none()));
-    if (busy === "update") row.child(div().text_size(12.5).text_color(t.dim).child("Copying this computer's terminal engine. Its terminals keep running."));
+    if (busy === "update") row.child(div().text_size(12.5).text_color(t.dim).child("Copying this computer's hc. Its terminals keep running."));
     if (edit && !busy) {
       const cancel = this.button(t, `st-m-cancel-${m.name}`, "Cancel", (_e, cx) => { this.machineEdit = null; this.handle.focus(); cx.notify(); });
       if (edit.action === "rm") row.child(v_flex().gap(8)
@@ -733,7 +733,7 @@ export default class Settings extends View {
         : c.error
           ? [`The update failed: ${c.error}`, primary("st-core-retry", "Try again", () => run("app.update_core"))]
           : c.ready
-            ? [`${c.ready} is ready. Your terminals keep running through it.`, primary("st-core-update", "Update the terminal engine", () => run("app.update_core"))]
+            ? [`${c.ready} is ready. Your terminals keep running through it.`, primary("st-core-update", "Update hc", () => run("app.update_core"))]
             : u.checks
               ? [result, check("st-check-core")]
               : ["Not checked: a build from source looks for no updates.", null];
@@ -744,9 +744,9 @@ export default class Settings extends View {
         .child(this.button(t, "st-whats-new", "What's new", () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
         .when(Boolean(app[1]), (el) => el.child(app[1]))))
       .child(div().h(18))
-      .child(this.heading(t, "Terminal engine"))
+      .child(this.heading(t, "Terminals (hc)"))
       .child(this.row(t, `hc ${c.version ?? ""}`, core[0], core[1] ?? div()))
-      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Captain doesn't update itself or the terminal engine on its own. The terminal engine (hc) runs your terminals, so they keep running through its updates."));
+      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Captain doesn't update itself or hc on its own. The hc runs your terminals, so they keep running through its updates."));
   }
 
 

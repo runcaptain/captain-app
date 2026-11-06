@@ -291,7 +291,7 @@ impl Core {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .context("cannot run `hc connect`: is the terminal engine (hc) installed?")?;
+            .context("cannot run `hc connect`: is the hc installed?")?;
         let mut stderr = child.stderr.take().unwrap();
         let (error_tx, errors) = mpsc::channel();
         std::thread::Builder::new().name("hc-stderr".into()).spawn(move || {

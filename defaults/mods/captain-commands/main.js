@@ -40,10 +40,11 @@ export default class CaptainCommands extends View {
     cx.spawn(async (cx) => {
       const r = await api("/api/commands");
       if (!r.ok) {
-        this.error = r.starting ? "Captain's engine is starting. Try again in a moment." : r.error;
+        this.problem = r;
+        this.error = r.starting ? null : r.error;
       } else {
         this.command = (r.data ?? []).find((c) => c.path.join(" ") === this.path.join(" ")) ?? null;
-        if (!this.command) this.error = `${title(this.path)} isn't a command this engine knows.`;
+        if (!this.command) this.error = `${title(this.path)} isn't a command Captain knows.`;
         // props.args prefills (an investigation's id for Decide, for example).
         const given = props()?.args ?? {};
         for (const p of this.command?.params ?? []) {
@@ -130,7 +131,7 @@ export default class CaptainCommands extends View {
     }
     return v_flex().size_full().bg(c.surface).text_color(c.navy).font_family("Inter").py(6)
       .child(div().px(12).pb(4).text_size(11).font_medium().text_color(c.grey500).child("NEW"))
-      .when(!list.length, (e) => e.child(div().px(12).py(8).text_size(12.5).text_color(c.grey500).child("Captain's engine is starting. The list fills in when it's up.")))
+      .when(!list.length, (e) => e.child(div().px(12).py(8).text_size(12.5).text_color(c.grey500).child("The list fills in in a moment.")))
       .child(v_flex().id("new-list").flex_1().min_h(0).overflow_y_scroll().children([...groups.entries()].map(([g, cmds]) => v_flex()
         .child(div().px(12).pt(8).pb(2).text_size(11).text_color(c.grey500).child(g))
         .children(cmds.map((cmd) => h_flex().id(`new-${cmd.path.join("-")}`).h(30).px(12).gap(8).items_center().cursor_pointer()

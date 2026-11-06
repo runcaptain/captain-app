@@ -236,13 +236,14 @@ pub fn shared_value(state: &State) -> Value {
     match state {
         State::Ready { port, token } => serde_json::json!({ "state": "ready", "base": format!("http://127.0.0.1:{port}"), "token": token, "home": cst_home().map(|h| h.display().to_string()) }),
         State::Idle | State::Starting => serde_json::json!({ "state": "starting" }),
-        State::Missing => serde_json::json!({ "state": "missing", "error": format!("Captain Search is not installed. Install it with: {INSTALL}") }),
+        State::Missing => serde_json::json!({ "state": "missing", "error": format!("Captain Search isn't installed. Install it with: {INSTALL}") }),
         State::Failed(e) => serde_json::json!({ "state": "failed", "error": e }),
     }
 }
 
 thread_local! {
     static PUBLISHED: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
+    static RETRY: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Each window render (main thread): start or reuse the daemon once, and keep
@@ -252,6 +253,12 @@ pub fn tick() {
     // Tests render windows; they must never start a real daemon. CAPTAIN_NO_DAEMON does the same for sandboxes.
     if cfg!(test) || std::env::var_os("CAPTAIN_NO_DAEMON").is_some() {
         return;
+    }
+    // A screen's Retry bumps shared "captain.daemon.retry": start over from scratch.
+    let retry = crate::mods::shared("captain.daemon.retry");
+    let fresh = RETRY.with_borrow_mut(|last| if *last != retry { let changed = last.is_some(); *last = retry; changed } else { false });
+    if fresh && matches!(state(), State::Failed(_) | State::Missing) {
+        stop();
     }
     if state() == State::Idle {
         ensure(|| crate::mods::request(crate::mods::Request::Refresh));

@@ -176,7 +176,7 @@ pub fn install() -> Result<PathBuf, String> {
         // Installed by hand since the screen opened: use it.
         let configured = crate::settings::load_person().ok().and_then(|p| p.core);
         return find(configured.as_deref().filter(|c| !c.is_empty()))
-            .ok_or_else(|| "The terminal engine (hc) is still not installed. Run the command below in a terminal, then press Look again.".into());
+            .ok_or_else(|| "The hc is still not installed. Run the command below in a terminal, then press Look again.".into());
     };
     let mut cmd = if cfg!(windows) {
         let mut c = crate::spawn::command("powershell");
@@ -217,7 +217,7 @@ pub fn update_to(at_least: Option<&str>) -> Result<String, String> {
     // it and restarts the core. Leave that to the person.
     if crate::brand::releases().is_none() {
         let wanted = at_least.map(|v| format!(" --version {v}")).unwrap_or_default();
-        return Err(format!("Captain does not update its terminal engine (hc), because other apps on this Mac can share it. Run hc update{wanted} yourself, then try again."));
+        return Err(format!("Captain does not update its hc, because other apps on this Mac can share it. Run hc update{wanted} yourself, then try again."));
     }
     let mut cmd = crate::spawn::command(path());
     cmd.args(["update", "--json"]);

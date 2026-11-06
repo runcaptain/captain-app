@@ -18,7 +18,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, layout, props, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
-import { api } from "./kit/cst.js";
+import { api, retry } from "./kit/cst.js";
 import { isDark, palette } from "./kit/tokens.js";
 import { getAppearance, setAppearance } from "./kit/appearance.js";
 
@@ -44,7 +44,7 @@ function find(node, id) {
 // Commands people make things with, for the New menu.
 const MAKES = /^(new|create|add|snapshot|import|gen|generate|sweep|publish|seed|init|link|propose)$/;
 
-/** Daemon commands as palette entries: each opens the native command form. */
+/** cst commands as palette entries: each opens the native command form. */
 export function paletteEntries(list) {
   return list.map((c) => ({
     name: "captain.command", group: "Captain", title: `cst ${c.path.join(" ")}`,
@@ -61,7 +61,7 @@ export default class CaptainNav extends View {
     this.state = "starting";
     this.appearance = "system";
     cx.spawn(async (cx) => { this.appearance = await getAppearance(); cx.notify(); });
-    // The onboarding, in the palette from the start (the commands join when the engine is up).
+    // The onboarding, in the palette from the start (the commands join once Captain's services answer).
     if (props()?.part !== "brand") {
       setShared("palette.extra", { ...(shared("palette.extra") ?? {}), "captain-app": [
         { name: "app.welcome", args: {}, group: "Captain", title: "Captain: onboarding", words: "welcome tour checklist start setup" },
@@ -85,7 +85,7 @@ export default class CaptainNav extends View {
       });
     }
     this.refresh(cx);
-    // Every 3 s until the engine answers, then every 15 s.
+    // Every 3 s until Captain's services answer, then every 15 s.
     this.tick = 0;
     cx.timer.every(3000, (cx) => { this.tick++; if (this.state !== "ready" || this.tick % 5 === 0) this.refresh(cx); });
   }
@@ -100,7 +100,7 @@ export default class CaptainNav extends View {
     cx.spawn(async (cx) => {
       try {
         const ws = await api("/api/workspace");
-        this.state = ws.ok ? "ready" : ws.starting ? "starting" : "error";
+        this.state = ws.ok ? "ready" : ws.starting ? "starting" : ws.failed ? "failed" : "error";
         this.error = ws.ok ? null : ws.error;
         if (ws.ok) {
           this.workspace = ws.data?.name ?? null;
@@ -167,19 +167,23 @@ export default class CaptainNav extends View {
     const current = list.find((s) => s.focused || s.shown) ?? list[0];
     const dots = (id) => agents().filter((a) => a.space === id);
     const dot = (st) => (st === "blocked" ? c.fail : st === "working" ? c.blue : st === "done" ? c.good : c.grey300);
-    const status = this.state === "error" ? `Captain's engine: ${this.error}` : this.state === "starting" ? "Starting Captain's engine..." : null;
+    // No words while Captain's services start: a placeholder bar. One short line if they fail.
+    const failed = this.state === "failed";
     return v_flex().w_full().flex_none().border_b(1).border_color(c.rule)
       .child(h_flex().h(40).px(16).gap(8).items_center()
-        .child(h_flex().id("space-current").flex_1().min_w(0).gap(6).items_center().cursor_pointer().tooltip(status ?? "Spaces")
+        .child(h_flex().id("space-current").flex_1().min_w(0).gap(6).items_center().cursor_pointer().tooltip(failed ? this.error : "Spaces")
           .on_click((_e, cx) => { this.spacesOpen = !this.spacesOpen; cx.notify(); })
-          .child(div().min_w(0).truncate().text_size(13).font_medium().text_color(this.state === "error" ? c.fail : c.navy)
-            .child(current?.name ?? this.workspace ?? (status ?? "No space")))
+          .child((current?.name ?? this.workspace)
+            ? div().min_w(0).truncate().text_size(13).font_medium().text_color(c.navy).child(current?.name ?? this.workspace)
+            : div().h(12).w(96).bg(c.surface2))
           .child(svg("mods/captain-nav/chevron-down.svg").size(12).text_color(c.grey500)))
         .child(div().id("nav-new").h(24).px(8).flex().items_center().gap(4).border_1().border_color(c.grey300).cursor_pointer()
           .text_size(12).text_color(c.navy).hover((s) => s.border_color(c.blue).text_color(c.blue)).tooltip("New")
           .on_click(() => openOverlay({ mod: "captain-commands", kind: "popup", width: 300, height: 420, props: { menu: "new" } }))
           .child(svg("mods/captain-nav/plus.svg").size(12)).child("New")))
-      .when(Boolean(status) && !this.spacesOpen, (e) => e.child(div().px(16).pb(8).text_size(11.5).text_color(this.state === "error" ? c.fail : c.grey500).child(status)))
+      .when(failed && !this.spacesOpen, (e) => e.child(h_flex().px(16).pb(8).gap(8).items_center()
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(c.fail).tooltip(this.error ?? "").child("Captain couldn't start its services"))
+        .child(div().id("svc-retry-nav").text_size(11.5).text_color(c.blue).cursor_pointer().on_click((_e, cx) => { retry(); this.state = "starting"; cx.notify(); }).child("Retry"))))
       .when(Boolean(this.spacesOpen), (e) => e.child(v_flex().pb(6)
         .children(list.map((sp) => h_flex().id(`space-${sp.id}`).h(28).px(16).gap(8).items_center().cursor_pointer()
           .bg(sp.id === current?.id ? c.blueLight : c.surface).text_color(sp.id === current?.id ? c.blue : c.navy).text_size(12.5)

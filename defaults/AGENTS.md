@@ -21,12 +21,12 @@ from the same parts you have.
 ## Two programs
 
 - **`captain-app`**, the window: spaces, tabs, layouts, panels.
-- **the terminal engine (`hc`)**, which runs every terminal and agent. They keep
+- **`hc`**, which runs every terminal and agent. They keep
   running when the window closes or updates. You can use `hc` yourself:
   start a terminal, read its screen, send it text, wait for an agent
   (`hc --help`). The Captain app is one client of it.
 
-`captain-app` controls this app; `hc` controls the terminal engine.
+`captain-app` controls this app; `hc` controls the terminals.
 
 ## What you can and can't do
 
@@ -175,10 +175,12 @@ the highlighted line shows where it will land.
 Each file is one whole window. `layout.switch` (`ctrl-shift-l`) cycles
 through them, `layout.switch {name}` picks one; `shared("layout")` is the
 shown one's name. Captain opens with `captain` ("Captain": the `captain-nav`
-sidebar with Explore, Pipelines, Evaluate, Deploys and Workflows; a `sections`
-stack of webview blocks, one per section, from the Captain Search daemon;
-terminal tabs and panes on the right). A webview URL may say `{cst}` (the
-daemon, which Captain starts on first use) and `{cst_token}`. It also ships `main` ("Spaces": spaces by machine and the
+sidebar with spaces, Investigations, Data and signals, Runs, Comparisons and
+Handoff; a `sections` stack of native screens, `captain-investigations`,
+`captain-handoff` and the others; terminal tabs and panes on the right).
+Captain's screens read Captain's local services, which it starts at launch;
+a mod reaches them through shared `captain.daemon` (`{base, token}`). It also
+ships `main` ("Spaces": spaces by machine and the
 agents list on the left, `workspace-chrome`; tabs as pills with a + menu
 that starts a terminal or any installed agent, `new-menu`; panes as cards
 with a header; Files and Changes panels on the right, `files` and
@@ -783,7 +785,7 @@ has 120 programs (agents, editors, runtimes, tools, databases, infra);
   inside `programs`. Use programs or shell functions, not aliases (the launcher
   does not expand them). On macOS the menu launcher loads login profiles before
   running the agent and leaves an interactive login shell when it ends.
-  Codex starts as `codex --no-daemon`: a shared Codex daemon would make later
+  Codex starts as `codex --no-daemon`: a shared Codex background process would make later
   sessions use the first terminal's identity and stop with it.
   On remote Unix machines, both the installed-agent check and launcher load
   that user's login/interactive shell for sh, bash, zsh, dash, ksh and fish, so
@@ -1026,7 +1028,7 @@ Mods are trusted code: commands and network access (including `fetch`) are unres
 Other built-ins: `localStorage` (per mod copy), `console.log`, `fetch`,
 `import * as fs from "fs/promises"` (read in home, write under `~/.config/captain-app`).
 
-## the terminal engine (`hc`)
+## `hc`
 
 `captain-app --skill` prints the manual for driving this window;
 `hc --skill` prints the manual for running and coordinating programs and agents,

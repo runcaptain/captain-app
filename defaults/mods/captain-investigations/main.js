@@ -10,7 +10,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, openOverlay, notify, run, spaces, focused, shared, setShared, exec } from "herdr";
 import { api, query } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
-import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Table, toneOf } from "./kit/ui.js";
+import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, toneOf } from "./kit/ui.js";
 import { View } from "gpui-kit";
 
 const STATES = [["", "All"], ["draft", "Draft"], ["running", "Running"], ["ready_for_review", "Ready for review"], ["decided", "Decided"]];
@@ -56,7 +56,7 @@ export default class CaptainInvestigations extends View {
       ],
       fetch: async () => {
         const r = await api(`/api/investigations${query({ state: this.state, q: this.q })}`);
-        if (!r.ok) return { error: r.error, starting: r.starting };
+        if (!r.ok) return { error: r.error, starting: r.starting, failed: r.failed };
         const rows = Array.isArray(r.data) ? r.data : r.data?.investigations ?? [];
         return { rows, total: rows.length };
       },
@@ -107,7 +107,7 @@ export default class CaptainInvestigations extends View {
     cx.spawn(async (cx) => {
       const r = await api(`/api/investigations/${encodeURIComponent(id)}`);
       if (this.open !== id) return;
-      this.detail = r.ok ? { data: r.data } : { error: r.error, starting: r.starting };
+      this.detail = r.ok ? { data: r.data } : { problem: r };
       cx.notify();
     });
   }
@@ -199,14 +199,14 @@ export default class CaptainInvestigations extends View {
   detailView(c) {
     const back = Button(c, "inv-back", "All investigations", (_e, cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); }, { kind: "quiet", small: true });
     if (!this.detail) return v_flex().size_full().p(24).gap(10).child(h_flex().child(back)).child(Loading(c));
-    if (this.detail.error) return v_flex().size_full().p(24).gap(10).child(h_flex().child(back)).child(this.detail.starting ? Loading(c, "", true) : ErrorState(c, this.detail.error));
+    if (this.detail.problem) return v_flex().size_full().p(24).gap(10).child(h_flex().child(back)).child(Problem(c, this.detail.problem, (cx) => this.load(this.open, cx)));
     const d = this.detail.data ?? {};
     return v_flex().size_full().min_h(0)
       .child(v_flex().flex_none().px(24).pt(16).gap(10)
         .child(h_flex().child(back))
         .child(h_flex().gap(10).items_center()
           .child(div().flex_1().min_w(0).truncate().text_size(20).font_semibold().text_color(c.navy).child(d.title ?? this.open))
-          .child(Button(c, "inv-space", "Open in a space", (_e, cx) => this.openSpace(d, cx)))
+          .child(Button(c, "inv-space", "Open a space for this investigation", (_e, cx) => this.openSpace(d, cx)))
           .child(Button(c, "inv-prompt", this.copied ? "Copied" : "Copy prompt", (_e, cx) => this.copyPrompt(cx)))
           .child(Button(c, "inv-run", "Run", (_e, cx) => this.run(cx), { kind: "primary" })))
         .child(h_flex().gap(8).items_center()

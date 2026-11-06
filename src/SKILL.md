@@ -1,6 +1,6 @@
 # captain-app: drive the person's window
 
-Captain shows spaces, tabs and panes. the terminal engine (`hc`) runs their terminals
+Captain shows spaces, tabs and panes. `hc` runs their terminals
 and keeps them alive when the window closes. Use `captain-app` only to change
 what the person sees. For starting, reading, messaging, waiting on or cleaning
 up agents and programs, read `hc --skill` and use hc.

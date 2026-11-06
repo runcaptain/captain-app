@@ -11,6 +11,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar } from "gpui-base";
 import { theme, props, closeOverlay, setShared, keys, openOverlay, appHome, spaces, run } from "herdr";
 import { api } from "./kit/cst.js";
+import { Skeleton, ServiceError } from "./kit/ui.js";
 import { isDark, palette } from "./kit/tokens.js";
 
 const PAGES = 4;
@@ -75,7 +76,7 @@ export default class Welcome extends View {
           this.next = r.data?.next ?? null;
           this.workspace = r.data?.workspace?.name ?? null;
         } else {
-          this.state = r.starting ? "starting" : "error";
+          this.state = r.starting ? "starting" : r.failed ? "failed" : "error";
           this.error = r.starting ? null : r.error;
         }
       } finally {
@@ -188,11 +189,10 @@ export default class Welcome extends View {
 
   pageWork(c) {
     if (this.state !== "ready") {
+      // Quiet while Captain's services start; one plain error with Retry if they don't.
       return v_flex()
         .child(this.title(c, "Your work", null))
-        .child(h_flex().gap(10).items_center().p(14).bg(c.surface2).border_1().border_color(c.rule)
-          .child(div().size(8).rounded_full().bg(this.state === "error" ? c.fail : c.blue))
-          .child(div().flex_1().min_w(0).child(this.para(c, this.state === "error" ? `Captain's engine isn't answering: ${this.error}` : "Starting Captain's engine. Your checklist appears here in a moment."))));
+        .child(this.state === "starting" ? Skeleton(c, 5) : this.state === "failed" ? ServiceError(c, this.error, (cx) => this.refresh(cx)) : div().text_size(12.5).text_color(c.fail).child(String(this.error ?? "")));
     }
     const empty = !this.steps.some((s) => s.id === "data" && s.done);
     return v_flex()
