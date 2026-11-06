@@ -1,0 +1,324 @@
+"""Object storage with the two guarantees the data model needs.
+
+1. put_new: create-only. A second write to the same key fails, so versions are write-once.
+2. put_if: compare-and-swap on a tag, for the few mutable pointers (aliases, current deploy).
+
+Local paths (and file://) work for tests and solo use. S3 uses conditional PUT
+(If-None-Match / If-Match). GCS uses generation preconditions. Azure uses ETag conditions.
+"""
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import os
+import tempfile
+from abc import ABC, abstractmethod
+from urllib.parse import urlparse
+
+
+class StorageError(Exception):
+    pass
+
+
+class AlreadyExists(StorageError):
+    pass
+
+
+class NotFound(StorageError):
+    pass
+
+
+class Conflict(StorageError):
+    """The object changed since it was read."""
+
+
+class Store(ABC):
+    uri: str
+
+    @abstractmethod
+    def put_new(self, key: str, data: bytes) -> None: ...
+
+    @abstractmethod
+    def get_with_tag(self, key: str) -> tuple[bytes, str]: ...
+
+    @abstractmethod
+    def put_if(self, key: str, data: bytes, tag: str | None) -> str:
+        """Write when the current tag equals `tag`. tag=None means the key must not exist."""
+
+    @abstractmethod
+    def list(self, prefix: str = "") -> list[str]:
+        """All keys under prefix, recursive, relative to the store root, sorted."""
+
+    def get(self, key: str) -> bytes:
+        return self.get_with_tag(key)[0]
+
+    def exists(self, key: str) -> bool:
+        try:
+            self.get_with_tag(key)
+            return True
+        except NotFound:
+            return False
+
+
+# ---- local -----------------------------------------------------------------------------
+
+
+class LocalStore(Store):
+    def __init__(self, root: str):
+        self.root = os.path.abspath(os.path.expanduser(root))
+        self.uri = "file://" + self.root
+        os.makedirs(self.root, exist_ok=True)
+
+    def _p(self, key: str) -> str:
+        key = key.lstrip("/")
+        p = os.path.abspath(os.path.join(self.root, key))
+        if not (p == self.root or p.startswith(self.root + os.sep)):
+            raise StorageError(f"key escapes store root: {key}")
+        return p
+
+    def put_new(self, key: str, data: bytes) -> None:
+        dest = self._p(key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dest), prefix=".tmp-")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            try:
+                os.link(tmp, dest)  # atomic, fails if dest exists
+            except FileExistsError:
+                raise AlreadyExists(key) from None
+        finally:
+            os.unlink(tmp)
+
+    def get_with_tag(self, key: str) -> tuple[bytes, str]:
+        try:
+            with open(self._p(key), "rb") as fh:
+                data = fh.read()
+        except FileNotFoundError:
+            raise NotFound(key) from None
+        return data, hashlib.sha256(data).hexdigest()
+
+    def put_if(self, key: str, data: bytes, tag: str | None) -> str:
+        dest = self._p(key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest + ".lock", "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                _, cur = self.get_with_tag(key)
+            except NotFound:
+                cur = None
+            if cur != tag:
+                raise Conflict(key)
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dest), prefix=".tmp-")
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            os.replace(tmp, dest)
+        return hashlib.sha256(data).hexdigest()
+
+    def list(self, prefix: str = "") -> list[str]:
+        base = self._p(prefix) if prefix else self.root
+        out = []
+        if os.path.isfile(base):
+            return [prefix.lstrip("/")]
+        for d, _, files in os.walk(base):
+            for f in files:
+                if f.startswith(".tmp-") or f.endswith(".lock"):
+                    continue
+                out.append(os.path.relpath(os.path.join(d, f), self.root))
+        return sorted(out)
+
+
+# ---- S3 --------------------------------------------------------------------------------
+
+
+class S3Store(Store):
+    def __init__(self, bucket: str, prefix: str = "", client=None):
+        if client is None:
+            import boto3
+
+            client = boto3.client("s3")
+        self.s3 = client
+        self.bucket = bucket
+        self.prefix = prefix.strip("/")
+        self.uri = f"s3://{bucket}/{self.prefix}".rstrip("/")
+
+    def _k(self, key: str) -> str:
+        key = key.lstrip("/")
+        return f"{self.prefix}/{key}" if self.prefix else key
+
+    @staticmethod
+    def _code(e) -> str:
+        return e.response.get("Error", {}).get("Code", "")
+
+    def put_new(self, key: str, data: bytes) -> None:
+        from botocore.exceptions import ClientError
+
+        try:
+            self.s3.put_object(Bucket=self.bucket, Key=self._k(key), Body=data, IfNoneMatch="*")
+        except ClientError as e:
+            if self._code(e) in ("PreconditionFailed", "ConditionalRequestConflict", "412"):
+                raise AlreadyExists(key) from None
+            raise
+
+    def get_with_tag(self, key: str) -> tuple[bytes, str]:
+        from botocore.exceptions import ClientError
+
+        try:
+            r = self.s3.get_object(Bucket=self.bucket, Key=self._k(key))
+        except ClientError as e:
+            if self._code(e) in ("NoSuchKey", "404"):
+                raise NotFound(key) from None
+            raise
+        return r["Body"].read(), r["ETag"]
+
+    def put_if(self, key: str, data: bytes, tag: str | None) -> str:
+        from botocore.exceptions import ClientError
+
+        kw = {"IfNoneMatch": "*"} if tag is None else {"IfMatch": tag}
+        try:
+            r = self.s3.put_object(Bucket=self.bucket, Key=self._k(key), Body=data, **kw)
+        except ClientError as e:
+            if self._code(e) in ("PreconditionFailed", "ConditionalRequestConflict", "412", "NoSuchKey"):
+                raise Conflict(key) from None
+            raise
+        return r["ETag"]
+
+    def list(self, prefix: str = "") -> list[str]:
+        out = []
+        pfx = self._k(prefix) if prefix else (self.prefix + "/" if self.prefix else "")
+        strip = len(self.prefix) + 1 if self.prefix else 0
+        for page in self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=pfx):
+            out += [o["Key"][strip:] for o in page.get("Contents", [])]
+        return sorted(out)
+
+
+# ---- GCS (untested in v1: no emulator in CI yet) ------------------------------------------
+
+
+class GCSStore(Store):
+    def __init__(self, bucket: str, prefix: str = "", credentials=None, project=None):
+        from google.cloud import storage  # type: ignore
+
+        self.b = storage.Client(project=project, credentials=credentials).bucket(bucket)
+        self.prefix = prefix.strip("/")
+        self.uri = f"gs://{bucket}/{self.prefix}".rstrip("/")
+
+    def _k(self, key: str) -> str:
+        key = key.lstrip("/")
+        return f"{self.prefix}/{key}" if self.prefix else key
+
+    def put_new(self, key: str, data: bytes) -> None:
+        from google.api_core.exceptions import PreconditionFailed  # type: ignore
+
+        try:
+            self.b.blob(self._k(key)).upload_from_string(data, if_generation_match=0)
+        except PreconditionFailed:
+            raise AlreadyExists(key) from None
+
+    def get_with_tag(self, key: str) -> tuple[bytes, str]:
+        blob = self.b.get_blob(self._k(key))
+        if blob is None:
+            raise NotFound(key)
+        return blob.download_as_bytes(if_generation_match=blob.generation), str(blob.generation)
+
+    def put_if(self, key: str, data: bytes, tag: str | None) -> str:
+        from google.api_core.exceptions import PreconditionFailed  # type: ignore
+
+        blob = self.b.blob(self._k(key))
+        try:
+            blob.upload_from_string(data, if_generation_match=0 if tag is None else int(tag))
+        except PreconditionFailed:
+            raise Conflict(key) from None
+        return str(blob.generation)
+
+    def list(self, prefix: str = "") -> list[str]:
+        strip = len(self.prefix) + 1 if self.prefix else 0
+        pfx = self._k(prefix) if prefix else (self.prefix + "/" if self.prefix else "")
+        return sorted(b.name[strip:] for b in self.b.client.list_blobs(self.b, prefix=pfx))
+
+
+# ---- Azure (untested in v1: no emulator in CI yet) ----------------------------------------
+
+
+class AzureStore(Store):
+    def __init__(self, account: str, container: str, prefix: str = "", credential=None, connection_string=None):
+        from azure.storage.blob import ContainerClient  # type: ignore
+
+        if connection_string:
+            self.c = ContainerClient.from_connection_string(connection_string, container)
+        else:
+            if credential is None:
+                from azure.identity import DefaultAzureCredential  # type: ignore
+
+                credential = DefaultAzureCredential()
+            self.c = ContainerClient(f"https://{account}.blob.core.windows.net", container, credential)
+        self.prefix = prefix.strip("/")
+        self.uri = f"az://{account}/{container}/{self.prefix}".rstrip("/")
+
+    def _k(self, key: str) -> str:
+        key = key.lstrip("/")
+        return f"{self.prefix}/{key}" if self.prefix else key
+
+    def put_new(self, key: str, data: bytes) -> None:
+        from azure.core.exceptions import ResourceExistsError  # type: ignore
+
+        try:
+            self.c.upload_blob(self._k(key), data, overwrite=False)
+        except ResourceExistsError:
+            raise AlreadyExists(key) from None
+
+    def get_with_tag(self, key: str) -> tuple[bytes, str]:
+        from azure.core.exceptions import ResourceNotFoundError  # type: ignore
+
+        try:
+            d = self.c.download_blob(self._k(key))
+        except ResourceNotFoundError:
+            raise NotFound(key) from None
+        return d.readall(), d.properties.etag
+
+    def put_if(self, key: str, data: bytes, tag: str | None) -> str:
+        from azure.core import MatchConditions  # type: ignore
+        from azure.core.exceptions import ResourceExistsError, ResourceModifiedError  # type: ignore
+
+        try:
+            if tag is None:
+                r = self.c.upload_blob(self._k(key), data, overwrite=False)
+            else:
+                r = self.c.upload_blob(
+                    self._k(key), data, overwrite=True, etag=tag, match_condition=MatchConditions.IfNotModified
+                )
+        except (ResourceExistsError, ResourceModifiedError):
+            raise Conflict(key) from None
+        return r["etag"]
+
+    def list(self, prefix: str = "") -> list[str]:
+        strip = len(self.prefix) + 1 if self.prefix else 0
+        pfx = self._k(prefix) if prefix else (self.prefix + "/" if self.prefix else "")
+        return sorted(b.name[strip:] for b in self.c.list_blobs(name_starts_with=pfx))
+
+
+def open_store(uri: str, profile: str | None = None) -> Store:
+    """profile names a cloud profile (see cloud.py). None uses the provider's default credential chain."""
+    u = urlparse(uri)
+    if u.scheme in ("", "file"):
+        return LocalStore(u.path if u.scheme == "file" else uri)
+    if u.scheme == "s3":
+        from ..cloud import aws_session
+
+        return S3Store(u.netloc, u.path, client=aws_session(profile).client("s3"))
+    if u.scheme in ("gs", "gcs"):
+        if profile:
+            from ..cloud import gcp_credentials
+
+            creds, project = gcp_credentials(profile)
+            return GCSStore(u.netloc, u.path, creds, project)
+        return GCSStore(u.netloc, u.path)
+    if u.scheme in ("az", "azure"):
+        container, _, prefix = u.path.lstrip("/").partition("/")
+        if profile:
+            from ..cloud import azure_credential
+
+            cred, conn, _ = azure_credential(profile)
+            return AzureStore(u.netloc, container, prefix, credential=cred, connection_string=conn)
+        return AzureStore(u.netloc, container, prefix)
+    raise StorageError(f"unsupported storage URI: {uri}")

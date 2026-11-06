@@ -8,6 +8,7 @@ const routes = globalThis.__routes ?? [];
 export const asked = (globalThis.__asked ??= []);
 export async function api(p, opts = {}) {
   asked.push(p);
+  (globalThis.__bodies ??= []).push([p, opts]);
   // The backend is down: what kit/cst.js answers then (tests/mod-render/backend-down.test.mjs).
   if (globalThis.__down) return { ...globalThis.__down };
   // The engine is not up yet: what kit/cst.js answers while the app starts the daemon.

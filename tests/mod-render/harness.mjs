@@ -15,12 +15,17 @@ export function harness(Mod) {
   const mod = new Mod();
   let tree = null;
 
+  // Long-lived tasks (a kernel socket's read loop) never finish: wait for each batch at most 40 ms.
   async function settle() {
-    for (let i = 0; i < 50 && pending.length; i++) await Promise.all(pending.splice(0));
+    for (let i = 0; i < 50 && pending.length; i++) {
+      await Promise.race([Promise.all(pending.splice(0)), new Promise((r) => setTimeout(r, 40))]);
+    }
   }
   function render() {
     const t0 = performance.now();
-    tree = mod.render(cx);
+    // The app refuses InputState.new and EditorState.new while drawing (stubs/gpui-base.js throws the same).
+    globalThis.__rendering = true;
+    try { tree = mod.render(cx); } finally { globalThis.__rendering = false; }
     timings.push(performance.now() - t0);
     return tree;
   }
@@ -31,7 +36,9 @@ export function harness(Mod) {
       const [id, count, , , draw] = e.args;
       const [a, b] = ranges[id] ?? [0, Math.min(count, 20)];
       const t0 = performance.now();
-      const rows = draw({ start: a, end: Math.min(b, count) }, cx);
+      globalThis.__rendering = true;
+      let rows;
+      try { rows = draw({ start: a, end: Math.min(b, count) }, cx); } finally { globalThis.__rendering = false; }
       timings.push(performance.now() - t0);
       for (const r of rows) walk(r, f, ranges);
     }
@@ -76,6 +83,22 @@ export function harness(Mod) {
       let found = false;
       walk(e, (x) => { if (x.kind === kind) found = true; });
       return found;
+    },
+    /** Press a key chord ("cmd-enter") on the element with this id: its on_key_down handler. */
+    async key(id, keystroke, ranges) {
+      const e = all(ranges).find((x) => typeof x.call === 'function' && x.call('id')?.[0] === id);
+      if (!e) throw new Error(`no element with id ${id}`);
+      const h = e.call('on_key_down')?.[0];
+      if (!h) throw new Error(`${id} has no on_key_down`);
+      h({ keystroke }, cx);
+      await settle();
+      render();
+    },
+    /** Let spawned work run (kernel replies arrive on timers), then render. */
+    async idle(ms = 60) {
+      await new Promise((r) => setTimeout(r, ms));
+      await settle();
+      render();
     },
     async click(id, ranges) {
       const e = all(ranges).find((x) => typeof x.call === 'function' && x.call('id')?.[0] === id);

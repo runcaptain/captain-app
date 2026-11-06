@@ -11,6 +11,11 @@ the fork changes and how to take upstream changes. Risks and hard parts are in d
 - New Captain features go in new files where possible.
 - Never push to `upstream`, open pull requests there or file issues there.
 
+## The backend lives here
+
+`backend/` is Captain's own code (the Captain Search backend and the `cst` CLI), moved in from a separate repo on
+2026-11-06 so one repo holds everything. It is not from Herdr and never goes upstream. See backend/README.md.
+
 ## What we changed
 
 Identity (Apache 2.0 section 6 grants no trademark rights):
@@ -78,11 +83,11 @@ allowlist at its top: the notice, the `herdr` mod module and `herdr.d.ts`, `herd
 real binary name; prose calls it "the terminal engine (hc)"), `herdr.<label>` core labels, `HERDR_*` variables
 and GPUI key-context names. "Herdr 98" (`win98`) isn't shipped (build.rs `NOT_SHIPPED`). Upstream's icon files
 keep their names, so their release scripts work, but hold the Captain C. One visible herdr.dev URL remains: the
-terminal engine's install command on the setup screen, until captain-ide's install.sh installs hc.
+terminal engine's install command on the setup screen, until backend/install.sh installs hc.
 
 **Captain.app carries what it runs** (`scripts/package-captain-macos`): a python-build-standalone CPython (through
-uv) with captain-search installed from a captain-ide checkout at `origin/main` (`git archive`, the checkout isn't
-touched) in `Contents/Resources/cst/`, with a `bin/cst` launcher that works through a symlink; and the herdr-core
+uv) with captain-search installed from `backend/core` in this repo, with every database driver, in
+`Contents/Resources/cst/`, with a `bin/cst` launcher that works through a symlink; and the herdr-core
 (hc, Apache-2.0) binary with its `--licenses` output in `Contents/Resources/hc/`. Captain starts the packaged cst
 and hc (`brand::bundled`). settings.json `cst` / `core` or `CST_BIN` point elsewhere for development. At launch it
 offers the packaged cst as `~/.local/bin/cst` only when there's none, or the link already points into a

@@ -7,11 +7,12 @@
 // grid keeps a few pages of 200 rows around what is on screen and drops the rest.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
-import { theme, shared } from "herdr";
+import { theme, shared, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button, Badge } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
+import { Notebooks } from "./notebooks.js";
 
 const PAGE = 200;
 const ROW = 26;
@@ -33,6 +34,9 @@ function cellText(v) {
 /** A failed call in words for people: the backend's own sentence when it answered, else a plain one. Transport
  *  details (hosts, ports, tool output) never show: they go behind Copy details. */
 function say(r, fallback) {
+  // The services went away or never came up: the kit's own plain sentence ("Captain's services stopped.").
+  // Belt and braces: anything that reads like a tool's or transport's output never shows.
+  if (r?.failed && r.error && !/curl|127\.0|localhost|\bport\b|https?:|error sending|traceback|engine|daemon/i.test(r.error)) return String(r.error);
   const e = String(r?.error ?? "");
   if (r?.status && e && !/^HTTP \d+$/.test(e)) return e;
   if (/time ?out|timed out/i.test(e)) return "This took too long.";
@@ -90,11 +94,22 @@ export default class CaptainData extends View {
     this.search.on("submit", (_e, cx) => this.query(cx, { search: this.search.value().trim() }));
     this.where.on("submit", (_e, cx) => this.query(cx, { where: this.where.value().trim() }));
     this.resetGrid();
+    this.nb = new Notebooks();
+    // Layout props (a layout, or the real-window check): {tab: "notebooks", notebook, runAll}.
+    const p = layoutProps?.() ?? {};
+    if (p.tab === "notebooks") {
+      this.tab = "notebooks";
+      this.nb.want = p.notebook ?? null;
+      this.nb.runOnOpen = !!p.runAll;
+      this.nb.load(cx);
+    }
     this.load(cx);
+    // The notebook: autosave its draft, and keep a running cell's clock moving.
+    cx.timer.every(500, (cx) => { if (this.tab === "notebooks") this.nb.tick(cx); });
     // Pages the grid asked for while drawing are fetched here, outside render.
     cx.timer.every(120, (cx) => this.pump(cx));
     // Until the backend answers, ask again every 3 s: the screen never stays on "starting" by itself.
-    cx.timer.every(3000, (cx) => { if (this.starting || (this.list === null && this.loadedOnce)) this.load(cx); });
+    cx.timer.every(3000, (cx) => { if (this.starting || (this.list === null && this.loadedOnce) || (this.listError && !this.listR?.status)) this.load(cx); });
     // "Open <dataset>" from the palette: captain-go sets shared "captain.open" {section: "data", dataset, at}.
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
@@ -112,6 +127,9 @@ export default class CaptainData extends View {
     watchWorkspace(cx, (cx) => {
       this.list = null; this.sel = null; this.detail = null; this.labels = null; this.labelSel = null; this.preview = null;
       this.cls = null; this.classes = [];
+      this.nb.kernel?.close();
+      this.nb = new Notebooks();
+      if (this.tab === "notebooks") this.nb.load(cx);
       this.resetGrid();
       this.load(cx);
       cx.notify();
@@ -277,10 +295,10 @@ export default class CaptainData extends View {
     const t = (id, label, icon) => h_flex().id(`tab-${id}`).h(28).px(12).gap(6).items_center().cursor_pointer()
       .border_r(1).border_color(c.grey300).text_size(12.5)
       .bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
-      .on_click((_e, cx) => { this.tab = id; if (id === "labels" && !this.labels) this.loadLabels(cx); cx.notify(); })
+      .on_click((_e, cx) => { this.tab = id; if (id === "labels" && !this.labels) this.loadLabels(cx); if (id === "notebooks" && this.nb.list === null) this.nb.load(cx); cx.notify(); })
       .child(this.icon(icon, 13)).child(div().child(label));
     return h_flex().flex_none().border_1().border_color(c.grey300)
-      .child(t("datasets", "Datasets", "table")).child(t("labels", "Labels", "tag"));
+      .child(t("datasets", "Datasets", "table")).child(t("labels", "Labels", "tag")).child(t("notebooks", "Notebooks", "folder-open"));
   }
 
   header(c) {
@@ -288,7 +306,7 @@ export default class CaptainData extends View {
       .child(div().flex_none().text_size(18).font_semibold().text_color(c.navy).child("Data and signals"))
       .child(this.tabs(c))
       .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.grey900)
-        .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your experiments read." : "Rules that turn logged events into judgments."))
+        .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your experiments read." : this.tab === "notebooks" ? "SQL, Python, notes and charts, saved as versions." : "Rules that turn logged events into judgments."))
       .when(this.tab === "datasets", (e) => e
         .child(Button(c, "new-class", "New class", () => openForm("dataset-class"), { small: true }))
         .child(Button(c, "import-dataset", "Import a dataset", () => openForm("dataset"), { kind: "primary", small: true })))
@@ -296,7 +314,7 @@ export default class CaptainData extends View {
         .child(Button(c, "label-agent", "Ask an agent to define a label", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, LABEL_PROMPT)), { small: true })))
       .child(div().id("data-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()
         .border_1().border_color(c.grey300).text_color(c.grey900).hover((s) => s.text_color(c.blue).border_color(c.blue))
-        .tooltip("Refresh").on_click((_e, cx) => { if (this.tab === "labels") this.loadLabels(cx); else this.load(cx); })
+        .tooltip("Refresh").on_click((_e, cx) => { if (this.tab === "labels") this.loadLabels(cx); else if (this.tab === "notebooks") this.nb.load(cx); else this.load(cx); })
         .child(this.icon("refresh", 14)));
   }
 
@@ -323,7 +341,7 @@ export default class CaptainData extends View {
         .child(this.chip(c, "All", null, !this.cls, (_e, cx) => { this.cls = null; this.load(cx); }))
         .children(this.classes.map((k) => this.chip(c, k.name, k.color, this.cls === k.name, (_e, cx) => { this.cls = this.cls === k.name ? null : k.name; this.load(cx); }, k.datasets))))
       .child(v_flex().id("data-list").flex_1().min_h(0).overflow_y_scrollbar()
-        .when(!!this.listError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child(this.listError)))
+        .when(!!this.listError, (e) => e.child(div().p(10).child(trouble(c, "datasets-list", this.listR, this.listError, (cx) => this.load(cx)))))
         .when(this.list !== null && rows.length === 0 && !this.listError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child(this.cls ? "No datasets in this class." : "No datasets yet.")))
         .when(this.list === null && !this.listError, (e) => e.child(div().child(Skeleton(c, 8))))
         .children(rows.map((d) => {
@@ -549,8 +567,12 @@ export default class CaptainData extends View {
     const w = this.width;
     const listW = Math.max(220, Math.min(320, Math.floor(w * 0.24)));
     // Never blank: the header always shows, and the body says what is happening.
-    const body = this.starting || (!this.loadedOnce && this.list === null)
+    const body = this.starting
       ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true))
+      : this.tab === "notebooks"
+        ? this.nb.render(c, w)
+      : !this.loadedOnce && this.list === null
+        ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true))
       : this.listError && this.list === null
         ? v_flex().flex_1().p(24).child(trouble(c, "datasets", this.listR, "Couldn't load datasets.", (cx) => this.load(cx)))
         : this.tab === "datasets" && Array.isArray(this.list) && this.list.length === 0 && !this.cls

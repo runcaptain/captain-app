@@ -17,11 +17,14 @@ const FORBIDDEN = /curl|127\.0\.0\.1|\bport\b|engine|daemon|ECONNREFUSED|localho
 const RAW = "curl: (7) Failed to connect to 127.0.0.1 port 56688 after 0 ms: Couldn't connect to server";
 const MODES = {
   starting: { ok: false, starting: true, error: null },
-  failed: { ok: false, failed: true, error: `Captain couldn't start its services: ${RAW}` },
+  failed: { ok: false, failed: true, error: "Captain's services didn't start." },
+  // An older kit that put the raw reason in the sentence: the screen must still not show it.
+  failedRaw: { ok: false, failed: true, error: `Captain couldn't start its services: ${RAW}` },
+  stopped: { ok: false, failed: true, stopped: true, error: "Captain's services stopped." },
   transport: { ok: false, error: RAW },
 };
 const SCREENS = {
-  'captain-data': ['tab-labels', 'tab-datasets'],
+  'captain-data': ['tab-labels', 'tab-notebooks', 'tab-datasets'],
   'captain-runs': ['tab-workflows', 'tab-grading', 'tab-replays', 'tab-backtests'],
   'captain-compare': ['tab-queries', 'tab-segments', 'tab-surfaces', 'tab-overview'],
 };
@@ -52,7 +55,7 @@ for (const [mod, tabs] of Object.entries(SCREENS)) {
     const bad = all.match(FORBIDDEN);
     assert.ok(!bad, `${mod}, backend ${mode}: shows "${bad?.[0]}" in: ${all.slice(Math.max(0, all.search(FORBIDDEN) - 80), all.search(FORBIDDEN) + 80)}`);
     if (mode !== 'starting') {
-      assert.ok(/Couldn't load|This took too long/.test(all), `${mod}, backend ${mode}: no plain sentence in: ${all.slice(0, 200)}`);
+      assert.ok(/Couldn't load|This took too long|Captain's services (stopped|didn't start)/.test(all), `${mod}, backend ${mode}: no plain sentence in: ${all.slice(0, 200)}`);
       assert.ok(h.byIdPrefix('').some((e) => /-retry$/.test(String(e.call('id')?.[0] ?? ''))), `${mod}, backend ${mode}: no Retry`);
     }
     checked++;
