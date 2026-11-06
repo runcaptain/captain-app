@@ -7,7 +7,7 @@
 // own field, never inferred from another.
 import { div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { theme, openOverlay, notify } from "herdr";
+import { theme, openOverlay, notify, run, spaces, focused, shared, setShared, exec } from "herdr";
 import { api, query } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Table, toneOf } from "./kit/ui.js";
@@ -63,6 +63,33 @@ export default class CaptainInvestigations extends View {
     });
     this.table.load(cx);
     cx.timer.every(10000, (cx) => (this.open ? this.load(this.open, cx) : this.table.load(cx)));
+    // A space bound to an investigation opens it here when you switch to that space.
+    cx.timer.every(1500, (cx) => {
+      const bound = (shared("captain.spaces") ?? {})[focused()?.space]?.investigation ?? null;
+      if (bound !== this.bound) {
+        this.bound = bound;
+        if (bound && bound !== this.open) this.show(bound, cx);
+      }
+    });
+  }
+
+  /** A space for this investigation: its terminals get CST_INVESTIGATION, and switching to it opens it here. */
+  openSpace(d, cx) {
+    cx.spawn(async (cx) => {
+      const ws = shared("captain.workspace");
+      const home = shared("captain.daemon")?.home;
+      let folder = null;
+      if (home && ws) {
+        const dir = `${home}/agent/${ws}`;
+        try { if ((await exec("test", ["-d", dir])).code === 0) folder = dir; } catch {}
+      }
+      const before = new Set(spaces().map((x) => x.id));
+      run("space.new", folder ? { name: d.title ?? this.open, folder } : { name: d.title ?? this.open });
+      const made = spaces().find((x) => !before.has(x.id));
+      if (made) setShared("captain.spaces", { ...(shared("captain.spaces") ?? {}), [made.id]: { workspace: ws, investigation: this.open } });
+      notify({ title: "Space opened", body: `Terminals there know this investigation (CST_INVESTIGATION=${this.open}).`, level: "info" });
+      cx.notify();
+    });
   }
 
   reload(cx) {
@@ -179,6 +206,7 @@ export default class CaptainInvestigations extends View {
         .child(h_flex().child(back))
         .child(h_flex().gap(10).items_center()
           .child(div().flex_1().min_w(0).truncate().text_size(20).font_semibold().text_color(c.navy).child(d.title ?? this.open))
+          .child(Button(c, "inv-space", "Open in a space", (_e, cx) => this.openSpace(d, cx)))
           .child(Button(c, "inv-prompt", this.copied ? "Copied" : "Copy prompt", (_e, cx) => this.copyPrompt(cx)))
           .child(Button(c, "inv-run", "Run", (_e, cx) => this.run(cx), { kind: "primary" })))
         .child(h_flex().gap(8).items_center()

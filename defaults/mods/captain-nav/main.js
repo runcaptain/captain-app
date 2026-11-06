@@ -17,7 +17,7 @@
 // the one that stays up to date.
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, layout, props, agents, shared, setShared, openOverlay, window as win } from "herdr";
+import { theme, run, layout, props, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
 import { api } from "./kit/cst.js";
 import { isDark, palette } from "./kit/tokens.js";
 import { getAppearance, setAppearance } from "./kit/appearance.js";
@@ -65,7 +65,24 @@ export default class CaptainNav extends View {
     if (props()?.part !== "brand") {
       setShared("palette.extra", { ...(shared("palette.extra") ?? {}), "captain-app": [
         { name: "app.welcome", args: {}, group: "Captain", title: "Captain: onboarding", words: "welcome tour checklist start setup" },
+        { name: "captain-nav.theme-light", args: {}, group: "Captain", title: "Theme: Light", words: "appearance light mode" },
+        { name: "captain-nav.theme-dark", args: {}, group: "Captain", title: "Theme: Dark", words: "appearance dark mode night" },
+        { name: "captain-nav.theme-system", args: {}, group: "Captain", title: "Theme: System", words: "appearance system auto" },
+        { name: "captain-nav.space-new", args: {}, group: "Captain", title: "New space for this workspace", words: "space workspace terminals" },
       ] });
+      // Commands the palette and keys send this mod (captain-nav.<name>).
+      cx.spawn(async (cx) => {
+        for (;;) {
+          const c = String(await nextCommand()).split(".").pop();
+          if (c.startsWith("theme-")) {
+            this.appearance = c.slice(6);
+            await setAppearance(this.appearance);
+          } else if (c === "space-new") {
+            await this.newSpace();
+          }
+          cx.notify();
+        }
+      });
     }
     this.refresh(cx);
     // Every 3 s until the engine answers, then every 15 s.
@@ -84,7 +101,13 @@ export default class CaptainNav extends View {
       try {
         const ws = await api("/api/workspace");
         this.state = ws.ok ? "ready" : ws.starting ? "starting" : "error";
-        if (ws.ok) this.workspace = ws.data?.name ?? null;
+        this.error = ws.ok ? null : ws.error;
+        if (ws.ok) {
+          this.workspace = ws.data?.name ?? null;
+          // The app names new spaces and sets terminals' CST_WORKSPACE from this.
+          if (this.workspace && shared("captain.workspace") !== this.workspace) setShared("captain.workspace", this.workspace);
+        }
+        await this.ensureSpace();
         for (const it of this.items().filter((i) => i.badge)) {
           const r = await api(it.badge);
           this.counts[it.id] = r.ok && Array.isArray(r.data) ? r.data.length : 0;
@@ -103,6 +126,74 @@ export default class CaptainNav extends View {
         cx.notify();
       }
     });
+  }
+
+  /** The workspace's agent folder (<CST_HOME>/agent/<workspace>, with its AGENTS.md), if it exists. */
+  async agentFolder() {
+    const home = shared("captain.daemon")?.home;
+    if (!home || !this.workspace) return null;
+    const dir = `${home}/agent/${this.workspace}`;
+    try { return (await exec("test", ["-d", dir])).code === 0 ? dir : null; } catch { return null; }
+  }
+
+  /** A space for this workspace (or an investigation in it), bound so its terminals know. */
+  async newSpace(investigation) {
+    const name = investigation?.title ?? this.workspace ?? "Captain";
+    const folder = await this.agentFolder();
+    const before = new Set(spaces().map((s) => s.id));
+    run("space.new", folder ? { name, folder } : { name });
+    const made = spaces().find((s) => !before.has(s.id));
+    if (made) {
+      const map = { ...(shared("captain.spaces") ?? {}) };
+      map[made.id] = { workspace: this.workspace, ...(investigation ? { investigation: investigation.id } : {}) };
+      setShared("captain.spaces", map);
+    }
+  }
+
+  /** Never zero spaces: once the window's spaces have loaded, make one if there are none. */
+  async ensureSpace() {
+    if (this.making || spaces().length) return;
+    if ((machines()[0]?.layout ?? "ready") !== "ready") return;
+    // Wait for the workspace's name (the space is named after it and its terminals get it),
+    // but never longer than ~10 s: a window with no space can't open a terminal at all.
+    this.waited = (this.waited ?? 0) + 1;
+    if (this.state !== "ready" && this.waited < 4) return;
+    this.making = true;
+    try { await this.newSpace(); } finally { this.making = false; }
+  }
+
+  spaceSwitcher(c) {
+    const list = spaces();
+    const current = list.find((s) => s.focused || s.shown) ?? list[0];
+    const dots = (id) => agents().filter((a) => a.space === id);
+    const dot = (st) => (st === "blocked" ? c.fail : st === "working" ? c.blue : st === "done" ? c.good : c.grey300);
+    const status = this.state === "error" ? `Captain's engine: ${this.error}` : this.state === "starting" ? "Starting Captain's engine..." : null;
+    return v_flex().w_full().flex_none().border_b(1).border_color(c.rule)
+      .child(h_flex().h(40).px(16).gap(8).items_center()
+        .child(h_flex().id("space-current").flex_1().min_w(0).gap(6).items_center().cursor_pointer().tooltip(status ?? "Spaces")
+          .on_click((_e, cx) => { this.spacesOpen = !this.spacesOpen; cx.notify(); })
+          .child(div().min_w(0).truncate().text_size(13).font_medium().text_color(this.state === "error" ? c.fail : c.navy)
+            .child(current?.name ?? this.workspace ?? (status ?? "No space")))
+          .child(svg("mods/captain-nav/chevron-down.svg").size(12).text_color(c.grey500)))
+        .child(div().id("nav-new").h(24).px(8).flex().items_center().gap(4).border_1().border_color(c.grey300).cursor_pointer()
+          .text_size(12).text_color(c.navy).hover((s) => s.border_color(c.blue).text_color(c.blue)).tooltip("New")
+          .on_click(() => openOverlay({ mod: "captain-commands", kind: "popup", width: 300, height: 420, props: { menu: "new" } }))
+          .child(svg("mods/captain-nav/plus.svg").size(12)).child("New")))
+      .when(Boolean(status) && !this.spacesOpen, (e) => e.child(div().px(16).pb(8).text_size(11.5).text_color(this.state === "error" ? c.fail : c.grey500).child(status)))
+      .when(Boolean(this.spacesOpen), (e) => e.child(v_flex().pb(6)
+        .children(list.map((sp) => h_flex().id(`space-${sp.id}`).h(28).px(16).gap(8).items_center().cursor_pointer()
+          .bg(sp.id === current?.id ? c.blueLight : c.surface).text_color(sp.id === current?.id ? c.blue : c.navy).text_size(12.5)
+          .hover((s) => s.bg(c.surface2))
+          .on_click((_e, cx) => { run("space.select", { id: sp.id }); this.spacesOpen = false; cx.notify(); })
+          .child(div().flex_1().min_w(0).truncate().child(sp.name))
+          .children(dots(sp.id).slice(0, 4).map((a) => div().size(6).rounded_full().bg(dot(a.status))))))
+        .child(h_flex().id("space-new").h(28).px(16).gap(6).items_center().cursor_pointer().text_size(12.5).text_color(c.blue)
+          .hover((s) => s.bg(c.blueLight)).on_click((_e, cx) => { this.spacesOpen = false; cx.spawn(async (cx) => { await this.newSpace(); cx.notify(); }); })
+          .child(svg("mods/captain-nav/plus.svg").size(12)).child(`New space${this.workspace ? ` for ${this.workspace}` : ""}`))
+        .when(Boolean(current), (x) => x.child(h_flex().id("space-rename").h(28).px(16).items_center().cursor_pointer().text_size(12.5).text_color(c.grey900)
+          .hover((s) => s.bg(c.surface2)).on_click((_e, cx) => { this.spacesOpen = false; cx.notify();
+            openOverlay({ mod: "prompt", kind: "dialog", width: 380, props: { title: "Rename space", hint: current.name, command: { name: "space.rename", args: { id: current.id } } } }); })
+          .child("Rename this space")))));
   }
 
   narrow() {
@@ -196,15 +287,9 @@ export default class CaptainNav extends View {
     const stack = props()?.stack ?? "sections";
     const node = find(layout(), stack);
     const active = node?.active ?? node?.children?.[0]?.id;
-    const ws = this.workspace ?? (this.state === "starting" ? "Starting Captain's engine..." : "No workspace");
     const go = (it) => () => (it.run ? run(it.run, it.args ?? {}) : run("layout.select", { stack, child: it.id }));
     return v_flex().size_full().bg(c.surface).font_family("Inter").border_r(1).border_color(c.rule)
-      .when(!rail, (e) => e.child(h_flex().h(40).flex_none().px(16).gap(8).items_center().border_b(1).border_color(c.rule)
-        .child(div().flex_1().min_w(0).truncate().text_size(13).font_medium().text_color(this.workspace ? c.navy : c.grey500).child(ws))
-        .child(div().id("nav-new").h(24).px(8).flex().items_center().gap(4).border_1().border_color(c.grey300).cursor_pointer()
-          .text_size(12).text_color(c.navy).hover((s) => s.border_color(c.blue).text_color(c.blue)).tooltip("New")
-          .on_click(() => openOverlay({ mod: "captain-commands", kind: "popup", width: 300, height: 420, props: { menu: "new" } }))
-          .child(svg("mods/captain-nav/plus.svg").size(12)).child("New"))))
+      .when(!rail, (e) => e.child(this.spaceSwitcher(c)))
       .when(rail, (e) => e.child(h_flex().id("nav-expand").h(40).flex_none().justify_center().items_center().cursor_pointer()
         .text_color(c.grey500).hover((s) => s.text_color(c.navy)).tooltip("Expand").on_click(() => this.toggle())
         .child(svg("mods/captain-nav/panel-left.svg").size(15))))

@@ -426,7 +426,14 @@ impl Core {
     /// Starts a program in a new core terminal and returns its address (`tN`).
     /// Starts a terminal, here or on another machine (`on`: its name in `hc machine ls`).
     pub fn run(&self, argv: Vec<String>, cwd: Option<String>, labels: Value, on: Option<&str>, size: Option<(u16, u16)>, display: Value) -> Result<String> {
-        let env = json!({"TERM": "xterm-256color", "COLORTERM": "truecolor", "TERM_PROGRAM": "herdr"});
+        let mut env = json!({"TERM": "xterm-256color", "COLORTERM": "truecolor", "TERM_PROGRAM": "herdr"});
+        // CAPTAIN: the space's Captain context (CST_WORKSPACE, CST_INVESTIGATION, PATH). Local terminals only.
+        #[cfg(unix)]
+        if on.is_none()
+            && let (Some(space), Value::Object(e)) = (labels.get("herdr.space").and_then(Value::as_str), &mut env)
+        {
+            e.extend(crate::cst::terminal_env(space));
+        }
         let mut params = json!({"argv": argv, "cwd": cwd, "env": env, "labels": labels, "on": on, "keep": true, "display": display});
         // Released cores ignore unknown parameters, including when forwarding to another machine.
         if let Some((cols, rows)) = size {

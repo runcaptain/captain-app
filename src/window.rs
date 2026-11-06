@@ -2440,6 +2440,11 @@ impl AppWindow {
 
     /// A tab in a space (default: the shown one), shown at once.
     fn new_tab(&mut self, space: Option<String>, name: &str, folder: Option<String>, argv: Option<Vec<String>>, task: Option<&str>, window: &Window) -> Result<Value, String> {
+        // CAPTAIN: no space yet: make the workspace's space with this as its first tab, instead of failing.
+        if space.is_none() && self.model.active_space().is_none() {
+            let (ws, dir) = captain_default_space();
+            return self.new_space(&ws, folder.or(dir), Some(name), argv, task, None, window);
+        }
         let space = space.or_else(|| self.model.active_space().map(|p| p.id.clone())).ok_or("no space yet: make one first (space.new)")?;
         if self.model.space(&space).is_none() {
             return Err(format!("no space {space:?}"));
@@ -2985,6 +2990,8 @@ impl AppWindow {
                 };
                 let r = match Self::owned(a, "mod") {
                     Some(name) => self.split_mod(Self::owned(a, "pane"), axis, name, a.get("props").cloned().unwrap_or(Value::Null)),
+                    // CAPTAIN: nothing to split yet: open the workspace's space instead of failing.
+                    None if self.model.active_space().is_none() && Self::owned(a, "pane").is_none() => self.new_tab(None, "", None, Self::argv(a), None, window),
                     None => self.split(Self::owned(a, "pane"), axis, Self::argv(a), None, window),
                 };
                 self.answer(r);
@@ -4731,6 +4738,17 @@ fn new_space_machine(args: &Value, person: bool, model: &Model) -> Option<String
 
 fn home() -> String {
     mods::home().to_string_lossy().into_owned()
+}
+
+/// CAPTAIN: the default space: named after the current cst workspace, in its agent
+/// folder (<CST_HOME>/agent/<workspace>, with its AGENTS.md) when that exists.
+fn captain_default_space() -> (String, Option<String>) {
+    let ws = mods::shared("captain.workspace").and_then(|v| v.as_str().map(str::to_owned)).filter(|w| !w.is_empty());
+    #[cfg(unix)]
+    let dir = ws.as_ref().and_then(|w| crate::cst::cst_home().map(|h| h.join("agent").join(w))).filter(|d| d.is_dir()).map(|d| d.display().to_string());
+    #[cfg(not(unix))]
+    let dir = None;
+    (ws.unwrap_or_else(|| crate::brand::NAME.to_owned()), dir)
 }
 
 fn mod_overlay(dir: &std::path::Path) -> Value {

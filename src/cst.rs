@@ -67,10 +67,45 @@ pub fn parse_discovery(line: &str) -> Option<(u16, String)> {
     Some((port, token))
 }
 
+/// Captain Search's home: $CST_HOME, else ~/.config/captain-search. Workspaces' agent
+/// folders live in <home>/agent/<workspace>.
+pub fn cst_home() -> Option<PathBuf> {
+    std::env::var_os("CST_HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/captain-search")))
+}
+
 fn serve_json() -> Option<PathBuf> {
-    let home = std::env::var_os("CST_HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/captain-search")))?;
-    Some(home.join("serve.json"))
+    Some(cst_home()?.join("serve.json"))
+}
+
+/// Environment for a terminal in `space`: the Captain context it's bound to
+/// (shared "captain.spaces" {<space>: {workspace, investigation?}}, else the
+/// current workspace from shared "captain.workspace"), and ~/.local/bin first on
+/// PATH so `cst` is found. Agents and Copy prompt read CST_WORKSPACE and
+/// CST_INVESTIGATION to know where they are.
+pub fn terminal_env(space: &str) -> serde_json::Map<String, Value> {
+    let bound = crate::mods::shared("captain.spaces").and_then(|m| m.get(space).cloned()).unwrap_or(Value::Null);
+    let workspace = bound.get("workspace").and_then(Value::as_str).map(str::to_owned)
+        .or_else(|| crate::mods::shared("captain.workspace").and_then(|v| v.as_str().map(str::to_owned)));
+    env_for(workspace.as_deref(), bound.get("investigation").and_then(Value::as_str), std::env::var("PATH").ok().as_deref())
+}
+
+pub fn env_for(workspace: Option<&str>, investigation: Option<&str>, path: Option<&str>) -> serde_json::Map<String, Value> {
+    let mut env = serde_json::Map::new();
+    if let Some(w) = workspace.filter(|w| !w.is_empty()) {
+        env.insert("CST_WORKSPACE".into(), Value::String(w.into()));
+    }
+    if let Some(i) = investigation.filter(|i| !i.is_empty()) {
+        env.insert("CST_INVESTIGATION".into(), Value::String(i.into()));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let local = PathBuf::from(home).join(".local/bin").display().to_string();
+        let rest = path.unwrap_or("/usr/bin:/bin:/usr/sbin:/sbin");
+        if !rest.split(':').any(|p| p == local) {
+            env.insert("PATH".into(), Value::String(format!("{local}:{rest}")));
+        }
+    }
+    env
 }
 
 /// `serve.json` as `(port, token, pid)`.
@@ -199,7 +234,7 @@ fn guard(pgid: i32) -> Option<Child> {
 /// is up, else `{state, error?}` (starting, missing with the install command, failed).
 pub fn shared_value(state: &State) -> Value {
     match state {
-        State::Ready { port, token } => serde_json::json!({ "state": "ready", "base": format!("http://127.0.0.1:{port}"), "token": token }),
+        State::Ready { port, token } => serde_json::json!({ "state": "ready", "base": format!("http://127.0.0.1:{port}"), "token": token, "home": cst_home().map(|h| h.display().to_string()) }),
         State::Idle | State::Starting => serde_json::json!({ "state": "starting" }),
         State::Missing => serde_json::json!({ "state": "missing", "error": format!("Captain Search is not installed. Install it with: {INSTALL}") }),
         State::Failed(e) => serde_json::json!({ "state": "failed", "error": e }),
@@ -262,6 +297,16 @@ mod tests {
         assert_eq!(parse_discovery("no config found"), None);
         assert_eq!(parse_discovery(r#"{"port": 0, "token": "t"}"#), None);
         assert_eq!(parse_discovery(r#"{"port": 70000, "token": "t"}"#), None);
+    }
+
+    #[test]
+    fn terminals_know_their_captain_context() {
+        let env = env_for(Some("acme"), Some("01abc"), Some("/usr/bin:/bin"));
+        assert_eq!(env["CST_WORKSPACE"], "acme");
+        assert_eq!(env["CST_INVESTIGATION"], "01abc");
+        assert!(env["PATH"].as_str().unwrap().ends_with("/.local/bin:/usr/bin:/bin"));
+        let bare = env_for(None, None, Some("/usr/bin"));
+        assert!(!bare.contains_key("CST_WORKSPACE") && !bare.contains_key("CST_INVESTIGATION"));
     }
 
     #[test]
