@@ -12,3 +12,4 @@ export const InputState = {
   },
 };
 export const Input = { new: (s) => el('input', [s]) };
+export const VirtualListScrollHandle = { new: () => ({ scrolled: [], scroll_to_item(i, how) { this.scrolled.push([i, how]); }, scroll_to_bottom() {}, release() { return true; } }) };

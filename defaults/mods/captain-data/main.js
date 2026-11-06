@@ -1,5 +1,5 @@
 // CAPTAIN: Data and signals, native. The datasets of the workspace with their classes, a data grid that pages
-// through any dataset where it lives (GET /api/datasets/{name}/rows: the daemon sorts, searches and filters), and
+// through any dataset where it lives (GET /api/datasets/{name}/rows: the backend sorts, searches and filters), and
 // labels as code with a preview over logs. It replaces the web view of the Captain Search desktop app's Datasets
 // screen, in the same look (its index.css tokens).
 //
@@ -8,9 +8,9 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { theme } from "herdr";
-import { api } from "./kit/cst.js";
+import { api, retry, details } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
-import { Loading, ErrorState } from "./kit/ui.js";
+import { Loading, Skeleton, Button } from "./kit/ui.js";
 
 const PAGE = 200;
 const ROW = 26;
@@ -27,6 +27,25 @@ function cellText(v) {
   if (typeof v === "number") return Number.isInteger(v) ? v.toLocaleString("en-US") : String(+v.toFixed(6));
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
+}
+
+/** A failed call in words for people: the backend's own sentence when it answered, else a plain one. Transport
+ *  details (hosts, ports, tool output) never show: they go behind Copy details. */
+function say(r, fallback) {
+  const e = String(r?.error ?? "");
+  if (r?.status && e && !/^HTTP \d+$/.test(e)) return e;
+  if (/time ?out|timed out/i.test(e)) return "This took too long.";
+  return fallback;
+}
+
+/** A section that couldn't load: one plain sentence, Retry, and Copy details. A skeleton while still starting. */
+function trouble(c, id, r, fallback, onRetry) {
+  if (r?.starting) return Skeleton(c);
+  return v_flex().w_full().p(14).gap(10).bg(c.failLight).border_1().border_color(c.fail)
+    .child(div().text_size(13).text_color(c.fail).child(say(r, fallback)))
+    .child(h_flex().gap(8)
+      .child(Button(c, `${id}-retry`, "Retry", (_e, cx) => { if (!r?.status) retry(); onRetry?.(cx); }, { kind: "primary", small: true }))
+      .when(!r?.status, (e) => e.child(Button(c, `${id}-copy`, "Copy details", (_e, cx) => cx.write_to_clipboard(details(r?.error ?? null)), { small: true }))));
 }
 
 export default class CaptainData extends View {
@@ -52,7 +71,7 @@ export default class CaptainData extends View {
     this.load(cx);
     // Pages the grid asked for while drawing are fetched here, outside render.
     cx.timer.every(120, (cx) => this.pump(cx));
-    // Until the engine answers, ask again every 3 s: the screen never stays on "starting" by itself.
+    // Until the backend answers, ask again every 3 s: the screen never stays on "starting" by itself.
     cx.timer.every(3000, (cx) => { if (this.starting || (this.list === null && this.loadedOnce)) this.load(cx); });
   }
 
@@ -70,7 +89,8 @@ export default class CaptainData extends View {
         }
       } else {
         this.starting = !!ds.starting;
-        this.listError = ds.starting ? null : ds.error;
+        this.listError = ds.starting ? null : say(ds, "Couldn't load datasets.");
+        this.listR = ds;
       }
       if (ds.ok) this.starting = false;
       this.loadedOnce = true;
@@ -82,7 +102,7 @@ export default class CaptainData extends View {
     cx.spawn(async (cx) => {
       const r = await api("/api/labels");
       this.labels = r.ok ? r.data ?? [] : [];
-      this.labelsError = r.ok ? null : r.error;
+      this.labelsError = r.ok ? null : say(r, "Couldn't load labels.");
       if (!this.labelSel && this.labels[0]) this.labelSel = this.labels[0].name;
       cx.notify();
     });
@@ -97,7 +117,7 @@ export default class CaptainData extends View {
     cx.spawn(async (cx) => {
       const r = await api(`/api/datasets/${enc(name)}`);
       if (this.sel !== name) return;
-      this.detail = r.ok ? r.data : { error: r.error };
+      this.detail = r.ok ? r.data : { error: say(r, "Couldn't load this dataset.") };
       cx.notify();
     });
     cx.notify();
@@ -146,7 +166,7 @@ export default class CaptainData extends View {
       const gg = this.grid;
       gg.inflight = null;
       if (!r.ok) {
-        gg.error = stripAnsi(r.error);
+        gg.error = stripAnsi(say(r, "Couldn't load the rows."));
       } else {
         const d = r.data;
         gg.pages.set(page, d.rows ?? []);
@@ -170,7 +190,7 @@ export default class CaptainData extends View {
       if (this.grid.seq !== seq) return;
       this.grid.counting = false;
       if (r.ok && r.data?.total !== undefined) this.grid.total = r.data.total;
-      else this.grid.error = stripAnsi(r.error);
+      else this.grid.error = stripAnsi(say(r, "Couldn't count the rows."));
       cx.notify();
     });
     cx.notify();
@@ -185,7 +205,7 @@ export default class CaptainData extends View {
     cx.spawn(async (cx) => {
       const r = await api(`/api/labels/${encodeURIComponent(l.name)}/preview?logs=${encodeURIComponent(logs)}&v=${l.version}&limit=20`, { timeout: 60 });
       this.preview = r.ok ? r.data : null;
-      this.previewError = r.ok ? null : stripAnsi(r.error);
+      this.previewError = r.ok ? null : stripAnsi(say(r, "Couldn't load the preview."));
       cx.notify();
     });
     cx.notify();
@@ -242,7 +262,7 @@ export default class CaptainData extends View {
       .child(v_flex().id("data-list").flex_1().min_h(0).overflow_y_scrollbar()
         .when(!!this.listError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child(this.listError)))
         .when(this.list !== null && rows.length === 0 && !this.listError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child(this.cls ? "No datasets in this class." : "No datasets yet.")))
-        .when(this.list === null && !this.listError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("Loading datasets")))
+        .when(this.list === null && !this.listError, (e) => e.child(div().child(Skeleton(c, 8))))
         .children(rows.map((d) => {
           const active = d.name === this.sel;
           return h_flex().id(`ds-${d.name}`).w_full().h(34).flex_none().px(10).gap(8).items_center().cursor_pointer()
@@ -304,10 +324,12 @@ export default class CaptainData extends View {
   status(c) {
     const g = this.grid;
     const [a, b] = g.want;
-    const shown = g.end ? `rows ${fmtInt(Math.min(a + 1, g.end))} to ${fmtInt(Math.min(b, g.end))}` : g.inflight !== null ? "loading" : "no rows";
-    const of = g.total !== null ? ` of ${fmtInt(g.total)}` : g.hasMore && g.end ? ` of ${fmtInt(g.end)}+` : "";
+    // Until the list reports what it shows (first frame), just the total: never "rows 1 to 0".
+    const of = g.total !== null ? fmtInt(g.total) : g.hasMore && g.end ? `${fmtInt(g.end)}+` : g.end ? fmtInt(g.end) : "";
+    const seen = Math.min(b, g.end);
+    const shown = !g.end ? (g.inflight !== null ? "" : "no rows") : seen > a ? `rows ${fmtInt(a + 1)} to ${fmtInt(seen)} of ${of}` : `${of} rows`;
     return h_flex().flex_none().h(32).px(20).gap(12).items_center().border_t(1).border_color(c.rule).text_size(12).text_color(c.grey900)
-      .child(div().child(shown + of))
+      .child(div().child(shown))
       .when(g.ms !== null, (e) => e.child(div().font_family(MONO).text_color(c.grey500).child(`${g.ms} ms`)))
       .when(!!g.search || !!g.where, (e) => e.child(div().text_color(c.blue).child("filtered")))
       .when(g.total === null && !g.error, (e) => e.child(h_flex().id("grid-count").h(24).px(8).gap(5).items_center().cursor_pointer()
@@ -355,7 +377,7 @@ export default class CaptainData extends View {
         const row = h_flex().w(total).h(ROW).border_b(1).border_color(c.rule).text_size(12).items_center();
         if (!r) {
           out.push(row.child(div().w(NUM).flex_none().px(8).text_right().text_color(c.grey300).font_family(MONO).child(fmtInt(i + 1)))
-            .child(div().px(8).text_color(c.grey500).child(i < g.end || g.hasMore ? "Loading" : "")));
+            .when(i < g.end || g.hasMore, (e) => e.child(div().mx(8).h(10).w("30%").bg(c.surface2))));
           continue;
         }
         out.push(row.hover((s) => s.bg(c.blueLight))
@@ -384,7 +406,7 @@ export default class CaptainData extends View {
   detailPane(c, w) {
     const d = this.detail;
     if (!this.sel) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick a dataset on the left.");
-    if (!d) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Loading");
+    if (!d) return v_flex().flex_1().child(Skeleton(c, 8));
     if (d.error) return v_flex().flex_1().p(24).text_size(13).text_color(c.fail).child(d.error);
     return v_flex().flex_1().min_w(0).h_full()
       .child(h_flex().flex_none().flex_wrap().gap(8).px(20).pt(14).pb(8).items_center()
@@ -408,7 +430,7 @@ export default class CaptainData extends View {
     const listW = Math.max(200, Math.min(280, Math.floor(w * 0.26)));
     return h_flex().flex_1().min_h(0)
       .child(v_flex().id("label-list").w(listW).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
-        .when(ls === null, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("Loading labels")))
+        .when(ls === null, (e) => e.child(div().child(Skeleton(c, 8))))
         .when(!!this.labelsError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child(this.labelsError)))
         .when(ls !== null && !ls.length, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("No labels yet. Define one with cst label define.")))
         .children((ls ?? []).map((x) => {
@@ -464,7 +486,7 @@ export default class CaptainData extends View {
     const body = this.starting || (!this.loadedOnce && this.list === null)
       ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true))
       : this.listError && this.list === null
-        ? v_flex().flex_1().p(24).child(ErrorState(c, this.listError, (_e, cx) => this.load(cx)))
+        ? v_flex().flex_1().p(24).child(trouble(c, "datasets", this.listR, "Couldn't load datasets.", (cx) => this.load(cx)))
         : this.tab === "datasets"
           ? h_flex().flex_1().min_h(0).child(this.datasetList(c, listW)).child(this.detailPane(c, w - listW))
           : this.labelsPane(c, w);

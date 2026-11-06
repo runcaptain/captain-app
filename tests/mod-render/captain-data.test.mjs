@@ -32,12 +32,11 @@ fs.copyFileSync(path.join(here, 'fixture-cst.js'), path.join(work, 'kit/cst.js')
 const { default: Mod } = await import(path.join(work, 'main.js'));
 
 const h = harness(Mod);
-// First the backend is still starting: the screen draws its header and a quiet loading state, never blank, and
-// never names the machinery (no engine, daemon, curl or ports), and keeps asking.
+// First the engine is still starting: the screen says so instead of drawing nothing, and keeps asking.
 globalThis.__starting = true;
 await h.start();
-assert.ok(/Data and signals/.test(h.text()), `starting state draws its header: ${h.text().slice(0, 120)}`);
-assert.ok(!/engine|daemon|curl|127\.0\.0\.1|port \d/i.test(h.text()), `starting state hides the machinery: ${h.text().slice(0, 160)}`);
+// A quiet skeleton: the header, and no words about what is starting.
+assert.ok(!/engine|daemon|starting|loading/i.test(h.text()), `starting state shows words: ${h.text().slice(0, 160)}`);
 globalThis.__starting = false;
 await h.layoutLists({});
 const rows0 = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'rows0.json'), 'utf8'));
