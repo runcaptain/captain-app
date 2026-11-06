@@ -68,7 +68,9 @@ export default class CaptainNav extends View {
       ] });
     }
     this.refresh(cx);
-    cx.timer.every(15000, (cx) => this.refresh(cx));
+    // Every 3 s until the engine answers, then every 15 s.
+    this.tick = 0;
+    cx.timer.every(3000, (cx) => { this.tick++; if (this.state !== "ready" || this.tick % 5 === 0) this.refresh(cx); });
   }
 
   items() {

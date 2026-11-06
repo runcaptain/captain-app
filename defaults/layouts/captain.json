@@ -124,17 +124,7 @@
           "id": "handoff",
           "type": "block",
           "content": {
-            "mod": "captain-soon",
-            "props": {
-              "title": "Handoff",
-              "about": "Candidates you export, serving contracts, linked external deployments and their online outcomes.",
-              "prefixes": [
-                "handoff",
-                "promote",
-                "export",
-                "deploy"
-              ]
-            }
+            "mod": "captain-handoff"
           }
         }
       ]
