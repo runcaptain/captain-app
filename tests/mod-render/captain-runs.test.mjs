@@ -47,7 +47,9 @@ const run = fx('run');
 const primary = run.comparisons.find((c) => c.primary);
 assert.ok(text.includes(`${primary.metric}, B minus A`), 'primary comparison');
 assert.ok(text.includes(primary.verdict.toUpperCase()), 'verdict badge');
-assert.ok(text.includes(run.arms[0].arm), 'arm table');
+// Shown as the name plus a version chip, never "name@v1".
+assert.ok(text.includes(run.arms[0].arm.replace(/@v(\d+)$/, ' | v$1')), 'arm table: name plus version chip');
+assert.ok(!text.includes(run.arms[0].arm), 'no raw name@v ref');
 assert.ok(text.includes(Number(run.arms[0].offline['ndcg@10']).toFixed(4)), 'arm nDCG');
 
 // Compare in detail hands the run to Comparisons.

@@ -11,6 +11,7 @@ import { theme, shared, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
+import { askAgent, copyPrompt } from "./kit/agent.js";
 
 const PAGE = 200;
 const ROW = 28;
@@ -41,13 +42,24 @@ function trouble(c, id, r, fallback, onRetry) {
       .when(!r?.status, (e) => e.child(Button(c, `${id}-copy`, "Copy details", (_e, cx) => cx.write_to_clipboard(details(r?.error ?? null)), { small: true }))));
 }
 
-/** A ref (name@v2) as a name and a version chip. */
-function refChip(c, ref) {
+/** A versioned name as people read it ("name@v2" becomes the name and a small version chip). */
+function named(c, ref, { size = 12.5, color } = {}) {
   const m = /^(.*)@v(\d+)$/.exec(String(ref ?? ""));
   const name = m ? m[1] : String(ref ?? "");
   return h_flex().min_w(0).gap(6).items_center()
-    .child(div().min_w(0).truncate().font_family(MONO).child(name))
-    .when(!!m, (e) => e.child(div().flex_none().px(5).border_1().border_color(c.grey300).text_size(10.5).font_family(MONO).text_color(c.grey900).child(`v${m[2]}`)));
+    .child(div().min_w(0).truncate().text_size(size).font_family(MONO).text_color(color ?? c.navy).child(name))
+    .when(!!m, (e) => e.child(div().flex_none().px(4).border_1().border_color(c.grey300).text_size(10.5).font_family(MONO).text_color(c.grey900).child(`v${m[2]}`)));
+}
+const bare = (ref) => String(ref ?? "").replace(/@v\d+$/, "");
+
+/** What an agent should look into for one query that moved. */
+function queryPrompt(run, row, d) {
+  return [
+    `In Captain, in the backtest run ${run}, look at the query "${row.query || d?.query || row.query_id}".`,
+    d ? `Under A (${bare(d.a?.arm)}) its nDCG@10 is ${d.a?.ndcg10}, under B (${bare(d.b?.arm)}) it is ${d.b?.ndcg10}.` : "",
+    "Compare the two ranked lists, say why B ranks the way it does, and whether this is a real regression or a judging gap",
+    "(unjudged products count as not relevant). Use the cst CLI to read the run. Change nothing without asking me.",
+  ].filter(Boolean).join(" ");
 }
 
 export default class CaptainCompare extends View {
@@ -71,6 +83,15 @@ export default class CaptainCompare extends View {
     cx.timer.every(150, (cx) => this.pump(cx));
     // Until the backend answers, ask again every 3 s.
     cx.timer.every(3000, (cx) => { if (this.starting) this.loadBacktests(cx); });
+    // Opened by name (palette): shared "captain.open" {section: "comparisons", backtest, version, at}.
+    cx.timer.every(500, (cx) => {
+      const o = shared("captain.open");
+      if (o?.section === "comparisons" && o.backtest && o.at !== this.opened) {
+        this.opened = o.at;
+        const v = o.version ?? this.backtests?.find((b) => b.name === o.backtest)?.latest ?? 1;
+        this.open(cx, o.backtest, v);
+      }
+    });
     // Another space, another workspace: back to its first run.
     // Answers can stall until the next redraw in the app: redraw while any request waits.
     keepAwake(cx);
@@ -246,7 +267,7 @@ export default class CaptainCompare extends View {
         return v_flex().w_full().flex_none().border_b(1).border_color(c.rule)
           .child(h_flex().id(`bt-${b.name}`).h(40).px(10).gap(8).items_center().cursor_pointer()
             .border_l(2).border_color(active ? c.blue : "#00000000").bg(active ? c.blueLight : c.surface).hover((s) => (active ? s : s.bg(c.surface2)))
-            .tooltip(`${b.name}: ${(b.arms ?? []).join(" vs ")}`)
+            .tooltip(`${b.name}: ${(b.arms ?? []).map(bare).join(" vs ")}`)
             .on_click((_e, cx) => this.open(cx, b.name, b.latest))
             .child(this.icon("backtest", 14, active ? c.blue : c.grey500))
             .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(active ? c.blue : c.navy).child(b.name))
@@ -315,7 +336,7 @@ export default class CaptainCompare extends View {
         .child(div().flex_1().min_w(0).truncate().font_family(MONO).child(r.source)).tooltip(r.source)))
       .children((r.arms ?? []).map((a, i) => h_flex().gap(8).items_center().text_size(12.5)
         .child(div().flex_none().w(60).text_color(c.grey500).child(i === 0 ? "A" : "B"))
-        .child(refChip(c, a.arm))));
+        .child(named(c, a.arm))));
   }
 
   /** What there is to see on a tab an imported run can't fill. */
@@ -339,7 +360,7 @@ export default class CaptainCompare extends View {
         .child(div().w(96).flex_none().px(8).text_right().child("per 1k"))
         .child(div().w(110).flex_none().px(8).text_right().child("p50 / p99 ms")))
       .children((r.arms ?? []).map((a, i) => h_flex().id(`arm-${i}`).h(30).items_center().border_b(1).border_color(c.rule).text_size(12.5).whitespace_nowrap()
-        .child(h_flex().flex_1().min_w(200).px(10).gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(div().min_w(0).truncate().font_family(MONO).child(a.arm)))
+        .child(h_flex().flex_1().min_w(200).px(10).gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(named(c, a.arm)))
         .children(metrics.map((m) => div().w(84).flex_none().px(8).text_right().font_family(MONO).child(fmt4(a.offline?.[m]))))
         .child(div().w(84).flex_none().px(8).text_right().font_family(MONO).text_color((a.judged_at_10 ?? 1) < 0.9 ? c.fail : c.navy).child(pct(a.judged_at_10)))
         .child(div().w(96).flex_none().px(8).text_right().truncate().font_family(MONO).text_color(a.cost?.serve_usd_per_1k != null ? c.navy : c.grey500).child(usd(a.cost?.serve_usd_per_1k) ?? "none"))
@@ -437,7 +458,7 @@ export default class CaptainCompare extends View {
     const d = side.data;
     const column = (arm, items, other, label) => v_flex().flex_1().min_w(0).border_1().border_color(c.rule)
       .child(h_flex().h(32).flex_none().px(10).gap(6).items_center().bg(c.surface2).border_b(1).border_color(c.rule).text_size(12.5)
-        .child(div().font_medium().child(label)).child(div().min_w(0).truncate().font_family(MONO).text_color(c.grey900).child(arm.arm))
+        .child(div().font_medium().child(label)).child(named(c, arm.arm, { color: c.grey900 }))
         .child(div().flex_1()).child(div().font_family(MONO).text_size(11.5).child(`nDCG ${fmt4(arm.ndcg10)}`)))
       .when(!items.length, (e) => e.child(div().p(10).text_size(12).text_color(c.grey500).child("No results.")))
       .children(items.map((it) => {
@@ -459,6 +480,9 @@ export default class CaptainCompare extends View {
     return v_flex().id("side-by-side").flex_1().min_w(0).h_full().gap(8)
       .child(h_flex().flex_none().gap(8).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(14).font_medium().child(side.row.query))
+        .when(!!d && !d.error, (e) => e
+          .child(Button(c, "q-agent", "Ask an agent why", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, queryPrompt(this.runRef(), side.row, d))), { small: true }))
+          .child(Button(c, "q-prompt", "Copy prompt", (_e, cx) => copyPrompt(cx, queryPrompt(this.runRef(), side.row, d)), { kind: "quiet", small: true })))
         .child(div().id("side-close").cursor_pointer().text_color(c.grey500).hover((s) => s.text_color(c.navy)).tooltip("Close")
           .on_click((_e, cx) => { this.side = null; cx.notify(); }).child(this.icon("x", 14))))
       .when(!d, (e) => e.child(Skeleton(c, 6)))

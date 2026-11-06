@@ -45,9 +45,12 @@ const datasets = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'da
 
 // The list, the classes, the first dataset's detail.
 let text = h.text();
-for (const d of datasets) assert.ok(text.includes(`${d.name}@v${d.latest}`), `list shows ${d.name}`);
+// Versioned names show as the name plus a version chip, never "name@v1".
+for (const d of datasets) assert.ok(text.includes(`${d.name} | v${d.latest}`), `list shows ${d.name}`);
+assert.ok(!/@v\d/.test(text), 'no raw name@v ref anywhere');
 assert.ok(text.includes('catalog'), 'class chips');
-assert.ok(text.includes('demo-catalog@v1'), 'detail header');
+assert.ok(text.includes('demo-catalog | v1'), 'detail header');
+assert.ok(text.includes('Import a dataset') && text.includes('Open an agent in this space') && text.includes('Copy prompt'), 'tasks and agent actions');
 assert.ok(text.includes('price'), 'schema');
 // An icon on every dataset row.
 for (const row of h.byIdPrefix('ds-')) assert.ok(h.has(row, 'svg'), `icon on ${row.call('id')[0]}`);
@@ -85,7 +88,7 @@ assert.ok(!text.includes('\u001b['), 'no ANSI codes');
 // Labels: the list, the SQL, and a preview over an events dataset.
 await h.click('tab-labels');
 text = h.text();
-assert.ok(text.includes('deep-search@v1'), 'label listed');
+assert.ok(text.includes('deep-search | v1'), 'label listed');
 assert.ok(text.includes('max(case when clicked'), 'label SQL');
 const chip = h.byIdPrefix('chip-logs/demo-search-sessions')[0];
 assert.ok(chip, 'events chip for the preview');

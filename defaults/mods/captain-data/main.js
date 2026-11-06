@@ -7,10 +7,11 @@
 // grid keeps a few pages of 200 rows around what is on screen and drops the rest.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
-import { theme } from "herdr";
+import { theme, shared } from "herdr";
 import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
-import { Loading, Skeleton, Button } from "./kit/ui.js";
+import { Loading, Skeleton, Button, Badge } from "./kit/ui.js";
+import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
 
 const PAGE = 200;
 const ROW = 26;
@@ -48,6 +49,27 @@ function trouble(c, id, r, fallback, onRetry) {
       .when(!r?.status, (e) => e.child(Button(c, `${id}-copy`, "Copy details", (_e, cx) => cx.write_to_clipboard(details(r?.error ?? null)), { small: true }))));
 }
 
+/** A versioned name as people read it: the name, then a small version chip. */
+function named(c, name, version, { size = 12.5, color, mono = true } = {}) {
+  return h_flex().flex_1().min_w(0).gap(6).items_center()
+    .child(div().min_w(0).truncate().text_size(size).when(mono, (e) => e.font_family(MONO)).text_color(color ?? c.navy).child(name))
+    .when(version != null, (e) => e.child(div().flex_none().px(4).border_1().border_color(c.grey300).text_size(10.5).font_family(MONO).text_color(c.grey900).child(`v${version}`)));
+}
+
+/** What an agent should do with a dataset, in words it can act on. */
+function datasetPrompt(d) {
+  return [
+    `In Captain, look at the dataset ${d.name}, version ${d.version}${d.description ? ` (${d.description})` : ""}.`,
+    `It has ${d.rows ?? "an unknown number of"} rows${(d.classes ?? []).length ? ` and is classed as ${d.classes.join(", ")}` : ""}.`,
+    "Describe what it holds, check it for problems (missing or duplicate keys, empty columns, odd values),",
+    "and suggest the signals or labels it could feed. Use the cst CLI to read it. Change nothing without asking me.",
+  ].join(" ");
+}
+
+const LABEL_PROMPT = "In Captain, help me define a label: a rule that turns logged search events into relevance judgments " +
+  "(for example, a purchase within 30 minutes of a search counts as relevant). Look at the event datasets in this workspace, " +
+  "propose a label that fits them, preview it on a sample, and define it with the cst CLI once I agree.";
+
 export default class CaptainData extends View {
   init(_props, cx) {
     this.tab = "datasets";
@@ -73,6 +95,17 @@ export default class CaptainData extends View {
     cx.timer.every(120, (cx) => this.pump(cx));
     // Until the backend answers, ask again every 3 s: the screen never stays on "starting" by itself.
     cx.timer.every(3000, (cx) => { if (this.starting || (this.list === null && this.loadedOnce)) this.load(cx); });
+    // "Open <dataset>" from the palette: captain-go sets shared "captain.open" {section: "data", dataset, at}.
+    cx.timer.every(500, (cx) => {
+      const o = shared("captain.open");
+      if (o?.section === "data" && o.dataset && o.at !== this.opened) {
+        this.opened = o.at;
+        this.tab = "datasets";
+        if (this.list?.some((d) => d.name === o.dataset)) this.select(cx, o.dataset);
+        else { this.wanted = o.dataset; this.load(cx); }
+        cx.notify();
+      }
+    });
     // Another space, another workspace: start over on its datasets and labels.
     // Answers can stall until the next redraw in the app: redraw while any request waits.
     keepAwake(cx);
@@ -94,7 +127,10 @@ export default class CaptainData extends View {
       if (ds.ok) {
         this.list = ds.data ?? [];
         this.listError = null;
-        if (!this.sel || !this.list.some((d) => d.name === this.sel)) {
+        if (this.wanted && this.list.some((d) => d.name === this.wanted)) {
+          this.select(cx, this.wanted);
+          this.wanted = null;
+        } else if (!this.sel || !this.list.some((d) => d.name === this.sel)) {
           if (this.list[0]) this.select(cx, this.list[0].name);
         }
       } else {
@@ -252,11 +288,28 @@ export default class CaptainData extends View {
       .child(div().flex_none().text_size(18).font_semibold().text_color(c.navy).child("Data and signals"))
       .child(this.tabs(c))
       .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.grey900)
-        .child(this.tab === "datasets" ? "Write-once versions, read where they live." : "Labels as code: SQL over events, versioned."))
+        .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your experiments read." : "Rules that turn logged events into judgments."))
+      .when(this.tab === "datasets", (e) => e
+        .child(Button(c, "new-class", "New class", () => openForm("dataset-class"), { small: true }))
+        .child(Button(c, "import-dataset", "Import a dataset", () => openForm("dataset"), { kind: "primary", small: true })))
+      .when(this.tab === "labels", (e) => e
+        .child(Button(c, "label-agent", "Ask an agent to define a label", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, LABEL_PROMPT)), { small: true })))
       .child(div().id("data-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()
         .border_1().border_color(c.grey300).text_color(c.grey900).hover((s) => s.text_color(c.blue).border_color(c.blue))
         .tooltip("Refresh").on_click((_e, cx) => { if (this.tab === "labels") this.loadLabels(cx); else this.load(cx); })
         .child(this.icon("refresh", 14)));
+  }
+
+  /** No datasets in this workspace yet: what they are for, and the ways in. */
+  firstDataset(c) {
+    return v_flex().flex_1().items_center().justify_center().gap(10).p(24)
+      .child(this.icon("table", 22, c.grey500))
+      .child(div().text_size(15).font_medium().child("Bring in your data"))
+      .child(div().max_w(460).text_center().text_size(12.5).line_height("19px").text_color(c.grey900)
+        .child("Experiments read four kinds of data: your catalog, the queries people search, judgments of what is relevant, and logs of what shoppers did. Import a file, save a SQL query, or start from the demo store."))
+      .child(h_flex().gap(8)
+        .child(Button(c, "first-import", "Import a dataset", () => openForm("dataset"), { kind: "primary" }))
+        .child(Button(c, "first-demo", "Try the demo store", () => openForm("demo"))));
   }
 
   classColor(name) {
@@ -281,7 +334,7 @@ export default class CaptainData extends View {
             .tooltip(`${d.name}@v${d.latest}${d.description ? `\n${d.description}` : ""}`)
             .on_click((_e, cx) => this.select(cx, d.name))
             .child(this.icon("table", 14, active ? c.blue : c.grey500))
-            .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(active ? c.blue : c.navy).child(`${d.name}@v${d.latest}`))
+            .child(named(c, d.name, d.latest, { color: active ? c.blue : c.navy }))
             .child(h_flex().flex_none().gap(3).children((d.classes ?? []).slice(0, 3).map((k) => div().size(7).bg(this.classColor(k)).tooltip(k))))
             .child(div().flex_none().w(54).text_right().text_size(11).font_family(MONO).text_color(c.grey500).child(d.rows ? fmtInt(d.rows) : ""));
         })));
@@ -421,11 +474,14 @@ export default class CaptainData extends View {
     return v_flex().flex_1().min_w(0).h_full()
       .child(h_flex().flex_none().flex_wrap().gap(8).px(20).pt(14).pb(8).items_center()
         .child(this.icon("table", 16, c.navy))
-        .child(div().min_w(0).truncate().text_size(15).font_medium().font_family(MONO).text_color(c.navy).child(`${d.name}@v${d.version}`))
+        .child(div().flex_none().max_w(420).child(named(c, d.name, d.version, { size: 15 })))
         .children((d.classes ?? []).map((k) => h_flex().h(20).px(6).gap(5).items_center().border_1().border_color(c.grey300).text_size(11)
           .child(div().size(7).bg(this.classColor(k))).child(div().text_color(c.navy).child(k))))
         .when(!!d.external?.length, (e) => e.child(div().text_size(11).text_color(c.grey500).child("by reference"))))
       .when(!!d.description, (e) => e.child(div().flex_none().px(20).pb(8).text_size(12.5).text_color(c.grey900).child(d.description)))
+      .child(h_flex().flex_none().gap(8).px(20).pb(8)
+        .child(Button(c, "agent-dataset", "Open an agent in this space", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, datasetPrompt(d))), { small: true }))
+        .child(Button(c, "prompt-dataset", "Copy prompt", (_e, cx) => copyPrompt(cx, datasetPrompt(d)), { kind: "quiet", small: true })))
       .child(this.facts(c, d))
       .child(this.schema(c, d))
       .child(this.toolbar(c))
@@ -451,14 +507,14 @@ export default class CaptainData extends View {
             .on_click((_e, cx) => { this.labelSel = x.name; this.preview = null; this.previewError = null; cx.notify(); })
             .child(this.icon("tag", 14, active ? c.blue : c.grey500))
             .child(v_flex().flex_1().min_w(0)
-              .child(div().truncate().text_size(12.5).font_family(MONO).text_color(active ? c.blue : c.navy).child(`${x.name}@v${x.version}`))
+              .child(named(c, x.name, x.version, { color: active ? c.blue : c.navy }))
               .child(div().truncate().text_size(11).text_color(c.grey500).child(`${x.grain} · ${x.dtype}`)));
         })))
       .child(!l ? v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child(ls?.length ? "Pick a label." : "")
         : v_flex().id("label-detail").flex_1().min_w(0).h_full().overflow_y_scrollbar().px(20).py(14).gap(12)
           .child(h_flex().gap(8).items_center().flex_wrap()
             .child(this.icon("tag", 16, c.navy))
-            .child(div().min_w(0).truncate().text_size(15).font_medium().font_family(MONO).text_color(c.navy).child(`${l.name}@v${l.version}`))
+            .child(div().flex_none().max_w(420).child(named(c, l.name, l.version, { size: 15 })))
             .child(div().h(20).px(6).border_1().border_color(c.grey300).text_size(11).text_color(c.navy).flex().items_center().child(l.grain))
             .child(div().text_size(11.5).text_color(c.grey500).child(`versions ${(l.versions ?? [l.version]).map((v) => `v${v}`).join(", ")}`)))
           .when(!!l.description, (e) => e.child(div().text_size(12.5).text_color(c.grey900).child(l.description)))
@@ -497,6 +553,8 @@ export default class CaptainData extends View {
       ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true))
       : this.listError && this.list === null
         ? v_flex().flex_1().p(24).child(trouble(c, "datasets", this.listR, "Couldn't load datasets.", (cx) => this.load(cx)))
+        : this.tab === "datasets" && Array.isArray(this.list) && this.list.length === 0 && !this.cls
+          ? this.firstDataset(c)
         : this.tab === "datasets"
           ? h_flex().flex_1().min_h(0).child(this.datasetList(c, listW)).child(this.detailPane(c, w - listW))
           : this.labelsPane(c, w);

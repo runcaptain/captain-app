@@ -33,6 +33,18 @@ async function importFile(v) {
   return ok(await run(["data", "snapshot"], { path, name: v.name, kind: v.kind }), `Imported ${v.name}.`);
 }
 
+
+// Datasets whose class plays this role (catalog, queries, judgments, events), newest version, as name plus chip.
+async function byRole(role) {
+  const [cl, ds] = await Promise.all([api("/api/dataset-classes"), api("/api/datasets")]);
+  const roles = new Map((cl.ok ? cl.data?.classes ?? [] : []).map((c) => [c.name, c.role]));
+  return (ds.ok && Array.isArray(ds.data) ? ds.data : [])
+    .filter((d) => (d.classes ?? []).some((c) => roles.get(c) === role))
+    .map((d) => ({ value: `${d.name}@v${d.latest}`, label: d.name, chip: `v${d.latest}` }));
+}
+const pipelines = () => list("/api/pipelines", (p) => ({ value: `${p.name}@v${p.latest}`, label: p.name, chip: `v${p.latest}` }));
+const COLORS = [["#0043CA", "Blue"], ["#7C3AED", "Violet"], ["#059669", "Green"], ["#D97706", "Amber"], ["#DC2626", "Red"], ["#64748B", "Slate"]];
+
 export const TASKS = [
   {
     id: "investigation", label: "New investigation", icon: "search",
@@ -131,6 +143,69 @@ export const TASKS = [
       for (const f of spec) if (v[`af:${f.name}`] !== undefined && v[`af:${f.name}`] !== "") config[f.name] = v[`af:${f.name}`];
       return ok(await api("/api/compute", { body: { name: v.name, kind: v.kind, profile: v.profile || undefined, region: v.region || undefined, config } }), `Added ${v.name}.`);
     },
+  },
+  {
+    id: "dataset-class", label: "New dataset class", icon: "tag",
+    about: "A class groups datasets by what they are for, and says which experiments can use them.",
+    fields: [
+      { key: "name", label: "Name", placeholder: "product-reviews", required: true, help: "Letters, digits and dashes." },
+      { key: "description", label: "What it's for", kind: "long", required: true, placeholder: "Reviews shoppers left, used to find quality signals" },
+      { key: "role", label: "Experiments can use it as", kind: "choice", default: "generic",
+        options: async () => {
+          const r = await api("/api/dataset-classes");
+          const roles = r.ok ? r.data?.roles ?? [] : [];
+          return [{ value: "generic", label: "Nothing in particular" }, ...roles.map((x) => ({ value: x, label: `${x[0].toUpperCase()}${x.slice(1)}` }))];
+        } },
+      { key: "color", label: "Color", kind: "choice", default: COLORS[0][0], options: COLORS.map(([value, label]) => ({ value, label })) },
+      { key: "columns", label: "Columns every dataset in it must have", optional: true, placeholder: "id, title", help: "Separate with commas." },
+    ],
+    submit: async (v) => ok(await api("/api/dataset-classes", { body: {
+      name: v.name.trim(), description: v.description.trim(), color: v.color, role: v.role === "generic" ? null : v.role,
+      required_columns: String(v.columns ?? "").split(",").map((x) => x.trim()).filter(Boolean),
+    } }), `Added the ${v.name.trim()} class.`),
+  },
+  {
+    id: "backtest", label: "Run a backtest", icon: "flask-conical",
+    about: "Compare two versions of your search on the same queries, and see whether the difference is real.",
+    fields: [
+      { key: "name", label: "Name", placeholder: "tuned-vs-current", required: true, help: "Letters, digits and dashes." },
+      { key: "a", label: "Compare", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet." },
+      { key: "b", label: "With", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet." },
+      { key: "mode", label: "Shoppers", kind: "choice", default: "simulated",
+        options: [{ value: "simulated", label: "Simulated shoppers" }, { value: "historic", label: "Replay logged searches" }] },
+      { key: "queries", label: "Queries", kind: "choice", required: true, options: () => byRole("queries"), empty: "No query sets yet. Import one first." },
+      { key: "judgments", label: "Judgments", kind: "choice", required: true, options: () => byRole("judgments"), empty: "No judgments yet. Import or grade some first." },
+      { key: "logs", label: "Logged searches", kind: "choice", required: true, when: (v) => v.mode === "historic", options: () => byRole("events"), empty: "No logs yet. Import some first." },
+      { key: "hypothesis", label: "What do you expect, and why", kind: "long", required: true, placeholder: "The tuned ranker finds more relevant products for long queries",
+        help: "Written down before the run, so the result can't move the goalposts." },
+      { key: "mde", label: "Smallest gain worth acting on", default: "0.003", help: "In nDCG@10. Smaller differences count as noise." },
+    ],
+    submit: async (v) => {
+      if (v.a === v.b) return { ok: false, error: "Pick two different versions to compare." };
+      const plan = await api("/api/backtests", { body: {
+        name: v.name.trim(), arms: [v.a, v.b], queries: v.queries, judgments: v.judgments, hypothesis: v.hypothesis.trim(),
+        primary: "ndcg@10", mde: Number(v.mde) || 0.003, mode: v.mode, logs: v.mode === "historic" ? v.logs : undefined,
+      } });
+      const planned = ok(plan, "");
+      if (!planned.ok) return planned;
+      return ok(await api(`/api/backtests/${v.name.trim().split("/").map(encodeURIComponent).join("/")}/run`, { body: {} }), "Started. Follow it in Runs.");
+    },
+  },
+  {
+    id: "grading", label: "Start grading", icon: "square-check",
+    about: "Grade the products your search returns, so backtests have judgments people trust.",
+    fields: [
+      { key: "name", label: "Name", placeholder: "spring-grading", required: true, help: "Letters, digits and dashes." },
+      { key: "queries", label: "Queries", kind: "choice", required: true, options: () => byRole("queries"), empty: "No query sets yet. Import one first." },
+      { key: "a", label: "Results from", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet." },
+      { key: "b", label: "And from", kind: "choice", optional: true, options: pipelines },
+      { key: "depth", label: "Results per query", default: "10" },
+      { key: "sample", label: "How many queries", optional: true, placeholder: "all of them" },
+    ],
+    submit: async (v) => ok(await run(["grade", "queue"], {
+      name: v.name.trim(), queries: v.queries, pipelines: [v.a, v.b].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(","),
+      depth: Number(v.depth) || 10, ...(Number(v.sample) > 0 ? { sample: Number(v.sample) } : {}),
+    }), "Queue ready. Grade it in Runs, under Grading."),
   },
   {
     id: "handoff", label: "Hand off a candidate", icon: "send",

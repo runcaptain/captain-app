@@ -42,7 +42,9 @@ assert.ok(text.includes('Read with care') && text.includes('small-slices'), 'war
 assert.ok(text.indexOf('Read with care') < text.indexOf('B minus A'), 'warnings above the winner');
 assert.ok(text.includes('WORTH IT'), 'cost flag');
 assert.ok(/gain per \$1k a month \+4\.9121/.test(text), 'gain per $1k');
-assert.ok(text.includes(run.arms[1].arm), 'arm table');
+// Shown as the name plus a version chip, never "name@v1".
+assert.ok(text.includes(run.arms[1].arm.replace(/@v(\d+)$/, ' | v$1')), 'arm table: name plus version chip');
+assert.ok(!text.includes(run.arms[1].arm), 'no raw name@v ref');
 assert.equal(h.byIdPrefix('cmp-').length, run.comparisons.length, 'every comparison');
 assert.equal(h.byIdPrefix('bin-').length, fx('hist').counts.length, 'histogram bins');
 

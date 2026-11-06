@@ -6,7 +6,7 @@ export const shared = (k) => globalThis.__shared?.[k];
 export const setShared = (k, v) => ((globalThis.__shared ??= {})[k] = v);
 export const layout = () => ({ id: 'root', children: [] });
 export const agents = () => [];
-export const openOverlay = () => 1;
+export const openOverlay = (o) => { (globalThis.__overlays ??= []).push(o); return 1; };
 export const closeOverlay = () => {};
 export const notify = () => {};
 // A test that needs real programs (forms-e2e.mjs) sets globalThis.__exec.
@@ -15,3 +15,4 @@ export const readTextFile = async () => null;
 export const home = () => '/tmp';
 export const window = () => ({ platform: 'macos', fullscreen: false });
 export const focused = () => ({ space: globalThis.__space ?? "s1" });
+export const knownAgents = async () => globalThis.__agents ?? [];

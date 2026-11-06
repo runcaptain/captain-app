@@ -4,10 +4,11 @@
 // for Comparisons, which pages it from the backend.
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { theme, run, setShared } from "herdr";
+import { theme, run, setShared, shared } from "herdr";
 import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
+import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
 const enc = (name) => name.split("/").map(encodeURIComponent).join("/");
@@ -66,6 +67,37 @@ function stepWords(command) {
   return words ? `${words[0].toUpperCase()}${words.slice(1)}${what}` : "Step";
 }
 
+/** A versioned name as people read it: the name, then a small version chip. Accepts "name@v3" or (name, 3). */
+function named(c, name, version, { size = 12.5, color, mono = true } = {}) {
+  if (version == null) {
+    const m = /^(.*)@v(\d+)$/.exec(String(name ?? ""));
+    if (m) [name, version] = [m[1], m[2]];
+  }
+  return h_flex().min_w(0).gap(6).items_center()
+    .child(div().min_w(0).truncate().text_size(size).when(mono, (e) => e.font_family(MONO)).text_color(color ?? c.navy).child(String(name ?? "")))
+    .when(version != null, (e) => e.child(div().flex_none().px(4).border_1().border_color(c.grey300).text_size(10.5).font_family(MONO).text_color(c.grey900).child(`v${version}`)));
+}
+const bare = (ref) => String(ref ?? "").replace(/@v\d+$/, "");
+
+/** What an agent should look into for a backtest result. */
+function backtestPrompt(name, b, r) {
+  const p = (r?.comparisons ?? []).find((x) => x.primary) ?? r?.comparisons?.[0];
+  return [
+    `In Captain, look at the backtest ${name}: it compares ${(b.arms ?? []).map(bare).join(" against ")}.`,
+    b.preregistration?.hypothesis ? `The hypothesis was: ${b.preregistration.hypothesis}` : "",
+    p ? `On ${p.metric}, B minus A is ${p.delta} with a 95% interval of [${p.ci_low}, ${p.ci_high}], verdict ${p.verdict}.` : "",
+    "Explain what drives the difference: which queries moved and why, and whether the result can be trusted.",
+    "Use the cst CLI to read the run. Change nothing without asking me.",
+  ].filter(Boolean).join(" ");
+}
+
+const EMPTY = {
+  backtests: ["No backtests yet", "A backtest runs two versions of your search on the same queries and tells you whether the difference is real.", "Run a backtest", "backtest"],
+  workflows: ["No workflows yet", "A workflow runs steps on a schedule, such as importing fresh logs and re-running a backtest each night. Ask an agent to set one up.", null, null],
+  grading: ["Nothing to grade yet", "Grading asks people which products are relevant for a query. Their answers become judgments backtests can trust.", "Start grading", "grading"],
+  replays: ["No replays yet", "A replay re-scores searches people really made, against a new version of your search.", null, null],
+};
+
 export default class CaptainRuns extends View {
   init(_props, cx) {
     this.tab = "backtests";
@@ -84,6 +116,16 @@ export default class CaptainRuns extends View {
     cx.timer.every(1000, (cx) => this.pollJob(cx));
     // Until the backend answers, ask again every 3 s.
     cx.timer.every(3000, (cx) => { if (this.starting) this.load(cx, this.tab); });
+    // Opened by name (palette): shared "captain.open" {section: "runs", backtest, at}.
+    cx.timer.every(500, (cx) => {
+      const o = shared("captain.open");
+      if (o?.section === "runs" && o.backtest && o.at !== this.opened) {
+        this.opened = o.at;
+        this.tab = "backtests";
+        this.pick(cx, "backtests", o.backtest);
+        cx.notify();
+      }
+    });
     // Another space, another workspace: drop what was shown and load this tab again.
     // Answers can stall until the next redraw in the app: redraw while any request waits.
     keepAwake(cx);
@@ -270,6 +312,8 @@ export default class CaptainRuns extends View {
           .on_click((_e, cx) => { this.tab = id; this.grader = null; if (!this.data[id]) this.load(cx, id); cx.notify(); })
           .child(this.icon(icon, 13)).child(div().child(label)))))
       .child(div().flex_1())
+      .when(this.tab === "backtests", (e) => e.child(Button(c, "new-backtest", "Run a backtest", () => openForm("backtest"), { kind: "primary", small: true })))
+      .when(this.tab === "grading", (e) => e.child(Button(c, "new-grading", "Start grading", () => openForm("grading"), { kind: "primary", small: true })))
       .child(div().id("runs-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()
         .border_1().border_color(c.grey300).text_color(c.grey900).hover((s) => s.text_color(c.blue).border_color(c.blue))
         .tooltip("Refresh").on_click((_e, cx) => { this.load(cx, this.tab); if (this.sel[this.tab]) this.pick(cx, this.tab, this.sel[this.tab]); })
@@ -293,7 +337,13 @@ export default class CaptainRuns extends View {
     return v_flex().id(`${tab}-list`).w(w).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
       .when(!!this.error, (e) => e.child(div().p(10).child(trouble(c, `${tab}-load`, this.errorR, this.error, (cx) => this.load(cx, tab)))))
       .when(this.data[tab] === undefined && !this.error, (e) => e.child(div().child(Skeleton(c, 8))))
-      .when(Array.isArray(this.data[tab]) && !rows.length, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("Nothing here yet.")))
+      .when(Array.isArray(this.data[tab]) && !rows.length, (e) => {
+        const [title, body, action, task] = EMPTY[tab] ?? ["Nothing here yet", "", null, null];
+        return e.child(v_flex().p(14).gap(8)
+          .child(div().text_size(13).font_medium().child(title))
+          .child(div().text_size(12).line_height("18px").text_color(c.grey900).child(body))
+          .when(!!action, (e) => e.child(Button(c, `empty-${tab}`, action, () => openForm(task), { small: true }))));
+      })
       .children(rows.map((x) => {
         const active = x.name === this.sel[tab];
         return h_flex().id(`${tab}-${x.name}`).w_full().h(48).flex_none().px(10).gap(8).items_center().cursor_pointer()
@@ -314,7 +364,7 @@ export default class CaptainRuns extends View {
     const rows = this.data.backtests ?? [];
     const lw = Math.max(220, Math.min(320, Math.floor(w * 0.26)));
     return h_flex().flex_1().min_h(0)
-      .child(this.list(c, lw, "backtests", rows, "backtest", (x) => `${(x.arms ?? []).join(" vs ")} · ${plural(x.runs ?? 0, "run")}`))
+      .child(this.list(c, lw, "backtests", rows, "backtest", (x) => `${(x.arms ?? []).map(bare).join(" vs ")} · ${plural(x.runs ?? 0, "run")}`))
       .child(this.backtestDetail(c));
   }
 
@@ -334,8 +384,11 @@ export default class CaptainRuns extends View {
         .child(div().flex_1())
         .when(b.mode !== "imported", (e) => e.child(this.button(c, "run-backtest", running ? "Running" : "Run backtest", "run", (_e, cx) => this.start(cx, "Backtest", `/api/backtests/${enc(name)}/run`, (cx) => this.pick(cx, "backtests", name)), true, !!running))))
       .child(div().text_size(13).font_medium().child(b.preregistration?.hypothesis ?? ""))
+      .child(h_flex().gap(8)
+        .child(Button(c, "bt-agent", "Open an agent in this space", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, backtestPrompt(name, b, r))), { small: true }))
+        .child(Button(c, "bt-prompt", "Copy prompt", (_e, cx) => copyPrompt(cx, backtestPrompt(name, b, r)), { kind: "quiet", small: true })))
       .child(h_flex().flex_wrap().gap(16).text_size(12).text_color(c.grey900)
-        .children((b.arms ?? []).map((a, i) => h_flex().gap(4).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(div().font_family(MONO).text_color(c.navy).child(a))))
+        .children((b.arms ?? []).map((a, i) => h_flex().gap(6).items_center().child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(named(c, a))))
         .child(div().child(`primary ${b.preregistration?.primary_metric ?? ""}, MDE ${b.preregistration?.mde ?? ""}`)))
       .child(h_flex().flex_wrap().gap(6).children((b.runs ?? []).map((x) => {
         const on = x.version === this.detail.runV;
@@ -369,7 +422,7 @@ export default class CaptainRuns extends View {
           .child(div().flex_1().min_w(200).px(10).child("Arm"))
           .children(cols.map((m) => div().w(92).flex_none().px(8).text_right().truncate().child(m))))
         .children((r.arms ?? []).map((a, i) => h_flex().id(`arm-${i}`).h(30).border_b(1).border_color(c.rule).text_size(12.5).items_center().whitespace_nowrap()
-          .child(h_flex().flex_1().min_w(200).px(10).gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(div().min_w(0).truncate().font_family(MONO).child(a.arm)))
+          .child(h_flex().flex_1().min_w(200).px(10).gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(named(c, a.arm)))
           .children(metrics.map((m) => div().w(92).flex_none().px(8).text_right().font_family(MONO).child(a.offline?.[m] !== undefined ? Number(a.offline[m]).toFixed(4) : "")))
           .child(div().w(92).flex_none().px(8).text_right().font_family(MONO).text_color((a.judged_at_10 ?? 1) < 0.9 ? c.fail : c.navy).child(a.judged_at_10 != null ? `${Math.round(a.judged_at_10 * 100)}%` : "none"))
           .child(div().w(92).flex_none().px(8).text_right().truncate().font_family(MONO).text_color(a.cost?.serve_usd_per_1k != null ? c.navy : c.grey500).child(a.cost?.serve_usd_per_1k != null ? `$${Number(a.cost.serve_usd_per_1k).toFixed(4)}` : "none"))))))
@@ -403,7 +456,7 @@ export default class CaptainRuns extends View {
     return v_flex().id("workflow-detail").flex_1().min_w(0).h_full().overflow_y_scrollbar().px(20).py(14).gap(12)
       .child(h_flex().gap(8).items_center().flex_wrap()
         .child(this.icon("workflow", 16, c.navy))
-        .child(div().min_w(0).truncate().text_size(15).font_medium().font_family(MONO).child(`${name}@v${w.version}`))
+        .child(named(c, name, w.version, { size: 15 }))
         .when(!!w.schedule, (e) => e.child(h_flex().gap(4).items_center().text_size(12).text_color(c.grey900).child(this.icon("schedule", 12)).child(div().child(cronEnglish(w.schedule)))))
         .child(div().flex_1())
         .child(this.button(c, "run-workflow", running ? "Running" : "Run now", "run", (_e, cx) => this.start(cx, "Workflow", `/api/workflows/${enc(name)}/run`, (cx) => this.pick(cx, "workflows", name)), true, !!running)))
@@ -535,7 +588,7 @@ export default class CaptainRuns extends View {
     return v_flex().id("replay-detail").flex_1().min_w(0).h_full().overflow_y_scrollbar().px(20).py(14).gap(12)
       .child(h_flex().gap(8).items_center().flex_wrap()
         .child(this.icon("replay", 16, c.navy))
-        .child(div().text_size(15).font_medium().font_family(MONO).child(`${r.name}@v${r.version}`))
+        .child(named(c, r.name, r.version, { size: 15 }))
         .child(this.badge(c, r.evidence ?? "")))
       .when(!!r.description, (e) => e.child(div().text_size(12.5).text_color(c.grey900).child(r.description)))
       .child(h_flex().gap(18).text_size(12).text_color(c.grey900)
