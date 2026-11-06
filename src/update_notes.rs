@@ -183,6 +183,9 @@ fn preview_media(url: &str) -> bool {
 }
 
 fn fetch_media(notes: &[Note]) {
+    // CAPTAIN: the bundled notes are Herdr's and link to media.herdr.dev. Fetch
+    // nothing unless this build has its own release server.
+    if crate::brand::releases().is_none() { return; }
     let dir = path("update-notes-media");
     if std::fs::create_dir_all(&dir).is_err() { return; }
     for media in notes.iter().flat_map(|n| &n.items).flat_map(|item| &item.media) {

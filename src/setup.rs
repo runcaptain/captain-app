@@ -15,11 +15,9 @@ use gpui::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-const ICON: &[u8] = include_bytes!("../assets/icons/herdr-ui-icon-clean.png");
-#[cfg(not(windows))]
-const APP_INSTALL: &str = "curl -fsSL https://releases.herdr.dev/app/install.sh | sh";
-#[cfg(windows)]
-const APP_INSTALL: &str = "powershell -c \"irm https://releases.herdr.dev/app/install.ps1 | iex\"";
+const ICON: &[u8] = include_bytes!("../assets/icons/captain-ui-icon.png");
+// CAPTAIN: Captain is built from source (FORK.md); there is no installer to fetch.
+const APP_INSTALL: &str = "build the latest Captain from https://github.com/runcaptain/captain-app";
 #[cfg(not(windows))]
 const CORE_INSTALL: &str = "curl -fsSL https://releases.herdr.dev/core/install.sh | sh";
 #[cfg(windows)]
@@ -49,13 +47,13 @@ pub struct Setup {
 pub fn open(need: Need, requests: async_channel::Receiver<Request>, cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(620.0), px(460.0)), cx))),
-        titlebar: Some(TitlebarOptions { title: Some("Herdr".into()), ..Default::default() }),
-        app_id: Some("herdr-app".into()),
+        titlebar: Some(TitlebarOptions { title: Some(crate::brand::NAME.into()), ..Default::default() }),
+        app_id: Some(crate::brand::BUNDLE_ID.into()),
         ..Default::default()
     };
     let icon = Arc::new(Image::from_bytes(ImageFormat::Png, ICON.to_vec()));
     cx.open_window(options, |_, cx| cx.new(|_| Setup { need, state: State::Ready, requests: Some(requests), icon }))
-        .expect("cannot open the Herdr window");
+        .expect("cannot open the Captain window");
     cx.activate(true);
 }
 
@@ -107,7 +105,7 @@ impl Setup {
     }
 
     fn install(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.run("Installing herdr-core…", || crate::core_bin::install().map(Some), window, cx);
+        self.run("Looking for herdr-core…", || crate::core_bin::install().map(Some), window, cx);
     }
 
     fn update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -125,7 +123,7 @@ impl Setup {
                     cx.notify();
                     return;
                 }
-                // Remembered: next time Herdr looks there first.
+                // Remembered: next time Captain looks there first.
                 let mut person = settings::load_person().unwrap_or_default();
                 person.core = Some(bin.to_string_lossy().into_owned());
                 let _ = settings::write_person(&person);
@@ -140,29 +138,29 @@ impl Setup {
     fn words(&self) -> (String, String, String) {
         match &self.need {
             Need::Install => (
-                "Herdr needs herdr-core".into(),
-                "herdr-core runs your terminals and agents, and keeps them alive when this window closes. Herdr couldn't find it on this computer.".into(),
-                format!("Install it for me puts it in {CORE_PLACE} (with hc), like its own installer: {CORE_INSTALL}"),
+                "Captain needs herdr-core".into(),
+                "herdr-core runs your terminals and agents, and keeps them alive when this window closes. Captain couldn't find it on this computer.".into(),
+                format!("Captain does not download it. Install it with its own installer in a terminal, into {CORE_PLACE}: {CORE_INSTALL}"),
             ),
             Need::Connect(error) => (
-                "Herdr can't connect to herdr-core".into(),
+                "Captain can't connect to herdr-core".into(),
                 error.clone(),
                 "Once you've resolved this, try again.".into(),
             ),
             Need::Fix(Mismatch::TooOld { have, need }) => (
-                "Herdr needs a newer herdr-core".into(),
-                format!("Yours is {have}; this Herdr needs {need} or newer. Updating keeps your terminals running."),
+                "Captain needs a newer herdr-core".into(),
+                format!("Yours is {have}; this Captain needs {need} or newer. Updating keeps your terminals running."),
                 "Or update it yourself: hc update".into(),
             ),
             Need::Fix(Mismatch::Missing(methods)) => (
-                "Herdr needs a newer herdr-core".into(),
-                format!("Your herdr-core can't do everything this Herdr needs ({}). Updating keeps your terminals running.", methods.join(", ")),
+                "Captain needs a newer herdr-core".into(),
+                format!("Your herdr-core can't do everything this Captain needs ({}). Updating keeps your terminals running.", methods.join(", ")),
                 "Or update it yourself: hc update".into(),
             ),
             Need::Fix(Mismatch::Newer { generation }) => (
-                "This Herdr is older than your herdr-core".into(),
-                format!("Your herdr-core speaks a newer protocol (generation {generation}) than this Herdr understands. Update Herdr; your terminals keep running."),
-                format!("Update Herdr: {APP_INSTALL}"),
+                "This Captain is older than your herdr-core".into(),
+                format!("Your herdr-core speaks a newer protocol (generation {generation}) than this Captain understands. Update Captain; your terminals keep running."),
+                format!("Update Captain: {APP_INSTALL}"),
             ),
         }
     }
@@ -192,7 +190,7 @@ impl Render for Setup {
             Need::Install => div()
                 .flex()
                 .gap(px(10.0))
-                .child(button("install", "Install it for me", true).when(!busy, |d| d.on_click(cx.listener(|this, _, w, cx| this.install(w, cx)))))
+                .child(button("install", "Look again", true).when(!busy, |d| d.on_click(cx.listener(|this, _, w, cx| this.install(w, cx)))))
                 .child(button("choose", "I have it somewhere…", false).when(!busy, |d| d.on_click(cx.listener(|this, _, w, cx| this.choose(w, cx))))),
             Need::Connect(_) => div().child(button("retry", "Retry", true).on_click(cx.listener(|this, _, w, cx| this.start(w, cx)))),
             Need::Fix(Mismatch::Newer { .. }) => div()

@@ -18,7 +18,7 @@ export function hc(args: string[]): Promise<ExecResult>;
 
 /** The user's home directory. */
 export function home(): string;
-/** The app's folder (`~/.config/herdr-app`, or `$HERDR_APP_HOME`): settings.json, keys.json, layouts/. */
+/** The app's folder (`~/.config/herdr-app`, or `$CAPTAIN_APP_HOME`): settings.json, keys.json, layouts/. */
 export function appHome(): string;
 
 /** Reads UTF-8 text (up to 1 MiB), or null if absent. Runs off the UI thread.

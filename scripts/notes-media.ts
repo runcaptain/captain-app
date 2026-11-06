@@ -80,7 +80,7 @@ async function clip(scene: string, v: string) {
   const script = join(root, "scripts/notes-clips", scene + ".sh");
   if (!await Bun.file(script).exists()) throw new Error(`unknown scene: ${scene}`);
   const name = `notes-clip-${scene}-${process.pid}`;
-  const env = { ...process.env, HERDR_APP_SANDBOX: name, HERDR_APP_HOME: `/var/tmp/herdr-app-${name}/home` };
+  const env = { ...process.env, HERDR_APP_SANDBOX: name, CAPTAIN_APP_HOME: `/var/tmp/herdr-app-${name}/home` };
   const frames = await mkdtemp("/var/tmp/herdr-notes-frames-");
   const pointerFile = join(frames, "pointer.json");
   const crop = (await Bun.$`bash ${script} crop`.cwd(root).quiet().text()).trim();
@@ -95,7 +95,7 @@ async function clip(scene: string, v: string) {
     const start = performance.now();
     for (let i = 0; i < 60; i++) {
       await Bun.sleep(Math.max(0, start + i * 1000 / 12 - performance.now()));
-      await run([join(root, "target/debug/herdr-app"), "shot", join(frames, `${String(i).padStart(3, "0")}.png`)], env);
+      await run([join(root, "target/debug/captain-app"), "shot", join(frames, `${String(i).padStart(3, "0")}.png`)], env);
       pointers.push(await Bun.file(pointerFile).exists() ? await Bun.file(pointerFile).json() : { x: 650, y: 400, cursor: "arrow" });
     }
     if (performance.now() - start > 5500) throw new Error("capture fell behind 12 fps; close other workloads and retry");

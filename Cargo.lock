@@ -3714,6 +3714,7 @@ dependencies = [
  "image",
  "libc",
  "notify",
+ "objc2 0.6.4",
  "png 0.17.16",
  "raw-window-handle",
  "serde",

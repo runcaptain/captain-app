@@ -100,13 +100,13 @@ export function checkMarkdown(file: string, source: string, ref: Reference): str
 }
 
 async function run(binary: string, arg: string): Promise<string> {
-  const result = Bun.spawnSync([resolve(binary), arg], { env: { ...process.env, HERDR_APP_HOME: resolve("target/docs-no-window") } });
+  const result = Bun.spawnSync([resolve(binary), arg], { env: { ...process.env, CAPTAIN_APP_HOME: resolve("target/docs-no-window") } });
   if (result.exitCode !== 0) throw new Error(`${binary} ${arg}: ${result.stderr.toString()}`);
   return result.stdout.toString();
 }
 
 async function main() {
-  const [mode, binary = `target/debug/herdr-app${process.platform === "win32" ? ".exe" : ""}`] = process.argv.slice(2);
+  const [mode, binary = `target/debug/captain-app${process.platform === "win32" ? ".exe" : ""}`] = process.argv.slice(2);
   if (mode !== "generate" && mode !== "check") throw new Error("usage: bun scripts/docs.ts <generate|check> [binary]");
   const ref = { help: await run(binary, "--help"), commands: JSON.parse(await run(binary, "commands")) as Command[] };
   const pages = { "docs/commands.md": commandPage(ref.commands) };

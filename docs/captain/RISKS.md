@@ -12,3 +12,14 @@
   the hatch and global keys from the web view back to the window.
 - Web view over Metal: a WKWebView subview sits above GPUI's Metal layer, so every GPUI overlay (palette,
   dialogs, popups, floating blocks, toasts) draws under it. Hide or snapshot it while covered.
+- Shared core binary, step 2: Captain runs its own core session but the same ~/.local/bin/herdr-core binary.
+  If Captain ever needs a newer core than Herdr's, the person has to run `hc update`, which swaps the binary
+  Herdr uses too. The setup screen says so instead of doing it.
+- Inherited HC_SESSION: a terminal inside Herdr exports Herdr's session. `brand::pin_core_session` replaces
+  anything but `test-*` with `captain`, so launching captain-app from a Herdr terminal cannot join Herdr's core.
+- THIRD-PARTY-NOTICES hashes Cargo.toml and Cargo.lock. Any dependency change in the fork needs
+  `just notices`, which needs `cargo install cargo-about --version 0.9.3 --locked --features cli`.
+- Herdr's CHANGELOG.md still ships as What's New, with herdr.dev media links (not fetched). Captain needs its
+  own notes before anyone else installs it.
+- Linux and Windows identity (desktop file, Start menu, .ico install scripts) is not rebranded yet. Only macOS
+  was the target.

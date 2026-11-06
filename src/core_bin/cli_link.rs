@@ -1,10 +1,10 @@
-//! The DMG has no installer to put the app's CLI on PATH.
+//! The DMG has no installer to put the app's CLI on PATH. CAPTAIN: the link is ~/.local/bin/captain-app to Captain.app, so Herdr's herdr-app link is never touched.
 
 use std::io;
 use std::path::Path;
 
 fn herdr_bundle(exe: &Path) -> bool {
-    exe.is_absolute() && exe.ends_with("Herdr.app/Contents/MacOS/Herdr")
+    exe.is_absolute() && exe.ends_with(Path::new(crate::brand::BUNDLE).join("Contents/MacOS").join(crate::brand::BUNDLE_EXE))
 }
 
 fn installed_bundle(exe: &Path) -> bool {
@@ -17,7 +17,7 @@ pub(super) fn ensure(home: &Path, exe: &Path) -> io::Result<()> {
     if !installed_bundle(exe) {
         return Ok(());
     }
-    let link = home.join(".local/bin/herdr-app");
+    let link = home.join(".local/bin").join(crate::brand::BIN);
     match std::fs::symlink_metadata(&link) {
         Ok(meta) if meta.file_type().is_symlink() => {
             let target = std::fs::read_link(&link)?;
@@ -45,11 +45,11 @@ mod tests {
 
     #[test]
     fn repairs_only_our_cli_link() {
-        let home = std::env::temp_dir().join(format!("herdr-cli-link-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("captain-cli-link-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
-        let exe = home.join("Applications/Herdr.app/Contents/MacOS/Herdr");
-        let link = home.join(".local/bin/herdr-app");
+        let exe = home.join("Applications/Captain.app/Contents/MacOS/Captain");
+        let link = home.join(".local/bin/captain-app");
         ensure(&home, &exe).unwrap();
         assert_eq!(std::fs::read_link(&link).unwrap(), exe);
         // Running it again leaves the same link alone.
@@ -57,17 +57,17 @@ mod tests {
         assert_eq!(std::fs::read_link(&link).unwrap(), exe);
 
         for old in [
-            home.join("old/Herdr.app/Contents/MacOS/Herdr"),
-            "../../Applications/Herdr.app/Contents/MacOS/Herdr".into(),
-            "/Volumes/Herdr/Herdr.app/Contents/MacOS/Herdr".into(),
-            "/private/var/folders/AppTranslocation/old/d/Herdr.app/Contents/MacOS/Herdr".into(),
+            home.join("old/Captain.app/Contents/MacOS/Captain"),
+            "../../Applications/Captain.app/Contents/MacOS/Captain".into(),
+            "/Volumes/Captain/Captain.app/Contents/MacOS/Captain".into(),
+            "/private/var/folders/AppTranslocation/old/d/Captain.app/Contents/MacOS/Captain".into(),
         ] {
             std::fs::remove_file(&link).unwrap();
             symlink(old, &link).unwrap();
             ensure(&home, &exe).unwrap();
             assert_eq!(std::fs::read_link(&link).unwrap(), exe);
         }
-        let old = home.join("previous/Herdr.app/Contents/MacOS/Herdr");
+        let old = home.join("previous/Captain.app/Contents/MacOS/Captain");
         std::fs::create_dir_all(old.parent().unwrap()).unwrap();
         std::fs::write(&old, "previous executable").unwrap();
         std::fs::remove_file(&link).unwrap();
@@ -88,9 +88,9 @@ mod tests {
         std::fs::remove_file(&link).unwrap();
 
         for skipped in [
-            "/Volumes/Herdr/Herdr.app/Contents/MacOS/Herdr",
-            "/private/var/folders/AppTranslocation/random/d/Herdr.app/Contents/MacOS/Herdr",
-            "/work/target/debug/Herdr.app/Contents/MacOS/Herdr",
+            "/Volumes/Captain/Captain.app/Contents/MacOS/Captain",
+            "/private/var/folders/AppTranslocation/random/d/Captain.app/Contents/MacOS/Captain",
+            "/work/target/debug/Captain.app/Contents/MacOS/Captain",
             "/work/target/debug/herdr-app",
             "/Applications/Other.app/Contents/MacOS/Herdr",
         ] {

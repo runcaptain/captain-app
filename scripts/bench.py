@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much CPU the app uses, and how often it draws, in fixed scenarios.
 
-    scripts/bench.py [--bin target/release/herdr-app] [--seconds 20] [--sample]
+    scripts/bench.py [--bin target/release/captain-app] [--seconds 20] [--sample]
 
 Runs the app on its own temporary home and core session, so nothing of yours
 is touched; prints the artifact folder and keeps it after cleanup. Requires hc
@@ -82,7 +82,7 @@ while True:
 def env():
     e = dict(os.environ)
     e.update(
-        HERDR_APP_HOME=f"{ROOT}/home",
+        CAPTAIN_APP_HOME=f"{ROOT}/home",
         HC_SESSION=SESSION,  # Short name avoids macOS socket-path limits.
         XDG_STATE_HOME=f"{ROOT}/state",
         PYTHONIOENCODING="utf-8",

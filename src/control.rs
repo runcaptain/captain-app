@@ -1,6 +1,6 @@
 //! `herdr-app do <command> [--arg value ... | json]`, `herdr-app ls`, `herdr-app commands`
 //! and `herdr-app status`: drive a running window from a shell (agents, tests)
-//! over `$HERDR_APP_HOME/herdr-app.sock`, one JSON line each way.
+//! over `$CAPTAIN_APP_HOME/herdr-app.sock`, one JSON line each way.
 
 use crate::mods::{self, Request};
 use serde_json::{Value, json};
@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 fn socket() -> PathBuf {
-    mods::app_dir().join("herdr-app.sock")
+    mods::app_dir().join(crate::brand::SOCKET)
 }
 
 /// Serves the socket for this window. A live socket means another window owns this home.
@@ -94,7 +94,7 @@ pub fn client(args: &[String]) -> i32 {
             Ok(a) => json!({ "do": command, "args": a }),
             Err(e) => return fail(&e),
         },
-        _ => return fail("usage: herdr-app ls | herdr-app commands | herdr-app status | herdr-app shot [file.png] | herdr-app do <command> [--arg value ... | json]"),
+        _ => return fail("usage: captain-app ls | captain-app commands | captain-app status | captain-app shot [file.png] | captain-app do <command> [--arg value ... | json]"),
     };
     let mut stream = match UnixStream::connect(socket()) {
         Ok(s) => s,
@@ -173,7 +173,7 @@ pub fn save_shot(window: &gpui::Window, path: &std::path::Path) -> anyhow::Resul
 }
 
 fn fail(message: &str) -> i32 {
-    eprintln!("herdr-app: {message}");
+    eprintln!("{}: {message}", crate::brand::BIN);
     2
 }
 
@@ -185,7 +185,7 @@ mod tests {
     fn a_second_launch_raises_the_running_window() {
         let dir = std::env::temp_dir().join(format!("herdr-app-raise-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("herdr-app.sock");
+        let path = dir.join(crate::brand::SOCKET);
         // Nothing running: this launch opens its own window.
         assert!(!raise_running_at(&path));
         // One running: it gets asked to come to the front.

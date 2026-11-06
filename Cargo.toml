@@ -36,6 +36,12 @@ fancy-regex = "0.19"
 notify = "7"
 sha2 = "0.10"
 
+# CAPTAIN: the executable and CLI are captain-app (brand.rs). The package keeps
+# upstream's name so merges from Herdr stay small.
+[[bin]]
+name = "captain-app"
+path = "src/main.rs"
+
 [[test]]
 name = "shot_pixels"
 path = "tests/shot_pixels.rs"
@@ -58,6 +64,8 @@ gpui_linux = { package = "gpui-pre-linux", version = "=0.3.8", features = ["rend
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui_macos = { package = "gpui-pre-macos", version = "=0.3.8", features = ["render-to-image"] }
 libc = "0.2"
+# CAPTAIN: the About panel (macos.rs). Already in the tree through gpui.
+objc2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 gpui_windows = { package = "gpui-pre-windows", version = "=0.3.8", features = ["render-to-image"] }

@@ -22,10 +22,10 @@ pub fn install_cli_link() {
     if let Err(e) = std::thread::Builder::new().name("cli-link".into()).spawn(|| {
         let result = std::env::current_exe().and_then(|exe| cli_link::ensure(&crate::mods::home(), &exe));
         if let Err(e) = result {
-            tracing::warn!("cannot install herdr-app CLI link: {e}");
+            tracing::warn!("cannot install {} CLI link: {e}", crate::brand::BIN);
         }
     }) {
-        tracing::warn!("cannot start herdr-app CLI setup: {e}");
+        tracing::warn!("cannot start {} CLI setup: {e}", crate::brand::BIN);
     }
 }
 
@@ -170,7 +170,14 @@ fn login_shell_path() -> Option<std::ffi::OsString> {
 /// Installs the core's latest release with its own installer (into
 /// ~/.local/bin, or HC_INSTALL_DIR), then finds it. Err: what went wrong.
 pub fn install() -> Result<PathBuf, String> {
-    let releases = std::env::var("HERDR_RELEASES_URL").unwrap_or_else(|_| "https://releases.herdr.dev".into());
+    // CAPTAIN: never download from herdr.dev. Install the core yourself, or point
+    // CAPTAIN_RELEASES_URL at a server that carries core/install.sh.
+    let Some(releases) = crate::brand::releases() else {
+        // Installed by hand since the screen opened: use it.
+        let configured = crate::settings::load_person().ok().and_then(|p| p.core);
+        return find(configured.as_deref().filter(|c| !c.is_empty()))
+            .ok_or_else(|| "herdr-core is still not installed. Run the command below in a terminal, then press Look again.".into());
+    };
     let mut cmd = if cfg!(windows) {
         let mut c = crate::spawn::command("powershell");
         c.args(["-NoProfile", "-Command", &format!("irm {releases}/core/install.ps1 | iex")]);
@@ -206,6 +213,12 @@ pub fn update() -> Result<String, String> {
 
 /// `hc update --version X`: at least X (a newer core stays). Cores before 0.1.5 lack it.
 pub fn update_to(at_least: Option<&str>) -> Result<String, String> {
+    // CAPTAIN: the herdr-core binary is shared with Herdr, and `hc update` swaps
+    // it and restarts the core. Leave that to the person.
+    if crate::brand::releases().is_none() {
+        let wanted = at_least.map(|v| format!(" --version {v}")).unwrap_or_default();
+        return Err(format!("Captain does not update herdr-core, because Herdr shares it. Run hc update{wanted} yourself, then try again."));
+    }
     let mut cmd = crate::spawn::command(path());
     cmd.args(["update", "--json"]);
     if let Some(v) = at_least {
@@ -259,7 +272,7 @@ fn ensure_core_bundle(version: &str) -> Result<(), String> {
     if !official {
         return Ok(());
     }
-    let releases = std::env::var("HERDR_RELEASES_URL").unwrap_or_else(|_| "https://releases.herdr.dev".into());
+    let Some(releases) = crate::brand::releases() else { return Ok(()) };
     let mut cmd = crate::spawn::command("sh");
     cmd.args([
         "-c",

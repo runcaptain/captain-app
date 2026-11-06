@@ -45,7 +45,7 @@ fn find_root() -> Option<PathBuf> {
 }
 
 /// The folder or bundle name inside a release tarball.
-const PACKED: &str = if cfg!(target_os = "macos") { "Herdr.app" } else { "herdr-app" };
+const PACKED: &str = if cfg!(target_os = "macos") { crate::brand::BUNDLE } else { crate::brand::BIN };
 
 fn beside(root: &Path, suffix: &str) -> PathBuf {
     let mut name = root.file_name().unwrap_or_default().to_os_string();
@@ -69,8 +69,10 @@ fn target() -> String {
     format!("{os}-{}", std::env::consts::ARCH)
 }
 
+/// CAPTAIN: Captain's own release server, never herdr.dev (brand.rs). Callers
+/// only run when checks_app() found one.
 fn releases() -> String {
-    std::env::var("HERDR_RELEASES_URL").unwrap_or_else(|_| "https://releases.herdr.dev".into())
+    crate::brand::releases().unwrap_or_default()
 }
 
 /// The version downloaded and waiting for a restart.
@@ -117,12 +119,13 @@ pub fn set_core(version: Option<String>, managed: Option<String>) {
 }
 
 fn checks_app() -> Option<PathBuf> {
-    root().filter(|_| option_env!("HERDR_APP_RELEASE").is_some() || std::env::var_os("HERDR_RELEASES_URL").is_some())
+    root().filter(|_| crate::brand::releases().is_some())
 }
 
 /// A release build checks the core; a source build only when pointed at a test release server.
+/// CAPTAIN: never. The core is shared with Herdr (core_bin::update_to).
 fn checks_core() -> bool {
-    option_env!("HERDR_APP_RELEASE").is_some() || std::env::var_os("HERDR_RELEASES_URL").is_some()
+    false
 }
 
 /// For the settings screen: both programs, what's waiting, when we last looked.

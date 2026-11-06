@@ -1641,7 +1641,7 @@ impl AppWindow {
     fn load(&self, inst: Instance, window: &mut Window, cx: &mut Context<Self>) -> Copy {
         let mut copy = Copy { inst, id: 0, root: None, _watch: None, error: None };
         let (Some(runtime), Some(folder)) = (&self.runtime, self.folders.get(&copy.inst.name)) else {
-            copy.error = Some(format!("no mod folder ~/.config/herdr-app/mods/{}", copy.inst.name));
+            copy.error = Some(format!("no mod folder ~/.config/captain-app/mods/{}", copy.inst.name));
             return copy;
         };
         copy.id = mods::prepare_load(&copy.inst);
@@ -2776,7 +2776,7 @@ impl AppWindow {
                 return json!({ "ok": true });
             }
             tracing::warn!("unknown command {name:?}");
-            return json!({ "error": format!("unknown command {name:?}: see `herdr-app commands`; a mod's are <mod>.<command> and need the mod loaded") });
+            return json!({ "error": format!("unknown command {name:?}: see `captain-app commands`; a mod's are <mod>.<command> and need the mod loaded") });
         };
         if let Err(error) = crate::commands::validate_args(command, &args) {
             return json!({ "error": error });
@@ -3766,7 +3766,7 @@ impl AppWindow {
         json!({ "error": "expected { do }, { ls }, { commands } or { status }" })
     }
 
-    /// Spaces, their tabs and terminals, for `herdr-app ls`. Sub-agents are listed
+    /// Spaces, their tabs and terminals, for `captain-app ls`. Sub-agents are listed
     /// under the terminal that started them.
     fn world(&self) -> Value {
         let m = &self.model;
@@ -4379,8 +4379,8 @@ impl AppWindow {
         let core = crate::update::core();
         let core = core.ready.filter(|_| !core.updating);
         match (crate::update::ready(), core) {
-            (Some(a), Some(c)) => Some(format!("Herdr {a} and herdr-core {c} are ready")),
-            (Some(a), None) => Some(format!("Herdr {a} is ready")),
+            (Some(a), Some(c)) => Some(format!("{} {a} and herdr-core {c} are ready", crate::brand::NAME)),
+            (Some(a), None) => Some(format!("{} {a} is ready", crate::brand::NAME)),
             (None, Some(c)) => Some(format!("herdr-core {c} is ready")),
             (None, None) => None,
         }
@@ -5311,7 +5311,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", &format!("window::tests::{name}"), "--nocapture", "--test-threads=1"])
-            .env("HERDR_APP_HOME", &home)
+            .env("CAPTAIN_APP_HOME", &home)
             .env("HERDR_TEST_WINDOW", name)
             .output()
             .unwrap();
