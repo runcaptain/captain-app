@@ -3,7 +3,7 @@ export const theme = () => globalThis.__theme ?? { background: '#ffffff', foregr
 export const run = (name, args) => (globalThis.__runs ??= []).push([name, args]);
 export const props = () => globalThis.__props ?? {};
 export const shared = () => undefined;
-export const setShared = () => {};
+export const setShared = (k, v) => ((globalThis.__shared ??= {})[k] = v);
 export const layout = () => ({ id: 'root', children: [] });
 export const agents = () => [];
 export const openOverlay = () => 1;
