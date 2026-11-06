@@ -1,0 +1,1 @@
+[{"id": "ipynb", "label": "Jupyter notebook", "extensions": [".ipynb"], "import": true, "export": true}, {"id": "quarto", "label": "Quarto document", "extensions": [".qmd"], "import": true, "export": true}]

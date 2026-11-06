@@ -11,7 +11,8 @@ export const closeOverlay = () => {};
 export const notify = () => {};
 // A test that needs real programs (forms-e2e.mjs) sets globalThis.__exec.
 export const exec = async (...a) => (globalThis.__exec ? globalThis.__exec(...a) : { code: 1, stdout: '', stderr: 'no exec in tests' });
-export const readTextFile = async () => null;
+export const readTextFile = async (p) => (globalThis.__files ?? {})[p] ?? null;
+export const writeTextFile = async (p, text) => { (globalThis.__files ??= {})[p] = text; (globalThis.__written ??= []).push(p); return null; };
 export const home = () => '/tmp';
 export const window = () => ({ platform: 'macos', fullscreen: false });
 export const focused = () => ({ space: globalThis.__space ?? "s1" });

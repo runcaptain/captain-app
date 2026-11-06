@@ -8,8 +8,16 @@ export const InputState = {
   new: (o = {}) => {
     let v = o.value ?? '';
     const handlers = {};
-    return { value: () => v, set_value: (x) => (v = String(x)), on: (ev, f) => ((handlers[ev] = f), true), focus() {}, handlers, placeholder: o.placeholder };
+    return { value: () => v, set_value: (x) => (v = String(x)), on: (ev, f) => ((handlers[ev] = f), true), focus() {}, release: () => true, handlers, placeholder: o.placeholder };
   },
 };
 export const Input = { new: (s) => el('input', [s]) };
 export const VirtualListScrollHandle = { new: () => ({ scrolled: [], scroll_to_item(i, how) { this.scrolled.push([i, how]); }, scroll_to_bottom() {}, release() { return true; } }) };
+export const EditorState = {
+  new: (o = {}) => {
+    let v = o.value ?? '';
+    const handlers = {};
+    return { value: () => v, set_value: (x) => (v = String(x)), on: (ev, f) => ((handlers[ev] = f), true), release: () => true, handlers, language: o.language };
+  },
+};
+export const Editor = { new: (s) => el('editor', [s]) };

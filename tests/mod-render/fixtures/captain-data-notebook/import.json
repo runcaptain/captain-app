@@ -1,0 +1,1 @@
+{"name": "analysis", "version": 1, "format": "marimo", "warnings": ["marimo runs cells in dependency order; Captain runs them top to bottom"]}

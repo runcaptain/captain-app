@@ -1,0 +1,1 @@
+[{"name": "warehouse", "engine": "postgres", "read_only": true}, {"name": "local-duck", "engine": "duckdb", "read_only": false}]
