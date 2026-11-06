@@ -60,3 +60,31 @@ no Captain window was opened. The first supervised launch must check each of the
 - Live theme changes (`captain:theme`) are not sent yet. Pages load with `theme=system`.
 - OSC 7501 (agent status): untouched. src/model.rs, src/programs.rs, src/terminal.rs and src/vt.rs are
   identical to upstream.
+
+## Native spike: 100,000 ranked results and a chart in a gpui-kit mod (2026-11-06)
+
+The mod is docs/captain/spikes/ranked-results (not shipped). It passes `captain-app check`. The numbers come from
+headless runs of the release build on Edgar's M-series Mac, timed inside the mod with Date.now(). Smoothness on
+screen is still unmeasured, because no window was opened.
+
+gpui-kit stops any script call that runs too long (vendor/gpui-kit/crates/shell/src/engine/quickjs/sandbox.rs:439):
+50 ms for render and layout, 500 ms for an event handler or init. The checker hit that limit for real.
+
+| Work, 100,000 rows | Time | Fits |
+|---|---|---|
+| Show 40 visible rows (v_virtual_list, per frame) | 0.7 ms | yes, about 70 times under the 50 ms frame limit |
+| Make the rows in memory | 230 ms | in init, yes. In render, no |
+| Average a metric over all rows (the chart) | 35 ms | only outside render |
+| Sort the objects by a number | about 350 ms (60 ms at 20,000, n log n) | barely, in a click. The UI freezes for a third of a second |
+| Sort an index over a typed array | about 140 ms (24 ms at 20,000) | in a click, yes |
+| Parse the rows from JSON (13 MB) | about 425 ms (212 ms at 50,000) | barely. Make plus sort, or parse plus sort, is stopped |
+
+What this means for native Captain screens:
+- Scrolling a 100,000-row table is cheap on the script side. Only the visible rows are built, at under 1 ms per
+  frame. Whether GPUI then draws it smoothly needs the window: check it on the next launch.
+- Charts are cheap to draw (12 bars). The aggregate behind them is not cheap to compute in a render.
+- Never hold or sort a full result set in the mod. The daemon should sort, filter and aggregate, and send pages
+  plus precomputed chart series. One JSON parse of 100,000 rows uses most of a call's time limit on its own.
+- When a mod must sort locally, sort an index over typed arrays, or split the work across timer ticks.
+- The 50 ms and 500 ms limits are fixed in vendored gpui-kit, not settings. Raising them would be a fork change,
+  and a long call blocks the whole window anyway, because mods run on the UI thread.
