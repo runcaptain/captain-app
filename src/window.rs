@@ -4907,6 +4907,9 @@ impl Render for AppWindow {
         crate::bench::frame_start();
         crate::terminal::next_frame();
         window.set_rem_size(px(settings::ui_font_size()));
+        // CAPTAIN: the Captain Search daemon the native screens read (cst.rs).
+        #[cfg(unix)]
+        crate::cst::tick();
         // A terminal the person clicked into becomes the focused pane.
         let clicked = self
             .terms

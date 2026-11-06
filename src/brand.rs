@@ -35,6 +35,8 @@ pub const CORE_SESSION_ENV: &str = "CAPTAIN_CORE_SESSION";
 pub const DEFAULT_LAYOUT: &str = "captain";
 /// Where the source and the issue tracker live.
 pub const REPO: &str = "https://github.com/runcaptain/captain-app";
+/// What Captain is, in Edgar's words: the About blurb, the onboarding's first line and AGENTS.md's.
+pub const ABOUT: &str = "Captain is the open-source platform for building better search and recommendation models: from signal discovery to reproducible experiments and measured production improvements.";
 /// Shown in the About panel.
 pub const NOTICE: &str = "Captain is a modified version of Herdr (https://github.com/herdrdev/herdr-app), Apache 2.0.";
 

@@ -18,7 +18,8 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, layout, props, agents, shared, setShared, openOverlay, window as win } from "herdr";
-import { api, isDark, palette } from "./cst.js";
+import { api } from "./kit/cst.js";
+import { isDark, palette } from "./kit/tokens.js";
 
 const ITEMS = [
   { id: "investigations", label: "Investigations", icon: "search", badge: "/api/proposals?status=proposed", badgeLabel: "proposals to review" },

@@ -57,19 +57,25 @@
           "id": "investigations",
           "type": "block",
           "content": {
-            "webview": {
-              "url": "{cst}/?embedded=1&screen=investigations&theme=system#token={cst_token}",
-              "id": "investigations"
-            }
+            "mod": "captain-investigations"
           }
         },
         {
           "id": "data",
           "type": "block",
           "content": {
-            "webview": {
-              "url": "{cst}/?embedded=1&screen=data&theme=system#token={cst_token}",
-              "id": "data"
+            "mod": "captain-soon",
+            "props": {
+              "title": "Data and signals",
+              "about": "Datasets (classes, grid, labels as code) and the signals you rank with.",
+              "prefixes": [
+                "data",
+                "queries",
+                "labels",
+                "signal",
+                "sql",
+                "catalog"
+              ]
             }
           }
         },
@@ -77,9 +83,19 @@
           "id": "runs",
           "type": "block",
           "content": {
-            "webview": {
-              "url": "{cst}/?embedded=1&screen=runs&theme=system#token={cst_token}",
-              "id": "runs"
+            "mod": "captain-soon",
+            "props": {
+              "title": "Runs",
+              "about": "Every execution with its manifest, logs, artifacts and reproducibility: backtests, replays, grading jobs and workflows.",
+              "prefixes": [
+                "backtest",
+                "replay",
+                "grade",
+                "workflow",
+                "jobs",
+                "run",
+                "runs"
+              ]
             }
           }
         },
@@ -87,9 +103,16 @@
           "id": "comparisons",
           "type": "block",
           "content": {
-            "webview": {
-              "url": "{cst}/?embedded=1&screen=comparisons&theme=system#token={cst_token}",
-              "id": "comparisons"
+            "mod": "captain-soon",
+            "props": {
+              "title": "Comparisons",
+              "about": "Metrics, slices, queries side by side, and the limits of what a result shows.",
+              "prefixes": [
+                "compare",
+                "segments",
+                "surfaces",
+                "diff"
+              ]
             }
           }
         },
@@ -97,9 +120,16 @@
           "id": "handoff",
           "type": "block",
           "content": {
-            "webview": {
-              "url": "{cst}/?embedded=1&screen=handoff&theme=system#token={cst_token}",
-              "id": "handoff"
+            "mod": "captain-soon",
+            "props": {
+              "title": "Handoff",
+              "about": "Candidates you export, serving contracts, linked external deployments and their online outcomes.",
+              "prefixes": [
+                "handoff",
+                "promote",
+                "export",
+                "deploy"
+              ]
             }
           }
         }

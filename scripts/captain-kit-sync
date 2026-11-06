@@ -1,0 +1,19 @@
+#!/bin/bash
+# CAPTAIN: copy the captain-ui kit (defaults/captain/kit) into every Captain mod as ./kit/.
+# gpui-kit mods can't import outside their folder, so each carries the kit. tests/captain_mods.rs
+# fails if a copy differs. A mod outside this repo (desktop-app's, a person's) copies it the same way:
+#   scripts/captain-kit-sync path/to/mods/my-screen
+set -euo pipefail
+cd "$(dirname "$0")/.."
+targets=("$@")
+if [[ ${#targets[@]} -eq 0 ]]; then
+  targets=(defaults/mods/captain-* defaults/frame/welcome)
+fi
+for t in "${targets[@]}"; do
+  [[ -d "$t" ]] || continue
+  rm -rf "$t/kit"
+  mkdir -p "$t/kit"
+  cp defaults/captain/kit/*.js "$t/kit/"
+  rm -f "$t/cst.js"
+  echo "kit -> $t/kit"
+done

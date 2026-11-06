@@ -27,7 +27,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$version</string>
     <key>CFBundleVersion</key><string>$version</string>
-    <key>NSHumanReadableCopyright</key><string>Captain is a modified version of Herdr (https://github.com/herdrdev/herdr-app), Apache 2.0.</string>
+    <key>NSHumanReadableCopyright</key><string>Captain is the open-source platform for building better search and recommendation models: from signal discovery to reproducible experiments and measured production improvements. Captain is a modified version of Herdr (https://github.com/herdrdev/herdr-app), Apache 2.0.</string>
     <key>NSMicrophoneUsageDescription</key><string>Terminal programs running in Captain can use the microphone, for example for voice input.</string>
     <key>NSCameraUsageDescription</key><string>Terminal programs running in Captain can use the camera.</string>
     <key>NSAppleEventsUsageDescription</key><string>Terminal programs running in Captain can use AppleScript to control other apps.</string>

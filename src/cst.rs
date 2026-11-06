@@ -195,6 +195,41 @@ fn guard(pgid: i32) -> Option<Child> {
         .ok()
 }
 
+/// What mods read from shared "captain.daemon": `{base, token}` once the daemon
+/// is up, else `{state, error?}` (starting, missing with the install command, failed).
+pub fn shared_value(state: &State) -> Value {
+    match state {
+        State::Ready { port, token } => serde_json::json!({ "state": "ready", "base": format!("http://127.0.0.1:{port}"), "token": token }),
+        State::Idle | State::Starting => serde_json::json!({ "state": "starting" }),
+        State::Missing => serde_json::json!({ "state": "missing", "error": format!("Captain Search is not installed. Install it with: {INSTALL}") }),
+        State::Failed(e) => serde_json::json!({ "state": "failed", "error": e }),
+    }
+}
+
+thread_local! {
+    static PUBLISHED: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Each window render (main thread): start or reuse the daemon once, and keep
+/// shared "captain.daemon" current for the Captain mods. Native screens reach the
+/// daemon over HTTP with it; nothing else needs to know where it is.
+pub fn tick() {
+    // Tests render windows; they must never start a real daemon. CAPTAIN_NO_DAEMON does the same for sandboxes.
+    if cfg!(test) || std::env::var_os("CAPTAIN_NO_DAEMON").is_some() {
+        return;
+    }
+    if state() == State::Idle {
+        ensure(|| crate::mods::request(crate::mods::Request::Refresh));
+    }
+    let now = state();
+    PUBLISHED.with_borrow_mut(|last| {
+        if last.as_ref() != Some(&now) {
+            crate::mods::set_shared("captain.daemon".into(), shared_value(&now));
+            *last = Some(now);
+        }
+    });
+}
+
 /// What a webview URL resolves to right now.
 #[derive(Debug, PartialEq)]
 pub enum Url {
@@ -227,6 +262,15 @@ mod tests {
         assert_eq!(parse_discovery("no config found"), None);
         assert_eq!(parse_discovery(r#"{"port": 0, "token": "t"}"#), None);
         assert_eq!(parse_discovery(r#"{"port": 70000, "token": "t"}"#), None);
+    }
+
+    #[test]
+    fn mods_get_the_daemon_or_why_not() {
+        let ready = shared_value(&State::Ready { port: 4100, token: "t".into() });
+        assert_eq!(ready["base"], "http://127.0.0.1:4100");
+        assert_eq!(ready["token"], "t");
+        assert_eq!(shared_value(&State::Starting)["state"], "starting");
+        assert!(shared_value(&State::Missing)["error"].as_str().unwrap().contains("install.sh"));
     }
 
     #[test]

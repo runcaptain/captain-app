@@ -9,3 +9,6 @@
 /defaults/frame/*/gpui-kit.d.ts
 /defaults/frame/*/jsconfig.json
 /defaults/frame/*/herdr.d.ts
+/defaults/**/kit/*.d.ts
+/defaults/**/kit/jsconfig.json
+/defaults/captain/kit/*.d.ts

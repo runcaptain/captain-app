@@ -110,7 +110,7 @@ fn main() {
         None => {}
         Some("-h" | "--help" | "help") => return print!("{HELP}"),
         Some("--skill") => return print!("{}", include_str!("SKILL.md")),
-        Some("-V" | "--version" | "version") => return println!("{} {}\n{}\nSource: {}", brand::BIN, env!("CARGO_PKG_VERSION"), brand::NOTICE, brand::REPO),
+        Some("-V" | "--version" | "version") => return println!("{} {}\n{}\n{}\nSource: {}", brand::BIN, env!("CARGO_PKG_VERSION"), brand::ABOUT, brand::NOTICE, brand::REPO),
         Some(other) => {
             eprint!("{}: unknown argument {other:?}\n\n{HELP}", brand::BIN);
             std::process::exit(2);

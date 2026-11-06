@@ -10,7 +10,8 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar } from "gpui-base";
 import { theme, props, closeOverlay, setShared, keys, openOverlay, appHome } from "herdr";
-import { api, isDark, palette } from "./cst.js";
+import { api } from "./kit/cst.js";
+import { isDark, palette } from "./kit/tokens.js";
 
 const PAGES = 4;
 const I = (name) => `mods/captain-nav/${name}.svg`;
@@ -123,7 +124,9 @@ export default class Welcome extends View {
 
   pageNav(c) {
     return v_flex()
-      .child(this.title(c, "Welcome to Captain", "Captain is where you work out whether a change to search or ranking is better, with the evidence to show it. The left side is where you go."))
+      // Edgar's words, as he wrote them (the em dash is a colon by the UI rule).
+      .child(div().pb(16).text_size(18).line_height("26px").font_semibold().text_color(c.navy).child("Captain is the open-source platform for building better search and recommendation models: from signal discovery to reproducible experiments and measured production improvements."))
+      .child(div().pb(12).child(this.para(c, "The left side is where you go:")))
       .child(v_flex().gap(10).children(SECTIONS.map(([icon, name, about]) => h_flex().gap(12).items_start()
         .child(div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(I(icon)).size(15)))
         .child(v_flex().flex_1().min_w(0).gap(2).child(div().text_size(13.5).font_semibold().text_color(c.navy).child(name)).child(div().text_size(12.5).line_height("18px").text_color(c.grey900).child(about))))))

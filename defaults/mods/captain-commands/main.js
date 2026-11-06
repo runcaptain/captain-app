@@ -1,5 +1,5 @@
 // CAPTAIN: run any cst command natively. Opened as an overlay:
-//   props {path: ["backtest","plan"]}  a form for that command's params
+//   props {path: ["backtest","plan"], args?}  a form for that command's params (args prefill)
 //                                      (GET /api/commands), Run posts
 //                                      POST /api/commands/run; the result shows here
 //                                      and as a toast.
@@ -9,7 +9,8 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, props, closeOverlay, notify, shared } from "herdr";
-import { api, isDark, palette } from "./cst.js";
+import { api } from "./kit/cst.js";
+import { isDark, palette } from "./kit/tokens.js";
 
 const title = (path) => `cst ${path.join(" ")}`;
 
@@ -43,12 +44,15 @@ export default class CaptainCommands extends View {
       } else {
         this.command = (r.data ?? []).find((c) => c.path.join(" ") === this.path.join(" ")) ?? null;
         if (!this.command) this.error = `${title(this.path)} isn't a command this engine knows.`;
+        // props.args prefills (an investigation's id for Decide, for example).
+        const given = props()?.args ?? {};
         for (const p of this.command?.params ?? []) {
+          const start = given[p.name] ?? p.default;
           if (p.kind === "flag" || p.kind === "choice") {
-            this.values[p.name] = p.default ?? (p.kind === "flag" ? false : null);
+            this.values[p.name] = start ?? (p.kind === "flag" ? false : null);
           } else {
             const s = InputState.new({ placeholder: p.help ?? p.name });
-            if (p.default != null) s.set_value(String(p.default));
+            if (start != null) s.set_value(String(start));
             this.inputs[p.name] = s;
           }
         }

@@ -1,5 +1,7 @@
 # Captain app
 
+Captain is the open-source platform for building better search and recommendation models: from signal discovery to reproducible experiments and measured production improvements.
+
 Captain is a modified version of Herdr (https://github.com/herdrdev/herdr-app), Apache 2.0.
 
 <!-- Written by the Captain app on every start. Edits here are overwritten. -->
