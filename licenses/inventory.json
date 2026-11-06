@@ -164,6 +164,13 @@
       ]
     },
     {
+      "name": "Inter fonts (Captain sidebar)",
+      "source": "https://github.com/rsms/inter (v4.1 release, extras/ttf, unchanged)",
+      "files": [
+        "defaults/mods/captain-nav/fonts/LICENSE-Inter.txt"
+      ]
+    },
+    {
       "name": "Symbols Nerd Font",
       "source": "https://github.com/ryanoasis/nerd-fonts",
       "files": [

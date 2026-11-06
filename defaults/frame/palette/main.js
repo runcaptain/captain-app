@@ -17,7 +17,8 @@ const SHOWN = 10;
 const ROW_H = 32;
 const HEAD_H = 26;
 const LIST_H = SHOWN * ROW_H;
-const GROUPS = ["Recent", "Tab", "Pane", "Space", "Layout", "Terminal", "Agent", "Window", "App"];
+// CAPTAIN: "Captain" holds the cst commands (palette.extra).
+const GROUPS = ["Recent", "Captain", "Tab", "Pane", "Space", "Layout", "Terminal", "Agent", "Window", "App"];
 
 // The palette's names for commands: [command, args, group, title, keywords].
 const NAMED = [
@@ -93,6 +94,13 @@ function entries() {
     if (named.has(c.name) || HIDDEN.has(c.name) || c.args.some((a) => a.required && a.name !== "name")) continue;
     list.push({ name: c.name, args: {}, ...titleOf(c.name), words: c.about });
   }
+  // CAPTAIN: entries mods publish under shared "palette.extra" ({<mod>: [{group, title,
+  // words, name, args} or {..., overlay: openOverlay spec}]}): Captain's cst commands.
+  for (const extra of Object.values(shared("palette.extra") ?? {})) {
+    for (const e of Array.isArray(extra) ? extra : []) {
+      if (e?.title && e?.group) list.push({ name: e.name ?? "overlay", args: e.args ?? e.overlay?.props ?? {}, group: e.group, title: e.title, words: e.words ?? "", overlay: e.overlay });
+    }
+  }
   return list.map((e) => ({ ...e, id: `${e.name}:${JSON.stringify(e.args)}` }));
 }
 
@@ -152,7 +160,9 @@ export default class Palette extends View {
     this.recent = [e.id, ...this.recent.filter((r) => r !== e.id)].slice(0, 20);
     localStorage.setItem("recent", JSON.stringify(this.recent));
     this.close();
-    if (e.name === "mod.clone") {
+    if (e.overlay) {
+      openOverlay(e.overlay);
+    } else if (e.name === "mod.clone") {
       openOverlay({ mod: "prompt", kind: "dialog", width: 380, props: {
         title: "Duplicate mod", hint: "Mod to copy; creates <name>-copy",
         command: { name: "mod.clone", args: {} },

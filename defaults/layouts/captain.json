@@ -23,13 +23,12 @@
         "px": 216
       },
       "resizable": false,
-      "background": "chrome",
       "children": [
         {
           "id": "nav-brand",
           "type": "block",
           "size": {
-            "px": 46
+            "px": 56
           },
           "window_drag": true,
           "content": {
