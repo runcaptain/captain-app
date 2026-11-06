@@ -4,7 +4,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, props, openOverlay } from "herdr";
-import { api } from "./kit/cst.js";
+import { api, watchWorkspace } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Problem } from "./kit/ui.js";
 
@@ -13,6 +13,7 @@ export default class CaptainSoon extends View {
     this.commands = null;
     this.error = null;
     this.load(cx);
+    watchWorkspace(cx, (cx) => { this.commands = null; this.load(cx); });
     cx.timer.every(15000, (cx) => { if (!this.commands) this.load(cx); });
   }
 
