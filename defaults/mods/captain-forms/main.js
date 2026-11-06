@@ -4,7 +4,7 @@
 //   props {menu: true}        the New menu: every task, icon and one line each
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
-import { theme, props, closeOverlay, openOverlay, notify, shared } from "herdr";
+import { theme, props, closeOverlay, openOverlay, notify, shared, setShared } from "herdr";
 import { palette, isDark, FONT } from "./kit/tokens.js";
 import { Button, Badge, ServiceError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -12,11 +12,22 @@ import { TASKS } from "./tasks.js";
 
 export default class CaptainForms extends View {
   init(_props, cx) {
+    this.values = {};
     // Test hook: opened bare (`captain-app do mod.open`), shared "captain.forms.preview" picks a form,
     // so a test copy can show any form on screen. People never set it.
-    const want = props()?.task ?? (props()?.menu ? null : shared("captain.forms.preview"));
+    // A list steps through its entries, one per open; an entry may preset values.
+    let want = props()?.task ?? null;
+    if (!want && !props()?.menu) {
+      let p = shared("captain.forms.preview");
+      if (Array.isArray(p)) {
+        const i = shared("captain.forms.preview.i") ?? 0;
+        setShared("captain.forms.preview.i", i + 1);
+        p = p[i % p.length];
+      }
+      want = typeof p === "string" ? p : p?.task;
+      Object.assign(this.values, p?.values ?? {});
+    }
     this.task = TASKS.find((t) => t.id === want) ?? null;
-    this.values = {};
     this.states = {};
     this.options = {};
     this.ctx = {};
@@ -27,7 +38,7 @@ export default class CaptainForms extends View {
   close() { closeOverlay(props().overlay); }
 
   start(cx) {
-    for (const f of this.task.fields) if (f.default !== undefined) this.values[f.key] = f.default;
+    for (const f of this.task.fields) if (f.default !== undefined) this.values[f.key] ??= f.default;
     // Text inputs keep state, which gpui-kit only lets a view create outside render.
     this.ensureStates();
     cx.spawn(async (cx) => {
@@ -53,7 +64,9 @@ export default class CaptainForms extends View {
     for (const f of this.shown()) {
       if (f.kind === "choice" || f.kind === "toggle" || this.states[f.key]) continue;
       const long = f.kind === "long";
-      const st = long ? TextareaState.new({ placeholder: f.placeholder ?? "", rows: 4 }) : InputState.new({ placeholder: f.placeholder ?? "" });
+      // "e.g." so an example never reads as a value that's already filled in.
+      const hint = f.placeholder ? `e.g. ${f.placeholder}` : "";
+      const st = long ? TextareaState.new({ placeholder: hint, rows: 4 }) : InputState.new({ placeholder: hint });
       if (f.kind === "secret") st.set_masked?.(true);
       const start = this.values[f.key] ?? f.default;
       if (start !== undefined) st.set_value(String(start));
@@ -74,6 +87,19 @@ export default class CaptainForms extends View {
     return out;
   }
 
+  // Many options (pipelines, environments, compute kinds): a short scrolling list, not a wall of chips.
+  longChoice(c, f, opts) {
+    return v_flex().id(`f-${f.key}-list`).max_h(184).overflow_y_scroll().border_1().border_color(c.grey300)
+      .children(opts.map((o) => {
+        const on = this.values[f.key] === o.value;
+        return h_flex().id(`f-${f.key}-${o.value}`).h(30).flex_none().px(10).gap(8).items_center().cursor_pointer()
+          .bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).text_size(12.5).hover((s) => (on ? s : s.bg(c.surface2)))
+          .on_click((_e, cx) => { this.values[f.key] = o.value; delete this.errors[f.key]; this.loadOptions(cx); })
+          .child(div().flex_1().min_w(0).truncate().child(o.label))
+          .when(Boolean(o.chip), (e) => e.child(Badge(c, o.chip, on ? "blue" : "neutral")));
+      }));
+  }
+
   field(c, f) {
     const err = this.errors[f.key];
     const label = h_flex().gap(6).items_baseline()
@@ -84,6 +110,7 @@ export default class CaptainForms extends View {
       const opts = this.options[f.key];
       control = !opts ? div().h(30).w(160).bg(c.surface2)
         : !opts.length ? div().text_size(12.5).text_color(c.grey500).child(f.empty ?? "Nothing to pick yet.")
+        : opts.length > 8 ? this.longChoice(c, f, opts)
         : h_flex().flex_wrap().gap(6).children(opts.map((o) => {
           const on = this.values[f.key] === o.value;
           return h_flex().id(`f-${f.key}-${o.value}`).h(30).px(10).gap(6).items_center().cursor_pointer().border_1()

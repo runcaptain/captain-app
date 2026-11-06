@@ -120,7 +120,7 @@ export const TASKS = [
     fields: [
       { key: "kind", label: "Where", kind: "choice", required: true, options: (ctx) => (ctx.kinds ?? []).map((k) => ({ value: k.kind, label: k.label ?? k.kind, chip: k.provider })) },
       { key: "name", label: "Name", placeholder: "aws-batch", required: true },
-      { key: "profile", label: "Cloud account", kind: "choice", optional: true, options: (ctx) => (ctx.profiles ?? []).map((p) => ({ value: p.name, label: p.name, chip: p.provider })) },
+      { key: "profile", label: "Cloud account", kind: "choice", optional: true, empty: "None yet. Connect a cloud account first, or leave this empty for this computer.", options: (ctx) => (ctx.profiles ?? []).map((p) => ({ value: p.name, label: p.name, chip: p.provider })) },
       { key: "region", label: "Region", optional: true, placeholder: "us-west-1" },
       { key: "*kind-fields", kind: "dynamic", fields: (ctx, v) => ((ctx.kinds ?? []).find((k) => k.kind === v.kind)?.fields ?? []) },
     ],
@@ -183,8 +183,8 @@ export const TASKS = [
     about: "Your deployment process ran this candidate. Recording it tells Captain what's live.",
     fields: [
       { key: "system", label: "Deployed with", kind: "choice", required: true, options: ["argo", "spinnaker", "sagemaker", "github-actions", "other"].map((s) => ({ value: s, label: { argo: "Argo", spinnaker: "Spinnaker", sagemaker: "SageMaker", "github-actions": "GitHub Actions", other: "Something else" }[s] })) },
-      { key: "deployment_id", label: "Its deployment id", required: true },
-      { key: "url", label: "Link to it", optional: true, placeholder: "https://" },
+      { key: "deployment_id", label: "Deployment id in that system", required: true },
+      { key: "url", label: "Link to it", optional: true, placeholder: "https://argo.example.com/deployments/123" },
       { key: "live", label: "It's serving traffic now", kind: "toggle", default: true },
     ],
     submit: async (v, ctx, args) => ok(await api(`/api/handoffs/${encodeURIComponent(args.id)}/link`, { body: { system: v.system, deployment_id: v.deployment_id, url: v.url || undefined, live: Boolean(v.live) } }), "Deployment recorded."),
@@ -197,7 +197,7 @@ export const TASKS = [
       { key: "value", label: "Change", required: true, placeholder: "0.012", help: "The measured lift as a number, e.g. 0.012 for +1.2%." },
       { key: "ci_low", label: "Interval low", optional: true },
       { key: "ci_high", label: "Interval high", optional: true },
-      { key: "source", label: "Where it comes from", required: true, placeholder: "Optimizely report, Eppo experiment..." },
+      { key: "source", label: "Where it comes from", required: true, placeholder: "the Optimizely report for test 42" },
       { key: "experiment", label: "Experiment", optional: true },
     ],
     submit: async (v, ctx, args) => {
