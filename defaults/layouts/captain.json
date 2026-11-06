@@ -67,10 +67,7 @@
           "id": "data",
           "type": "block",
           "content": {
-            "webview": {
-              "url": "{cst}/?embedded=1&screen=data&theme=system#token={cst_token}",
-              "id": "data"
-            }
+            "mod": "captain-data"
           }
         },
         {
