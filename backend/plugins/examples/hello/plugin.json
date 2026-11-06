@@ -1,0 +1,7 @@
+{
+  "name": "hello",
+  "version": "0.1.0",
+  "description": "Example plugin: a panel that shows the workspace and dataset counts, and a command that reports daemon health.",
+  "author": "Captain",
+  "permissions": ["daemon:read", "ui:panel", "ui:command"]
+}

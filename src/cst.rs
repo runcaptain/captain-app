@@ -20,7 +20,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 /// Not `uv tool install captain-search`: that PyPI name is an unrelated package.
-pub const INSTALL: &str = "git clone git@github.com:runcaptain/captain-ide.git && cd captain-ide && ./install.sh";
+pub const INSTALL: &str = "git clone https://github.com/runcaptain/captain-app.git && captain-app/backend/install.sh";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum State {

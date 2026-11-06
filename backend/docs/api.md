@@ -1,0 +1,447 @@
+# `cst serve` API (contract between the daemon and the desktop app)
+
+Base: `http://127.0.0.1:<port>`. Every request carries `Authorization: Bearer <token>`.
+WebSockets pass the token as `?token=<token>`.
+
+**Discovery.** `cst serve --port 0` prints exactly one JSON line on stdout as soon as it is listening:
+`{"port": 51234, "token": "…", "pid": 123}`. It also writes the same object to
+`$CST_HOME/serve.json` (default `~/.config/captain-search/serve.json`, mode 0600). The app spawns
+`cst serve --port 0` (finding `cst` on PATH, then `~/.local/bin/cst`) and reads the first stdout line.
+If `cst` is missing, the app shows: `uv tool install captain-search`.
+
+All responses are JSON. Errors: HTTP 4xx/5xx with `{"error": "plain sentence"}`.
+
+## Workspace
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/api/health` | `{ok, version}` |
+| GET | `/api/workspace` | `{name, org, storage_uri, user}` |
+| GET | `/api/lineage` | `{nodes:[{id, kind, label}], edges:[{src, dst, relation}]}` |
+
+## Data
+
+| Method | Path | Body / query | Returns |
+|---|---|---|---|
+| GET | `/api/connections` | | `[{name, engine, network, writable}]` |
+| POST | `/api/sql` | `{conn, sql, limit?, save?, kind?, description?}` | `{columns:[{name,type}], rows:[[…]], row_count, truncated, ms, dataset?}` (rows capped at 1000 in the response) |
+| GET | `/api/datasets` | `?kind=` | `[{name, latest, kind, rows, by, created}]` |
+| GET | `/api/datasets/{name}` | `?v=` | DatasetVersion manifest |
+| GET | `/api/datasets/{name}/head` | `?v=&n=50` | `{columns, rows}` |
+
+## Pipelines, backtests, deploys
+
+| Method | Path | Body / query | Returns |
+|---|---|---|---|
+| GET | `/api/pipelines` | | `[{name, latest, engine, repro_status, by, created}]` |
+| GET | `/api/pipelines/{name}` | `?v=` | PipelineVersion manifest |
+| GET | `/api/backtests` | | `[{name, latest, arms, primary_metric, runs}]` |
+| GET | `/api/backtests/{name}` | | Backtest manifest + `runs:[{version, created, complete, independent}]` |
+| POST | `/api/backtests/{name}/run` | `{}` | `{job}` |
+| GET | `/api/runs/{name}` | `?v=` | BacktestRun manifest (see `entities.py`): `arms[].offline` (ndcg@10, p@10, r@50, mrr), `arms[].simulated` (ctr, conversion, rpv, p99_ms), `arms[].evidence`, `arms[].judged_at_10`, `comparisons[]` `{metric, a, b, delta, ci_low, ci_high, p, verdict}`, `independent`, `complete` |
+| GET | `/api/jobs/{id}` | | `{id, status: queued|running|done|failed, progress 0..1, message, result?}` |
+| GET | `/api/environments` | | `[{name, tier, target, current}]` |
+| GET | `/api/deployments` | `?env=` | `[{id, environment, pipeline, action, created_by, created_at, override_reason, gate_results}]` |
+| POST | `/api/deploy/promote` | `{pipeline, env, override_reason?, confirm}` | Deployment or `{error, gate_results}` with 409 |
+| POST | `/api/deploy/rollback` | `{env, confirm}` | Deployment |
+
+Evidence labels: `SIMULATED`, `LLM_GRADED`, `HUMAN_GRADED`, `REAL_TRAFFIC`. The UI shows one on every number.
+Verdicts: `win`, `loss`, `noise` (gain under the MDE or CI crosses 0).
+
+## Notebooks
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/notebooks` | | `[{name, latest, has_draft}]` |
+| GET | `/api/notebooks/{name}` | | `{name, version, notebook}`: the draft if any, else the latest revision. `notebook` is nbformat 4 JSON |
+| PUT | `/api/notebooks/{name}/draft` | `{notebook}` | `{ok}` (local autosave, not versioned) |
+| POST | `/api/notebooks/{name}/save` | `{notebook, message?}` | `{version}` (write-once revision) |
+| POST | `/api/notebooks/{name}/import` | `{notebook, message?}` (any nbformat 4 .ipynb) | `{name, version}` |
+| POST | `/api/kernels` | `{notebook}` | `{session}` |
+| WS | `/api/kernels/{session}` | | see below |
+
+Cell metadata: `cell.metadata.captain = {kind: "sql"|"python"|"markdown"|"chart", conn?, var?, chart?}`.
+A SQL cell's result is bound to the Python variable `var` (default `df_<n>`) inside the kernel.
+
+Kernel socket, client to server: `{type:"execute", cell_id, kind:"sql"|"python", code, conn?, var?}` and `{type:"interrupt"}`.
+Server to client: `{type:"status", state:"busy"|"idle"}`, `{type:"stream", cell_id, name:"stdout"|"stderr", text}`,
+`{type:"table", cell_id, var, columns, rows, row_count, truncated}`, `{type:"display", cell_id, mime, data}`
+(`text/plain`, `text/html`, `image/png` base64, `application/vnd.vegalite.v5+json`), `{type:"error", cell_id, ename, evalue, traceback}`,
+`{type:"done", cell_id, ms}`.
+
+## Agent
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/api/skills` | `[{name, version, description, tags}]` |
+| WS | `/api/agent` | see below |
+
+Client to server: `{type:"ask", text, context?:{notebook?, dataset?, run?}}`, `{type:"confirm", call_id, ok}`, `{type:"cancel"}`.
+
+Server to client (one turn):
+- `{type:"step", id, label, status:"running"|"done"|"failed"}`: a visible work step ("Reading your question", "Running SQL on warehouse").
+- `{type:"tool_call", call_id, name, args, needs_confirm}`: when `needs_confirm`, the server waits for `confirm`.
+- `{type:"tool_result", call_id, summary}`.
+- `{type:"check_failed", attempt, problems:[{claim, expected, found}]}`: the draft reply stated a figure the tool results do not support.
+- `{type:"corrected", attempt}`: the rewrite passed the check. The panel shows a "Checked and corrected" step with the problems.
+- `{type:"repaired", problems}`: two rewrites failed, so the server fixed the figures itself.
+- `{type:"text", text}`: the final reply (markdown), after checks.
+- `{type:"done", ms, steps}` or `{type:"error", message}`.
+
+---
+
+# v2 additions (2026-11-06)
+
+## Removed
+
+- `WS /api/agent` and the built-in data-mining agent. The app hosts a **coding agent** (Claude Code or Codex) in a
+  terminal instead. `GET /api/skills` stays: the skills are installed for the coding agent.
+
+## Coding agent
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/api/coding-agent` | `{cwd, env:{CST_HOME, CST_WORKSPACE, PATH}, agents:[{id:"claude"|"codex", label, command:[...], available}]}` |
+
+The daemon prepares `cwd` (a per-workspace folder) with `AGENTS.md`, `CLAUDE.md` (how to use `cst`, the workspace,
+the evidence rules) and `.claude/skills/<skill>/SKILL.md`. The app runs `command` in a PTY with that `cwd` and `env`
+merged over its own environment, and shows it in an xterm panel. The agent drives everything through `cst ... --json`.
+
+## Notebook formats
+
+| Method | Path | Body / query | Returns |
+|---|---|---|---|
+| GET | `/api/notebook-formats` | | `[{id, label, extensions:[".py"], import:true, export:true}]` |
+| POST | `/api/notebooks/{name}/import` | `{filename, content}` (text, any supported format) or `{notebook}` (.ipynb JSON) | `{name, version, format, warnings:[...]}` |
+| GET | `/api/notebooks/{name}/export` | `?format=<id>` | `{filename, content, mime}` |
+
+Format ids: `ipynb`, `jupytext` (percent `.py`), `databricks` (`.py` source with `# COMMAND ----------`),
+`marimo` (`.py`), `quarto` (`.qmd`), `rmarkdown` (`.Rmd`), `myst` (`.md`), `zeppelin` (`.zpln`). Format is detected
+from the extension and content. SQL cells round-trip where the format has a SQL cell type (Databricks `%sql`,
+Zeppelin `%sql`, Quarto/Rmd ```{sql}``` chunks, jupytext `%%sql` magics). Databricks and marimo have no place for
+a SQL cell's connection, so it is kept as a first comment line: `-- captain: conn=demo-store var=zero`.
+Chart cells export as Python. marimo's run-by-dependency order becomes top-to-bottom (a warning says so).
+
+## Datasets as a directory
+
+Dataset names may have up to 8 `/`-separated segments (`catalogs/acme/products`).
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/api/datasets/tree` | `{name:"", path:"", folders:[...same shape...], datasets:[{name, leaf, latest, kind, rows, created}]}` |
+
+## Cloud profiles (per user, secrets in the OS keychain)
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/cloud/providers` | | `[{provider:"aws"|"gcp"|"azure", auth:[{mode, label, fields:[{name, label, secret:bool, required:bool}]}]}]` |
+| GET | `/api/cloud/profiles` | | `[{name, provider, auth, region, fields}]` (never secrets) |
+| POST | `/api/cloud/profiles` | `{name, provider, auth, region?, fields:{...}, secrets:{...}}` | profile |
+| POST | `/api/cloud/profiles/{name}/test` | | `{ok, identity?, error?}` |
+| DELETE | `/api/cloud/profiles/{name}` | | `{ok}` |
+
+## Workspaces (choose the storage backend)
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/workspaces` | | `[{name, storage_uri, provider:"local"|"aws"|"gcp"|"azure", profile, current}]` |
+| POST | `/api/workspaces` | `{name, storage_uri, profile?}` | workspace (creates, or attaches to an existing one) |
+| POST | `/api/workspaces/{name}/use` | | `{current}` (the daemon switches) |
+
+## Compute targets (shared in the workspace; they name a cloud profile)
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/compute/kinds` | | `[{kind, provider, label, purposes:["backtest","serve"], fields:[{name,label,required,default?}]}]` |
+| GET | `/api/compute` | | `[{name, kind, provider, profile, region, config, purposes}]` |
+| POST | `/api/compute` | `{name, kind, profile?, region?, config}` | target |
+| POST | `/api/compute/{name}/test` | | `{ok, detail}` |
+
+Kinds: `local`, `modal`, `aws-batch`, `aws-ecs`, `aws-sagemaker`, `gcp-cloud-run`, `gcp-vertex`,
+`azure-container-apps`, `azure-ml`.
+
+## Building a backtest from the app
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/api/pipelines` | `{name, engine, catalog?, spec, description?}` | PipelineVersion |
+| GET | `/api/engines` | | `[{engine, label, template:{...spec}}]` |
+| POST | `/api/queries/generate` | `{catalog, name, classes?, n, seed}` | DatasetVersion |
+| POST | `/api/queries/seal` | `{ref, holdout}` | DatasetVersion |
+| POST | `/api/judgments/run` | `{queries, pipelines:[...], judge:"heuristic"|"llm"|"llm:<model>", into, depth}` | `{job}` |
+| POST | `/api/judgments/from-logs` | `{logs, into, min_impressions?}` | DatasetVersion (click-derived grades) |
+| GET | `/api/populations` | | `[{name, latest, simulator, size, seed, from_logs, click_model_judgments}]` |
+| POST | `/api/populations` | `{name, simulator?, size, seed, click_judgments?, from_logs?}` | ShopperPopulation |
+| POST | `/api/backtests` | `{name, mode:"simulated"|"historic", arms:[...], queries?, judgments?, population?, logs?, hypothesis, primary, mde, compute?}` | Backtest |
+| POST | `/api/backtests/{name}/run` | `{compute?}` | `{job}` |
+| GET | `/api/jobs/{id}` | | adds `log:[lines]` and `compute` |
+
+**Historic mode** replays real search logs. `logs` is an `events` dataset with columns
+`query, product_id, position, clicked, purchased` (optional `session_id, ts, price`). The run:
+1. builds grades from the logs, corrected for position bias (clicks over expected clicks at that rank);
+2. takes the query mix and frequencies from the logs;
+3. scores each arm with nDCG@10 against those grades, plain and traffic-weighted (`ndcg@10_tw`);
+4. simulates shoppers who replay the historic query mix, with click rates by rank calibrated from the logs.
+
+Its offline evidence is `LOGGED_CLICKS`, or `SIMULATED` when the logs dataset is tagged `synthetic`. Evidence order,
+weakest first: `SIMULATED`, `LLM_GRADED`, `LOGGED_CLICKS`, `HUMAN_GRADED`, `REAL_TRAFFIC`.
+Runs gain `mode` and `arms[].offline["ndcg@10_tw"]` in historic mode, and `arms[].offline["coverage"]` (share of
+the arm's top 10 that has a logged grade).
+
+## Environments with compute
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/api/environments` | `{name, tier, compute?, target:{type, ...}, gates?}` | Environment |
+
+`GET /api/environments` items gain `compute`, `region`, `endpoint`. Target types: `record`, `webhook`, `captain`,
+`sagemaker-endpoint`, `ecs-service`, `cloud-run`, `container-app`, `azure-ml-endpoint`.
+A promote to a cloud target returns `gate_results.target.plan` (the exact API calls) and runs them unless
+`dry_run:true` is in the body.
+
+## Model registry and lineage
+
+| Method | Path | Body / query | Returns |
+|---|---|---|---|
+| POST | `/api/registry/import` | `{uri?:"s3://<bucket>", profile?}` (default: $CST_MODEL_REGISTRY or the demos file) | `{job}` (read-only on the registry) |
+| GET | `/api/models` | | `[{id, brand, architecture, version, status_kind, status, repro_status, parent_label, parent_id, training_commit, dvc_alias, attached_to_demo, results:[{label,text}], known_issues:[...], path}]` |
+| GET | `/api/models/{id}` | | the same plus `manifest` (raw) and `files:[{path, bytes}]` |
+| GET | `/api/lineage` | `?view=artifacts|models` | `{nodes:[{id, kind, label, status?, group?}], edges:[{src, dst, relation}]}` |
+
+`status_kind`: `current`, `candidate`, `rolled-back`, `unattached`, `other`. In the `models` view, node kinds are
+`architecture`, `model`, `model-unregistered` (a parent the registry does not hold) and `demo`. Relations:
+`built_on` (model to architecture), `parent` (parent to child), `attached` (model to the demo running it).
+
+---
+
+# v3 additions (2026-11-06)
+
+## Commands: everything the CLI can do
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/commands` | | `[{path:["backtest","plan"], help, params:[{name, kind:"string"|"int"|"float"|"flag"|"choice", argument, opts, required, default, help, choices, multiple, secret}]}]` |
+| POST | `/api/commands/run` | `{path, args:{<param name>: value}, dry_run?}` | `{command:"cst ...", exit_code, output (parsed --json), error}` |
+
+Hidden from this list: `serve`, `app`, `code`, `notebook open`, `pipeline serve`.
+
+## Workflows
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/workflows` | | `[{name, latest, steps, schedule, description, runs, last_status, last_run}]` |
+| GET | `/api/workflows/templates` | | `[{id, description, params, steps, schedule?}]` |
+| GET | `/api/workflows/{name}` | `?v=` | Workflow + `yaml` |
+| POST | `/api/workflows` | `{name, steps:[{id, command, args, needs, position?}], params, schedule?, description?}` | Workflow (new version) |
+| POST | `/api/workflows/{name}/run` | `{params?}` | `{job}`; job `log` gets one line per finished step |
+| GET | `/api/workflows/{name}/runs` | | WorkflowRun list, newest first: `{status, trigger, steps:[{id, status, command, exit_code, error, ms, output}]}` |
+
+Step args may contain `${params.<name>}` and `${steps.<id>.<field>}` (a field of that step's JSON output).
+`schedule` is five cron fields in UTC; a running daemon fires due workflows.
+
+## Datasets
+
+`GET /api/datasets/{name}` adds `sample_schema:[{name,type}]` for by-reference datasets (read from the first
+2 MB), or `sample_schema_error`. By-reference datasets list their files in `external:[{uri, bytes, etag,
+sha256, mutable}]`.
+
+## Dataset classes (team-defined, replaces fixed kinds in the UI)
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/dataset-classes` | | `{classes:[{name, description, color, role, required_columns, datasets, created_by}], roles:["catalog","queries","judgments","events","logs"]}` |
+| POST | `/api/dataset-classes` | `{name, description?, color?, role?, required_columns?}` | class |
+| PUT | `/api/dataset-classes/{name}` | same fields | class |
+| DELETE | `/api/dataset-classes/{name}` | | `{ok}`; 400 if any dataset still has it |
+| PUT | `/api/datasets/{name}/classes` | `{classes:[...]}` | `{dataset, classes, role, warnings}` |
+
+`GET /api/datasets?class=<name>` filters; list, tree and detail items carry `classes`, and detail carries `role`.
+A class's optional `role` tells the tools what the data can feed (a catalog, a query set, grades, events).
+A dataset takes at most one role. Classes without a role are plain labels. Five defaults are seeded on first
+use and can be edited or deleted. Classification is mutable metadata with its own history; versions stay write-once.
+
+## Cost against value
+
+A platform team should score every model on build, upkeep and serving cost against what it adds, and retire
+what doesn't pay. A cost is mutable metadata on a write-once pipeline version, kept with its history.
+
+| Method | Path | Body / result |
+|---|---|---|
+| GET, PUT | `/api/pipelines/{name}/v/{n}/cost` | `{train_usd, train_gpu_hours, gpu_type, serve_usd_per_1k, note}` and `history` |
+| GET | `/api/costs` | every version with cost, measured latency and `roi` from its latest backtest |
+| GET, PUT | `/api/cost-settings` | `{queries_per_day}`, used to price serving per month |
+
+Each `ArmResult.cost` holds `train_usd, serve_usd_per_1k, p50_ms, p99_ms, latency_source` (latency is measured per
+query in the run). Primary comparisons carry `cost: {extra_serve_usd_per_1k, extra_train_usd, extra_monthly_usd,
+gain_per_1k_usd, flag}`. Monthly extra cost is extra serving at `queries_per_day` x 30, plus extra training spread
+over 12 months. The flag is `retire` (costs more, no measured win), `worth-it`, `cheaper-and-better` or `unproven`.
+`BacktestRun.wall_s` is the run's wall time. CLI: `cst pipeline cost set|show`, `cst cost ledger`, `cst cost settings`.
+
+## Monitor, retrain and gate
+
+`cst monitor record --env E --logs L [--since D] [--where SQL]` aggregates an events dataset in DuckDB where it
+lives and appends a snapshot for the deployed pipeline: searches, impressions, ctr, conversion, mrr_click,
+clicks_at_3 (LOGGED_CLICKS). `GET /api/monitor/{env}` returns `{env, snapshots}`. `cst monitor check` compares the
+latest snapshot with the pipeline's first, best or previous one and returns `degraded`.
+
+`cst pipeline retrain NAME` runs the command the pipeline declares in `spec.train.command` and publishes a new
+version whose parent is the old one. The command can write YAML to `$CST_TRAIN_OUT` (spec, registry_ref,
+training_commit, known_issues, description, cost, metrics). Running it locally needs `--local-exec`. On a compute
+target it runs as a job in the runner image.
+
+Workflow steps take an optional `when`. A step whose `when` resolves to "", false, 0, none, null or no is skipped
+with `reason: "condition false"`, and so is every step that needs it. Skipped results have no `command`. The
+`retrain-and-review` template records, checks, retrains when degraded, and backtests the new version against what
+is live. It stops at a candidate ready for review. Captain never promotes: production promotion is the customer's
+own deployment process (see Handoff).
+
+## Segments and surfaces
+
+`BacktestRun.segments` breaks nDCG@10 down by query `class` and, when queries carry weights, by traffic band (head
+= top 50% of searches, torso = next 30%, tail = last 20%). Each row: `{kind, segment, arm, n, ndcg@10, judged@10,
+delta, ci_low, ci_high, verdict}`. Segments under 5 queries say `too few`.
+
+`Backtest.surfaces` lists extra places the pipeline serves: `{name, queries, judgments, guardrails: [{metric, min,
+max_drop}]}`. CLI: `--surface name=related,queries=q@v1:holdout,judgments=j@v1 --guardrail "related ndcg@10
+max_drop 0.01"`. `BacktestRun.surfaces` holds per-surface arm metrics, comparisons and guardrail results. A live
+promote adds the gate `surface_guardrails`, which fails when any guardrail fails.
+
+## Experiment proposals
+
+An agent or a person proposes, and a person approves before anything runs. Agent sessions set `CST_AGENT=<name>`
+(or pass `--agent`). They can propose, but approving or rejecting is refused in an agent session.
+
+| Method | Path | Body / result |
+|---|---|---|
+| GET | `/api/proposals?status=` | newest first: `{id, title, hypothesis, rationale, arms, queries, judgments, population, primary, mde, author, agent, status, review, backtest, run, result, history}` |
+| GET | `/api/proposals/{id}` | one proposal |
+| POST | `/api/proposals/{id}/review` | `{decision: approved or rejected, note}` |
+| POST | `/api/proposals/{id}/run` | `{job}`. Plans and runs the backtest. Approved only |
+
+Status: proposed, then approved or rejected, then ran. A live promote of a pipeline introduced by an agent
+proposal adds the gate `human_approval`. CLI: `cst propose new|list|show|approve|reject|run`.
+
+## Human grading
+
+| Method | Path | Body / result |
+|---|---|---|
+| GET | `/api/grading` | queues with status |
+| GET | `/api/grading/{name}` | `{pairs, graded, share, graders: {who: n}, agreement_pairs, kappa, published}` |
+| GET | `/api/grading/{name}/next` | `{done, remaining, pair: {id, query_id, query, product_id, first_seen, overlap}, product: {title, brand, ...}, scale}` |
+| POST | `/api/grading` | `{name, queries, pipelines, depth?, sample?, overlap?}` starts a queue |
+| POST | `/api/grading/{name}/grade` | `{pair, grade: 0-3, note}` |
+| POST | `/api/grading/{name}/publish` | `{into}`. Publishes a judgments dataset with judgment_source human (HUMAN_GRADED) |
+
+A queue holds the deduplicated top-k pairs of the given pipelines, shuffled, with an overlap share every grader sees.
+Kappa shows once 10 or more pairs have two grades. CLI: `cst grade queue|list|next|set|status|publish`.
+
+## Labels as code
+
+`cst label define NAME --sql "max(case when clicked and position <= 3 then 1 else 0 end)" --grain search` publishes a
+versioned label (grain: search, session, user or impression). `preview` and `compute` run it in DuckDB over an
+events dataset where it lives. `compute` writes one row per group, with provenance pinning the label and logs
+versions. `GET /api/labels` lists them, and `GET /api/labels/{name}/preview?logs=&v=&limit=` previews.
+
+## Replay over randomized logs
+
+`cst replay sweep NAME --logs L --score S --action A --outcome Y [--propensity P] [--direct Y]` sweeps "treat when
+score >= t" and publishes a `replay` with `curve: [{threshold, trigger_rate, n, matched, outcomes: {y: {ips, se,
+snips, delta_vs_never, kind: direct|directional}}}]`. Evidence is LOGGED_CLICKS, or SIMULATED on synthetic logs.
+`GET /api/replays` lists them.
+
+## Benchmarks
+
+`cst bench rows DATASET` times the first page with a count, pages at 25%, 50% and 75%, the last page, and a sorted
+page, and keeps the result. `GET /api/bench` returns `[{id, dataset, rows, bytes, where, machine, timings: [{step,
+offset, ms}], worst_ms, at, by}]`.
+
+## Investigations, signals and decisions (spec S1, S3, S6, S7)
+
+The investigation is the main object. State: draft, running, ready_for_review, decided. Agents (CST_AGENT) can open,
+revise, attach evidence and run within the execution policy. Only a person records the decision or changes the policy.
+
+| Method | Path | Body / result |
+|---|---|---|
+| GET | `/api/investigations?state=&q=` | list: `{id, title, state, hypothesis, initiator, revision, runs, latest_run, decision, updated_at, missing}` |
+| POST | `/api/investigations` | `{title, hypothesis?, baseline?, candidates?, queries?, judgments?, population?, primary_metric?, mde?, guardrails?, agent?}` |
+| GET | `/api/investigations/{id}` | `{..., revisions, evidence, runs: [{run, rev, status, error, idempotency_key, by, agent, at}], signals, decision, history, plan, missing}` |
+| POST | `/api/investigations/{id}/revise` | plan fields plus `{hypothesis, note, expected_revision}`. 409 if expected_revision is stale |
+| POST | `/api/investigations/{id}/evidence` | `{kind: dataset or run or slice or query or signal or note or label or replay or handoff, ref, note}` |
+| POST | `/api/investigations/{id}/run` | `{idempotency_key?}` returns `{job}`. Pins the current revision. Failed runs stay listed |
+| POST | `/api/investigations/{id}/decide` | `{outcome: continue or online-test or reject or inconclusive, claim, interpretation, limitations, next_step, runs?, slices?}` |
+| GET | `/api/investigations/{id}/export` | `captain.investigation/v1`: investigation, decision, runs, signals |
+| GET | `/api/investigations/{id}/prompt?ask=investigate or run or explain or panel` | `{prompt}`, built from real context, unknowns marked, no secrets |
+| GET | `/api/decisions/{id}` | the write-once decision |
+| GET, POST | `/api/signals` | candidate signals: `{name, source, definition, rationale, available_at, investigation?}` |
+| POST | `/api/signals/{id}/check` | `{what: availability or leakage, status: ok or problem or unchecked, note}` (a note is required) |
+| GET | `/api/execution-policy` | `{agent_runs, max_queries, max_shoppers, compute, max_runs_per_day}` |
+
+A claim of `online-lift` is refused unless the runs carry REAL_TRAFFIC evidence. Offline decisions get the limitation
+"not proof of online or profit lift" added automatically. CLI: `cst investigate new|list|show|revise|evidence|run|decide|export|prompt|policy`,
+`cst signal new|list|check`.
+
+## Handoff (Captain stays outside production)
+
+A promote to a live environment is a handoff. It runs the readiness checks, writes a candidate bundle and deploys
+nothing. `GET /api/handoffs`, `GET /api/handoffs/{id}`, `POST /api/handoffs/{id}/link {system, deployment_id, url, live}`
+(this is what moves a live environment's current version), `POST /api/handoffs/{id}/outcome {metric, value, source,
+experiment, ci_low, ci_high}` (REAL_TRAFFIC). Live rollbacks are refused. Demo-tier localhost environments still promote.
+
+## Onboarding
+
+`GET /api/onboarding` returns `{cst, workspace: {name, storage, kind}, workspaces, counts, steps: [{id, title, done,
+optional?, detail, command}], next}`. The steps are workspace, cloud, data, pipeline, investigation, run,
+decision and agent. Each is read from real records, so onboarding never marks a step done that isn't.
+
+## Inspect differences (spec S5), built for native screens
+
+Lists are sorted, filtered and paged on the server, because native mods must not hold or sort whole result sets.
+
+| Method | Path | Result |
+|---|---|---|
+| GET | `/api/runs/{run}/queries?a=&b=&sort=delta or query or ndcg_a or ndcg_b or weight or overlap&desc=&offset=&limit=&class=&q=&only=regressions or improvements or unchanged` | `{total, total_unfiltered, counts, rows: [{query_id, query, class, weight, ndcg_a, ndcg_b, delta, judged_a, judged_b, overlap10}]}` |
+| GET | `/api/runs/{run}/queries/{query_id}?a=&b=&k=20` | both arms' ranked lists: `{a: {arm, ndcg10, judged10, items: [{rank, product_id, title, brand, price, grade (null = unjudged), other_rank, moved}]}, b: {...}, dropped, new, grade_scale, notes}` |
+| GET | `/api/runs/{run}/compatibility` | `{trustworthy, warnings: [{code, text}]}`: not-independent, incomplete, uneven-coverage, exposure-bias, offline, not-holdout, small-slices |
+| GET | `/api/runs/{run}/histogram?bins=21` | the per-query delta distribution, pre-binned: `{n, edges, counts}` |
+| GET | `/api/compare-runs?a=&b=` | `{comparable, issues: [{code, text}]}` across two runs |
+
+## Per-request workspace
+
+Every route accepts `X-CST-Workspace: <name>` (or `?workspace=<name>`), so one daemon serves all workspaces. A Captain
+space bound to a workspace sends it, and switching spaces switches what the screens read. Without it, the daemon's
+current workspace is used. An unknown name returns 400 with the known names.
+
+## Cloud summary
+
+`GET /api/cloud/summary` returns which cloud the workspace is on, without calling the cloud: `{workspace, storage,
+storage_provider, storage_provider_label, storage_profile, active: {name, provider, label, auth, region, account_hint,
+last_test: {ok, identity, error, at}}, profiles: [...], compute: [{name, kind, provider, profile, region, purposes}],
+can_run_in_cloud, notes}`. `POST /api/cloud/profiles/{name}/test` (or `cst cloud test`) checks the login and saves
+`last_test`.
+
+## Secrets
+
+`POST /api/secrets {name, value}` stores a value in the OS keychain in the daemon's own process, so a password typed
+into the app never reaches a command line or process list. The value is never returned. `GET /api/secrets` lists
+names only. `DELETE /api/secrets/{name}` removes one. Connections reference secrets as `{secret:NAME}`.
+
+## Connection kinds
+
+`GET /api/connections/kinds` lists every database the app can connect to, with the form's fields (name, label, type:
+text, number, secret, path or choice, required, default, help, placeholder, choices), the driver, a docs link, and
+whether the driver is installed. Kinds: Snowflake, Databricks, BigQuery, Redshift, PostgreSQL, MySQL, Trino or Presto,
+Athena, ClickHouse, SQL Server, DuckDB, SQLite. `POST /api/connections {name, kind, fields, writable?, replace?}`
+builds the connection. Secret fields are refused there: store each first with `POST /api/secrets` under
+`<NAME>_<FIELD>` (the response lists them). `POST /api/connections/{name}/test` runs `select 1` and returns `{ok,
+ms}` or `{ok: false, error}` in plain words. Install every driver with `pip install 'captain-search[warehouses]'`.
+
+## Extensions (plan 0)
+
+`GET /api/extensions` returns `{extensions, errors, project}`.
+- `extensions`: every engine, simulator, judge and metric the workspace can use, each with kind, name, version, source
+  (`builtin`, `package:<dist>` or `project:<file>`), description and determinism, plus metrics' `higher_is_better`
+  and `definition`.
+- `errors`: what failed to load or failed its check, in plain words.
+- `project`: the `captain/` folder with its git commit, uncommitted-changes flag and file hash.
+
+Backtest runs now carry `manifest` (see docs/extending.md).
