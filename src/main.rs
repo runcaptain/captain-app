@@ -33,6 +33,8 @@ mod sprites;
 mod telemetry;
 // CAPTAIN: names, ids, paths and endpoints of this fork.
 mod brand;
+// CAPTAIN: webview blocks.
+mod webview;
 mod feedback;
 mod terminal;
 mod update;

@@ -392,6 +392,8 @@ pub enum Request {
     OpenOverlay { id: String, spec: Value },
     CloseOverlay { id: String },
     Refresh,
+    /// CAPTAIN: a key a web page handed back (webview.rs), and which view it came from.
+    Keystroke { keys: String, webview: String },
     /// From `herdr-app do` / `herdr-app status` (control.rs); answer on `reply`.
     Control { cmd: Value, reply: std::sync::mpsc::Sender<Value> },
 }

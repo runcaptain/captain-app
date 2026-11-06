@@ -98,6 +98,9 @@ pub const COMMANDS: &[Command] = &[
     cmd("app.zoom_reset", &[], "Back to normal size."),
     cmd("app.update", &[], "Restart into the update Herdr downloaded (your terminals keep running)."),
     cmd("app.quit", &[], "Quit (macOS)."),
+    // CAPTAIN: webview blocks.
+    cmd("webview.reload", &[opt("id")], "Reload a web view (default: the only one)."),
+    cmd("webview.devtools", &[opt("id")], "Open the web inspector for a web view (default: the only one)."),
     cmd("app.hide", &[], "Hide the app (macOS)."),
     cmd("app.hide_others", &[], "Hide other apps (macOS)."),
     cmd("app.show_all", &[], "Show all apps (macOS)."),
