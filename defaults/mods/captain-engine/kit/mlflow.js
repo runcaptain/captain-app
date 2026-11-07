@@ -12,7 +12,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { api } from "./cst.js";
 import { shared } from "herdr";
 import { MONO } from "./tokens.js";
-import { Button, Skeleton } from "./ui.js";
+import { Skeleton } from "./ui.js";
 import { icon } from "./icons.js";
 import { Brand } from "./brands.js";
 import { num, int } from "./num.js";
@@ -83,7 +83,8 @@ export class MlflowList {
     cx.spawn(async (cx) => {
       const s = await api("/api/mlflow", { scoped: false });
       // The services are still starting: ask again shortly, never sit on the placeholder.
-      if (!s.ok && s.starting) { cx.timer?.after(1000, (cx) => this.fetch(cx)); return; }
+      if (!s.ok && s.starting && (this.tries = (this.tries ?? 0) + 1) <= 15) { cx.timer?.after(1000, (cx) => this.fetch(cx)); return; }
+      if (!s.ok && s.starting) { this.status = { error: "Captain's services aren't answering yet. Open this again in a moment." }; cx.notify(); return; }
       if (!s.ok) { this.status = { error: said(s, "Couldn't read the MLflow settings.") }; cx.notify(); return; }
       this.status = s.data;
       if (!s.data.configured) { cx.notify(); return; }
@@ -153,9 +154,12 @@ export class MlflowList {
     const top = (e) => (this.header ? e.child(head) : e);
     if (!s) return top(v_flex().id(id)).child(div().px(10).child(Skeleton(c, 2)));
     if (s.error) return top(v_flex().id(id)).child(div().px(10).text_size(12).text_color(c.fail).child(s.error));
+    // Not set up: one line and the way to set it up, nothing to load.
     if (!s.configured) return top(v_flex().id(id).gap(4))
-      .child(div().px(10).text_size(12).line_height("18px").text_color(c.grey900).child("See your MLflow experiments, runs and registered models here, read-only, and which pipeline serves each model."))
-      .when(!!this.onSetup, (e) => e.child(div().px(10).pb(6).child(Button(c, `${id}-setup`, "Connect MLflow", () => this.onSetup(), { small: true }))));
+      .child(h_flex().id(`${id}-off`).px(10).py(2).gap(8).flex_wrap().items_center().text_size(12)
+        .child(div().text_color(c.grey900).child("MLflow isn't connected"))
+        .when(!!this.onSetup, (e) => e.child(div().id(`${id}-setup`).cursor_pointer().text_color(c.blue).tooltip("Read your experiments, runs and registered models, read-only")
+          .on_click(() => this.onSetup()).child("Connect MLflow"))));
     const row = (rid, depth, kids, onClick) => h_flex().id(rid).min_h(26).py(3).pl(10 + depth * 14).pr(10).gap(6).items_center().text_size(12)
       .when(!!onClick, (e) => e.cursor_pointer().hover((st) => st.bg(c.surface2)).on_click(onClick)).children(kids);
     const chev = (open) => this.icon(open ? "chevron-down" : "chevron-right", 11, c.grey500);
