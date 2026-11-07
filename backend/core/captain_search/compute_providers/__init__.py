@@ -108,9 +108,11 @@ def _builtin() -> dict[str, type]:
     from .gcp import CloudRunProvider, VertexProvider
     from .local import LocalProvider
     from .modal import ModalProvider
+    from .warehouses import DatabricksJobsProvider, SnowparkContainersProvider
 
     return {c.kind: c for c in (LocalProvider, ModalProvider, BatchProvider, ECSProvider, SageMakerProvider,
-                                CloudRunProvider, VertexProvider, ContainerAppsProvider, AzureMLProvider)}
+                                CloudRunProvider, VertexProvider, ContainerAppsProvider, AzureMLProvider,
+                                DatabricksJobsProvider, SnowparkContainersProvider)}
 
 
 _plugin_errors: dict[str, str] = {}
