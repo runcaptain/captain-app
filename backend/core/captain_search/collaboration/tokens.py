@@ -29,12 +29,38 @@ def authenticate(db, credential):
         tokens.c.expires_at > int(time.time())))).scalar()
 
 
+class _ObservedTokenAbsence(Exception):
+    def __init__(self, absent):
+        self.absent = absent
+
+
+def _confirmed_absent(engine, token_id):
+    """Wait for any issuing transaction before deciding its file is disposable."""
+    try:
+        # The observation must take a fresh snapshot after waiting for the lock,
+        # even if the operator configured a stronger default isolation level.
+        observer = engine.execution_options(isolation_level='READ COMMITTED') if engine.dialect.name == 'postgresql' else engine
+        with locked_transaction(observer) as db:
+            absent = db.execute(select(tokens.c.id).where(tokens.c.id == token_id)).first() is None
+            # This is a read-only observation. Roll back to release the same
+            # operator lock without introducing another ambiguous commit.
+            raise _ObservedTokenAbsence(absent)
+    except _ObservedTokenAbsence as observed:
+        return observed.absent
+    except Exception:
+        # Failure to acquire the lock, read, or roll back is not proof that the
+        # original commit failed. Preserve the only plaintext credential copy.
+        return False
+
+
 def issue(engine, *, user_id=None, output, expires_in_days=30, rotate_id=None):
     """Write once to a private file, then atomically activate and optionally rotate.
 
-    A failed file write leaves the old credential valid. A failed database commit
-    removes the newly written file. A process crash before commit can leave a file
-    containing an unusable token; it never partially commits a rotation.
+    A failed file write leaves the old credential valid. Failure removes the new
+    file only after absence is confirmed under the operator transaction lock.
+    An unknown commit outcome retains the private file for operator verification,
+    even though the command reports failure. A retained token may be unusable;
+    the database never partially commits a rotation.
     """
     if not isinstance(expires_in_days, int) or not 1 <= expires_in_days <= 365:
         raise ValueError('Token lifetime must be between 1 and 365 days')
@@ -79,7 +105,7 @@ def issue(engine, *, user_id=None, output, expires_in_days=30, rotate_id=None):
                 db.execute(update(tokens).where(tokens.c.id == rotate_id).values(revoked_at=now))
         return result
     except BaseException:
-        if created:
+        if created and _confirmed_absent(engine, token_id):
             path.unlink(missing_ok=True)
         raise
 

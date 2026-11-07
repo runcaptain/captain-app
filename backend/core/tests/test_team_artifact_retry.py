@@ -1,5 +1,6 @@
 """Accepted retries retain one stage; rejected contenders remove only their own bytes."""
 import hashlib
+import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -10,9 +11,10 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from moto import mock_aws
-from sqlalchemy import event, select, update
+from sqlalchemy import create_engine, delete, event, insert, select, update
 
-from captain_search.collaboration.artifacts import S3ArtifactStore, uploads
+from captain_search.collaboration.artifacts import S3ArtifactStore, uploads, stage_referenced
+from captain_search.collaboration.migrations import locked_transaction, migrate
 from captain_search.collaboration.server import create_app, members
 
 DATA = b'synthetic retry bytes'
@@ -152,3 +154,86 @@ def test_s3_put_succeeded_but_response_failed_is_cleaned(service, monkeypatch):
     assert client.put(endpoint, headers=HEADERS, content=DATA).status_code == 503
     assert stage_count(root, store) == 0
     assert list((root/'staging').iterdir()) == []
+
+
+@pytest.mark.parametrize('commit', [True, False])
+def test_reference_cleanup_waits_for_unfinished_acceptance_transaction(service, commit):
+    app, _, _, root, store = service
+    filename = uuid.uuid4().hex + '.upload'
+    path = root/'staging'/filename
+    path.write_bytes(DATA)
+    if store:
+        store.stage('team', filename, path)
+    cleanup_started = threading.Event()
+    def cleanup():
+        cleanup_started.set()
+        referenced = stage_referenced(app.state.engine, filename)
+        if not referenced:
+            if store:
+                store.delete_stage('team', filename)
+            path.unlink()
+        return referenced
+    class RolledBack(Exception):
+        pass
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            with locked_transaction(app.state.engine) as pending:
+                pending.execute(update(uploads).values(staged_file=filename, state='uploaded'))
+                # A plain reference read sees the OLD metadata while acceptance
+                # is unresolved. This is exactly the dangerous cleanup decision.
+                with app.state.engine.connect() as observer:
+                    assert observer.execute(select(uploads.c.id).where(uploads.c.staged_file == filename)).first() is None
+                future = pool.submit(cleanup)
+                assert cleanup_started.wait(2)
+                with pytest.raises(TimeoutError):
+                    future.result(timeout=.15)
+                assert stage_count(root, store) == 1
+                if not commit:
+                    raise RolledBack()
+        except RolledBack:
+            pass
+        assert future.result(timeout=3) is commit
+    assert stage_count(root, store) == int(commit)
+
+
+@pytest.mark.parametrize('commit', [True, False])
+@pytest.mark.parametrize('isolation', ['READ COMMITTED', 'REPEATABLE READ'])
+def test_postgres_reference_cleanup_waits_for_acceptance_outcome(commit, isolation):
+    url = os.environ.get('DATABASE_URL', '')
+    if not url.startswith('postgresql'):
+        pytest.skip('requires isolated PostgreSQL')
+    engine = create_engine(url, isolation_level=isolation)
+    migrate(engine)
+    upload_id = uuid.uuid4().hex
+    filename = uuid.uuid4().hex + '.upload'
+    with engine.begin() as db:
+        db.execute(insert(uploads).values(id=upload_id, workspace=upload_id, owner_id=upload_id,
+            artifact_id=upload_id, sha256=hashlib.sha256(DATA).hexdigest(), size=len(DATA),
+            visibility='private', state='staged', history_id=uuid.uuid4().hex))
+    started = threading.Event()
+    def check_reference():
+        started.set()
+        return stage_referenced(engine, filename)
+    class RolledBack(Exception):
+        pass
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            try:
+                with locked_transaction(engine) as pending:
+                    pending.execute(update(uploads).where(uploads.c.id == upload_id)
+                                    .values(staged_file=filename, state='uploaded'))
+                    with engine.connect() as observer:
+                        assert observer.execute(select(uploads.c.id).where(uploads.c.staged_file == filename)).first() is None
+                    future = pool.submit(check_reference)
+                    assert started.wait(2)
+                    with pytest.raises(TimeoutError):
+                        future.result(timeout=.15)
+                    if not commit:
+                        raise RolledBack()
+            except RolledBack:
+                pass
+            assert future.result(timeout=3) is commit
+    finally:
+        with engine.begin() as db:
+            db.execute(delete(uploads).where(uploads.c.id == upload_id))
+        engine.dispose()

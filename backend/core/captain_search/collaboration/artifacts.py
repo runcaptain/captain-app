@@ -34,6 +34,16 @@ uploads = Table('sync_artifact_uploads', metadata,
     UniqueConstraint('workspace', 'artifact_id'))
 
 
+def stage_referenced(engine, filename):
+    # Serialize with acceptance, including a COMMIT still running after a lost
+    # connection. A plain MVCC read could see the old row and delete live bytes.
+    # The lock query itself can establish a REPEATABLE READ snapshot before it
+    # waits. Force a fresh statement snapshot for the following reference read.
+    observer = engine.execution_options(isolation_level='READ COMMITTED') if engine.dialect.name == 'postgresql' else engine
+    with locked_transaction(observer) as db:
+        return db.execute(select(uploads.c.id).where(uploads.c.staged_file == filename)).first() is not None
+
+
 class Begin(BaseModel):
     history_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{32}$')
     mutation_id: str = Field(min_length=1, max_length=100)
@@ -290,13 +300,10 @@ def register_artifacts(app, engine, actor, access, root, *, store=None):
         finally:
             safe_to_remove = not accepted
             if not accepted and (remote_attempted or temporary.exists()):
-                def referenced():
-                    with engine.connect() as db:
-                        return db.execute(select(uploads.c.id).where(uploads.c.staged_file == filename)).first() is not None
                 try:
-                    # A commit response can fail after the DB committed. Do not
-                    # remove bytes until their absence from metadata is confirmed.
-                    safe_to_remove = not await run_in_threadpool(referenced)
+                    # Wait for an unresolved acceptance transaction before proving
+                    # the bytes unreferenced. On uncertainty retain them.
+                    safe_to_remove = not await run_in_threadpool(stage_referenced, engine, filename)
                     if not safe_to_remove and remote_attempted:
                         # Metadata confirms S3 holds the accepted stage; the local
                         # spool is redundant even if the commit response was lost.

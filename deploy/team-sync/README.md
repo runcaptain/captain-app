@@ -196,3 +196,11 @@ containers, network and volume. It never sets the synthetic auth bypass.
 `scripts/check_keychain.py` creates one synthetic OS-keychain item, checks it from a
 separate process, then deletes it. Native acceptance uses only an explicitly coordinated
 isolated profile. Keep private acceptance evidence outside source control.
+
+### Uncertain token command result
+
+A connection failure during issue or rotation can occur after the database commits.
+The operator command retains the private output file unless it confirms the new token
+was rolled back under the transaction lock. Keep a retained file protected; verify it
+through the normal token connection flow before retrying or deleting it. A failed command
+is not proof the old token remains valid. Never print the file into logs or chat.
