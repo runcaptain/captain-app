@@ -546,7 +546,10 @@ def cloud_rm(name: str):
 def compute_kinds():
     from .. import compute as C
 
-    emit(C.KINDS, "\n".join(f"{k['kind']:22} {k['label']}  ({', '.join(k['purposes'])})" for k in C.KINDS))
+    ks = C.kinds()
+    emit(ks, "\n".join(f"{k['kind']:22} {k['label']}  ({', '.join(k['purposes'])})  "
+                       f"{'last ran for real ' + k['live_tested'] if k['live_tested'] else 'not tested on a real account'}"
+                       for k in ks))
 
 
 @compute_app.command("add")
@@ -775,3 +778,4 @@ from . import appctl  # noqa: E402,F401  cst app: open the desktop app and drive
 from . import invest  # noqa: E402,F401  investigations and signals
 from . import ext  # noqa: E402,F401  extensions and the captain/ project folder
 from . import library  # noqa: E402,F401  data import, folders, model registries
+from . import jobs  # noqa: E402,F401  cst job and cst compute setup

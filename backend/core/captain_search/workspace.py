@@ -118,6 +118,13 @@ def open_context(name: str | None = None) -> Context:
     name = name or os.environ.get("CST_WORKSPACE") or cfg.get("current")
     if not name:
         raise RuntimeError("no workspace selected. Run `cst init --storage <uri> <name>` first.")
+    if name not in cfg.get("workspaces", {}) and os.environ.get("CST_STORAGE") and os.environ.get("CST_WORKSPACE") == name:
+        # A compute job (runner image) names its workspace in the environment: attach to it, never create one.
+        store = open_store(os.environ["CST_STORAGE"], os.environ.get("CST_STORAGE_PROFILE") or None)
+        ws = Workspace.model_validate(yaml.safe_load(store.get("workspace.yaml")))
+        cfg.setdefault("workspaces", {})[name] = {"storage": os.environ["CST_STORAGE"]}
+        save_config(cfg)
+        return Context(ws, store, Registry(store))
     try:
         uri = cfg["workspaces"][name]["storage"]
     except KeyError:
