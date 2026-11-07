@@ -71,3 +71,77 @@ fn work_init_queues_redraws_its_own_mod(cx: &mut TestAppContext) {
     let _ = std::fs::remove_dir_all(ticker_dir);
     let _ = std::fs::remove_dir_all(deferred_dir);
 }
+
+// CAPTAIN: an answer reaches whoever awaits it after the screen that asked for it closes. All mods share one
+// script runtime, so one screen's code can await a request another screen started. desktop-app saw a Comparisons
+// GET stay pending for 20 s in 1 of 4 real-window runs (before 26b7cffb). This guards that path. It passes
+// without a change: the stall hasn't been reproduced here.
+const STARTER: &str = r#"
+import { div, View } from "gpui-kit";
+export default class Starter extends View {
+  init(_props, cx) { globalThis.__captainShared = fetch("http://127.0.0.1:PORT/x"); }
+  render() { return div().child("starter"); }
+}
+"#;
+
+const WAITER: &str = r#"
+import { div, View } from "gpui-kit";
+export default class Waiter extends View {
+  init(_props, cx) {
+    this.state = "waiting";
+    const pending = globalThis.__captainShared;
+    cx.spawn(async (cx) => {
+      try { const r = await pending; this.state = `answered ${r.status}`; }
+      catch (e) { this.state = `failed ${e}`; }
+      cx.notify();
+    });
+  }
+  render() { return div().child(`state: ${this.state}`); }
+}
+"#;
+
+#[gpui::test]
+fn an_answer_reaches_its_waiter_after_the_screen_that_asked_closes(cx: &mut TestAppContext) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        if let Ok((mut s, _)) = listener.accept() {
+            let mut buf = [0u8; 1024];
+            let _ = s.read(&mut buf);
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+    });
+    cx.update(gpui_shell::init);
+    gpui_shell::set_capabilities(gpui_shell::Capabilities::new().network(gpui_shell::NetworkGrant::Unrestricted));
+    let runtime = cx.update(|cx| ShellRuntime::new(cx)).expect("runtime");
+    let window = cx.add_window(|_, _| Empty);
+    let mut context = VisualTestContext::from_window(*window, cx);
+    let starter_dir = mod_dir("starter", &STARTER.replace("PORT", &port.to_string()));
+    let waiter_dir = mod_dir("waiter", WAITER);
+    let starter = context.update(|window, cx| runtime.try_load(&starter_dir, window, cx)).expect("load starter");
+    let waiter = context.update(|window, cx| runtime.try_load(&waiter_dir, window, cx)).expect("load waiter");
+    let view = context.update(|_, cx| view_of(&waiter, cx));
+    let asked = context.update(|_, cx| view_of(&starter, cx).downgrade());
+
+    // The screen that asked closes before the answer comes (a layout switch builds new mods).
+    drop(starter);
+    context.run_until_parked();
+    assert!(asked.upgrade().is_none(), "the screen that asked must be closed for this to test anything");
+
+    let mut shown = String::new();
+    for _ in 0..60 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        context.run_until_parked();
+        let v = view.clone();
+        context.draw(gpui::Point::default(), gpui::size(gpui::px(400.), gpui::px(300.)), move |_, _| gpui::IntoElement::into_any_element(v));
+        shown = context.update(|_, cx| view.read(cx).snapshot().map(|s| s.debug_tree()).unwrap_or_default());
+        if !shown.contains("waiting") {
+            break;
+        }
+    }
+    let _ = std::fs::remove_dir_all(starter_dir);
+    let _ = std::fs::remove_dir_all(waiter_dir);
+    assert!(shown.contains("answered 200"), "the waiter never heard the answer: {shown}");
+}
