@@ -667,3 +667,29 @@ offset, limit, has_more, total?, ms, filtered, sql?}`.
 - `GET /api/tables/{conn}/{schema}/{table}/rows?offset=&limit<=1000&order=&desc=&where=&count=` pages through a whole
   warehouse table, every column. The page query is translated per database. `/sample` is its first page.
 - `POST /api/connections/{name}/preview` returns the same page, plus `row_count` and `limited`.
+
+## Bring your own rankings (spec S2)
+
+A team's own system's results, imported and compared like any backtest. The contract is one long table (csv, tsv,
+parquet, json or jsonl), one row per (query, arm, item):
+- **Required:** `query_id`, `arm` (the system or version), `item_id`, and `rank` (1 is the top) or `score` (higher is
+  better).
+- **Optional:** `query` (text), `label` (grade 0 to 3), `segment` (a slice) and `weight` (traffic). Map your own column
+  names with `mapping`.
+
+Routes:
+- `POST /api/rankings/validate {path | dataset, mapping?, judgments?}` returns `{ok, errors, warnings, stats,
+  available}`, in plain words. It catches missing columns, empty ids, duplicate items, tied or bad ranks, labels
+  outside 0 to 3, conflicting labels, and arms missing queries. `available` says which analysis the data supports. With
+  no labels or judgments, relevance metrics are unavailable, never invented.
+- `POST /api/rankings/import {name, path | dataset, mapping?, baseline?, labels_from?, judgments?, catalog?,
+  primary_metric?, mde?, hypothesis?, project?}` returns `{job}`. Its result is `{run, backtest, datasets, validation,
+  evidence}`.
+  - It versions the raw file and builds query and label datasets.
+  - It publishes a run (mode `rankings`) with every arm's rankings stored. Comparisons, slices by `segment`, the query
+    list, side by side, the histogram and compatibility all work on it.
+  - `labels_from` (human, llm, clicks, heuristic) is required with labels, and sets the evidence label.
+  - `catalog` gives titles side by side.
+
+CLI: `cst rankings validate <file> [--map query_id=qid,arm=system]` and
+`cst rankings import <name> <file> --baseline prod --labels-from human`.

@@ -1,6 +1,6 @@
 #!/bin/bash
 # CAPTAIN: a real-window check for team views (captain/views/<name>/, plan 0 S8), built on forms-check.sh's window
-# handling. A scratch project holds two views made from the template (defaults/captain/view-template). The check
+# handling. A scratch project holds two views made from the template (backend/core/captain_search/view_template). The check
 # proves they load and draw, a saved change reaches the app, a broken view keeps its last good version without
 # touching the other, and a removed view goes away.
 #
@@ -57,6 +57,8 @@ cleanup() {
     if ps eww -p "$p" | tr ' ' '\n' | grep -qx "CST_HOME=$WORK/cst"; then kill "$p" 2>/dev/null || true; fi
   done
   rm -rf "$HOME_DIR"
+  # The scratch workspace (its store and logs) goes too; shots stay only when SHOT_DIR points outside it.
+  case "${WORK:-}" in "${TMPDIR:-/tmp}"*|/tmp/*|/var/folders/*) rm -rf "${WORK:?}" ;; esac
 }
 trap cleanup EXIT
 
@@ -67,7 +69,7 @@ PROJECT=$WORK/project/captain
 for v in rows other; do
   mkdir -p "$PROJECT/views/$v"
   for f in mod.json main.js README.md .gitignore; do
-    sed -e "s/{{name}}/$v/g" -e "s/{{title}}/Team $v/g" "defaults/captain/view-template/$f" > "$PROJECT/views/$v/$f"
+    sed -e "s/{{name}}/$v/g" -e "s/{{title}}/Team $v/g" "backend/core/captain_search/view_template/$f" > "$PROJECT/views/$v/$f"
   done
 done
 : > "$PROJECT/captain.toml"

@@ -22,10 +22,10 @@ def analyze(path):
                 cur = 0
         return bs, bs + best
     white = lambda x, y: min(px[x, y]) >= 250
-    # A dialog fills a fifth of the window's height or more; in a big window, a short one is under a third.
-    cols = [sum(white(x, y) for y in range(0, h, 4)) > (h / 4) * 0.18 for x in range(w)]
+    # A dialog fills a tenth of the window's height or more (the dimmed window behind it has no pure white).
+    cols = [sum(white(x, y) for y in range(0, h, 4)) > (h / 4) * 0.1 for x in range(w)]
     left, right = longest(cols)
-    if right - left < w * 0.2:
+    if right - left < w * 0.12:
         return {"ok": False, "why": "no dialog found"}
     # Its side padding is white from top to bottom, broken only by the 1 px header and footer rules.
     # Forms are 560 px wide at 1x. With --any (another dialog width), the scale comes from the 1100 px test window.

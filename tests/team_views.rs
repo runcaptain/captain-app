@@ -1,5 +1,5 @@
 //! CAPTAIN: `captain-app check` validates a team view (captain/views/<name>/) with the Captain kit injected, the way
-//! the app loads it. The template `cst view new` scaffolds (defaults/captain/view-template) passes; a broken view and
+//! the app loads it. The template `cst view new` scaffolds (backend/core/captain_search/view_template) passes; a broken view and
 //! a view needing a newer view API fail, saying why.
 
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ fn scaffold(name: &str) -> (PathBuf, PathBuf) {
     std::fs::create_dir_all(&view).unwrap();
     std::fs::write(project.join("captain").join("captain.toml"), "").unwrap();
     for f in ["mod.json", "main.js", "README.md", ".gitignore"] {
-        let text = std::fs::read_to_string(root().join("defaults/captain/view-template").join(f)).unwrap();
+        let text = std::fs::read_to_string(root().join("backend/core/captain_search/view_template").join(f)).unwrap();
         std::fs::write(view.join(f), text.replace("{{name}}", name).replace("{{title}}", "Catalog rows")).unwrap();
     }
     (project, view)

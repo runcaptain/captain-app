@@ -13,6 +13,11 @@ import { loadExplorer, words, childKinds, nodeIcon, nodeName, nodeKey, currentSc
 const INDENT = 12;
 // A click this soon after the tree appears, or after its rows moved, is ignored (see meant()).
 const SETTLE_MS = 1200, MOVED_MS = 350;
+// What the two workspace-wide rows mean, in plain words (Edgar: "not sure the differences between them").
+const ABOUT = {
+  "all-engines": "The search and recommendation systems you're improving, across every brand",
+  "all-experiments": "Every comparison you've run, newest first",
+};
 const DIALOG = (props) => ({ mod: "captain-scope", kind: "dialog", width: 460, props });
 
 export class Explorer {
@@ -86,6 +91,8 @@ export class Explorer {
     // An engine opens its page; anything else goes back to the views, filtered to it.
     if (n.kind === "engine") run("layout.select", { stack: "sections", child: "engine" });
     else if (n.kind === "view" && n.id === "all-experiments") run("layout.select", { stack: "sections", child: "runs" });
+    // All engines: the engines page with nothing picked lists every engine (and explains them when there are none).
+    else if (n.kind === "view" && n.id === "all-engines") run("layout.select", { stack: "sections", child: "engine" });
     else if (this.onEnginePage?.()) run("layout.select", { stack: "sections", child: "investigations" });
   }
 
@@ -115,6 +122,14 @@ export class Explorer {
         .child(a.label)));
   }
 
+  /** How many engines the workspace has (one engine can show under several scopes: counted once). */
+  engineCount() {
+    const ids = new Set();
+    const walk = (n) => { if (n.kind === "engine") ids.add(n.id); (n.children ?? []).forEach(walk); };
+    (this.tree ?? []).forEach(walk);
+    return ids.size;
+  }
+
   row(c, n, depth, holder, path) {
     const key = nodeKey(n, path);
     const scope = currentScope();
@@ -123,7 +138,10 @@ export class Explorer {
     const open = kids.length > 0 && this.isOpen(key);
     const acts = this.actions(n, holder);
     const header = n.kind === "group";
-    const line = h_flex().id(`ex-${key}`).h(26).flex_none().pr(6).gap(5).items_center().cursor_pointer()
+    const about = n.kind === "view" ? ABOUT[n.id] : null;
+    const count = n.kind === "view" && n.id === "all-engines" ? this.engineCount() : 0;
+    const line = h_flex().id(`ex-${key}`).when(!about, (e) => e.h(26)).when(Boolean(about), (e) => e.min_h(26).py(4).items_start().tooltip(about))
+      .flex_none().pr(6).gap(5).when(!about, (e) => e.items_center()).cursor_pointer()
       .pl(8 + depth * INDENT).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : header ? c.grey500 : c.navy)
       .text_size(header ? 11.5 : 12.5).when(header, (e) => e.font_medium())
       .hover((s) => (on ? s : s.bg(c.surface2)))
@@ -132,8 +150,14 @@ export class Explorer {
       .child(div().id(`ex-fold-${key}`).size(12).flex_none().flex().items_center().justify_center()
         .when(kids.length > 0, (e) => e.text_color(c.grey500).on_click((_e, cx) => { cx.stop_propagation(); this.toggle(key); cx.notify(); })
           .child(svg(icon(open ? "chevron-down" : "chevron-right")).size(11))))
-      .child(svg(icon(nodeIcon(n))).size(13).flex_none().text_color(on ? c.blue : c.grey500))
-      .child(div().flex_1().min_w(0).truncate().child(nodeName(n)))
+      .child(svg(icon(nodeIcon(n))).size(13).flex_none().when(Boolean(about), (e) => e.mt(2)).text_color(on ? c.blue : c.grey500))
+      .child(about
+        // The name, and under it one muted line saying what it holds (the whole sentence on hover).
+        ? v_flex().flex_1().min_w(0).gap(1).child(div().truncate().child(nodeName(n)))
+          .child(div().truncate().text_size(11).text_color(c.grey500).child(about))
+        : div().flex_1().min_w(0).truncate().child(nodeName(n)))
+      .when(count > 0, (e) => e.child(div().min_w(20).px(6).text_size(10.5).line_height("18px").font_family("JetBrains Mono")
+        .bg(on ? c.blue : c.surface2).text_color(on ? c.onBlue : c.grey900).flex().justify_center().tooltip(`${count} engine${count === 1 ? "" : "s"}`).child(String(count))))
       .when(acts.length > 0, (e) => e.child(div().id(`ex-more-${key}`).px(4).text_size(13).text_color(c.grey500).tooltip("Actions")
         .hover((s) => s.text_color(c.navy)).on_click((_e, cx) => { cx.stop_propagation(); this.menu = this.menu === key ? null : key; cx.notify(); })
         .child("...")));

@@ -233,7 +233,7 @@ class Surface(BaseModel):
 
 class Backtest(VersionBase):
     kind: Literal["backtest"] = "backtest"
-    mode: Literal["simulated", "historic", "imported"] = "simulated"
+    mode: Literal["simulated", "historic", "imported", "rankings"] = "simulated"
     logs: str | None = None  # historic mode: the events dataset replayed
     compute: str | None = None  # compute target name; None = local
     arms: list[str]  # pipeline refs
@@ -263,7 +263,7 @@ class ArmResult(BaseModel):
 class BacktestRun(VersionBase):
     kind: Literal["backtest-run"] = "backtest-run"
     backtest: str
-    mode: Literal["simulated", "historic", "imported"] = "simulated"
+    mode: Literal["simulated", "historic", "imported", "rankings"] = "simulated"
     source: str | None = None  # imported runs: where the original readout lives
     compute: str = "local"
     arms: list[ArmResult]
