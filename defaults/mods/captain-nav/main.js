@@ -61,6 +61,7 @@ const TASK_ENTRIES = [
   ["dataset-class", "New dataset class", "class type role catalog queries judgments"],
   ["rankings", "Compare your own rankings", "bring import rankings results system offline compare evaluate"],
   ["explain", "Explain a query", "debug why ranking stage score trace query debugger"],
+  ["sandbox", "What if...", "sandbox sweep tune knobs settings parameters try offline what if"],
   ["demo", "Try the demo store", "sample example data"],
 ];
 // New workspace: where it keeps its work, then a drop zone, then an optional model registry (captain-setup).
@@ -72,7 +73,8 @@ export function staticEntries(sections) {
     ...TASK_ENTRIES.map(([task, title, words]) => ({ group: "Captain", title, words,
       overlay: task === "dataset" ? { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} }
         : task === "rankings" ? { mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }
-        : task === "explain" ? { mod: "captain-explain", kind: "dialog", width: 0.9, height: 0.9 } : { mod: "captain-forms", kind: "dialog", width: 560, props: { task } } })),
+        : task === "explain" ? { mod: "captain-explain", kind: "dialog", width: 0.9, height: 0.9 }
+        : task === "sandbox" ? { mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9 } : { mod: "captain-forms", kind: "dialog", width: 560, props: { task } } })),
     ...sections.map((s) => ({ group: "Captain", title: `Go to ${s.label}`, words: `section ${s.label}`, overlay: go(s.id) })),
     { name: "captain-nav.theme-light", args: {}, group: "Captain", title: "Switch to light", words: "appearance theme light mode" },
     { name: "captain-nav.theme-dark", args: {}, group: "Captain", title: "Switch to dark", words: "appearance theme dark mode night" },
