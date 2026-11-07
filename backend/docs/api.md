@@ -552,6 +552,9 @@ Backtest runs now carry `manifest` (see docs/extending.md).
   - `POST /api/registries {uri, profile?, label?}` returns `{job}`. It attaches a registry and reads it, or re-reads it
     if already attached.
   - `DELETE /api/registries?uri=` detaches one.
+  - The address can be `s3://`, `gs://`, `az://` or a local folder. Leave out the scheme and Captain uses the cloud
+    of the workspace's storage, else the only connected cloud, else AWS. Leave out the login and Captain uses the
+    workspace's own login for that cloud, else the only one, else the last that passed its test.
   - The layout is `<architecture>/<brand>/<version>/MANIFEST.yaml` under any prefix. `/api/models` and
     `/api/lineage?view=models` cover every attached registry.
 

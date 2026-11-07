@@ -88,11 +88,46 @@ def registries(ctx: Context) -> list[dict]:
     return out
 
 
+def resolve(ctx: Context, uri: str, profile: str | None = None) -> tuple[str, str | None]:
+    """Fill in what the person left out, from the clouds they've connected:
+    - no scheme ("my-bucket/models"): the cloud of the workspace's own storage if it's a cloud, else the only cloud
+      with a login here, else AWS;
+    - no login: the workspace's own login if it's for that cloud, else the one login for that cloud, else the first
+      that passed its last test. None falls back to the provider's default credentials."""
+    import os
+
+    from . import cloud
+    from .workspace import load_config
+
+    uri = uri.strip().rstrip("/")
+    profs = cloud.profiles()
+    wcfg = (load_config().get("workspaces") or {}).get(ctx.workspace.name, {})
+    if "://" not in uri and not os.path.isabs(os.path.expanduser(uri)):
+        ws_provider = cloud.provider_of(ctx.workspace.storage_uri)
+        providers = sorted({p.get("provider") for p in profs if p.get("provider")})
+        provider = ws_provider if ws_provider != "local" else (providers[0] if len(providers) == 1 else "aws")
+        scheme = {"aws": "s3", "gcp": "gs", "azure": "az"}.get(provider, "s3")
+        uri = f"{scheme}://{uri.removeprefix('/')}"
+    if profile is None:
+        prov = cloud.provider_of(uri)
+        if prov != "local":
+            mine = [p for p in profs if p.get("provider") == prov]
+            if wcfg.get("profile") and any(p["name"] == wcfg["profile"] for p in mine):
+                profile = wcfg["profile"]
+            elif len(mine) == 1:
+                profile = mine[0]["name"]
+            else:
+                ok = [p for p in mine if (p.get("last_test") or {}).get("ok")]
+                profile = (ok or mine or [{"name": None}])[0]["name"]
+    return uri, profile
+
+
 def attach(ctx: Context, uri: str, profile: str | None = None, label: str | None = None, progress=lambda f: None) -> dict:
-    """Attach a registry and read it. Reading it first means a wrong address fails here, not later."""
+    """Attach a registry and read it. Reading it first means a wrong address fails here, not later. The scheme and
+    the cloud login are filled in from the connected clouds when left out (see resolve)."""
     from . import models as MD
 
-    uri = uri.rstrip("/")
+    uri, profile = resolve(ctx, uri, profile)
     progress(0.1)
     snap = MD.import_registry(ctx, uri, profile)
     progress(0.9)
@@ -108,7 +143,7 @@ def attach(ctx: Context, uri: str, profile: str | None = None, label: str | None
         except Conflict:
             continue
     progress(1.0)
-    return {"uri": uri, "snapshot": f"{snap.name}@v{snap.version}", "models": len(snap.models)}
+    return {"uri": uri, "profile": profile, "snapshot": f"{snap.name}@v{snap.version}", "models": len(snap.models)}
 
 
 def detach(ctx: Context, uri: str) -> dict:
