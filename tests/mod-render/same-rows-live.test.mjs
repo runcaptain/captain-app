@@ -64,7 +64,7 @@ await until(w, (t) => t.includes('products-copy'), 'named');
 await w.click('import-go');
 await until(w, () => globalThis.__toasts.length > 0, 'imported');
 assert.match(globalThis.__toasts[0].body, /^480 rows in, 480 kept/, globalThis.__toasts[0].body);
-assert.equal(globalThis.__toasts[0].title, 'Imported catalogs/products-copy, version 1');
+assert.equal(globalThis.__toasts[0].title, 'Imported products-copy, version 1');
 
 // 2. Tables: the same table's Rows tab. (The wizard's "open this dataset" was for a Data already running: drop it.)
 delete globalThis.__shared['captain.open'];
@@ -80,8 +80,8 @@ await until(data, (t) => /1 to 100 of 480/.test(t), () => `Rows pager: ${JSON.st
 const fromTables = await byId(data, data.mod.tables.rows);
 
 // 3. The dataset it became: Sample data.
-globalThis.__shared['captain.open'] = { section: 'data', dataset: 'catalogs/products-copy', fresh: true, at: Date.now() };
-await until(data, () => data.mod.sel === 'catalogs/products-copy' && !!data.mod.detail?.version, 'the dataset open');
+globalThis.__shared['captain.open'] = { section: 'data', dataset: 'products-copy', fresh: true, at: Date.now() };
+await until(data, () => data.mod.sel === 'products-copy' && !!data.mod.detail?.version, 'the dataset open');
 await until(data, (t) => t.includes('Sample data'), () => `the dataset page (tab ${data.mod.tab}, detail ${JSON.stringify(data.mod.detail)?.slice(0, 200)})`);
 await data.click('dtab-sample');
 await until(data, () => data.mod.page.rows && !data.mod.page.rows.loading && data.mod.page.rows.table.rows.length > 0, 'Sample data');

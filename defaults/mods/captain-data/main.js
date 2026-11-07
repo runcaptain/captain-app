@@ -295,7 +295,7 @@ export default class CaptainData extends View {
         .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your experiments read." : this.tab === "notebooks" ? "SQL, Python, notes and charts, saved as versions." : this.tab === "models" ? "Trained models from your registries, and what each was built from." : this.tab === "tables" ? "Your databases' tables, their columns and rows, and how they're queried." : "Rules that turn logged events into judgments."))
       .when(this.tab === "datasets", (e) => e
         .child(Button(c, "new-class", "New class", () => openForm("dataset-class"), { small: true }))
-        .child(Button(c, "import-dataset", "Import a dataset", () => openImport(this.lib?.cur ?? ""), { kind: "primary", small: true })))
+        .child(Button(c, "import-dataset", "Import a dataset", () => openImport(), { kind: "primary", small: true })))
       .when(this.tab === "labels", (e) => e
         .child(Button(c, "label-agent", "Ask an agent to define a label", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, LABEL_PROMPT)), { small: true })))
       .child(div().id("data-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()
@@ -312,7 +312,7 @@ export default class CaptainData extends View {
       .child(div().max_w(460).text_center().text_size(12.5).line_height("19px").text_color(c.grey900)
         .child("Experiments read four kinds of data: your catalog, the queries people search, judgments of what is relevant, and logs of what shoppers did. Import a file, save a SQL query, or start from the demo store."))
       .child(h_flex().gap(8)
-        .child(Button(c, "first-import", "Import a dataset", () => openImport(this.lib?.cur ?? ""), { kind: "primary" }))
+        .child(Button(c, "first-import", "Import a dataset", () => openImport(), { kind: "primary" }))
         .child(Button(c, "first-demo", "Try the demo store", () => openForm("demo"))));
   }
 
