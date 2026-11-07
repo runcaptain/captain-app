@@ -5304,6 +5304,7 @@ mod tests {
         assert_eq!(super::traffic_light_divider_inset(&layout, crate::layout::Axis::Row, 0, true, 1.0), 0.0);
     }
 
+    #[cfg_attr(not(debug_assertions), ignore = "finds elements by debug selector, which release builds don't record (gpui debug_bounds)")]
     #[gpui::test]
     fn fitted_popups_use_their_rendered_size_at_the_window_edge(cx: &mut TestAppContext) {
         struct Popup {

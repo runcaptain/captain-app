@@ -2302,6 +2302,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(debug_assertions), ignore = "finds elements by debug selector, which release builds don't record (gpui debug_bounds)")]
     #[gpui::test]
     fn each_terminal_keeps_its_find_bar_inside_its_own_pane(cx: &mut gpui::TestAppContext) {
         use gpui::*;
@@ -2542,6 +2543,7 @@ mod tests {
         root.read_with(cx, |root, cx| assert_eq!(root.0.read(cx).search_query, "xyz"));
     }
 
+    #[cfg_attr(not(debug_assertions), ignore = "finds elements by debug selector, which release builds don't record (gpui debug_bounds)")]
     #[gpui::test]
     fn find_bar_chevrons_step_older_up_and_newer_down(cx: &mut gpui::TestAppContext) {
         use gpui::*;
@@ -2702,6 +2704,7 @@ mod tests {
         });
     }
 
+    #[cfg_attr(not(debug_assertions), ignore = "finds elements by debug selector, which release builds don't record (gpui debug_bounds)")]
     #[gpui::test]
     fn shipped_find_binding_opens_search_but_ctrl_f_reaches_the_program(cx: &mut gpui::TestAppContext) {
         use gpui::*;
