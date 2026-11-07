@@ -15,9 +15,10 @@ import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Kernel } from "./kit/kernel.js";
 import { fromNotebook, toNotebook, newCell, tablesByVar, errorSentence } from "./kit/notebook.js";
-import { Chart, series } from "./kit/chart.js";
+import { ChartView, MARKS, AGGS, COLORS as CHART_COLORS, shape as shapeChart } from "./kit/charts.js";
 import { ResultGrid } from "./kit/grid.js";
 import { askAgent, copyPrompt } from "./kit/agent.js";
+import { SqlTools } from "./sql-tools.js";
 
 const KINDS = { sql: ["SQL", "database"], python: ["Python", "terminal"], markdown: ["Text", "file-text"], chart: ["Chart", "bar-chart-3"] };
 const LANG = { sql: "sql", python: "python", markdown: "markdown" };
@@ -55,6 +56,7 @@ export class Notebooks {
     this.execCount = 0;
     this.newName = InputState.new({ placeholder: "Name a new notebook" });
     this.importPath = InputState.new({ placeholder: "~/Downloads/analysis.ipynb" });
+    this.sqlTools = new SqlTools(this);
   }
 
   // ---- data ------------------------------------------------------------------------------------------------------
@@ -87,6 +89,8 @@ export class Notebooks {
     this.releaseEditors();
     this.note = null;
     this.exporting = false;
+    this.sqlTools.cell = null;
+    this.sqlTools.varInputs.clear();
     cx.spawn(async (cx) => {
       const r = await api(`/api/notebooks/${enc(name)}`);
       if (this.open?.name !== name) return;
@@ -104,6 +108,8 @@ export class Notebooks {
       }
       for (const cell of this.cells) this.prepare(cell);
       if (this.runOnOpen) { this.runOnOpen = false; this.runAll(cx); }
+      const sqlCell = this.toolsOnOpen && this.cells.find((x) => x.kind === "sql");
+      if (sqlCell) { this.sqlTools.cell = sqlCell.id; if (this.toolsOnOpen.panel) this.sqlTools.show(cx, sqlCell, this.toolsOnOpen.panel); this.toolsOnOpen = null; }
       cx.notify();
     });
     cx.notify();
@@ -251,13 +257,22 @@ export class Notebooks {
       return false;
     }
     cell.source = this.editors.get(cell.id)?.value() ?? cell.source;
+    let code = cell.source;
+    if (cell.kind === "sql") {
+      try { code = this.sqlTools.rendered(cell); } catch (e) {
+        this.state.set(cell.id, { status: "failed" });
+        cell.outputs = [{ kind: "error", ename: "", evalue: e.message, traceback: [] }];
+        cx.notify();
+        return false;
+      }
+    }
     cell.outputs = [];
     for (const k of [...this.grids.keys()]) if (k.startsWith(`${cell.id}-`)) this.grids.delete(k);
     this.state.set(cell.id, { status: "running", started: Date.now() });
     cx.notify();
     let r;
     try {
-      r = await this.ensureKernel().execute(cx, { cell_id: cell.id, kind: cell.kind, code: cell.source, n: ++this.execCount, conn: cell.meta.conn ?? undefined, var: cell.meta.var ?? undefined, limit: cell.kind === "sql" ? cell.meta.limit ?? LIMIT : undefined });
+      r = await this.ensureKernel().execute(cx, { cell_id: cell.id, kind: cell.kind, code, n: ++this.execCount, conn: cell.meta.conn ?? undefined, var: cell.meta.var ?? undefined, limit: cell.kind === "sql" ? cell.meta.limit ?? LIMIT : undefined });
     } catch (e) {
       r = { ok: false, ms: 0, lost: true };
       cell.outputs.push({ kind: "error", ename: "", evalue: String(e?.message ?? "Couldn't start Python for this notebook."), traceback: [] });
@@ -468,6 +483,7 @@ export class Notebooks {
       .child(this.icon(ic, 13, c.navy)).child(div().text_size(12).font_medium().child(label))
       .child(div().flex_1())
       .child(this.status(c, cell))
+      .when(cell.kind === "sql", (e) => e.child(this.tool(c, `tools-${cell.id}`, "settings", "Format, explain, translate, snippets and history", (_e, cx) => this.sqlTools.toggle(cx, cell))))
       .when(code && !running, (e) => e.child(this.tool(c, `run-${cell.id}`, "play", "Run (Cmd-Enter)", (_e, cx) => this.runCell(cx, cell))))
       .when(running, (e) => e.child(this.tool(c, `stop-${cell.id}`, "circle-x", "Stop", () => this.stop())))
       .when(cell.kind === "markdown", (e) => e.child(this.tool(c, `edit-${cell.id}`, this.editing.has(cell.id) ? "check" : "file-text", this.editing.has(cell.id) ? "Done" : "Edit",
@@ -492,9 +508,10 @@ export class Notebooks {
           .tooltip(`Return at most ${fmtInt(n)} rows`).on_click((_e, cx) => { cell.meta.limit = n; this.edited(); cx.notify(); }).child(n >= 1000 ? `${n / 1000}k` : String(n))))
         .child(div().flex_none().child("as"))
         .child(div().w(120).h(22).px(6).flex().items_center().border_1().border_color(c.grey300).when(this.inputs.has(cell.id), (e) => e.child(Input.new(this.inputs.get(cell.id)).w_full().text_size(11.5).font_family(MONO).text_color(c.navy))))))
+      .when(cell.kind === "sql" && this.sqlTools.cell === cell.id, (e) => e.child(this.sqlTools.render(c, cell)))
       .when(showSource && this.editors.has(cell.id), (e) => e.child(div().flex_none().w_full().h(lines * 19 + 14).child(Editor.new(this.editors.get(cell.id)).size_full())))
       .when(cell.kind === "markdown" && !this.editing.has(cell.id), (e) => e.child(this.markdown(c, cell)))
-      .when(cell.kind === "chart", (e) => e.child(this.chart(c, cell)))
+      .when(cell.kind === "chart", (e) => e.child(this.chart(c, cell, w)))
       .children(cell.outputs.map((o, k) => this.output(c, cell, o, k, w)));
   }
 
@@ -533,30 +550,59 @@ export class Notebooks {
       }));
   }
 
-  chart(c, cell) {
+  /** A chart cell: Querybook's nine kinds and their settings, over any result in the notebook. */
+  chart(c, cell, w) {
     const spec = (cell.meta.chart ??= { mark: "bar" });
+    if (spec.mark === "point") spec.mark = "scatter"; // older notebooks
+    if (typeof spec.y === "string") spec.y = [spec.y];
     const tables = tablesByVar(this.cells);
     const name = spec.data ?? spec.var ?? [...tables.keys()].pop();
     const t = tables.get(name);
     const cols = (t?.columns ?? []).map((x) => x.name);
     const numeric = (t?.columns ?? []).filter((x) => /int|float|double|decimal|numeric|real|number/i.test(String(x.type))).map((x) => x.name);
-    const x = cols.includes(spec.x) ? spec.x : cols[0];
-    const y = cols.includes(spec.y) ? spec.y : numeric.find((n) => n !== x) ?? cols[1];
-    const set = (k, v) => (_e, cx) => { spec[k] = v; this.edited(); cx.notify(); };
-    const chips = (id, opts, cur, k) => h_flex().id(id).min_w(0).gap(4).overflow_x_scrollbar().children(opts.map((v) => {
-      const on = v === cur;
-      return div().id(`${id}-${v}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer().text_size(11.5)
-        .border_1().border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.grey900)
-        .on_click(set(k, v)).child(v === "point" ? "scatter" : String(v));
-    }));
-    const row = (label, el) => h_flex().gap(8).items_center().text_size(11.5).child(div().w(44).flex_none().text_color(c.grey500).child(label)).child(el);
+    if (t) {
+      if (!cols.includes(spec.x)) spec.x = cols[0];
+      spec.y = (spec.y ?? []).filter((y) => cols.includes(y));
+      if (!spec.y.length) { const first = numeric.find((n) => n !== spec.x) ?? cols[1]; if (first) spec.y = [first]; }
+    }
+    const change = (k, v) => (_e, cx) => { spec[k] = v; this.edited(); cx.notify(); };
+    const chip = (id, label, on, onClick) => div().id(id).h(22).px(6).flex().flex_none().items_center().cursor_pointer().text_size(11.5)
+      .border_1().border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.grey900).on_click(onClick).child(label);
+    const pick = (id, opts, cur, k) => h_flex().id(id).min_w(0).gap(4).overflow_x_scrollbar().children(opts.map(([v, label]) => chip(`${id}-${v}`, label, (cur ?? opts[0][0]) === v, change(k, v))));
+    const toggle = (id, label, k) => chip(`${id}-${cell.id}`, label, !!spec[k], change(k, !spec[k]));
+    const row = (label, el) => h_flex().gap(8).items_center().text_size(11.5).child(div().w(64).flex_none().text_color(c.grey500).child(label)).child(el);
+    const xy = spec.mark === "scatter" || spec.mark === "bubble";
+    const colOpts = cols.map((k) => [k, k]);
+    const data = t ? shapeChart(t, spec) : { series: [] };
     return v_flex().px(10).py(8).gap(6)
-      .child(row("Data", tables.size ? chips(`ch-d-${cell.id}`, [...tables.keys()], name, "data") : div().text_color(c.grey500).child("Run a SQL cell first: its result is what a chart draws.")))
+      .child(row("Data", tables.size ? pick(`ch-d-${cell.id}`, [...tables.keys()].map((k) => [k, k]), name, "data") : div().text_color(c.grey500).child("Run a SQL cell first: its result is what a chart draws.")))
       .when(!!t, (e) => e
-        .child(row("Kind", chips(`ch-m-${cell.id}`, ["bar", "line", "point"], spec.mark ?? "bar", "mark")))
-        .child(row("Across", chips(`ch-x-${cell.id}`, cols, x, "x")))
-        .child(row("Up", chips(`ch-y-${cell.id}`, numeric.length ? numeric : cols, y, "y")))
-        .child(Chart(c, { mark: spec.mark ?? "bar", points: series(t, x, y), xLabel: x, yLabel: y })));
+        .child(row("Kind", pick(`ch-m-${cell.id}`, MARKS, spec.mark ?? "bar", "mark")))
+        .child(row(xy ? "Across (x)" : "Categories", pick(`ch-x-${cell.id}`, colOpts, spec.x, "x")))
+        .child(row(xy ? "Up (y)" : "Values", h_flex().id(`ch-y-${cell.id}`).min_w(0).gap(4).overflow_x_scrollbar().children((numeric.length ? numeric : cols).map((k) => {
+          const on = spec.y.includes(k);
+          return chip(`ch-y-${cell.id}-${k}`, k, on, (_e, cx) => { spec.y = on ? spec.y.filter((y) => y !== k) : xy ? [k] : [...spec.y, k]; this.edited(); cx.notify(); });
+        }))))
+        .child(row("Split by", pick(`ch-s-${cell.id}`, [["", "Nothing"], ...colOpts.filter(([k]) => k !== spec.x)], spec.series ?? "", "series")))
+        .when(spec.mark === "bubble", (e) => e.child(row("Size", pick(`ch-z-${cell.id}`, numeric.map((k) => [k, k]), spec.z ?? numeric[0], "z"))))
+        .when(!xy, (e) => e
+          .child(row("Combine", pick(`ch-a-${cell.id}`, AGGS, spec.agg ?? "none", "agg")))
+          .child(row("Order", pick(`ch-o-${cell.id}`, [["none", "As returned"], ["x", "By category"], ["value-desc", "Largest first"], ["value-asc", "Smallest first"]], spec.sort ?? "none", "sort"))))
+        // One chip row per setting: a scrolling row inside a wrapping one overlaps in GPUI.
+        .child(row("Numbers", pick(`ch-f-${cell.id}`, [["none", "Plain"], ["$", "$"], ["%", "%"]], spec.format ?? "none", "format")))
+        .when(spec.mark !== "pie" && spec.mark !== "doughnut" && spec.mark !== "table", (e) => e.child(row("Scale", pick(`ch-sc-${cell.id}`, [["linear", "Linear"], ["log", "Log"]], spec.scale ?? "linear", "scale"))))
+        .child(row("Legend", pick(`ch-l-${cell.id}`, [["right", "Right"], ["bottom", "Below"], ["none", "None"]], spec.legend ?? (data.series.length > 1 ? "right" : "none"), "legend")))
+        .child(row("Show", h_flex().id(`ch-show-${cell.id}`).min_w(0).gap(4).overflow_x_scrollbar()
+          .child(toggle("ch-lab", "Values on marks", "labels"))
+          .when(spec.mark === "bar" || spec.mark === "hbar", (e) => e.child(toggle("ch-stack", "Stack", "stack")))
+          .when(spec.mark === "line", (e) => e.child(toggle("ch-conn", "Connect gaps", "connect")))
+          .when(!xy && spec.mark !== "pie" && spec.mark !== "doughnut", (e) => e.child(toggle("ch-swap", "Swap rows and series", "swap")))))
+        .when(data.series.length > 1, (e) => e.child(row("Colors", h_flex().id(`ch-col-${cell.id}`).min_w(0).gap(6).overflow_x_scrollbar().children(data.series.slice(0, 12).map((sr, i) =>
+          h_flex().id(`ch-col-${cell.id}-${i}`).flex_none().gap(4).items_center().cursor_pointer().tooltip("Click to change its color")
+            .on_click((_e, cx) => { const k = CHART_COLORS.indexOf(sr.color); (spec.colors ??= {})[sr.name] = CHART_COLORS[(k + 1) % CHART_COLORS.length]; this.edited(); cx.notify(); })
+            .child(div().size(10).bg(sr.color)).child(div().text_size(11).text_color(c.grey900).child(sr.name)))))))
+        .child(ChartView(c, t, spec, { width: Math.max(320, (w ?? 640) - 24), height: 260,
+          onToggle: (n, cx) => { const h = new Set(spec.hidden ?? []); if (h.has(n)) h.delete(n); else h.add(n); spec.hidden = [...h]; this.edited(); cx.notify(); } })));
   }
 
   output(c, cell, o, k, w) {

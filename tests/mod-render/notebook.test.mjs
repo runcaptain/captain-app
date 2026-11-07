@@ -106,9 +106,14 @@ assert.ok(h.text().includes('2500'), 'stdout');
 
 // The chart draws from df_1 (bars), with its pickers.
 text = h.text();
-assert.ok(text.includes('conv by category'), 'chart drawn from the SQL result');
-await h.click('ch-m-ch1-point');
-assert.ok(h.text().includes('scatter'), 'chart kinds');
+assert.ok(text.includes('Stacked area') && text.includes('Horizontal bar') && text.includes('Doughnut') && text.includes('Bubble'), 'the nine kinds');
+assert.ok(text.includes('Split by') && text.includes('Combine') && text.includes('Log'), 'chart settings');
+assert.ok(text.includes('sofas'), 'categories drawn from the SQL result');
+await h.click('ch-m-ch1-scatter');
+assert.ok(h.text().includes('Up (y)'), 'scatter asks for x and y');
+await h.click('ch-m-ch1-bar');
+await h.click('ch-a-ch1-sum');
+assert.equal(h.mod.nb.cells.find((x) => x.id === 'ch1').meta.chart.agg, 'sum', 'combine by sum, saved in the cell');
 
 // A failing cell: one sentence, Copy details, an agent; no traceback on screen.
 await h.click('nb-add-python');

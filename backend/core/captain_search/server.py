@@ -481,15 +481,81 @@ def table_sample(conn: str, schema: str, table: str, n: int = 20, where: str | N
     return MS.sample(ctx(), conn, schema, table, n, where, order, desc)
 
 
+@app.post("/api/sql/format", dependencies=A)
+def sql_format(body: dict):
+    """{sql, case: upper|lower, conn? | dialect?}: pretty-printed, keywords in that case."""
+    from . import sqltools as ST
+
+    return {"sql": ST.format_sql(str(body.get("sql", "")), body.get("case", "upper"), ST._dialect(ctx(), body.get("conn"), body.get("dialect")))}
+
+
+@app.post("/api/sql/transpile", dependencies=A)
+def sql_transpile(body: dict):
+    """{sql, to, conn? | from?}: the query in another engine's dialect, with warnings for what didn't carry over."""
+    from . import sqltools as ST
+
+    return ST.transpile_sql(str(body.get("sql", "")), ST._dialect(ctx(), body.get("conn"), body.get("from")), str(body.get("to", "")))
+
+
+@app.post("/api/sql/explain", dependencies=A)
+def sql_explain(body: dict):
+    """{conn, sql}: the engine's plan, through the read-only guard."""
+    from . import sqltools as ST
+
+    return ST.explain(ctx(), body["conn"], str(body.get("sql", "")))
+
+
+@app.get("/api/sql/history", dependencies=A)
+def sql_history(conn: str | None = None, status: str | None = None, source: str | None = None, q: str | None = None,
+                days: int = 30, limit: int = 200):
+    """Queries run through Captain, newest first. status: ok | failed. source: app | notebook | preview | cli."""
+    from . import sqltools as ST
+
+    return ST.history(ctx(), conn, status, source, q, max(1, min(days, 365)), max(1, min(limit, 1000)))
+
+
+@app.get("/api/snippets", dependencies=A)
+def snippets_list(engine: str | None = None, q: str | None = None):
+    from . import sqltools as ST
+
+    return ST.snippets(ctx(), engine, q)
+
+
+@app.post("/api/snippets", dependencies=A)
+def snippets_add(body: dict):
+    """{title, sql, description?, engine?, golden?}. {{name}} in the SQL becomes a field when it's inserted."""
+    from . import sqltools as ST
+
+    return ST.save_snippet(ctx(), body)
+
+
+@app.put("/api/snippets/{sid}", dependencies=A)
+def snippets_change(sid: str, body: dict):
+    from . import sqltools as ST
+
+    return ST.save_snippet(ctx(), body, sid)
+
+
+@app.delete("/api/snippets/{sid}", dependencies=A)
+def snippets_delete(sid: str):
+    from . import sqltools as ST
+
+    return ST.delete_snippet(ctx(), sid)
+
+
 @app.post("/api/sql", dependencies=A)
 def sql(body: dict):
     from .connectors.sql import run_sql
 
     c = ctx()
     conn = c.load_connection(body["conn"])
-    r = run_sql(conn, body["sql"], limit=body.get("limit"))
     from .metastore import record_query
 
+    try:
+        r = run_sql(conn, body["sql"], limit=body.get("limit"))
+    except Exception:
+        record_query(c, body["conn"], body["sql"], source="app", ok=False)  # query history shows failures too
+        raise
     record_query(c, body["conn"], body["sql"], rows=r.table.num_rows, ms=r.elapsed_ms, source="app")
     out = {"columns": [{"name": f.name, "type": str(f.type)} for f in r.table.schema],
            "rows": [list(map(_jsonable, row.values())) for row in r.table.slice(0, 1000).to_pylist()],

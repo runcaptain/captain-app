@@ -45,8 +45,13 @@ def sql(conn_name: str, text: str, var: str | None = None, limit: int | None = N
 
     ctx = _context()
     conn = ctx.load_connection(conn_name)
-    r = run_sql(conn, text, limit=limit, allow_large=local)
     from captain_search.metastore import record_query
+
+    try:
+        r = run_sql(conn, text, limit=limit, allow_large=local)
+    except Exception:
+        record_query(ctx, conn_name, text, source="notebook", ok=False)
+        raise
 
     record_query(ctx, conn_name, text, rows=r.table.num_rows, ms=r.elapsed_ms, source="notebook")
     df = r.table.to_pandas()

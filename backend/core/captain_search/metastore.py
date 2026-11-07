@@ -324,7 +324,7 @@ def _queries(ctx: Context, conn_name: str, days: int = 90) -> list[dict]:
             r = json.loads(ctx.store.get(k))
         except Exception:  # noqa: BLE001
             continue
-        if r.get("connection") == conn_name:
+        if r.get("connection") == conn_name and r.get("ok", True):  # a failed query isn't usage
             out.append(r)
     return out
 

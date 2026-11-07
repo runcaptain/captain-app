@@ -24,6 +24,16 @@ ctx = open_context()
 m = NB.save_revision(ctx, "shot-notebook", nb, "shot check")
 print(f"{m.name}@v{m.version}")
 # The same query with its chart first, so a shot shows the chart above the fold. Charts read any cell's result.
-chart_first = {**nb, "cells": [nb["cells"][3], nb["cells"][1]]}
+stock = cell("stock", "sql", "select category, case when in_stock then 'in stock' else 'sold out' end as stock, count(*) as products\nfrom products group by 1, 2 order by 1",
+             conn="demo-store", var="df_2")
+chart_first = {**nb, "cells": [
+    cell("pie", "chart", "df_1", chart={"mark": "doughnut", "data": "df_1", "x": "category", "y": ["products"], "labels": True}),
+    cell("area", "chart", "df_2", chart={"mark": "area", "data": "df_2", "x": "category", "y": ["products"], "series": "stock", "agg": "sum"}),
+    nb["cells"][1], stock]}
 m = NB.save_revision(ctx, "shot-chart", chart_first, "shot check")
+print(f"{m.name}@v{m.version}")
+# A query with a {{value}}, its tools open on "Filled-in query".
+tools = {**nb, "metadata": {**nb["metadata"], "captain": {"vars": {"category": "'Camping'"}}}, "cells": [
+    cell("tq", "sql", "select title, price\nfrom products\nwhere category = {{category}} and {{since}} <= '{{today}}'\norder by price desc", conn="demo-store", var="df_1")]}
+m = NB.save_revision(ctx, "shot-sql-tools", tools, "shot check")
 print(f"{m.name}@v{m.version}")
