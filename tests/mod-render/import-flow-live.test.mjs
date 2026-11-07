@@ -11,13 +11,13 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
-import { cstBin } from './backend.mjs';
+import { cstBin, tidy } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
 const { bin: cst, why } = cstBin();
 if (!cst) { console.log(`import-flow-live render test: skipped (${why})`); process.exit(0); }
-const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cst-flow-'));
+const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-flow-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'flow', '--storage', path.join(work, 'store')], { env });
 
@@ -31,7 +31,7 @@ const j = JSON.parse(line);
 const get = async (p) => { const go = () => fetch(`http://127.0.0.1:${j.port}${p}`, { headers: { Authorization: `Bearer ${j.token}` } }); let r; try { r = await go(); } catch { r = await go(); } return r.json(); };
 globalThis.__shared = { 'captain.daemon': { state: 'ready', base: `http://127.0.0.1:${j.port}`, token: j.token } };
 
-const copy = (mod) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), `${mod}-`)); fs.cpSync(path.join(root, 'defaults/mods', mod), d, { recursive: true }); return d; };
+const copy = (mod) => { const d = tidy(fs.mkdtempSync(path.join(os.tmpdir(), `${mod}-`))); fs.cpSync(path.join(root, 'defaults/mods', mod), d, { recursive: true }); return d; };
 const { default: Data } = await import(path.join(copy('captain-data'), 'main.js'));
 const { default: Import } = await import(path.join(copy('captain-import'), 'main.js'));
 const until = async (h, ok, what, others = []) => {

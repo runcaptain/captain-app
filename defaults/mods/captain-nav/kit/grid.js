@@ -14,11 +14,13 @@
 // to the services, so they cover the whole table, and Previous and Next page through it. Make it outside render.
 //   const grid = new ResultGrid({ id: "rows", name: "products", load: (q) => api(`/api/tables/c/s/t/rows${query(q)}`) });
 //   grid.fetch(cx);                      // q = {offset, limit, order, desc, where, count}
+//   grid.render(c, { fill: true })       // takes the height its parent gives it and scrolls inside
+// `source` ("Databricks") names where rows come from while a slow page loads: "Reading rows from Databricks, 4 s".
 //
 // Columns format by their `kind` when the services send one: numbers right-aligned, decimals exactly as sent, lists
 // and structs shortened ("[3] a, b, c"). Clicking a row opens it below the grid, every column written out in full.
 import { div, svg } from "gpui-kit";
-import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
+import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input, Popup } from "gpui-base";
 import { writeTextFile, readTextFile, home } from "herdr";
 import { MONO } from "./tokens.js";
 import { icon } from "./icons.js";
@@ -128,7 +130,7 @@ export function passes(v, f, type) {
 }
 
 export class ResultGrid {
-  constructor({ id, table, name, load, pageSize = 100, searchable = false }) {
+  constructor({ id, table, name, load, pageSize = 100, searchable = false, source = null }) {
     this.id = id;
     this.name = name ?? table?.var ?? "result";
     this.openRow = null; // the row shown in full below the grid
@@ -146,6 +148,8 @@ export class ResultGrid {
       this.searchBox?.on("submit", (_e, cx) => this.applyWhere(cx));
       this.loading = false;
       this.error = null;
+      this.source = source;
+      this.orderOpen = false; // the Order by list
     }
     this.set(table);
   }
@@ -157,6 +161,9 @@ export class ResultGrid {
     const seq = (this.seq = (this.seq ?? 0) + 1);
     const q = { offset, limit: this.page.limit, order: this.order?.name, desc: this.order?.desc ? "true" : undefined, where: this.where || undefined, search: this.search || undefined, count: this.page.total === null ? "true" : undefined };
     this.loading = true;
+    this.started = Date.now();
+    // Redraw each second while a page loads, so the time on screen moves (one timer per grid).
+    if (!this.ticking && cx.timer) { this.ticking = true; cx.timer.every(1000, (cx) => { if (this.loading) cx.notify(); }); }
     cx.spawn(async (cx) => {
       const r = await this.load(q);
       if (seq !== this.seq) return;
@@ -331,7 +338,7 @@ export class ResultGrid {
       .on_click(onClick).child(label);
   }
 
-  render(c, { height = 300 } = {}) {
+  render(c, { height = 300, fill = false } = {}) {
     const id = this.id;
     const all = this.table.columns ?? [];
     const cols = all.map((col, j) => [col, j]).filter(([, j]) => !this.hidden.has(j));
@@ -339,6 +346,15 @@ export class ResultGrid {
     const idx = this.view();
     const width = NUM_W + cols.length * COL;
     const bodyH = Math.max(ROW, Math.min(idx.length, Math.floor(height / ROW)) * ROW);
+    // Nothing to show yet while the services read the first page: skeleton rows, where from and for how long.
+    const waiting = this.paged && this.loading && !rows.length;
+    const secs = waiting ? Math.floor((Date.now() - (this.started ?? Date.now())) / 1000) : 0;
+    const skeleton = v_flex().id(`gwait-${id}`).w_full().gap(0)
+      .child(h_flex().h(ROW + 4).px(10).gap(8).items_center().text_size(12).text_color(c.grey900)
+        .child(div().child(`Reading rows${this.source ? ` from ${this.source}` : ""}`))
+        .child(div().font_family(MONO).text_color(c.grey500).child(`${secs} s`)))
+      .children(Array.from({ length: 8 }, (_, i) => h_flex().h(ROW).px(10).gap(16).items_center().border_b(1).border_color(c.rule)
+        .children([0, 1, 2, 3].map((k) => div().h(10).w(60 + ((i * 37 + k * 53) % 90)).bg(c.surface2)))));
     const filters = this.paged ? 0 : Object.keys(this.filters).length;
     const base = this.paged ? this.page.offset : 0;
     const list = v_virtual_list(`grid-${id}`, idx.length, ROW, (i) => `${id}:${idx[i]}`, (range) => {
@@ -374,18 +390,19 @@ export class ResultGrid {
             .on_click((_e, cx) => this.openMenu(cx, j)).child(this.icon("chevron-down", 12)));
       }));
     const total = this.table.row_count ?? rows.length;
-    return v_flex().id(`grid-wrap-${id}`).w_full()
+    const body = waiting ? skeleton : div().id(`gx-${id}`).w_full().when(fill, (e) => e.flex_1().min_h(0)).overflow_x_scrollbar().child(v_flex().w(width).when(fill, (e) => e.h_full())
+        .child(header)
+        .child(div().when(fill, (e) => e.flex_1().min_h(0)).when(!fill, (e) => e.h(bodyH)).relative()
+          .when(!idx.length, (e) => e.child(div().px(10).py(4).text_size(12).text_color(c.grey500).child(this.loading ? "Loading rows" : filters || this.where ? "No rows match." : "No rows.")))
+          .when(idx.length > 0, (e) => e.child(list.size_full().on_item_click((key, cx) => { const r = Number(String(key).split(":").pop()); this.openRow = this.openRow === r ? null : r; cx.notify(); })).child(Scrollbar.vertical(`grid-${id}`).viewport_from_layout().absolute().inset_0()))));
+    return v_flex().id(`grid-wrap-${id}`).w_full().when(fill, (e) => e.flex_1().min_h(0).h_full())
       .when(this.paged, (e) => e.child(this.whereRow(c)))
       .when(this.paged && !!this.error, (e) => e.child(div().px(10).py(6).text_size(12).text_color(c.fail).child(this.error)))
       .when(this.menu !== null && this.menu !== undefined && all[this.menu], (e) => e.child(this.columnMenu(c, this.menu)))
-      .child(div().id(`gx-${id}`).w_full().overflow_x_scrollbar().child(v_flex().w(width)
-        .child(header)
-        .child(div().h(bodyH).relative()
-          .when(!idx.length, (e) => e.child(div().px(10).py(4).text_size(12).text_color(c.grey500).child(this.loading ? "Loading rows" : filters || this.where ? "No rows match." : "No rows.")))
-          .when(idx.length > 0, (e) => e.child(list.size_full().on_item_click((key, cx) => { const r = Number(String(key).split(":").pop()); this.openRow = this.openRow === r ? null : r; cx.notify(); })).child(Scrollbar.vertical(`grid-${id}`).viewport_from_layout().absolute().inset_0())))))
+      .child(body)
       .when(this.openRow !== null && !!rows[this.openRow], (e) => e.child(this.rowPanel(c, this.openRow)))
       .when(this.paged, (e) => e.child(this.pager(c)))
-      .child(h_flex().h(28).px(10).gap(10).items_center().text_size(11.5).text_color(c.grey500).border_t(1).border_color(c.rule)
+      .child(h_flex().flex_none().h(28).px(10).gap(10).items_center().text_size(11.5).text_color(c.grey500).border_t(1).border_color(c.rule)
         .when(!!this.table.var, (e) => e.child(div().font_family(MONO).text_color(c.navy).child(this.table.var)))
         .when(!this.paged, (e) => e.child(div().child(filters ? `${fmtInt(idx.length)} of ${fmtInt(rows.length)} rows match` : `${fmtInt(total)} row${total === 1 ? "" : "s"}, ${all.length} column${all.length === 1 ? "" : "s"}`)))
         .when(this.paged, (e) => e.child(div().child(`${all.length} column${all.length === 1 ? "" : "s"}`)))
@@ -401,15 +418,37 @@ export class ResultGrid {
 
   whereRow(c) {
     const id = this.id;
-    return h_flex().px(10).py(6).gap(8).items_center().border_b(1).border_color(c.rule).text_size(11.5)
+    // Wraps in a narrow pane rather than squeezing the box to nothing.
+    return h_flex().flex_none().flex_wrap().px(10).py(6).gap(8).items_center().border_b(1).border_color(c.rule).text_size(11.5)
       .when(!!this.searchBox, (e) => e.child(div().w(200).flex_none().h(24).px(6).flex().items_center().border_1().border_color(this.search ? c.blue : c.grey300)
         .child(Input.new(this.searchBox).w_full().text_size(11.5).text_color(c.navy))))
       .child(div().flex_none().text_color(c.grey500).child("Where"))
-      .child(div().flex_1().min_w(0).max_w(480).h(24).px(6).flex().items_center().border_1().border_color(this.where ? c.blue : c.grey300)
+      .child(div().flex_1().min_w(180).max_w(480).h(24).px(6).flex().items_center().border_1().border_color(this.where ? c.blue : c.grey300)
         .child(Input.new(this.whereBox).w_full().text_size(11.5).font_family(MONO).text_color(c.navy)))
       .child(this.chip(c, `gwhere-${id}`, "Apply", false, (_e, cx) => this.applyWhere(cx)))
       .when(!!this.where || !!this.search, (e) => e.child(this.chip(c, `gwhere-clear-${id}`, "Clear", false, (_e, cx) => { this.whereBox.set_value(""); this.searchBox?.set_value(""); this.applyWhere(cx); })))
-      .when(!!this.order, (e) => e.child(div().text_color(c.grey500).child(`sorted by ${this.order.name}${this.order.desc ? ", largest first" : ""}`)));
+      .child(this.orderBy(c));
+  }
+
+  /** Order by: one button, and the columns in a list that opens over the grid (never a wall of chips). */
+  orderBy(c) {
+    const id = this.id;
+    const o = this.order;
+    const pick = (order) => (_e, cx) => { this.order = order; this.orderOpen = false; this.fetch(cx, 0); };
+    const opt = (key, label, on, onClick) => div().id(`gorder-${id}-${key}`).h(24).px(8).flex().flex_none().items_center().cursor_pointer().text_size(12)
+      .text_color(on ? c.blue : c.navy).when(on, (e) => e.bg(c.blueLight)).hover((st) => st.bg(c.surface2)).on_click(onClick).child(label);
+    const trigger = h_flex().id(`gorder-btn-${id}`).h(24).px(8).gap(5).flex_none().items_center().cursor_pointer().text_size(11.5)
+      .border_1().border_color(o || this.orderOpen ? c.blue : c.grey300).text_color(o ? c.blue : c.grey900)
+      .on_click((_e, cx) => { this.orderOpen = !this.orderOpen; cx.notify(); })
+      .child(div().max_w(200).truncate().child(o ? `Order by ${o.name}${o.desc ? ", largest first" : ""}` : "Order by"))
+      .child(this.icon("chevron-down", 11));
+    const cols = (this.table.columns ?? []).map((x) => x.name);
+    return Popup.new(`gorder-pop-${id}`, trigger).anchor("bottom_left")
+      .when(this.orderOpen, (e) => e.content(v_flex().id(`gorder-list-${id}`).w(260).max_h(300).overflow_y_scrollbar().py(4).bg(c.surface).border_1().border_color(c.grey300)
+        .child(opt("none", "As stored", !o, pick(null)))
+        .when(!!o, (e) => e.child(opt("dir", o?.desc ? "Smallest first instead" : "Largest first instead", false, pick(o ? { name: o.name, desc: !o.desc } : null))))
+        .child(div().h(1).my(4).bg(c.rule))
+        .children(cols.map((n, i) => opt(`c${i}`, n, o?.name === n, pick({ name: n, desc: false }))))));
   }
 
   /** "1 to 100 of 12,480", Previous and Next. */

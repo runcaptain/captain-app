@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
+import { tidy } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
@@ -32,7 +33,7 @@ const SCREENS = {
 let checked = 0;
 for (const [mod, tabs] of Object.entries(SCREENS)) {
   if (!fs.existsSync(path.join(root, 'defaults/mods', mod))) continue;
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), `${mod}-down-`));
+  const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), `${mod}-down-`)));
   fs.cpSync(path.join(root, 'defaults/mods', mod), work, { recursive: true });
   fs.copyFileSync(path.join(root, 'defaults/captain/kit/cst.js'), path.join(work, 'kit/real-cst.js'));
   fs.copyFileSync(path.join(here, 'fixture-cst.js'), path.join(work, 'kit/cst.js'));

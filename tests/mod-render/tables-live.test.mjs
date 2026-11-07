@@ -8,13 +8,13 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
-import { cstBin } from './backend.mjs';
+import { cstBin, tidy } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
 const { bin: cst, why } = cstBin();
 if (!cst) { console.log(`tables-live render test: skipped (${why})`); process.exit(0); }
-const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cst-tables-'));
+const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-tables-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'tables', '--storage', path.join(work, 'store')], { env });
 spawnSync(cst, ['demo', 'seed'], { env });
@@ -30,7 +30,7 @@ const j = JSON.parse(line);
 globalThis.__shared = { 'captain.daemon': { state: 'ready', base: `http://127.0.0.1:${j.port}`, token: j.token } };
 globalThis.__props = { tab: 'tables' };
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-tables-'));
+const dir = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-tables-')));
 fs.cpSync(path.join(root, 'defaults/mods/captain-data'), dir, { recursive: true });
 const { default: Mod } = await import(path.join(dir, 'main.js'));
 const h = harness(Mod);
@@ -55,7 +55,7 @@ const price = h.mod.tables.rows.table.columns.findIndex((c) => c.name === 'price
 await h.click(`gh-table-rows-${price}`);
 await until((t) => /ORDER BY "?price"?/.test(t), 'ordered');
 await h.click(`gh-table-rows-${price}`);
-await until((t) => /ORDER BY "?price"? DESC/.test(t) && t.includes('sorted by price, largest first'), 'ordered, largest first');
+await until((t) => /ORDER BY "?price"? DESC/.test(t) && t.includes('Order by price, largest first'), 'ordered, largest first');
 await h.click('gnext-table-rows');
 await until((t) => /101 to 200 of 480/.test(t), 'next page');
 assert.ok(h.text().includes('Download CSV'), 'CSV export from the grid');

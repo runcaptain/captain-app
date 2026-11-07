@@ -18,3 +18,9 @@ export function cstBin() {
   const b = a.status === 0 ? spawnSync(uv, ['pip', 'install', '-q', '-e', '.[dev]'], { cwd: core, stdio: 'inherit' }) : a;
   return fs.existsSync(bin) && b.status === 0 ? { bin } : { bin: null, why: 'setting up backend/core failed' };
 }
+
+/** Delete a test's temp folder (a scratch workspace, a copy of a mod) when the test ends, passed or failed. */
+export function tidy(dir) {
+  process.on('exit', () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
+  return dir;
+}

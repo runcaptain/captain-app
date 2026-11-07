@@ -10,14 +10,14 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
-import { cstBin } from './backend.mjs';
+import { cstBin, tidy } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
 const { bin: cst, why } = cstBin();
 if (!cst) { console.log(`scopes-live render test: skipped (${why})`); process.exit(0); }
 
-const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cst-scopes-'));
+const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-scopes-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'scopes', '--storage', path.join(work, 'store')], { env });
 spawnSync(cst, ['demo', 'seed'], { env });
@@ -33,7 +33,7 @@ const get = async (p) => (await fetch(base + p, { headers: { Authorization: `Bea
 
 // Each mod from its own copy, as the app loads them.
 const copy = async (name) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${name}-`));
+  const dir = tidy(fs.mkdtempSync(path.join(os.tmpdir(), `${name}-`)));
   fs.cpSync(path.join(root, 'defaults/mods', name), dir, { recursive: true });
   return dir;
 };

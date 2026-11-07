@@ -111,6 +111,7 @@ export default class CaptainData extends View {
     if (p.tab === "models" || p.tab === "labels" || p.tab === "tables") this.tab = p.tab;
     if (p.pageTab) this.page.tab = p.pageTab;
     if (p.tablesTab) this.tables.tab = p.tablesTab; // "rows": the first table's rows, once it's picked
+    if (p.tablesPick) this.tables.want = p.tablesPick; // a table by name instead of the first
     // {importWith: {conn, sql, name}}: the import wizard, open on that query (a layout, or the real-window check).
     if (p.importWith) cx.timer.after(1500, () => openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { start: p.importWith } }));
     if (p.tab === "tables") this.tables.load(cx);

@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
+import { tidy } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
@@ -25,7 +26,7 @@ const routes = (profile) => [
 async function mount(profile) {
   globalThis.__routes = routes(profile);
   globalThis.__asked = [];
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-page-'));
+  const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-page-')));
   fs.cpSync(path.join(root, 'defaults/mods/captain-data'), work, { recursive: true });
   fs.copyFileSync(path.join(root, 'defaults/captain/kit/cst.js'), path.join(work, 'kit/real-cst.js'));
   fs.copyFileSync(path.join(here, 'fixture-cst.js'), path.join(work, 'kit/cst.js'));

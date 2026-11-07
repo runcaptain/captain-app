@@ -32,8 +32,11 @@ assert.equal(columnType(columns[3], []), 'json');
 assert.equal(shortJson('["a","b","c"]'), '[3] a, b, c');
 assert.equal(shortJson('{"k":1,"j":"x"}'), '{2} k: 1, j: x');
 
-const g = new ResultGrid({ id: 'p', name: 'products', load });
+const g = new ResultGrid({ id: 'p', name: 'products', load, source: 'Databricks' });
 g.fetch(cx);
+// While the first page is read: skeleton rows, where from, and the seconds so far. Never an empty grid.
+let waitText = textOf(g.render(c)).join(' | ');
+assert.ok(waitText.includes('Reading rows from Databricks') && /\d+ s/.test(waitText), waitText.slice(0, 200));
 await flush();
 let t = textOf(g.render(c)).join(' | ');
 assert.ok(t.includes('1 to 100 of 250'), t.slice(0, 300));
@@ -51,6 +54,15 @@ await click(g, 'gh-p-2');
 await click(g, 'gh-p-2');
 assert.deepEqual([asked.at(-1).order, asked.at(-1).desc, asked.at(-1).offset], ['price', 'true', 0]);
 assert.equal(g.table.rows[0][0], 250, 'the largest price of all 250 first');
+// Order by, from its list: one button, the columns in a popup.
+await click(g, 'gorder-btn-p');
+assert.ok(textOf(g.render(c)).join(' | ').includes('As stored'), 'the list opens');
+await click(g, 'gorder-p-c1');
+assert.deepEqual([asked.at(-1).order, asked.at(-1).desc], ['title', undefined]);
+assert.equal(g.orderOpen, false, 'the list closes on a pick');
+await click(g, 'gorder-btn-p');
+await click(g, 'gorder-p-none');
+assert.equal(asked.at(-1).order, undefined, 'back to as stored');
 // Where: the whole table, counted again.
 g.whereBox.set_value('id < 31');
 await click(g, 'gwhere-p');

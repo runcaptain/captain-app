@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
+import { tidy } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
@@ -25,7 +26,7 @@ globalThis.__routes = [
   [/^\/api\/labels$/, 'labels'],
 ];
 
-const work = fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-'));
+const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-')));
 // The mod as shipped, with its kit; the kit's daemon client is swapped for the fixtures.
 fs.cpSync(path.join(root, 'defaults/mods/captain-data'), work, { recursive: true });
 fs.copyFileSync(path.join(root, 'defaults/captain/kit/cst.js'), path.join(work, 'kit/real-cst.js'));

@@ -11,6 +11,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
+import { tidy } from './backend.mjs';
 import { cstBin } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
@@ -19,7 +20,7 @@ const { bin: cst, why } = cstBin();
 if (!cst) { console.log(`live-backend render test: skipped (${why})`); process.exit(0); }
 const python = fs.readFileSync(cst, 'utf8').split('\n')[0].replace(/^#!/, '');
 
-const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cst-live-'));
+const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-live-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'live', '--storage', path.join(work, 'store')], { env });
 spawnSync(cst, ['demo', 'seed'], { env });
@@ -47,7 +48,7 @@ await startServe();
 const FORBIDDEN = /error sending request|fetching http|127\.0\.0\.1|localhost|\bport\b|curl|engine|daemon|Traceback/i;
 
 async function mount(mod) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${mod}-live-`));
+  const dir = tidy(fs.mkdtempSync(path.join(os.tmpdir(), `${mod}-live-`)));
   fs.cpSync(path.join(root, 'defaults/mods', mod), dir, { recursive: true });
   const { default: Mod } = await import(path.join(dir, 'main.js'));
   const h = harness(Mod);

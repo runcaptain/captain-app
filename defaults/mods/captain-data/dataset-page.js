@@ -160,7 +160,7 @@ export class DatasetPage {
   sample(c) {
     const g = this.rows;
     const files = g?.last?.files ?? [];
-    return v_flex().id("ds-sample").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(8).gap(8)
+    return v_flex().id("ds-sample").flex_1().min_h(0).px(20).py(8).gap(8)
       .when(files.length > 1, (e) => e.child(h_flex().id("ds-files").gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
         .child(div().flex_none().text_color(c.grey500).child("File"))
         .children(files.slice(0, 12).map((f, i) => {
@@ -170,7 +170,7 @@ export class DatasetPage {
             .on_click((_e, cx) => { this.file = f.file; this.loadRows(cx); }).child(String(f.file).split("/").pop());
         }))))
       .when(!g, (e) => e.child(Skeleton(c, 8)))
-      .when(!!g, (e) => e.child(div().flex_none().border_1().border_color(c.rule).child(g.render(c, { height: 400 }))));
+      .when(!!g, (e) => e.child(v_flex().flex_1().min_h(0).border_1().border_color(c.rule).child(g.render(c, { fill: true }))));
   }
 
   details(c, d) {

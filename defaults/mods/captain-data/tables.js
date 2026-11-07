@@ -28,6 +28,10 @@ function ago(iso) {
 // A schema as people read it: DuckDB's '"t-store".main' is t-store.main.
 const schemaWords = (s) => String(s ?? "").replace(/"/g, "");
 
+// How a database is named on screen while its rows load.
+const ENGINES = { databricks: "Databricks", snowflake: "Snowflake", bigquery: "BigQuery", postgres: "Postgres", postgresql: "Postgres", redshift: "Redshift", mysql: "MySQL", duckdb: "DuckDB", trino: "Trino", clickhouse: "ClickHouse", athena: "Athena", mssql: "SQL Server", sqlserver: "SQL Server" };
+const engineName = (e) => (e ? ENGINES[String(e).toLowerCase()] ?? e : null);
+
 export class Tables {
   constructor(host) {
     this.host = host;
@@ -78,9 +82,11 @@ export class Tables {
     cx.spawn(async (cx) => {
       const r = await api(`/api/tables/${enc(conn)}`);
       this.trees.set(conn, r.ok ? r.data : { missing: r.status === 404 ? "Not read yet." : "Couldn't load its tables." });
-      // Nothing open yet: open the first table, so the page shows something useful.
+      // Nothing open yet: open the asked-for table (props.tablesPick), else the first, so the page shows something.
+      const asked = r.ok && this.want ? (r.data.schemas ?? []).find((x) => (x.tables ?? []).some((t) => t.name === this.want)) : null;
       const first = r.ok ? (r.data.schemas ?? []).find((x) => (x.tables ?? []).length) : null;
-      if (!this.sel && first) this.pick(cx, conn, first.name, first.tables[0].name);
+      if (!this.sel && asked) { this.pick(cx, conn, asked.name, this.want); this.want = null; }
+      else if (!this.sel && first && !this.want) this.pick(cx, conn, first.name, first.tables[0].name);
       cx.notify();
     });
   }
@@ -170,7 +176,8 @@ export class Tables {
     const s = this.sel;
     if (!s) return;
     const path = `/api/tables/${enc(s.conn)}/${enc(s.schema)}/${enc(s.name)}/rows`;
-    this.rows = new ResultGrid({ id: "table-rows", name: s.name, load: (q) => api(`${path}${query(q)}`, { timeout: 60 }) });
+    const engine = (this.conns ?? []).find((k) => k.connection === s.conn)?.engine;
+    this.rows = new ResultGrid({ id: "table-rows", name: s.name, source: engineName(engine) ?? s.conn, load: (q) => api(`${path}${query(q)}`, { timeout: 120 }) });
     this.rows.fetch(cx);
   }
 
@@ -319,10 +326,11 @@ export class Tables {
 
   rowsView(c) {
     const g = this.rows;
-    return v_flex().id("table-rows-tab").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(10).gap(8)
+    // The grid takes the height left under the tabs and scrolls inside itself: nothing pushes it below the fold.
+    return v_flex().id("table-rows-tab").flex_1().min_h(0).px(20).pt(8).pb(10).gap(6)
       .when(!g, (e) => e.child(Skeleton(c, 8)))
-      .when(!!g, (e) => e.child(div().flex_none().border_1().border_color(c.rule).child(g.render(c, { height: 380 })))
-        .when(!!g.page?.sql, (e) => e.child(div().text_size(11).font_family(MONO).text_color(c.grey500).truncate().child(g.page.sql))));
+      .when(!!g, (e) => e.child(v_flex().flex_1().min_h(0).border_1().border_color(c.rule).child(g.render(c, { fill: true })))
+        .when(!!g.page?.sql, (e) => e.child(div().flex_none().text_size(11).font_family(MONO).text_color(c.grey500).truncate().child(g.page.sql))));
   }
 
   insights(c, p) {

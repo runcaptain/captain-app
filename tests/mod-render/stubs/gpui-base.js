@@ -13,6 +13,15 @@ export const InputState = {
   },
 };
 export const Input = { new: (s) => el('input', [s]) };
+// An anchored popup (the real one paints above everything): its trigger and its content are children here, so tests
+// can read and click both.
+export const Popup = {
+  new: (id, trigger) => {
+    const e = el('popup', [id]).child(trigger);
+    e.__self.content = function (x) { if (x) this.kids.push(x); return this.proxy; };
+    return e;
+  },
+};
 export const VirtualListScrollHandle = { new: () => ({ scrolled: [], scroll_to_item(i, how) { this.scrolled.push([i, how]); }, scroll_to_bottom() {}, release() { return true; } }) };
 export const EditorState = {
   new: (o = {}) => {

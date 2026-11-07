@@ -8,13 +8,13 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
-import { cstBin } from './backend.mjs';
+import { cstBin, tidy } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
 const { bin: cst, why } = cstBin();
 if (!cst) { console.log(`import-live render test: skipped (${why})`); process.exit(0); }
-const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cst-import-'));
+const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-import-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'imp', '--storage', path.join(work, 'store')], { env });
 spawnSync(cst, ['demo', 'seed'], { env });
@@ -38,7 +38,7 @@ const brand = await call('/api/scopes', { type: 'brand', name: 'Acme Shop' });
 globalThis.__shared['captain.scope'] = { kind: 'scope', id: brand.id, label: 'Acme Shop' };
 globalThis.__props = { overlay: 'o1' };
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'captain-import-'));
+const dir = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-import-')));
 fs.cpSync(path.join(root, 'defaults/mods/captain-import'), dir, { recursive: true });
 const { default: Mod } = await import(path.join(dir, 'main.js'));
 const h = harness(Mod);
