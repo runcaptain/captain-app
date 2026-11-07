@@ -118,7 +118,7 @@ export default class CaptainCompare extends View {
       if (this.starting || (this.error && !this.errorR?.status)) this.loadBacktests(cx);
       else if (this.sel && this.run?.error && !this.runR?.status) this.open(cx, this.sel.backtest, this.sel.version);
     });
-    // Opened by name (palette): shared "captain.open" {section: "comparisons", backtest, version, at}.
+    // Opened by name (palette): shared "captain.open" {section: "comparisons", backtest, version, tab?, at}.
     cx.timer.every(500, (cx) => this.profiler.tick(cx));
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
@@ -126,6 +126,8 @@ export default class CaptainCompare extends View {
         this.opened = o.at;
         const v = o.version ?? this.backtests?.find((b) => b.name === o.backtest)?.latest ?? 1;
         this.open(cx, o.backtest, v);
+        if (o.tab) this.tab = o.tab;
+        if (o.profile) this.autoProfile = true; // and profile it once it loads
       }
     });
     // The Explorer's pick filters the backtests: reload them, keeping the open run if it's still listed.

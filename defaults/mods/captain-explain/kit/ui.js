@@ -147,7 +147,8 @@ export function Line(c, values, { height = 120, min, max } = {}) {
     const x = `${(i / (nums.length - 1)) * 100}%`, y = `${(1 - (v - lo) / span) * 92 + 4}%`;
     p = i === 0 ? p.move_to(x, y) : p.line_to(x, y);
   });
-  return box.child(div().absolute().inset_0().child(globalThis.window.paint_path(p.build(), c.blue)));
+  // size_full: a painted path's percentages resolve against the painted element, which has no size of its own.
+  return box.child(div().absolute().inset_0().child(globalThis.window.paint_path(p.build(), c.blue).size_full()));
 }
 
 /**

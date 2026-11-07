@@ -16,7 +16,9 @@ import { MONO } from "./tokens.js";
 import { int } from "./num.js";
 
 const pct = (x) => (x == null ? "" : `${Math.round(x * 100)}%`);
-const kindOf = (d) => d?.kind ?? (d?.classes ?? []).find((k) => ["queries", "judgments", "events", "catalog"].includes(k)) ?? null;
+// A dataset's role. The record's own `kind` is "dataset"; the role is in `classes` (the list's `kind` carries it too).
+const ROLES = ["queries", "judgments", "events", "catalog"];
+const kindOf = (d) => (d?.classes ?? []).find((k) => ROLES.includes(k)) ?? (ROLES.includes(d?.kind) ? d.kind : null);
 const sleep = (cx, ms) => new Promise((r) => cx.timer.after(ms, () => r()));
 
 /** Wait for a job: {ok, result} or {ok: false, error}. */
@@ -114,7 +116,7 @@ export class EvalHealth {
   }
 
   section(c, title, children) {
-    return v_flex().gap(8).p(14).border_1().border_color(c.rule)
+    return v_flex().w_full().gap(8).p(14).border_1().border_color(c.rule)
       .child(div().text_size(13).font_semibold().text_color(c.navy).child(title)).children(children);
   }
 
@@ -139,13 +141,14 @@ export class EvalHealth {
     const h = this.health;
     const rep = h.representativeness ?? {}, st = h.staleness ?? {}, rel = h.reliability ?? {};
     const tone = h.status === "healthy" ? "good" : h.status === "needs refresh" ? "warn" : "bad";
-    return v_flex().gap(12)
+    // w_full and min_w(0) on the text: in a scroll view a row is as wide as its text unless told, so it ran off.
+    return v_flex().w_full().gap(12)
       .child(h_flex().gap(10).items_center()
         .child(Badge(c, h.status ?? "checked", tone))
-        .child(div().text_size(12.5).text_color(c.grey900).child(`${h.queries ?? ""} and ${h.judgments ?? ""}: ${h.n_queries ?? 0} queries, ${h.n_grades ?? 0} grades`)))
+        .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child(`${h.queries ?? ""} and ${h.judgments ?? ""}: ${int(h.n_queries ?? 0)} queries, ${int(h.n_grades ?? 0)} grades`)))
       .child(v_flex().gap(4).children((h.findings ?? []).map((f, i) => h_flex().id(`eh-f-${i}`).gap(8).items_start()
         .child(div().size(6).mt(6).flex_none().bg(tone === "good" ? c.good : c.warn))
-        .child(div().flex_1().text_size(13).line_height("19px").text_color(c.navy).child(f)))))
+        .child(div().flex_1().min_w(0).text_size(13).line_height("19px").text_color(c.navy).child(f)))))
       .child(this.section(c, "Does it look like your traffic?", [
         rep.traffic_covered != null ? div().text_size(12.5).text_color(c.grey900).child(`The set's queries cover ${pct(rep.traffic_covered)} of recent searches.`) : div(),
         this.bar(c, "Head", rep.by_band?.head), this.bar(c, "Torso", rep.by_band?.torso), this.bar(c, "Tail", rep.by_band?.tail),
@@ -177,7 +180,7 @@ export class EvalHealth {
       .child(h_flex().gap(10).items_center()
         .child(v_flex().flex_1().min_w(0).gap(2)
           .child(div().text_size(13).font_semibold().text_color(c.navy).child("Refresh as a new version"))
-          .child(div().text_size(12).text_color(c.grey900).child("Adds queries from recent traffic and drops grades on retired products, as new versions. The sealed holdout and the old versions stay as they are.")))
+          .child(div().min_w(0).text_size(12).text_color(c.grey900).child("Adds queries from recent traffic and drops grades on retired products, as new versions. The sealed holdout and the old versions stay as they are.")))
         .when(!plan, (e) => e.child(Button(c, "eh-plan", this.busy === "plan" ? "Planning..." : "See what would change", (_e, cx) => this.refresh(cx, false), { small: true, disabled: Boolean(this.busy) }))))
       .when(Boolean(plan), (e) => e
         .child(v_flex().gap(2).children((plan.changelog ?? []).map((l, i) => div().id(`eh-cl-${i}`).text_size(12.5).text_color(c.navy).child(l))))
@@ -193,7 +196,7 @@ export class EvalHealth {
     if (!this.list) return v_flex().p(20).child(Skeleton(c, 5));
     const kind = kindOf(this.d);
     const other = kind === "queries" ? "judgments" : "queries";
-    return v_flex().id("eval-health").gap(14).px(20).py(14)
+    return v_flex().id("eval-health").w_full().gap(14).px(20).py(14)
       .child(h_flex().gap(16).items_start().flex_wrap()
         .child(this.chooser(c, other === "judgments" ? "Its grades" : "Its queries", other, other))
         .child(this.chooser(c, "Recent searches (logs)", "events", "logs", true))

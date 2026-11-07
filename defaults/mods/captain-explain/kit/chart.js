@@ -1,5 +1,8 @@
 // captain-ui: a chart from a table that is already totalled: bars, a line, or points (scatter). Draws at most
-// MAX points, so a big result never stalls a frame: total it in SQL or Python first.
+// MAX points, so a big result never stalls a frame: total it in SQL or Python first. Curve: a line over 0..1 (Runs'
+// trigger-rate curves).
+// A painted path's percentages resolve against the painted element itself, which takes no size of its own: without
+// size_full() every y is 0 and a line draws flat along the top. tests/mod-render/charts-gallery shoots each chart.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { PathBuilder } from "gpui-kit";
@@ -45,7 +48,7 @@ export function Chart(c, { mark = "bar", points = [], xLabel = "", yLabel = "" }
   } else if (paint && mark === "line" && points.length > 1) {
     let path = PathBuilder.stroke(2);
     points.forEach((p, i) => { path = i === 0 ? path.move_to(`${X(i)}%`, `${Y(p.y)}%`) : path.line_to(`${X(i)}%`, `${Y(p.y)}%`); });
-    plot.child(div().absolute().inset_0().child(paint(path.build(), c.blue)));
+    plot.child(div().absolute().inset_0().child(paint(path.build(), c.blue).size_full()));
   } else {
     plot.children(points.map((p, i) => div().absolute().left(`${X(i)}%`).top(`${Y(p.y)}%`).size(6).ml(-3).mt(-3).rounded_full().bg(c.blue)));
   }
@@ -61,4 +64,24 @@ export function Chart(c, { mark = "bar", points = [], xLabel = "", yLabel = "" }
     .child(h_flex().gap(10).text_size(11).text_color(c.grey500)
       .child(div().child(`${yLabel} by ${xLabel}`))
       .when(points.length >= MAX, (e) => e.child(div().child(`first ${MAX} rows`))));
+}
+
+/** A line over x in 0..1 (each point {x, y}), with a zero rule; dashed when it is only directional. Percent geometry,
+ *  so it fills whatever width it is given. */
+export function Curve(c, points, { height = 140, color, dashed = false } = {}) {
+  const box = div().relative().w_full().h(height).border_1().border_color(c.rule);
+  const paint = globalThis.window?.paint_path;
+  if (!paint || !points.length) return box;
+  const ys = points.map((p) => p.y ?? 0);
+  const lo = Math.min(0, ...ys), hi = Math.max(0, ...ys);
+  const span = hi - lo || 1;
+  const X = (r) => `${(4 + r * 92).toFixed(2)}%`;
+  const Y = (v) => `${(6 + (1 - (v - lo) / span) * 86).toFixed(2)}%`;
+  let line = PathBuilder.stroke(2);
+  if (dashed) line = line.dash_array([6, 4]);
+  points.forEach((p, k) => (line = k ? line.line_to(X(p.x), Y(ys[k])) : line.move_to(X(p.x), Y(ys[k]))));
+  const zero = PathBuilder.stroke(1).move_to("4%", Y(0)).line_to("96%", Y(0));
+  return box
+    .child(div().absolute().inset_0().child(paint(zero.build(), c.grey300).size_full()))
+    .child(div().absolute().inset_0().child(paint(line.build(), color ?? c.blue).size_full()));
 }

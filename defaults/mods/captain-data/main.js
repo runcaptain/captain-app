@@ -134,14 +134,17 @@ export default class CaptainData extends View {
       // The folder tree, until it loads (while the services start, or after a failure that wasn't an answer).
       if (this.lib.tree === null || (this.lib.error && !this.lib.error.status)) this.lib.load(cx);
     });
-    // "Open <dataset>" from the palette: captain-go sets shared "captain.open" {section: "data", dataset, at}.
+    // "Open <dataset>" from the palette: captain-go sets shared "captain.open" {section: "data", dataset, tab?, at}.
+    // tab (a dataset page tab: health, insights, quality...) opens once that dataset is on the page.
     // Shared values outlive the app: an open from before this screen started (the last session's import) is done.
     const stale = shared("captain.open");
     if (stale?.at && Date.now() - stale.at > 10000) this.opened = stale.at;
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
+      if (this.wantTab && this.detail?.name === this.wantTab.dataset) { const t = this.wantTab.tab; this.wantTab = null; this.page.open(cx, t); }
       if (o?.section === "data" && o.dataset && o.at !== this.opened) {
         this.opened = o.at;
+        this.wantTab = o.tab ? { dataset: o.dataset, tab: o.tab } : null;
         this.tab = "datasets";
         // Just imported, or opened from elsewhere: reload the folders and open them down to it.
         this.lib.revealing = o.dataset;
