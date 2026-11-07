@@ -140,11 +140,11 @@ await until(ex, () => (ex.mod.ex.experiments ?? []).length === 2, 'the experimen
 assert.ok(!ex.text().includes('demo-historic-replay'), 'folded at first');
 await ex.click('ex-all-experiments');
 assert.ok(ex.text().includes('demo-historic-replay') && ex.text().includes('demo-tuned-vs-bm25'), `opened: ${ex.text().slice(0, 400)}`);
-// Each experiment's marker says how its latest run went, exactly as the services report it (last_run_complete).
+// Each experiment's marker says whether its latest run has enough grades, exactly as the services report it (last_run_graded).
 const replay = (await get('/api/backtests')).find((b) => b.name === 'demo-historic-replay');
 const mark = ex.byIdPrefix('ex-mark-all-experiments/demo-historic-replay')[0]?.call('tooltip')?.[0] ?? '';
-const expected = !replay.last_run ? /Not run yet/ : replay.last_run_complete === false ? /didn't finish/ : /, finished$/;
-assert.match(mark, expected, `the marker matches last_run_complete=${replay.last_run_complete}: ${mark}`);
+const expected = !replay.last_run ? /Not run yet/ : replay.last_run_graded === false ? /^Not enough grades/ : /fully graded$/;
+assert.match(mark, expected, `the marker matches last_run_graded=${replay.last_run_graded}: ${mark}`);
 const ws = Object.keys(globalThis.__shared['captain.explorer.folds'] ?? {})[0];
 assert.equal(globalThis.__shared['captain.explorer.folds'][ws]['all-experiments'], true, 'the fold is remembered for this workspace');
 await ex.click('ex-all-experiments/demo-historic-replay');
