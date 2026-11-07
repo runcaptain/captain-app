@@ -3,3 +3,4 @@
 !core/captain_search/**
 **/__pycache__
 **/*.pyc
+!runner/entrypoint.sh

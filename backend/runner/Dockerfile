@@ -17,5 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf 
 USER cst
 ENV CST_HOME=/home/cst/.cst PYTHONUNBUFFERED=1 CST_ALLOW_REMOTE=1
 EXPOSE 8765
-ENTRYPOINT ["/usr/bin/tini", "--", "cst"]
+COPY runner/entrypoint.sh /usr/local/bin/cst-entrypoint
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/cst-entrypoint"]
 CMD ["--help"]
