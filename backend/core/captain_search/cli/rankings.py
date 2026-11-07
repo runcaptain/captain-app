@@ -55,3 +55,30 @@ def rk_import(name: str, path: str, map: Optional[str] = typer.Option(None, "--m
         fail(str(e))
     emit(r, f"imported {r['run']}: {r['validation']['stats']['queries']} queries, arms "
             f"{', '.join(r['validation']['stats']['arms'])}" + ("" if r["evidence"] else " (no labels: relevance metrics unavailable)"))
+
+
+@app.command("explain")
+def explain_cmd(pipeline: str, query: str = typer.Option(..., "--query", "-q"),
+                vs: Optional[str] = typer.Option(None, "--vs", help="a second pipeline to compare with"),
+                query_id: Optional[str] = typer.Option(None, "--query-id"),
+                judgments: Optional[str] = typer.Option(None, "--judgments"), k: int = typer.Option(10, "-k")):
+    """Why a pipeline ranked this: each stage, with score contributions. --vs shows where two pipelines diverge."""
+    from .. import explain as EX
+
+    c = ctx()
+    out = EX.compare_traces(c, pipeline, vs, query, query_id, judgments, k) if vs else EX.trace(c, pipeline, query, query_id, judgments, k)
+    traces = [out["a"], out["b"]] if vs else [out]
+    lines = []
+    for t in traces:
+        lines.append(f"== {t['pipeline']}")
+        for s in t["stages"]:
+            lines.append(f"  {s['stage']}{'' if s['explained'] else ' (no explanation provided)'}: " + "; ".join(s["notes"]))
+            for it in s["items"][:k] if s["kind"] in ("retrieve", "final") else []:
+                top = ", ".join(f"{n} {v:.2f}" for n, v in sorted(it["score_parts"].items(), key=lambda kv: -kv[1])[:3])
+                g = f" grade {it['grade']}" if it.get("grade") is not None else ""
+                lines.append(f"    {it['rank']:>3}. {it['id']} {it.get('title') or ''}{g}" + (f"  [{top}]" if top else ""))
+    if vs:
+        fd = out["first_divergence"]
+        lines.append(f"first divergence: {fd['stage']}: lost {len(fd['lost'])}, ranked lower {len(fd['ranked_lower'])}"
+                     if fd else (out["note"] or "no relevant result was lost"))
+    emit(out, "\n".join(lines))

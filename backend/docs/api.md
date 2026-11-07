@@ -713,3 +713,20 @@ Pull a warehouse table, a query or a dataset in as clean, training-ready data.
 - Cleaning (`options`, on by default): text is trimmed and empty text becomes null, types are cast, rows missing a
   required column are dropped, grades outside 0 to 3 are dropped, and duplicates on the role's key keep their first
   row. Source order is kept. `keep_other_columns` defaults to true.
+
+## Query debugger: why did it rank this? (plan 2)
+
+- `GET /api/explain?pipeline=&q=&vs=&query_id=&judgments=&k=` returns a trace per stage:
+  `{pipeline, engine, query, stages: [{stage, kind, explained, notes, items: [{id, rank, score, score_parts, fired,
+  moved, title, grade?}], timing_ms, ...}]}`.
+  - Stage kinds: understand (tokens, terms, expansions, synonyms, unknown terms), retrieve, rules, filter (with
+    `removed`) and final.
+  - Local BM25 is exact: each item's `score_parts` are per field and term, and they add up to its score.
+  - Elasticsearch uses its own `explain`, the top 8 parts per hit.
+  - Other engines return `explained: false` with "no explanation provided", unless they implement `explain(query, k)`.
+  - With `vs`, it returns `{a, b, first_divergence, graded, note}`. `first_divergence` is the first stage where a
+    relevant result (grade 2 or more) was lost or ranked lower.
+- `GET /api/runs/{run}/queries/{qid}/explain?a=&b=` explains one query of a comparison run, with its grades. Arms from
+  imported rankings can't be replayed, and the error says so.
+
+CLI: `cst explain <pipeline> -q "..." [--vs <pipeline>] [--query-id --judgments]`.
