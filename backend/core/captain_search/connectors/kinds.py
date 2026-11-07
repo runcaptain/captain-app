@@ -70,7 +70,9 @@ KINDS: list[dict] = [
      "note": "Signs in with your AWS login (Cloud and compute)."},
     {"kind": "clickhouse", "label": "ClickHouse", "icon": "clickhouse", "dialect": "clickhouse",
      "driver": "clickhouse-sqlalchemy", "module": "clickhouse_sqlalchemy", "docs": "https://github.com/xzkostyan/clickhouse-sqlalchemy",
-     "fields": [HOST, _f("port", "Port", "number", default=8443), DB, USER, PASSWORD]},
+     "fields": [HOST, _f("port", "Port", "number", default=8443), DB, USER, PASSWORD,
+                _f("https", "Encrypted (HTTPS)", "choice", required=False, default="yes", choices=["yes", "no"],
+                   help="ClickHouse Cloud is always encrypted. A local server on port 8123 usually isn't")]},
     {"kind": "sqlserver", "label": "SQL Server", "icon": "microsoftsqlserver", "dialect": "tsql", "driver": "pymssql",
      "module": "pymssql", "docs": "https://docs.sqlalchemy.org/en/20/dialects/mssql.html",
      "fields": [HOST, _f("port", "Port", "number", default=1433), DB, USER, PASSWORD]},
@@ -154,7 +156,8 @@ def build(kind: str, conn: str, values: dict) -> dict:
         url = f"awsathena+rest://@athena.{v['region']}.amazonaws.com:443/{q(v.get('schema') or 'default')}" + params(
             {"s3_staging_dir": v["s3_staging_dir"], "work_group": v.get("work_group")})
     elif kind == "clickhouse":
-        url = f"clickhouse+http://{auth()}{v['host']}:{v['port']}/{q(v['database'])}" + params({"protocol": "https"})
+        url = f"clickhouse+http://{auth()}{v['host']}:{v['port']}/{q(v['database'])}" + params(
+            {"protocol": "https" if (v.get("https") or "yes") == "yes" else None})
     elif kind == "sqlserver":
         url = f"mssql+pymssql://{auth()}{v['host']}:{v['port']}/{q(v['database'])}"
     elif kind == "duckdb":
