@@ -245,6 +245,8 @@ export const TASKS = [
   {
     id: "grading", label: "Start grading", icon: "square-check",
     about: "Grade the products your search returns, so backtests have judgments people trust.",
+    // The team's rubrics (captain/rubrics/<domain>.md): graders see the same words beside each pair.
+    load: async () => ({ rubrics: (await api("/api/rubrics")).data ?? [] }),
     fields: [
       { key: "name", label: "Name", placeholder: "spring-grading", required: true, help: "Letters, digits and dashes." },
       { key: "queries", label: "Queries", kind: "choice", required: true, options: () => byRole("queries"), empty: "No query sets yet. Import one first." },
@@ -252,10 +254,14 @@ export const TASKS = [
       { key: "b", label: "And from", kind: "choice", optional: true, options: pipelines },
       { key: "depth", label: "Results per query", default: "10" },
       { key: "sample", label: "How many queries", optional: true, placeholder: "all of them" },
+      { key: "rubric", label: "Rubric", kind: "choice", optional: true,
+        options: (ctx) => (ctx.rubrics ?? []).map((r) => ({ value: r.name, label: r.name })),
+        empty: "No rubrics yet. A rubric is captain/rubrics/<domain>.md in your project: what makes a result relevant here.",
+        help: (ctx, v) => { const r = (ctx.rubrics ?? []).find((x) => x.name === v.rubric); return r ? `${String(r.preview ?? "").split("\n").find((l) => l.trim() && !l.startsWith("#")) ?? ""}` : null; } },
     ],
     submit: async (v) => ok(await api("/api/grading", { body: {
       name: v.name.trim(), queries: v.queries, pipelines: [v.a, v.b].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(","),
-      depth: Number(v.depth) || 10, ...(Number(v.sample) > 0 ? { sample: Number(v.sample) } : {}),
+      depth: Number(v.depth) || 10, ...(Number(v.sample) > 0 ? { sample: Number(v.sample) } : {}), ...(v.rubric ? { rubric: v.rubric } : {}),
     } }), "Queue ready. Grade it in Runs, under Grading."),
   },
   {
