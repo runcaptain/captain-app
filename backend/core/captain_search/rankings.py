@@ -38,7 +38,9 @@ def _rename(t: pa.Table, mapping: dict | None) -> pa.Table:
 
 
 def validate(t: pa.Table, mapping: dict | None = None, judgments: bool = False) -> dict:
-    """{ok, errors, warnings, stats, available}. Errors stop an import; warnings don't."""
+    """{ok, errors, warnings, stats, available, columns}. Errors stop an import; warnings don't. `columns` are the
+    file's own names (for the app's column mapping), and stats.labels says whether the file carries labels."""
+    file_columns = list(t.column_names)
     t = _rename(t, mapping)
     cols = set(t.column_names)
     errors, warnings = [], []
@@ -49,7 +51,7 @@ def validate(t: pa.Table, mapping: dict | None = None, judgments: bool = False) 
     if "rank" not in cols and "score" not in cols:
         errors.append("Give a rank (1 is the top) or a score (higher is better) for each row.")
     if errors:
-        return {"ok": False, "errors": errors, "warnings": warnings, "stats": {}, "available": {}}
+        return {"ok": False, "errors": errors, "warnings": warnings, "stats": {}, "available": {}, "columns": file_columns}
     rows = t.to_pylist()
     nulls = Counter(c for r in rows for c in REQUIRED if r.get(c) in (None, ""))
     for c, n in nulls.items():
@@ -114,9 +116,10 @@ def validate(t: pa.Table, mapping: dict | None = None, judgments: bool = False) 
             if cov < 0.9:
                 warnings.append(f"Only {cov:.0%} of {a}'s top 10 results have a label. Its nDCG will read low until "
                                 "the rest are graded.")
-    stats = {"rows": len(rows), "queries": len(allq), "arms": arms,
+    stats = {"rows": len(rows), "queries": len(allq), "arms": arms, "labels": has_labels,
              "results_per_query": round(len(rows) / max(1, len(allq) * max(1, len(arms))), 1)}
-    return {"ok": not errors, "errors": errors, "warnings": warnings, "stats": stats, "available": available}
+    return {"ok": not errors, "errors": errors, "warnings": warnings, "stats": stats, "available": available,
+            "columns": file_columns}
 
 
 def _is_pos_int(v) -> bool:
