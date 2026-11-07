@@ -1038,3 +1038,15 @@ including a small hc skill you can install with the user's permission.
 - One mod per idea. Don't edit `AGENTS.md` or the `.d.ts` files (the app
   rewrites them). Don't touch other mods unless the request
   needs it.
+
+## Captain team collaboration
+
+The Captain palette's **Team collaboration** entry opens the `captain-team` mod.
+Connect with a server URL, workspace and masked access token using the protected
+local `/api/team/connect` route. The daemon validates access and stores credentials
+in the OS keychain; the mod clears the token field after each attempt. Company SSO
+is optional when configured. The mod provides cached records, explicit pull/push,
+local drafts and reviewed conflict resolution. The team workspace is independent
+of bucket workspace selection.
+New records are private; saving a draft does not publish it. See
+`docs/captain/TEAM-SYNC.md` in the source tree for configuration and verification limits.
