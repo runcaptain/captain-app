@@ -46,6 +46,15 @@ const luma = (hex) => {
   return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
 };
 
+/** A database's own name for itself ("DuckDB", "Databricks"), never the lowercase kind a person would read as code. */
+export function engineTitle(kind) {
+  const slug = brandSlug(kind);
+  if (slug) return BRANDS[slug].title;
+  const k = String(kind ?? "").trim();
+  const own = { redshift: "Redshift", athena: "Athena", mssql: "SQL Server", sqlserver: "SQL Server", oracle: "Oracle", ga4: "Google Analytics 4", posthog: "PostHog" };
+  return own[k.toLowerCase()] ?? (k ? `${k[0].toUpperCase()}${k.slice(1)}` : "Database");
+}
+
 /** The mark for an engine, cloud or connection kind, `size` px square; a neutral glyph when there is none. */
 export function Brand(c, kind, size = 16) {
   const k = String(kind ?? "").toLowerCase();

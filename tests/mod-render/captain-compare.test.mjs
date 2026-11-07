@@ -39,7 +39,7 @@ const run = fx('run');
 // Overview: what limits the result comes before the winner.
 let text = h.text();
 assert.ok(globalThis.__asked.some((p) => /^\/api\/runs\/surf-e2e\?v=1/.test(p)), 'opened the handed-over run');
-assert.ok(text.includes('Read with care') && text.includes('1 slice result(s) rest on fewer than 5 queries.'), 'warnings as sentences');
+assert.ok(text.includes('Read with care') && text.includes('1 slice result rests on fewer than 5 queries.'), 'warnings as sentences');
 assert.ok(!/small-slices|\boffline \|/.test(text), 'no warning codes on screen');
 assert.ok(text.includes('nDCG@10') && !/\| ndcg@10 \|/.test(text), 'metric names in words');
 assert.ok(text.includes('Open an agent in this space') && text.includes('Copy prompt'), 'agent actions');

@@ -162,7 +162,7 @@ def compatibility(ctx: Context, run_ref: str) -> dict:
         warnings.append({"code": "not-holdout", "text": "scored on a query set that is not a sealed holdout, so tuning on it can overfit"})
     small = [s for s in run.segments if s.get("verdict") == "too few"]
     if small:
-        warnings.append({"code": "small-slices", "text": f"{len(small)} slice result(s) rest on fewer than 5 queries"})
+        warnings.append({"code": "small-slices", "text": (f"{len(small)} slice results rest on fewer than 5 queries each" if len(small) != 1 else "1 slice result rests on fewer than 5 queries")})
     return {"run": f"{run.name}@v{run.version}", "trustworthy": not any(w["code"] in ("not-independent", "incomplete") for w in warnings),
             "warnings": warnings, "queries": bt.queries, "judgments": bt.judgments, "mode": run.mode}
 

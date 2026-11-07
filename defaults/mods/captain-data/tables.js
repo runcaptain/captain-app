@@ -11,7 +11,7 @@ import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { ResultGrid } from "./kit/grid.js";
 import { openForm } from "./kit/agent.js";
-import { Brand } from "./kit/brands.js";
+import { Brand, engineTitle } from "./kit/brands.js";
 import { int } from "./kit/num.js";
 
 const enc = encodeURIComponent;
@@ -250,7 +250,7 @@ export class Tables {
         .child(this.icon(open ? "chevron-down" : "chevron-right", 11, c.grey500))
         .child(Brand(c, k.engine, 14))
         .child(div().flex_1().min_w(0).truncate().text_size(13).font_medium().child(conn))
-        .when(!!k.engine, (e) => e.child(div().flex_none().h(18).px(5).flex().items_center().border_1().border_color(c.rule).text_size(10.5).text_color(c.grey900).child(k.engine))))
+        .when(!!k.engine, (e) => e.child(div().flex_none().h(18).px(5).flex().items_center().border_1().border_color(c.rule).text_size(10.5).text_color(c.grey900).child(engineTitle(k.engine)))))
       .child(h_flex().gap(8).items_center().text_size(11.5).text_color(c.grey500)
         .child(div().flex_1().min_w(0).truncate().child(job ? (job.lineage ? `Reading lineage from ${job.system}` : `Reading its tables, ${Math.round((job.progress ?? 0) * 100)}%`)
           : k.pulled_at ? `${fmtInt(k.tables)} tables, last read ${ago(k.pulled_at)}` : "Its tables haven't been read yet"))
@@ -342,7 +342,7 @@ export class Tables {
     const card = (title, body) => v_flex().gap(6).p(12).border_1().border_color(c.rule).child(div().text_size(12.5).font_medium().child(title)).child(body);
     return v_flex().id("tins").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(12).gap(12)
       .when(!ins.queries, (e) => e.child(div().text_size(12.5).line_height("19px").text_color(c.grey900)
-        .child("No queries through Captain read this table yet. Notebook SQL cells, SQL in the app and agents' cst sql all count once they run.")))
+        .child("Nobody has queried this table through Captain yet. Queries from notebooks, from SQL in the app and from agents all count here once they run.")))
       .when(!!ins.queries, (e) => e
         .child(div().text_size(12.5).text_color(c.grey900).child(`${fmtInt(ins.queries)} quer${ins.queries === 1 ? "y" : "ies"} through Captain read this table in the last 90 days.`))
         .child(h_flex().gap(12).items_start()

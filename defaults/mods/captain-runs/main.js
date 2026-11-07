@@ -11,6 +11,7 @@ import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
 import { Jobs } from "./jobs.js";
 import { metricWords } from "./kit/words.js";
+import { int } from "./kit/num.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
 const enc = (name) => name.split("/").map(encodeURIComponent).join("/");
@@ -126,8 +127,10 @@ export default class CaptainRuns extends View {
     cx.timer.every(1000, (cx) => this.pollJob(cx));
     // Compute jobs: their list, and a running one's state and log lines.
     this.jobs = new Jobs(this);
-    // Layout props (a layout, or the real-window check): {tab: "jobs"} opens on that tab.
-    if (layoutProps?.()?.tab === "jobs") { this.tab = "jobs"; this.jobs.load(cx); }
+    // Layout props (a layout, or the real-window check): {tab: "jobs" | "grading" | ...} opens on that tab.
+    const startTab = layoutProps?.()?.tab;
+    if (startTab === "jobs") { this.tab = "jobs"; this.jobs.load(cx); }
+    else if (["workflows", "grading", "replays"].includes(startTab)) { this.tab = startTab; this.load(cx, startTab); }
     cx.timer.every(2000, (cx) => { if (this.tab === "jobs") this.jobs.tick(cx); });
     // Until the backend answers, ask again every 3 s.
     // Until the list loads, ask again every 3 s: while the services start, and after any failure that wasn't the
@@ -423,7 +426,7 @@ export default class CaptainRuns extends View {
           // What if... (captain-sandbox): try other settings of this arm's pipeline.
           .child(div().id(`bt-whatif-${i}`).text_size(11.5).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
             .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: String(a) } })).child("What if..."))))
-        .child(div().child(`primary ${b.preregistration?.primary_metric ?? ""}, MDE ${b.preregistration?.mde ?? ""}`)))
+        .child(div().child(b.preregistration?.primary_metric ? `Judged on ${metricWords(b.preregistration.primary_metric)}${b.preregistration.mde ? `, looking for a change of at least ${b.preregistration.mde}` : ""}` : "")))
       .child(h_flex().flex_wrap().gap(6).children((b.runs ?? []).map((x) => {
         const on = x.version === this.detail.runV;
         return h_flex().id(`run-v${x.version}`).h(26).px(8).gap(6).items_center().cursor_pointer().text_size(12)
@@ -451,15 +454,15 @@ export default class CaptainRuns extends View {
         .when(!!p.evidence, (e) => e.child(this.badge(c, p.evidence)))
         .child(div().flex_1())
         .child(div().text_size(12).text_color(c.grey500).child([r.wall_s != null ? `ran in ${Math.round(r.wall_s)} s` : null, r.cost_usd != null ? `cost $${Number(r.cost_usd).toFixed(2)}` : null].filter(Boolean).join(" · ")))))
-      .child(div().id("arm-table-x").w_full().overflow_x_scrollbar().child(v_flex().min_w(200 + cols.length * 104).border_1().border_color(c.rule)
+      .child(div().id("arm-table-x").w_full().overflow_x_scrollbar().child(v_flex().min_w(200 + metrics.length * 104 + 2 * 112).border_1().border_color(c.rule)
         .child(h_flex().h(28).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().whitespace_nowrap()
           .child(div().flex_1().min_w(200).px(10).child("Arm"))
-          .children(cols.map((m) => div().id(`armh-${m}`).w(104).flex_none().px(8).text_right().truncate().tooltip(m).child(metricWords(m)))))
+          .children(cols.map((m, j) => div().id(`armh-${m}`).w(j < metrics.length ? 104 : 112).flex_none().px(8).text_right().truncate().tooltip(m).child(metricWords(m)))))
         .children((r.arms ?? []).map((a, i) => h_flex().id(`arm-${i}`).h(30).border_b(1).border_color(c.rule).text_size(12.5).items_center().whitespace_nowrap()
           .child(h_flex().flex_1().min_w(200).px(10).gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(named(c, a.arm)))
           .children(metrics.map((m) => div().w(104).flex_none().px(8).text_right().font_family(MONO).child(a.offline?.[m] !== undefined ? Number(a.offline[m]).toFixed(4) : "")))
-          .child(div().w(92).flex_none().px(8).text_right().font_family(MONO).text_color((a.judged_at_10 ?? 1) < 0.9 ? c.fail : c.navy).child(a.judged_at_10 != null ? `${Math.round(a.judged_at_10 * 100)}%` : "none"))
-          .child(div().w(92).flex_none().px(8).text_right().truncate().font_family(MONO).text_color(a.cost?.serve_usd_per_1k != null ? c.navy : c.grey500).child(a.cost?.serve_usd_per_1k != null ? `$${Number(a.cost.serve_usd_per_1k).toFixed(4)}` : "none"))))))
+          .child(div().w(112).flex_none().px(8).text_right().font_family(MONO).text_color((a.judged_at_10 ?? 1) < 0.9 ? c.fail : c.navy).child(a.judged_at_10 != null ? `${Math.round(a.judged_at_10 * 100)}%` : "not measured"))
+          .child(div().w(112).flex_none().px(8).text_right().truncate().font_family(MONO).text_color(a.cost?.serve_usd_per_1k != null ? c.navy : c.grey500).child(a.cost?.serve_usd_per_1k != null ? `$${Number(a.cost.serve_usd_per_1k).toFixed(4)}` : "not measured"))))))
       .child(h_flex().gap(8)
         .child(this.button(c, "open-compare", "Compare in detail", "compare", () => {
           setShared("captain.compare", { backtest: name, version: r.version });
@@ -546,12 +549,15 @@ export default class CaptainRuns extends View {
             .child(this.button(c, `grade-${q.name}`, "Grade", "grade", (_e, cx) => this.openGrader(cx, q.name), true)))
           .child(h_flex().gap(10).items_center()
             .child(div().flex_1().h(8).bg(c.grey300).child(div().h_full().bg(c.blue).w(`${Math.round((q.share ?? 0) * 100)}%`)))
-            .child(div().flex_none().font_family(MONO).text_size(12).child(`${q.graded} of ${q.pairs} pairs`)))
+            .child(div().flex_none().font_family(MONO).text_size(12).child(`${int(q.graded)} of ${int(q.pairs)} pairs`)))
           .child(h_flex().flex_wrap().gap(14).text_size(12).text_color(c.grey900)
-            .child(div().child(`queries ${q.queries}`))
-            .child(div().child(`${(q.pipelines ?? []).join(", ")}, top ${q.depth}`))
-            .child(div().child(`graders ${Object.keys(q.graders ?? {}).length ? Object.entries(q.graders).map(([w, n]) => `${w} (${n})`).join(", ") : "none yet"}`))
-            .child(div().child(q.kappa === null || q.kappa === undefined ? `kappa not yet (${q.agreement_pairs ?? 0} of 10 shared pairs)` : `kappa ${Number(q.kappa).toFixed(2)}`)))
+            // In words: which queries, whose results, who has graded, and whether graders agree (Cohen's kappa).
+            .child(div().child(`Queries from ${String(q.queries ?? "").replace(/:(\w+)$/, " ($1)")}`))
+            .child(div().child(`The top ${q.depth} results of ${(q.pipelines ?? []).join(" and ")}`))
+            .child(div().child(Object.keys(q.graders ?? {}).length ? `Graded by ${Object.entries(q.graders).map(([w, n]) => `${w} (${int(n)})`).join(", ")}` : "Nobody has graded yet"))
+            .child(div().tooltip("Cohen's kappa, on pairs two graders both graded").child(q.kappa === null || q.kappa === undefined
+              ? `Agreement between graders: not measured until 10 pairs are graded twice (${int(q.agreement_pairs ?? 0)} so far)`
+              : `Agreement between graders: ${Number(q.kappa).toFixed(2)}`)))
           .when(!!pub, (e) => e.child(div().text_size(12.5).text_color(pub.status === "failed" ? c.fail : c.navy)
             .child(pub.status === "done" ? `Published ${pub.ref}: HUMAN_GRADED judgments.` : pub.status === "failed" ? pub.error : "Publishing")))
           .when(q.graded > 0 && !pub, (e) => e.child(h_flex().gap(8).items_center().text_size(12)

@@ -20,6 +20,7 @@ import { ResultGrid } from "./kit/grid.js";
 import { askAgent, copyPrompt } from "./kit/agent.js";
 import { SqlTools } from "./sql-tools.js";
 import { int } from "./kit/num.js";
+import { engineTitle } from "./kit/brands.js";
 
 const KINDS = { sql: ["SQL", "database"], python: ["Python", "terminal"], markdown: ["Text", "file-text"], chart: ["Chart", "bar-chart-3"] };
 const LANG = { sql: "sql", python: "python", markdown: "markdown" };
@@ -56,7 +57,7 @@ export class Notebooks {
     this.exporting = false;
     this.running = false;
     this.execCount = 0;
-    this.newName = InputState.new({ placeholder: "Name a new notebook" });
+    this.newName = InputState.new({ placeholder: "New notebook" });
     this.importPath = InputState.new({ placeholder: "~/Downloads/analysis.ipynb" });
     this.sqlTools = new SqlTools(this);
   }
@@ -560,7 +561,7 @@ export class Notebooks {
           .border_1().border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.grey900)
           .tooltip(k.read_only === false ? `${k.name}: writes allowed` : `${k.name}: read-only`)
           .on_click((_e, cx) => { cell.meta.conn = k.name; this.edited(); cx.notify(); })
-          .child(div().child(k.name)).when(!!k.engine, (e) => e.child(div().text_color(c.grey500).child(k.engine)));
+          .child(div().child(k.name)).when(!!k.engine, (e) => e.child(div().text_color(c.grey500).child(engineTitle(k.engine))));
       }));
   }
 

@@ -26,7 +26,7 @@ p.byRun.set('r@v1', { job: null, result });
 const c = palette(true);
 const texts = (e, out = []) => { if (typeof e === 'string') out.push(e); else if (e && typeof e === 'object') for (const k of e.kids ?? []) texts(k, out); return out; };
 const t = texts(p.render(c, 1100)).join(' | ');
-assert.ok(t.includes('Demo-tuned@v1 adds 4.0 ms at p99 against demo-bm25@v1, most of it in boosts (+3.8 ms).'), 'the summary, first');
+assert.ok(t.includes('demo-tuned@v1 adds 4.0 ms at p99 against demo-bm25@v1, most of it in boosts (+3.8 ms).'), 'the summary, first');
 assert.ok(t.includes('Over budget') && t.includes('Demo-tuned@v1: p99 is 6.4 ms, over the 5 ms budget.'), 'a breach, in words');
 assert.ok(t.includes('Vendor-x isn\'t timed: from imported rankings'), 'a skipped arm, with its reason');
 assert.ok(t.includes('boosts') && t.includes('3.8 ms, 60%'), 'a stage with its p99 and share');

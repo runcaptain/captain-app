@@ -15,12 +15,12 @@ if [[ ${#MODS[@]} -eq 0 ]]; then
   for m in captain-data captain-runs captain-compare; do [[ -d defaults/mods/$m ]] && MODS+=("$m"); done
 fi
 block_of() { case "$1" in captain-data) echo data ;; captain-runs) echo runs ;; captain-compare) echo comparisons ;; *) echo "" ;; esac; }
-# Extra views after the plain ones: a query side by side (props the mods read at init).
+# Extra views after the plain ones (the two that open the import wizard last, so it covers nothing after them): a query side by side (props the mods read at init).
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:import" "captain-data:import-table" "captain-data:sample" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights") ;;
-    captain-runs) EXTRA+=("captain-runs:jobs") ;;
+    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:import" "captain-data:import-table") ;;
+    captain-runs) EXTRA+=("captain-runs:jobs") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
 done
@@ -148,6 +148,7 @@ props_of() {
     captain-data:tables) echo '{"tab": "tables"}' ;;
     captain-data:insights) echo '{"pageTab": "insights"}' ;;
     captain-data:lineage) echo '{"pageTab": "lineage"}' ;;
+    captain-runs:grading) echo '{"tab": "grading"}' ;;
     captain-runs:jobs) echo '{"tab": "jobs"}' ;;
     captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;
     captain-data:import) echo '{"importWith": {"conn": "demo-store", "sql": "select * from products limit 1000", "name": "Hello World"}}' ;;
@@ -220,4 +221,30 @@ EOF
   errs=$(app status | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('errors', [])))")
   if [[ $ok == 1 && $errs == 0 ]]; then echo "$view: drawn ($OUT/${view/:/-}.png)"; else echo "$view: BLANK or errors ($errs) ($OUT/${view/:/-}.png)"; app status; fail=1; fi
 done
+
+# SHOT_AUDIT=1: the whole app as a person meets it, in Captain's own layout with every current Captain mod installed:
+# each section, then the palette, Settings and the Captain dialogs. Shots only (audit-*.png): a person looks at them.
+if [[ -n "${SHOT_AUDIT:-}" ]]; then
+  mkdir -p "$HOME_DIR/mods"
+  for d in defaults/mods/captain-*; do
+    m=$(basename "$d"); rm -rf "$HOME_DIR/mods/$m"; cp -R "$d" "$HOME_DIR/mods/$m"
+    rm -f "$HOME_DIR/mods/$m/gpui-kit.d.ts" "$HOME_DIR/mods/$m/jsconfig.json"
+  done
+  # Close whatever an earlier view opened (the import wizard), so nothing covers the walk.
+  for _ in 1 2 3; do app do overlay.close '{}' >/dev/null 2>&1 || true; done
+  app do layout.switch '{"name":"captain"}' >/dev/null || true
+  sleep 3
+  shoot() { sleep "${2:-4}"; app shot "$OUT/audit-$1.png" >/dev/null && echo "audit: $1"; }
+  for child in investigations data runs comparisons handoff engine; do
+    app do layout.select "{\"stack\":\"sections\",\"child\":\"$child\"}" >/dev/null || true
+    shoot "$child" 5
+  done
+  app do layout.select '{"stack":"sections","child":"data"}' >/dev/null || true
+  app do app.palette >/dev/null || true; shoot palette 2; app do app.palette >/dev/null || true
+  app do app.settings >/dev/null || true; shoot settings 3; app do app.settings >/dev/null || true
+  for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup; do
+    app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; shoot "dialog-$m" 4
+    app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; sleep 1
+  done
+fi
 exit $fail

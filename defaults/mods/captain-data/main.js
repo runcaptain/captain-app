@@ -282,10 +282,13 @@ export default class CaptainData extends View {
   }
 
   header(c) {
-    return h_flex().h(52).flex_none().px(20).gap(14).items_center().border_b(1).border_color(c.rule)
+    // Wraps in a narrow pane: the buttons go to a second line rather than out of view.
+    return h_flex().min_h(52).flex_none().flex_wrap().px(20).py(8).gap(14).items_center().border_b(1).border_color(c.rule)
       .child(div().flex_none().text_size(18).font_semibold().text_color(c.navy).child("Data and signals"))
       .child(this.tabs(c))
+      // What the tab holds, only when there's room: in a narrow pane it would push the buttons out of view.
       .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.grey900)
+        .when((this.width ?? 0) < 1180, (e) => e.invisible())
         .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your experiments read." : this.tab === "notebooks" ? "SQL, Python, notes and charts, saved as versions." : this.tab === "models" ? "Trained models from your registries, and what each was built from." : this.tab === "tables" ? "Your databases' tables, their columns and rows, and how they're queried." : "Rules that turn logged events into judgments."))
       .when(this.tab === "datasets", (e) => e
         .child(Button(c, "new-class", "New class", () => openForm("dataset-class"), { small: true }))

@@ -89,7 +89,7 @@ export class Profiler {
         .when(running && !res, (e) => e.child(Skeleton(c, 5)))
         .when(!!res, (e) => this.result(e, c, res, w)))
       // Always visible: these numbers are a laptop replay.
-      .child(h_flex().id("prof-where").flex_none().h(30).px(20).gap(8).items_center().border_t(1).border_color(c.rule).text_size(11.5).text_color(c.grey900)
+      .child(h_flex().id("prof-where").flex_none().min_h(30).py(6).flex_wrap().px(20).gap_x(8).gap_y(2).items_center().border_t(1).border_color(c.rule).text_size(11.5).text_color(c.grey900)
         .child(div().child("Measured offline on this computer, not production."))
         .when(!!res?.measured_on, (e) => e.child(div().text_color(c.grey500).child(`${res.measured_on.machine}, Python ${res.measured_on.python}, one query at a time.`))));
   }
@@ -101,7 +101,7 @@ export class Profiler {
     const stageNames = [...new Set(arms.flatMap((a) => (a.stages ?? []).map((s) => s.stage)))];
     const color = (stage) => COLORS[stageNames.indexOf(stage) % COLORS.length];
     return e
-      .children((res.summary ?? []).map((t, i) => div().id(`prof-sum-${i}`).text_size(14).font_medium().text_color(c.navy).child(sentence(t))))
+      .children((res.summary ?? []).map((t, i) => div().id(`prof-sum-${i}`).text_size(14).font_medium().text_color(c.navy).child(/[.!?]$/.test(String(t).trim()) ? String(t).trim() : `${String(t).trim()}.`)))
       .when(!(res.summary ?? []).length && arms.length === 1, (e) => e.child(div().text_size(13).text_color(c.grey900).child(`One arm could be timed, so there's nothing to compare it with. ${arms[0].pipeline} takes ${ms(arms[0].total?.p99_ms)} at p99.`)))
       .children(arms.flatMap((a) => (a.budget?.breaches ?? []).map((b, i) => h_flex().id(`prof-breach-${a.pipeline}-${i}`).gap(8).items_center().p(8).border_1().border_color(c.warn).text_size(12.5)
         .child(div().text_color(c.warn).font_medium().child("Over budget")).child(div().text_color(c.navy).child(sentence(`${a.pipeline}: ${b}`))))))
@@ -133,16 +133,17 @@ export class Profiler {
     const rows = arms.flatMap((a) => (a.slowest ?? []).map((q) => ({ ...q, arm: a.pipeline }))).sort((x, y) => y.total_ms - x.total_ms).slice(0, 15);
     if (!rows.length) return div();
     const run = this.host.runRef();
-    const cell = (w, el) => div().w(w).flex_none().px(8).truncate().child(el);
+    // The query takes what's left; the rest fit a narrow pane.
+    const cell = (w, el) => (w === 0 ? div().flex_1().min_w(120) : div().w(w).flex_none()).px(8).truncate().child(el);
     return v_flex().id("prof-slow").gap(0).border_1().border_color(c.rule)
       .child(h_flex().h(26).items_center().bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium()
-        .child(cell(260, "Slowest queries")).child(cell(150, "Arm")).child(cell(90, "Total")).child(cell(150, "Most time in")).child(cell(100, "Candidates")))
+        .child(cell(0, "Slowest queries")).child(cell(116, "Arm")).child(cell(76, "Total")).child(cell(128, "Most time in")).child(cell(80, "Candidates")))
       .children(rows.map((q, i) => h_flex().id(`prof-slow-${i}`).h(26).items_center().border_b(1).border_color(c.rule).text_size(12).cursor_pointer()
         .hover((s) => s.bg(c.blueLight)).tooltip(q.query_id ? "Explain why it ranked as it did, stage by stage" : "This query has no id in the run, so it can't be explained")
         .when(!!q.query_id, (e) => e.on_click(() => openOverlay({ mod: "captain-explain", kind: "dialog", width: 0.9, height: 0.9, props: { run, query_id: q.query_id } })))
-        .child(cell(260, q.query)).child(cell(150, div().font_family(MONO).child(q.arm)))
-        .child(cell(90, div().font_family(MONO).child(ms(q.total_ms))))
-        .child(cell(150, `${q.dominant_stage ?? "none"}${q.stages_ms?.[q.dominant_stage] != null ? `, ${ms(q.stages_ms[q.dominant_stage])}` : ""}`))
-        .child(cell(100, div().font_family(MONO).child(q.candidates === null || q.candidates === undefined ? "" : int(q.candidates))))));
+        .child(cell(0, q.query)).child(cell(116, div().font_family(MONO).child(q.arm)))
+        .child(cell(76, div().font_family(MONO).child(ms(q.total_ms))))
+        .child(cell(128, `${q.dominant_stage ?? "none"}${q.stages_ms?.[q.dominant_stage] != null ? `, ${ms(q.stages_ms[q.dominant_stage])}` : ""}`))
+        .child(cell(80, div().font_family(MONO).child(q.candidates === null || q.candidates === undefined ? "" : int(q.candidates))))));
   }
 }

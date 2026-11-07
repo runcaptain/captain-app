@@ -18,7 +18,7 @@ import { api, query, watchConnections } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
-import { Brand } from "./kit/brands.js";
+import { Brand, engineTitle } from "./kit/brands.js";
 import { ResultGrid } from "./kit/grid.js";
 import { int } from "./kit/num.js";
 
@@ -478,10 +478,11 @@ export default class CaptainImport extends View {
   }
 
   tile(c, id, mark, title, sub, onClick, { soon = false, on = false } = {}) {
-    return v_flex().id(id).w(176).h(96).p(12).gap(6).justify_between().border_1()
+    // Titles wrap rather than cut ("Connect a new source", "Connect Google Analytics 4").
+    return v_flex().id(id).w(196).min_h(96).p(12).gap(6).justify_between().border_1()
       .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface)
       .when(!soon, (e) => e.cursor_pointer().hover((s) => s.border_color(c.blue)).on_click(onClick))
-      .child(h_flex().gap(8).items_center().child(mark).child(div().flex_1().min_w(0).truncate().text_size(13).font_medium().text_color(soon ? c.grey500 : c.navy).child(title)))
+      .child(h_flex().gap(8).items_center().child(mark).child(div().flex_1().min_w(0).text_size(13).line_height("17px").font_medium().text_color(soon ? c.grey500 : c.navy).child(title)))
       .child(div().text_size(11.5).text_color(c.grey500).child(sub));
   }
 
@@ -510,7 +511,7 @@ export default class CaptainImport extends View {
       .child(div().text_size(12.5).text_color(c.grey900).child("Pick where the data lives. Nothing is copied until you import."))
       .child(h_flex().flex_wrap().gap(10)
         .child(this.tile(c, "src-file", this.icon("upload", 18, c.navy), "A file or folder", "CSV, Parquet, JSON on this computer", (_e, cx) => this.pick(cx, { kind: "file" }), { on: file }))
-        .children((this.conns ?? []).map((k) => this.tile(c, `src-${k.name}`, Brand(c, k.kind ?? k.engine, 18), k.name, `${k.engine ?? k.kind ?? "database"}${k.read_only === false ? ", writes allowed" : ""}`,
+        .children((this.conns ?? []).map((k) => this.tile(c, `src-${k.name}`, Brand(c, k.kind ?? k.engine, 18), k.name, `${engineTitle(k.engine ?? k.kind)}${k.read_only === false ? ", writes allowed" : ""}`,
           (_e, cx) => this.pick(cx, { kind: "db", conn: k.name }))))
         .children(ANALYTICS.filter(([kind]) => !(this.conns ?? []).some((k) => (k.kind ?? k.engine) === kind)).map(([kind, label, sub]) =>
           this.tile(c, `src-${kind}`, Brand(c, kind, 18), `Connect ${label}`, sub,
