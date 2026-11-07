@@ -34,6 +34,10 @@ dependencies = [
 s3 = ["boto3>=1.35"]
 gcs = ["google-cloud-storage>=2.18"]
 azure = ["azure-storage-blob>=12.20"]
+# SDKs the compute providers call (compute_providers/). AWS needs only boto3, which is a base dependency.
+compute-gcp = ["google-cloud-run>=0.10", "google-cloud-aiplatform>=1.60", "google-cloud-logging>=3.10"]
+compute-azure = ["azure-identity>=1.17", "azure-mgmt-appcontainers>=3.0", "azure-ai-ml>=1.18", "azure-monitor-query>=1.4"]
+modal = ["modal>=0.64"]
 postgres = ["psycopg[binary]>=3.1"]
 # Every database the app's "Connect a database" form offers (connectors/kinds.py). Captain.app bundles this extra.
 warehouses = ["psycopg[binary]>=3.1", "snowflake-sqlalchemy>=1.7", "databricks-sqlalchemy>=2.0", "sqlalchemy-bigquery>=1.11",

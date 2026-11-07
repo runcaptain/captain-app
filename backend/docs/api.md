@@ -207,7 +207,7 @@ Where each provider reads state and logs:
 Tested on a real account (2026-11-06): `local`, `aws-ecs` and `aws-batch` (Captain's AWS account, us-west-1, Batch on
 a Fargate compute environment). The others pass
 the same contract tests against fakes of their SDKs (`core/tests/test_compute_providers.py`) and have not run
-against a real account.
+against a real account. What each needs before it can, and the test to run: [compute-live-testing.md](compute-live-testing.md).
 
 ### Adding a provider
 
