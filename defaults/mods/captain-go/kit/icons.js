@@ -4,7 +4,7 @@
 //   import { icon } from "./kit/icons.js";   svg(icon("database")).size(16)
 export const ICONS = [
   "search", "database", "play", "git-compare", "send", "settings", "terminal", "plus", "panel-left", "sun", "moon",
-  "monitor", "flask-conical", "waypoints", "tag", "square-check", "rewind", "workflow", "compass", "rocket", "layers",
+  "monitor", "flask-conical", "waypoints", "tag", "square-check", "square", "rewind", "workflow", "compass", "rocket", "layers",
   "file-text", "table", "bar-chart-3", "chart-line", "activity", "bot", "user", "copy", "refresh-cw", "triangle-alert",
   "circle-check", "circle-x", "x", "check", "chevron-right", "chevron-left", "chevron-down", "external-link", "link",
   "clock", "filter", "arrow-up-down", "boxes", "sparkles", "cloud", "server", "folder", "folder-open", "upload", "hard-drive",

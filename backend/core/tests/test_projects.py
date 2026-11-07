@@ -53,6 +53,15 @@ def test_projects_group_a_companys_work(tmp_path, monkeypatch):
     # taking an item out beats the name rules
     PR.assign(c, None, [{"kind": "dataset", "name": "acme/eval/q"}])
     assert "acme/eval/q" not in PR.contents(c, "acme")["dataset"]
+    # Choosing models: one model left out beats its brand, clear hands it back to the brand, and the home says which
+    # brands the project holds.
+    PR.assign(c, None, [{"kind": "model", "name": "acme@v2"}])
+    assert [m["id"] for m in PR.contents(c, "acme")["models"]] == ["acme@v1"]
+    PR.assign(c, "acme", [{"kind": "model", "name": "globex@v1"}])
+    assert [m["id"] for m in PR.home(c, "acme")["models"]] == ["acme@v1", "globex@v1"]
+    PR.assign(c, None, [{"kind": "model", "name": "acme@v2"}], clear=True)
+    assert [m["id"] for m in PR.contents(c, "acme")["models"]] == ["acme@v1", "acme@v2", "globex@v1"]
+    assert PR.home(c, "acme")["project"]["brands"] == ["acme"]
 
 
 def test_project_routes_filter_lists(tmp_path, monkeypatch):

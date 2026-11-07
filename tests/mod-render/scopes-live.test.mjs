@@ -161,6 +161,32 @@ assert.equal(globalThis.__shared['captain.open']?.backtest, 'demo-tuned-vs-bm25'
 globalThis.__overlays = [];
 await home.click('ph-pl-0');
 assert.equal(globalThis.__overlays.at(-1)?.mod, 'captain-sandbox', 'a pipeline opens What if');
+
+// 4b. Choose models (Edgar, 2026-11-07): a registry on disk with two brands. Tick one model in, tick a whole brand,
+//     then leave one of its models out; the home's Models list follows each change.
+const regDir = path.join(work, 'registry');
+for (const [arch, brand, ver] of [['arch-v1', 'acme', 'v1'], ['arch-v1', 'acme', 'v2'], ['arch-v2', 'other', 'v1']]) {
+  fs.mkdirSync(path.join(regDir, arch, brand, ver), { recursive: true });
+  fs.writeFileSync(path.join(regDir, arch, brand, ver, 'MANIFEST.yaml'), `status: candidate\n`);
+}
+const att = await postJ('/api/registries', { uri: regDir });
+for (let i = 0; i < 100 && (await get(`/api/jobs/${att.job}`)).status !== 'done'; i++) await new Promise((r) => setTimeout(r, 100));
+const modelsIn = () => (home.mod.home?.models ?? []).map((m) => m.id).sort().join(',');
+await home.click('ph-choose-models');
+await until(home, () => home.text().includes('All acme models') && home.text().includes('All other models'), 'the picker lists every brand');
+assert.equal(modelsIn(), '', 'no models in the project yet');
+const pickId = (brand, ver) => { const bi = ['acme', 'other'].indexOf(brand); return `ph-pick-${bi}-${ver === 'v1' ? 0 : 1}`; };
+await home.click(pickId('other', 'v1'));
+await until(home, () => modelsIn() === 'other@v1', 'one model ticked in');
+await home.click('ph-brand-0');
+await until(home, () => modelsIn() === 'acme@v1,acme@v2,other@v1', 'a whole brand ticked in');
+assert.ok(home.text().includes('2 of 2 in this project'), 'the brand line counts its models');
+await home.click(pickId('acme', 'v2'));
+await until(home, () => modelsIn() === 'acme@v1,other@v1', 'one model of the brand left out');
+await home.click('ph-brand-0'); // off: models added one by one stay
+await until(home, () => modelsIn() === 'other@v1', 'the brand off, the one-by-one model stays');
+await home.click('ph-brand-0'); // on again: brings back the one left out
+await until(home, () => modelsIn() === 'acme@v1,acme@v2,other@v1', 'the brand on again brings every model back');
 globalThis.__shared['captain.scope'] = null;
 
 // 5. Picking the engine sets the scope the views filter to.

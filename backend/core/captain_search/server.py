@@ -519,7 +519,7 @@ def project_assign(body: dict):
     """{project: id or null, items: [{kind, name}]}. Moves nothing: it only says which project each item is in."""
     from . import projects as PR
 
-    return PR.assign(ctx(), body.get("project"), list(body.get("items") or []))
+    return PR.assign(ctx(), body.get("project"), list(body.get("items") or []), bool(body.get("clear")))
 
 
 @app.get("/api/projects/{pid}/home", dependencies=A)

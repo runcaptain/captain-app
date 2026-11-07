@@ -410,7 +410,8 @@ export class Library {
       .child(div().flex_1().min_w(48).truncate().text_size(12.5).font_family(MONO).text_color(on ? c.blue : c.navy).child(d.leaf ?? d.name))
       .when(d.latest != null, (e) => e.child(div().flex_none().px(4).border_1().border_color(c.grey300).text_size(10.5).font_family(MONO).text_color(c.grey900).child(`v${d.latest}`)))
       .child(div().flex_none().h(18).px(5).flex().items_center().text_size(10.5).text_color(c.grey900).border_1().border_color(c.rule).child(d.kind ?? "data"))
-      .child(div().flex_none().w(46).text_right().text_size(11).font_family(MONO).text_color(c.grey500).child(d.rows ? fmtInt(d.rows) : ""));
+      .child(div().flex_none().w(56).truncate().text_right().text_size(11).font_family(MONO).text_color(c.grey500)
+        .child(!d.rows ? "" : d.rows >= 1e6 ? `${(d.rows / 1e6).toFixed(d.rows >= 1e7 ? 0 : 1)}M` : fmtInt(d.rows)));
   }
 
   progress(c) {
