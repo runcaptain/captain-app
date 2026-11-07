@@ -12,7 +12,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, EditorState, Editor } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay, pickFolder, home, shared, setShared, notify, run } from "herdr";
-import { api, watchConnections } from "./kit/cst.js";
+import { api, query, watchConnections } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -45,6 +45,12 @@ const kindOf = (hint, sql) => hint ?? (/\b(search|query|queries)\b/i.test(sql) ?
 const timeWindow = (sql) => /\binterval\b|date_sub|dateadd|date_add|current_date|current_timestamp|now\(\)|\b\d+\s*days?\b|daysago|-\d+d\b/i.test(sql);
 
 /** Queries worth starting from, made from a database's tables when the backend has none to suggest. */
+/** A table's full name for SQL: every part of its schema (a Databricks catalog too), quoted where it must be. */
+export function qualified(schema, table) {
+  return [...String(schema ?? "").split(".").filter(Boolean), table].map((p) => p.replace(/"/g, ""))
+    .map((p) => (/^[a-z_][a-z0-9_]*$/.test(p) ? p : `"${p}"`)).join(".");
+}
+
 export function localSuggestions(tree) {
   const out = [];
   for (const s of tree?.schemas ?? []) for (const t of s.tables ?? []) {
@@ -270,7 +276,33 @@ export default class CaptainImport extends View {
     this.runPreview(cx);
   }
 
+  /** A table picked: the whole table, a page at a time, in the kit grid Tables uses. Imports SELECT * of it. */
+  useTable(cx, schema, table) {
+    const conn = this.source.conn;
+    this.kindHint = null;
+    this.tableSel = { schema, table };
+    this.sql.set_value(`select * from ${qualified(schema, table)}`);
+    if (!this.name.value().trim()) this.name.set_value(this.freshName(table));
+    this.confirmEmpty = false;
+    this.clashFor = null;
+    this.step = 3;
+    const path = `/api/tables/${enc(conn)}/${enc(schema)}/${enc(table)}/rows`;
+    const grid = new ResultGrid({ id: "import-preview", name: table, load: (q) => api(`${path}${query(q)}`, { timeout: 120 }) });
+    this.preview = { grid, table: true };
+    grid.fetch(cx);
+    cx.notify();
+  }
+
+  /** Rows the preview found: a table's count, or the query's rows. Null while unknown. */
+  get previewCount() {
+    const p = this.preview;
+    if (!p?.grid) return null;
+    if (p.table) return p.grid.page.total ?? (p.grid.page.has_more || p.grid.loading ? null : (p.grid.table.rows ?? []).length);
+    return p.limited ? null : p.rows;
+  }
+
   runPreview(cx) {
+    this.tableSel = null; // a query now, even if it began as a table
     const conn = this.source.conn;
     const sql = this.sql.value().trim();
     if (!sql) return;
@@ -292,10 +324,11 @@ export default class CaptainImport extends View {
     const name = this.finalName;
     if (!name) { this.note = { text: "Name the dataset first.", tone: "fail" }; cx.notify(); return; }
     if (this.clash && !this.clash.same && !this.allowNewVersion) { this.note = { text: `${name} already holds other data. Pick another name, or choose "Import as version ${this.clash.version + 1}".`, tone: "fail" }; cx.notify(); return; }
-    if (this.preview?.rows === 0 && !this.confirmEmpty) { this.confirmEmpty = true; cx.notify(); return; }
+    if (this.previewCount === 0 && !this.confirmEmpty) { this.confirmEmpty = true; cx.notify(); return; }
     const conn = this.source.conn, sql = this.sql.value().trim(), folder = this.target;
     const kind = this.kindHint ?? undefined;
-    const previewRows = this.preview?.limited ? null : this.preview?.rows;
+    const previewRows = this.previewCount;
+    const whole = this.tableSel ? "the whole table" : null;
     this.busy = true;
     this.note = null;
     cx.spawn(async (cx) => {
@@ -311,8 +344,10 @@ export default class CaptainImport extends View {
       const rows = r.data.row_count ?? 0;
       // Fewer rows than the query asked for: say it's everything there was.
       const asked = Number(/\blimit\s+(\d+)\s*;?\s*$/i.exec(sql)?.[1] ?? 0);
-      const whole = /^\s*select\s+\*\s+from\s+[^\s]+\s+limit\s+\d+\s*;?\s*$/i.test(sql) ? "the whole table" : "everything the query returned";
-      const count = `${fmtInt(rows)} row${rows === 1 ? "" : "s"}${asked && rows < asked ? `, ${whole}` : ""}`;
+      const all = whole ?? (/^\s*select\s+\*\s+from\s+[^\s]+\s+limit\s+\d+\s*;?\s*$/i.test(sql) ? "the whole table" : "everything the query returned");
+      // Stopped at the laptop's row limit: say so, so a cut table is never taken for a whole one.
+      const count = r.data.truncated ? `The first ${fmtInt(rows)} rows: this computer's row limit stopped it. Run it on a cloud machine for the rest`
+        : `${fmtInt(rows)} row${rows === 1 ? "" : "s"}${(asked && rows < asked) || whole ? `, ${all}` : ""}`;
       const differs = previewRows != null && previewRows !== rows ? ` The preview showed ${fmtInt(previewRows)}: the data changed in between.` : "";
       const forWhom = dest.kind ? `for ${dest.name}` : "";
       const where = !moved.ok ? ` It stayed at the top level: ${sentence(moved.data?.error ?? moved.error) || "the folder move failed."}${forWhom ? ` It's ${forWhom}.` : ""}`
@@ -480,7 +515,7 @@ export default class CaptainImport extends View {
         .children((t?.schemas ?? []).flatMap((s) => [
           div().pt(6).text_size(11.5).text_color(c.grey500).child(plainSchema(s.name)),
           ...(s.tables ?? []).map((x) => h_flex().id(`tbl-${s.name}-${x.name}`).h(26).px(6).gap(6).items_center().cursor_pointer().hover((st) => st.bg(c.surface2))
-            .on_click((_e, cx) => this.useQuery(cx, `select * from ${plainSchema(s.name).split(".").pop()}.${x.name} limit 1000`, x.name))
+            .on_click((_e, cx) => this.useTable(cx, s.name, x.name))
             .child(this.icon("table", 12, c.grey500)).child(div().flex_1().min_w(0).truncate().text_size(12).font_family(MONO).child(x.name))),
         ])))
       .child(v_flex().id("import-suggest").flex_1().min_w(0).h_full().overflow_y_scrollbar().p(16).gap(10)
@@ -504,8 +539,9 @@ export default class CaptainImport extends View {
     return v_flex().id("import-preview-step").flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(10)
       .child(div().flex_none().h(100).border_1().border_color(c.rule).child(Editor.new(this.sql).size_full()))
       .child(h_flex().flex_none().gap(8).items_center()
-        .child(Button(c, "preview-run", "Preview 1,000 rows", (_e, cx) => this.runPreview(cx), { small: true }))
-        .when(!!p?.grid, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`${fmtInt(p.rows)} rows${p.ms != null ? ` in ${p.ms} ms` : ""}`))))
+        .child(Button(c, "preview-run", p?.table ? "Preview this query instead" : "Preview 1,000 rows", (_e, cx) => this.runPreview(cx), { small: true }))
+        .when(!!p?.grid && !p.table, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`${fmtInt(p.rows)} rows${p.ms != null ? ` in ${p.ms} ms` : ""}`)))
+        .when(!!p?.table, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`The whole of ${this.tableSel?.table ?? "the table"}, a page at a time. Import brings in every row.`))))
       .when(!!p?.loading, (e) => e.child(Skeleton(c, 6)))
       .when(!!p?.error, (e) => e.child(div().p(10).bg(c.failLight).border_1().border_color(c.fail).text_size(12.5).text_color(c.fail).child(p.error)))
       .when(!!p?.grid, (e) => e.child(div().flex_none().border_1().border_color(c.rule).child(p.grid.render(c, { height: 220 }))))
@@ -519,7 +555,7 @@ export default class CaptainImport extends View {
         .when(!!this.clash && !this.clash.same, (e) => e.child(this.clashView(c)))
         .when(this.confirmEmpty, (e) => e.child(this.emptyView(c)))
         .child(h_flex().gap(8)
-          .child(Button(c, "import-go", this.busy ? "Importing" : this.confirmEmpty ? "Import anyway" : this.clash && this.allowNewVersion ? `Import as version ${this.clash.version + 1}` : "Import", (_e, cx) => this.importQuery(cx),
+          .child(Button(c, "import-go", this.busy ? "Importing" : this.confirmEmpty ? "Import anyway" : this.clash && this.allowNewVersion ? `Import as version ${this.clash.version + 1}` : p?.table ? "Import this table" : "Import", (_e, cx) => this.importQuery(cx),
             { kind: "primary", small: true, disabled: this.busy || !p?.grid || !this.finalName || (!!this.clash && !this.clash.same && !this.allowNewVersion) }))
           .child(div().text_size(11.5).text_color(c.grey500).child("Imports the query's full result as a write-once dataset. Running it again later makes a new version."))));
   }

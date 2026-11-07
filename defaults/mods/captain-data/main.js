@@ -140,6 +140,9 @@ export default class CaptainData extends View {
       if (this.lib.tree === null || (this.lib.error && !this.lib.error.status)) this.lib.load(cx);
     });
     // "Open <dataset>" from the palette: captain-go sets shared "captain.open" {section: "data", dataset, at}.
+    // Shared values outlive the app: an open from before this screen started (the last session's import) is done.
+    const stale = shared("captain.open");
+    if (stale?.at && Date.now() - stale.at > 10000) this.opened = stale.at;
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
       if (o?.section === "data" && o.dataset && o.at !== this.opened) {
