@@ -5643,12 +5643,17 @@ globalThis.__gpui = (() => {
       "child(value) expects an element, a string, or an entity from cx.new(Class, props)",
     );
   };
+  // CAPTAIN: nothing to draw is not an error. `.child(cond ? x : null)` and a helper that returns null for an
+  // empty value are everywhere in mods, and one empty field used to blank a whole screen with "child(value) expects
+  // an element". null, undefined and false are skipped, as GPUI skips a None and as the render tests' stub does.
+  const absent = (child) => child === null || child === undefined || child === false;
   methods.child = function (child) {
+    if (absent(child)) return this;
     __attach(this.__id, childId(child));
     return this;
   };
   methods.children = function (list) {
-    for (const child of list) __attach(this.__id, childId(child));
+    for (const child of list ?? []) if (!absent(child)) __attach(this.__id, childId(child));
     return this;
   };
   // A named slot. The element is consumed exactly as `child` consumes one, so
