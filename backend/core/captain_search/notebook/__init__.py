@@ -229,7 +229,7 @@ def run_all(ctx: Context, nb: dict, params: dict | None = None, progress=None) -
         if params:
             list(k.execute("__params__", "\n".join(f"{n} = {v!r}" for n, v in params.items())))
         n = 0
-        for cell in nb["cells"]:
+        for pos, cell in enumerate(nb["cells"], 1):  # pos: the cell's place in the notebook, as `notebook show` counts
             if cell.get("cell_type") != "code":
                 continue
             n += 1
@@ -238,9 +238,9 @@ def run_all(ctx: Context, nb: dict, params: dict | None = None, progress=None) -
             cell["execution_count"] = n
             errs = [e for e in evs if e["type"] == "error"]
             if progress:
-                progress(f"cell {n}: {'error' if errs else 'ok'}")
+                progress(f"cell {pos}: {'error' if errs else 'ok'}")
             if errs:
-                errors.append(f"cell {n}: {errs[0]['ename']}: {errs[0]['evalue']}")
+                errors.append(f"cell {pos}: {errs[0]['ename']}: {errs[0]['evalue']}")
                 break
     finally:
         k.shutdown()

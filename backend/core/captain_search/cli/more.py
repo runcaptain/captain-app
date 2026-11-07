@@ -25,6 +25,8 @@ backtest_app = typer.Typer(no_args_is_help=True, help="Backtests: offline nDCG a
 deploy_app = typer.Typer(no_args_is_help=True, help="Deploys with gates and rollback")
 env_app = typer.Typer(no_args_is_help=True, help="Deploy environments")
 notebook_app = typer.Typer(no_args_is_help=True, help="Notebooks")
+notebook_cell_app = typer.Typer(no_args_is_help=True, help="Add, edit and remove one cell")
+notebook_app.add_typer(notebook_cell_app, name="cell")
 skill_app = typer.Typer(no_args_is_help=True, help="Agent skills")
 demo_app = typer.Typer(no_args_is_help=True, help="A built-in demo store")
 sim_app.add_typer(pop_app, name="population")
@@ -372,8 +374,10 @@ def nb_new(name: str):
 
 @notebook_app.command("run")
 def nb_run(name: str, param: list[str] = typer.Option([], "-p", help="key=value, set before the first cell"),
-           save_rev: bool = typer.Option(False, "--save-rev", help="save the executed notebook as a new revision")):
-    """Run every cell headless, papermill-style."""
+           save_rev: bool = typer.Option(False, "--save-rev", help="save the executed notebook as a new revision"),
+           upto: Optional[int] = typer.Option(None, "--upto", help="run cells 1 to N only"),
+           keep: bool = typer.Option(False, "--keep", help="keep the outputs in the draft, so the app shows them")):
+    """Run the cells headless, papermill-style: all of them, or 1 to N with --upto."""
     from .. import notebook as NB
 
     c = ctx()
@@ -385,13 +389,132 @@ def nb_run(name: str, param: list[str] = typer.Option([], "-p", help="key=value,
             params[k] = json.loads(v)
         except json.JSONDecodeError:
             params[k] = v
+    if upto is not None:
+        if not 1 <= upto <= len(nb["cells"]):
+            fail(f"there's no cell {upto}: the notebook has {len(nb['cells'])} cells")
+        rest, nb["cells"] = nb["cells"][upto:], nb["cells"][:upto]
+    else:
+        rest = []
     nb, errors = NB.run_all(c, nb, params, progress=None if S.json else (lambda s: typer.echo(f"  {s}", err=True)))
+    nb["cells"] += rest
+    if keep and not S.dry_run:
+        NB.save_draft(c, name, nb)
     out = {"errors": errors}
     if save_rev and not S.dry_run:
         out["version"] = NB.save_revision(c, name, nb, "headless run").version
     emit(out, ("ok" if not errors else "\n".join(errors)) + (f"\nsaved {name}@v{out['version']}" if "version" in out else ""))
     if errors:
         raise typer.Exit(2)
+
+
+def _nb_text(cell: dict, outputs: bool) -> str:
+    meta = (cell.get("metadata") or {}).get("captain") or {}
+    kind = "markdown" if cell.get("cell_type") == "markdown" else meta.get("kind") or "python"
+    head = kind + (f" on {meta['conn']}" if kind == "sql" and meta.get("conn") else "") + (
+        f" into {meta['var']}" if kind == "sql" and meta.get("var") else "")
+    lines = [head, *("    " + ln for ln in str(cell.get("source") or "").splitlines())]
+    if outputs:
+        for o in cell.get("outputs") or []:
+            txt = o.get("text") or (o.get("data") or {}).get("text/plain") or o.get("evalue") or ""
+            txt = "".join(txt) if isinstance(txt, list) else str(txt)
+            lines += ["    > " + ln for ln in txt.splitlines()[:20]]
+    return "\n".join(lines)
+
+
+def _nb_edit(name: str, change, message: str):
+    """Load a notebook (draft first), change its cells, and save it back as the draft the app opens."""
+    from .. import notebook as NB
+
+    c = ctx()
+    _, nb, _ = _do(NB.load, c, name)
+    out = change(nb)
+    NB.normalize(nb)
+    if not S.dry_run:
+        NB.save_draft(c, name, nb)
+    emit({"name": name, "cells": len(nb["cells"]), **(out or {})}, message)
+
+
+def _nb_index(nb: dict, n: int) -> int:
+    if not 1 <= n <= len(nb["cells"]):
+        fail(f"there's no cell {n}: the notebook has {len(nb['cells'])} cells, numbered from 1")
+    return n - 1
+
+
+def _nb_source(source: Optional[str], file: Optional[str]) -> str:
+    if file:
+        return sys.stdin.read() if file == "-" else open(os.path.expanduser(file)).read()
+    if source is None:
+        fail("give the cell's text with --source, or a file with -f (- reads standard input)")
+    return source
+
+
+@notebook_app.command("show")
+def nb_show(name: str, outputs: bool = typer.Option(False, "--outputs", help="include each cell's last output")):
+    """Print a notebook's cells, numbered, the way the cell commands count them."""
+    from .. import notebook as NB
+
+    version, nb, draft = _do(NB.load, ctx(), name)
+    cells = nb["cells"]
+    emit({"name": name, "version": version, "draft": draft, "cells": cells},
+         f"{name} ({'draft' if draft else f'v{version}'}), {len(cells)} cells\n"
+         + "\n".join(f"[{i + 1}] {_nb_text(cl, outputs)}" for i, cl in enumerate(cells)))
+
+
+@notebook_cell_app.command("add")
+def nb_cell_add(name: str, kind: str = typer.Option("python", "--kind", help="python, sql or markdown"),
+                source: Optional[str] = typer.Option(None, "--source"), file: Optional[str] = typer.Option(None, "-f"),
+                conn: Optional[str] = typer.Option(None, "--conn", help="sql: the connection to run on"),
+                var: Optional[str] = typer.Option(None, "--var", help="sql: the DataFrame name for the result"),
+                at: Optional[int] = typer.Option(None, "--at", help="insert as cell N (default: the end)")):
+    """Add a cell. SQL cells run on a connection and leave their result as a DataFrame."""
+    if kind not in ("python", "sql", "markdown"):
+        fail("a cell is python, sql or markdown")
+    text = _nb_source(source, file)
+    if kind == "markdown":
+        cell = {"cell_type": "markdown", "metadata": {}, "source": text}
+    else:
+        meta = {"kind": kind, **({"conn": conn, "var": var or "df"} if kind == "sql" else {})}
+        cell = {"cell_type": "code", "metadata": {"captain": meta}, "outputs": [], "execution_count": None, "source": text}
+
+    def ch(nb):
+        i = len(nb["cells"]) if at is None else max(0, min(len(nb["cells"]), at - 1))
+        nb["cells"].insert(i, cell)
+        return {"cell": i + 1}
+
+    _nb_edit(name, ch, f"added a {kind} cell to {name}")
+
+
+@notebook_cell_app.command("edit")
+def nb_cell_edit(name: str, n: int, source: Optional[str] = typer.Option(None, "--source"),
+                 file: Optional[str] = typer.Option(None, "-f"), conn: Optional[str] = typer.Option(None, "--conn"),
+                 var: Optional[str] = typer.Option(None, "--var")):
+    """Replace cell N's text (and, for SQL, its connection or result name). Its old output is cleared."""
+    text = _nb_source(source, file) if (source is not None or file) else None
+
+    def ch(nb):
+        cell = nb["cells"][_nb_index(nb, n)]
+        if text is not None:
+            cell["source"] = text
+        meta = cell.setdefault("metadata", {}).setdefault("captain", {})
+        if conn is not None:
+            meta["conn"] = conn
+        if var is not None:
+            meta["var"] = var
+        if cell.get("cell_type") == "code":
+            cell["outputs"], cell["execution_count"] = [], None
+        return {"cell": n}
+
+    _nb_edit(name, ch, f"edited cell {n} of {name}")
+
+
+@notebook_cell_app.command("rm")
+def nb_cell_rm(name: str, n: int):
+    """Remove cell N."""
+    def ch(nb):
+        nb["cells"].pop(_nb_index(nb, n))
+        return {"removed": n}
+
+    _nb_edit(name, ch, f"removed cell {n} from {name}")
 
 
 @notebook_app.command("import")
