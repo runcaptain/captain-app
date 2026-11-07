@@ -22,7 +22,8 @@ def analyze(path):
                 cur = 0
         return bs, bs + best
     white = lambda x, y: min(px[x, y]) >= 250
-    cols = [sum(white(x, y) for y in range(0, h, 4)) > (h / 4) * 0.3 for x in range(w)]
+    # A dialog fills a fifth of the window's height or more; in a big window, a short one is under a third.
+    cols = [sum(white(x, y) for y in range(0, h, 4)) > (h / 4) * 0.18 for x in range(w)]
     left, right = longest(cols)
     if right - left < w * 0.2:
         return {"ok": False, "why": "no dialog found"}

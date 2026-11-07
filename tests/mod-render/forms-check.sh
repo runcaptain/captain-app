@@ -81,7 +81,7 @@ export default class Blank extends View { render() { return div().size_full().bg
 JS
 
 printf '{"appearance":"light"}\n' > "$HOME_DIR/settings.json"
-printf '{"captain.forms.preview":%s,"frame.welcomed":"skipped"}\n' "$PREVIEW" > "$HOME_DIR/shared.json"
+printf '{"captain.forms.preview":%s,"frame.welcomed":"skipped","captain.explorer.sample":true}\n' "$PREVIEW" > "$HOME_DIR/shared.json"
 printf '{"state":"windowed","bounds":[80,80,1100,750]}\n' > "$HOME_DIR/window.json"
 CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_BIN=$CST CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
@@ -96,15 +96,31 @@ done
 
 # Overlays open now, except toasts.
 overlays() { app status | python3 -c "import json,sys; print(' '.join(o for o in json.load(sys.stdin).get('overlays', []) if o != 'toast'))"; }
+# Close what's open. `mod.open` toggles a mod's overlay, and the status lists overlays by mod name (overlay.close
+# wants an id it doesn't give), so toggle each one off until none is left.
+close_all() {
+  for _ in 1 2 3; do
+    local open; open=$(overlays)
+    [[ -z "$open" ]] && return 0
+    for name in $open; do app do mod.open "{\"name\":\"$name\"}" >/dev/null 2>&1 || true; done
+    sleep 0.6
+  done
+}
 shoot() { # mod, shot name. Fails unless that mod is the overlay on screen when the shot is taken.
-  for id in $(overlays); do app do overlay.close "{\"id\":\"$id\"}" >/dev/null 2>&1 || true; done
+  close_all
   app do mod.open "{\"name\":\"$1\"}" >/dev/null
   sleep 2.5
   app shot "$OUT/$2.png" >/dev/null
   SHOWN=$(overlays)
-  app do mod.open "{\"name\":\"$1\"}" >/dev/null
-  sleep 0.5
+  close_all
 }
+
+# Warm up: right after start, an overlay can open before the window is ready for it and never show. Open a
+# throwaway one until it shows, so the first real check isn't the one that finds out.
+for _ in $(seq 1 20); do
+  app do mod.open '{"name":"forms-blank"}' >/dev/null 2>&1; sleep 1
+  if [[ "$(overlays)" == *forms-blank* ]]; then app do mod.open '{"name":"forms-blank"}' >/dev/null 2>&1; sleep 0.5; break; fi
+done
 
 fail=0
 for kind in broken blank; do
@@ -124,5 +140,12 @@ done
 # the tour opens as its own window, outside this window's shot; `captain-app check defaults/frame/welcome` covers it.
 shoot captain-setup setup
 if [[ "$SHOWN" == *captain-setup* ]] && python3 tests/mod-render/forms-shot.py "$OUT/setup.png" --any; then echo "setup: drawn"; else echo "setup: NOT DRAWN ($SHOWN) $OUT/setup.png"; fail=1; fi
+# The Explorer (its sample tree, turned on only in this window) and the scope screens.
+close_all
+sleep 1; app shot "$OUT/explorer.png" >/dev/null; echo "explorer: shot $OUT/explorer.png"
+for m in captain-scope-model captain-scope; do
+  shoot "$m" "$m"
+  if [[ "$SHOWN" == *"$m"* ]] && python3 tests/mod-render/forms-shot.py "$OUT/$m.png" --any; then echo "$m: drawn"; else echo "$m: NOT DRAWN ($SHOWN) $OUT/$m.png"; fail=1; fi
+done
 [[ $fail == 0 ]] && echo "all forms drawn" || echo "shots: $OUT"
 exit $fail

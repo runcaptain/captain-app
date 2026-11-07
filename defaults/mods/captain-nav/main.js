@@ -23,6 +23,7 @@ import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { isDark, palette } from "./kit/tokens.js";
 import { getAppearance, setAppearance } from "./kit/appearance.js";
+import { Explorer } from "./explorer.js";
 
 const ITEMS = [
   { id: "investigations", label: "Investigations", icon: "search", badge: "/api/proposals?status=proposed", badgeLabel: "proposals to review" },
@@ -115,8 +116,10 @@ export default class CaptainNav extends View {
         }
       });
     }
+    this.explorer = new Explorer();
+    this.explorer.start(cx, this.workspace);
     this.refresh(cx);
-    watchWorkspace(cx, (cx) => { this.cloud = null; this.refresh(cx); });
+    watchWorkspace(cx, (cx) => { this.cloud = null; setShared("captain.scope", null); this.refresh(cx); this.explorer.load(cx, workspace()); });
     // Every 3 s until Captain's services answer, then every 15 s.
     this.tick = 0;
     cx.timer.every(3000, (cx) => { this.tick++; if (this.state !== "ready" || this.tick % 5 === 0) this.refresh(cx); });
@@ -136,6 +139,8 @@ export default class CaptainNav extends View {
         this.error = ws.ok ? null : ws.error;
         if (ws.ok) {
           this.workspace = ws.data?.name ?? null;
+          const shownWs = workspace() ?? this.workspace;
+          if (this.explorer && this.explorer.workspaceName !== shownWs) this.explorer.load(cx, shownWs);
           // The services' current workspace names new spaces and is unbound terminals' CST_WORKSPACE.
           if (!workspace() && this.workspace && shared("captain.workspace") !== this.workspace) setShared("captain.workspace", this.workspace);
           const all = await api("/api/workspaces");
@@ -354,7 +359,14 @@ export default class CaptainNav extends View {
       .when(rail, (e) => e.child(h_flex().id("nav-expand").h(40).flex_none().justify_center().items_center().cursor_pointer()
         .text_color(c.grey500).hover((s) => s.text_color(c.navy)).tooltip("Expand").on_click(() => this.toggle())
         .child(svg("mods/captain-nav/panel-left.svg").size(15))))
-      .child(v_flex().w_full().flex_1().min_h(0).py(8)
+      // The Explorer: the workspace's scopes and engines; picking one filters the views below to it.
+      .when(!rail, (e) => e.child(v_flex().id("nav-explorer").w_full().flex_1().min_h(0).py(6).overflow_y_scroll().child(this.explorer.render(c))))
+      .child(v_flex().w_full().when(rail, (e) => e.flex_1().min_h(0)).when(!rail, (e) => e.flex_none().border_t(1).border_color(c.rule)).py(6)
+        .when(!rail, (e) => e.child(h_flex().h(22).px(14).items_center().gap(6)
+          .child(div().text_size(11).font_semibold().text_color(c.grey500).child("VIEWS"))
+          .when(Boolean(shared("captain.scope")), (x) => x.child(div().id("nav-scope-clear").min_w(0).flex_1().truncate().text_size(11).text_color(c.blue).cursor_pointer()
+            .tooltip("Show the whole workspace").on_click((_e, cx) => { setShared("captain.scope", null); cx.notify(); })
+            .child(`in ${shared("captain.scope")?.label ?? ""}`)))))
         .children(this.items().map((it) => this.row(c, it, it.id === active, rail, go(it)))))
       .child(this.agentRows(c, rail) ?? div())
       .child(v_flex().w_full().flex_none().py(8).border_t(1).border_color(c.rule)
