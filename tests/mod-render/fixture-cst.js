@@ -19,8 +19,9 @@ export async function api(p, opts = {}) {
     if (want && want !== method) continue;
     if (re.test(p)) {
       const data = JSON.parse(fs.readFileSync(path.join(dir, `${file}.json`), 'utf8'));
-      const ok = !(data && typeof data === 'object' && !Array.isArray(data) && 'error' in data && Object.keys(data).length === 1);
-      return ok ? { ok: true, status: 200, data, error: null } : { ok: false, status: 400, data, error: data.error };
+      // {"error": ...} answers 400; add "__status" for another code (404 for a missing record).
+      const failed = data && typeof data === 'object' && !Array.isArray(data) && 'error' in data && Object.keys(data).filter((k) => k !== '__status').length === 1;
+      return !failed ? { ok: true, status: 200, data, error: null } : { ok: false, status: data.__status ?? 400, data, error: data.error };
     }
   }
   return { ok: false, status: 404, data: null, error: `no fixture for ${p}` };

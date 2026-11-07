@@ -9,6 +9,7 @@ import { api, retry, details, watchWorkspace } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
+import { Jobs } from "./jobs.js";
 import { metricWords } from "./kit/words.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
@@ -34,14 +35,17 @@ function cronEnglish(cron) {
 
 /** A failed call in words for people: the backend's own sentence when it answered, else a plain one. Transport
  *  details (hosts, ports, tool output) never show: they go behind Copy details. */
-function say(r, fallback) {
+function say(r, fallback, missing) {
   if (r?.timedOut) return "This took too long.";
   // The services went away or never came up: the kit's own plain sentence ("Captain's services stopped.").
   // Belt and braces: anything that reads like a tool's or transport's output never shows.
   if (r?.failed && r.error && !/curl|127\.0|localhost|\bport\b|https?:|error sending|traceback|engine|daemon/i.test(r.error)) return String(r.error);
   const e = String(r?.error ?? "");
   // A route this backend doesn't have answers FastAPI's bare "Not Found": not a sentence for people.
-  if (r?.status && e && !/^HTTP \d+$/.test(e) && !/^(Not Found|Method Not Allowed|Internal Server Error)$/i.test(e)) return e;
+  // A storage key or path ("backtest-runs/x/v1/MANIFEST.yaml") isn't a sentence either: it goes to Copy details.
+  const pathy = /^[\w.@-]+(\/[\w.@-]+)+$/.test(e.trim()) || /\.(ya?ml|json|parquet|csv)$/i.test(e.trim());
+  if (r?.status === 404 && missing) return missing;
+  if (r?.status && e && !pathy && !/^HTTP \d+$/.test(e) && !/^(Not Found|Method Not Allowed|Internal Server Error)$/i.test(e)) return e;
   if (/time ?out|timed out/i.test(e)) return "This took too long.";
   return fallback;
 }
@@ -120,6 +124,9 @@ export default class CaptainRuns extends View {
     this.keys = cx.focus_handle();
     this.load(cx, "backtests");
     cx.timer.every(1000, (cx) => this.pollJob(cx));
+    // Compute jobs: their list, and a running one's state and log lines.
+    this.jobs = new Jobs(this);
+    cx.timer.every(2000, (cx) => { if (this.tab === "jobs") this.jobs.tick(cx); });
     // Until the backend answers, ask again every 3 s.
     // Until the list loads, ask again every 3 s: while the services start, and after any failure that wasn't the
     // backend answering (they stopped or restarted).
@@ -137,6 +144,7 @@ export default class CaptainRuns extends View {
     // Another space, another workspace: drop what was shown and load this tab again.
     watchWorkspace(cx, (cx) => {
       this.data = {}; this.sel = {}; this.detail = {}; this.open = {}; this.grader = null; this.error = null;
+      this.jobs = new Jobs(this);
       this.load(cx, this.tab);
       cx.notify();
     });
@@ -145,6 +153,7 @@ export default class CaptainRuns extends View {
   // ---- data ---------------------------------------------------------------------------------------------------
 
   load(cx, tab) {
+    if (tab === "jobs") { this.jobs.load(cx); return; }
     const path = { backtests: "/api/backtests", workflows: "/api/workflows", grading: "/api/grading", replays: "/api/replays" }[tab];
     cx.spawn(async (cx) => {
       const r = await api(path);
@@ -276,6 +285,11 @@ export default class CaptainRuns extends View {
 
   // ---- pieces -------------------------------------------------------------------------------------------------
 
+  /** The plain failure panel, for the Jobs tab. */
+  troubleView(c, id, r, fallback, onRetry) {
+    return trouble(c, id, r, fallback, onRetry);
+  }
+
   icon(n, size = 14, color) {
     return svg(ICON(n)).size(size).flex_none().when(!!color, (e) => e.text_color(color));
   }
@@ -309,13 +323,13 @@ export default class CaptainRuns extends View {
   }
 
   header(c) {
-    const tabs = [["backtests", "Backtests", "backtest"], ["workflows", "Workflows", "workflow"], ["grading", "Grading", "grade"], ["replays", "Replays", "replay"]];
+    const tabs = [["backtests", "Backtests", "backtest"], ["workflows", "Workflows", "workflow"], ["grading", "Grading", "grade"], ["replays", "Replays", "replay"], ["jobs", "Jobs", "compute"]];
     return h_flex().h(52).flex_none().px(20).gap(14).items_center().border_b(1).border_color(c.rule)
       .child(div().flex_none().text_size(18).font_semibold().child("Runs"))
       .child(h_flex().flex_none().border_1().border_color(c.grey300).children(tabs.map(([id, label, icon]) =>
         h_flex().id(`tab-${id}`).h(28).px(12).gap(6).items_center().cursor_pointer().border_r(1).border_color(c.grey300).text_size(12.5)
           .bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
-          .on_click((_e, cx) => { this.tab = id; this.grader = null; if (!this.data[id]) this.load(cx, id); cx.notify(); })
+          .on_click((_e, cx) => { this.tab = id; this.grader = null; if (id === "jobs") { if (this.jobs.list === null) this.jobs.load(cx); } else if (!this.data[id]) this.load(cx, id); cx.notify(); })
           .child(this.icon(icon, 13)).child(div().child(label)))))
       .child(div().flex_1())
       .when(this.tab === "backtests", (e) => e.child(Button(c, "new-backtest", "Run a backtest", () => openForm("backtest"), { kind: "primary", small: true })))
@@ -644,7 +658,7 @@ export default class CaptainRuns extends View {
     const c = palette(isDark(theme()));
     const w = this.width;
     // Never blank: the header always shows, and the body says what is happening.
-    const body = this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true)) : this.tab === "backtests" ? this.backtests(c, w) : this.tab === "workflows" ? this.workflows(c, w) : this.tab === "grading" ? this.grading(c) : this.replays(c, w);
+    const body = this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true)) : this.tab === "backtests" ? this.backtests(c, w) : this.tab === "workflows" ? this.workflows(c, w) : this.tab === "grading" ? this.grading(c) : this.tab === "jobs" ? this.jobs.render(c, w) : this.replays(c, w);
     return v_flex().id("root").size_full().bg(c.surface).font_family(FONT).text_color(c.navy)
       .on_size_change((size, cx) => { this.width = size.width; cx.notify(); })
       .child(this.header(c))

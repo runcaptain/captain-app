@@ -41,9 +41,26 @@ def _key(conn: str) -> str:
     return f"metastore/{conn}.json"
 
 
+def _parts(schema: str) -> list[str]:
+    """A schema name split on dots outside double quotes, quotes removed: DuckDB names a schema of a catalog with a
+    dash in it '"t-store".main', which is ['t-store', 'main']."""
+    out, cur, quoted = [], "", False
+    for ch in schema or "":
+        if ch == '"':
+            quoted = not quoted
+        elif ch == "." and not quoted:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    out.append(cur)
+    return [x for x in out if x]
+
+
 def _split(schema: str) -> tuple[str | None, str]:
     """DuckDB and some others name schemas catalog.schema."""
-    return tuple(schema.split(".", 1)) if "." in schema else (None, schema)  # type: ignore[return-value]
+    p = _parts(schema)
+    return (p[0], ".".join(p[1:])) if len(p) > 1 else (None, p[0] if p else "")
 
 
 def _columns_from_information_schema(eng, schema: str, table: str) -> list[dict]:
@@ -220,14 +237,19 @@ def sample(ctx: Context, conn_name: str, schema: str, name: str, n: int = 20, wh
 
     conn = ctx.load_connection(conn_name)
     prep = make_url(render_secrets(conn.url)).get_dialect()().identifier_preparer
-    qual = ".".join(prep.quote(x) for x in [*(schema.split(".") if schema else []), name] if x)
+    qual = ".".join(prep.quote(x) for x in [*_parts(schema), name] if x)
     sql = f"SELECT * FROM {qual}"
     if where:
         sql += f" WHERE {where}"
     if order:
         sql += f" ORDER BY {prep.quote(order)}{' DESC' if desc else ''}"
     sql += f" LIMIT {max(1, min(int(n), 1000))}"
-    r = run_sql(conn, sql, limit=n)
+    try:
+        r = run_sql(conn, sql, limit=n)
+    except Exception as e:  # noqa: BLE001  the database's own error, as the first line of a sentence (a 400, not a 500)
+        if type(e).__name__ in ("WriteRefused", "TooLarge"):
+            raise
+        raise ValueError(f"Couldn't read sample rows of {name}: {str(e).splitlines()[0][:300]}") from None
     from .server import _jsonable
 
     return {"sql": sql, "columns": [{"name": f.name, "type": str(f.type)} for f in r.table.schema],

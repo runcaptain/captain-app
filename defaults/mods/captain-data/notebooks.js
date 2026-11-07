@@ -63,6 +63,8 @@ export class Notebooks {
     cx.spawn(async (cx) => {
       const [nb, cs, fs] = await Promise.all([api("/api/notebooks"), api("/api/connections"), api("/api/notebook-formats")]);
       this.list = nb.ok && Array.isArray(nb.data) ? nb.data : [];
+      // A notebook made before the list arrived (from a table's example query) stays in it.
+      if (this.open?.name && !this.list.some((n) => n.name === this.open.name)) this.list.unshift({ name: this.open.name, latest: null, has_draft: true });
       this.listError = nb.ok ? null : "Couldn't load notebooks.";
       this.conns = cs.ok && Array.isArray(cs.data) ? cs.data : [];
       this.formats = fs.ok && Array.isArray(fs.data) ? fs.data.filter((f) => f.export) : [];
@@ -92,6 +94,14 @@ export class Notebooks {
       this.open = { name, version: r.data.version, base: r.data.notebook, draft: !!r.data.draft };
       this.cells = fromNotebook(r.data.notebook);
       if (!this.cells.length) this.cells = [newCell("sql", [], this.conns[0]?.name)];
+      // Opened from a table's example query: that query, on its connection, as the first cell.
+      if (this.seedSql) {
+        const cell = newCell("sql", [], this.seedSql.conn);
+        cell.source = this.seedSql.sql;
+        this.cells = [cell];
+        this.seedSql = null;
+        this.edited();
+      }
       for (const cell of this.cells) this.prepare(cell);
       if (this.runOnOpen) { this.runOnOpen = false; this.runAll(cx); }
       cx.notify();
@@ -103,6 +113,7 @@ export class Notebooks {
     const name = this.newName.value().trim().replace(/\s+/g, "-");
     if (!name) { this.note = { text: "Give the notebook a name first.", tone: "fail" }; cx.notify(); return; }
     this.newName.set_value("");
+    this.list ??= [];
     if (!this.list.some((n) => n.name === name)) this.list = [{ name, latest: null, has_draft: true }, ...this.list];
     this.openNotebook(cx, name);
     this.dirty = true;

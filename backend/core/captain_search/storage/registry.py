@@ -116,7 +116,11 @@ class Registry:
             if not vs:
                 raise NotFound(f"{kind} {name} has no versions")
             version = vs[-1]
-        raw = yaml.safe_load(self.store.get(f"{self.version_dir(kind, name, version)}/MANIFEST.yaml"))
+        try:
+            raw = yaml.safe_load(self.store.get(f"{self.version_dir(kind, name, version)}/MANIFEST.yaml"))
+        except NotFound:
+            # In words, not the storage key the store reports ("backtest-runs/x/v1/MANIFEST.yaml").
+            raise NotFound(f"no {kind.replace('-', ' ')} {name} with version {version}") from None
         return VERSION_KINDS[kind].model_validate(raw)
 
     def resolve(self, kind: str, ref: str):

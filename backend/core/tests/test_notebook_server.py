@@ -115,3 +115,13 @@ def test_sql_cell_code_carries_the_row_limit():
     assert NB.cell_code(cell, 1).endswith("var='df_1', limit=1000)")
     cell["metadata"]["captain"].pop("limit")
     assert NB.cell_code(cell, 1).endswith("var='df_1')")
+
+
+def test_a_missing_version_is_named_in_words(ctx):
+    from captain_search.storage.backend import NotFound
+
+    with pytest.raises(NotFound) as e:
+        ctx.registry.load("backtest-run", "demos/nothing-here", 1)
+    msg = str(e.value)
+    assert msg == "no backtest run demos/nothing-here with version 1", msg
+    assert "MANIFEST" not in msg and "/v1/" not in msg
