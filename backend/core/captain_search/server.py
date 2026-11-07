@@ -170,6 +170,45 @@ def extensions_list():
     return {"extensions": [e.public() for e in reg.items], "errors": reg.errors, "project": reg.project}
 
 
+@app.get("/api/lineage/graph", dependencies=A)
+def lineage_graph(node: str | None = None, up: int = 2, down: int = 2):
+    """Data and model lineage. With node=<id>, only what's within `up` steps upstream and `down` downstream, each node
+    with its level (negative is upstream). Without a node, the whole graph."""
+    from . import lineage as LN
+
+    c = ctx()
+    if node:
+        return LN.neighborhood(c, node, max(0, min(up, 10)), max(0, min(down, 10)))
+    return LN.graph(c)
+
+
+@app.get("/api/lineage/columns", dependencies=A)
+def lineage_columns(dataset: str, column: str):
+    """Which warehouse table columns one column of a SQL-made dataset came from."""
+    from . import lineage as LN
+
+    return LN.columns(ctx(), dataset, column)
+
+
+@app.post("/api/lineage/import/{conn}", dependencies=A)
+def lineage_import(conn: str, body: dict | None = None):
+    """Read Databricks Unity Catalog's or Snowflake's own lineage into the graph. Runs as a job."""
+    from . import lineage as LN
+
+    c = ctx()
+    c.load_connection(conn)
+    days = int((body or {}).get("days", 30))
+    return {"job": _job(lambda p: LN.import_external(c, conn, days), f"read {conn}'s lineage")}
+
+
+@app.get("/api/profile", dependencies=A)
+def profile(dataset: str):
+    """Quality per column (null share, distinct values, min, max) and freshness, for a dataset version."""
+    from . import lineage as LN
+
+    return LN.profile_dataset(ctx(), dataset)
+
+
 @app.get("/api/explorer", dependencies=A)
 def explorer_tree():
     """The Explorer: All engines, All experiments, the scope tree (Brand > Site > Engine by default), Projects and

@@ -606,3 +606,20 @@ Routes:
 - `GET|POST /api/engines`, `PUT /api/engines/{id}`: engines are persistent identities `{name, type: search |
   recommendation, scopes, pipelines}`. A pipeline belongs to the engine that lists it.
 - `POST /api/scopes/link {items, scope? | engine?}` attaches records to a scope or an engine.
+
+## Lineage and quality (Unity Catalog style)
+
+- `GET /api/lineage/graph?node=<id>&up=2&down=2` returns the nodes within `up` steps upstream and `down` downstream,
+  each with `level` (negative is upstream), plus `more_upstream` and `more_downstream`. Without `node`, it returns the
+  whole graph.
+  - Node ids: `table:<conn>/<schema.table>`, `dataset:<name>@v<n>` (or `dataset:<name>` for the newest),
+    `pipeline:…`, `run:…`, `model:<brand>@<v>`, `connection:…`, `environment:…`, `architecture:…`.
+  - Edges come from Captain's records, attached registries, the SQL that made each dataset (warehouse table, then
+    dataset), and imported warehouse lineage.
+- `GET /api/lineage/columns?dataset=&column=` returns `{sources: [{table, column, node}], path, known, reason}`. It
+  traces the dataset's SQL with SQLGlot against the pulled table metadata.
+- `POST /api/lineage/import/{conn} {days?}` returns `{job}`. It reads Databricks Unity Catalog's
+  `system.access.table_lineage` and `column_lineage`, or Snowflake's `ACCOUNT_USAGE.ACCESS_HISTORY`, with the
+  connection's own login, read-only. Other databases get a plain refusal.
+- `GET /api/profile?dataset=<name>[@vN]` returns rows, age, and per column the type, null share, distinct count, min
+  and max.
