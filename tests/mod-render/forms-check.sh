@@ -149,7 +149,7 @@ if [[ "$SHOWN" == *captain-setup* ]] && python3 tests/mod-render/forms-shot.py "
 # The Explorer (its sample tree, turned on only in this window) and the scope screens.
 close_all
 sleep 1; app shot "$OUT/explorer.png" >/dev/null; echo "explorer: shot $OUT/explorer.png"
-for m in captain-scope-model captain-scope captain-rankings captain-explain; do
+for m in captain-scope-model captain-scope captain-rankings captain-explain captain-sandbox; do
   shoot "$m" "$m"
   if [[ "$SHOWN" == *"$m"* ]] && python3 tests/mod-render/forms-shot.py "$OUT/$m.png" --any; then echo "$m: drawn"; else echo "$m: NOT DRAWN ($SHOWN) $OUT/$m.png"; fail=1; fi
 done
