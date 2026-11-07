@@ -19,7 +19,7 @@ block_of() { case "$1" in captain-data) echo data ;; captain-runs) echo runs ;; 
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:sqltools" "captain-data:import" "captain-data:import-table" "captain-data:sample" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage") ;;
+    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:import" "captain-data:import-table" "captain-data:sample" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage") ;;
     captain-runs) EXTRA+=("captain-runs:jobs") ;;
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries") ;;
   esac
@@ -151,6 +151,7 @@ props_of() {
     captain-data:wide40) echo '{"tab": "tables", "tablesTab": "rows", "tablesPick": "usage"}' ;;
     captain-data:wide13) echo '{"tab": "tables", "tablesTab": "rows", "tablesPick": "spend"}' ;;
     captain-data:tablerows) echo '{"tab": "tables", "tablesTab": "rows"}' ;;
+    captain-data:bignotebook) echo '{"tab": "notebooks", "notebook": "shot-big", "runAll": true}' ;;
     captain-data:sqltools) echo '{"tab": "notebooks", "notebook": "shot-sql-tools", "sqlTools": {"panel": "filled"}}' ;;
     captain-compare:imported) echo '{"backtest": "demos/shot/imported-readout", "version": 1}' ;;
     captain-compare:imported-queries) echo '{"backtest": "demos/shot/imported-readout", "version": 1, "tab": "queries"}' ;;
@@ -195,7 +196,7 @@ EOF
   app do layout.select "{\"stack\":\"sections\",\"child\":\"$block\"}" >/dev/null
   ok=0
   # The notebook view runs every cell on a fresh Python first: give it time to finish before judging.
-  [[ "$view" == captain-data:notebook || "$view" == captain-data:chart ]] && sleep 25
+  [[ "$view" == captain-data:notebook || "$view" == captain-data:chart || "$view" == captain-data:bignotebook ]] && sleep 25
   [[ "$view" == captain-data:import* ]] && sleep 8
   for i in $(seq 1 12); do
     sleep 1.5

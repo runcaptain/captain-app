@@ -125,3 +125,57 @@ def test_a_missing_version_is_named_in_words(ctx):
     msg = str(e.value)
     assert msg == "no backtest run demos/nothing-here with version 1", msg
     assert "MANIFEST" not in msg and "/v1/" not in msg
+
+
+def test_page_of_a_dataframe_sorts_and_filters_every_row():
+    import pandas as pd
+
+    from captain_search.connectors.guard import WriteRefused
+    from captain_search.notebook.helpers import page_of
+
+    df = pd.DataFrame({"id": range(2500), "price": [i % 97 for i in range(2500)], "tags": [["a", str(i)] for i in range(2500)]})
+    p = page_of(df, 0, 100, count=True)
+    assert p["total"] == 2500 and len(p["rows"]) == 100 and p["has_more"] and p["offset"] == 0
+    assert [c["kind"] for c in p["columns"]] == ["integer", "integer", "list"]
+    assert p["rows"][0][2] == '["a", "0"]'  # lists as JSON text, the same as every rows route
+    last = page_of(df, 2400, 100)
+    assert last["rows"][-1][0] == 2499 and not last["has_more"]
+    top = page_of(df, 0, 5, order="price", desc=True, where="id >= 1000", count=True)
+    assert top["rows"][0][1] == 96 and all(r[0] >= 1000 for r in top["rows"]) and top["total"] == 1500 and top["filtered"]
+    with pytest.raises(ValueError, match="no column"):
+        page_of(df, 0, 5, order="nope")
+    with pytest.raises(WriteRefused):
+        page_of(df, 0, 5, where="1=1; drop table t")
+
+
+def test_kernel_pages_a_result_over_the_socket(ctx):
+    from captain_search import server
+
+    server._ctx = None
+    c = TestClient(server.app)
+    h = {"Authorization": f"Bearer {server.TOKEN}"}
+    sid = c.post("/api/kernels", headers=h, json={"notebook": "x"}).json()["session"]
+
+    def until_done(ws, cid):
+        evs = []
+        while True:
+            e = ws.receive_json()
+            evs.append(e)
+            if e["type"] == "done" and e["cell_id"] == cid:
+                return evs
+
+    try:
+        with c.websocket_connect(f"/api/kernels/{sid}?token={server.TOKEN}") as ws:
+            ws.send_json({"type": "execute", "cell_id": "a", "kind": "python", "code": "import pandas as pd\nbig = pd.DataFrame({'n': range(3000)})"})
+            until_done(ws, "a")
+            ws.send_json({"type": "page", "req": "r1", "var": "big", "offset": 1000, "limit": 50, "order": "n", "desc": True, "count": True})
+            evs = until_done(ws, "r1")
+            p = next(e for e in evs if e["type"] == "page")
+            assert p["cell_id"] == "r1" and p["total"] == 3000 and p["rows"][0] == [1999] and len(p["rows"]) == 50
+            assert not any(e["type"] == "status" for e in evs), "a page doesn't show the notebook as running"
+            ws.send_json({"type": "page", "req": "r2", "var": "gone"})
+            evs = until_done(ws, "r2")
+            err = next(e for e in evs if e["type"] == "error")
+            assert "Run its cell again" in err["evalue"]
+    finally:
+        c.delete(f"/api/kernels/{sid}", headers=h)

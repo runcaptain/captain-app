@@ -37,6 +37,19 @@ globalThis.__kernel = (m, send) => {
     waiting = null;
     return;
   }
+  // A page of df_1 for the notebook grid: all 2,500 rows live "in Python", sorted and filtered there.
+  if (m.type === 'page') {
+    globalThis.__pages = [...(globalThis.__pages ?? []), m];
+    const cats = ['sofas', 'lamps', 'rugs', 'beds'];
+    let all = Array.from({ length: 2500 }, (_, i) => [cats[i % 4], (i % 4) * 10 + 5]);
+    const w = /conv\s*>\s*(\d+)/.exec(m.where ?? '');
+    if (w) all = all.filter((r) => r[1] > Number(w[1]));
+    if (m.order === 'conv') all.sort((a, b) => (a[1] - b[1]) * (m.desc ? -1 : 1));
+    const rows = all.slice(m.offset, m.offset + m.limit);
+    send({ type: 'page', cell_id: m.req, columns: [{ name: 'category', type: 'VARCHAR', kind: 'text' }, { name: 'conv', type: 'BIGINT', kind: 'integer' }], rows, offset: m.offset, limit: m.limit, has_more: m.offset + m.limit < all.length, total: m.count ? all.length : undefined, ms: 4, filtered: !!m.where });
+    send({ type: 'done', cell_id: m.req, ms: 4 });
+    return;
+  }
   if (m.type !== 'execute') return;
   send({ type: 'status', state: 'busy' });
   if (m.kind === 'sql') {
@@ -81,21 +94,29 @@ text = h.text();
 assert.ok(globalThis.__asked.some((p) => p === '/api/kernels'), 'kernel session started');
 assert.ok(globalThis.__sockets?.[0]?.url.startsWith('ws://127.0.0.1:9/api/kernels/abc123?token='), 'socket to the session');
 assert.ok(/Done, 420 ms, 2,500 rows/.test(text), `cell status: ${text.slice(0, 400)}`);
-assert.ok(text.includes('2,500 rows, 2 columns') && text.includes('showing the first 1,000'), 'grid footer');
+// More rows than came back: the grid pages all 2,500 in Python, 100 at a time.
+await h.idle();
+text = h.text();
+assert.ok(/1 to 100 of 2,500/.test(text), `pager: ${text.match(/\d+ to [^|]*/)?.[0]}`);
+assert.equal(globalThis.__pages[0].var, 'df_1', 'the page names the result');
 assert.ok(text.includes('Download CSV') && text.includes('Copy TSV'), 'grid exports');
 assert.ok(text.includes('sofas'), 'grid rows');
 assert.ok(text.includes('Python ready'), 'kernel ready');
 
-// The result grid's column menu: filter conv > 20, stats, then sort.
+// The column menu's stats; the Where box filters all 2,500 rows; a header click sorts them all, in Python.
 await h.click('gm-sql1-0-1');
 text = h.text();
-assert.ok(text.includes('sum') && text.includes('median') && text.includes('unique'), 'column stats');
-await h.click('gop-sql1-0-1-gt');
-h.mod.nb.grids.get('sql1-0').inputs.get('1:a').set_value('20');
-await h.click('gapply-sql1-0-1');
-assert.ok(/500 of 1,000 rows match/.test(h.text()), `filter applied: ${h.text().match(/\d[\d,]* of [\d,]* rows match/)?.[0]}`);
+assert.ok(text.includes('sum') && text.includes('median') && text.includes('unique') && text.includes('(this page)'), 'column stats, on this page');
 await h.click('gclose-sql1-0');
 assert.ok(!h.text().includes('median'), 'menu closed');
+h.mod.nb.grids.get('sql1-0').whereBox.set_value('conv > 20');
+await h.click('gwhere-sql1-0');
+await h.idle();
+assert.ok(/1 to 100 of 1,250/.test(h.text()), `filtered over every row: ${h.text().match(/\d+ to [^|]*/)?.[0]}`);
+await h.click('gh-sql1-0-1');
+await h.click('gh-sql1-0-1');
+await h.idle();
+assert.deepEqual([globalThis.__pages.at(-1).order, globalThis.__pages.at(-1).desc, globalThis.__pages.at(-1).where], ['conv', true, 'conv > 20'], 'sorted in Python, keeping the filter');
 assert.ok((h.mod.nb.cells[1].meta.limit ?? 1000) === 1000, 'default row limit');
 await h.click('lim-sql1-10000');
 assert.equal(h.mod.nb.cells[1].meta.limit, 10000, 'row limit picked');

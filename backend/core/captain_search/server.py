@@ -1488,6 +1488,21 @@ async def kernel_ws(ws: WebSocket, sid: str):
                 loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "cell_id": msg.get("cell_id"), "ename": type(e).__name__, "evalue": str(e), "traceback": []})
                 loop.call_soon_threadsafe(q.put_nowait, {"type": "done", "cell_id": msg.get("cell_id"), "ms": 0})
 
+    def page(msg):
+        # The grid's page of a result: {type: "page", req, var, offset, limit, order?, desc?, where?, count?}. Its
+        # answer comes back as {type: "page", cell_id: req, ...one row shape} (or an error), then done.
+        with lock:
+            req = str(msg.get("req") or "page")
+            try:
+                code = (f"__cst.page({str(msg.get('var') or '')!r}, {int(msg.get('offset') or 0)}, {int(msg.get('limit') or 100)}, "
+                        f"{msg.get('order')!r}, {bool(msg.get('desc'))}, {msg.get('where')!r}, {bool(msg.get('count'))})")
+                for ev in k.execute(req, code):
+                    if ev.get("type") != "status":  # a page is not the notebook running
+                        loop.call_soon_threadsafe(q.put_nowait, ev)
+            except Exception as e:  # noqa: BLE001
+                loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "cell_id": req, "ename": type(e).__name__, "evalue": str(e), "traceback": []})
+                loop.call_soon_threadsafe(q.put_nowait, {"type": "done", "cell_id": req, "ms": 0})
+
     async def pump():
         while True:
             await ws.send_json(await q.get())
@@ -1498,6 +1513,8 @@ async def kernel_ws(ws: WebSocket, sid: str):
             msg = await ws.receive_json()
             if msg.get("type") == "execute":
                 threading.Thread(target=run, args=(msg,), daemon=True).start()
+            elif msg.get("type") == "page":
+                threading.Thread(target=page, args=(msg,), daemon=True).start()
             elif msg.get("type") == "interrupt":
                 k.interrupt()
     except WebSocketDisconnect:

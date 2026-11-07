@@ -71,6 +71,10 @@ Cell metadata: `cell.metadata.captain = {kind: "sql"|"python"|"markdown"|"chart"
 A SQL cell's result is bound to the Python variable `var` (default `df_<n>`) inside the kernel.
 
 Kernel socket, client to server: `{type:"execute", cell_id, kind:"sql"|"python", code, conn?, var?}` and `{type:"interrupt"}`.
+`{type:"page", req, var, offset?, limit<=1000?, order?, desc?, where?, count?}` asks for a page of the DataFrame `var`,
+sorted and filtered over all its rows (DuckDB, WHERE through the read-only guard). It answers
+`{type:"page", cell_id: req, ...one row shape}` then `{type:"done", cell_id: req}`, or an error such as "df_1 isn't in
+this notebook's Python any more. Run its cell again." A page sends no status messages.
 Server to client: `{type:"status", state:"busy"|"idle"}`, `{type:"stream", cell_id, name:"stdout"|"stderr", text}`,
 `{type:"table", cell_id, var, columns, rows, row_count, truncated}`, `{type:"display", cell_id, mime, data}`
 (`text/plain`, `text/html`, `image/png` base64, `application/vnd.vegalite.v5+json`), `{type:"error", cell_id, ename, evalue, traceback}`,

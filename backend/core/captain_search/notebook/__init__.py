@@ -19,6 +19,7 @@ from ..storage.registry import check_name, sha256
 from ..workspace import Context, home, whoami
 
 TABLE_MIME = "application/vnd.captain.table+json"
+PAGE_MIME = "application/vnd.captain.page+json"  # a page of a result, for the notebook grid (helpers.page)
 VEGA_MIME = "application/vnd.vegalite.v5+json"
 
 
@@ -171,6 +172,9 @@ class Kernel:
                 data = c["data"]
                 if TABLE_MIME in data:
                     yield {"type": "table", "cell_id": cell_id, **data[TABLE_MIME]}
+                    continue
+                if PAGE_MIME in data:
+                    yield {"type": "page", "cell_id": cell_id, **data[PAGE_MIME]}
                     continue
                 for mime in (VEGA_MIME, "image/png", "text/html", "text/plain"):
                     if mime in data:

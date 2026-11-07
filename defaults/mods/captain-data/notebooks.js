@@ -245,11 +245,11 @@ export class Notebooks {
   // ---- running ---------------------------------------------------------------------------------------------------
 
   ensureKernel() {
-    if (!this.kernel) this.kernel = new Kernel(this.open.name, (m) => this.onMsg(m), (s) => { this.kstate = s; });
+    if (!this.kernel) this.kernel = new Kernel(this.open.name, (m, cx) => this.onMsg(m, cx), (s) => { this.kstate = s; });
     return this.kernel;
   }
 
-  onMsg(m) {
+  onMsg(m, cx) {
     const cell = this.cells.find((c) => c.id === m.cell_id);
     if (!cell) return;
     if (m.type === "stream") {
@@ -258,6 +258,15 @@ export class Notebooks {
       else cell.outputs.push({ kind: "stream", name: m.name, text: m.text });
     } else if (m.type === "table") {
       cell.outputs.push({ kind: "table", table: { var: m.var, columns: m.columns, rows: m.rows, row_count: m.row_count, truncated: m.truncated, limited: !!m.limited, limit: m.limit ?? cell.meta.limit ?? LIMIT } });
+      // More rows than came back, held in a variable: the grid pages, sorts and filters all of them in Python.
+      if (m.var && (m.row_count ?? 0) > (m.rows ?? []).length && cx) {
+        const key = `${cell.id}-${cell.outputs.length - 1}`;
+        const kernel = this.kernel;
+        const g = new ResultGrid({ id: key, name: `${this.open?.name ?? "notebook"}-${m.var}`, source: "this notebook's Python",
+          load: (q) => kernel.page(cx, { var: m.var, ...q }) });
+        this.grids.set(key, g);
+        g.fetch(cx);
+      }
     } else if (m.type === "display") {
       cell.outputs.push({ kind: "display", mime: m.mime, data: m.data });
     } else if (m.type === "error") {
@@ -633,7 +642,7 @@ export class Notebooks {
     if (o.kind === "table") {
       let g = this.grids.get(key);
       if (!g) { g = new ResultGrid({ id: key, table: o.table, name: `${this.open?.name ?? "notebook"}-${o.table.var ?? cell.meta.var ?? "result"}` }); this.grids.set(key, g); }
-      else if (g.table !== o.table) g.set(o.table);
+      else if (!g.paged && g.table !== o.table) g.set(o.table);
       return div().id(`out-${key}`).border_t(1).border_color(c.rule).child(g.render(c, { height: 270 }));
     }
     if (o.kind === "display") {

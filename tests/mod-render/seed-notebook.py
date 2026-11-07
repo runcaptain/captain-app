@@ -32,6 +32,10 @@ chart_first = {**nb, "cells": [
     nb["cells"][1], stock]}
 m = NB.save_revision(ctx, "shot-chart", chart_first, "shot check")
 print(f"{m.name}@v{m.version}")
+# A result bigger than what comes back with it (12,480 rows, the row limit at 100k): the grid pages it in Python.
+big = {**nb, "cells": [cell("bigq", "sql", "select * from usage order by record_id", conn="demo-store", var="df_1", limit=100000)]}
+m = NB.save_revision(ctx, "shot-big", big, "shot check")
+print(f"{m.name}@v{m.version}")
 # A query with a {{value}}, its tools open on "Filled-in query".
 tools = {**nb, "metadata": {**nb["metadata"], "captain": {"vars": {"category": "'Camping'"}}}, "cells": [
     cell("tq", "sql", "select title, price\nfrom products\nwhere category = {{category}} and {{since}} <= '{{today}}'\norder by price desc", conn="demo-store", var="df_1")]}

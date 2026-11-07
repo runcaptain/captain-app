@@ -6,6 +6,7 @@ import json
 import math
 
 TABLE_MIME = "application/vnd.captain.table+json"
+PAGE_MIME = "application/vnd.captain.page+json"
 VEGA_MIME = "application/vnd.vegalite.v5+json"
 PREVIEW = 1000
 
@@ -87,6 +88,55 @@ def chart(df, spec: dict):
     vl["data"] = {"values": data}
     vl.setdefault("width", "container")
     display({VEGA_MIME: vl, "text/plain": "chart"}, raw=True)
+
+
+def _quote(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def page_of(df, offset: int = 0, limit: int = 100, order: str | None = None, desc: bool = False,
+            where: str | None = None, count: bool = False) -> dict:
+    """One page of a DataFrame in the one row shape (data/cells.py), sorted and filtered over all its rows with
+    DuckDB. The WHERE passes the read-only guard first."""
+    import time
+
+    import duckdb
+
+    from captain_search.connectors.guard import check_read_only
+    from captain_search.data.cells import page_from_arrow
+
+    t0 = time.time()
+    limit = max(1, min(int(limit), 1000))
+    offset = max(0, int(offset))
+    body = "select * from t"
+    if where and where.strip():
+        body += f" where {where}"
+        check_read_only(body, "duckdb")
+    if order:
+        if order not in [str(c) for c in df.columns]:
+            raise ValueError(f"there's no column {order} to sort by")
+        body += f" order by {_quote(order)} {'desc' if desc else 'asc'} nulls last"
+    con = duckdb.connect()
+    try:
+        con.register("t", df)
+        table = con.sql(f"{body} limit {limit + 1} offset {offset}").to_arrow_table()
+        total = con.execute(f"select count(*) from ({body})").fetchall()[0][0] if count else None
+    finally:
+        con.close()
+    return page_from_arrow(table, offset=offset, limit=limit, ms=int((time.time() - t0) * 1000),
+                           filtered=bool(where and where.strip()), total=total)
+
+
+def page(var: str, offset: int = 0, limit: int = 100, order: str | None = None, desc: bool = False,
+         where: str | None = None, count: bool = False):
+    """The notebook grid's paging: a page of the DataFrame named `var` in this kernel, shown as a page message."""
+    from IPython import get_ipython
+    from IPython.display import display
+
+    ns = get_ipython().user_ns
+    if var not in ns:
+        raise NameError(f"{var} isn't in this notebook's Python any more. Run its cell again.")
+    display({PAGE_MIME: page_of(ns[var], offset, limit, order, desc, where, count)}, raw=True)
 
 
 def install():
