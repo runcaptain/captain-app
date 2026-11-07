@@ -44,7 +44,8 @@ def analyze(path):
         for x in range(left, right, 2):
             r, g, b = px[x, y]
             total += 1
-            if r > 150 and g < 90 and b < 90:
+            # The error banner's red; amber text (g around 80+, a warning) isn't it.
+            if r > 150 and g < 70 and b < 70:
                 red += 1
             if 0.3 * r + 0.59 * g + 0.11 * b < 150:
                 dark += 1
