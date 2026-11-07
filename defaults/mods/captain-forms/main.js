@@ -30,6 +30,8 @@ export default class CaptainForms extends View {
       want = typeof p === "string" ? p : p?.task;
       Object.assign(this.values, p?.values ?? {});
     }
+    // A caller may preset values too: openOverlay({mod: "captain-forms", props: {task: "database", values: {kind: "posthog"}}}).
+    Object.assign(this.values, props()?.values ?? {});
     this.task = TASKS.find((t) => t.id === want) ?? null;
     this.states = {};
     this.options = {};

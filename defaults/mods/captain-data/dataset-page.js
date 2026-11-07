@@ -89,8 +89,13 @@ export class DatasetPage {
     if (!col || !d) { this.lineage.setColumns([]); cx.notify(); return; }
     cx.spawn(async (cx) => {
       const r = await api(`/api/lineage/columns?dataset=${encodeURIComponent(`${d.name}@v${d.version}`)}&column=${encodeURIComponent(col)}`);
-      this.lineage.setColumns(r.ok ? r.data?.edges ?? [] : []);
-      this.columnNote = r.ok ? null : r.status === 404 ? "Column-level lineage needs a newer backend." : "Couldn't trace that column.";
+      // {sources: [{table, column, node}], known, reason}: each source column feeds this column of the focused dataset.
+      const focus = this.lineage.focus;
+      const srcs = r.ok ? r.data?.sources ?? [] : [];
+      this.lineage.setColumns(srcs.map((x) => ({ from: { node: x.node, column: x.column }, to: { node: focus, column: col } })));
+      this.columnNote = !r.ok ? (r.status === 404 ? "Column-level lineage needs a newer backend." : "Couldn't trace that column.")
+        : r.data?.known === false ? (r.data.reason ? `${r.data.reason[0].toUpperCase()}${r.data.reason.slice(1)}${/[.!?]$/.test(r.data.reason) ? "" : "."}` : "Captain can't tell where that column came from.")
+        : srcs.length ? `${col} comes from ${srcs.map((x) => `${x.table}.${x.column}`).join(", ")}.` : null;
       cx.notify();
     });
   }
@@ -181,7 +186,7 @@ export class DatasetPage {
     const head = (t, w) => div().w(w).flex_none().px(8).text_right().child(t);
     return v_flex().id("ds-quality").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(10).gap(10)
       .child(h_flex().gap(16).text_size(12.5)
-        .when(!!p.freshness?.updated_at, (e) => e.child(div().child(`Updated ${ago(p.freshness.updated_at)}`)))
+        .when(!!(p.created ?? p.freshness?.updated_at), (e) => e.child(div().child(`This version was made ${ago(p.created ?? p.freshness.updated_at)}`)))
         .when(p.rows != null, (e) => e.child(div().child(`${fmtInt(p.rows)} rows profiled`))))
       .child(div().id("q-x").w_full().overflow_x_scrollbar().child(v_flex().min_w(620).border_1().border_color(c.rule)
         .child(h_flex().h(28).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().whitespace_nowrap()
@@ -190,7 +195,7 @@ export class DatasetPage {
         .children(cols.map((x, i) => h_flex().id(`q-${i}`).h(30).border_b(1).border_color(c.rule).text_size(12).whitespace_nowrap().items_center()
           .child(h_flex().flex_1().min_w(140).px(10).gap(6).child(div().min_w(0).truncate().font_family(MONO).child(x.name))
             .child(div().text_size(11).text_color(c.grey500).child(String(x.type ?? "").toLowerCase())))
-          .child(div().w(80).flex_none().px(8).text_right().font_family(MONO).text_color((x.null_share ?? 0) > 0.2 ? c.warn : c.navy).child(pct(x.null_share)))
+          .child(div().w(80).flex_none().px(8).text_right().font_family(MONO).text_color((x.nulls ?? x.null_share ?? 0) > 0.2 ? c.warn : c.navy).child(pct(x.nulls ?? x.null_share)))
           .child(div().w(90).flex_none().px(8).text_right().font_family(MONO).child(x.distinct != null ? fmtInt(x.distinct) : ""))
           .child(div().w(120).flex_none().px(8).text_right().truncate().font_family(MONO).child(x.min != null ? String(x.min) : ""))
           .child(div().w(120).flex_none().px(8).text_right().truncate().font_family(MONO).child(x.max != null ? String(x.max) : ""))))));

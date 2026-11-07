@@ -43,19 +43,21 @@ const until = async (ok, what) => {
   assert.ok(ok(h.text()), `${what}: ${h.text().slice(0, 700)}`);
 };
 
-await until((t) => t.includes('demo-store') && t.includes('A file or folder') && t.includes('Connect a new source') && t.includes('PostHog'), 'sources');
+await until((t) => t.includes('demo-store') && t.includes('A file or folder') && t.includes('Connect a new source') && t.includes('Connect PostHog') && t.includes('Connect Google Analytics 4'), 'sources');
 await h.click('src-demo-store');
 await until((t) => t.includes("hasn't read this database's tables"), 'unread');
 await h.click('read-tables');
-await until((t) => t.includes('products') && t.includes('1,000-row sample of products'), 'tables and suggestions');
-const i = h.mod.suggestions.findIndex((s) => s.title === '1,000-row sample of products');
+// The backend's suggestions (from the read tables), each with why it's worth running.
+await until((t) => t.includes('products') && t.includes('Top searches, last 7 days'), 'tables and suggestions');
+const i = h.mod.suggestions.findIndex((s) => /from\s+\S*products/i.test(s.sql));
+assert.ok(i >= 0, `a suggestion on products: ${h.mod.suggestions.map((s) => s.title).join('; ')}`);
 await h.click(`sug-${i}`);
-await until((t) => /480 rows in \d+ ms/.test(t) && t.includes('Download CSV'), 'preview in the grid');
+await until((t) => /[\d,]+ rows in \d+ ms/.test(t) && t.includes('Download CSV'), 'preview in the grid');
 h.mod.name.set_value('shop-products');
 await h.click(`folder-${h.mod.folders.indexOf('Shop')}`);
 assert.equal(h.mod.folder, 'Shop');
 await h.click('import-go');
-await until((t) => /Imported shop-products \(version 1\) into Shop: 480 rows\./.test(t), 'imported into a folder');
+await until((t) => /Imported shop-products \(version 1\) into Shop: [\d,]+ rows\./.test(t), 'imported into a folder');
 const tree = await (await fetch(`http://127.0.0.1:${j.port}/api/datasets/tree`, { headers: { Authorization: `Bearer ${j.token}` } })).json();
 const shop = tree.folders.find((f) => f.path === 'Shop');
 assert.ok(shop && shop.datasets.some((d) => d.leaf === 'shop-products'), `the dataset is in Shop: ${JSON.stringify(shop)?.slice(0, 200)}`);

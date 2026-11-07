@@ -19,7 +19,8 @@ const enc = encodeURIComponent;
 const fmtInt = (n) => Number(n ?? 0).toLocaleString("en-US");
 const sentence = (t) => { const s = String(t ?? "").trim(); return s ? `${s[0].toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}` : ""; };
 const expand = (p) => String(p ?? "").trim().replace(/^~(?=\/|$)/, home());
-const SOON = [["posthog", "PostHog", "activity"], ["ga", "Google Analytics", "chart-line"]];
+// Product analytics sources: connected ones show with the databases; the rest offer their connect form.
+const ANALYTICS = [["posthog", "PostHog", "Product events, queried with HogQL"], ["ga4", "Google Analytics 4", "Site search terms and pages"]];
 const plainSchema = (s) => String(s ?? "").replace(/"/g, "");
 
 /** Queries worth starting from, made from a database's tables when the backend has none to suggest. */
@@ -79,7 +80,9 @@ export default class CaptainImport extends View {
       if (t.ok) this.tree = t.data;
       else if (t.status === 404) this.tree = { unread: true };
       else this.tree = { error: "Couldn't list its tables." };
-      this.suggestions = s.ok && Array.isArray(s.data) ? s.data.map((x) => ({ title: x.title, sql: x.sql, why: x.why })) : localSuggestions(t.ok ? t.data : null);
+      // The backend's suggestions ({pulled, suggestions: [{title, why, query}]}), else ones made here from the tables.
+      const list = s.ok ? (Array.isArray(s.data) ? s.data : s.data?.suggestions) : null;
+      this.suggestions = Array.isArray(list) && list.length ? list.map((x) => ({ title: x.title, sql: x.query ?? x.sql, why: x.why })) : localSuggestions(t.ok ? t.data : null);
       cx.notify();
     });
   }
@@ -144,11 +147,11 @@ export default class CaptainImport extends View {
     if (!sql) return;
     this.preview = { loading: true };
     cx.spawn(async (cx) => {
-      let r = await api(`/api/connections/${enc(conn)}/preview`, { body: { sql, limit: 1000 }, timeout: 120 });
+      let r = await api(`/api/connections/${enc(conn)}/preview`, { body: { query: sql, limit: 1000 }, timeout: 120 });
       if (!r.ok && r.status === 404 && /not found/i.test(String(r.error))) r = await api("/api/sql", { body: { conn, sql, limit: 1000 }, timeout: 120 });
       if (!r.ok) { this.preview = { error: sentence(r.data?.error ?? r.data?.detail ?? r.error) || "Couldn't run that query." }; cx.notify(); return; }
       const d = r.data;
-      this.preview = { grid: new ResultGrid({ id: "import-preview", name: this.name.value().trim() || "preview", table: { columns: d.columns, rows: d.rows, row_count: d.row_count ?? d.rows.length, limited: d.truncated, limit: 1000 } }), rows: d.row_count ?? d.rows.length, ms: d.ms };
+      this.preview = { grid: new ResultGrid({ id: "import-preview", name: this.name.value().trim() || "preview", table: { columns: d.columns, rows: d.rows, row_count: d.row_count ?? d.rows.length, limited: d.limited ?? d.truncated, limit: 1000 } }), rows: d.row_count ?? d.rows.length, ms: d.ms };
       cx.notify();
     });
     cx.notify();
@@ -226,7 +229,9 @@ export default class CaptainImport extends View {
         .child(this.tile(c, "src-file", this.icon("upload", 18, c.navy), "A file or folder", "CSV, Parquet, JSON on this computer", (_e, cx) => this.pick(cx, { kind: "file" }), { on: file }))
         .children((this.conns ?? []).map((k) => this.tile(c, `src-${k.name}`, Brand(c, k.kind ?? k.engine, 18), k.name, `${k.engine ?? k.kind ?? "database"}${k.read_only === false ? ", writes allowed" : ""}`,
           (_e, cx) => this.pick(cx, { kind: "db", conn: k.name }))))
-        .children(SOON.map(([id, label, ic]) => this.tile(c, `src-${id}`, this.icon(ic, 18, c.grey500), label, "Coming soon", null, { soon: true })))
+        .children(ANALYTICS.filter(([kind]) => !(this.conns ?? []).some((k) => (k.kind ?? k.engine) === kind)).map(([kind, label, sub]) =>
+          this.tile(c, `src-${kind}`, Brand(c, kind, 18), `Connect ${label}`, sub,
+            () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "database", values: { kind } } }))))
         .child(this.tile(c, "src-new", this.icon("plus", 18, c.blue), "Connect a new source", "A warehouse or database", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "database" } }))))
       .when(this.conns === null, (e) => e.child(Skeleton(c, 2)))
       .when(file, (e) => e.child(v_flex().gap(8).p(14).border_1().border_color(c.rule)
