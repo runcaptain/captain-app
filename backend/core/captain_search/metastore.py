@@ -97,6 +97,39 @@ def _comment_from_information_schema(eng, schema: str, table: str) -> str | None
 # ---- pull and read the cache --------------------------------------------------------------
 
 
+def _read_unity_catalog(conn, schemas, max_tables):
+    """Databricks: catalogs, schemas, tables, views and columns from system.information_schema, in two queries. Schema
+    names come back as catalog.schema."""
+    from .connectors.sql import run_sql
+
+    where = "table_schema <> 'information_schema'"
+    if schemas:
+        pairs = [s.split(".", 1) for s in schemas if "." in s]
+        if pairs:
+            where += " AND (" + " OR ".join(
+                f"(table_catalog = '{c.replace(chr(39), '')}' AND table_schema = '{s.replace(chr(39), '')}')"
+                for c, s in pairs) + ")"
+    tables = run_sql(conn, f"""SELECT table_catalog, table_schema, table_name, table_type, comment
+FROM system.information_schema.tables WHERE {where}
+ORDER BY table_catalog, table_schema, table_name LIMIT {int(max_tables)}""", limit=max_tables).table.to_pylist()
+    cols = run_sql(conn, f"""SELECT table_catalog, table_schema, table_name, column_name, full_data_type, is_nullable, comment
+FROM system.information_schema.columns WHERE {where}
+ORDER BY table_catalog, table_schema, table_name, ordinal_position""", limit=500_000).table.to_pylist()
+    by_table: dict = {}
+    for c in cols:
+        by_table.setdefault((c["table_catalog"], c["table_schema"], c["table_name"]), []).append(
+            {"name": c["column_name"], "type": c["full_data_type"], "nullable": str(c["is_nullable"]).upper() == "YES",
+             "comment": c["comment"]})
+    out: dict = {}
+    for t in tables:
+        key = f"{t['table_catalog']}.{t['table_schema']}"
+        kind = "view" if "VIEW" in str(t["table_type"]).upper() else "table"
+        out.setdefault(key, {"name": key, "tables": []})["tables"].append(
+            {"name": t["table_name"], "type": kind, "comment": t["comment"],
+             "columns": by_table.get((t["table_catalog"], t["table_schema"], t["table_name"]), [])})
+    return list(out.values()), len(tables), []
+
+
 def _read_sql_metadata(conn, schemas, max_tables, progress):
     """Schemas, tables, views and columns through SQLAlchemy's inspector, with information_schema fallbacks."""
     from sqlalchemy import inspect
@@ -152,6 +185,8 @@ def pull(ctx: Context, conn_name: str, schemas: list[str] | None = None, max_tab
     if conn.engine in sources.ENGINES:  # PostHog and Google Analytics describe themselves over their APIs
         out_schemas, errors = sources.describe(conn), []
         n_tables = sum(len(x["tables"]) for x in out_schemas)
+    elif conn.engine == "databricks":  # Unity Catalog: every catalog the login can see, like Catalog Explorer
+        out_schemas, n_tables, errors = _read_unity_catalog(conn, schemas, max_tables)
     else:
         out_schemas, n_tables, errors = _read_sql_metadata(conn, schemas, max_tables, progress)
     doc = {"connection": conn_name, "engine": conn.engine, "pulled_at": _now(), "pulled_by": whoami(),

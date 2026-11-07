@@ -234,11 +234,12 @@ def conn_list():
 def conn_test(name: str):
     c = ctx()
     conn = _load_conn(c, name)
-    try:
-        r = run_sql(conn, "select 1 as ok", limit=1)
-    except Exception as e:
-        fail(f"{name}: {e}")
-    emit({"name": name, "ok": True, "ms": r.elapsed_ms}, f"{name}: ok in {r.elapsed_ms} ms")
+    from ..connectors.checks import verify
+
+    r = verify(conn)
+    if not r["ok"]:
+        fail(f"{name}: {r['error']}")
+    emit({"name": name, **r}, f"{name}: ok in {r['ms']} ms")
 
 
 @conn_app.command("rm")

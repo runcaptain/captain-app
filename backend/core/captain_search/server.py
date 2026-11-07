@@ -416,20 +416,10 @@ def connection_add(body: dict):
 
 @app.post("/api/connections/{name}/test", dependencies=A)
 def connection_test(name: str):
-    """Run select 1 and say plainly whether the connection works."""
-    from .connectors.sql import run_sql
+    """Prove the login works and the place it points at exists, and say plainly what's wrong if not."""
+    from .connectors.checks import verify
 
-    c = ctx()
-    conn = c.load_connection(name)
-    try:
-        r = run_sql(conn, "select 1 as ok", limit=1)
-    except ModuleNotFoundError as e:
-        return {"name": name, "ok": False, "error": f"this database's driver isn't installed ({e.name})"}
-    except KeyError as e:
-        return {"name": name, "ok": False, "error": str(e).strip("'\"")}
-    except Exception as e:  # noqa: BLE001
-        return {"name": name, "ok": False, "error": str(e).splitlines()[0][:300]}
-    return {"name": name, "ok": True, "ms": r.elapsed_ms}
+    return {"name": name, **verify(ctx().load_connection(name))}
 
 
 @app.get("/api/tables", dependencies=A)
