@@ -170,3 +170,50 @@ def sweep_cmd(pipeline: str, queries: str = typer.Option(..., "--queries"), judg
                      + (f"  slices: {flips}" if flips else ""))
     lines.append(r["note"])
     emit(r, "\n".join(lines))
+
+
+mlflow_app = typer.Typer(no_args_is_help=True, help="Read a team's MLflow: experiments, runs, models (read-only)")
+app.add_typer(mlflow_app, name="mlflow")
+
+
+@mlflow_app.command("use")
+def mlflow_use(uri: Optional[str] = typer.Option(None, "--uri"), token_secret: Optional[str] = typer.Option(None, "--token-secret"),
+               databricks: Optional[str] = typer.Option(None, "--databricks", help="a Databricks connection name")):
+    """Point Captain at an MLflow tracking server, or at a Databricks connection's managed MLflow."""
+    from .. import mlflow_bridge as MF
+
+    r = MF.configure(ctx(), uri, token_secret, databricks)
+    emit(r, f"reading MLflow from {r['uri'] or 'Databricks connection ' + r['databricks_connection']}")
+
+
+@mlflow_app.command("experiments")
+def mlflow_exps():
+    from .. import mlflow_bridge as MF
+
+    r = MF.experiments(ctx())
+    emit(r, "\n".join(f"{e['id']}  {e['name']}" for e in r) or "no experiments")
+
+
+@mlflow_app.command("runs")
+def mlflow_runs_cmd(experiment_id: str, limit: int = typer.Option(20, "--limit")):
+    from .. import mlflow_bridge as MF
+
+    r = MF.runs(ctx(), experiment_id, limit)
+    emit(r, "\n".join(f"{x['run_id'][:8]}  {x['name'] or ''}  {x['status']}  "
+                      + ", ".join(f"{k}={v:.4g}" for k, v in list(x["metrics"].items())[:4]) for x in r) or "no runs")
+
+
+@mlflow_app.command("models")
+def mlflow_models_cmd():
+    from .. import mlflow_bridge as MF
+
+    r = MF.models(ctx())
+    emit(r, "\n".join(f"{m['name']}: " + ", ".join(f"v{v['version']}" for v in m["versions"]) for m in r) or "no models")
+
+
+@mlflow_app.command("link")
+def mlflow_link_cmd(model: str, version: str, pipeline: str):
+    """Record that a Captain pipeline serves an MLflow model version, for lineage."""
+    from .. import mlflow_bridge as MF
+
+    emit(MF.link(ctx(), model, version, pipeline), f"{model} v{version} is served by {pipeline}")

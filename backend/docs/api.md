@@ -789,3 +789,18 @@ CLI: `cst evals health <queries> <judgments> --logs --catalog`, `cst evals refre
   backtest can test it. Nothing goes live.
 
 CLI: `cst sweep <pipeline> --queries Q --judgments J --knob k1=0.8:2.0:4 --knob boosts.0.weight=1,1.2,1.5`.
+
+## MLflow bridge (read-only)
+
+- `PUT /api/mlflow {uri, token_secret?}` or `{databricks_connection}` sets where Captain reads MLflow from. A
+  Databricks connection's host and token are reused, and the token needs the `mlflow` scope.
+- `GET /api/mlflow` returns the settings and links, without calling MLflow.
+- `GET /api/mlflow/experiments`, `GET /api/mlflow/experiments/{id}/runs?limit=`: runs with status, times, metrics,
+  params and non-system tags.
+- `GET /api/mlflow/models`: registered models, with each version's run, status, stage and aliases.
+- `POST /api/mlflow/links {model, version, pipeline}` records which pipeline serves a model version.
+  `GET /api/mlflow/lineage` returns nodes and edges, MLflow run to model version to pipeline.
+- Captain only calls MLflow's search endpoints. It never writes to MLflow.
+
+CLI: `cst mlflow use --uri URL | --databricks CONN`, `cst mlflow experiments|runs <id>|models`,
+`cst mlflow link <model> <version> <pipeline>`.
