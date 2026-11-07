@@ -1,7 +1,10 @@
 """Compute inside a data platform: Databricks Jobs and Snowflake Snowpark Container Services.
 
-Both reuse a database connection the workspace already has (its host and token, or its Snowflake login), so a team
-that keeps its data in Databricks or Snowflake can run backtests there without a separate cloud login.
+Each signs in its own way, with secrets kept in the keychain (the target stores only the secret's name):
+- Databricks: a personal access token, a service principal through OAuth machine-to-machine, or a reused Databricks
+  connection. Every call sends `Authorization: Bearer ...` and a `User-Agent: captain-search/<version>`.
+- Snowflake: key-pair (a PEM private key, optionally with a passphrase), a password, or a reused Snowflake
+  connection. Sessions name the application `Captain_Search`.
 
 - **Databricks:** triggers an existing Databricks job that runs `cst` (a Python wheel or notebook task with the
   captain-search package), passing the job's argv as its parameters, through the Jobs API 2.1. Captain doesn't
@@ -26,22 +29,101 @@ def _conn(ctx, name: str):
     return ctx.load_connection(name)
 
 
+def _secret(config: dict, field: str) -> str | None:
+    """A secret field's value: the keychain entry named by <field>_secret (written by the app), else none."""
+    from ..workspace import get_secret
+
+    name = config.get(f"{field}_secret")
+    if not name:
+        return None
+    try:
+        return get_secret(name)
+    except Exception:  # noqa: BLE001
+        raise PermissionError(f"the {field.replace('_', ' ')} isn't in this computer's keychain ({name}). "
+                              "Add it again in Settings, Connected services.") from None
+
+
+def _version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("captain-search")
+    except Exception:  # noqa: BLE001
+        return "dev"
+
+
+_TOKENS: dict[tuple, tuple[str, float]] = {}
+
+
+def databricks_auth(ctx, config: dict) -> tuple[str, dict]:
+    """(host, headers) for the Databricks REST API: Authorization plus a User-Agent naming Captain."""
+    import time
+
+    import httpx
+
+    from ..workspace import render_secrets
+
+    mode = config.get("auth") or ("connection" if config.get("connection") and not config.get("host") else "token")
+    ua = {"User-Agent": f"captain-search/{_version()}"}
+    if mode == "connection":
+        conn = _conn(ctx, config.get("connection"))
+        u = urlparse(render_secrets(conn.url))
+        if not u.password:
+            raise PermissionError(f"the connection {conn.name} has no token")
+        return u.hostname, {"Authorization": f"Bearer {u.password}", **ua}
+    host = str(config.get("host") or "").removeprefix("https://").strip("/")
+    if not host:
+        raise ValueError("give the Databricks workspace host")
+    if mode == "token":
+        tok = _secret(config, "token")
+        if not tok:
+            raise PermissionError("add an access token, or pick another way to sign in")
+        return host, {"Authorization": f"Bearer {tok}", **ua}
+    if mode == "service-principal":
+        cid, sec = config.get("client_id"), _secret(config, "client_secret")
+        if not cid or not sec:
+            raise PermissionError("a service principal needs its client ID and secret")
+        key = (host, cid)
+        cached = _TOKENS.get(key)
+        if cached and cached[1] > time.time() + 60:
+            return host, {"Authorization": f"Bearer {cached[0]}", **ua}
+        # OAuth machine-to-machine: https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html
+        r = httpx.post(f"https://{host}/oidc/v1/token", data={"grant_type": "client_credentials", "scope": "all-apis"},
+                       auth=(cid, sec), headers=ua, timeout=30)
+        if r.status_code >= 400:
+            raise PermissionError(f"Databricks refused the service principal ({r.status_code}). Check its client ID "
+                                  "and secret, and that it may use the workspace.")
+        body = r.json()
+        _TOKENS[key] = (body["access_token"], time.time() + int(body.get("expires_in", 3600)))
+        return host, {"Authorization": f"Bearer {body['access_token']}", **ua}
+    raise ValueError(f"unknown sign-in {mode!r}: use token, service-principal or connection")
+
+
 class DatabricksJobsProvider(ComputeProvider):
     kind, label = "databricks-jobs", "Databricks Jobs"
     provider = "databricks"
     purposes = ["backtest"]
     live_tested = None
     fields = [
-        {"name": "connection", "label": "Databricks connection", "required": True, "kind": "connection:databricks"},
+        {"name": "auth", "label": "Sign in with", "type": "choice", "required": True, "default": "token",
+         "choices": ["token", "service-principal", "connection"],
+         "help": "token: a personal access token. service-principal: OAuth with a client ID and secret (best for a "
+                 "team). connection: reuse a Databricks database connection's host and token."},
+        {"name": "host", "label": "Workspace host", "required": False,
+         "placeholder": "dbc-1234abcd-5678.cloud.databricks.com", "help": "Not needed when signing in with a connection"},
+        {"name": "token", "label": "Access token", "type": "secret", "required": False,
+         "help": "For token sign-in. It needs the Jobs scope. Kept in your keychain only."},
+        {"name": "client_id", "label": "Service principal client ID", "required": False},
+        {"name": "client_secret", "label": "Service principal secret", "type": "secret", "required": False,
+         "help": "For service-principal sign-in. Kept in your keychain only."},
+        {"name": "connection", "label": "Databricks connection", "required": False, "kind": "connection:databricks",
+         "help": "For connection sign-in"},
         {"name": "job_id", "label": "Job ID of a job that runs cst", "required": True},
     ]
 
     def _api(self):
-        from ..workspace import render_secrets
-
-        conn = _conn(self.ctx, self.config.get("connection"))
-        u = urlparse(render_secrets(conn.url))
-        return f"https://{u.hostname}/api/2.1/jobs", {"Authorization": f"Bearer {u.password or ''}"}
+        host, headers = databricks_auth(self.ctx, self.config)
+        return f"https://{host}/api/2.1/jobs", headers
 
     def _call(self, method: str, path: str, body: dict | None = None) -> dict:
         import httpx
@@ -117,18 +199,79 @@ class SnowparkContainersProvider(ComputeProvider):
     purposes = ["backtest"]
     live_tested = None
     fields = [
-        {"name": "connection", "label": "Snowflake connection", "required": True, "kind": "connection:snowflake"},
+        {"name": "auth", "label": "Sign in with", "type": "choice", "required": True, "default": "key-pair",
+         "choices": ["key-pair", "password", "connection"],
+         "help": "key-pair: a private key registered on the user (Snowflake's recommendation for services). "
+                 "password: the user's password. connection: reuse a Snowflake database connection."},
+        {"name": "account", "label": "Account identifier", "required": False, "placeholder": "myorg-myaccount",
+         "help": "Not needed when signing in with a connection"},
+        {"name": "user", "label": "User", "required": False},
+        {"name": "role", "label": "Role", "required": False, "help": "Needs USAGE on the compute pool and image repository"},
+        {"name": "warehouse", "label": "Warehouse", "required": False},
+        {"name": "private_key", "label": "Private key (PEM)", "type": "secret", "required": False,
+         "help": "For key-pair sign-in. Kept in your keychain only."},
+        {"name": "private_key_passphrase", "label": "Private key passphrase", "type": "secret", "required": False},
+        {"name": "password", "label": "Password", "type": "secret", "required": False,
+         "help": "For password sign-in. Kept in your keychain only."},
+        {"name": "connection", "label": "Snowflake connection", "required": False, "kind": "connection:snowflake",
+         "help": "For connection sign-in"},
         {"name": "compute_pool", "label": "Compute pool", "required": True},
         {"name": "image", "label": "Runner image in your image repository", "required": True,
          "placeholder": "/db/schema/repo/captain-runner:latest"},
     ]
 
-    def _sql(self, sql: str) -> list:
-        from sqlalchemy import text
+    def _engine(self):
+        """A SQLAlchemy engine signed in the configured way. Returns a context manager."""
+        import contextlib
 
         from ..connectors.sql import open_engine
 
-        with open_engine(_conn(self.ctx, self.config.get("connection"))) as eng, eng.connect() as c:
+        cfg = self.config
+        mode = cfg.get("auth") or ("connection" if cfg.get("connection") and not cfg.get("account") else "key-pair")
+        if mode == "connection":
+            return open_engine(_conn(self.ctx, cfg.get("connection")))
+        from urllib.parse import quote, urlencode
+
+        from sqlalchemy import create_engine
+
+        if not cfg.get("account") or not cfg.get("user"):
+            raise ValueError("give the Snowflake account identifier and user")
+        q = {k: cfg[k] for k in ("warehouse", "role") if cfg.get(k)}
+        q["application"] = "Captain_Search"
+        connect_args = {}
+        if mode == "password":
+            pw = _secret(cfg, "password")
+            if not pw:
+                raise PermissionError("add the password, or pick another way to sign in")
+            url = f"snowflake://{quote(cfg['user'])}:{quote(pw, safe='')}@{cfg['account']}/?{urlencode(q)}"
+        elif mode == "key-pair":
+            pem = _secret(cfg, "private_key")
+            if not pem:
+                raise PermissionError("add the private key, or pick another way to sign in")
+            from cryptography.hazmat.primitives import serialization
+
+            phrase = _secret(cfg, "private_key_passphrase")
+            key = serialization.load_pem_private_key(pem.encode(), password=phrase.encode() if phrase else None)
+            connect_args["private_key"] = key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8,
+                                                            serialization.NoEncryption())
+            url = f"snowflake://{quote(cfg['user'])}@{cfg['account']}/?{urlencode(q)}"
+        else:
+            raise ValueError(f"unknown sign-in {mode!r}: use key-pair, password or connection")
+
+        @contextlib.contextmanager
+        def eng():
+            e = create_engine(url, connect_args=connect_args)
+            try:
+                yield e
+            finally:
+                e.dispose()
+
+        return eng()
+
+    def _sql(self, sql: str) -> list:
+        from sqlalchemy import text
+
+        with self._engine() as eng, eng.connect() as c:
             return [tuple(r) for r in c.execute(text(sql))]
 
     def _spec(self, job: Job) -> str:
