@@ -208,7 +208,7 @@ export default class CaptainForms extends View {
   openTask(t) {
     this.close();
     // Import a dataset is desktop-app's wizard (sources, tables, a preview); the form stays for agents.
-    openOverlay(t.id === "dataset" ? IMPORT : { mod: "captain-forms", kind: "dialog", width: 560, props: { task: t.id } });
+    openOverlay(t.opens ?? (t.id === "dataset" ? IMPORT : { mod: "captain-forms", kind: "dialog", width: 560, props: { task: t.id } }));
   }
 
   menu(c) {

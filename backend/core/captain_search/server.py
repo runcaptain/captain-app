@@ -1228,9 +1228,11 @@ def backtests(project: str | None = None):
             continue
         m = c.registry.load("backtest", n)
         runs = c.registry.versions("backtest-run", n)
-        last = c.registry.load("backtest-run", n, runs[-1]).created_at.isoformat() if runs else None
+        lr = c.registry.load("backtest-run", n, runs[-1]) if runs else None
         out.append({"name": n, "latest": m.version, "arms": m.arms, "primary_metric": m.preregistration.primary_metric,
-                    "runs": len(runs), "created": m.created_at.isoformat(), "last_run": last, "mode": m.mode})
+                    "runs": len(runs), "created": m.created_at.isoformat(), "mode": m.mode,
+                    "last_run": lr.created_at.isoformat() if lr else None,
+                    "last_run_complete": lr.complete if lr else None})
     out.sort(key=lambda x: x["last_run"] or x["created"], reverse=True)  # newest first: latest run, else creation
     return out
 
