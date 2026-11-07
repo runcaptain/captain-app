@@ -187,13 +187,128 @@ def listing(ctx: Context) -> list[dict]:
     return out
 
 
-def detail(ctx: Context, model_id: str) -> dict:
-    m = next((m for s in all_latest(ctx) for m in s.models if m["id"] == model_id), None)
-    if m is None:
-        from .storage.backend import NotFound
+def _vkey(label: str) -> tuple:
+    return tuple(int(x) if x.isdigit() else x for x in re.split(r"(\d+)", label or ""))
 
-        raise NotFound(f"no model {model_id!r} in any attached registry")
-    return m
+
+def find(ctx: Context, ref: str) -> tuple[dict, RegistrySnapshot]:
+    """A model by its id (brand@version), or by brand alone: the brand's current model, else its newest version."""
+    from .storage.backend import NotFound
+
+    pairs = [(m, s) for s in all_latest(ctx) for m in s.models]
+    hit = next(((m, s) for m, s in pairs if m["id"] == ref), None)
+    if hit:
+        return hit
+    if "@" not in ref:
+        mine = [(m, s) for m, s in pairs if m["brand"] == ref]
+        if mine:
+            cur = [p for p in mine if p[0]["status_kind"] == "current"] or mine
+            return max(cur, key=lambda p: _vkey(p[0]["version"]))
+    raise NotFound(f"no model {ref!r} in any attached registry. Ids look like brand@v1, see `cst models list`.")
+
+
+def detail(ctx: Context, model_id: str) -> dict:
+    return find(ctx, model_id)[0]
+
+
+PULL_PARTS = ("weights", "code", "env", "results", "inputs")
+
+
+def _sha256(path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def pull(ctx: Context, ref: str, dest: str | None = None, parts: list[str] | None = None, profile: str | None = None,
+         progress=lambda f: None) -> dict:
+    """Download a model version's files and check each against the version's SHA256SUMS.
+
+    By default it takes everything but inputs/ (training data can be large and belongs in the cloud). The top-level
+    files (MANIFEST.yaml, REPRODUCE.md, reproduce.sh, SHA256SUMS) always come. A file already on disk with the
+    right checksum is kept, so a stopped pull picks up where it left off. A checksum mismatch fails the pull.
+    """
+    import os
+    from pathlib import Path
+
+    from .attach import _read
+
+    m, snap = find(ctx, ref)
+    parts = list(parts) if parts else [p for p in PULL_PARTS if p != "inputs"]
+    bad = [p for p in parts if p not in PULL_PARTS]
+    if bad:
+        raise ValueError(f"unknown part {', '.join(bad)}: pick from {', '.join(PULL_PARTS)}")
+    if profile is None:
+        profile = next((r.get("profile") for r in _read(ctx)[0]["registries"]
+                        if r["uri"].rstrip("/") == snap.uri.rstrip("/")), None)
+    out = Path(dest or f"{m['brand']}-{m['version']}").expanduser().resolve()
+    want = [f for f in m["files"] if "/" not in f["path"] or f["path"].split("/", 1)[0] in parts]
+    if not want:
+        raise ValueError(f"{m['id']} has no files under {', '.join(parts)}")
+
+    u = urlparse(m["path"])
+    if u.scheme == "s3":
+        s3 = _s3(profile)
+        bucket, base = u.netloc, u.path.lstrip("/")
+
+        def fetch(rel, to):
+            s3.download_file(bucket, base + rel, str(to))
+
+        def read(rel):
+            return s3.get_object(Bucket=bucket, Key=base + rel)["Body"].read()
+    else:
+        from .storage.backend import open_store
+
+        st = open_store(snap.uri, profile)
+        base = m["path"][len(snap.uri.rstrip("/")) + 1:]
+
+        def read(rel):
+            return st.get(base + rel)
+
+        def fetch(rel, to):
+            to.write_bytes(read(rel))
+
+    try:
+        sums_text = read("SHA256SUMS").decode()
+    except Exception:  # noqa: BLE001  a version without SHA256SUMS still downloads, unchecked
+        sums_text = ""
+    sums = {}
+    for line in sums_text.splitlines():
+        h, _, path = line.strip().partition("  ")
+        if len(h) == 64 and path:
+            sums[path.lstrip("*")] = h
+
+    total = sum(f["bytes"] or 0 for f in want) or len(want)
+    done, fetched, kept, mismatched = 0, 0, 0, []
+    for f in want:
+        rel, to = f["path"], out / f["path"]
+        to.parent.mkdir(parents=True, exist_ok=True)
+        expect = sums.get(rel)
+        if to.exists() and expect and _sha256(to) == expect:
+            kept += 1
+        else:
+            tmp = to.with_name(to.name + ".part")
+            fetch(rel, tmp)
+            os.replace(tmp, to)
+            fetched += 1
+            if expect and _sha256(to) != expect:
+                mismatched.append(rel)
+        done += f["bytes"] or 1
+        progress(done / total)
+    unchecked = [f["path"] for f in want if f["path"] not in sums and f["path"] != "SHA256SUMS"]
+    res = {"model": m["id"], "architecture": m["architecture"], "from": m["path"], "to": str(out), "parts": parts,
+           "files": len(want), "downloaded": fetched, "already_there": kept,
+           "bytes": sum(f["bytes"] or 0 for f in want) if all(f["bytes"] is not None for f in want) else None,
+           "checked": len(want) - len(unchecked) - (1 if any(f["path"] == "SHA256SUMS" for f in want) else 0),
+           "unchecked": unchecked, "mismatched": mismatched}
+    if mismatched:
+        raise ValueError(f"{len(mismatched)} file(s) don't match SHA256SUMS: {', '.join(mismatched[:5])}. "
+                         "They may have been changed after the version was written. Don't use this download.")
+    return res
 
 
 def lineage(ctx: Context) -> dict:

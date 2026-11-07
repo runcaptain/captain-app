@@ -2045,6 +2045,18 @@ def models_list(project: str | None = None):
     return [m for m in MD.listing(c) if inp(m["id"], brand=m.get("brand"))]
 
 
+@app.post("/api/models/pull", dependencies=A)
+def models_pull(body: dict):
+    """Download a model version into a folder, checked against its SHA256SUMS. Runs as a job."""
+    from . import models as MD
+
+    c, ref = ctx(), str(body.get("model") or "")
+    m, _ = MD.find(c, ref)  # fail now on an unknown model, not inside the job
+    dest = body.get("dest") or os.path.expanduser(f"~/Downloads/{m['brand']}-{m['version']}")
+    return {"job": _job(lambda p: MD.pull(c, m["id"], dest, body.get("parts"), body.get("profile"), p),
+                        f"Download {ref}")}
+
+
 @app.get("/api/models/{mid:path}", dependencies=A)
 def model_detail(mid: str):
     from . import models as MD

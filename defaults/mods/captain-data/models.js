@@ -265,12 +265,12 @@ export class Models {
           .child(div().text_size(11.5).text_color(c.grey900).child(`${r.models == null ? "Not read yet" : `${r.models} model${r.models === 1 ? "" : "s"}`}, synced ${ago(r.synced_at)}`)))
         .child(Button(c, `reg-sync-${i}`, "Sync", (_e, cx) => this.sync(cx, r), { small: true, disabled: !!this.job }))
         .child(Button(c, `reg-detach-${i}`, this.confirm === r.uri ? "Detach? Click again" : "Detach", (_e, cx) => this.detach(cx, r), { kind: "quiet", small: true }))))
-      .when(this.owners.length > 1, (e) => e.child(h_flex().id("model-owners").flex_none().gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
+      .when(this.owners.length > 1, (e) => e.child(h_flex().id("model-owners").flex_none().h(26).gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
         .child(div().flex_none().text_color(c.grey500).child("Whose"))
         .children(this.owners.map((o, i) => div().id(`owner-${i}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer()
           .border_1().border_color(this.owner === o ? c.blue : c.grey300).bg(this.owner === o ? c.blueLight : c.surface).text_color(this.owner === o ? c.blue : c.grey900)
           .on_click((_e, cx) => { this.owner = o; this.load(cx); cx.notify(); }).child(o.name)))))
-      .when(!!this.projectLineage?.nodes?.length, (e) => e.child(v_flex().gap(6)
+      .when(!!this.projectLineage?.nodes?.length, (e) => e.child(v_flex().flex_none().gap(6)
         .child(div().text_size(14).font_semibold().child(`${this.owner.name}: models, what they were built from, and where they run`))
         .child(this.projectGraph.render(c))))
       .when(this.owner?.kind && !this.models.length && this.regs !== null, (e) => e.child(div().text_size(12).text_color(c.grey500).child(`No models for ${this.owner.name} yet.`)))
@@ -365,7 +365,7 @@ export class Models {
     const order = [...byArch.keys()].sort((a, b) => (Number(/(\d+)/.exec(a)?.[1] ?? 99) - Number(/(\d+)/.exec(b)?.[1] ?? 99)) || a.localeCompare(b));
     const focus = this.focus ? this.models.find((m) => m.id === this.focus) : null;
     const related = new Set(focus ? [focus.id, ...(focus.parent_ids ?? focus.parents ?? []).map(String)] : []);
-    return v_flex().gap(10)
+    return v_flex().flex_none().gap(10)
       .child(h_flex().gap(8).items_center().child(this.icon("lineage", 15, c.navy)).child(div().text_size(14).font_semibold().child("Models and lineage"))
         .child(div().text_size(12).text_color(c.grey500).child(this.countText())))
       .children(order.map((a) => v_flex().gap(4)

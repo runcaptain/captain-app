@@ -730,6 +730,27 @@ def models_show(model_id: str):
          + f"files: {len(m['files'])} ({m['bytes'] / 1e6:.1f} MB)")
 
 
+@models_app.command("pull")
+def models_pull(model_id: str = typer.Argument(..., help="brand@version, or a brand for its current model"),
+                out: Optional[str] = typer.Option(None, "--out", "-o", help="Folder to download into. Default: ./<brand>-<version>"),
+                only: list[str] = typer.Option([], "--only", help="weights, code, env, results or inputs. Repeat for more. Default: all but inputs"),
+                profile: Optional[str] = typer.Option(None, "--profile")):
+    """Download a model version's weights and files, checked against its SHA256SUMS."""
+    from .. import models as MD
+
+    def show(f):
+        if not S.json:
+            typer.echo(f"\r{f * 100:5.1f}%", nl=False, err=True)
+
+    r = _do(MD.pull, ctx(), model_id, out, only or None, profile, show)
+    if not S.json:
+        typer.echo("", err=True)
+    size = f", {r['bytes'] / 1e6:.1f} MB" if r["bytes"] is not None else ""
+    note = f"\n{len(r['unchecked'])} file(s) aren't listed in SHA256SUMS, so they weren't checked." if r["unchecked"] else ""
+    emit(r, f"pulled {r['model']} ({r['files']} files{size}) into {r['to']}. "
+            f"{r['downloaded']} downloaded, {r['already_there']} already there, {r['checked']} checked against SHA256SUMS." + note)
+
+
 @app.command()
 def lineage(view: str = typer.Option("artifacts", "--view", help="artifacts or models")):
     """Print the lineage graph as edges."""
