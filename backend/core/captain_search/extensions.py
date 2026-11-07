@@ -393,6 +393,9 @@ def title_match(query, product):
 ''',
     "simulators/README.md": "Shopper simulators go here. Copy cascade-v1's signature: "
                             "(population, queries, search, relevance, products, seed=...) -> logs.\n",
+    "rubrics/README.md": "Domain rubrics: what relevant means for your domain, in plain words. Name a file "
+                         "<domain>.md and use it with `cst judge run --rubric <domain>` and grading queues, so people and "
+                         "the LLM judge grade against the same words.\n",
     "stages/README.md": "Search engines and ranking stages go here: a class with __init__(spec, products) and "
                         "search(query, k). Decorate it with @engine(\"name\").\n",
 }

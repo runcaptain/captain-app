@@ -78,7 +78,8 @@ def _calls(items: list[tuple[str, str, list[str]]], products: dict[str, dict]) -
 
 
 def judge_pairs(pairs: dict[str, tuple[str, list[str]]], products: dict[str, dict], judge: str,
-                workers: int = 4, progress=None, workspace: str | None = None) -> tuple[list[dict], dict]:
+                workers: int = 4, progress=None, workspace: str | None = None,
+                rubric: dict | None = None) -> tuple[list[dict], dict]:
     """pairs: query_id -> (query, [product ids to grade]). Returns (rows, meta)."""
     rows: list[dict] = []
     from .. import extensions as X
@@ -110,6 +111,9 @@ def judge_pairs(pairs: dict[str, tuple[str, list[str]]], products: dict[str, dic
     if ":" in judge:
         os.environ["CST_MODEL"] = judge.split(":", 1)[1]
     llm = get_llm()
+    system = SYSTEM + (f"\n\nThis team's rubric for its domain. Where it is more specific than the grades above, "
+                       f"follow it:\n{rubric['text']}" if rubric else "")
+    pv = PROMPT_VERSION + (f"+{rubric['name']}:{rubric['sha'][:8]}" if rubric else "")
     calls = _calls([(qid, q, ids) for qid, (q, ids) in pairs.items()], products)
     done = 0
 
@@ -117,10 +121,10 @@ def judge_pairs(pairs: dict[str, tuple[str, list[str]]], products: dict[str, dic
         nonlocal done
         for _ in range(3):
             try:
-                out = parse_json(llm.complete(SYSTEM, [{"role": "user", "content": c["user"]}], max_tokens=1500))
+                out = parse_json(llm.complete(system, [{"role": "user", "content": c["user"]}], max_tokens=1500))
                 grades = out.get("grades", {})
                 r = [{"query_id": c["query_id"], "product_id": pid, "grade": int(max(0, min(3, int(grades[cid])))),
-                      "source": "llm", "model": f"{llm.backend}:{llm.model}", "prompt_version": PROMPT_VERSION}
+                      "source": "llm", "model": f"{llm.backend}:{llm.model}", "prompt_version": pv}
                      for cid, pid in c["cmap"].items() if cid in grades]
                 break
             except Exception:
@@ -133,7 +137,8 @@ def judge_pairs(pairs: dict[str, tuple[str, list[str]]], products: dict[str, dic
     with ThreadPoolExecutor(workers) as ex:
         for r in ex.map(one, calls):
             rows.extend(r)
-    return rows, {"model": f"{llm.backend}:{llm.model}", "prompt_version": PROMPT_VERSION, "calls": len(calls)}
+    return rows, {"model": f"{llm.backend}:{llm.model}", "prompt_version": pv, "calls": len(calls),
+                  **({"rubric": {"name": rubric["name"], "sha": rubric["sha"]}} if rubric else {})}
 
 
 def to_map(rows: list[dict]) -> dict[str, dict[str, int]]:

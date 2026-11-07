@@ -82,3 +82,62 @@ def explain_cmd(pipeline: str, query: str = typer.Option(..., "--query", "-q"),
         lines.append(f"first divergence: {fd['stage']}: lost {len(fd['lost'])}, ranked lower {len(fd['ranked_lower'])}"
                      if fd else (out["note"] or "no relevant result was lost"))
     emit(out, "\n".join(lines))
+
+
+@app.command("profile")
+def profile_cmd(target: str = typer.Argument(..., help="a comparison run (name or name@vN), or a pipeline with --queries"),
+                queries: Optional[str] = typer.Option(None, "--queries", help="a queries dataset (with :split) to profile a pipeline over"),
+                max_queries: int = typer.Option(200, "--max-queries"), memory: bool = typer.Option(True, "--memory/--no-memory")):
+    """Where the time goes, stage by stage: p50, p95 and p99 per stage, the slowest queries, and budget breaches."""
+    from .. import ops
+    from .. import profile as PF
+
+    c = ctx()
+    if queries:
+        out = PF.profile_pipeline(c, target, ops.rows_of(c, queries)[1][:max_queries], memory=memory)
+        arms = [out]
+    else:
+        out = PF.profile_run(c, target, max_queries, memory)
+        arms = out["arms"]
+    lines = []
+    for a in arms:
+        t = a["total"]
+        lines.append(f"== {a['pipeline']}: p50 {t['p50_ms']} ms, p99 {t['p99_ms']} ms over {a['queries']} queries")
+        for s in a["stages"]:
+            lines.append(f"  {s['stage']:<28} p50 {s['p50_ms']:>8} ms  p99 {s['p99_ms']:>8} ms  {100 * (s['share'] or 0):5.1f}%")
+        if a.get("budget"):
+            lines += [f"  over budget: {b}" for b in a["budget"]["breaches"]] or ["  within budget"]
+    lines += out.get("summary", []) if not queries else []
+    lines.append(f"measured on {out['measured_on']['machine']}, {out['measured_on']['where']}")
+    emit(out, "\n".join(lines))
+
+
+evals_app = typer.Typer(no_args_is_help=True, help="Living evaluation sets: health and refresh")
+app.add_typer(evals_app, name="evals")
+
+
+@evals_app.command("health")
+def evals_health_cmd(queries: str, judgments: str, logs: Optional[str] = typer.Option(None, "--logs"),
+                     catalog: Optional[str] = typer.Option(None, "--catalog"),
+                     lifetime_days: int = typer.Option(180, "--lifetime-days")):
+    """Does this evaluation set still tell the truth? Traffic it covers, stale grades, coverage, agreement."""
+    from .. import evals as EV
+
+    h = EV.health(ctx(), queries, judgments, logs, catalog, lifetime_days)
+    lines = [f"{h['queries']} with {h['judgments']}: {h['status']}"] + [f"  - {f}" for f in h["findings"]]
+    if h.get("representativeness"):
+        r = h["representativeness"]
+        lines.append(f"  traffic covered {r['traffic_covered']:.0%} (head {r['by_band']['head']:.0%}, torso "
+                     f"{r['by_band']['torso']:.0%}, tail {r['by_band']['tail']:.0%})")
+    emit(h, "\n".join(lines))
+
+
+@evals_app.command("refresh")
+def evals_refresh_cmd(queries: str, judgments: str, logs: str = typer.Option(..., "--logs"),
+                      catalog: Optional[str] = typer.Option(None, "--catalog"), add: int = typer.Option(50, "--add"),
+                      seed: int = typer.Option(7, "--seed"), dry_run: bool = typer.Option(False, "--plan", help="show the plan only")):
+    """Refresh as new versions: add queries sampled from traffic, drop grades on retired products, list what to grade."""
+    from .. import evals as EV
+
+    out = EV.refresh(ctx(), queries, judgments, logs, catalog, add, seed, dry_run)
+    emit(out, "\n".join(out["changelog"]) + ("" if dry_run else f"\npublished {out['queries']} and {out['judgments']}"))
