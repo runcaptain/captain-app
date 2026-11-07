@@ -6,9 +6,12 @@
 // /api/sandbox/ripple: moved most, regressions, a must-not-break list) or become the next version (POST
 // /api/sandbox/promote), then a backtest against the current one.
 // Props: {pipeline?}.
+// Test hook (test windows only, shared "app.testWindow"): opened bare, shared "captain.sandbox.preview" = [{pipeline,
+// knobs: {path: "values"}, sample?}, ...] runs a sweep on open, the next entry each time, so a real-window check can
+// shoot the line and the grid.
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { theme, props, closeOverlay, openOverlay, notify } from "herdr";
+import { theme, props, closeOverlay, openOverlay, notify, shared, setShared } from "herdr";
 import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
 import { api } from "./kit/cst.js";
 import { Button, Badge, Skeleton, plainError } from "./kit/ui.js";
@@ -58,8 +61,18 @@ export default class Sandbox extends View {
       const of = (k) => this.datasets.filter((x) => kindOf(x) === k).map((x) => x.name);
       this.queries = of("queries").find((n) => !n.includes("/")) ?? of("queries")[0] ?? null;
       this.judgments = of("judgments").find((n) => !n.includes("/")) ?? of("judgments")[0] ?? null;
+      const pre = !this.p.pipeline && shared("app.testWindow") === true ? shared("captain.sandbox.preview") : null;
+      const run = Array.isArray(pre) && pre.length ? pre[(Number(shared("captain.sandbox.preview.at")) || 0) % pre.length] : null;
+      if (run) { setShared("captain.sandbox.preview.at", (Number(shared("captain.sandbox.preview.at")) || 0) + 1); this.pipeline = run.pipeline; this.sample = run.sample; }
       if (!this.pipeline) this.pipeline = this.pipelines[0]?.name ?? null;
       if (this.pipeline) await this.loadSpec(cx);
+      if (run) {
+        for (const [path, values] of Object.entries(run.knobs ?? {})) {
+          const k = this.offer.find((x) => x.path === path);
+          if (k) { this.toggleKnob(cx, k); this.states[path].set_value(String(values)); }
+        }
+        this.sweep(cx);
+      }
       cx.notify();
     });
   }
@@ -105,7 +118,7 @@ export default class Sandbox extends View {
     if (!Object.keys(knobs).length && !this.spec?.tunables) { this.error = "Pick at least one knob."; cx.notify(); return; }
     this.busy = "sweep"; this.error = null; this.result = null; this.cell = null; this.ripple = null; this.promoted = null; this.progress = null; cx.notify();
     cx.spawn(async (cx) => {
-      const r = await api("/api/sandbox/sweep", { body: { pipeline: this.pipeline, queries: this.queries, judgments: this.judgments, ...(Object.keys(knobs).length ? { knobs } : {}) } });
+      const r = await api("/api/sandbox/sweep", { body: { pipeline: this.pipeline, queries: this.queries, judgments: this.judgments, ...(Object.keys(knobs).length ? { knobs } : {}), ...(this.sample ? { sample: this.sample, top: 2 } : {}) } });
       if (!r.ok || !r.data?.job) { this.busy = null; this.error = plainError(r.error, "Captain couldn't start the sweep."); cx.notify(); return; }
       for (let i = 0; i < 1200; i++) {
         const j = await api(`/api/jobs/${encodeURIComponent(r.data.job)}`);
@@ -173,8 +186,12 @@ export default class Sandbox extends View {
   }
 
   // One knob: mean nDCG against the value, each point with its interval, the current value marked.
-  line(c, cells, path, current, baseline) {
-    const pts = cells.map((x) => ({ x: Number(x.values[path]), y: x.mean, lo: baseline + (x.ci?.[0] ?? 0), hi: baseline + (x.ci?.[1] ?? 0), cell: x })).sort((a, b) => a.x - b.x);
+  line(c, cells, path, current) {
+    // Each cell's interval is for its change against today's setting on the same queries, so the whiskers and the
+    // reference line sit on today's score on those queries (mean - delta), not the full-pass baseline.
+    const ref = cells.length ? cells[0].mean - (cells[0].delta ?? 0) : 0;
+    const baseline = ref;
+    const pts = cells.map((x) => ({ x: Number(x.values[path]), y: x.mean, lo: ref + (x.ci?.[0] ?? 0), hi: ref + (x.ci?.[1] ?? 0), cell: x })).sort((a, b) => a.x - b.x);
     const ys = pts.flatMap((p) => [p.y, p.lo, p.hi]).concat([baseline]);
     const lo = Math.min(...ys), hi = Math.max(...ys), span = hi - lo || 1;
     const xs = pts.map((p) => p.x).concat([Number(current)]).filter(Number.isFinite);
@@ -182,7 +199,8 @@ export default class Sandbox extends View {
     const X = (v) => ((v - xlo) / xspan) * 88 + 6, Y = (v) => (1 - (v - lo) / span) * 80 + 10;
     const paint = globalThis.window?.paint_path;
     let path_ = null;
-    if (paint && pts.length > 1) { let b = PathBuilder.stroke(2); pts.forEach((p, i) => { b = i ? b.line_to(`${X(p.x)}%`, `${Y(p.y)}%`) : b.move_to(`${X(p.x)}%`, `${Y(p.y)}%`); }); path_ = paint(b.build(), c.blue); }
+    if (paint && pts.length > 1) { let b = PathBuilder.stroke(2); // y in pixels: the painted element takes no height of its own, so a percentage of it is 0 (the box is 240 high).
+      pts.forEach((p, i) => { b = i ? b.line_to(`${X(p.x)}%`, Y(p.y) * 2.4) : b.move_to(`${X(p.x)}%`, Y(p.y) * 2.4); }); path_ = paint(b.build(), c.blue); }
     return v_flex().gap(4)
       .child(div().id("sb-line").w_full().h(240).relative().border_1().border_color(c.rule)
         .child(div().absolute().left(`${X(Number(current))}%`).top(0).bottom(0).w(1).bg(c.grey300))
@@ -194,7 +212,7 @@ export default class Sandbox extends View {
           .bg(this.cell && key(this.cell.values) === key(p.cell.values) ? c.navy : c.blue).tooltip(`${path} ${p.x}: nDCG ${num(p.y, 4)}, ${p.cell.verdict}`)
           .on_click((_e, cx) => { this.cell = p.cell; this.ripple = null; this.promoted = null; cx.notify(); })))
         .children(pts.map((p, i) => div().absolute().left(`${X(p.x)}%`).bottom(2).ml(-12).w(24).text_center().text_size(10.5).font_family(MONO).text_color(c.grey500).child(String(p.x)))))
-      .child(div().text_size(11.5).text_color(c.grey500).child(`Mean nDCG by ${path}. Whiskers: the interval of the change against today's ${num(baseline, 4)}.`));
+      .child(div().text_size(11.5).text_color(c.grey500).child(`Mean nDCG by ${path} on these queries. The grey line is today's setting here (${num(baseline, 4)}). Whiskers: how far each change could really be from it.`));
   }
 
   // Two knobs: a heat grid, green better and red worse than today, today's cell outlined.
@@ -248,7 +266,7 @@ export default class Sandbox extends View {
       .child(div().text_size(12.5).text_color(c.grey900).child(`Today: ${Object.entries(r.current ?? {}).map(([p, v]) => `${p} ${v}`).join(", ")}, nDCG ${num(r.baseline_mean, 4)} (${r.metric}).`))
       .child(v_flex().gap(8)
         .child(div().text_size(13).font_semibold().child(`Quick pass, ${int(r.sample?.n)} queries`))
-        .child(paths.length === 1 ? this.line(c, sample, paths[0], r.current?.[paths[0]], r.baseline_mean)
+        .child(paths.length === 1 ? this.line(c, sample, paths[0], r.current?.[paths[0]])
           : paths.length === 2 ? this.grid(c, sample, paths, r.current)
           : v_flex().gap(4).children([...sample].sort((a, b) => b.mean - a.mean).map((k, i) => this.cellLine(c, k, `s${i}`)))))
       .child(v_flex().gap(8)
@@ -273,7 +291,7 @@ export default class Sandbox extends View {
       .when(Boolean(rp), (e) => e
         .child(div().text_size(12.5).text_color(c.navy).child(rp.summary ?? ""))
         .child(h_flex().gap(16).items_start()
-          .child(v_flex().flex_1().min_w(0).child(list("Moved most", rp.moved_most ?? [], (x) => `${x.query}: ${Math.round((x.top10_changed ?? 0) * 100)}% of the top 10 changed`)))
+          .child(v_flex().flex_1().min_w(0).child(list("Moved most", rp.moved_most ?? [], (x) => `${x.query}: ${Math.round((x.top10_changed ?? 0) * 100)}% of the top 10 changed, ${x.graded === false || x.ndcg_before == null ? "no grades" : `nDCG ${num(x.ndcg_before, 3)} to ${num(x.ndcg_after, 3)}`}`)))
           .child(v_flex().flex_1().min_w(0).child(list("Regressions", rp.regressions ?? [], (x) => `${x.query}: nDCG ${num(x.ndcg_before, 3)} to ${num(x.ndcg_after, 3)}`)))
           .child(v_flex().flex_1().min_w(0).child(list("Must not break", rp.must_not_break ?? [], (x) => `${x.query ?? x}: ${(rp.broken ?? []).some((b) => (b.query ?? b) === (x.query ?? x)) ? "breaks" : "holds"}`)))))
       .when(Boolean(pr), (e) => e.child(h_flex().gap(10).items_center()

@@ -87,7 +87,7 @@ export default class Blank extends View { render() { return div().size_full().bg
 JS
 
 printf '{"appearance":"light"}\n' > "$HOME_DIR/settings.json"
-printf '{"captain.forms.preview":%s,"frame.welcomed":"skipped","captain.explorer.sample":true,"captain.explain.preview":{"pipeline":"demo-bm25","q":"earbuds under 50","vs":"demo-tuned"}}\n' "$PREVIEW" > "$HOME_DIR/shared.json"
+printf '{"captain.forms.preview":%s,"frame.welcomed":"skipped","captain.explorer.sample":true,"captain.explain.preview":{"pipeline":"demo-bm25","q":"earbuds under 50","vs":"demo-tuned"},"captain.sandbox.preview":[{"pipeline":"demo-tuned","knobs":{"boosts.0.weight":"1, 1.15, 1.4, 1.8"},"sample":30},{"pipeline":"demo-tuned","knobs":{"boosts.0.weight":"1, 1.15, 1.4","fields.title":"2, 3"},"sample":30}]}\n' "$PREVIEW" > "$HOME_DIR/shared.json"
 printf '{"state":"windowed","bounds":[80,80,1100,750]}\n' > "$HOME_DIR/window.json"
 CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_BIN=$CST CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
@@ -149,9 +149,19 @@ if [[ "$SHOWN" == *captain-setup* ]] && python3 tests/mod-render/forms-shot.py "
 # The Explorer (its sample tree, turned on only in this window) and the scope screens.
 close_all
 sleep 1; app shot "$OUT/explorer.png" >/dev/null; echo "explorer: shot $OUT/explorer.png"
-for m in captain-scope-model captain-scope captain-rankings captain-explain captain-sandbox; do
+for m in captain-scope-model captain-scope captain-rankings captain-explain; do
   shoot "$m" "$m"
   if [[ "$SHOWN" == *"$m"* ]] && python3 tests/mod-render/forms-shot.py "$OUT/$m.png" --any; then echo "$m: drawn"; else echo "$m: NOT DRAWN ($SHOWN) $OUT/$m.png"; fail=1; fi
+done
+# What if...: the test hook runs a small sweep on each open (one knob, then two), so the line and the grid draw.
+for shot in sandbox-line sandbox-grid; do
+  close_all
+  app do mod.open '{"name":"captain-sandbox"}' >/dev/null
+  sleep 25
+  app shot "$OUT/$shot.png" >/dev/null
+  SHOWN=$(overlays)
+  close_all
+  if [[ "$SHOWN" == *captain-sandbox* ]] && python3 tests/mod-render/forms-shot.py "$OUT/$shot.png" --any; then echo "$shot: drawn $OUT/$shot.png"; else echo "$shot: NOT DRAWN ($SHOWN) $OUT/$shot.png"; fail=1; fi
 done
 [[ $fail == 0 ]] && echo "all forms drawn" || echo "shots: $OUT"
 exit $fail

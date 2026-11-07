@@ -71,6 +71,10 @@ await h.click('sb-ripple');
 await until(h, () => Boolean(h.mod.ripple), 'the ripple');
 t = h.text();
 assert.ok(t.includes('MOVED MOST') && t.includes('REGRESSIONS') && t.includes('MUST NOT BREAK'), 'the ripple lists');
+const mm = (h.mod.ripple.moved_most ?? []).slice(0, 8); // the rows on screen
+if (mm.some((x) => x.graded)) assert.match(t, /changed, nDCG [\d.]+ to [\d.]+/, 'graded rows show the score change');
+if (mm.some((x) => x.graded === false)) assert.ok(t.includes('changed, no grades'), 'ungraded rows say so');
+assert.ok(mm.length > 0, 'something moved');
 const before = (await call('GET', '/api/pipelines')).find((p) => p.name === 'demo-tuned').latest;
 await h.click('sb-promote');
 await until(h, () => Boolean(h.mod.promoted), 'promoted');
