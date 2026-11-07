@@ -46,8 +46,18 @@ def _pid(qid: str, product: str) -> str:
     return hashlib.sha1(f"{qid}\x00{product}".encode()).hexdigest()[:12]
 
 
+def _rubric(ctx, rubric: str | None):
+    """The rubric graders see on every pair, stored with the queue so it can't drift under them."""
+    if not rubric:
+        return None
+    from .rubrics import resolve
+
+    r = resolve(rubric, ctx.workspace.name)
+    return {"name": r["name"], "sha": r["sha"], "text": r["text"]}
+
+
 def create(ctx: Context, name: str, queries: str, pipelines: list[str], depth: int = 10, sample: int | None = None,
-           overlap: float = 0.1, seed: int = 7, dry_run: bool = False) -> dict:
+           overlap: float = 0.1, seed: int = 7, dry_run: bool = False, rubric: str | None = None) -> dict:
     from .ops import _rankings, ref, rows_of
 
     check_name(name)
@@ -79,7 +89,7 @@ def create(ctx: Context, name: str, queries: str, pipelines: list[str], depth: i
     n_over = int(round(len(pairs) * overlap))
     for i, p in enumerate(pairs):
         p["overlap"] = i < n_over
-    doc = {"name": name, "queries": queries, "pipelines": pipelines, "depth": depth, "overlap": overlap, "seed": seed,
+    doc = {"name": name, "queries": queries, "pipelines": pipelines, "depth": depth, "overlap": overlap, "seed": seed, "rubric": _rubric(ctx, rubric),
            "created_by": whoami(), "created_at": _now(), "pairs": pairs, "products": products, "published": []}
     if dry_run:
         return {k: v for k, v in doc.items() if k not in ("pairs", "products")} | {"pairs": len(pairs)}
@@ -163,7 +173,7 @@ def status(ctx: Context, name: str) -> dict:
             for pid in set(files[a]) & set(files[b]):
                 xs.append(files[a][pid]["grade"])
                 ys.append(files[b][pid]["grade"])
-    return {"name": name, "queries": q["queries"], "pipelines": q["pipelines"], "depth": q["depth"], "pairs": len(q["pairs"]),
+    return {"name": name, "queries": q["queries"], "pipelines": q["pipelines"], "depth": q["depth"], "pairs": len(q["pairs"]), "rubric": q.get("rubric"),
             "graded": len(graded), "share": round(len(graded) / len(q["pairs"]), 4),
             "graders": {who: len(g) for who, g in files.items()}, "agreement_pairs": len(xs),
             "kappa": round(quadratic_kappa(xs, ys), 4) if len(xs) >= 10 else None,

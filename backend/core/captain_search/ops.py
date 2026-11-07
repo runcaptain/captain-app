@@ -150,7 +150,7 @@ def _rankings(ctx, pref: str, queries: list[dict], k: int = 50, check_fp: bool =
 
 
 def judge_run(ctx, qref: str, pipelines: list[str], judge: str, into: str, depth: int = 10, progress=None,
-              dry_run=False) -> DatasetVersion:
+              dry_run=False, rubric: str | None = None) -> DatasetVersion:
     _, qs, _ = rows_of(ctx, qref)
     source = "heuristic" if judge == "heuristic" else "llm"
     prev_rows: list[dict] = []
@@ -173,7 +173,18 @@ def judge_run(ctx, qref: str, pipelines: list[str], judge: str, into: str, depth
             if need:
                 cur = pairs.setdefault(q["query_id"], (q["query"], []))
                 cur[1].extend(i for i in need if i not in cur[1])
-    new_rows, meta = J.judge_pairs(pairs, products, judge, progress=progress, workspace=ctx.workspace.name) if pairs else ([], {"calls": 0})
+    rub = None
+    if rubric:
+        from .rubrics import resolve
+
+        rub = resolve(rubric, ctx.workspace.name)
+    before = ((prev.provenance.params or {}).get("rubric") or {}).get("sha") if prev_rows and prev else None
+    if prev_rows and before != (rub["sha"] if rub else None) and source == "llm":
+        raise ValueError(f"{into} holds grades made under {'another rubric' if before else 'no rubric'}"
+                         f"{'' if rub else ', and this run has none'}. Grades from different rubrics aren't comparable: "
+                         "use another --into.")
+    new_rows, meta = J.judge_pairs(pairs, products, judge, progress=progress, workspace=ctx.workspace.name,
+                                   rubric=rub) if pairs else ([], {"calls": 0})
     rows = prev_rows + new_rows
     if not rows:
         rows = [{"query_id": "", "product_id": "", "grade": 0, "source": source, "model": "", "prompt_version": ""}][:0]

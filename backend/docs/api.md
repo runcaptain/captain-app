@@ -749,3 +749,24 @@ adds `total_ms`.
   (tracemalloc), not process RSS.
 
 CLI: `cst profile <run>` or `cst profile <pipeline> --queries <dataset:split>`.
+
+## Living evaluation sets (plan 4)
+
+- `POST /api/evals/health {queries, judgments, logs?, catalog?, lifetime_days?}` returns `{status, findings, ...}`:
+  - `representativeness`: the share of searches covered overall and by head, torso and tail, the top unseen
+    queries, and set queries nobody searched;
+  - `staleness`: grades on retired products, products changed since grading (title, price, stock), relevant products
+    now out of stock, and grade age;
+  - `coverage`: judged@10 per arm of runs scored with these grades;
+  - `reliability`: agreement on pairs graded twice, or a plain note that it can't be measured.
+- `POST /api/evals/refresh {queries, judgments, logs, catalog?, add?, seed?, dry_run?}` returns `{job}`. It publishes
+  new versions and never edits. The queries get new traffic samples (stratified by band, seeded) in a new `added`
+  split, and the sealed holdout is unchanged. The grades drop retired products. The result lists what to regrade, plus
+  a changelog.
+- Rubrics: `captain/rubrics/<domain>.md`, listed at `GET /api/rubrics`.
+  - `cst judge run --rubric <domain>` prompts the LLM judge with it and records the rubric's name and hash in the
+    prompt version.
+  - Grades from different rubrics, or with and without one, are refused in one dataset.
+  - `POST /api/grading {..., rubric}` stores the rubric on the queue, so graders see the same words.
+
+CLI: `cst evals health <queries> <judgments> --logs --catalog`, `cst evals refresh ... [--plan]`.

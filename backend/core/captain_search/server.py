@@ -278,6 +278,36 @@ def prepare_import(body: dict):
     return {"job": _job(lambda p: PP.import_prepared(c, src, progress=p, **kw), "prepare data for training")}
 
 
+@app.post("/api/evals/health", dependencies=A)
+def evals_health(body: dict):
+    """How well an evaluation set still tells the truth: {queries, judgments, logs?, catalog?, lifetime_days?}.
+    Returns representativeness, staleness, coverage, reliability, findings in words, and a status."""
+    from . import evals as EV
+
+    return EV.health(ctx(), body["queries"], body["judgments"], body.get("logs"), body.get("catalog"),
+                     int(body.get("lifetime_days") or EV.LIFETIME_DAYS))
+
+
+@app.post("/api/evals/refresh", dependencies=A)
+def evals_refresh(body: dict):
+    """Refresh an evaluation set as new versions: {queries, judgments, logs, catalog?, add?, seed?, dry_run?}. Runs
+    as a job. dry_run returns the plan and changelog without publishing."""
+    from . import evals as EV
+
+    c = ctx()
+    return {"job": _job(lambda p: EV.refresh(c, body["queries"], body["judgments"], body["logs"], body.get("catalog"),
+                                             int(body.get("add", 50)), int(body.get("seed", 7)),
+                                             bool(body.get("dry_run"))), "refresh evaluation set")}
+
+
+@app.get("/api/rubrics", dependencies=A)
+def rubrics_list():
+    """The team's domain rubrics from captain/rubrics/*.md."""
+    from . import rubrics as RB
+
+    return RB.listing(ctx().workspace.name)
+
+
 @app.post("/api/rankings/validate", dependencies=A)
 def rankings_validate(body: dict):
     """Check a rankings file before importing: {path | dataset, mapping?, judgments?}. Returns {ok, errors, warnings,
@@ -964,7 +994,8 @@ def grading_create(body: dict):
     if not pipes:
         raise ValueError("pick at least one pipeline whose results people will grade")
     return GR.create(ctx(), body.get("name", ""), body.get("queries", ""), pipes, int(body.get("depth") or 10),
-                     int(body["sample"]) if body.get("sample") else None, float(body.get("overlap", 0.1)))
+                     int(body["sample"]) if body.get("sample") else None, float(body.get("overlap", 0.1)),
+                     rubric=body.get("rubric") or None)
 
 
 @app.get("/api/grading/{name}", dependencies=A)

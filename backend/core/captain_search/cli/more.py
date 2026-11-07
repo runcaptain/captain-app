@@ -90,12 +90,14 @@ def queries_check(ref: str):
 def judge_run(queries: str = typer.Option(..., "--queries"), pipelines: str = typer.Option(..., "--pipelines"),
               judge: str = typer.Option("llm", "--judge", help="llm, llm:<model> or heuristic"),
               into: str = typer.Option(..., "--into", help="judgment dataset name"),
-              depth: int = typer.Option(10, "--depth", help="grade the top N of each pipeline")):
+              depth: int = typer.Option(10, "--depth", help="grade the top N of each pipeline"),
+              rubric: Optional[str] = typer.Option(None, "--rubric", help="a rubric name in captain/rubrics/, or a file")):
     """Grade the pooled top results of each pipeline. Reuses grades already in --into."""
     def prog(f):
         if not S.json:
             typer.echo(f"\r  judging {f:.0%}", nl=False, err=True)
-    m = _do(ops.judge_run, ctx(), queries, pipelines.split(","), judge, into, depth, progress=prog, dry_run=S.dry_run)
+    m = _do(ops.judge_run, ctx(), queries, pipelines.split(","), judge, into, depth, progress=prog, dry_run=S.dry_run,
+            rubric=rubric)
     p = m.provenance.params
     _out(m, f"\n{'would save' if S.dry_run else 'saved'} {m.name}@v{m.version}: {m.row_count} grades "
             f"({p.get('new_pairs', 0)} new, {p.get('reused_pairs', 0)} reused) by {judge}")
