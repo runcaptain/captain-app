@@ -19,7 +19,8 @@ block_of() { case "$1" in captain-data) echo data ;; captain-runs) echo runs ;; 
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:models") ;;
+    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:models" "captain-data:tables") ;;
+    captain-runs) EXTRA+=("captain-runs:jobs") ;;
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries") ;;
   esac
 done
@@ -76,18 +77,23 @@ cleanup() {
 trap cleanup EXIT
 
 echo "seeding a scratch workspace"
+# The backend the seeding and the window use: $CST_BIN (this repo's backend/core, say), else cst on PATH.
+CSTCMD=${CST_BIN:-cst}
 # SHOT_CST_HOME: shoot against an existing backend home (a copy of someone's workspace) instead of a seeded one.
 if [[ -n "${SHOT_CST_HOME:-}" ]]; then
   CSTH=$SHOT_CST_HOME
 else
 CSTH=$WORK/cst
-CST_HOME=$WORK/cst cst init test --storage "$WORK/store" >/dev/null 2>&1
-CST_HOME=$WORK/cst cst demo seed >/dev/null 2>&1
+CST_HOME=$WORK/cst "$CSTCMD" init test --storage "$WORK/store" >/dev/null 2>&1
+CST_HOME=$WORK/cst "$CSTCMD" demo seed >/dev/null 2>&1
 # An imported run (a readout only, no per-query rankings), as `cst demos import` makes them.
-CST_PY=$(head -1 "$(command -v cst)" | sed 's/^#!//')
+CST_PY=$(head -1 "$(command -v "$CSTCMD")" | sed 's/^#!//')
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-imported.py >/dev/null
 # A notebook: text, a SQL cell on the demo store, a Python cell and a chart of the SQL result.
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-notebook.py >/dev/null
+# The demo store's tables, read, and one finished local job, for the Tables and Jobs views.
+CST_HOME=$WORK/cst "$CSTCMD" tables pull demo-store >/dev/null 2>&1 || true
+CST_HOME=$WORK/cst "$CSTCMD" job run local -- data list >/dev/null 2>&1 || true
 fi
 
 # Skip the first-start welcome (it opens over everything while shared "frame.welcomed" is unset).
@@ -120,6 +126,8 @@ props_of() {
     captain-compare:side) python3 tests/mod-render/first-query.py "$CSTH" ;;
     captain-data:notebook) echo '{"tab": "notebooks", "notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:models) echo '{"tab": "models"}' ;;
+    captain-data:tables) echo '{"tab": "tables"}' ;;
+    captain-runs:jobs) echo '{"tab": "jobs"}' ;;
     captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;
     captain-compare:imported) echo '{"backtest": "demos/shot/imported-readout", "version": 1}' ;;
     captain-compare:imported-queries) echo '{"backtest": "demos/shot/imported-readout", "version": 1, "tab": "queries"}' ;;

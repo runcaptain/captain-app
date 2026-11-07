@@ -4,7 +4,7 @@
 // for Comparisons, which pages it from the backend.
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { theme, run, setShared, shared } from "herdr";
+import { theme, run, setShared, shared, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
@@ -126,6 +126,8 @@ export default class CaptainRuns extends View {
     cx.timer.every(1000, (cx) => this.pollJob(cx));
     // Compute jobs: their list, and a running one's state and log lines.
     this.jobs = new Jobs(this);
+    // Layout props (a layout, or the real-window check): {tab: "jobs"} opens on that tab.
+    if (layoutProps?.()?.tab === "jobs") { this.tab = "jobs"; this.jobs.load(cx); }
     cx.timer.every(2000, (cx) => { if (this.tab === "jobs") this.jobs.tick(cx); });
     // Until the backend answers, ask again every 3 s.
     // Until the list loads, ask again every 3 s: while the services start, and after any failure that wasn't the
