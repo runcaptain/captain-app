@@ -25,7 +25,7 @@ from .storage.backend import Conflict, NotFound
 from .workspace import Context, whoami
 
 KEY = "projects.yaml"
-KINDS = ("connection", "dataset", "pipeline", "backtest", "investigation", "registry", "model")
+KINDS = ("connection", "dataset", "pipeline", "backtest", "investigation", "registry", "model", "signal", "grading")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
