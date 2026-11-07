@@ -73,7 +73,7 @@ async function call(path, { method = "GET", body, timeout = 20, scoped = true } 
     if (ws) headers["X-CST-Workspace"] = ws;
     // The Explorer's pick (shared "captain.scope"): the services filter to it and below. Absent: the whole workspace.
     const scope = shared("captain.scope");
-    if (scope?.id && scoped) headers["X-CST-Scope"] = `${scope.kind}:${scope.id}`;
+    if (scope?.id && scope.kind !== "view" && scoped) headers["X-CST-Scope"] = `${scope.kind}:${scope.id}`;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     r = await fetch(d.base + path, { method: body !== undefined && method === "GET" ? "POST" : method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
     text = await r.text();

@@ -81,7 +81,8 @@ export function plainError(message, fallback = "Something went wrong.") {
   if (!e) return fallback;
   if (/^[\w.@-]+(\/[\w.@-]+)+$/.test(e) || /\.(ya?ml|json|parquet|csv)$/i.test(e)) return fallback;
   if (/^HTTP \d+$/.test(e) || /^(Not Found|Method Not Allowed|Internal Server Error|Bad Request)$/i.test(e)) return fallback;
-  if (/curl|127\.0|localhost|\bport \d|error sending|traceback|engine|daemon/i.test(e)) return fallback;
+  // "engine" is a product word now (a customer's search system), so only transport and backend talk is hidden.
+  if (/curl|127\.0|localhost|\bport \d|error sending|traceback|daemon/i.test(e)) return fallback;
   if (/time ?out|timed out/i.test(e)) return "This took too long.";
   return e;
 }

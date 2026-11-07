@@ -1,31 +1,30 @@
 // CAPTAIN: the Explorer, under the workspace selector (Edgar's spec, 2026-11-06). The tree is the services'
-// (GET /api/explorer, kit/scopes.js): Brand > Site > Engine by default, Brand and Site optional, then All engines,
-// All experiments, Projects, and Settings > Scope model. Selecting a node sets shared "captain.scope" = {kind, id,
-// label}, which the five sections read to filter to it and below; the workspace, All engines and All experiments
-// clear it. Each scope's menu holds its actions (Add brand, Add site, Add engine, Rename, Move, Archive), which
-// open captain-scope.
+// (GET /api/explorer, kit/scopes.js): All engines, All experiments, the scope groups (Brand > Site > Engine by
+// default, Brand and Site optional), unscoped engines, Projects, and Settings > Scope model. Selecting a node sets
+// shared "captain.scope" = {kind: scope | engine | project | view, id, label}, which the five sections read to
+// filter to it and below; "All engines" is the whole workspace. Each scope's and engine's menu holds its actions
+// (Add brand, Add site, Add engine, Rename, Move, Archive), which open captain-scope.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { shared, setShared, openOverlay, run } from "herdr";
 import { icon } from "./kit/icons.js";
-import { Brand } from "./kit/brands.js";
-import { loadExplorer, words, childKinds, nodeIcon, currentScope } from "./kit/scopes.js";
+import { loadExplorer, words, childKinds, nodeIcon, nodeName, nodeKey, currentScope } from "./kit/scopes.js";
 
-const SCOPED = new Set(["brand", "site", "engine", "project"]);
 const INDENT = 12;
+const DIALOG = (props) => ({ mod: "captain-scope", kind: "dialog", width: 460, props });
 
 export class Explorer {
   constructor() {
     this.tree = null;
     this.model = null;
+    this.actionsTop = [];
     this.live = false;
     this.menu = null;
     this.loading = false;
     this.rev = null;
   }
 
-  start(cx, workspaceName) {
-    this.workspaceName = workspaceName;
+  start(cx) {
     this.load(cx);
     // A dialog that changed the tree bumps shared "captain.explorer.rev"; the services' tree is re-read now and then.
     cx.timer.every(1000, (cx) => {
@@ -35,14 +34,13 @@ export class Explorer {
     cx.timer.every(15000, (cx) => this.load(cx));
   }
 
-  load(cx, workspaceName) {
-    if (workspaceName !== undefined) this.workspaceName = workspaceName;
+  load(cx) {
     if (this.loading) return;
     this.loading = true;
     cx.spawn(async (cx) => {
       try {
-        const r = await loadExplorer(this.workspaceName);
-        this.tree = r.tree; this.model = r.model; this.live = r.live;
+        const r = await loadExplorer();
+        this.tree = r.tree; this.model = r.model; this.live = r.live; this.actionsTop = r.actions ?? [];
       } finally {
         this.loading = false;
         cx.notify();
@@ -50,108 +48,89 @@ export class Explorer {
     });
   }
 
-  isOpen(n, depth) {
-    const o = shared("captain.explorer.open");
-    if (!Array.isArray(o)) return depth < 6 && n.kind !== "settings";
-    return o.includes(n.id);
-  }
+  // Folded nodes, by key. Everything starts open, so a small tree shows whole.
+  isOpen(key) { return !(shared("captain.explorer.closed") ?? []).includes(key); }
 
-  toggle(n, depth) {
-    const now = this.isOpen(n, depth);
-    const set = Array.isArray(shared("captain.explorer.open")) ? new Set(shared("captain.explorer.open")) : this.allOpen();
-    if (now) set.delete(n.id); else set.add(n.id);
-    setShared("captain.explorer.open", [...set]);
-  }
-
-  // Everything open by default turns into an explicit list the first time someone folds a node.
-  allOpen() {
-    const out = new Set();
-    const walk = (n, d) => { if (d < 6 && n.kind !== "settings") out.add(n.id); for (const ch of n.children ?? []) walk(ch, d + 1); };
-    if (this.tree) walk(this.tree, 0);
-    return out;
+  toggle(key) {
+    const closed = new Set(shared("captain.explorer.closed") ?? []);
+    if (closed.has(key)) closed.delete(key); else closed.add(key);
+    setShared("captain.explorer.closed", [...closed]);
   }
 
   select(n) {
     this.menu = null;
-    if (n.kind === "scope-model") {
-      openOverlay({ mod: "captain-scope-model", kind: "dialog", width: 760, height: 640 });
-      return;
-    }
-    if (n.kind === "settings" || n.kind === "group") return;
-    if (SCOPED.has(n.kind)) setShared("captain.scope", { kind: n.kind, id: n.id, label: n.label });
-    else setShared("captain.scope", null);
-    if (n.kind === "all-experiments") run("layout.select", { stack: "sections", child: "runs" });
+    if (n.kind === "settings") { openOverlay({ mod: "captain-scope-model", kind: "dialog", width: 760, height: 640 }); return; }
+    if (n.kind === "group") return;
+    setShared("captain.scope", n.kind === "view" && n.id === "all-engines" ? null : { kind: n.kind, id: n.id, label: nodeName(n) });
+    if (n.kind === "view" && n.id === "all-experiments") run("layout.select", { stack: "sections", child: "runs" });
   }
 
-  /** The actions in a node's menu. `parent` is the scope a group belongs to ("workspace" at the root). */
-  actions(n, parent) {
+  /** A node's menu. `holder` is the scope a group sits in ({id, type, name}), or null at the top level. */
+  actions(n, holder) {
     const m = this.model;
-    const add = (kind, under) => ({ label: words(m, kind).add, props: { action: "add", kind, parent: under } });
-    if (n.kind === "workspace") return childKinds(m, "workspace").map((k) => add(k, { id: n.id, kind: "workspace", label: n.label }));
-    if (n.kind === "group" && n.of && n.of !== "project") return [add(n.of, parent)];
-    if (n.kind === "group" && n.of === "project") return [{ label: "Add project", props: { action: "add", kind: "project", parent: { id: "ws", kind: "workspace" } } }];
-    if (!SCOPED.has(n.kind)) return [];
-    const me = { id: n.id, kind: n.kind, label: n.label };
+    const add = (kind, under) => ({ label: words(m, kind).add, props: { action: "add", kind: kind === "engine" ? "engine" : "scope", type: kind, parent: under } });
+    if (n.kind === "group") {
+      if (n.type === "project") return [];
+      return [add(n.type, holder)];
+    }
+    if (n.kind !== "scope" && n.kind !== "engine") return [];
+    const me = { kind: n.kind, id: n.id, type: n.type, name: n.name };
     return [
-      ...(n.kind === "engine" || n.kind === "project" ? [] : childKinds(m, n.kind).map((k) => add(k, me))),
+      ...(n.kind === "scope" ? childKinds(m, n.type).map((k) => add(k, me)) : []),
       { label: "Rename", props: { action: "rename", node: me } },
-      ...(n.kind === "project" ? [] : [{ label: "Move", props: { action: "move", node: me } }]),
+      { label: "Move", props: { action: "move", node: me } },
       { label: "Archive", props: { action: "archive", node: me } },
     ];
   }
 
-  rowIcon(c, n, on) {
-    if (n.kind === "engine") return n.system ? Brand(c, n.system, 13) : svg(icon("search")).size(13).flex_none().text_color(on ? c.blue : c.grey500);
-    return svg(icon(nodeIcon(n))).size(13).flex_none().text_color(on ? c.blue : c.grey500);
+  menuList(c, id, acts, indent) {
+    return v_flex().ml(indent).mr(8).mb(4).py(4).border_1().border_color(c.grey300).bg(c.surface)
+      .children(acts.map((a, i) => div().id(`ex-act-${id}-${i}`).h(26).px(10).flex().items_center().text_size(12.5).cursor_pointer()
+        .text_color(a.props.action === "archive" ? c.fail : c.navy).hover((s) => s.bg(c.surface2))
+        .on_click((_e, cx) => { this.menu = null; cx.notify(); openOverlay(DIALOG(a.props)); })
+        .child(a.label)));
   }
 
-  row(c, n, depth, parent) {
+  row(c, n, depth, holder, path) {
+    const key = nodeKey(n, path);
     const scope = currentScope();
-    const on = scope ? scope.id === n.id : n.kind === "all-engines";
+    const on = scope ? scope.kind === n.kind && scope.id === n.id : n.kind === "view" && n.id === "all-engines";
     const kids = n.children ?? [];
-    const open = kids.length > 0 && this.isOpen(n, depth);
-    const acts = this.actions(n, parent);
-    const group = n.kind === "group" || n.kind === "settings";
-    const line = h_flex().id(`ex-${n.id}`).h(26).flex_none().pr(6).gap(5).items_center().cursor_pointer()
-      .pl(8 + depth * INDENT).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : group ? c.grey500 : c.navy)
-      .text_size(group ? 11.5 : 12.5).when(group, (e) => e.font_medium())
+    const open = kids.length > 0 && this.isOpen(key);
+    const acts = this.actions(n, holder);
+    const header = n.kind === "group";
+    const line = h_flex().id(`ex-${key}`).h(26).flex_none().pr(6).gap(5).items_center().cursor_pointer()
+      .pl(8 + depth * INDENT).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : header ? c.grey500 : c.navy)
+      .text_size(header ? 11.5 : 12.5).when(header, (e) => e.font_medium())
       .hover((s) => (on ? s : s.bg(c.surface2)))
-      .on_click((_e, cx) => { if (group && kids.length) this.toggle(n, depth); else this.select(n); cx.notify(); })
-      .on_mouse_down("right", (_e, cx) => { if (acts.length) { this.menu = this.menu === n.id ? null : n.id; cx.notify(); } })
-      .child(div().id(`ex-fold-${n.id}`).size(12).flex_none().flex().items_center().justify_center()
-        .when(kids.length > 0, (e) => e.text_color(c.grey500).on_click((_e, cx) => { cx.stop_propagation(); this.toggle(n, depth); cx.notify(); })
+      .on_click((_e, cx) => { if (header) { if (kids.length) this.toggle(key); } else this.select(n); cx.notify(); })
+      .on_mouse_down("right", (_e, cx) => { if (acts.length) { this.menu = this.menu === key ? null : key; cx.notify(); } })
+      .child(div().id(`ex-fold-${key}`).size(12).flex_none().flex().items_center().justify_center()
+        .when(kids.length > 0, (e) => e.text_color(c.grey500).on_click((_e, cx) => { cx.stop_propagation(); this.toggle(key); cx.notify(); })
           .child(svg(icon(open ? "chevron-down" : "chevron-right")).size(11))))
-      .child(this.rowIcon(c, n, on))
-      .child(div().flex_1().min_w(0).truncate().child(n.label))
-      .when(acts.length > 0, (e) => e.child(div().id(`ex-more-${n.id}`).px(4).text_size(13).text_color(c.grey500).tooltip("Actions")
-        .hover((s) => s.text_color(c.navy)).on_click((_e, cx) => { cx.stop_propagation(); this.menu = this.menu === n.id ? null : n.id; cx.notify(); })
+      .child(svg(icon(nodeIcon(n))).size(13).flex_none().text_color(on ? c.blue : c.grey500))
+      .child(div().flex_1().min_w(0).truncate().child(nodeName(n)))
+      .when(acts.length > 0, (e) => e.child(div().id(`ex-more-${key}`).px(4).text_size(13).text_color(c.grey500).tooltip("Actions")
+        .hover((s) => s.text_color(c.navy)).on_click((_e, cx) => { cx.stop_propagation(); this.menu = this.menu === key ? null : key; cx.notify(); })
         .child("...")));
-    const menu = this.menu === n.id ? v_flex().ml(20 + depth * INDENT).mr(8).mb(4).py(4).border_1().border_color(c.grey300).bg(c.surface)
-      .children(acts.map((a, i) => div().id(`ex-act-${n.id}-${i}`).h(26).px(10).flex().items_center().text_size(12.5).cursor_pointer()
-        .text_color(a.props.action === "archive" ? c.fail : c.navy).hover((s) => s.bg(c.surface2))
-        .on_click((_e, cx) => { this.menu = null; cx.notify(); openOverlay({ mod: "captain-scope", kind: "dialog", width: 460, props: a.props }); })
-        .child(a.label))) : null;
-    const me = SCOPED.has(n.kind) || n.kind === "workspace" ? { id: n.id, kind: n.kind, label: n.label } : parent;
-    return v_flex().w_full().child(line).when(Boolean(menu), (e) => e.child(menu))
-      .when(open, (e) => e.children(kids.map((ch) => this.row(c, ch, depth + 1, me))));
+    const inner = n.kind === "scope" ? { id: n.id, type: n.type, name: n.name } : holder;
+    return v_flex().w_full().child(line)
+      .when(this.menu === key, (e) => e.child(this.menuList(c, key, acts, 20 + depth * INDENT)))
+      .when(open, (e) => e.children(kids.map((ch, i) => this.row(c, ch, depth + 1, inner, `${key}/${i}`))));
   }
 
   render(c) {
     if (!this.tree) return v_flex().px(12).py(8).gap(6).children([0, 1, 2].map((i) => div().id(`ex-sk-${i}`).h(12).w(120 - i * 20).bg(c.surface2)));
-    // The workspace itself is the selector above: the tree starts with its children.
-    const root = this.tree;
-    const ws = { id: root.id, kind: "workspace", label: root.label };
+    // The top level's "Add": the services' actions (Add brand, Add site, Add engine), or the model's when it's new.
+    const top = (this.actionsTop.length ? this.actionsTop.map((a) => a.type) : childKinds(this.model, null))
+      .map((k) => ({ label: words(this.model, k).add, props: { action: "add", kind: k === "engine" ? "engine" : "scope", type: k, parent: null } }));
     return v_flex().w_full()
       .child(h_flex().h(26).px(14).items_center()
         .child(div().flex_1().text_size(11).font_semibold().text_color(c.grey500).child("EXPLORER"))
-        .when(this.actions(root).length > 0, (e) => e.child(div().id("ex-root-more").px(4).text_size(13).text_color(c.grey500).cursor_pointer()
-          .tooltip("Add").hover((s) => s.text_color(c.navy)).on_click((_e, cx) => { this.menu = this.menu === root.id ? null : root.id; cx.notify(); })
-          .child(svg(icon("plus")).size(12)))))
-      .when(this.menu === root.id, (e) => e.child(v_flex().mx(8).mb(4).py(4).border_1().border_color(c.grey300).bg(c.surface)
-        .children(this.actions(root).map((a, i) => div().id(`ex-act-root-${i}`).h(26).px(10).flex().items_center().text_size(12.5).cursor_pointer()
-          .text_color(c.navy).hover((s) => s.bg(c.surface2))
-          .on_click((_e, cx) => { this.menu = null; cx.notify(); openOverlay({ mod: "captain-scope", kind: "dialog", width: 460, props: a.props }); })
-          .child(a.label)))))
-      .children((root.children ?? []).map((ch) => this.row(c, ch, 0, ws)));
+        .child(div().id("ex-root-more").px(4).text_color(c.grey500).cursor_pointer().tooltip("Add")
+          .hover((s) => s.text_color(c.navy)).on_click((_e, cx) => { this.menu = this.menu === "top" ? null : "top"; cx.notify(); })
+          .child(svg(icon("plus")).size(12))))
+      .when(this.menu === "top", (e) => e.child(this.menuList(c, "top", top, 8)))
+      .children(this.tree.map((n, i) => this.row(c, n, 0, null, `t${i}`)));
   }
 }
