@@ -100,7 +100,6 @@ export class Profiler {
     const widest = Math.max(1, ...arms.map((a) => (a.stages ?? []).reduce((n, s) => n + (s.p99_ms ?? 0), 0)));
     const stageNames = [...new Set(arms.flatMap((a) => (a.stages ?? []).map((s) => s.stage)))];
     const color = (stage) => COLORS[stageNames.indexOf(stage) % COLORS.length];
-    const barW = Math.max(240, Math.min(900, (w ?? 900) - 260));
     return e
       .children((res.summary ?? []).map((t, i) => div().id(`prof-sum-${i}`).text_size(14).font_medium().text_color(c.navy).child(sentence(t))))
       .when(!(res.summary ?? []).length && arms.length === 1, (e) => e.child(div().text_size(13).text_color(c.grey900).child(`One arm could be timed, so there's nothing to compare it with. ${arms[0].pipeline} takes ${ms(arms[0].total?.p99_ms)} at p99.`)))
@@ -114,10 +113,11 @@ export class Profiler {
           .child(div().text_size(13).font_medium().font_family(MONO).child(a.pipeline))
           .child(div().text_size(12).text_color(c.grey900).child(`p50 ${ms(a.total?.p50_ms)}, p95 ${ms(a.total?.p95_ms)}, p99 ${ms(a.total?.p99_ms)}`))
           .when(a.budget?.ok === true, (e) => e.child(div().text_size(11.5).text_color(c.good).child("within budget"))))
-        .child(h_flex().id(`prof-bar-${ai}`).h(22).w(barW).bg(c.surface2).children((a.stages ?? []).filter((s) => (s.p99_ms ?? 0) > 0).map((s) => {
-          const px = Math.max(2, Math.round(((s.p99_ms ?? 0) / widest) * barW));
-          return div().id(`prof-seg-${ai}-${s.stage}`).w(px).h_full().flex_none().bg(color(s.stage)).tooltip(`${s.stage}: ${ms(s.p99_ms)} at p99, ${Math.round((s.share ?? 0) * 100)}% of the time`)
-            .when(px > 70, (e) => e.flex().items_center().px(4).child(div().truncate().text_size(10.5).text_color("#ffffff").child(`${s.stage} ${ms(s.p99_ms)}`)));
+        // Widths in percent of the pane: every arm on one scale, and never past the edge.
+        .child(h_flex().id(`prof-bar-${ai}`).h(22).w_full().max_w(900).overflow_hidden().bg(c.surface2).children((a.stages ?? []).filter((s) => (s.p99_ms ?? 0) > 0).map((s) => {
+          const pct = Math.max(0.5, ((s.p99_ms ?? 0) / widest) * 100);
+          return div().id(`prof-seg-${ai}-${s.stage}`).w(`${pct.toFixed(2)}%`).h_full().flex_none().bg(color(s.stage)).tooltip(`${s.stage}: ${ms(s.p99_ms)} at p99, ${Math.round((s.share ?? 0) * 100)}% of the time`)
+            .when(pct > 18, (e) => e.flex().items_center().px(4).overflow_hidden().child(div().truncate().text_size(10.5).text_color("#ffffff").child(`${s.stage} ${ms(s.p99_ms)}`)));
         })))
         .child(h_flex().flex_wrap().gap(12).children((a.stages ?? []).map((s) => h_flex().gap(5).items_center().text_size(11.5)
           .child(div().size(9).flex_none().bg(color(s.stage)))
