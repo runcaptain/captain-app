@@ -125,10 +125,10 @@ export class Explorer {
       .when(open, (e) => e.child(div().pl(10).child(this.mlflow.render(c, 220))));
   }
 
-  // Whether the engine page is the section on show (the sections stack's active child).
+  // Whether an engine page or a project home is the section on show (the sections stack's active child).
   onEnginePage() {
     const find = (n) => (n?.id === "sections" ? n : (n?.children ?? []).map(find).find(Boolean));
-    return find(layout())?.active === "engine";
+    return ["engine", "project"].includes(find(layout())?.active);
   }
 
   /** False for a click that can't be meant: in the first moments after the tree appears (the click that brings the
@@ -155,7 +155,9 @@ export class Explorer {
     }
     setShared("captain.scope", { kind: n.kind, id: n.id, label: nodeName(n) });
     // An engine opens its page; anything else goes back to the views, filtered to it.
+    // An engine opens its page, a project its home; anything else goes back to the views, filtered to it.
     if (n.kind === "engine") run("layout.select", { stack: "sections", child: "engine" });
+    else if (n.kind === "project") run("layout.select", { stack: "sections", child: "project" });
     else if (this.onEnginePage?.()) run("layout.select", { stack: "sections", child: "investigations" });
   }
 
@@ -164,7 +166,7 @@ export class Explorer {
     const m = this.model;
     const add = (kind, under) => ({ label: words(m, kind).add, props: { action: "add", kind: kind === "engine" ? "engine" : "scope", type: kind, parent: under } });
     if (n.kind === "group") {
-      if (n.type === "project") return [];
+      if (n.type === "project") return [{ label: "New project", overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "project" } } }];
       return [add(n.type, holder)];
     }
     if (n.kind !== "scope" && n.kind !== "engine") return [];
@@ -180,8 +182,8 @@ export class Explorer {
   menuList(c, id, acts, indent) {
     return v_flex().ml(indent).mr(8).mb(4).py(4).border_1().border_color(c.grey300).bg(c.surface)
       .children(acts.map((a, i) => div().id(`ex-act-${id}-${i}`).h(26).px(10).flex().items_center().text_size(12.5).cursor_pointer()
-        .text_color(a.props.action === "archive" ? c.fail : c.navy).hover((s) => s.bg(c.surface2))
-        .on_click((_e, cx) => { this.menu = null; cx.notify(); openOverlay(DIALOG(a.props)); })
+        .text_color(a.props?.action === "archive" ? c.fail : c.navy).hover((s) => s.bg(c.surface2))
+        .on_click((_e, cx) => { this.menu = null; cx.notify(); openOverlay(a.overlay ?? DIALOG(a.props)); })
         .child(a.label)));
   }
 
@@ -194,28 +196,19 @@ export class Explorer {
     return ids.size;
   }
 
-  /** The tree as shown: All engines and All experiments become lists of the real things, and an empty list says so. */
+  /** The tree as shown (Edgar, 2026-11-07: "experience everything through projects"): Projects first, each opening
+   *  its home; no All engines or All experiments views; and no empty level groups, so a workspace whose scope model is
+   *  still empty shows its projects and nothing bare. */
   shown() {
-    const engines = this.engines ?? (() => { const out = new Map(); const walk = (n) => { if (n.kind === "engine") out.set(n.id, n); (n.children ?? []).forEach(walk); }; (this.tree ?? []).forEach(walk); return [...out.values()]; })();
-    const exps = this.experiments ?? [];
-    return (this.tree ?? []).map((n) => {
-      if (n.kind === "view" && n.id === "all-engines") {
-        return { kind: "list", id: n.id, key: n.id, label: n.label, about: ABOUT[n.id], count: engines.length, children: engines.length
-          ? engines.map((e) => ({ kind: "engine", id: e.id, name: e.name, type: e.type, key: `all-engines/${e.id}` }))
-          : [{ kind: "hint", key: "all-engines/none", label: "No engines yet: add one", overlay: ADD_ENGINE }] };
-      }
-      if (n.kind === "view" && n.id === "all-experiments") {
-        const first = exps.slice(0, FIRST).map((b) => ({ kind: "experiment", key: `all-experiments/${b.name}`, name: b.name, latest: b.latest, lastRun: b.last_run, lastGraded: b.last_run_graded, runs: b.runs }));
-        return { kind: "list", id: n.id, key: n.id, label: n.label, about: ABOUT[n.id], count: exps.length, children: exps.length
-          ? [...first, ...(exps.length > FIRST ? [{ kind: "more", key: "all-experiments/more", label: `Show all ${exps.length}` }] : [])]
-          : [{ kind: "hint", key: "all-experiments/none", label: "No experiments yet: run one", overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "backtest" } } }] };
-      }
-      if (n.kind === "group" && n.type === "project" && !(n.children ?? []).length) {
-        return { ...n, children: [{ kind: "hint", key: "projects/none", label: "No projects yet" }] };
-      }
-      return n;
-    });
+    const tree = (this.tree ?? []).filter((n) => !(n.kind === "view" && (n.id === "all-engines" || n.id === "all-experiments")))
+      .filter((n) => !(n.kind === "group" && n.type !== "project" && !(n.children ?? []).length))
+      .map((n) => (n.kind === "group" && n.type === "project" && !(n.children ?? []).length
+        ? { ...n, children: [{ kind: "hint", key: "projects/none", label: "No projects yet: add one", overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "project" } } }] }
+        : n));
+    const projects = tree.filter((n) => n.kind === "group" && n.type === "project");
+    return [...projects, ...tree.filter((n) => !projects.includes(n))];
   }
+
 
   /** An experiment's marker: its latest run is fully graded, has too few grades to trust nDCG, or it hasn't run yet.
    *  (last_run_graded: judged@10 at least 0.9.) */

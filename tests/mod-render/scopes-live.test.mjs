@@ -78,14 +78,17 @@ let ex = harness(ExplorerView);
 await ex.start();
 await until(ex, () => Boolean(ex.mod.ex.tree), 'the Explorer loaded');
 let t = ex.text();
-assert.ok(t.includes('All engines') && t.includes('All experiments') && t.includes('Scope model'), `base tree: ${t}`);
+// Edgar, 2026-11-07: everything through projects. Projects come first; no All engines or All experiments views; and
+// no bare Brands or Sites groups while the scope model has no levels with anything in them.
+assert.ok(t.includes('Projects') && t.includes('Scope model'), `base tree: ${t}`);
+for (const gone of ['All engines', 'All experiments', 'Brands']) assert.ok(!t.includes(gone), `no ${gone}: ${t}`);
+assert.ok(t.indexOf('Projects') < t.indexOf('Scope model'), 'Projects first');
 assert.equal(ex.mod.ex.live, true, 'the Explorer reads the services');
-// All engines and All experiments are lists, like folders (Edgar: "they aren't lists"), with what they hold on hover.
-const tip = (id) => ex.byIdPrefix(`ex-${id}`).find((e) => e.call('id')?.[0] === `ex-${id}`)?.call('tooltip')?.[0];
-assert.equal(tip('all-engines'), "The search and recommendation systems you're improving, across every brand");
-assert.equal(tip('all-experiments'), "Every comparison you've run, newest first");
-assert.ok(t.includes('No engines yet: add one'), `an empty All engines says so: ${t.slice(0, 300)}`);
-assert.ok(t.includes('No projects yet'), 'an empty Projects says so');
+assert.ok(t.includes('No projects yet: add one'), 'an empty Projects says so');
+await new Promise((r) => setTimeout(r, 1300)); // past the Explorer's first moments, when a click is ignored
+globalThis.__overlays = [];
+await ex.click('ex-projects/none');
+assert.equal(globalThis.__overlays.at(-1)?.props?.task, 'project', 'No projects yet: add one opens New project');
 
 // All engines with none yet: what an engine is, an example, and a button that opens the add dialog.
 const { default: EngineMod } = await import(path.join(await copy('captain-engine'), 'main.js'));
@@ -118,8 +121,6 @@ await ex.start();
 await until(ex, () => ex.text().includes('Product search'), 'the Explorer shows the new engine');
 t = ex.text();
 for (const name of ['Brands', 'Acme Outdoors', 'Sites', 'US storefront', 'Engines', 'Product search']) assert.ok(t.includes(name), `${name} in the Explorer: ${t}`);
-assert.equal(ex.mod.ex.engineCount(), 1, 'All engines counts the one engine');
-// (The engine also shows near the top, under All engines: the nested one is the last.)
 assert.ok(t.indexOf('Acme Outdoors') < t.indexOf('US storefront') && t.indexOf('US storefront') < t.lastIndexOf('Product search'), 'nested in order');
 
 // 4. A click in the Explorer's first moments is ignored (the click that brings the window forward lands on whatever
@@ -131,27 +132,36 @@ await new Promise((r) => setTimeout(r, 1300));
 await ex.click('ex-scope-model');
 assert.equal(globalThis.__overlays.at(-1)?.mod, 'captain-scope-model', 'a later click opens Scope model');
 
-// The lists. All engines holds the engine (once, though it also shows under its site), counted on the parent.
-const listed = findScope((await get('/api/explorer')).tree, 'Product search');
-assert.ok(ex.byIdPrefix(`ex-all-engines/${listed.id}`).length === 1, 'All engines lists the engine');
-await ex.click(`ex-all-engines/${listed.id}`);
-assert.deepEqual(globalThis.__shared['captain.scope'], { kind: 'engine', id: listed.id, label: 'Product search' }, 'clicking it picks the engine');
-globalThis.__shared['captain.scope'] = null;
-await until(ex, () => (ex.mod.ex.experiments ?? []).length === 2, 'the experiments, for the whole workspace again');
-// All experiments starts folded; opening it lists the demo's experiments, newest first, and a click opens Comparisons.
-assert.ok(!ex.text().includes('demo-historic-replay'), 'folded at first');
-await ex.click('ex-all-experiments');
-assert.ok(ex.text().includes('demo-historic-replay') && ex.text().includes('demo-tuned-vs-bm25'), `opened: ${ex.text().slice(0, 400)}`);
-// Each experiment's marker says whether its latest run has enough grades, exactly as the services report it (last_run_graded).
-const replay = (await get('/api/backtests')).find((b) => b.name === 'demo-historic-replay');
-const mark = ex.byIdPrefix('ex-mark-all-experiments/demo-historic-replay')[0]?.call('tooltip')?.[0] ?? '';
-const expected = !replay.last_run ? /Not run yet/ : replay.last_run_graded === false ? /^Not enough grades/ : /fully graded$/;
-assert.match(mark, expected, `the marker matches last_run_graded=${replay.last_run_graded}: ${mark}`);
-const ws = Object.keys(globalThis.__shared['captain.explorer.folds'] ?? {})[0];
-assert.equal(globalThis.__shared['captain.explorer.folds'][ws]['all-experiments'], true, 'the fold is remembered for this workspace');
-await ex.click('ex-all-experiments/demo-historic-replay');
+// A project: made, given the demo's catalog, tuned pipeline and backtest, then picked in the Explorer, it opens its
+// home, where each item opens where it lives.
+const postJ = async (p, body) => (await fetch(base + p, { method: 'POST', headers: { Authorization: `Bearer ${j.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+const proj = await postJ('/api/projects', { name: 'Acme search' });
+await postJ('/api/projects/assign', { project: proj.id, items: [{ kind: 'dataset', name: 'demo-catalog' }, { kind: 'pipeline', name: 'demo-tuned' }, { kind: 'backtest', name: 'demo-tuned-vs-bm25' }] });
+globalThis.__shared['captain.explorer.rev'] = Date.now(); // what New project does; the Explorer re-reads its tree
+ex.mod.ex.load(ex.cx);
+await until(ex, () => ex.text().includes('Acme search'), 'the Explorer lists the project');
+t = ex.text();
+assert.ok(t.indexOf('Acme search') < t.indexOf('Acme Outdoors'), 'projects come before brands');
+await new Promise((r) => setTimeout(r, 500)); // the rows just moved: a click right away is ignored
+globalThis.__runs = [];
+await ex.click(`ex-${proj.id}`);
+assert.deepEqual(globalThis.__shared['captain.scope'], { kind: 'project', id: proj.id, label: 'Acme search' }, 'clicking it picks the project');
+assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections', child: 'project' }], 'and opens its home');
+const { default: ProjectMod } = await import(path.join(await copy('captain-project'), 'main.js'));
+const home = harness(ProjectMod);
+await home.start();
+await until(home, () => home.text().includes('demo-catalog'), 'the home lists its dataset');
+for (const thing of ['demo-tuned@v1', 'demo-tuned-vs-bm25', 'DATASETS', 'RECENT RUNS', 'PIPELINES', 'MODELS', 'NOTEBOOKS']) assert.ok(home.text().includes(thing), `the home shows ${thing}: ${home.text().slice(0, 500)}`);
+await home.click('ph-ds-0');
+assert.equal(globalThis.__shared['captain.open']?.section, 'data');
+assert.equal(globalThis.__shared['captain.open']?.dataset, 'demo-catalog', 'a dataset opens in Data');
+await home.click('ph-run-0');
 assert.equal(globalThis.__shared['captain.open']?.section, 'comparisons');
-assert.equal(globalThis.__shared['captain.open']?.backtest, 'demo-historic-replay', 'an experiment opens in Comparisons');
+assert.equal(globalThis.__shared['captain.open']?.backtest, 'demo-tuned-vs-bm25', 'a run opens in Comparisons');
+globalThis.__overlays = [];
+await home.click('ph-pl-0');
+assert.equal(globalThis.__overlays.at(-1)?.mod, 'captain-sandbox', 'a pipeline opens What if');
+globalThis.__shared['captain.scope'] = null;
 
 // 5. Picking the engine sets the scope the views filter to.
 tree = (await get('/api/explorer')).tree;

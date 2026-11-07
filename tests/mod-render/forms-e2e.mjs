@@ -41,9 +41,15 @@ const pipes = await options("investigation", "baseline");
 await step("New investigation with a baseline", "investigation", { title: "Forms e2e with baseline", baseline: pipes[0]?.value });
 await step("Import a dataset from a file", "dataset", { from: "file", name: "forms-e2e-tiny", kind: "catalog", file: csv });
 await step("Import a dataset from a missing file (plain error)", "dataset", { from: "file", name: "forms-e2e-missing", kind: "catalog", file: join(dir, "nope.csv") }, {}, false);
-await step("Connect a database with a password", "database", { name: `forms-e2e-db-${Date.now() % 100000}`, db: "postgres", url: "postgresql://reader@127.0.0.1:1/shop", password: "s3cret-e2e", writable: false });
-await step("Connect a database that is already connected (plain error)", "database", { name: "forms-e2e-db", db: "postgres", url: "postgresql://reader@127.0.0.1:1/shop" }, {}, false);
-await step("Connect a database without a user (plain error)", "database", { name: "forms-e2e-db2", db: "postgres", url: "postgresql://127.0.0.1:1/shop", password: "x" }, {}, false);
+// The form is typed (GET /api/connections/kinds): the kind, then that kind's fields ("af:<kind>.<field>"). It saves,
+// puts the password in the keychain, then tests the connection. Nothing listens on port 1, so it says it saved but
+// couldn't reach it, which is the plain error a person sees.
+const dbName = `forms-e2e-db-${Date.now() % 100000}`;
+const pg = { "af:postgres.host": "127.0.0.1", "af:postgres.port": "1", "af:postgres.database": "shop", "af:postgres.user": "reader" };
+const saved = await step("Connect a database it can't reach yet (saved, plain error)", "database", { kind: "postgres", name: dbName, ...pg, "af:postgres.password": "s3cret-e2e", writable: false }, {}, false);
+if (!/^Saved .*couldn't reach it/.test(saved.error ?? "")) { results.at(-1).pass = false; console.log(`     expected "Saved ..., but Captain couldn't reach it", got: ${saved.error}`); }
+await step("Connect a database that is already connected (plain error)", "database", { kind: "postgres", name: dbName, ...pg }, {}, false);
+await step("Connect a database without picking one (plain error)", "database", { name: "forms-e2e-db2" }, {}, false);
 const conns = await api("/api/connections");
 const conn = (conns.data ?? []).find((c) => c.name.startsWith("forms-e2e-db"));
 console.log(`     connection stored: ${conn ? JSON.stringify(conn) : "missing"}`);
@@ -58,8 +64,10 @@ const kinds = await options("compute", "kind");
 console.log(`     compute kinds: ${kinds.map((k) => k.label).join(", ")}`);
 
 await step("Connect a cloud account (AWS default chain)", "cloud", { provider: "aws", auth: auths.find((a) => /Default/.test(a.label))?.value, name: "forms-e2e-aws", region: "us-west-1" });
-await step("Add a place to run work (this machine)", "compute", { kind: kinds.find((k) => /This machine/.test(k.label))?.value, name: `forms-e2e-local-${Date.now() % 100000}` });
-await step("Add a place that already exists (plain error)", "compute", { kind: kinds.find((k) => /This machine/.test(k.label))?.value, name: "forms-e2e-local" }, {}, false);
+// The second add reuses the first's name, so it already exists.
+const localName = `forms-e2e-local-${Date.now() % 100000}`;
+await step("Add a place to run work (this machine)", "compute", { kind: kinds.find((k) => /This machine/.test(k.label))?.value, name: localName });
+await step("Add a place that already exists (plain error)", "compute", { kind: kinds.find((k) => /This machine/.test(k.label))?.value, name: localName }, {}, false);
 const envs = await options("handoff", "env");
 await step("Hand off a candidate that isn't ready (plain error)", "handoff", { pipeline: pipes.find((p) => /tuned/.test(p.value))?.value ?? pipes[0]?.value, env: envs.find((e) => e.chip === "live")?.value ?? envs[0]?.value }, {}, false);
 await step("Hand off with a reason", "handoff", { pipeline: pipes.find((p) => /tuned/.test(p.value))?.value ?? pipes[0]?.value, env: envs.find((e) => e.chip === "live")?.value ?? envs[0]?.value, reason: "forms e2e, scratch workspace" });

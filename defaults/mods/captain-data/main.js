@@ -145,6 +145,16 @@ export default class CaptainData extends View {
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
       if (this.wantTab && this.detail?.name === this.wantTab.dataset) { const t = this.wantTab.tab; this.wantTab = null; this.page.open(cx, t); }
+      // {section: "data", view: notebooks | models | tables | labels, notebook?}: that tab of Data (a project's home).
+      if (o?.section === "data" && o.view && !o.dataset && o.at !== this.opened) {
+        this.opened = o.at;
+        this.tab = o.view;
+        if (o.view === "notebooks") { this.nb.want = o.notebook ?? null; this.nb.load(cx); }
+        if (o.view === "models") this.models.load(cx);
+        if (o.view === "tables") this.tables.show(cx);
+        if (o.view === "labels") this.loadLabels(cx);
+        cx.notify();
+      }
       if (o?.section === "data" && o.dataset && o.at !== this.opened) {
         this.opened = o.at;
         this.wantTab = o.tab ? { dataset: o.dataset, tab: o.tab } : null;

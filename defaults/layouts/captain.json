@@ -98,7 +98,8 @@
           "content": {
             "mod": "captain-engine"
           }
-        }
+        },
+        { "id": "project", "type": "block", "content": { "mod": "captain-project" } }
       ]
     },
     {

@@ -10,6 +10,7 @@ import { Button, Badge, ServiceError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { TASKS } from "./tasks.js";
+import { recordsChanged } from "./kit/cst.js";
 
 const IMPORT = { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} };
 
@@ -204,6 +205,7 @@ export default class CaptainForms extends View {
       this.busy = false;
       this.result = r;
       if (r.ok) {
+        recordsChanged(this.task.id); // Handoff, Investigations... reload now
         notify({ title: r.message ?? "Done", level: "info" });
         this.close();
       }

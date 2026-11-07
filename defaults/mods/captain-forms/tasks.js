@@ -60,6 +60,19 @@ export const TASKS = [
     submit: async (v) => ok(await api("/api/investigations", { body: { title: v.title, hypothesis: v.hypothesis || undefined, baseline: v.baseline || undefined } }), "Investigation opened."),
   },
   {
+    id: "project", label: "New project", icon: "workflow",
+    about: "A project groups one company's datasets, pipelines, models, notebooks and runs, so you can see them together. Nothing moves or is copied.",
+    fields: [
+      { key: "name", label: "Name", placeholder: "Acme search", required: true },
+      { key: "description", label: "What it's for", optional: true, placeholder: "Product search for the Acme storefronts" },
+    ],
+    submit: async (v) => {
+      const r = await api("/api/projects", { body: { name: v.name.trim(), ...(v.description ? { description: v.description.trim() } : {}) } });
+      if (r.ok) setShared("captain.explorer.rev", Date.now()); // the Explorer lists it now
+      return ok(r, `Project ${v.name.trim()} made. Datasets, pipelines and runs whose names start with ${r.data?.id ?? "its id"} join it.`);
+    },
+  },
+  {
     id: "dataset", label: "Import a dataset", icon: "database",
     about: "Bring in a catalog, queries, judgments or logs, from a file on this computer or a SQL query.",
     fields: [

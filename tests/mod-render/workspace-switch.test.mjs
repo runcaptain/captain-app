@@ -1,5 +1,6 @@
-// Switching to a space bound to another workspace reloads each native screen (kit watchWorkspace): its list is
-// asked for again, and what was open is dropped.
+// Switching the workspace in the sidebar's switcher (shared "captain.workspace") reloads each native screen (kit
+// watchWorkspace): its list is asked for again, and what was open is dropped. Changing spaces doesn't: spaces are only
+// groups of terminals.
 //
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/workspace-switch.test.mjs
 import fs from 'node:fs';
@@ -24,7 +25,7 @@ for (const [mod, list] of Object.entries(LIST)) {
   globalThis.__routes = ROUTES[mod];
   globalThis.__asked = [];
   globalThis.__space = 's1';
-  globalThis.__shared = { 'captain.spaces': { s1: { workspace: 'acme' }, s2: { workspace: 'globex' } } };
+  globalThis.__shared = { 'captain.workspace': 'acme' };
   const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), `${mod}-ws-`)));
   fs.cpSync(path.join(root, 'defaults/mods', mod), work, { recursive: true });
   fs.copyFileSync(path.join(root, 'defaults/captain/kit/cst.js'), path.join(work, 'kit/real-cst.js'));
@@ -37,7 +38,11 @@ for (const [mod, list] of Object.entries(LIST)) {
   assert.ok(before >= 1, `${mod}: loaded its list`);
   await h.layoutLists({});
   assert.equal(globalThis.__asked.filter((p) => list.test(p)).length, before, `${mod}: no reload without a switch`);
+  // Another space shows: same workspace, nothing reloads.
   globalThis.__space = 's2';
+  await h.layoutLists({});
+  assert.equal(globalThis.__asked.filter((p) => list.test(p)).length, before, `${mod}: a space change isn't a workspace switch`);
+  globalThis.__shared['captain.workspace'] = 'globex';
   await h.layoutLists({});
   assert.ok(globalThis.__asked.filter((p) => list.test(p)).length > before, `${mod}: reloaded after the switch`);
   // The Explorer's pick changes (a brand): the list is asked for again.

@@ -81,7 +81,6 @@ export function staticEntries(sections) {
     { name: "captain-nav.theme-light", args: {}, group: "Captain", icon: icon("sun"), title: "Switch to light", words: "appearance theme light mode" },
     { name: "captain-nav.theme-dark", args: {}, group: "Captain", icon: icon("moon"), title: "Switch to dark", words: "appearance theme dark mode night" },
     { name: "captain-nav.theme-system", args: {}, group: "Captain", icon: icon("monitor"), title: "Match the system appearance", words: "appearance theme system auto" },
-    { name: "captain-nav.space-new", args: {}, group: "Captain", icon: icon("terminal"), title: "New space for this workspace", words: "space workspace terminals" },
     { group: "Captain", icon: icon("folder-open"), title: "New workspace...", words: "workspace storage folder bucket s3 gcs azure create start import drop", overlay: SETUP },
     { name: "app.welcome", args: {}, group: "Captain", icon: icon("compass"), title: "Show the Captain tour", words: "onboarding welcome checklist start setup" },
     { group: "Captain", icon: icon("cloud"), title: "Cloud and compute", words: "aws gcp azure login profile region compute", overlay: { mod: "captain-cloud", kind: "dialog", width: 760, height: 640 } },
@@ -126,6 +125,13 @@ export default class CaptainNav extends View {
         }
       });
     }
+    // Spaces from before the workspace switcher were bound to a workspace; only an investigation's stays bound, so
+    // every other terminal follows the switcher's workspace.
+    if (props()?.part !== "brand") {
+      const map = shared("captain.spaces") ?? {};
+      const kept = Object.fromEntries(Object.entries(map).filter(([, b]) => b?.investigation));
+      if (Object.keys(kept).length !== Object.keys(map).length) setShared("captain.spaces", kept);
+    }
     this.explorer = new Explorer();
     this.explorer.start(cx);
     // Team views from the project's captain/views/ (teamviews.js).
@@ -152,8 +158,9 @@ export default class CaptainNav extends View {
         this.error = ws.ok ? null : ws.error;
         if (ws.ok) {
           this.workspace = ws.data?.name ?? null;
-          // The services' current workspace names new spaces and is unbound terminals' CST_WORKSPACE.
-          if (!workspace() && this.workspace && shared("captain.workspace") !== this.workspace) setShared("captain.workspace", this.workspace);
+          // The window's workspace, until someone picks another in the switcher: the services' current one. It is also
+          // the terminals' CST_WORKSPACE.
+          if (!workspace() && this.workspace) setShared("captain.workspace", this.workspace);
           const all = await api("/api/workspaces");
           if (all.ok && Array.isArray(all.data)) this.workspaces = all.data.map((w) => w.name);
           const cloud = await api("/api/cloud/summary");
@@ -186,17 +193,21 @@ export default class CaptainNav extends View {
     try { return (await exec("test", ["-d", dir])).code === 0 ? dir : null; } catch { return null; }
   }
 
-  /** A space for this workspace (or an investigation in it), bound so its terminals know. */
+  /** A space of terminals ("Terminals"), or an investigation's, bound so its terminals know the investigation. Spaces
+   *  are never named after a workspace: the workspace is the switcher's. */
   async newSpace(investigation, ws = this.workspace) {
-    const name = investigation?.title ?? ws ?? "Captain";
+    const name = investigation?.title ?? "Terminals";
     const folder = await this.agentFolder();
     const before = new Set(spaces().map((s) => s.id));
     run("space.new", folder ? { name, folder } : { name });
     const made = spaces().find((s) => !before.has(s.id));
     if (made) {
-      const map = { ...(shared("captain.spaces") ?? {}) };
-      map[made.id] = { workspace: ws, ...(investigation ? { investigation: investigation.id } : {}) };
-      setShared("captain.spaces", map);
+      // Only an investigation's space is bound (its terminals get CST_INVESTIGATION, and its workspace).
+      if (investigation) {
+        const map = { ...(shared("captain.spaces") ?? {}) };
+        map[made.id] = { workspace: ws, investigation: investigation.id };
+        setShared("captain.spaces", map);
+      }
     }
   }
 
@@ -212,19 +223,26 @@ export default class CaptainNav extends View {
     try { await this.newSpace(); } finally { this.making = false; }
   }
 
+  /** The workspace switcher: the window's workspace, every workspace to switch to, and New workspace. */
+  switchWorkspace(cx, name) {
+    this.spacesOpen = false;
+    if (name === workspace()) { cx.notify(); return; }
+    setShared("captain.workspace", name); // every screen reads it (kit/cst.js workspace()) and reloads
+    cx.spawn(async (cx) => { await api(`/api/workspaces/${encodeURIComponent(name)}/use`, { method: "POST" }); this.refresh(cx); });
+    cx.notify();
+  }
+
   spaceSwitcher(c) {
-    const list = spaces();
-    const current = list.find((s) => s.focused || s.shown) ?? list[0];
-    const dots = (id) => agents().filter((a) => a.space === id);
-    const dot = (st) => (st === "blocked" ? c.fail : st === "working" ? c.blue : st === "done" ? c.good : c.grey300);
+    const current = workspace() ?? this.workspace;
     // No words while Captain's services start: a placeholder bar. One short line if they fail.
     const failed = this.state === "failed";
+    const list = this.workspaces?.length ? this.workspaces : current ? [current] : [];
     return v_flex().w_full().flex_none().border_b(1).border_color(c.rule)
       .child(h_flex().h(40).px(16).gap(8).items_center()
-        .child(h_flex().id("space-current").flex_1().min_w(0).gap(6).items_center().cursor_pointer().tooltip(failed ? this.error : "Spaces")
+        .child(h_flex().id("space-current").flex_1().min_w(0).gap(6).items_center().cursor_pointer().tooltip(failed ? this.error : "Switch workspace")
           .on_click((_e, cx) => { this.spacesOpen = !this.spacesOpen; cx.notify(); })
-          .child((current?.name ?? this.workspace)
-            ? div().min_w(0).truncate().text_size(13).font_medium().text_color(c.navy).child(current?.name ?? this.workspace)
+          .child(current
+            ? div().min_w(0).truncate().text_size(13).font_medium().text_color(c.navy).child(current)
             : div().h(12).w(96).bg(c.surface2))
           .child(svg("mods/captain-nav/chevron-down.svg").size(12).text_color(c.grey500)))
         .child(div().id("nav-new").h(24).px(8).flex().items_center().gap(4).border_1().border_color(c.grey300).cursor_pointer()
@@ -235,23 +253,18 @@ export default class CaptainNav extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(c.fail).tooltip(this.error ?? "").child("Captain couldn't start its services"))
         .child(div().id("svc-retry-nav").text_size(11.5).text_color(c.blue).cursor_pointer().on_click((_e, cx) => { retry(); this.state = "starting"; cx.notify(); }).child("Retry"))))
       .when(Boolean(this.spacesOpen), (e) => e.child(v_flex().pb(6)
-        .children(list.map((sp) => h_flex().id(`space-${sp.id}`).h(28).px(16).gap(8).items_center().cursor_pointer()
-          .bg(sp.id === current?.id ? c.blueLight : c.surface).text_color(sp.id === current?.id ? c.blue : c.navy).text_size(12.5)
+        .child(div().h(22).px(16).flex().items_center().text_size(10.5).font_semibold().text_color(c.grey500).child("WORKSPACES"))
+        .children(list.map((w) => h_flex().id(`workspace-${w}`).h(28).px(16).gap(8).items_center().cursor_pointer()
+          .bg(w === current ? c.blueLight : c.surface).text_color(w === current ? c.blue : c.navy).text_size(12.5)
           .hover((s) => s.bg(c.surface2))
-          .on_click((_e, cx) => { run("space.select", { id: sp.id }); this.spacesOpen = false; cx.notify(); })
-          .child(div().flex_1().min_w(0).truncate().child(sp.name))
-          .children(dots(sp.id).slice(0, 4).map((a) => div().size(6).rounded_full().bg(dot(a.status))))))
-        .children((this.workspaces?.length ? this.workspaces : [this.workspace]).map((w) => h_flex().id(`space-new-${w ?? "default"}`).h(28).px(16).gap(6).items_center().cursor_pointer().text_size(12.5).text_color(c.blue)
-          .hover((s) => s.bg(c.blueLight)).on_click((_e, cx) => { this.spacesOpen = false; cx.spawn(async (cx) => { await this.newSpace(undefined, w); cx.notify(); }); })
-          .child(svg("mods/captain-nav/plus.svg").size(12)).child(`New space${w ? ` for ${w}` : ""}`)))
+          .on_click((_e, cx) => this.switchWorkspace(cx, w))
+          .child(div().flex_1().min_w(0).truncate().child(w))
+          .when(w === current, (x) => x.child(svg(icon("check")).size(12).text_color(c.blue)))))
         .child(h_flex().id("workspace-new").h(28).px(16).gap(6).items_center().cursor_pointer().text_size(12.5).text_color(c.blue)
           .hover((s) => s.bg(c.blueLight)).on_click((_e, cx) => { this.spacesOpen = false; cx.notify(); openOverlay(SETUP); })
-          .child(svg("mods/captain-nav/plus.svg").size(12)).child("New workspace..."))
-        .when(Boolean(current), (x) => x.child(h_flex().id("space-rename").h(28).px(16).items_center().cursor_pointer().text_size(12.5).text_color(c.grey900)
-          .hover((s) => s.bg(c.surface2)).on_click((_e, cx) => { this.spacesOpen = false; cx.notify();
-            openOverlay({ mod: "prompt", kind: "dialog", width: 380, props: { title: "Rename space", hint: current.name, command: { name: "space.rename", args: { id: current.id } } } }); })
-          .child("Rename this space")))));
+          .child(svg("mods/captain-nav/plus.svg").size(12)).child("New workspace..."))));
   }
+
 
   // The project's own views (captain/views/<name>/), under a "From <project>" label. A view with a problem says what
   // it is instead of opening.

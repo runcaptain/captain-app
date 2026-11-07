@@ -3,7 +3,7 @@
 // {state: "ready", base, token, home}, or {state: "starting" | "missing" | "failed", error}.
 // Requests go through fetch, in-process, so the token never shows up in `ps`.
 // Where they listen comes only from the app (shared "captain.daemon").
-import { shared, setShared, focused } from "herdr";
+import { shared, setShared } from "herdr";
 
 // When this copy of the mod started: services get ~15 s to come up before a screen says so.
 const BORN = Date.now();
@@ -27,12 +27,11 @@ function notUp(reason) {
   return { ok: false, failed: true, error: "Captain's services didn't start." };
 }
 
-/** The cst workspace the shown space is bound to (shared "captain.spaces"), or null
- *  for the services' current one. Every request carries it, so switching spaces
- *  switches what the screens read. */
+/** The workspace the window shows: one choice for the whole window, made in the switcher at the top of the sidebar
+ *  (shared "captain.workspace"), or null before the services name one. Every request carries it. Spaces are only
+ *  groups of terminals and never pick the workspace (Edgar, 2026-11-07: workspaces and spaces were confusing). */
 export function workspace() {
-  const bound = (shared("captain.spaces") ?? {})[focused()?.space];
-  return bound?.workspace ?? null;
+  return shared("captain.workspace") ?? null;
 }
 
 /** Call fn(cx) whenever the shown space's workspace changes (reload, reset the view). */
@@ -130,6 +129,23 @@ export function watchScope(cx, fn) {
     if (now === last) return;
     last = now;
     fn(cx);
+  });
+}
+
+/** Say that a form changed records (a handoff, a deployment, an outcome, a decision...), so screens listing them reload
+ *  now, not at their next timer. The forms call it after every successful submit. */
+export function recordsChanged(what) {
+  setShared("captain.records.changed", { what, at: Date.now() });
+}
+
+/** Call `fn(cx, what)` when a form changes records anywhere in the app (recordsChanged). */
+export function watchRecords(cx, fn) {
+  let last = shared("captain.records.changed")?.at ?? null;
+  cx.timer.every(300, (cx) => {
+    const now = shared("captain.records.changed");
+    if ((now?.at ?? null) === last) return;
+    last = now?.at ?? null;
+    fn(cx, now?.what);
   });
 }
 

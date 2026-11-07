@@ -124,7 +124,7 @@ export default class Blank extends View { render() { return div().size_full().bg
 JS
 
 printf '{"appearance":"light"}\n' > "$HOME_DIR/settings.json"
-printf '{"captain.forms.preview":%s,"frame.welcomed":"skipped","captain.explorer.sample":true,"captain.explain.preview":{"pipeline":"demo-bm25","q":"earbuds under 50","vs":"demo-tuned"},"test.nav":[{"section":"investigations"},{"section":"handoff"},{"section":"comparisons","backtest":"demo-tuned-vs-bm25"},{"section":"comparisons","backtest":"demo-tuned-vs-bm25","tab":"segments"},{"section":"comparisons","backtest":"demo-tuned-vs-bm25","tab":"profile","profile":true},{"section":"data","dataset":"demo-judgments","tab":"health"},{"section":"data","dataset":"demo-catalog","tab":"insights"},{"section":"data","dataset":"demo-catalog","tab":"quality"},{"section":"runs","replay":"shopping-trigger"}],"captain.sandbox.preview":[{"pipeline":"demo-tuned","knobs":{"boosts.0.weight":"1, 1.15, 1.4, 1.8"},"sample":30},{"pipeline":"demo-tuned","knobs":{"boosts.0.weight":"1, 1.15, 1.4","fields.title":"2, 3"},"sample":30}]}\n' "$PREVIEW" > "$HOME_DIR/shared.json"
+printf '{"captain.forms.preview":%s,"frame.welcomed":"skipped","captain.explorer.sample":true,"captain.explain.preview":{"pipeline":"demo-bm25","q":"earbuds under 50","vs":"demo-tuned"},"test.nav":[{"section":"investigations"},{"section":"handoff"},{"section":"project"},{"section":"comparisons","backtest":"demo-tuned-vs-bm25"},{"section":"comparisons","backtest":"demo-tuned-vs-bm25","tab":"segments"},{"section":"comparisons","backtest":"demo-tuned-vs-bm25","tab":"profile","profile":true},{"section":"data","dataset":"demo-judgments","tab":"health"},{"section":"data","dataset":"demo-catalog","tab":"insights"},{"section":"data","dataset":"demo-catalog","tab":"quality"},{"section":"runs","replay":"shopping-trigger"}],"captain.sandbox.preview":[{"pipeline":"demo-tuned","knobs":{"boosts.0.weight":"1, 1.15, 1.4, 1.8"},"sample":30},{"pipeline":"demo-tuned","knobs":{"boosts.0.weight":"1, 1.15, 1.4","fields.title":"2, 3"},"sample":30}]}\n' "$PREVIEW" > "$HOME_DIR/shared.json"
 printf '{"state":"windowed","bounds":[80,80,1100,750]}\n' > "$HOME_DIR/window.json"
 CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_BIN=$CST CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
@@ -194,7 +194,7 @@ for m in captain-scope-model captain-scope captain-rankings captain-explain; do
 done
 # The screens with charts: shot for a person to look at (the gallery below is the automatic check).
 # Investigations and Handoff with the terminal column open, their narrowest; then the palette.
-for shot in investigations handoff; do
+for shot in investigations handoff project; do
   close_all
   app do mod.open '{"name":"nav-shot"}' >/dev/null
   sleep 8
@@ -203,6 +203,7 @@ done
 close_all
 app do app.palette >/dev/null; sleep 2
 app shot "$OUT/palette.png" >/dev/null && echo "palette: shot $OUT/palette.png"
+app do app.palette >/dev/null; sleep 1 # it toggles; close_all doesn't close it
 close_all
 # The terminal column hidden, so the screens get the width a person gives them (it's shown again after).
 app do layout.hide '{"id":"work"}' >/dev/null
@@ -227,6 +228,13 @@ for shot in sandbox-line sandbox-grid; do
   close_all
   if [[ "$SHOWN" == *captain-sandbox* ]] && python3 tests/mod-render/forms-shot.py "$OUT/$shot.png" --any; then echo "$shot: drawn $OUT/$shot.png"; else echo "$shot: NOT DRAWN ($SHOWN) $OUT/$shot.png"; fail=1; fi
 done
-cp "$WORK/app.log" "$OUT/app.log" 2>/dev/null
+# Closing the only terminal leaves its space open and empty, offering a new terminal; nothing starts one by itself.
+close_all
+spaces_before=$(app status | python3 -c "import json,sys; print(json.load(sys.stdin).get('space') or '')" 2>/dev/null)
+app do tab.close '{"confirmed":true}' >/dev/null; sleep 3
+app shot "$OUT/empty-space.png" >/dev/null
+spaces_after=$(app status | python3 -c "import json,sys; print(json.load(sys.stdin).get('space') or '')" 2>/dev/null)
+echo "empty-space: space '$spaces_before' before, '$spaces_after' after closing the last terminal; shot $OUT/empty-space.png"
+[[ -n "$spaces_before" && "$spaces_before" == "$spaces_after" ]] || { echo "empty-space: NOT KEPT (the space closed with its terminal)"; fail=1; }
 [[ $fail == 0 ]] && echo "all forms drawn" || echo "shots: $OUT"
 exit $fail

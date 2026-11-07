@@ -8,7 +8,7 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, openOverlay, notify, run, spaces, focused, shared, setShared, exec, knownAgents } from "herdr";
-import { api, query, watchWorkspace, watchScope } from "./kit/cst.js";
+import { api, query, watchWorkspace, watchScope, watchRecords } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
 import { View } from "gpui-kit";
@@ -69,6 +69,8 @@ export default class CaptainInvestigations extends View {
     // The Explorer pick: the list reloads filtered to it (the services read X-CST-Scope).
     watchScope(cx, (cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); });
     watchWorkspace(cx, (cx) => { this.open = null; this.detail = null; this.bound = undefined; this.table.load(cx); cx.notify(); });
+    // A form saved something (a handoff, a deployment, an outcome, a decision): the list and the open one reload now.
+    watchRecords(cx, (cx) => { this.table.load(cx); if (this.open) this.load(this.open, cx); cx.notify(); });
     cx.timer.every(10000, (cx) => (this.open ? this.load(this.open, cx) : this.table.load(cx)));
     // Experiments an agent or a person proposed, waiting for a person's approval (the sidebar's count).
     this.proposals = []; this.reviewing = null;
