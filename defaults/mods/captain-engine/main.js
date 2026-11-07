@@ -14,6 +14,7 @@ import { api, watchScope, watchWorkspace } from "./kit/cst.js";
 import { Button, Badge, Tabs, Empty, Skeleton, Problem } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { nodeName } from "./kit/scopes.js";
+import { int } from "./kit/num.js";
 
 const TABS = [["overview", "Overview"], ["investigations", "Investigations"], ["experiments", "Experiments"], ["runs", "Runs"],
   ["evaluations", "Evaluations"], ["datasets", "Datasets"], ["signals", "Signals"], ["versions", "Versions"]];
@@ -137,7 +138,7 @@ export default class Engine extends View {
     if (t === "evaluations") return this.listTab(c, "evaluations", { title: "No evaluations here yet", body: "Grading over this engine's pipelines shows here." },
       (x, i) => this.row(c, `eng-eval-${i}`, x.name, `${x.graded ?? 0} of ${x.pairs ?? 0} graded, depth ${x.depth ?? "?"}`, [x.queries], () => this.open("runs", { grading: x.name })));
     if (t === "datasets") return this.listTab(c, "datasets", { title: "No datasets here yet", body: "Datasets linked to this engine show here." },
-      (x, i) => this.row(c, `eng-ds-${i}`, x.name, x.description ?? "", [x.kind, x.rows != null ? `${Number(x.rows).toLocaleString("en-US")} rows` : null, `v${x.latest ?? 1}`], () => this.open("data", { dataset: x.name })));
+      (x, i) => this.row(c, `eng-ds-${i}`, x.name, x.description ?? "", [x.kind, x.rows != null ? `${int(x.rows)} rows` : null, `v${x.latest ?? 1}`], () => this.open("data", { dataset: x.name })));
     if (t === "signals") return this.listTab(c, "signals", { title: "No signals here yet", body: "Signals this engine ranks with show here." },
       (x, i) => this.row(c, `eng-sig-${i}`, x.name ?? x.id, x.description ?? x.source ?? "", [x.status]));
     // Versions: its pipelines' versions, then its models.

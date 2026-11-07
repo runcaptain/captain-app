@@ -15,6 +15,8 @@ import { MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { LineageGraph } from "./kit/lineage.js";
 import { int, num } from "./kit/num.js";
+// The Health tab (a queries or judgments set): app-shell's, self-contained in the kit.
+import { EvalHealth } from "./kit/evals.js";
 
 const enc = (name) => String(name).split("/").map(encodeURIComponent).join("/");
 const fmtInt = (n) => int(n ?? 0);
@@ -44,6 +46,7 @@ export class DatasetPage {
     this.rows = null; // Sample data: the kit grid, paged
     this.rowsFor = null;
     this.file = null; // a dataset with several files: the one shown
+    this.health = new EvalHealth(); // the Health tab (kit/evals.js)
   }
 
   /** A new dataset (or version) on the page: lineage and quality load again when their tab opens. */
@@ -61,6 +64,7 @@ export class DatasetPage {
     if (tab === "lineage") this.loadLineage(cx);
     if (tab === "quality") this.loadProfile(cx);
     if (tab === "sample") this.loadRows(cx);
+    if (tab === "health" && this.host.detail) this.health.open(cx, this.host.detail);
     cx.notify();
   }
 
@@ -143,7 +147,8 @@ export class DatasetPage {
   // ---- drawing ---------------------------------------------------------------------------------------------------
 
   tabs(c) {
-    return h_flex().flex_none().gap(4).px(20).pb(10).children(TABS.filter(([id]) => id !== "quality" || this.hasProfile).map(([id, label]) =>
+    const tabs = [...TABS.filter(([id]) => id !== "quality" || this.hasProfile), ...(EvalHealth.applies(this.host.detail) ? [["health", "Health"]] : [])];
+    return h_flex().flex_none().gap(4).px(20).pb(10).children(tabs.map(([id, label]) =>
       div().id(`dtab-${id}`).h(26).px(10).flex().items_center().cursor_pointer().text_size(12)
         .border_1().border_color(this.tab === id ? c.navy : c.grey300).bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
         .on_click((_e, cx) => this.open(cx, id)).child(label)));
@@ -155,6 +160,7 @@ export class DatasetPage {
     if (this.tab === "details") return this.details(c, d);
     if (this.tab === "lineage") return this.lineageView(c);
     if (this.tab === "quality") return this.quality(c, d);
+    if (this.tab === "health") return v_flex().id("ds-health").flex_1().min_h(0).overflow_y_scrollbar().child(this.health.render(c));
     return v_flex().id("ds-overview").flex_1().min_h(0).overflow_y_scrollbar().pb(12).child(h.facts(c, d)).child(h.schema(c, d));
   }
 

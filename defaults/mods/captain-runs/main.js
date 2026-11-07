@@ -240,8 +240,13 @@ export default class CaptainRuns extends View {
   }
 
   openGrader(cx, name) {
-    this.grader = { name, next: null, count: 0, error: null, busy: false };
+    this.grader = { name, next: null, count: 0, error: null, busy: false, rubric: null };
     this.nextPair(cx);
+    // The queue's rubric (captain/rubrics/<domain>.md), so every grader reads the same words beside each pair.
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/grading/${encodeURIComponent(name)}`);
+      if (this.grader?.name === name && r.ok && r.data?.rubric?.text) { this.grader.rubric = r.data.rubric; cx.notify(); }
+    });
     this.keys.focus();
   }
 
@@ -585,6 +590,9 @@ export default class CaptainRuns extends View {
               .when(!!field("price"), (e) => e.child(div().font_family(MONO).child(`$${Number(field("price")).toFixed(2)}`)))
               .child(div().font_family(MONO).text_color(c.grey500).child(n.pair.product_id)))
             .when(!!field("description"), (e) => e.child(div().text_size(12.5).text_color(c.grey900).child(field("description")))))
+          .when(!!g.rubric?.text, (e) => e.child(v_flex().id("grader-rubric").max_h(180).overflow_y_scrollbar().p(12).gap(4).bg(c.surface2)
+            .child(div().text_size(11).text_color(c.grey500).child(`RUBRIC: ${String(g.rubric.name ?? "").toUpperCase()}`))
+            .child(div().text_size(12.5).line_height("19px").text_color(c.grey900).child(String(g.rubric.text)))))
           .child(h_flex().gap(8).children(GRADES.map(([v, label]) => v_flex().id(`grade-${v}`).flex_1().h(76).items_center().justify_center().gap(2).cursor_pointer()
             .border_1().border_color(v === 3 ? c.blue : c.grey300).hover((s) => s.bg(c.blueLight).border_color(c.blue))
             .on_click((_e, cx) => this.grade(cx, v))

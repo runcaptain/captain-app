@@ -168,7 +168,7 @@ export class Explorer {
           : [{ kind: "hint", key: "all-engines/none", label: "No engines yet: add one", overlay: ADD_ENGINE }] };
       }
       if (n.kind === "view" && n.id === "all-experiments") {
-        const first = exps.slice(0, FIRST).map((b) => ({ kind: "experiment", key: `all-experiments/${b.name}`, name: b.name, latest: b.latest, lastRun: b.last_run, lastComplete: b.last_run_complete, runs: b.runs }));
+        const first = exps.slice(0, FIRST).map((b) => ({ kind: "experiment", key: `all-experiments/${b.name}`, name: b.name, latest: b.latest, lastRun: b.last_run, lastGraded: b.last_run_graded, runs: b.runs }));
         return { kind: "list", id: n.id, key: n.id, label: n.label, about: ABOUT[n.id], count: exps.length, children: exps.length
           ? [...first, ...(exps.length > FIRST ? [{ kind: "more", key: "all-experiments/more", label: `Show all ${exps.length}` }] : [])]
           : [{ kind: "hint", key: "all-experiments/none", label: "No experiments yet: run one", overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "backtest" } } }] };
@@ -180,11 +180,13 @@ export class Explorer {
     });
   }
 
-  /** An experiment's marker: its latest run finished, didn't finish, or it hasn't run yet (the date on hover). */
+  /** An experiment's marker: its latest run is fully graded, has too few grades to trust nDCG, or it hasn't run yet.
+   *  (last_run_graded: judged@10 at least 0.9.) */
   marker(c, n) {
     const day = String(n.lastRun ?? "").slice(0, 10);
     const [color, words] = !n.lastRun ? [c.grey300, "Not run yet"]
-      : n.lastComplete === false ? [c.warn ?? "#d97706", `Its latest run, ${day}, didn't finish`] : [c.good, `Latest run ${day}, finished`];
+      : n.lastGraded === false ? [c.warn, `Not enough grades (latest run ${day}). Fewer than 90% of the top results are graded, so nDCG reads low. Grade more, or import labels.`]
+      : [c.good, `Latest run ${day}, fully graded`];
     return div().id(`ex-mark-${n.key}`).size(7).flex_none().rounded_full().bg(color).tooltip(words);
   }
 

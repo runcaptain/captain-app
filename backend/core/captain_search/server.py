@@ -278,6 +278,36 @@ def prepare_import(body: dict):
     return {"job": _job(lambda p: PP.import_prepared(c, src, progress=p, **kw), "prepare data for training")}
 
 
+@app.post("/api/sandbox/sweep", dependencies=A)
+def sandbox_sweep(body: dict):
+    """Turn up to three knobs: {pipeline, queries, judgments, knobs?, sample?, top?, seed?, metric?}. Runs the grid on
+    a stratified sample, then the best few on every query, against the current values. Runs as a job."""
+    from . import sandbox as SB
+
+    c = ctx()
+    return {"job": _job(lambda p: SB.sweep(c, body["pipeline"], body["queries"], body["judgments"], body.get("knobs"),
+                                           sample=int(body.get("sample", 60)), top=int(body.get("top", 3)),
+                                           seed=int(body.get("seed", 7)), metric=body.get("metric", "ndcg@10"),
+                                           progress=p), f"sweep {body.get('pipeline')}")}
+
+
+@app.post("/api/sandbox/ripple", dependencies=A)
+def sandbox_ripple(body: dict):
+    """What one setting changes, query by query: {pipeline, queries, judgments, values, must_not_break?}."""
+    from . import sandbox as SB
+
+    return SB.ripple(ctx(), body["pipeline"], body["queries"], body["judgments"], dict(body["values"]),
+                     body.get("must_not_break"))
+
+
+@app.post("/api/sandbox/promote", dependencies=A)
+def sandbox_promote(body: dict):
+    """Publish a setting as the pipeline's next version, for a pre-registered backtest. Nothing goes live."""
+    from . import sandbox as SB
+
+    return SB.promote(ctx(), body["pipeline"], dict(body["values"]), body.get("note", ""))
+
+
 @app.post("/api/evals/health", dependencies=A)
 def evals_health(body: dict):
     """How well an evaluation set still tells the truth: {queries, judgments, logs?, catalog?, lifetime_days?}.

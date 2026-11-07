@@ -13,6 +13,9 @@ export const InputState = {
   },
 };
 export const Input = { new: (s) => el('input', [s]) };
+// Multi-line text (captain-forms' long fields): the same stand-in as InputState, refused while drawing like the app.
+export const TextareaState = { new: (...a) => InputState.new(...a) };
+export const Textarea = { new: (s) => el('textarea', [s]) };
 // An anchored popup (the real one paints above everything): its trigger and its content are children here, so tests
 // can read and click both.
 export const Popup = {

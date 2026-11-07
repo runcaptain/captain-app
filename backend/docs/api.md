@@ -774,3 +774,18 @@ CLI: `cst profile <run>` or `cst profile <pipeline> --queries <dataset:split>`.
   - `POST /api/grading {..., rubric}` stores the rubric on the queue, so graders see the same words.
 
 CLI: `cst evals health <queries> <judgments> --logs --catalog`, `cst evals refresh ... [--plan]`.
+
+## What-if sandbox (plan 1)
+
+- `POST /api/sandbox/sweep {pipeline, queries, judgments, knobs?, sample?, top?, seed?, metric?}` returns `{job}`.
+  - Knobs are spec paths (`k1`, `fields.title`, `boosts.0.weight`) with `{values}` or `{min, max, steps}`, at most
+    three and 64 combinations. Without knobs, it uses the pipeline's `spec.tunables`.
+  - Pass 1 runs every combination on a stratified sample. Pass 2 runs the best `top` on every query.
+  - Each cell has `mean`, `delta` against the current values, `ci`, `verdict` and `n`. Full-pass cells add
+    `slice_flips`. The result carries the grades' `evidence` and a note that it's offline.
+- `POST /api/sandbox/ripple {pipeline, queries, judgments, values, must_not_break?}` returns `{moved_most,
+  regressions, must_not_break, broken, summary}`, query by query.
+- `POST /api/sandbox/promote {pipeline, values, note?}` publishes the setting as the pipeline's next version, so a
+  backtest can test it. Nothing goes live.
+
+CLI: `cst sweep <pipeline> --queries Q --judgments J --knob k1=0.8:2.0:4 --knob boosts.0.weight=1,1.2,1.5`.

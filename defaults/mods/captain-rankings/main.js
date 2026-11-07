@@ -13,6 +13,7 @@ import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
 import { api } from "./kit/cst.js";
 import { Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
+import { int } from "./kit/num.js";
 
 const NEEDED = [["query_id", "Query id"], ["arm", "System or version"], ["item_id", "Result id"]];
 const RANKING = [["rank", "Rank (1 is the top)"], ["score", "Score (higher is better)"]];
@@ -183,7 +184,7 @@ export default class Rankings extends View {
     const avail = ch.available ?? {};
     return v_flex().gap(10)
       .when(s.rows != null, (e) => e.child(h_flex().gap(16)
-        .child(div().text_size(13).text_color(c.navy).child(`${Number(s.rows).toLocaleString("en-US")} rows`))
+        .child(div().text_size(13).text_color(c.navy).child(`${int(s.rows)} rows`))
         .child(div().text_size(13).text_color(c.navy).child(`${s.queries} queries`))
         .child(div().text_size(13).text_color(c.navy).child(`${(s.arms ?? []).length} systems`))))
       .children((ch.errors ?? []).map((t, i) => h_flex().id(`rk-err-${i}`).gap(8).items_start()
