@@ -5,6 +5,8 @@
 // - Details: every version (open any), its files, and its provenance: the source, connection, and the SQL that made it.
 // - Lineage: a drawn graph upstream and downstream (GET /api/lineage/graph when the backend has it, else /api/lineage,
 //   cut to the chosen depth here), with column-level lineage for a picked column (GET /api/lineage/columns).
+// - Insights: what uses it (pipelines, runs, environments, datasets made from it), the notebooks that name it, who works
+//   with it, and recent activity (insights.js, GET /api/datasets/{name}/insights).
 // - Quality: per column, the share of empty values, distinct count, min and max, plus freshness (GET /api/profile).
 //   Hidden while the backend has no profile route.
 import { div } from "gpui-kit";
@@ -17,6 +19,7 @@ import { LineageGraph } from "./kit/lineage.js";
 import { int, num } from "./kit/num.js";
 // The Health tab (a queries or judgments set): app-shell's, self-contained in the kit.
 import { EvalHealth } from "./kit/evals.js";
+import { DatasetInsights } from "./insights.js";
 
 const enc = (name) => String(name).split("/").map(encodeURIComponent).join("/");
 const fmtInt = (n) => int(n ?? 0);
@@ -31,7 +34,7 @@ function ago(iso) {
 /** "name@v3" as {label: name, version: 3}, for graph nodes. */
 const split = (label) => { const m = /^(.*)@v(\d+)$/.exec(String(label ?? "")); return m ? { label: m[1], version: Number(m[2]) } : { label: String(label ?? "") }; };
 
-export const TABS = [["overview", "Overview"], ["sample", "Sample data"], ["details", "Details"], ["lineage", "Lineage"], ["quality", "Quality"]];
+export const TABS = [["overview", "Overview"], ["sample", "Sample data"], ["details", "Details"], ["lineage", "Lineage"], ["insights", "Insights"], ["quality", "Quality"]];
 
 export class DatasetPage {
   constructor(host) {
@@ -47,6 +50,7 @@ export class DatasetPage {
     this.rowsFor = null;
     this.file = null; // a dataset with several files: the one shown
     this.health = new EvalHealth(); // the Health tab (kit/evals.js)
+    this.insights = new DatasetInsights(host); // the Insights tab (insights.js)
   }
 
   /** A new dataset (or version) on the page: lineage and quality load again when their tab opens. */
@@ -57,6 +61,7 @@ export class DatasetPage {
     this.rows = null;
     this.rowsFor = null;
     this.file = null;
+    this.insights?.reset();
   }
 
   open(cx, tab) {
@@ -64,6 +69,7 @@ export class DatasetPage {
     if (tab === "lineage") this.loadLineage(cx);
     if (tab === "quality") this.loadProfile(cx);
     if (tab === "sample") this.loadRows(cx);
+    if (tab === "insights") this.insights.load(cx, this.host.detail);
     if (tab === "health" && this.host.detail) this.health.open(cx, this.host.detail);
     cx.notify();
   }
@@ -148,7 +154,7 @@ export class DatasetPage {
 
   tabs(c) {
     const tabs = [...TABS.filter(([id]) => id !== "quality" || this.hasProfile), ...(EvalHealth.applies(this.host.detail) ? [["health", "Health"]] : [])];
-    return h_flex().flex_none().gap(4).px(20).pb(10).children(tabs.map(([id, label]) =>
+    return h_flex().flex_none().flex_wrap().gap(4).px(20).pb(10).children(tabs.map(([id, label]) =>
       div().id(`dtab-${id}`).h(26).px(10).flex().items_center().cursor_pointer().text_size(12)
         .border_1().border_color(this.tab === id ? c.navy : c.grey300).bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
         .on_click((_e, cx) => this.open(cx, id)).child(label)));
@@ -159,6 +165,7 @@ export class DatasetPage {
     if (this.tab === "sample") return this.sample(c);
     if (this.tab === "details") return this.details(c, d);
     if (this.tab === "lineage") return this.lineageView(c);
+    if (this.tab === "insights") return this.insights.render(c);
     if (this.tab === "quality") return this.quality(c, d);
     if (this.tab === "health") return v_flex().id("ds-health").flex_1().min_h(0).overflow_y_scrollbar().child(this.health.render(c));
     return v_flex().id("ds-overview").flex_1().min_h(0).overflow_y_scrollbar().pb(12).child(h.facts(c, d)).child(h.schema(c, d));

@@ -19,7 +19,7 @@ block_of() { case "$1" in captain-data) echo data ;; captain-runs) echo runs ;; 
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:import" "captain-data:import-table" "captain-data:sample" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage") ;;
+    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:import" "captain-data:import-table" "captain-data:sample" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights") ;;
     captain-runs) EXTRA+=("captain-runs:jobs") ;;
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
@@ -142,6 +142,7 @@ props_of() {
     captain-data:notebook) echo '{"tab": "notebooks", "notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:models) echo '{"tab": "models"}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;
+    captain-data:insights) echo '{"pageTab": "insights"}' ;;
     captain-data:lineage) echo '{"pageTab": "lineage"}' ;;
     captain-runs:jobs) echo '{"tab": "jobs"}' ;;
     captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;

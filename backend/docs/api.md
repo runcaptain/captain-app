@@ -35,6 +35,7 @@ All responses are JSON. Errors: HTTP 4xx/5xx with `{"error": "plain sentence"}`.
 | GET | `/api/datasets` | `?kind=` | `[{name, latest, kind, rows, by, created}]` |
 | GET | `/api/datasets/{name}` | `?v=` | DatasetVersion manifest |
 | GET | `/api/datasets/{name}/head` | `?v=&n=50` | `{columns, rows}` |
+| GET | `/api/datasets/{name}/insights` | | what uses it, from Captain's own records: `{used_by: {pipeline, run, environment, dataset: [{id, label, name, version, level, via, section, created_by, created_at}]}, notebooks: [{name, cells}], people: [{user, versions, builds}], activity: [{at, who, what, kind, id}], versions, versions_total, counts}`. `level` is how many steps downstream and `via` which of its versions. An unknown name is a 404 in words |
 
 ## Pipelines, backtests, deploys
 

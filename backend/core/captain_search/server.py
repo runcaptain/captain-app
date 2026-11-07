@@ -865,6 +865,15 @@ def dataset_classify(name: str, body: dict):
     return CL.classify(ctx(), name, body.get("classes") or [])
 
 
+@app.get("/api/datasets/{name:path}/insights", dependencies=A)
+def dataset_insights(name: str):
+    """What uses this dataset (pipelines, runs, environments, datasets made from it), the notebooks that name it, who
+    works with it, and what happened to it lately. From Captain's own records."""
+    from .data import insights as IN
+
+    return IN.dataset_insights(ctx(), name)
+
+
 @app.get("/api/datasets/{name:path}/rows", dependencies=A)
 def dataset_rows(name: str, v: int | None = None, file: str | None = None, offset: int = 0, limit: int = 100,
                  order: str | None = None, desc: bool = False, search: str | None = None, where: str | None = None,
