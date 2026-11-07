@@ -14,6 +14,8 @@
 // to the services, so they cover the whole table, and Previous and Next page through it. Make it outside render.
 //   const grid = new ResultGrid({ id: "rows", name: "products", load: (q) => api(`/api/tables/c/s/t/rows${query(q)}`) });
 //   grid.fetch(cx);                      // q = {offset, limit, order, desc, where, count}
+//   The rows come first, without a count: counting a big file means reading all of it (seconds on S3), so the total
+//   is asked for separately once the rows are on screen, and the footer says "counting" meanwhile.
 //   grid.render(c, { fill: true })       // takes the height its parent gives it and scrolls inside
 // `source` ("Databricks") names where rows come from while a slow page loads: "Reading rows from Databricks, 4 s".
 //
@@ -46,6 +48,10 @@ const FORMATS = {
 
 const isNum = (v) => typeof v === "number" || (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)));
 const toNum = (v) => (typeof v === "number" ? v : Number(v));
+// A cell shows one line, cut to its column: laying out kilobytes of text to show forty characters is what made wide
+// JSON columns slow to draw. The whole value stays in the row (row details, CSV, copy).
+const CLIP = 240;
+const clip = (s) => (s.length > CLIP ? `${s.slice(0, CLIP)}...` : s);
 const text = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 const fmtInt = (n) => int(n ?? 0);
 const fmtNum = (n) => (Number.isInteger(n) ? fmtInt(n) : num(n, 4));
@@ -160,7 +166,7 @@ export class ResultGrid {
   /** Ask the services for a page. Keeps the order and WHERE; a new WHERE or order starts at the first row. */
   fetch(cx, offset = this.page.offset) {
     const seq = (this.seq = (this.seq ?? 0) + 1);
-    const q = { offset, limit: this.page.limit, order: this.order?.name, desc: this.order?.desc ? "true" : undefined, where: this.where || undefined, search: this.search || undefined, count: this.page.total === null ? "true" : undefined };
+    const q = { offset, limit: this.page.limit, order: this.order?.name, desc: this.order?.desc ? "true" : undefined, where: this.where || undefined, search: this.search || undefined };
     this.loading = true;
     this.started = Date.now();
     // Redraw each second while a page loads, so the time on screen moves (one timer per grid).
@@ -172,21 +178,42 @@ export class ResultGrid {
       if (r.ok) {
         const d = r.data ?? {};
         this.last = d; // the whole answer, for what a screen reads beside the rows (a dataset's files)
-        const total = d.total ?? this.page.total;
+        // The last page says the total by itself: no count to ask for.
+        const total = d.total ?? this.page.total ?? (!d.has_more ? (d.offset ?? offset) + (d.rows ?? []).length : null);
         this.page = { offset: d.offset ?? offset, limit: d.limit ?? this.page.limit, has_more: !!d.has_more, total: total ?? null, ms: d.ms ?? null, sql: d.sql };
         this.error = null;
         this.openRow = null;
         this.set({ columns: d.columns ?? [], rows: d.rows ?? [], row_count: total ?? undefined });
+        if ((total === null || total === undefined) && (d.has_more || offset > 0)) this.count(cx, q);
       } else this.error = sayError(r);
       cx.notify();
     });
     cx.notify();
   }
 
+  /** The total for the current filter, asked for after the rows are shown. Only the number is used from the answer. */
+  count(cx, q) {
+    const key = JSON.stringify([q.where, q.search]);
+    if (this.counting === key) return;
+    this.counting = key;
+    cx.spawn(async (cx) => {
+      const r = await this.load({ ...q, offset: 0, limit: 1, order: undefined, desc: undefined, count: "true" });
+      if (this.counting !== key) return; // the filter changed meanwhile
+      this.counting = null;
+      const total = r.ok ? r.data?.total : null;
+      if (total !== null && total !== undefined && JSON.stringify([this.where || undefined, this.search || undefined]) === key) {
+        this.page.total = total;
+        this.table.row_count = total;
+      }
+      cx.notify();
+    });
+  }
+
   applyWhere(cx) {
     this.where = this.whereBox.value().trim();
     this.search = this.searchBox?.value().trim() ?? "";
     this.page.total = null; // a new WHERE: count again
+    this.counting = null;
     this.fetch(cx, 0);
   }
 
@@ -245,8 +272,8 @@ export class ResultGrid {
     }
     if (type === "boolean" && f === "yesno") return v === true || v === "true" ? "Yes" : "No";
     if (type === "string" && f === "capitalize") { const s = text(v); return s ? `${s[0].toUpperCase()}${s.slice(1)}` : s; }
-    if (type === "json") return f === "raw" ? text(v) : shortJson(v);
-    return text(v);
+    if (type === "json") return clip(f === "raw" ? text(v) : shortJson(v));
+    return clip(text(v));
   }
 
   /** The rows shown, as CSV text (header first). */
@@ -458,7 +485,7 @@ export class ResultGrid {
     const { offset, limit, has_more, total, ms } = this.page;
     const n = (this.table.rows ?? []).length;
     const span = n ? `${fmtInt(offset + 1)} to ${fmtInt(offset + n)}` : "No rows";
-    const of = total !== null && total !== undefined ? ` of ${fmtInt(total)}` : has_more ? ", more after" : "";
+    const of = total !== null && total !== undefined ? ` of ${fmtInt(total)}` : this.counting ? ", counting the rest" : has_more ? ", more after" : "";
     const step = (label, gid, on, to) => div().id(gid).h(22).px(8).flex().flex_none().items_center().text_size(11.5).border_1()
       .border_color(on ? c.grey300 : c.rule).text_color(on ? c.navy : c.grey300)
       .when(on, (e) => e.cursor_pointer().hover((st) => st.border_color(c.blue)).on_click((_e, cx) => this.fetch(cx, to))).child(label);

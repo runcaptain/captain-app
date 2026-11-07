@@ -42,11 +42,21 @@ let t = textOf(g.render(c)).join(' | ');
 assert.ok(t.includes('1 to 100 of 250'), t.slice(0, 300));
 assert.equal(g.show(g.table.rows[0][3], 3), '[3] a, b, 0', 'lists shortened');
 assert.equal(g.show('1.10', 2), '1.10', 'a decimal exactly as sent');
-assert.equal(asked[0].count, 'true', 'counted once');
+// The rows come without a count; the count is a second, one-row request once they're shown.
+assert.equal(asked[0].count, undefined, 'the rows are not held for a count');
+assert.deepEqual([asked[1].count, asked[1].limit], ['true', 1], 'then the count alone');
 await click(g, 'gnext-p');
 t = textOf(g.render(c)).join(' | ');
 assert.ok(t.includes('101 to 200 of 250') && g.table.rows[0][1] === 'item 101', 'next page');
-assert.equal(asked[1].count, undefined, 'not counted again');
+assert.equal(asked.length, 3, 'not counted again');
+assert.equal(asked[2].count, undefined);
+// Before the count arrives the footer says so, and a long cell is cut before it is drawn.
+const slow = new ResultGrid({ id: 's', name: 'slow', load: async (q) => (q.count ? new Promise(() => {}) : load(q)) });
+slow.fetch(cx);
+await tasks.shift(); // the rows; the count never answers
+tasks.length = 0;
+assert.ok(textOf(slow.render(c)).join(' | ').includes('1 to 100, counting the rest'), 'counting');
+assert.equal(g.show('x'.repeat(5000), 1).length, 243, 'a long cell is cut to 240 characters');
 await click(g, 'gprev-p');
 assert.ok(textOf(g.render(c)).join(' | ').includes('1 to 100 of 250'), 'previous page');
 // Sort the whole table by price, largest first: two header clicks.
