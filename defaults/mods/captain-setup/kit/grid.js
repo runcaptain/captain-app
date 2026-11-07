@@ -8,6 +8,15 @@
 //
 // It works on the rows it was given (a cell's first 1,000, say): sorting, filtering and stats say so when the result
 // has more. Filter inputs are made in click handlers, never while drawing (the app refuses that).
+//
+// Paged from the services: any route that answers in the one row shape ({columns: [{name, type, kind}], rows, offset,
+// limit, has_more, total?, ms}), such as a warehouse table's /rows or a dataset's /rows. Sorting and the WHERE box go
+// to the services, so they cover the whole table, and Previous and Next page through it. Make it outside render.
+//   const grid = new ResultGrid({ id: "rows", name: "products", load: (q) => api(`/api/tables/c/s/t/rows${query(q)}`) });
+//   grid.fetch(cx);                      // q = {offset, limit, order, desc, where, count}
+//
+// Columns format by their `kind` when the services send one: numbers right-aligned, decimals exactly as sent, lists
+// and structs shortened ("[3] a, b, c"). Clicking a row opens it below the grid, every column written out in full.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { writeTextFile, readTextFile, home } from "herdr";
@@ -20,12 +29,15 @@ const NUM_W = 52;
 
 export const TEXT_OPS = [["contains", "contains"], ["not_contains", "doesn't contain"], ["eq", "is"], ["ne", "isn't"], ["starts", "starts with"], ["ends", "ends with"]];
 export const NUMBER_OPS = [["eq", "="], ["ne", "≠"], ["gt", ">"], ["lt", "<"], ["between", "between"]];
+// The grid's column types for the services' kinds (backend data/cells.py).
+const KIND_TYPE = { integer: "number", number: "number", decimal: "number", bool: "boolean", list: "json", struct: "json", date: "time", time: "time", timestamp: "time" };
 const FORMATS = {
+  time: [["plain", "Plain"]],
   number: [["plain", "Plain"], ["commas", "1,234"], ["dollar", "$"], ["percent", "%"], ["human", "1.2k"]],
   id: [["plain", "Plain"]],
   string: [["plain", "Plain"], ["capitalize", "Capitalize"]],
   url: [["plain", "Plain"], ["link", "Link"]],
-  json: [["plain", "Raw"], ["parsed", "Parsed"]],
+  json: [["plain", "Short"], ["raw", "Raw"]],
   boolean: [["plain", "Plain"], ["yesno", "Yes / No"]],
 };
 
@@ -37,6 +49,13 @@ const fmtNum = (n) => (Number.isInteger(n) ? fmtInt(n) : Number(n).toLocaleStrin
 const human = (n) => {
   const a = Math.abs(n);
   return a >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : a >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : a >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : fmtNum(n);
+};
+// A failed page in one plain sentence: never the transport's words.
+const sayError = (r) => {
+  if (r.timedOut) return "This took too long. Narrow it with a WHERE, or try again.";
+  if (r.starting || r.failed) return "Captain's services aren't answering. Try again in a moment.";
+  const e = String(r.data?.error ?? r.data?.detail ?? r.error ?? "").trim();
+  return e ? `${e[0].toUpperCase()}${e.slice(1)}${/[.!?]$/.test(e) ? "" : "."}` : "Couldn't load these rows.";
 };
 const csvCell = (v) => { const s = text(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 
@@ -50,6 +69,31 @@ export function detectType(name, declared, values) {
   if (/json|struct|map|list|array|object/.test(t) || (vs.length && vs.every((v) => typeof v === "object" || /^\s*[[{]/.test(String(v))))) return "json";
   if (vs.length && vs.every((v) => /^https?:\/\//.test(String(v)))) return "url";
   return "string";
+}
+
+/** A column's type: from the services' kind when there is one (an id stays an id, text is looked at), else detected. */
+export function columnType(col, values) {
+  const t = KIND_TYPE[col.kind];
+  if (t === "number" && /(^|_)id$|^id$|_key$/.test(String(col.name).toLowerCase()) && col.kind === "integer") return "id";
+  if (t) return t;
+  if (col.kind === "text") { const d = detectType(col.name, "", values); return d === "number" ? "string" : d; }
+  return detectType(col.name, col.type, values);
+}
+
+/** A list or struct, shortened to fit a cell: "[3] a, b, c" or "{2} k: v, k: v". */
+export function shortJson(v) {
+  let o = v;
+  if (typeof v === "string") { try { o = JSON.parse(v); } catch { return v; } }
+  if (Array.isArray(o)) return `[${o.length}] ${o.map((x) => (x !== null && typeof x === "object" ? JSON.stringify(x) : String(x))).join(", ")}`;
+  if (o && typeof o === "object") { const e = Object.entries(o); return `{${e.length}} ${e.map(([k, x]) => `${k}: ${x !== null && typeof x === "object" ? JSON.stringify(x) : String(x)}`).join(", ")}`; }
+  return text(v);
+}
+
+/** A cell written out in full: lists and structs as indented JSON. */
+export function fullCell(v, type) {
+  if (v === null || v === undefined) return "null";
+  if (type === "json") { try { return JSON.stringify(typeof v === "string" ? JSON.parse(v) : v, null, 2); } catch { return text(v); } }
+  return text(v);
 }
 
 /** Sum, average, median, min, max (numbers), unique count and the five commonest values. */
@@ -83,17 +127,64 @@ export function passes(v, f, type) {
 }
 
 export class ResultGrid {
-  constructor({ id, table, name }) {
+  constructor({ id, table, name, load, pageSize = 100 }) {
     this.id = id;
     this.name = name ?? table?.var ?? "result";
+    this.openRow = null; // the row shown in full below the grid
+    // Paged from the services (load(q) resolves like kit/cst.js api()).
+    this.load = load ?? null;
+    if (this.load) {
+      this.page = { offset: 0, limit: pageSize, has_more: false, total: null, ms: null };
+      this.order = null; // {name, desc}
+      this.where = "";
+      this.whereBox = InputState.new({ placeholder: "WHERE, for example: price < 100" });
+      this.whereBox.on("submit", (_e, cx) => this.applyWhere(cx));
+      this.loading = false;
+      this.error = null;
+    }
     this.set(table);
+  }
+
+  get paged() { return !!this.load; }
+
+  /** Ask the services for a page. Keeps the order and WHERE; a new WHERE or order starts at the first row. */
+  fetch(cx, offset = this.page.offset) {
+    const seq = (this.seq = (this.seq ?? 0) + 1);
+    const q = { offset, limit: this.page.limit, order: this.order?.name, desc: this.order?.desc ? "true" : undefined, where: this.where || undefined, count: this.page.total === null ? "true" : undefined };
+    this.loading = true;
+    cx.spawn(async (cx) => {
+      const r = await this.load(q);
+      if (seq !== this.seq) return;
+      this.loading = false;
+      if (r.ok) {
+        const d = r.data ?? {};
+        const total = d.total ?? this.page.total;
+        this.page = { offset: d.offset ?? offset, limit: d.limit ?? this.page.limit, has_more: !!d.has_more, total: total ?? null, ms: d.ms ?? null, sql: d.sql };
+        this.error = null;
+        this.openRow = null;
+        this.set({ columns: d.columns ?? [], rows: d.rows ?? [], row_count: total ?? undefined });
+      } else this.error = sayError(r);
+      cx.notify();
+    });
+    cx.notify();
+  }
+
+  applyWhere(cx) {
+    this.where = this.whereBox.value().trim();
+    this.page.total = null; // a new WHERE: count again
+    this.fetch(cx, 0);
+  }
+
+  /** The first rows shown, as {columns, rows}: what a test compares across screens. */
+  firstPage() {
+    return { columns: (this.table.columns ?? []).map((c) => c.name), rows: (this.table.rows ?? []).slice(0, this.page?.limit ?? 100) };
   }
 
   /** New rows (a cell ran again): keeps sort, filters, formats and hidden columns that still apply. */
   set(table) {
     this.table = table ?? { columns: [], rows: [] };
     const rows = this.table.rows ?? [];
-    this.types = (this.table.columns ?? []).map((c, j) => detectType(c.name, c.type, rows.map((r) => r[j])));
+    this.types = (this.table.columns ?? []).map((c, j) => columnType(c, rows.map((r) => r[j])));
     this.sort ??= null; // {col, desc}
     this.filters ??= {}; // col -> {op, value, value2}
     this.formats ??= {}; // col -> format id
@@ -139,9 +230,7 @@ export class ResultGrid {
     }
     if (type === "boolean" && f === "yesno") return v === true || v === "true" ? "Yes" : "No";
     if (type === "string" && f === "capitalize") { const s = text(v); return s ? `${s[0].toUpperCase()}${s.slice(1)}` : s; }
-    if (type === "json" && f === "parsed") {
-      try { const o = typeof v === "string" ? JSON.parse(v) : v; return Array.isArray(o) ? `${o.length} items: ${JSON.stringify(o).slice(0, 80)}` : Object.entries(o).map(([k, x]) => `${k}: ${text(x)}`).join(", "); } catch { return text(v); }
-    }
+    if (type === "json") return f === "raw" ? text(v) : shortJson(v);
     return text(v);
   }
 
@@ -161,6 +250,14 @@ export class ResultGrid {
   // ---- actions (event handlers) ------------------------------------------------------------------------------------
 
   toggleSort(cx, col) {
+    if (this.paged) {
+      // The whole table, sorted by the services: ascending, descending, then as stored.
+      const name = this.table.columns[col]?.name;
+      const o = this.order;
+      this.order = !o || o.name !== name ? { name, desc: false } : !o.desc ? { name, desc: true } : null;
+      this.fetch(cx, 0);
+      return;
+    }
     const s = this.sort;
     this.sort = !s || s.col !== col ? { col, desc: false } : !s.desc ? { col, desc: true } : null;
     cx.notify();
@@ -235,13 +332,15 @@ export class ResultGrid {
     const idx = this.view();
     const width = NUM_W + cols.length * COL;
     const bodyH = Math.max(ROW, Math.min(idx.length, Math.floor(height / ROW)) * ROW);
-    const filters = Object.keys(this.filters).length;
+    const filters = this.paged ? 0 : Object.keys(this.filters).length;
+    const base = this.paged ? this.page.offset : 0;
     const list = v_virtual_list(`grid-${id}`, idx.length, ROW, (i) => `${id}:${idx[i]}`, (range) => {
       const out = [];
       for (let i = range.start; i < range.end; i++) {
         const r = rows[idx[i]];
         out.push(h_flex().h(ROW).border_b(1).border_color(c.rule).text_size(12).whitespace_nowrap()
-          .child(div().w(NUM_W).flex_none().px(6).text_right().font_family(MONO).text_color(c.grey500).child(String(idx[i] + 1)))
+          .when(this.openRow === idx[i], (e) => e.bg(c.blueLight))
+          .child(div().w(NUM_W).flex_none().px(6).text_right().font_family(MONO).text_color(c.grey500).child(String(base + idx[i] + 1)))
           .children(cols.map(([, j]) => {
             const t = this.types[j];
             return div().w(COL).flex_none().px(8).truncate().font_family(MONO)
@@ -255,11 +354,11 @@ export class ResultGrid {
     const header = h_flex().h(ROW).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().whitespace_nowrap()
       .child(div().w(NUM_W).flex_none().px(6).text_right().text_color(c.grey500).child("#"))
       .children(cols.map(([col, j]) => {
-        const s = this.sort?.col === j ? this.sort : null;
+        const s = this.paged ? (this.order?.name === col.name ? this.order : null) : this.sort?.col === j ? this.sort : null;
         const filtered = !!this.filters[j];
         return h_flex().w(COL).flex_none().h_full().px(8).gap(4).items_center()
           .child(div().id(`gh-${id}-${j}`).flex_1().min_w(0).truncate().cursor_pointer().text_color(s || filtered ? c.blue : c.navy)
-            .tooltip(`${col.name}: ${this.types[j]}${col.type ? ` (${col.type})` : ""}. Click to sort.`)
+            .tooltip(`${col.name}: ${this.types[j]}${col.type ? ` (${col.type})` : ""}. Click to sort${this.paged ? " the whole table" : ""}.`)
             .on_click((_e, cx) => this.toggleSort(cx, j)).child(col.name))
           .when(!!s, (e) => e.child(svg(icon("arrow-up-down")).size(11).flex_none().text_color(c.blue)))
           .when(filtered, (e) => e.child(this.icon("filter", 11, c.blue)))
@@ -269,16 +368,21 @@ export class ResultGrid {
       }));
     const total = this.table.row_count ?? rows.length;
     return v_flex().id(`grid-wrap-${id}`).w_full()
+      .when(this.paged, (e) => e.child(this.whereRow(c)))
+      .when(this.paged && !!this.error, (e) => e.child(div().px(10).py(6).text_size(12).text_color(c.fail).child(this.error)))
       .when(this.menu !== null && this.menu !== undefined && all[this.menu], (e) => e.child(this.columnMenu(c, this.menu)))
       .child(div().id(`gx-${id}`).w_full().overflow_x_scrollbar().child(v_flex().w(width)
         .child(header)
         .child(div().h(bodyH).relative()
-          .when(!idx.length, (e) => e.child(div().px(10).py(4).text_size(12).text_color(c.grey500).child(filters ? "No rows match the filters." : "No rows.")))
-          .when(idx.length > 0, (e) => e.child(list.size_full()).child(Scrollbar.vertical(`grid-${id}`).viewport_from_layout().absolute().inset_0())))))
+          .when(!idx.length, (e) => e.child(div().px(10).py(4).text_size(12).text_color(c.grey500).child(this.loading ? "Loading rows" : filters || this.where ? "No rows match." : "No rows.")))
+          .when(idx.length > 0, (e) => e.child(list.size_full().on_item_click((key, cx) => { const r = Number(String(key).split(":").pop()); this.openRow = this.openRow === r ? null : r; cx.notify(); })).child(Scrollbar.vertical(`grid-${id}`).viewport_from_layout().absolute().inset_0())))))
+      .when(this.openRow !== null && !!rows[this.openRow], (e) => e.child(this.rowPanel(c, this.openRow)))
+      .when(this.paged, (e) => e.child(this.pager(c)))
       .child(h_flex().h(28).px(10).gap(10).items_center().text_size(11.5).text_color(c.grey500).border_t(1).border_color(c.rule)
         .when(!!this.table.var, (e) => e.child(div().font_family(MONO).text_color(c.navy).child(this.table.var)))
-        .child(div().child(filters ? `${fmtInt(idx.length)} of ${fmtInt(rows.length)} rows match` : `${fmtInt(total)} row${total === 1 ? "" : "s"}, ${all.length} column${all.length === 1 ? "" : "s"}`))
-        .when(rows.length < total, (e) => e.child(div().child(`showing the first ${fmtInt(rows.length)}${this.table.var ? `: all of them are in ${this.table.var}` : ""}`)))
+        .when(!this.paged, (e) => e.child(div().child(filters ? `${fmtInt(idx.length)} of ${fmtInt(rows.length)} rows match` : `${fmtInt(total)} row${total === 1 ? "" : "s"}, ${all.length} column${all.length === 1 ? "" : "s"}`)))
+        .when(this.paged, (e) => e.child(div().child(`${all.length} column${all.length === 1 ? "" : "s"}`)))
+        .when(!this.paged && rows.length < total, (e) => e.child(div().child(`showing the first ${fmtInt(rows.length)}${this.table.var ? `: all of them are in ${this.table.var}` : ""}`)))
         .when(!!this.table.limited, (e) => e.child(div().text_color(c.warn).child(this.table.limit ? `Limited to ${fmtInt(this.table.limit)} rows: raise the row limit for more` : "The query hit its row limit")))
         .when(this.hidden.size > 0, (e) => e.child(div().id(`gshow-${id}`).cursor_pointer().text_color(c.blue)
           .on_click((_e, cx) => { this.hidden.clear(); cx.notify(); }).child(`${this.hidden.size} hidden, show all`)))
@@ -286,6 +390,51 @@ export class ResultGrid {
         .when(!!this.note, (e) => e.child(div().min_w(0).truncate().text_color(c.grey900).child(this.note)))
         .child(div().id(`gcsv-${id}`).flex_none().cursor_pointer().text_color(c.blue).on_click((_e, cx) => cx.spawn(async (cx) => this.exportCsv(cx))).child("Download CSV"))
         .child(div().id(`gtsv-${id}`).flex_none().cursor_pointer().text_color(c.blue).on_click((_e, cx) => this.copyTsv(cx)).child("Copy TSV")));
+  }
+
+  whereRow(c) {
+    const id = this.id;
+    return h_flex().px(10).py(6).gap(8).items_center().border_b(1).border_color(c.rule).text_size(11.5)
+      .child(div().flex_none().text_color(c.grey500).child("Where"))
+      .child(div().flex_1().min_w(0).max_w(480).h(24).px(6).flex().items_center().border_1().border_color(this.where ? c.blue : c.grey300)
+        .child(Input.new(this.whereBox).w_full().text_size(11.5).font_family(MONO).text_color(c.navy)))
+      .child(this.chip(c, `gwhere-${id}`, "Apply", false, (_e, cx) => this.applyWhere(cx)))
+      .when(!!this.where, (e) => e.child(this.chip(c, `gwhere-clear-${id}`, "Clear", false, (_e, cx) => { this.whereBox.set_value(""); this.applyWhere(cx); })))
+      .when(!!this.order, (e) => e.child(div().text_color(c.grey500).child(`sorted by ${this.order.name}${this.order.desc ? ", largest first" : ""}`)));
+  }
+
+  /** "1 to 100 of 12,480", Previous and Next. */
+  pager(c) {
+    const id = this.id;
+    const { offset, limit, has_more, total, ms } = this.page;
+    const n = (this.table.rows ?? []).length;
+    const span = n ? `${fmtInt(offset + 1)} to ${fmtInt(offset + n)}` : "No rows";
+    const of = total !== null && total !== undefined ? ` of ${fmtInt(total)}` : has_more ? ", more after" : "";
+    const step = (label, gid, on, to) => div().id(gid).h(22).px(8).flex().flex_none().items_center().text_size(11.5).border_1()
+      .border_color(on ? c.grey300 : c.rule).text_color(on ? c.navy : c.grey300)
+      .when(on, (e) => e.cursor_pointer().hover((st) => st.border_color(c.blue)).on_click((_e, cx) => this.fetch(cx, to))).child(label);
+    return h_flex().id(`gpager-${id}`).h(32).px(10).gap(8).items_center().border_t(1).border_color(c.rule).text_size(11.5)
+      .child(div().text_color(c.navy).child(`${span}${n ? of : ""}`))
+      .when(ms !== null && ms !== undefined, (e) => e.child(div().text_color(c.grey500).child(`${fmtInt(ms)} ms`)))
+      .when(this.loading, (e) => e.child(div().text_color(c.grey500).child("Loading")))
+      .child(div().flex_1())
+      .child(step("Previous", `gprev-${id}`, offset > 0 && !this.loading, Math.max(0, offset - limit)))
+      .child(step("Next", `gnext-${id}`, has_more && !this.loading, offset + limit));
+  }
+
+  /** One row, every column in full: lists and structs written out. */
+  rowPanel(c, i) {
+    const id = this.id;
+    const r = this.table.rows[i];
+    const base = this.paged ? this.page.offset : 0;
+    return v_flex().id(`grow-${id}`).max_h(260).overflow_y_scrollbar().px(10).py(8).gap(4).border_t(1).border_color(c.rule).bg(c.surface2).text_size(12)
+      .child(h_flex().gap(8).items_center()
+        .child(div().font_medium().text_color(c.navy).child(`Row ${fmtInt(base + i + 1)}`))
+        .child(div().flex_1())
+        .child(div().id(`grow-x-${id}`).cursor_pointer().text_color(c.grey500).on_click((_e, cx) => { this.openRow = null; cx.notify(); }).child(this.icon("x", 12))))
+      .children((this.table.columns ?? []).map((col, j) => h_flex().gap(10).items_start()
+        .child(div().w(160).flex_none().truncate().text_color(c.grey500).child(col.name))
+        .child(div().flex_1().min_w(0).font_family(MONO).text_color(r[j] === null || r[j] === undefined ? c.grey300 : c.navy).child(fullCell(r[j], this.types[j])))));
   }
 
   columnMenu(c, j) {
@@ -308,14 +457,17 @@ export class ResultGrid {
         .child(div().id(`ghide-${id}-${j}`).cursor_pointer().text_color(c.blue).on_click((_e, cx) => { this.hidden.add(j); this.menu = null; cx.notify(); }).child("Hide column"))
         .child(div().id(`gclose-${id}`).cursor_pointer().text_color(c.grey500).on_click((_e, cx) => { this.menu = null; cx.notify(); }).child(this.icon("x", 12))))
       .child(row("Sort", h_flex().gap(4)
-        .child(this.chip(c, `gs-asc-${id}-${j}`, type === "number" ? "Smallest first" : "A to Z", this.sort?.col === j && !this.sort.desc, (_e, cx) => { this.sort = { col: j, desc: false }; cx.notify(); }))
-        .child(this.chip(c, `gs-desc-${id}-${j}`, type === "number" ? "Largest first" : "Z to A", this.sort?.col === j && this.sort.desc, (_e, cx) => { this.sort = { col: j, desc: true }; cx.notify(); }))))
-      .child(row("Filter", h_flex().flex_wrap().gap(4).items_center()
+        .child(this.chip(c, `gs-asc-${id}-${j}`, type === "number" ? "Smallest first" : "A to Z", this.paged ? this.order?.name === col.name && !this.order.desc : this.sort?.col === j && !this.sort.desc,
+          (_e, cx) => { if (this.paged) { this.order = { name: col.name, desc: false }; this.fetch(cx, 0); } else { this.sort = { col: j, desc: false }; cx.notify(); } }))
+        .child(this.chip(c, `gs-desc-${id}-${j}`, type === "number" ? "Largest first" : "Z to A", this.paged ? this.order?.name === col.name && this.order.desc : this.sort?.col === j && this.sort.desc,
+          (_e, cx) => { if (this.paged) { this.order = { name: col.name, desc: true }; this.fetch(cx, 0); } else { this.sort = { col: j, desc: true }; cx.notify(); } }))))
+      .when(this.paged, (e) => e.child(row("Filter", div().text_color(c.grey500).child("Filter the whole table with the Where box above."))))
+      .when(!this.paged, (e) => e.child(row("Filter", h_flex().flex_wrap().gap(4).items_center()
         .children(ops.map(([k, label]) => this.chip(c, `gop-${id}-${j}-${k}`, label, op === k, (_e, cx) => { (this.pendingOp ??= {})[j] = k; cx.notify(); })))
         .when(!!a, (e) => e.child(box(a)))
         .when(!!b && op === "between", (e) => e.child(box(b)))
         .child(this.chip(c, `gapply-${id}-${j}`, "Apply", false, (_e, cx) => this.applyFilter(cx, j)))
-        .when(!!this.filters[j], (e) => e.child(this.chip(c, `gclear-${id}-${j}`, "Clear", false, (_e, cx) => this.clearFilter(cx, j))))))
+        .when(!!this.filters[j], (e) => e.child(this.chip(c, `gclear-${id}-${j}`, "Clear", false, (_e, cx) => this.clearFilter(cx, j)))))))
       .child(row("Format", h_flex().gap(4).children((FORMATS[type] ?? FORMATS.string).map(([k, label]) =>
         this.chip(c, `gf-${id}-${j}-${k}`, label, (this.formats[j] ?? "plain") === k, (_e, cx) => { this.formats[j] = k; cx.notify(); })))))
       .child(row("Stats", h_flex().flex_wrap().gap(12)
@@ -323,7 +475,7 @@ export class ResultGrid {
           .child(stat("min", fmtNum(st.min))).child(stat("max", fmtNum(st.max))))
         .child(stat("unique", fmtInt(st.unique)))
         .when(st.empty > 0, (e) => e.child(stat("empty", fmtInt(st.empty))))
-        .child(div().text_color(c.grey500).child(this.partNote(values.length).trim()))))
+        .child(div().text_color(c.grey500).child(this.paged ? "(this page)" : this.partNote(values.length).trim()))))
       .child(row("Common", h_flex().flex_wrap().gap(10).children(st.common.map(([v, n]) =>
         h_flex().gap(4).child(div().max_w(160).truncate().font_family(MONO).text_color(c.navy).child(v || "(empty)")).child(div().text_color(c.grey500).child(fmtInt(n)))))));
   }
