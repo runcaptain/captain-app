@@ -693,3 +693,23 @@ Routes:
 
 CLI: `cst rankings validate <file> [--map query_id=qid,arm=system]` and
 `cst rankings import <name> <file> --baseline prod --labels-from human`.
+
+## Prepare data for training
+
+Pull a warehouse table, a query or a dataset in as clean, training-ready data.
+- `POST /api/prepare/preview {source: {conn, table: "schema.name"} | {conn, sql} | {dataset}, role?, mapping?,
+  options?}` returns:
+  - the role (guessed if not given: catalog, queries, judgments, events or generic) and every role's required and
+    optional columns;
+  - the column `mapping`, guessed from common names and editable, and what's `missing`;
+  - a `report` of every change (rows in and out, the steps in words, problems and warnings);
+  - the first 100 cleaned rows as a page.
+
+  It runs on a 1,000-row sample, and nothing is saved.
+- `POST /api/prepare/import {source, role?, mapping?, options?, name?, folder?, project?}` returns `{job}`. It
+  prepares the whole source the same way and saves a dataset of the role's kind in the role's folder (catalogs,
+  queries, judgments, logs, imports). Provenance records the source, role, mapping and cleaning steps. It's refused
+  if required columns are unmapped or cleaning leaves no rows.
+- Cleaning (`options`, on by default): text is trimmed and empty text becomes null, types are cast, rows missing a
+  required column are dropped, grades outside 0 to 3 are dropped, and duplicates on the role's key keep their first
+  row. Source order is kept. `keep_other_columns` defaults to true.

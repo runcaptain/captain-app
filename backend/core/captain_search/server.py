@@ -255,6 +255,29 @@ def profile(dataset: str):
     return LN.profile_dataset(ctx(), dataset)
 
 
+@app.post("/api/prepare/preview", dependencies=A)
+def prepare_preview(body: dict):
+    """Training-ready data, previewed: {source: {conn, table} | {conn, sql} | {dataset}, role?, mapping?, options?}.
+    Returns the role guess, the column mapping (editable), what's missing, the cleaned first rows, and a report of
+    every change, all from a sample. Nothing is saved."""
+    from .data import prepare as PP
+
+    return PP.preview(ctx(), dict(body.get("source") or {}), body.get("role"), body.get("mapping"), body.get("options"))
+
+
+@app.post("/api/prepare/import", dependencies=A)
+def prepare_import(body: dict):
+    """Prepare the whole source like the preview and save it as a dataset of the role's kind. Runs as a job.
+    {source, role?, mapping?, options?, name?, folder?, project?}"""
+    from .data import prepare as PP
+
+    c = ctx()
+    src = dict(body.get("source") or {})
+    kw = {k: body.get(k) for k in ("role", "mapping", "options", "name", "folder", "project")}
+    kw["opts"] = kw.pop("options")
+    return {"job": _job(lambda p: PP.import_prepared(c, src, progress=p, **kw), "prepare data for training")}
+
+
 @app.post("/api/rankings/validate", dependencies=A)
 def rankings_validate(body: dict):
     """Check a rankings file before importing: {path | dataset, mapping?, judgments?}. Returns {ok, errors, warnings,
