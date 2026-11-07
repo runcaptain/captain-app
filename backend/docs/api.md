@@ -552,6 +552,9 @@ Backtest runs now carry `manifest` (see docs/extending.md).
   - `POST /api/registries {uri, profile?, label?}` returns `{job}`. It attaches a registry and reads it, or re-reads it
     if already attached.
   - `DELETE /api/registries?uri=` detaches one.
+  - The address can be `s3://`, `gs://`, `az://` or a local folder. Leave out the scheme and Captain uses the cloud
+    of the workspace's storage, else the only connected cloud, else AWS. Leave out the login and Captain uses the
+    workspace's own login for that cloud, else the only one, else the last that passed its test.
   - The layout is `<architecture>/<brand>/<version>/MANIFEST.yaml` under any prefix. `/api/models` and
     `/api/lineage?view=models` cover every attached registry.
 
@@ -606,6 +609,9 @@ Routes:
 - `GET|POST /api/engines`, `PUT /api/engines/{id}`: engines are persistent identities `{name, type: search |
   recommendation, scopes, pipelines}`. A pipeline belongs to the engine that lists it.
 - `POST /api/scopes/link {items, scope? | engine?}` attaches records to a scope or an engine.
+- **Filtering by the Explorer's pick:** send `X-CST-Scope: scope:<id> | engine:<id> | project:<id> | view:<id>` (or
+  `?scope=`) on any list route: datasets, the tree, pipelines, backtests, investigations, models and connections. A
+  scope includes its descendants. `view:` filters nothing. Anything else gets a 400.
 
 ## Lineage and quality (Unity Catalog style)
 

@@ -60,10 +60,43 @@ def _s3(profile):
     return aws_session(profile, "us-west-1").client("s3")
 
 
+def _scan_store(uri: str, profile: str | None) -> dict:
+    """Any registry Captain's storage layer can open: gs://, az:// or a local folder (sizes aren't listed there)."""
+    from .storage.backend import open_store
+
+    st = open_store(uri, profile)
+    keys = st.list("")
+    try:
+        index_md = st.get("INDEX.md").decode()
+    except Exception:  # noqa: BLE001
+        index_md = ""
+    models = []
+    for k in sorted(keys):
+        m = re.match(r"^([^/]+)/([^/]+)/([^/]+)/MANIFEST\.yaml$", k)
+        if not m:
+            continue
+        arch, brand, label = m.groups()
+        man = yaml.safe_load(st.get(k)) or {}
+        base = f"{arch}/{brand}/{label}/"
+        files = [{"path": f[len(base):], "bytes": None} for f in keys if f.startswith(base)]
+        models.append({
+            "id": f"{brand}@{label}", "brand": brand, "architecture": arch, "version": label,
+            "status": str(man.get("status", "")), "status_kind": status_kind(str(man.get("status", ""))),
+            "repro_status": str(man.get("repro_status", "not-tested")), "parent_label": man.get("parent"),
+            "parents": parse_parents(brand, man.get("parent")), "training_commit": man.get("training_commit"),
+            "dvc_alias": man.get("dvc_alias"), "attached_to_demo": bool(man.get("attached_to_demo")),
+            "results": man.get("results") or [], "known_issues": man.get("known_issues") or [],
+            "what_changed": man.get("what_changed"), "path": f"{uri.rstrip('/')}/{base}",
+            "files": sorted(files, key=lambda f: f["path"]), "bytes": None, "manifest": man,
+        })
+    archs = sorted({m["architecture"] for m in models})
+    return {"index_md": index_md, "models": models, "architectures": archs, "architecture_docs": {}}
+
+
 def scan(uri: str, profile: str | None = None, s3=None) -> dict:
     u = urlparse(uri)
     if u.scheme != "s3":
-        raise ValueError("registry import reads an s3:// registry")
+        return _scan_store(uri, profile)
     s3 = s3 or _s3(profile)
     bucket, prefix = u.netloc, u.path.strip("/")
     pfx = f"{prefix}/" if prefix else ""

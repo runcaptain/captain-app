@@ -53,3 +53,24 @@ def test_registry_brand_maps_to_a_scope(tmp_path):
     r = SC.Resolve(c)
     assert r.targets("model", "globex-eu@v3", brand="globex-eu")["scopes"] == [b["id"]]
     assert r.targets("model", "globex@v1", brand="globex")["scopes"] == [b["id"]]
+
+
+def test_scope_header_filters_lists(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from captain_search import demo, server
+
+    c = init_workspace("acme", str(tmp_path / "b"))
+    demo.seed(c, progress=lambda s: None)
+    brand = SC.add_scope(c, "brand", "Acme Outdoors")
+    eng = SC.add_engine(c, "Product search", "search", [brand["id"]], ["demo-bm25"])
+    SC.link(c, [{"kind": "dataset", "name": "demo-catalog"}], scope=brand["id"])
+    monkeypatch.setattr(server, "_ctx", None)
+    cl = TestClient(server.app)
+    h = {"Authorization": f"Bearer {server.TOKEN}"}
+    by = lambda hdr, path: [x["name"] for x in cl.get(path, headers={**h, "X-CST-Scope": hdr}).json()]
+    assert by(f"scope:{brand['id']}", "/api/datasets") == ["demo-catalog"]
+    assert by(f"scope:{brand['id']}", "/api/pipelines") == ["demo-bm25"]
+    assert by(f"engine:{eng['id']}", "/api/pipelines") == ["demo-bm25"]
+    assert len(by("view:all-engines", "/api/pipelines")) > 1
+    assert cl.get("/api/datasets", headers={**h, "X-CST-Scope": "bogus:x"}).status_code == 400

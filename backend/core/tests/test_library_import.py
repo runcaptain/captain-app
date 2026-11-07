@@ -91,3 +91,34 @@ def test_attach_registry_any_layout(ctx, tmp_path, monkeypatch):
     assert MD.lineage(ctx)["registries"] == ["s3://team-models/registry"]
     AT.detach(ctx, "s3://team-models/registry")
     assert AT.registries(ctx) == []
+
+
+def test_registry_address_and_login_come_from_connected_clouds(ctx, monkeypatch):
+    from captain_search.workspace import load_config, save_config
+
+    cfg = load_config()
+    cfg["profiles"] = {"team-aws": {"provider": "aws"}, "team-gcp": {"provider": "gcp", "last_test": {"ok": True}},
+                       "old-gcp": {"provider": "gcp"}}
+    save_config(cfg)
+    assert AT.resolve(ctx, "s3://models/registry/") == ("s3://models/registry", "team-aws")
+    assert AT.resolve(ctx, "gs://models") == ("gs://models", "team-gcp")
+    assert AT.resolve(ctx, "s3://x", "mine") == ("s3://x", "mine")
+    # no scheme: two clouds connected and a local workspace, so AWS
+    assert AT.resolve(ctx, "models/registry")[0] == "s3://models/registry"
+    cfg["profiles"] = {"only-gcp": {"provider": "gcp"}}
+    save_config(cfg)
+    assert AT.resolve(ctx, "models/registry") == ("gs://models/registry", "only-gcp")
+
+
+def test_attach_a_registry_in_a_folder(ctx, tmp_path):
+    from captain_search import models as MD
+
+    reg = tmp_path / "registry"
+    for brand, v, parent in (("acme", "v1", None), ("acme", "v2", "v1")):
+        d = reg / "two-tower" / brand / v
+        d.mkdir(parents=True)
+        (d / "MANIFEST.yaml").write_text(f"status: current\nparent: {parent or ''}\n")
+        (d / "weights.bin").write_text("x")
+    r = AT.attach(ctx, str(reg))
+    assert r["models"] == 2 and r["profile"] is None
+    assert {m["id"] for m in MD.listing(ctx)} == {"acme@v1", "acme@v2"}
