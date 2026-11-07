@@ -11,7 +11,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 BIN=${1:-target/debug/captain-app}
-CST=${CST_BIN:-$(ls dist/Captain.app/Contents/Resources/cst/bin/cst 2>/dev/null || command -v cst)}
+# This repo's backend first (its source via PYTHONPATH, even when the venv came from another checkout), then the
+# bundled one, then a cst on PATH (which may be older than this tree's routes).
+CST=${CST_BIN:-$(ls "$PWD/backend/core/.venv/bin/cst" 2>/dev/null || ls dist/Captain.app/Contents/Resources/cst/bin/cst 2>/dev/null || command -v cst)}
+[[ "$CST" == "$PWD/backend/core/.venv/bin/cst" ]] && export PYTHONPATH="$PWD/backend/core${PYTHONPATH:+:$PYTHONPATH}"
 HOME_DIR=$(mktemp -d /tmp/cform.XXXX)
 WORK=$(mktemp -d)
 OUT=${SHOT_DIR:-$WORK/shots}
@@ -84,7 +87,7 @@ export default class Blank extends View { render() { return div().size_full().bg
 JS
 
 printf '{"appearance":"light"}\n' > "$HOME_DIR/settings.json"
-printf '{"captain.forms.preview":%s,"frame.welcomed":"skipped","captain.explorer.sample":true}\n' "$PREVIEW" > "$HOME_DIR/shared.json"
+printf '{"captain.forms.preview":%s,"frame.welcomed":"skipped","captain.explorer.sample":true,"captain.explain.preview":{"pipeline":"demo-bm25","q":"earbuds under 50","vs":"demo-tuned"}}\n' "$PREVIEW" > "$HOME_DIR/shared.json"
 printf '{"state":"windowed","bounds":[80,80,1100,750]}\n' > "$HOME_DIR/window.json"
 CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_BIN=$CST CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
@@ -146,7 +149,7 @@ if [[ "$SHOWN" == *captain-setup* ]] && python3 tests/mod-render/forms-shot.py "
 # The Explorer (its sample tree, turned on only in this window) and the scope screens.
 close_all
 sleep 1; app shot "$OUT/explorer.png" >/dev/null; echo "explorer: shot $OUT/explorer.png"
-for m in captain-scope-model captain-scope captain-rankings; do
+for m in captain-scope-model captain-scope captain-rankings captain-explain; do
   shoot "$m" "$m"
   if [[ "$SHOWN" == *"$m"* ]] && python3 tests/mod-render/forms-shot.py "$OUT/$m.png" --any; then echo "$m: drawn"; else echo "$m: NOT DRAWN ($SHOWN) $OUT/$m.png"; fail=1; fi
 done

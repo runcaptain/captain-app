@@ -19,7 +19,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 BIN=${1:-target/debug/captain-app}
-CST=${CST_BIN:-$(ls dist/Captain.app/Contents/Resources/cst/bin/cst 2>/dev/null || command -v cst)}
+# This repo's backend first (its source via PYTHONPATH, even when the venv came from another checkout), then the
+# bundled one, then a cst on PATH (which may be older than this tree's routes).
+CST=${CST_BIN:-$(ls "$PWD/backend/core/.venv/bin/cst" 2>/dev/null || ls dist/Captain.app/Contents/Resources/cst/bin/cst 2>/dev/null || command -v cst)}
+[[ "$CST" == "$PWD/backend/core/.venv/bin/cst" ]] && export PYTHONPATH="$PWD/backend/core${PYTHONPATH:+:$PYTHONPATH}"
 HOME_DIR=$(mktemp -d /tmp/cteam.XXXX)
 WORK=$(mktemp -d)
 OUT=${SHOT_DIR:-$WORK/shots}

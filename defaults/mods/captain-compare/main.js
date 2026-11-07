@@ -524,6 +524,8 @@ export default class CaptainCompare extends View {
       .child(h_flex().flex_none().gap(8).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(14).font_medium().child(side.row.query))
         .when(!!d && !d.error, (e) => e
+          // Stage by stage, where this query's results changed (captain-explain, the run's own explain route).
+          .child(Button(c, "q-explain", "Explain why", () => openOverlay({ mod: "captain-explain", kind: "dialog", width: 0.9, height: 0.9, props: { run: this.runRef(), query_id: side.row.query_id } }), { kind: "primary", small: true }))
           .child(Button(c, "q-agent", "Ask an agent why", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, queryPrompt(this.runRef(), side.row, d))), { small: true }))
           .child(Button(c, "q-prompt", "Copy prompt", (_e, cx) => copyPrompt(cx, queryPrompt(this.runRef(), side.row, d)), { kind: "quiet", small: true })))
         .child(div().id("side-close").cursor_pointer().text_color(c.grey500).hover((s) => s.text_color(c.navy)).tooltip("Close")
