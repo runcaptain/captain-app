@@ -532,7 +532,7 @@ export default class CaptainImport extends View {
   }
 
   destPick(c) {
-    return h_flex().id("import-dest").gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
+    return h_flex().id("import-dest").flex_none().gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
       .child(div().flex_none().text_color(c.grey500).child("For"))
       .children(this.dests.map((d, i) => div().id(`dest-${i}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer()
         .border_1().border_color(this.dest === d ? c.blue : c.grey300).text_color(this.dest === d ? c.blue : c.grey900)
@@ -546,7 +546,7 @@ export default class CaptainImport extends View {
     const list = [...this.folders];
     if (target && !list.includes(target)) list.push(target);
     return v_flex().gap(6)
-      .child(h_flex().id("import-folder").gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
+      .child(h_flex().id("import-folder").flex_none().gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
         .child(div().w(60).flex_none().text_size(12).text_color(c.grey900).child("Folder"))
         .children(list.map((f, i) => div().id(`folder-${i}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer()
           .border_1().border_color(!typed && target === f ? c.blue : c.grey300).text_color(!typed && target === f ? c.blue : c.grey900)

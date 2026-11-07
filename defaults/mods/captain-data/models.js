@@ -265,7 +265,7 @@ export class Models {
           .child(div().text_size(11.5).text_color(c.grey900).child(`${r.models == null ? "Not read yet" : `${r.models} model${r.models === 1 ? "" : "s"}`}, synced ${ago(r.synced_at)}`)))
         .child(Button(c, `reg-sync-${i}`, "Sync", (_e, cx) => this.sync(cx, r), { small: true, disabled: !!this.job }))
         .child(Button(c, `reg-detach-${i}`, this.confirm === r.uri ? "Detach? Click again" : "Detach", (_e, cx) => this.detach(cx, r), { kind: "quiet", small: true }))))
-      .when(this.owners.length > 1, (e) => e.child(h_flex().id("model-owners").gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
+      .when(this.owners.length > 1, (e) => e.child(h_flex().id("model-owners").flex_none().gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
         .child(div().flex_none().text_color(c.grey500).child("Whose"))
         .children(this.owners.map((o, i) => div().id(`owner-${i}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer()
           .border_1().border_color(this.owner === o ? c.blue : c.grey300).bg(this.owner === o ? c.blueLight : c.surface).text_color(this.owner === o ? c.blue : c.grey900)

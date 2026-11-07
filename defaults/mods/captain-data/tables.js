@@ -333,7 +333,7 @@ export class Tables {
     // The grid takes the height left under the tabs and scrolls inside itself: nothing pushes it below the fold.
     return v_flex().id("table-rows-tab").flex_1().min_h(0).px(20).pt(8).pb(10).gap(6)
       .when(!g, (e) => e.child(Skeleton(c, 8)))
-      .when(!!g, (e) => e.child(v_flex().flex_1().min_h(0).border_1().border_color(c.rule).child(g.render(c, { fill: true })))
+      .when(!!g, (e) => e.child(v_flex().flex_1().min_h(240).border_1().border_color(c.rule).child(g.render(c, { fill: true })))
         .when(!!g.page?.sql, (e) => e.child(div().flex_none().text_size(11).font_family(MONO).text_color(c.grey500).truncate().child(g.page.sql))));
   }
 
