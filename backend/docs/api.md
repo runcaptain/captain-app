@@ -606,6 +606,9 @@ Routes:
 - `GET|POST /api/engines`, `PUT /api/engines/{id}`: engines are persistent identities `{name, type: search |
   recommendation, scopes, pipelines}`. A pipeline belongs to the engine that lists it.
 - `POST /api/scopes/link {items, scope? | engine?}` attaches records to a scope or an engine.
+- **Filtering by the Explorer's pick:** send `X-CST-Scope: scope:<id> | engine:<id> | project:<id> | view:<id>` (or
+  `?scope=`) on any list route: datasets, the tree, pipelines, backtests, investigations, models and connections. A
+  scope includes its descendants. `view:` filters nothing. Anything else gets a 400.
 
 ## Lineage and quality (Unity Catalog style)
 

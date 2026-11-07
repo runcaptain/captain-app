@@ -52,14 +52,39 @@ _req_ws: "_cv.ContextVar[str | None]" = _cv.ContextVar("cst_workspace", default=
 _ctxs: dict = {}
 
 
+_req_scope: "_cv.ContextVar[str | None]" = _cv.ContextVar("cst_scope", default=None)
+
+
 @app.middleware("http")
 async def _workspace_from_request(request: Request, call_next):
     name = request.headers.get("x-cst-workspace") or request.query_params.get("workspace")
     tok = _req_ws.set(name or None)
+    # The Explorer's pick travels like the workspace: X-CST-Scope: <scope|engine|project|view>:<id>
+    stok = _req_scope.set(request.headers.get("x-cst-scope") or request.query_params.get("scope") or None)
     try:
         return await call_next(request)
     finally:
+        _req_scope.reset(stok)
         _req_ws.reset(tok)
+
+
+def _member(c, project: str | None, kind: str):
+    """A name -> bool predicate for list routes: ?project= and the Explorer's X-CST-Scope, both applied."""
+    from . import projects as PR
+    from . import scopes as SC
+
+    by_project = PR.member_filter(c, project, kind)
+    pick = _req_scope.get() or ""
+    skind, _, sid = pick.partition(":")
+    if not sid or skind == "view":
+        return by_project
+    if skind == "project":
+        in_proj = PR.member_filter(c, sid, kind)
+        return lambda name, **kw: by_project(name, **kw) and in_proj(name, **kw)
+    if skind in ("scope", "engine"):
+        in_scope = SC.scope_filter(c, sid if skind == "scope" else None, sid if skind == "engine" else None, kind)
+        return lambda name, **kw: by_project(name, **kw) and in_scope(name, **kw)
+    raise ValueError(f"X-CST-Scope must be scope:, engine:, project: or view:, not {pick!r}")
 
 
 def ctx():
@@ -149,7 +174,7 @@ def connections(project: str | None = None):
     from . import projects as PR
 
     c = ctx()
-    inp = PR.member_filter(c, project, "connection")
+    inp = _member(c, project, "connection")
     out = []
     for n in c.connections():
         if not inp(n):
@@ -493,7 +518,7 @@ def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class
     from . import projects as PR
 
     c = ctx()
-    inp = PR.member_filter(c, project, "dataset")
+    inp = _member(c, project, "dataset")
     out = []
     for n in c.registry.names("dataset"):
         if not inp(n):
@@ -546,7 +571,7 @@ def dataset_tree(cls: str | None = Query(None, alias="class"), project: str | No
     from . import projects as PR
 
     c = ctx()
-    inp = PR.member_filter(c, project, "dataset")
+    inp = _member(c, project, "dataset")
 
     def entry(n):
         if (cls and cls not in CL.classes_of(c, n)) or not inp(n):
@@ -702,7 +727,7 @@ def pipelines(project: str | None = None):
     from . import projects as PR
 
     c = ctx()
-    inp = PR.member_filter(c, project, "pipeline")
+    inp = _member(c, project, "pipeline")
     out = []
     for n in c.registry.names("pipeline"):
         if not inp(n):
@@ -893,7 +918,7 @@ def investigations_list(state: str | None = None, q: str | None = None, project:
     from . import projects as PR
 
     c = ctx()
-    inp = PR.member_filter(c, project, "investigation")
+    inp = _member(c, project, "investigation")
     return [i for i in INV.listing(c, state, q) if inp(i["id"])]
 
 
@@ -1019,7 +1044,7 @@ def backtests(project: str | None = None):
     from . import projects as PR
 
     c = ctx()
-    inp = PR.member_filter(c, project, "backtest")
+    inp = _member(c, project, "backtest")
     out = []
     for n in c.registry.names("backtest"):
         if not inp(n):
@@ -1547,7 +1572,7 @@ def models_list(project: str | None = None):
     from . import projects as PR
 
     c = ctx()
-    inp = PR.member_filter(c, project, "model")
+    inp = _member(c, project, "model")
     return [m for m in MD.listing(c) if inp(m["id"], brand=m.get("brand"))]
 
 
