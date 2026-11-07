@@ -36,7 +36,7 @@ const NOT_SHIPPED: &[&str] = &["defaults/mods/win98", "defaults/layouts/win98.js
 
 /// The scope model's files, where "engine" means the customer's search or recommendation system (see
 /// no_engine_or_daemon_a_person_sees).
-const SCOPE_MODEL: &[&str] = &["defaults/captain/kit/scopes.js", "defaults/mods/captain-scope", "defaults/mods/captain-nav/explorer.js"];
+const SCOPE_MODEL: &[&str] = &["defaults/captain/kit/scopes.js", "defaults/mods/captain-scope", "defaults/mods/captain-nav/explorer.js", "defaults/mods/captain-engine"];
 
 /// Files on their way out, each with the commit that removes it. Keep this empty.
 const PENDING: &[&str] = &[];

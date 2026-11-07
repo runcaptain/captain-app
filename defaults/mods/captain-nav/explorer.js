@@ -6,7 +6,7 @@
 // (Add brand, Add site, Add engine, Rename, Move, Archive), which open captain-scope.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { shared, setShared, openOverlay, run } from "herdr";
+import { shared, setShared, openOverlay, run, layout } from "herdr";
 import { icon } from "./kit/icons.js";
 import { loadExplorer, words, childKinds, nodeIcon, nodeName, nodeKey, currentScope } from "./kit/scopes.js";
 
@@ -57,12 +57,21 @@ export class Explorer {
     setShared("captain.explorer.closed", [...closed]);
   }
 
+  // Whether the engine page is the section on show (the sections stack's active child).
+  onEnginePage() {
+    const find = (n) => (n?.id === "sections" ? n : (n?.children ?? []).map(find).find(Boolean));
+    return find(layout())?.active === "engine";
+  }
+
   select(n) {
     this.menu = null;
     if (n.kind === "settings") { openOverlay({ mod: "captain-scope-model", kind: "dialog", width: 760, height: 640 }); return; }
     if (n.kind === "group") return;
     setShared("captain.scope", n.kind === "view" && n.id === "all-engines" ? null : { kind: n.kind, id: n.id, label: nodeName(n) });
-    if (n.kind === "view" && n.id === "all-experiments") run("layout.select", { stack: "sections", child: "runs" });
+    // An engine opens its page; anything else goes back to the views, filtered to it.
+    if (n.kind === "engine") run("layout.select", { stack: "sections", child: "engine" });
+    else if (n.kind === "view" && n.id === "all-experiments") run("layout.select", { stack: "sections", child: "runs" });
+    else if (this.onEnginePage?.()) run("layout.select", { stack: "sections", child: "investigations" });
   }
 
   /** A node's menu. `holder` is the scope a group sits in ({id, type, name}), or null at the top level. */

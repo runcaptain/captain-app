@@ -91,6 +91,13 @@
           "content": {
             "mod": "captain-handoff"
           }
+        },
+        {
+          "id": "engine",
+          "type": "block",
+          "content": {
+            "mod": "captain-engine"
+          }
         }
       ]
     },
