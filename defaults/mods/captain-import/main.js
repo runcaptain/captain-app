@@ -37,7 +37,12 @@ export function datasetName(text) {
   return String(text ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
 }
 
-/** A folder path as the library keeps it: lower case words split by "/". */
+/** A folder as the person sees it, tidied: its levels trimmed, empty ones dropped. Capitals stay ("Shop"). */
+export function folderShown(text) {
+  return String(text ?? "").split("/").map((x) => x.trim()).filter(Boolean).join("/");
+}
+
+/** The lowercase prefix a folder gives the dataset's name ("Shop/Q4" makes "shop/q4/..."), by the services' rule. */
 export function folderPath(text) {
   return String(text ?? "").split("/").map(datasetName).filter(Boolean).join("/");
 }
@@ -171,23 +176,26 @@ export default class CaptainImport extends View {
   get finalName() { return datasetName(this.name.value()); }
 
   /** The folder it goes into: the typed one, else the picked one, else the role's (from the services). */
+  /** The folder, exactly as shown and sent: the library keeps its capitals, so an import into "Shop" lands there. */
   get target() {
-    const typed = folderPath(this.newFolder.value());
+    const typed = folderShown(this.newFolder.value());
     if (typed) return typed;
-    if (this.folderTouched) return folderPath(this.folder); // as the services will save it (Shop is shop)
+    if (this.folderTouched) return this.folder;
     return this.prep?.result?.folder ?? KIND_FOLDER[kindOf(this.kindHint, this.sql.value())] ?? "imports";
   }
 
   /** The dataset's full name: its folder, then its name (catalogs/products). */
   get fullName() {
     const n = this.finalName;
-    return n && this.target ? `${this.target}/${n}` : n;
+    const prefix = folderPath(this.target);
+    return n && prefix ? `${prefix}/${n}` : n;
   }
 
   /** A name nobody has used in the target folder: the name itself, else name-2, name-3 ... */
   freshName(base) {
     base = datasetName(base) || "dataset";
-    const taken = (n) => this.names.has(this.target ? `${this.target}/${n}` : n) || this.names.has(n);
+    const prefix = folderPath(this.target);
+    const taken = (n) => this.names.has(prefix ? `${prefix}/${n}` : n) || this.names.has(n);
     if (!taken(base)) return base;
     for (let i = 2; ; i++) if (!taken(`${base}-${i}`)) return `${base}-${i}`;
   }
@@ -454,7 +462,7 @@ export default class CaptainImport extends View {
     if (!paths.length) return;
     this.busy = true;
     cx.spawn(async (cx) => {
-      const r = await api("/api/datasets/import", { body: { paths, folder: folderPath(this.newFolder.value()) || this.folder, project: this.dest.kind === "project" ? this.dest.id : undefined } });
+      const r = await api("/api/datasets/import", { body: { paths, folder: folderShown(this.newFolder.value()) || this.folder, project: this.dest.kind === "project" ? this.dest.id : undefined } });
       if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't start the import.", tone: "fail" }; cx.notify(); return; }
       this.importJob = r.data.job;
       cx.notify();
@@ -529,8 +537,8 @@ export default class CaptainImport extends View {
   }
 
   folderPick(c, forQuery = false) {
-    const target = forQuery ? this.target : folderPath(this.newFolder.value()) || this.folder;
-    const typed = !!folderPath(this.newFolder.value());
+    const target = forQuery ? this.target : folderShown(this.newFolder.value()) || this.folder;
+    const typed = !!folderShown(this.newFolder.value());
     const list = [...this.folders];
     if (target && !list.includes(target)) list.push(target);
     return v_flex().gap(6)
@@ -553,7 +561,8 @@ export default class CaptainImport extends View {
     const vv = this.clash?.same ? `, as version ${this.clash.version + 1}` : this.clash && this.allowNewVersion ? `, as version ${this.clash.version + 1}` : "";
     return h_flex().id("import-save-as").gap(6).items_center().text_size(12)
       .child(div().w(60).flex_none().text_color(c.grey900).child("Saved as"))
-      .child(div().font_family(MONO).text_color(c.navy).child(this.target ? `${this.target}/${name}` : name))
+      .child(div().font_family(MONO).text_color(c.navy).child(this.fullName))
+      .when(!!this.target, (e) => e.child(div().text_color(c.grey900).child(`in ${this.target}`)))
       .child(div().text_color(c.grey500).child(`${typed && typed !== name ? `(from "${typed}")` : ""}${vv}`));
   }
 
