@@ -33,6 +33,13 @@ const j = JSON.parse(line);
 globalThis.__shared = { 'captain.daemon': { state: 'ready', base: `http://127.0.0.1:${j.port}`, token: j.token } };
 const call = async (p, body) => (await fetch(`http://127.0.0.1:${j.port}${p}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${j.token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })).json();
 await call('/api/projects', { name: 'Acme' });
+// The scope model starts empty: take the suggested Brand, then Site, as Settings offers.
+{
+  const types = (await call('/api/scope-model/suggested')).types;
+  const r = await fetch(`http://127.0.0.1:${j.port}/api/scope-model`, { method: 'PUT', headers: { Authorization: `Bearer ${j.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ types, explorer: { order: types.map((t) => t.key), hidden: [] } }) });
+  assert.ok(r.ok, `scope model: ${await r.text()}`);
+}
 const brand = await call('/api/scopes', { type: 'brand', name: 'Acme Shop' });
 // The Explorer has the brand picked: the import's "For" defaults to it.
 globalThis.__shared['captain.scope'] = { kind: 'scope', id: brand.id, label: 'Acme Shop' };

@@ -111,11 +111,14 @@ export default class CaptainData extends View {
     const p = layoutProps?.() ?? {};
     if (p.tab === "models" || p.tab === "labels" || p.tab === "tables") this.tab = p.tab;
     if (p.pageTab) this.page.tab = p.pageTab;
+    if (p.find) this.lib.find.set_value(String(p.find)); // a search to start with
+    if (p.flatAll) this.lib.flatAll = true;
     if (p.tablesTab) this.tables.tab = p.tablesTab; // "rows": the first table's rows, once it's picked
     if (p.tablesPick) this.tables.want = p.tablesPick; // a table by name instead of the first
     // {importWith: {conn, sql, name}}: the import wizard, open on that query (a layout, or the real-window check).
     if (p.importWith) cx.timer.after(1500, () => openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { start: p.importWith } }));
     if (p.tab === "tables") this.tables.load(cx);
+    if (p.tab === "labels") this.loadLabels(cx);
     if (p.tab === "models") this.models.load(cx);
     if (p.tab === "notebooks") {
       this.tab = "notebooks";
@@ -295,7 +298,7 @@ export default class CaptainData extends View {
         .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your experiments read." : this.tab === "notebooks" ? "SQL, Python, notes and charts, saved as versions." : this.tab === "models" ? "Trained models from your registries, and what each was built from." : this.tab === "tables" ? "Your databases' tables, their columns and rows, and how they're queried." : "Rules that turn logged events into judgments."))
       .when(this.tab === "datasets", (e) => e
         .child(Button(c, "new-class", "New class", () => openForm("dataset-class"), { small: true }))
-        .child(Button(c, "import-dataset", "Import a dataset", () => openImport(this.lib?.cur ?? ""), { kind: "primary", small: true })))
+        .child(Button(c, "import-dataset", "Import a dataset", () => openImport(), { kind: "primary", small: true })))
       .when(this.tab === "labels", (e) => e
         .child(Button(c, "label-agent", "Ask an agent to define a label", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, LABEL_PROMPT)), { small: true })))
       .child(div().id("data-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()
@@ -312,7 +315,7 @@ export default class CaptainData extends View {
       .child(div().max_w(460).text_center().text_size(12.5).line_height("19px").text_color(c.grey900)
         .child("Experiments read four kinds of data: your catalog, the queries people search, judgments of what is relevant, and logs of what shoppers did. Import a file, save a SQL query, or start from the demo store."))
       .child(h_flex().gap(8)
-        .child(Button(c, "first-import", "Import a dataset", () => openImport(this.lib?.cur ?? ""), { kind: "primary" }))
+        .child(Button(c, "first-import", "Import a dataset", () => openImport(), { kind: "primary" }))
         .child(Button(c, "first-demo", "Try the demo store", () => openForm("demo"))));
   }
 
@@ -417,7 +420,10 @@ export default class CaptainData extends View {
     const l = ls?.find((x) => x.name === this.labelSel) ?? null;
     const events = (this.list ?? []).filter((d) => (d.classes ?? []).some((k) => this.classes.find((x) => x.name === k)?.role === "events"));
     const listW = Math.max(200, Math.min(280, Math.floor(w * 0.26)));
-    return h_flex().flex_1().min_h(0)
+    // What a label is, always in view (Edgar didn't know what labels do).
+    const about = div().id("labels-about").flex_none().px(16).py(8).border_b(1).border_color(c.rule).text_size(12.5).line_height("18px").text_color(c.grey900)
+      .child("A label grades each search from what shoppers did, so you can train and judge without grading by hand. For example, deep-search is 1 when a shopper clicked one of the top 3 results.");
+    return v_flex().flex_1().min_h(0).child(about).child(h_flex().flex_1().min_h(0)
       .child(v_flex().id("label-list").w(listW).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
         .when(ls === null, (e) => e.child(div().child(Skeleton(c, 8))))
         .when(!!this.labelsError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child(this.labelsError)))
@@ -451,7 +457,7 @@ export default class CaptainData extends View {
               .when(!events.length, (e) => e.child(div().text_size(12).text_color(c.grey500).child("No events datasets in this workspace.")))
               .children(events.slice(0, 12).map((d) => this.chip(c, `${d.name}@v${d.latest}`, null, this.previewLogs === `${d.name}@v${d.latest}`, (_e, cx) => this.loadPreview(cx, `${d.name}@v${d.latest}`)))))
             .when(!!this.previewError, (e) => e.child(div().text_size(12.5).text_color(c.fail).child(this.previewError)))
-            .when(!!this.preview, (e) => e.child(this.previewTable(c, this.preview)))));
+            .when(!!this.preview, (e) => e.child(this.previewTable(c, this.preview))))));
   }
 
   previewTable(c, p) {

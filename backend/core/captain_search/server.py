@@ -520,6 +520,46 @@ def project_assign(body: dict):
     return PR.assign(ctx(), body.get("project"), list(body.get("items") or []))
 
 
+@app.get("/api/projects/{pid}/home", dependencies=A)
+def project_home(pid: str):
+    """A project's home screen: its datasets, models, notebooks and recent runs."""
+    from . import projects as PR
+
+    return PR.home(ctx(), pid)
+
+
+@app.get("/api/services", dependencies=A)
+def services_list(check: bool = False):
+    """Every outside service this workspace uses, for Settings: storage, connections, compute (with defaults),
+    registries, MLflow and model keys. check=true asks each whether it answers now."""
+    from . import services as SV
+
+    return SV.listing(ctx(), check)
+
+
+@app.get("/api/settings", dependencies=A)
+def settings_get():
+    from . import settings as ST
+
+    return ST.get(ctx())
+
+
+@app.put("/api/settings/compute", dependencies=A)
+def settings_compute(body: dict):
+    """{backtest?, serve?}: the compute targets backtests and serving use unless they name their own."""
+    from . import settings as ST
+
+    return ST.set_compute(ctx(), body.get("backtest"), body.get("serve"), clear_serve="serve" in body and not body["serve"])
+
+
+@app.get("/api/scope-model/suggested", dependencies=A)
+def scope_model_suggested():
+    """A starting set of levels (Brand, then Site) to offer in Settings. The model itself starts empty."""
+    from . import scopes as SC
+
+    return {"types": SC.SUGGESTED}
+
+
 @app.get("/api/projects/{pid}", dependencies=A)
 def project_detail(pid: str):
     from . import projects as PR
@@ -759,7 +799,9 @@ def _jsonable(v):
 
 
 @app.get("/api/datasets", dependencies=A)
-def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class"), project: str | None = None):
+def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class"), project: str | None = None,
+             q: str | None = None):
+    """Every dataset, with its columns' names. q: every word in its name, description or a column's name."""
     from . import classes as CL
     from . import projects as PR
 
@@ -775,8 +817,12 @@ def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class
         mine = CL.classes_of(c, n)
         if cls and cls not in mine:
             continue
+        cols = [f.get("name") for f in (m.schema_fields or []) if isinstance(f, dict) and f.get("name")]
+        if q and not all(w in " ".join([n, m.description or "", *cols]).lower() for w in q.lower().split()):
+            continue
         out.append({"name": n, "latest": m.version, "kind": m.dataset_kind.value, "classes": mine, "rows": m.row_count,
-                    "by": m.created_by, "created": m.created_at.isoformat(), "description": m.description})
+                    "by": m.created_by, "created": m.created_at.isoformat(), "description": m.description,
+                    "columns": cols})
     return out
 
 
@@ -1404,7 +1450,9 @@ def _job(fn, label: str) -> str:
 def backtest_run(name: str, body: dict | None = None):
     c = ctx()
     bt = c.registry.load("backtest", name)
-    compute = (body or {}).get("compute") or bt.compute or "local"
+    from . import settings as ST
+
+    compute = (body or {}).get("compute") or bt.compute or ST.default_compute(c, "backtest") or "local"
 
     def go(p):
         r = ops.backtest_launch(c, name, compute, progress=p)

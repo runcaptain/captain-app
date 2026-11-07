@@ -55,8 +55,41 @@ const text = all.flatMap((e) => (e.kids ?? []).filter((k) => typeof k === 'strin
 for (const n of ['warehouse.orders', 'catalog', 'ranker', 'tuned-vs-current', 'production']) assert.ok(text.includes(n), `node ${n}`);
 assert.ok(text.includes('Upstream') && text.includes('Downstream') && text.includes('Trace a column'), 'controls');
 const node = all.find((e) => e.call?.('id')?.[0] === 'lin-node-p:ranker');
-node.call('on_click')[0]({}, { notify() {} });
-assert.equal(focused, 'p:ranker', 'click focuses');
+const ncx = { notify() {}, stop_propagation() {} };
+node.call('on_click')[0]({}, ncx);
+assert.equal(focused, null, 'a click selects, it does not refocus');
+assert.equal(g.sel, 'p:ranker', 'a click selects');
+const find = (tree, id) => { const out = []; const w = (e) => { if (!e || typeof e !== 'object') return; out.push(e); for (const k of e.kids ?? []) w(k); }; w(tree); return out.find((e) => e.call?.('id')?.[0] === id); };
+const words = (tree) => { const out = []; const w = (e) => { if (!e || typeof e !== 'object') return; for (const k of e.kids ?? []) typeof k === 'string' ? out.push(k) : w(k); }; w(tree); return out.join(' | '); };
+let t2 = g.render(c);
+const det = find(t2, 'lin-details');
+assert.ok(det, 'its details show');
+assert.ok(words(det).includes('Made from (2)') && words(det).includes('catalog') && words(det).includes('Feeds (1)'), words(det));
+// Only the path through the selection lights up: the selected node's chain, not its siblings.
+const P = g.pathOf(g.layout().edges, 'p:ranker');
+assert.ok(P.up.has('d:catalog') && P.up.has('t:orders') && P.down.has('h:prod'), 'upstream and downstream of it');
+// "Show its lineage" refocuses.
+find(t2, 'lin-details-focus').call('on_click')[0]({}, ncx);
+assert.equal(focused, 'p:ranker', 'Show its lineage focuses');
+// Drag a node: press, move, release. It moves by the drag over the zoom, and the release is not a click.
+const before = { ...g.at(g.layout(), 'd:catalog') };
+find(t2, 'lin-node-d:catalog').call('on_mouse_down')[1]({ position: { x: 100, y: 100 }, click_count: 1 }, ncx);
+const canvas = find(t2, 'lin-canvas');
+canvas.call('on_mouse_move')[0]({ position: { x: 160, y: 130 }, bounds: { x: 0, y: 0, width: 800, height: 300 } }, ncx);
+canvas.call('on_mouse_up')[1]({}, ncx);
+assert.deepEqual(g.at(g.layout(), 'd:catalog'), { x: before.x + 60, y: before.y + 30 }, 'the node moved with the drag');
+find(g.render(c), 'lin-node-d:catalog').call('on_click')[0]({}, ncx);
+assert.equal(g.sel, 'p:ranker', 'the drag did not select');
+// Pan the background, then zoom with Command held, and Fit.
+canvas.call('on_mouse_down')[1]({ position: { x: 10, y: 10 }, bounds: { x: 0, y: 0, width: 800, height: 300 } }, ncx);
+canvas.call('on_mouse_move')[0]({ position: { x: 50, y: 20 } }, ncx);
+canvas.call('on_mouse_up')[1]({}, ncx);
+assert.deepEqual(g.pan, { x: 40, y: 10 }, 'panned');
+canvas.call('on_scroll_wheel')[0]({ delta: { x: 0, y: -100 }, modifiers: { platform: true }, local_position: { x: 0, y: 0 } }, ncx);
+assert.ok(g.zoom < 1, 'zoomed');
+canvas.call('on_scroll_wheel')[0]({ delta: { x: 0, y: 30 }, modifiers: {} }, ncx);
+find(g.render(c), 'lin-zoom-fit').call('on_click')[0]({}, ncx);
+assert.equal(g.moved.size, 0, 'Fit puts dragged nodes back');
 const col = all.find((e) => e.call?.('id')?.[0] === 'lin-col-price');
 col.call('on_click')[0]({}, { notify() {} });
 assert.equal(traced, 'price', 'a column is traced');

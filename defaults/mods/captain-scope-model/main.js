@@ -68,6 +68,18 @@ export default class ScopeModel extends View {
     this.makeStates(); this.touch(); cx.notify();
   }
 
+  /** Brand, then Site, from the services' suggestion. Not saved until Save, like any other change. */
+  useSuggested(cx) {
+    cx.spawn(async (cx) => {
+      const r = await api("/api/scope-model/suggested", { scoped: false });
+      const types = r.ok ? r.data?.types ?? [] : [];
+      if (!types.length) { this.error = "Couldn't load the suggested types. Add your own below."; cx.notify(); return; }
+      for (const t of types) if (!this.model.types.some((x) => x.key === t.key)) this.model.types.push({ fields: [], parents: [], ...clone(t) });
+      this.model.explorer.order = [...new Set([...this.model.explorer.order, ...types.map((t) => t.key)])];
+      this.makeStates(); this.touch(); cx.notify();
+    });
+  }
+
   removeType(cx, key) {
     this.model.types = this.model.types.filter((t) => t.key !== key);
     for (const t of this.model.types) t.parents = (t.parents ?? []).filter((p) => p !== key);
@@ -140,6 +152,10 @@ export default class ScopeModel extends View {
   types(c) {
     return v_flex().gap(8)
       .child(this.intro(c, "The kinds of scope this workspace organizes engines by. They're optional: a workspace can keep its engines at the top level."))
+      // The model starts empty: one line, and the usual start in one click.
+      .when(!this.model.types.length, (e) => e.child(h_flex().id("types-empty").flex_wrap().gap(10).items_center().p(12).border_1().border_color(c.rule)
+        .child(div().flex_1().min_w(220).text_size(12.5).text_color(c.grey900).child("No scope types yet, so everything sits at the top level. Most teams group by brand, then by site."))
+        .child(Button(c, "types-suggested", "Start with Brand, then Site", (_e, cx) => this.useSuggested(cx), { kind: "primary", small: true }))))
       .children(this.model.types.map((t) => h_flex().id(`type-${t.key}`).h(42).px(12).gap(10).items_center().border_1().border_color(c.rule)
         .child(div().flex_1().min_w(0).child(div().text_size(13).font_semibold().child(t.singular || t.key))
           .child(div().text_size(11.5).text_color(c.grey500).truncate().child(t.description || "No description yet.")))

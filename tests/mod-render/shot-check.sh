@@ -19,7 +19,7 @@ block_of() { case "$1" in captain-data) echo data ;; captain-runs) echo runs ;; 
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:import" "captain-data:import-table") ;;
+    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
     captain-runs) EXTRA+=("captain-runs:jobs") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
@@ -116,6 +116,24 @@ fi
 if [[ "${SHOT_WINDOW:-}" =~ ^([0-9]+)x([0-9]+)$ ]]; then
   printf '{"state":"windowed","bounds":[80.0,60.0,%s.0,%s.0]}\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" > "$HOME_DIR/window.json"
 fi
+# SHOT_AUDIT: a helper mod that opens the Explorer's MLflow heading while the window runs (mods are found at launch).
+if [[ -n "${SHOT_AUDIT:-}" ]]; then
+  mkdir -p "$HOME_DIR/mods/folds-open"; cp -R defaults/captain/kit "$HOME_DIR/mods/folds-open/kit"
+  echo '{ "place": "none", "overlay": { "kind": "popup", "width": 1, "height": 1 } }' > "$HOME_DIR/mods/folds-open/mod.json"
+  cat > "$HOME_DIR/mods/folds-open/main.js" <<'JS'
+import { View, div } from "gpui-kit";
+import { props, shared, setShared, closeOverlay } from "herdr";
+import { workspace } from "./kit/cst.js";
+export default class FoldsOpen extends View {
+  init(_p, cx) {
+    const ws = workspace() ?? shared("captain.workspace") ?? "";
+    setShared("captain.explorer.folds", { ...(shared("captain.explorer.folds") ?? {}), [ws]: { "all-engines": false, mlflow: true } });
+    cx.timer.after(1, () => closeOverlay(props()?.overlay));
+  }
+  render() { return div(); }
+}
+JS
+fi
 launch() {
   # "Captain (test)" in the title bar, so nobody mistakes this window for their own Captain.
   CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_HOME=$CSTH "$BIN" >"$WORK/app.log" 2>&1 &
@@ -146,8 +164,13 @@ props_of() {
     captain-data:notebook) echo '{"tab": "notebooks", "notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:models) echo '{"tab": "models"}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;
+    captain-data:import-run) echo '{"importWith": {"conn": "demo-store", "table": "products", "name": "hello", "autoImport": true}}' ;;
+    captain-data:quality) echo '{"pageTab": "quality"}' ;;
     captain-data:insights) echo '{"pageTab": "insights"}' ;;
     captain-data:lineage) echo '{"pageTab": "lineage"}' ;;
+    captain-data:labels) echo '{"tab": "labels"}' ;;
+    captain-data:search) echo '{"find": "price"}' ;;
+    captain-data:flat) echo '{"flatAll": true}' ;;
     captain-runs:grading) echo '{"tab": "grading"}' ;;
     captain-runs:jobs) echo '{"tab": "jobs"}' ;;
     captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;
@@ -204,7 +227,8 @@ EOF
   ok=0
   # The notebook view runs every cell on a fresh Python first: give it time to finish before judging.
   [[ "$view" == captain-data:notebook || "$view" == captain-data:chart || "$view" == captain-data:bignotebook ]] && sleep 25
-  [[ "$view" == captain-data:import* || "$view" == captain-compare:profile ]] && sleep 8
+  [[ "$view" == captain-data:import* || "$view" == captain-compare:profile || "$view" == captain-data:quality ]] && sleep 8
+  [[ "$view" == captain-data:import-run ]] && sleep 14
   for i in $(seq 1 12); do
     sleep 1.5
     # A window in the background may not draw a new frame after its data arrives, and shot saves the last frame
@@ -242,7 +266,8 @@ if [[ -n "${SHOT_AUDIT:-}" ]]; then
   app do layout.select '{"stack":"sections","child":"data"}' >/dev/null || true
   app do app.palette >/dev/null || true; shoot palette 2; app do app.palette >/dev/null || true
   app do app.settings >/dev/null || true; shoot settings 3; app do app.settings >/dev/null || true
-  for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup; do
+  app do mod.open '{"name":"folds-open"}' >/dev/null || true; shoot explorer-mlflow 6
+  for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup captain-services captain-scope-model captain-cloud; do
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; shoot "dialog-$m" 4
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; sleep 1
   done

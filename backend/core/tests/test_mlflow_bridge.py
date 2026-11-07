@@ -86,4 +86,5 @@ def test_a_refused_login_reaches_the_app_as_a_sentence(ctx, monkeypatch):
 
     monkeypatch.setattr(httpx, "request", down)
     r = c.get("/api/mlflow/models", headers=h)
-    assert r.status_code == 502 and r.json()["error"].startswith("Couldn't reach MLflow")
+    assert r.status_code == 502 and r.json()["error"] == ("Couldn't reach MLflow at mlflow.example.com. Check the address in "
+                                                         "Connect MLflow, and that the server is running.")

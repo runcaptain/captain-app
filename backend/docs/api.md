@@ -811,3 +811,23 @@ CLI: `cst sweep <pipeline> --queries Q --judgments J --knob k1=0.8:2.0:4 --knob 
 
 CLI: `cst mlflow use --uri URL | --databricks CONN`, `cst mlflow experiments|runs <id>|models`,
 `cst mlflow link <model> <version> <pipeline>`.
+
+## Settings and connected services
+
+- `GET /api/services?check=` returns, in one list:
+  - storage;
+  - connections (kind, writable, network);
+  - compute targets, with `default_for` and each kind's `live_tested`;
+  - compute `defaults`, the available `kinds`, registries, MLflow (no links) and model keys (set or not).
+  `check=true` runs select 1 on each connection and each target's test. Secrets are never included.
+- `GET /api/settings`, `PUT /api/settings/compute {backtest?, serve?}`: the compute that backtests and serving use
+  unless they name their own. They're saved in the bucket (`settings.yaml`), so every teammate and session gets them.
+  A target must list the purpose.
+- New compute kinds:
+  - `databricks-jobs` triggers an existing job that runs cst, through a Databricks connection;
+  - `snowflake-spcs` runs the runner image as a job service in a compute pool, through a Snowflake connection.
+  Neither has been tested on a real account yet.
+- The scope model starts empty. `GET /api/scope-model/suggested` returns Brand, then Site, to offer as a one-click start.
+- `GET /api/projects/{id}/home` returns `{project, datasets, pipelines, models, mlflow_models, notebooks, runs,
+  connections, investigations, counts, empty}` for a project's home screen. Saved notebooks can now be assigned to
+  projects (kind `notebook`).
