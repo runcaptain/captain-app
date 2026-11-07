@@ -42,7 +42,9 @@ def test_sweep_refuses_unreadable_or_unknown_knobs(ctx):
 
 def test_ripple_and_promote(ctx):
     rp = SB.ripple(ctx, "demo-tuned", Q, J, {"boosts.0.weight": 3.0}, must_not_break=["voltwave backpack"])
-    assert rp["moved_most"] and rp["moved_most"][0]["top10_changed"] >= rp["moved_most"][-1]["top10_changed"]
+    graded = [r for r in rp["moved_most"] if r["graded"]]
+    assert graded and rp["moved_most"][0]["graded"] and rp["moved_most"][0]["ndcg_before"] is not None
+    assert graded[0]["top10_changed"] >= graded[-1]["top10_changed"]
     assert rp["must_not_break"] and rp["must_not_break"][0]["query"] == "voltwave backpack"
     assert "queries change their top 10" in rp["summary"]
     p = SB.promote(ctx, "demo-tuned", {"boosts.0.weight": 1.3})

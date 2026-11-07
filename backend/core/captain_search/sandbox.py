@@ -185,7 +185,12 @@ def ripple(ctx, pipeline: str, queries: str, judgments: str, values: dict, must_
                      "ndcg_before": bpq[q["query_id"]]["ndcg10"] if jmap.get(q["query_id"]) else None,
                      "ndcg_after": npq[q["query_id"]]["ndcg10"] if jmap.get(q["query_id"]) else None,
                      "new_top": b[:3], "old_top": a[:3]})
-    moved = sorted(rows, key=lambda r: -r["top10_changed"])[:limit]
+    # Graded queries first: ungraded ones often reshuffle most (nothing relevant anchors them) and say nothing
+    # about quality, so they'd crowd out the moves that matter.
+    for r in rows:
+        r["graded"] = r["ndcg_before"] is not None
+    moved = sorted((r for r in rows if r["top10_changed"] > 0), key=lambda r: (not r["graded"], -r["top10_changed"]))[:limit]
+    ungraded_moved = sum(1 for r in rows if not r["graded"] and r["top10_changed"] > 0)
     worse = sorted((r for r in rows if r["ndcg_before"] is not None and r["ndcg_after"] < r["ndcg_before"]),
                    key=lambda r: r["ndcg_after"] - r["ndcg_before"])[:limit]
     guard = [r for r in rows if r["query"].lower() in must]
@@ -193,7 +198,9 @@ def ripple(ctx, pipeline: str, queries: str, judgments: str, values: dict, must_
     return {"pipeline": ops.ref(pm), "values": values, "moved_most": moved, "regressions": worse,
             "must_not_break": guard, "broken": [r["query"] for r in broke],
             "summary": f"{sum(1 for r in rows if r['top10_changed'] > 0)} of {len(rows)} queries change their top 10; "
-                       f"{len(worse)} get worse" + (f"; {len(broke)} must-not-break queries moved" if must else "")}
+                       f"{len(worse)} get worse" + (f"; {len(broke)} must-not-break queries moved" if must else "")
+                       + (f"; {ungraded_moved} of the changed queries have no grades" if ungraded_moved else ""),
+            "ungraded_changed": ungraded_moved}
 
 
 def promote(ctx, pipeline: str, values: dict, note: str = "") -> dict:
