@@ -116,6 +116,24 @@ fi
 if [[ "${SHOT_WINDOW:-}" =~ ^([0-9]+)x([0-9]+)$ ]]; then
   printf '{"state":"windowed","bounds":[80.0,60.0,%s.0,%s.0]}\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" > "$HOME_DIR/window.json"
 fi
+# SHOT_AUDIT: a helper mod that opens the Explorer's MLflow heading while the window runs (mods are found at launch).
+if [[ -n "${SHOT_AUDIT:-}" ]]; then
+  mkdir -p "$HOME_DIR/mods/folds-open"; cp -R defaults/captain/kit "$HOME_DIR/mods/folds-open/kit"
+  echo '{ "place": "none", "overlay": { "kind": "popup", "width": 1, "height": 1 } }' > "$HOME_DIR/mods/folds-open/mod.json"
+  cat > "$HOME_DIR/mods/folds-open/main.js" <<'JS'
+import { View, div } from "gpui-kit";
+import { props, shared, setShared, closeOverlay } from "herdr";
+import { workspace } from "./kit/cst.js";
+export default class FoldsOpen extends View {
+  init(_p, cx) {
+    const ws = workspace() ?? shared("captain.workspace") ?? "";
+    setShared("captain.explorer.folds", { ...(shared("captain.explorer.folds") ?? {}), [ws]: { "all-engines": false, mlflow: true } });
+    cx.timer.after(1, () => closeOverlay(props()?.overlay));
+  }
+  render() { return div(); }
+}
+JS
+fi
 launch() {
   # "Captain (test)" in the title bar, so nobody mistakes this window for their own Captain.
   CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_HOME=$CSTH "$BIN" >"$WORK/app.log" 2>&1 &
@@ -243,6 +261,7 @@ if [[ -n "${SHOT_AUDIT:-}" ]]; then
   app do layout.select '{"stack":"sections","child":"data"}' >/dev/null || true
   app do app.palette >/dev/null || true; shoot palette 2; app do app.palette >/dev/null || true
   app do app.settings >/dev/null || true; shoot settings 3; app do app.settings >/dev/null || true
+  app do mod.open '{"name":"folds-open"}' >/dev/null || true; shoot explorer-mlflow 6
   for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup; do
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; shoot "dialog-$m" 4
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; sleep 1

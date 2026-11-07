@@ -40,13 +40,16 @@ export class Explorer {
     this.loading = false;
     this.rev = null;
     // MLflow, read-only (kit/mlflow.js): read the first time its heading opens, so a workspace without it pays nothing.
-    this.mlflow = new MlflowList({ id: "ex-ml", onSetup: () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "mlflow" } }) });
+    this.mlflow = new MlflowList({ id: "ex-ml", header: false, onSetup: () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "mlflow" } }) });
     this.mlflowLoaded = false;
   }
 
   start(cx) {
     this.load(cx);
-    if (this.isOpen("mlflow")) this.openMlflow(cx); // left open last time
+    // Left open last time: read it as soon as its fold reads open. The workspace (and so the remembered fold) may
+    // not be known yet at start, so look again each second until it has been read once.
+    if (this.isOpen("mlflow")) this.openMlflow(cx);
+    cx.timer.every(1000, (cx) => { if (!this.mlflowLoaded && this.isOpen("mlflow")) { this.openMlflow(cx); cx.notify(); } });
     // A dialog that changed the tree bumps shared "captain.explorer.rev"; the services' tree is re-read now and then.
     cx.timer.every(1000, (cx) => {
       const rev = shared("captain.explorer.rev") ?? null;

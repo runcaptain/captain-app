@@ -49,6 +49,7 @@ find(ex.render(c), 'ex-mlflow').call('on_click')[0]({}, cx);
 await flush();
 t = texts(ex.render(c)).join(' | ');
 assert.ok(t.includes('/rankers') && t.includes('ranker') && t.includes('Read-only'), `open, with MLflow in it: ${t}`);
+assert.equal(t.split(' | ').filter((x) => x === 'MLflow').length, 1, 'MLflow named once: the heading, not the list too');
 assert.equal(asked().filter((p) => p === '/api/mlflow').length, 1);
 const folds = globalThis.__shared['captain.explorer.folds'];
 assert.equal(Object.keys(folds).length, 1, 'one workspace');

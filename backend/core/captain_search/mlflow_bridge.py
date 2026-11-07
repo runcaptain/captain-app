@@ -85,7 +85,11 @@ def _call(ctx: Context, method: str, path: str, body: dict | None = None) -> dic
         r = httpx.request(method, url, json=body if method != "GET" else None,
                           params=body if method == "GET" else None, headers=headers, timeout=60)
     except httpx.HTTPError as e:
-        raise ConnectionError(f"Couldn't reach MLflow at {base}: {type(e).__name__}") from None
+        # The person's own address, without the transport's words (no exception names): what to check, in words.
+        host = base.split("://", 1)[-1].rstrip("/")
+        slow = isinstance(e, httpx.TimeoutException)
+        raise ConnectionError(f"Couldn't reach MLflow at {host}" + (": it didn't answer in time." if slow else ".")
+                              + " Check the address in Connect MLflow, and that the server is running.") from None
     if r.status_code in (401, 403):
         try:
             said = str(r.json().get("message") or "").split(" [ReqId")[0]

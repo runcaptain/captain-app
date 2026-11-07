@@ -50,9 +50,10 @@ export async function withMlflow(graph) {
 }
 
 export class MlflowList {
-  constructor({ id = "ml", onSetup } = {}) {
+  constructor({ id = "ml", onSetup, header = true } = {}) {
     this.id = id;
     this.onSetup = onSetup;
+    this.header = header; // false under a heading that already says MLflow (the Explorer)
     this.status = null; // {configured, uri, databricks_connection, links}
     this.experiments = null; // [...] | {error}
     this.models = null; // [...] | {error}
@@ -81,12 +82,16 @@ export class MlflowList {
   fetch(cx) {
     cx.spawn(async (cx) => {
       const s = await api("/api/mlflow", { scoped: false });
+      // The services are still starting: ask again shortly, never sit on the placeholder.
+      if (!s.ok && s.starting) { cx.timer?.after(1000, (cx) => this.fetch(cx)); return; }
       if (!s.ok) { this.status = { error: said(s, "Couldn't read the MLflow settings.") }; cx.notify(); return; }
       this.status = s.data;
       if (!s.data.configured) { cx.notify(); return; }
       const [e, m] = await Promise.all([api("/api/mlflow/experiments", { scoped: false, timeout: 60 }), api("/api/mlflow/models", { scoped: false, timeout: 60 })]);
       this.experiments = e.ok ? e.data : { error: said(e, "Couldn't read MLflow's experiments.") };
       this.models = m.ok ? m.data : { error: said(m, "Couldn't read MLflow's registered models.") };
+      // Both failed the same way (MLflow unreachable, a refused login): say it once, under Experiments.
+      if (this.experiments?.error && this.models?.error === this.experiments.error) this.models = { error: this.experiments.error, same: true };
       cx.notify();
     });
   }
@@ -145,16 +150,17 @@ export class MlflowList {
     const s = this.status;
     const head = h_flex().gap(6).items_center().px(10).py(6).child(Brand(c, "mlflow", 14)).child(div().text_size(12).font_medium().text_color(c.navy).child("MLflow"))
       .when(!!s?.configured, (e) => e.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(c.grey500).child(s.databricks_connection ? `on ${s.databricks_connection}` : s.uri ?? "")));
-    if (!s) return v_flex().id(id).child(head).child(div().px(10).child(Skeleton(c, 2)));
-    if (s.error) return v_flex().id(id).child(head).child(div().px(10).text_size(12).text_color(c.fail).child(s.error));
-    if (!s.configured) return v_flex().id(id).gap(4).child(head)
+    const top = (e) => (this.header ? e.child(head) : e);
+    if (!s) return top(v_flex().id(id)).child(div().px(10).child(Skeleton(c, 2)));
+    if (s.error) return top(v_flex().id(id)).child(div().px(10).text_size(12).text_color(c.fail).child(s.error));
+    if (!s.configured) return top(v_flex().id(id).gap(4))
       .child(div().px(10).text_size(12).line_height("18px").text_color(c.grey900).child("See your MLflow experiments, runs and registered models here, read-only, and which pipeline serves each model."))
       .when(!!this.onSetup, (e) => e.child(div().px(10).pb(6).child(Button(c, `${id}-setup`, "Connect MLflow", () => this.onSetup(), { small: true }))));
     const row = (rid, depth, kids, onClick) => h_flex().id(rid).min_h(26).py(3).pl(10 + depth * 14).pr(10).gap(6).items_center().text_size(12)
       .when(!!onClick, (e) => e.cursor_pointer().hover((st) => st.bg(c.surface2)).on_click(onClick)).children(kids);
     const chev = (open) => this.icon(open ? "chevron-down" : "chevron-right", 11, c.grey500);
     const exps = this.experiments, models = this.models;
-    return v_flex().id(id).gap(2).child(head)
+    return top(v_flex().id(id).gap(2))
       .when(!!this.note, (e) => e.child(div().px(10).text_size(11.5).text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
       .child(div().px(10).pt(4).text_size(11).text_color(c.grey500).child("Experiments"))
       .when(exps === null, (e) => e.child(div().px(10).child(Skeleton(c, 2))))
@@ -178,9 +184,9 @@ export class MlflowList {
                 .child(Object.entries(r.params).slice(0, 4).map(([k, v]) => `${k}=${v}`).join("  ")))))),
         ];
       }) : [])
-      .child(div().px(10).pt(6).text_size(11).text_color(c.grey500).child("Registered models"))
+      .when(!models?.same, (e) => e.child(div().px(10).pt(6).text_size(11).text_color(c.grey500).child("Registered models")))
       .when(models === null, (e) => e.child(div().px(10).child(Skeleton(c, 2))))
-      .when(!!models?.error, (e) => e.child(div().px(10).text_size(12).text_color(c.fail).child(models.error)))
+      .when(!!models?.error && !models.same, (e) => e.child(div().px(10).text_size(12).text_color(c.fail).child(models.error)))
       .when(Array.isArray(models) && !models.length, (e) => e.child(div().px(10).text_size(12).text_color(c.grey500).child("No registered models.")))
       .children(Array.isArray(models) ? models.flatMap((m) => {
         const open = this.open.has(`m:${m.name}`);
