@@ -105,6 +105,7 @@ def test_posthog_end_to_end(ctx, monkeypatch):
 
 
 def test_ga4_reports(ctx, monkeypatch):
+    pytest.importorskip("google.analytics.data_v1beta", reason="the GA4 client is an optional extra")
     from captain_search.connectors import sources as SRC
 
     class FakeClient:
