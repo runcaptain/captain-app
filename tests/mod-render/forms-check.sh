@@ -49,6 +49,8 @@ cleanup() {
     if ps eww -p "$p" | tr ' ' '\n' | grep -qx "CST_HOME=$WORK/cst"; then kill "$p" 2>/dev/null || true; fi
   done
   rm -rf "$HOME_DIR"
+  # The scratch workspace (its store and logs) goes too; shots stay only when SHOT_DIR points outside it.
+  case "${WORK:-}" in "${TMPDIR:-/tmp}"*|/tmp/*|/var/folders/*) rm -rf "${WORK:?}" ;; esac
 }
 trap cleanup EXIT
 
