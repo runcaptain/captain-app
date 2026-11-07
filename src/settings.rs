@@ -526,7 +526,7 @@ impl Default for Sounds {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            font_family: DEFAULT_FONT.into(),
+            font_family: TERMINAL_FONT.into(), // CAPTAIN: was DEFAULT_FONT
             font_size: 14.0,
             font_ligatures: false,
             ui_font_family: "Geist".into(),
@@ -835,6 +835,9 @@ pub const BUNDLED_FONTS: &[&[u8]] = &[
     include_bytes!("../assets/fonts/Geist.ttf"),
     include_bytes!("../assets/fonts/JetBrainsMono-Variable.ttf"),
     include_bytes!("../assets/fonts/JetBrainsMono-Italic-Variable.ttf"),
+    // CAPTAIN: Captain's terminal font (OFL, assets/fonts/OFL-RedHatMono.txt), bundled so it never falls back.
+    include_bytes!("../assets/fonts/RedHatMono-Variable.ttf"),
+    include_bytes!("../assets/fonts/RedHatMono-Italic-Variable.ttf"),
     SYMBOLS_FONT_FILE,
 ];
 
@@ -844,8 +847,11 @@ pub const SYMBOLS_FONT_FILE: &[u8] = include_bytes!("../assets/fonts/SymbolsNerd
 /// Nerd Font icons for terminals, under any font (MIT, nerd-fonts).
 pub const SYMBOLS_FONT: &str = "Symbols Nerd Font";
 
-/// Terminals' font unless a layout or settings.json picks another.
+/// The bundled fallback when a chosen terminal font isn't installed.
 pub const DEFAULT_FONT: &str = "JetBrains Mono";
+
+/// CAPTAIN: terminals' font (shells and coding agents) unless a layout or settings.json picks another.
+pub const TERMINAL_FONT: &str = "Red Hat Mono";
 
 #[cfg(test)]
 mod tests {

@@ -62,8 +62,9 @@ PREVIEW=$(node --import ./tests/mod-render/stubs/register.mjs -e '
   const extra = { dataset: [{ from: "sql" }], cloud: [{ provider: "aws", auth: "keys" }], compute: [{ kind: "aws-batch" }], database: [{ kind: "snowflake" }, { kind: "databricks" }] };
   const list = [];
   for (const t of TASKS) { list.push(t.id); for (const values of extra[t.id] ?? []) list.push({ task: t.id, values }); }
+  list.push("menu");
   console.log(JSON.stringify(list));')
-NAMES=$(echo "$PREVIEW" | python3 -c "import json,sys; print(' '.join((e if isinstance(e,str) else e['task']+'-'+'-'.join(str(v) for v in e['values'].values())) for e in json.load(sys.stdin)))")
+NAMES=$(echo "$PREVIEW" | python3 -c "import json,sys; print(' '.join((('new-menu' if e == 'menu' else e) if isinstance(e,str) else e['task']+'-'+'-'.join(str(v) for v in e['values'].values())) for e in json.load(sys.stdin)))")
 
 # Two throwaway mods that must fail the analyzer: one breaks like the bug did, one draws nothing.
 for kind in broken blank; do

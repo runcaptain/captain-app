@@ -10,7 +10,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, props, closeOverlay, setShared, shared } from "herdr";
-import { palette, isDark, FONT } from "./kit/tokens.js";
+import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
 import { Button, Tabs } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { api } from "./kit/cst.js";
@@ -208,7 +208,7 @@ export default class ScopeModel extends View {
     const c = palette(isDark(theme()));
     const body = !this.model ? v_flex().gap(8).children([0, 1, 2, 3].map((i) => div().id(`sm-sk-${i}`).h(36).bg(c.surface2)))
       : { types: this.types, terms: this.terms, hierarchy: this.hierarchy, explorer: this.explorer, fields: this.fields }[this.tab].call(this, c);
-    return v_flex().id("scope-model").size_full().bg(c.surface).text_color(c.navy).font_family(FONT)
+    return v_flex().id("scope-model").size_full().bg(c.surface).rounded(RADIUS).text_color(c.navy).font_family(FONT)
       .child(h_flex().h(52).flex_none().px(20).gap(10).items_center()
         .child(div().size(28).flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("waypoints")).size(15)))
         .child(div().flex_1().text_size(15).font_semibold().child("Scope model"))

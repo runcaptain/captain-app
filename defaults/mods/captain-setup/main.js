@@ -4,7 +4,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Scrollbar } from "gpui-base";
 import { theme, props, closeOverlay } from "herdr";
-import { palette, isDark, FONT } from "./kit/tokens.js";
+import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
 import { icon } from "./kit/icons.js";
 import { StorageSetup } from "./kit/setup.js";
 
@@ -16,7 +16,7 @@ export default class Setup extends View {
 
   render() {
     const c = palette(isDark(theme()));
-    return v_flex().id("setup").size_full().bg(c.surface).text_color(c.navy).font_family(FONT)
+    return v_flex().id("setup").size_full().bg(c.surface).rounded(RADIUS).text_color(c.navy).font_family(FONT)
       .child(h_flex().h(52).flex_none().px(20).gap(10).items_center().border_b(1).border_color(c.rule)
         .child(div().size(28).flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("folder-open")).size(15)))
         .child(div().flex_1().text_size(15).font_semibold().child("New workspace"))

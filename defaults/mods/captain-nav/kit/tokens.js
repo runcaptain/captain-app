@@ -2,6 +2,9 @@
 import { theme } from "herdr";
 
 export const FONT = "Inter";
+/** The corner radius of every dialog and popup card (the window draws its border at the same radius, src/window.rs).
+ *  A dialog's root fill uses it too: GPUI clips children to a rectangle, so a square root would poke out. */
+export const RADIUS = 10;
 export const MONO = "JetBrains Mono";
 
 /** Light or dark, from the window's background color (the app's theme decides). */

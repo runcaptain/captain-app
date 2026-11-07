@@ -617,7 +617,8 @@ Routes:
   recommendation, scopes, pipelines}`. A pipeline belongs to the engine that lists it.
 - `POST /api/scopes/link {items, scope? | engine?}` attaches records to a scope or an engine.
 - **Filtering by the Explorer's pick:** send `X-CST-Scope: scope:<id> | engine:<id> | project:<id> | view:<id>` (or
-  `?scope=`) on any list route: datasets, the tree, pipelines, backtests, investigations, models and connections. A
+  `?scope=`) on any list route: datasets, the tree, pipelines, backtests, investigations, models, connections,
+  runs, grading queues and signals. A
   scope includes its descendants. `view:` filters nothing. Anything else gets a 400.
 
 ## Lineage and quality (Unity Catalog style)
@@ -650,3 +651,7 @@ Routes:
   read the tables first.
 - `POST /api/connections/{name}/preview {query, limit<=1000}` returns `{columns, rows, row_count, limited, ms}` and
   saves nothing. Save with `POST /api/sql {conn, sql, save, kind, project?}`.
+
+`GET /api/runs?backtest=&project=&limit=` lists every backtest run, newest first: `{name, version, created, mode,
+compute, arms, complete, wall_s, by}`. Grading queues are in scope when linked there or when they grade an in-scope
+pipeline. Signals are in scope when linked there or when they're evidence on an in-scope investigation.

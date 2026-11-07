@@ -875,10 +875,16 @@ def proposal_run(pid: str):
 
 
 @app.get("/api/grading", dependencies=A)
-def grading_list():
+def grading_list(project: str | None = None):
+    """Grading queues. Under an Explorer pick or ?project=: queues linked there, or grading a pipeline that is."""
     from . import grading as GR
 
-    return GR.listing(ctx())
+    c = ctx()
+    out = GR.listing(c)
+    if not (project or _req_scope.get()):
+        return out
+    own, pipe = _member(c, project, "grading"), _member(c, project, "pipeline")
+    return [g for g in out if own(g["name"]) or any(pipe(p.split("@")[0]) for p in g.get("pipelines", []))]
 
 
 @app.post("/api/grading", dependencies=A)
@@ -1060,10 +1066,47 @@ def decision_get(did: str):
 
 
 @app.get("/api/signals", dependencies=A)
-def signals_list():
+def signals_list(project: str | None = None):
+    """Candidate signals. Under an Explorer pick or ?project=: signals linked there, or recorded as evidence on an
+    investigation that is."""
     from . import investigations as INV
 
-    return INV.signals(ctx())
+    c = ctx()
+    out = INV.signals(c)
+    if not (project or _req_scope.get()):
+        return out
+    own, inv = _member(c, project, "signal"), _member(c, project, "investigation")
+    via = {}
+    for i in INV.listing(c):
+        if inv(i["id"]):
+            for s in (INV.get(c, i["id"]).get("signals") or []):
+                via[s] = True
+    return [s for s in out if own(s["id"]) or via.get(s["id"])]
+
+
+@app.get("/api/runs", dependencies=A)
+def runs_list(backtest: str | None = None, project: str | None = None, limit: int = 200):
+    """Every backtest run, newest first, under ?project= and the Explorer's pick (by its backtest or arms)."""
+    c = ctx()
+    bt_in, pipe_in = _member(c, project, "backtest"), _member(c, project, "pipeline")
+    scoped = bool(project or _req_scope.get())
+    out = []
+    for n in c.registry.names("backtest-run"):
+        if backtest and n != backtest:
+            continue
+        try:
+            bt = c.registry.load("backtest", n)
+        except Exception:  # noqa: BLE001
+            bt = None
+        if scoped and not (bt_in(n) or (bt and any(pipe_in(a.split("@")[0]) for a in bt.arms))):
+            continue
+        for v in c.registry.versions("backtest-run", n):
+            r = c.registry.load("backtest-run", n, v)
+            out.append({"name": n, "version": v, "created": r.created_at.isoformat(), "mode": r.mode,
+                        "compute": r.compute, "arms": [a.arm for a in r.arms], "complete": r.complete,
+                        "wall_s": r.wall_s, "by": r.created_by})
+    out.sort(key=lambda x: x["created"], reverse=True)
+    return out[: max(1, min(limit, 2000))]
 
 
 @app.post("/api/signals", dependencies=A)

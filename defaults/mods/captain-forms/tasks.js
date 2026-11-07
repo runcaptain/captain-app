@@ -15,6 +15,8 @@ export function plain(text) {
     .replace(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b|\b[A-Z]{4,}\b/g, (w) => w.toLowerCase().replace(/_/g, " "))
     .trim();
 }
+const CLOUDS = ["aws", "gcp", "azure"];
+const kindOf = (ctx, v) => (ctx.kinds ?? []).find((k) => k.kind === v.kind);
 const ok = (r, done) => {
   if (r.ok && !r.data?.error && !r.data?.exit_code) return { ok: true, message: done };
   if (r.failed) return { ok: false, error: r.error };
@@ -150,21 +152,39 @@ export const TASKS = [
   },
   {
     id: "compute", label: "Add a place to run work", icon: "boxes",
-    about: "Run backtests and serve candidates in your cloud instead of on this computer.",
+    about: "Run backtests and serve candidates on this computer or in your cloud.",
+    // Every kind comes from the services (GET /api/compute/kinds), including a team's own from its captain/ folder.
     load: async () => ({ kinds: (await api("/api/compute/kinds")).data ?? [], profiles: (await api("/api/cloud/profiles")).data ?? [] }),
     fields: [
-      { key: "kind", label: "Where", kind: "choice", required: true, options: (ctx) => (ctx.kinds ?? []).map((k) => ({ value: k.kind, label: k.label ?? k.kind, chip: k.provider, brand: k.provider === "local" ? null : k.provider })) },
-      { key: "name", label: "Name", placeholder: "aws-batch", required: true },
-      { key: "profile", label: "Cloud account", kind: "choice", optional: true, empty: "None yet. Connect a cloud account first, or leave this empty for this computer.", options: (ctx) => (ctx.profiles ?? []).map((p) => ({ value: p.name, label: p.name, chip: p.provider })) },
-      { key: "region", label: "Region", optional: true, placeholder: "us-west-1" },
-      { key: "*kind-fields", kind: "dynamic", fields: (ctx, v) => ((ctx.kinds ?? []).find((k) => k.kind === v.kind)?.fields ?? []) },
+      { key: "kind", label: "Where", kind: "choice", grid: true, columns: 2, required: true,
+        options: (ctx) => (ctx.kinds ?? []).map((k) => ({ value: k.kind, label: k.label ?? k.kind, brand: k.provider === "local" ? "local" : k.provider, chip: k.live_tested ? null : "not tested yet" })),
+        help: (ctx, v) => {
+          const k = (ctx.kinds ?? []).find((x) => x.kind === v.kind);
+          if (!k) return null;
+          return k.live_tested ? `Tested on a real account on ${k.live_tested}.` : "Not yet tested on a real account. It should work; tell us if it doesn't.";
+        } },
+      { key: "name", label: "Name", placeholder: "aws-batch", required: true, when: (v) => Boolean(v.kind), help: "How you'll pick this place later." },
+      // The login comes from the kind's own cloud; this computer and Modal need none.
+      { key: "profile", label: "Cloud login", kind: "choice", when: (v, ctx) => Boolean(v.kind) && CLOUDS.includes(kindOf(ctx, v)?.provider),
+        empty: "None yet for this cloud. Connect a cloud account first, from Cloud and compute.",
+        options: (ctx, v) => (ctx.profiles ?? []).filter((p) => p.provider === kindOf(ctx, v)?.provider).map((p) => ({ value: p.name, label: p.name, brand: p.provider })) },
+      { key: "region", label: "Region", optional: true, placeholder: "us-west-1", when: (v, ctx) => Boolean(v.kind) && CLOUDS.includes(kindOf(ctx, v)?.provider) },
+      { key: "*kind-fields", kind: "dynamic", when: (v) => Boolean(v.kind),
+        fields: (ctx, v) => (kindOf(ctx, v)?.fields ?? []).map((f) => ({ ...f, key: `${v.kind}.${f.name}`, optional: !f.required })) },
     ],
     submit: async (v, ctx) => {
+      const k = kindOf(ctx, v);
+      if (!k) return { ok: false, error: "Pick where it runs." };
+      if (CLOUDS.includes(k.provider) && !v.profile) return { ok: false, error: `${k.label} needs a cloud login. Connect one first, from Cloud and compute.` };
       if (((await api("/api/compute")).data ?? []).some((t) => t.name === v.name)) return { ok: false, error: `There's already a place to run work named ${v.name}. Pick another name.` };
-      const spec = (ctx.kinds ?? []).find((k) => k.kind === v.kind)?.fields ?? [];
       const config = {};
-      for (const f of spec) if (v[`af:${f.name}`] !== undefined && v[`af:${f.name}`] !== "") config[f.name] = v[`af:${f.name}`];
-      return ok(await api("/api/compute", { body: { name: v.name, kind: v.kind, profile: v.profile || undefined, region: v.region || undefined, config } }), `Added ${v.name}.`);
+      for (const f of k.fields ?? []) { const val = v[`af:${v.kind}.${f.name}`]; if (val !== undefined && val !== "") config[f.name] = val; }
+      const r = await api("/api/compute", { body: { name: v.name, kind: v.kind, profile: v.profile || undefined, region: v.region || undefined, config } });
+      if (!r.ok) return ok(r, "");
+      // Try it at once, and say what happened either way: it's saved, and Cloud and compute can test it again.
+      const t = await api(`/api/compute/${encodeURIComponent(v.name)}/test`, { body: {}, timeout: 60 });
+      if (t.ok && t.data?.ok) return { ok: true, message: `Added ${v.name}, and it answered.` };
+      return { ok: true, message: `Added ${v.name}, but its test didn't pass: ${plain(t.data?.detail ?? t.data?.error ?? t.error ?? "no answer")}. Test it again from Cloud and compute once that's fixed.` };
     },
   },
   {

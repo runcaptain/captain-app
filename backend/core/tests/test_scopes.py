@@ -96,3 +96,30 @@ def test_link_refuses_unknown_targets_and_class_counts_follow_the_pick(tmp_path,
     everything = {x["name"]: x["datasets"] for x in cl.get("/api/dataset-classes", headers=h).json()["classes"]}
     scoped = {x["name"]: x["datasets"] for x in cl.get("/api/dataset-classes", headers={**h, "X-CST-Scope": f"scope:{b['id']}"}).json()["classes"]}
     assert sum(scoped.values()) <= 1 < sum(everything.values())
+
+
+def test_runs_grading_and_signals_follow_the_pick(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from captain_search import demo, investigations as INV, server
+
+    c = init_workspace("acme", str(tmp_path / "b"))
+    demo.seed(c, progress=lambda s: None)
+    b = SC.add_scope(c, "brand", "Acme")
+    eng = SC.add_engine(c, "Search", "search", [b["id"]], ["demo-bm25"])
+    inv = INV.create(c, "Do returns help?", "")
+    sig = INV.signal_create(c, "returns", "orders", "count(returns)", "why", investigation=inv["id"])
+    SC.link(c, [{"kind": "investigation", "name": inv["id"]}], scope=b["id"])
+    monkeypatch.setattr(server, "_ctx", None)
+    cl = TestClient(server.app)
+    h = {"Authorization": f"Bearer {server.TOKEN}"}
+    g = lambda path, pick=None: cl.get(path, headers={**h, **({"X-CST-Scope": pick} if pick else {})}).json()
+    allruns = g("/api/runs")
+    assert allruns and allruns[0]["created"] >= allruns[-1]["created"]
+    mine = g("/api/runs", f"engine:{eng['id']}")
+    assert mine and all("demo-bm25" in " ".join(r["arms"]) for r in mine)
+    assert [q["name"] for q in g("/api/grading", f"scope:{b['id']}")] == ["demo-grading"]
+    other = SC.add_scope(c, "brand", "Other")
+    assert g("/api/grading", f"scope:{other['id']}") == [] and g("/api/runs", f"scope:{other['id']}") == []
+    assert [s["id"] for s in g("/api/signals", f"scope:{b['id']}")] == [sig["id"]]
+    assert g("/api/signals", f"scope:{other['id']}") == []

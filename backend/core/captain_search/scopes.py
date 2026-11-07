@@ -248,7 +248,7 @@ def update_engine(ctx: Context, eid: str, **changes) -> dict:
 def link(ctx: Context, items: list[dict], scope: str | None = None, engine: str | None = None) -> dict:
     """Attach records ({kind, name}: dataset, connection, investigation, backtest, model, registry) to a scope or an
     engine. Pipelines belong to engines through the engine's own list. An unknown scope or engine is refused."""
-    kinds = ("dataset", "connection", "investigation", "backtest", "model", "registry", "pipeline")
+    kinds = ("dataset", "connection", "investigation", "backtest", "model", "registry", "pipeline", "signal", "grading")
     for it in items:
         if it.get("kind") not in kinds or not it.get("name"):
             raise ValueError(f"each item needs a kind ({', '.join(kinds)}) and a name")

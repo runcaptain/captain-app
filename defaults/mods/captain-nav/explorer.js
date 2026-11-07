@@ -6,11 +6,13 @@
 // (Add brand, Add site, Add engine, Rename, Move, Archive), which open captain-scope.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { shared, setShared, openOverlay, run } from "herdr";
+import { shared, setShared, openOverlay, run, layout } from "herdr";
 import { icon } from "./kit/icons.js";
 import { loadExplorer, words, childKinds, nodeIcon, nodeName, nodeKey, currentScope } from "./kit/scopes.js";
 
 const INDENT = 12;
+// A click this soon after the tree appears, or after its rows moved, is ignored (see meant()).
+const SETTLE_MS = 1200, MOVED_MS = 350;
 const DIALOG = (props) => ({ mod: "captain-scope", kind: "dialog", width: 460, props });
 
 export class Explorer {
@@ -40,6 +42,10 @@ export class Explorer {
     cx.spawn(async (cx) => {
       try {
         const r = await loadExplorer();
+        // Rows that move under the pointer take a click meant for something else, so note when the shape changed.
+        const shape = JSON.stringify(r.tree, (k, v) => (k === "pipelines" ? undefined : v));
+        if (shape !== this.shape) { this.shape = shape; this.movedAt = Date.now(); }
+        this.firstAt ??= Date.now();
         this.tree = r.tree; this.model = r.model; this.live = r.live; this.actionsTop = r.actions ?? [];
       } finally {
         this.loading = false;
@@ -57,12 +63,30 @@ export class Explorer {
     setShared("captain.explorer.closed", [...closed]);
   }
 
+  // Whether the engine page is the section on show (the sections stack's active child).
+  onEnginePage() {
+    const find = (n) => (n?.id === "sections" ? n : (n?.children ?? []).map(find).find(Boolean));
+    return find(layout())?.active === "engine";
+  }
+
+  /** False for a click that can't be meant: in the first moments after the tree appears (the click that brings the
+   *  window forward lands on whatever is under the pointer) or just after the rows moved. Settings never opens by
+   *  itself at launch (Edgar saw Scope model open right after starting). */
+  meant() {
+    const now = Date.now();
+    return Boolean(this.firstAt) && now - this.firstAt > SETTLE_MS && now - (this.movedAt ?? 0) > MOVED_MS;
+  }
+
   select(n) {
     this.menu = null;
+    if (!this.meant()) return;
     if (n.kind === "settings") { openOverlay({ mod: "captain-scope-model", kind: "dialog", width: 760, height: 640 }); return; }
     if (n.kind === "group") return;
     setShared("captain.scope", n.kind === "view" && n.id === "all-engines" ? null : { kind: n.kind, id: n.id, label: nodeName(n) });
-    if (n.kind === "view" && n.id === "all-experiments") run("layout.select", { stack: "sections", child: "runs" });
+    // An engine opens its page; anything else goes back to the views, filtered to it.
+    if (n.kind === "engine") run("layout.select", { stack: "sections", child: "engine" });
+    else if (n.kind === "view" && n.id === "all-experiments") run("layout.select", { stack: "sections", child: "runs" });
+    else if (this.onEnginePage?.()) run("layout.select", { stack: "sections", child: "investigations" });
   }
 
   /** A node's menu. `holder` is the scope a group sits in ({id, type, name}), or null at the top level. */
