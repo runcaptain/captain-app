@@ -190,7 +190,8 @@ fn the_scanner_catches_branding_and_lets_identifiers_through() {
 fn backend_words(path: &str, text: &str) -> Vec<String> {
     // "core" too, where it means hc's terminal runtime ("reconnecting to core").
     let word = fancy_regex::Regex::new(r"(?i)\b(engine|daemon|core)s?\b").unwrap();
-    let allowed = fancy_regex::Regex::new(r"captain\.daemon(\.retry)?|--no-daemon|herdr-core|`[^`]*`|^\W*core\W*$|dev\.herdr\.core|Herdr Core\.app|core/|[\w]+-core[\w-]*|core-[\w-]+").unwrap();
+    // A bare lowercase "engine" is a key (`n.kind === "engine"`), not prose a person reads.
+    let allowed = fancy_regex::Regex::new(r#"^["'`]engines?["'`]$|captain\.daemon(\.retry)?|--no-daemon|herdr-core|`[^`]*`|^\W*core\W*$|dev\.herdr\.core|Herdr Core\.app|core/|[\w]+-core[\w-]*|core-[\w-]+"#).unwrap();
     let lit = fancy_regex::Regex::new(r#""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`"#).unwrap();
     let mut out = Vec::new();
     let prose = path.ends_with(".md");
