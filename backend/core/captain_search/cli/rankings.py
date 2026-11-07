@@ -141,3 +141,32 @@ def evals_refresh_cmd(queries: str, judgments: str, logs: str = typer.Option(...
 
     out = EV.refresh(ctx(), queries, judgments, logs, catalog, add, seed, dry_run)
     emit(out, "\n".join(out["changelog"]) + ("" if dry_run else f"\npublished {out['queries']} and {out['judgments']}"))
+
+
+@app.command("sweep")
+def sweep_cmd(pipeline: str, queries: str = typer.Option(..., "--queries"), judgments: str = typer.Option(..., "--judgments"),
+              knob: list[str] = typer.Option([], "--knob", help="path=v1,v2,v3 or path=min:max:steps, e.g. k1=0.8:2.0:4"),
+              sample: int = typer.Option(60, "--sample"), top: int = typer.Option(3, "--top")):
+    """What-if: turn up to three knobs and see nDCG@10 move, on a sample first, then the best on every query."""
+    from .. import sandbox as SB
+
+    knobs = {}
+    for k in knob:
+        path, _, spec = k.partition("=")
+        if ":" in spec:
+            lo, hi, n = spec.split(":")
+            knobs[path] = {"min": float(lo), "max": float(hi), "steps": int(n)}
+        else:
+            knobs[path] = {"values": [float(x) for x in spec.split(",")]}
+    r = SB.sweep(ctx(), pipeline, queries, judgments, knobs or None, sample=sample, top=top)
+    lines = [f"{r['pipeline']}, current {r['current']}, {r['metric']} {r['baseline_mean']} ({r['evidence']})",
+             f"sample of {r['sample']['n']}:"]
+    for c in sorted(r["sample"]["cells"], key=lambda c: -c["delta"])[:8]:
+        lines.append(f"  {c['values']}  {c['mean']}  {c['delta']:+.4f}{'  (current)' if c['is_current'] else ''}")
+    lines.append(f"every query ({r['full']['n']}):")
+    for c in r["full"]["cells"]:
+        flips = "; ".join(f"{f['slice']} {f['delta']:+.3f}" for f in c["slice_flips"])
+        lines.append(f"  {c['values']}  {c['delta']:+.4f} [{c['ci'][0]:+.4f}, {c['ci'][1]:+.4f}] {c['verdict']}"
+                     + (f"  slices: {flips}" if flips else ""))
+    lines.append(r["note"])
+    emit(r, "\n".join(lines))
