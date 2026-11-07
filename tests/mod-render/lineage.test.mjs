@@ -74,4 +74,12 @@ assert.equal(r.get('h:prod'), 4);
 const whole = new LineageGraph({ id: 'all' });
 whole.set(graph, null);
 assert.equal(whole.layout().pos.size, graph.nodes.length, 'every node shown');
+// MLflow feeds a downstream pipeline from the side: it's placed one column before what it feeds, run before model.
+{
+  const g = { nodes: [{ id: 'd', kind: 'dataset' }, { id: 'p', kind: 'pipeline' }, { id: 'm', kind: 'mlflow-model' }, { id: 'r', kind: 'mlflow-run' }, { id: 'x', kind: 'dataset' }],
+    edges: [{ src: 'd', dst: 'p' }, { src: 'm', dst: 'p' }, { src: 'r', dst: 'm' }, { src: 'x', dst: 'p' }] };
+  const lv = levels(g, 'd', 2, 2);
+  assert.deepEqual([lv.get('p'), lv.get('m'), lv.get('r')], [1, 0, -1], 'MLflow beside the pipeline it feeds');
+  assert.ok(!lv.has('x'), 'other side inputs stay out');
+}
 console.log('lineage ranks: ok');

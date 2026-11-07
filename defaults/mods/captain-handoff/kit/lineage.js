@@ -51,6 +51,17 @@ export function levels(graph, focus, up, down) {
   };
   walk(ups, -1, up);
   walk(downs, 1, down);
+  // MLflow feeds the pipelines downstream from the side (a model version, and the run that made it): neither up nor
+  // down from the focus, so place each one column before what it feeds. Other side inputs stay out, so the graph
+  // doesn't fill with everything that touches a downstream node.
+  const kind = new Map((graph.nodes ?? []).map((n) => [n.id, n.kind]));
+  for (let pass = 0; pass < 2; pass++) {
+    for (const e of graph.edges ?? []) {
+      const [a, b] = ends(e);
+      if (level.has(a) || !level.has(b) || !String(kind.get(a) ?? "").startsWith("mlflow-")) continue;
+      level.set(a, level.get(b) - 1);
+    }
+  }
   return level;
 }
 

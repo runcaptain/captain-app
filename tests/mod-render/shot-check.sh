@@ -93,6 +93,10 @@ CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-imported.py >/dev/null
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-notebook.py >/dev/null
 # Wide tables for the Rows tab: usage (40 columns), spend (13).
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-wide.py >/dev/null
+# An MLflow model version linked to demo-tuned, so lineage draws MLflow upstream of it. The tracking server isn't
+# there: lineage draws from the link alone.
+CST_HOME=$WORK/cst "$CSTCMD" mlflow use --uri http://127.0.0.1:9 >/dev/null 2>&1 || true
+CST_HOME=$WORK/cst "$CSTCMD" mlflow link ranker 3 demo-tuned >/dev/null 2>&1 || true
 # hello-world from another query, so the import view shows the name clash.
 CST_HOME=$WORK/cst "$CSTCMD" sql demo-store -e "select 1 as a" --save hello-world >/dev/null 2>&1 || true
 # The demo store's tables, read, and one finished local job, for the Tables and Jobs views.
