@@ -774,3 +774,4 @@ from . import review  # noqa: E402,F401  proposals, grading, labels, replay and 
 from . import appctl  # noqa: E402,F401  cst app: open the desktop app and drive it
 from . import invest  # noqa: E402,F401  investigations and signals
 from . import ext  # noqa: E402,F401  extensions and the captain/ project folder
+from . import library  # noqa: E402,F401  data import, folders, model registries

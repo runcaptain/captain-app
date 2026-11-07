@@ -11,6 +11,12 @@ import shutil
 from .workspace import Context, load_config
 
 
+def _registries(ctx) -> list:
+    from .attach import _read
+
+    return _read(ctx)[0]["registries"]
+
+
 def status(ctx: Context) -> dict:
     from . import cloud, investigations as INV
 
@@ -27,7 +33,10 @@ def status(ctx: Context) -> dict:
         {"id": "cloud", "title": "Add cloud credentials", "done": bool(cloud.profiles()) or kind == "local",
          "optional": kind == "local", "detail": f"{len(cloud.profiles())} profile(s)", "command": "cst cloud add"},
         {"id": "data", "title": "Bring in data", "done": len(datasets) > 0,
-         "detail": f"{len(datasets)} dataset(s): catalogs, query sets, judgments, search logs", "command": "cst data snapshot  (or: cst demo seed)"},
+         "detail": f"{len(datasets)} dataset(s). Drag catalogs, query sets, judgments and logs into Data and signals",
+         "command": "cst data import <files or folders> --folder <folder>"},
+        {"id": "registry", "title": "Attach your model registry", "done": bool(_registries(ctx)), "optional": True,
+         "detail": "an S3, GCS or Azure folder of model versions, for lineage", "command": "POST /api/registries {uri}"},
         {"id": "pipeline", "title": "Register a baseline", "done": len(pipelines) > 0,
          "detail": f"{len(pipelines)} pipeline(s)", "command": "cst pipeline new  (or: cst pipeline link s3://<registry>/...)"},
         {"id": "investigation", "title": "Open an investigation", "done": len(inv) > 0,

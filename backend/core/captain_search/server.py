@@ -296,29 +296,100 @@ def dataset_class_delete(name: str):
 
 @app.get("/api/datasets/tree", dependencies=A)
 def dataset_tree(cls: str | None = Query(None, alias="class")):
+    """The workspace as folders, the way the person organized it (see library.py)."""
     from . import classes as CL
+    from . import library as LIB
 
     c = ctx()
-    root = {"name": "", "path": "", "folders": [], "datasets": []}
-    for n in c.registry.names("dataset"):
-        if cls and cls not in CL.classes_of(c, n):
-            continue
-        m = c.registry.load("dataset", n)
-        parts = n.split("/")
-        node = root
-        for i, seg in enumerate(parts[:-1]):
-            path = "/".join(parts[: i + 1])
-            nxt = next((f for f in node["folders"] if f["name"] == seg), None)
-            if nxt is None:
-                nxt = {"name": seg, "path": path, "folders": [], "datasets": []}
-                node["folders"].append(nxt)
-            node = nxt
-        from . import classes as CL
 
-        node["datasets"].append({"name": n, "leaf": parts[-1], "latest": m.version, "kind": m.dataset_kind.value,
-                                 "classes": CL.classes_of(c, n),
-                                 "rows": m.row_count, "created": m.created_at.isoformat(), "description": m.description})
-    return root
+    def entry(n):
+        if cls and cls not in CL.classes_of(c, n):
+            return None
+        m = c.registry.load("dataset", n)
+        return {"name": n, "leaf": n.split("/")[-1], "latest": m.version, "kind": m.dataset_kind.value,
+                "classes": CL.classes_of(c, n), "rows": m.row_count, "created": m.created_at.isoformat(),
+                "description": m.description}
+
+    return LIB.tree(c, entry)
+
+
+@app.post("/api/library/folders", dependencies=A)
+def library_folder_make(body: dict):
+    from . import library as LIB
+
+    return {"folder": LIB.make_folder(ctx(), body.get("path", ""))}
+
+
+@app.delete("/api/library/folders", dependencies=A)
+def library_folder_remove(path: str):
+    from . import library as LIB
+
+    return LIB.remove_folder(ctx(), path)
+
+
+@app.post("/api/library/move", dependencies=A)
+def library_move(body: dict):
+    """Move datasets into a folder ("" is the top). Copies nothing and changes no versions."""
+    from . import library as LIB
+
+    return LIB.move(ctx(), list(body.get("names") or []), body.get("folder", ""))
+
+
+@app.post("/api/library/rename", dependencies=A)
+def library_rename(body: dict):
+    from . import library as LIB
+
+    return LIB.rename_folder(ctx(), body.get("from", ""), body.get("to", ""))
+
+
+@app.post("/api/datasets/import", dependencies=A)
+def datasets_import(body: dict):
+    """Files or folders dropped into the app: {paths: [...], folder}. Runs as a job, whose result lists what was
+    imported, updated, unchanged and skipped (with reasons)."""
+    from .data import importer as IM
+
+    c = ctx()
+    paths = [str(p) for p in body.get("paths") or []]
+    if not paths:
+        raise ValueError("drop at least one file or folder")
+    return {"job": _job(lambda p: IM.import_paths(c, paths, body.get("folder", ""), progress=p),
+                        f"import {len(paths)} item(s)")}
+
+
+@app.post("/api/storage/check", dependencies=A)
+def storage_check(body: dict):
+    """Can Captain read and write this bucket or folder with this cloud login? Plain-words answer."""
+    from . import attach as AT
+
+    return AT.check_storage(str(body.get("uri", "")).strip(), body.get("profile") or None)
+
+
+@app.get("/api/registries", dependencies=A)
+def registries_list():
+    from . import attach as AT
+
+    return AT.registries(ctx())
+
+
+@app.post("/api/registries", dependencies=A)
+def registries_attach(body: dict):
+    """Attach a model registry (s3://bucket[/prefix] in the <architecture>/<brand>/<version>/ layout) and read it.
+    Runs as a job. Attaching the same address again syncs it."""
+    from . import attach as AT
+
+    c = ctx()
+    uri = str(body.get("uri", "")).strip()
+    if not uri:
+        raise ValueError("name the registry's address, like s3://bucket/models")
+    return {"job": _job(lambda p: AT.attach(c, uri, body.get("profile") or None, body.get("label"), progress=p),
+                        f"attach {uri}")}
+
+
+@app.delete("/api/registries", dependencies=A)
+def registries_detach(uri: str):
+    from . import attach as AT
+
+    return AT.detach(ctx(), uri)
 
 
 @app.put("/api/datasets/{name:path}/classes", dependencies=A)

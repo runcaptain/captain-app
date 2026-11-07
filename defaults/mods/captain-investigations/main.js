@@ -8,7 +8,7 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, openOverlay, notify, run, spaces, focused, shared, setShared, exec, knownAgents } from "herdr";
-import { api, query, watchWorkspace } from "./kit/cst.js";
+import { api, query, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
 import { View } from "gpui-kit";
@@ -32,6 +32,7 @@ const outcome = (d) => (d ? words(d.outcome ?? d.decision ?? "decided") : null);
 
 export default class CaptainInvestigations extends View {
   init(_props, cx) {
+    keepAwake(cx);
     this.state = "";
     this.search = InputState.new({ placeholder: "Search investigations" });
     this.search.on("change", (_e, cx) => { this.q = this.search.value(); this.reload(cx); });

@@ -445,3 +445,27 @@ ms}` or `{ok: false, error}` in plain words. Install every driver with `pip inst
 - `project`: the `captain/` folder with its git commit, uncommitted-changes flag and file hash.
 
 Backtest runs now carry `manifest` (see docs/extending.md).
+
+## Your own data: storage, dropped files, folders, model registries
+
+- `POST /api/storage/check {uri, profile?}` returns `{ok, can_read, can_write, existing_workspace, error}`. Onboarding
+  calls it before `POST /api/workspaces`. It writes one marker (`.captain/access-check`) and deletes nothing. Errors are
+  plain sentences ("This login isn't allowed to write to s3://...").
+- `POST /api/datasets/import {paths: [files or folders], folder}` returns `{job}`. Its result is `{imported, updated,
+  unchanged, skipped: [{path, reason}]}`. Supported: csv, tsv, parquet, json, jsonl, ndjson, up to 2 GB a file.
+  Dropped folders keep their structure. A file with an existing name becomes a new version, and an unchanged one is
+  skipped. The kind (catalog, queries, judgments, events, generic) is guessed from the columns.
+- Folders are organization only. Moving copies nothing and changes no version.
+  - `GET /api/datasets/tree` returns the folder tree as the person arranged it.
+  - `POST /api/library/folders {path}` makes a folder, and `DELETE /api/library/folders?path=` removes an empty one.
+  - `POST /api/library/move {names, folder}` moves datasets.
+  - `POST /api/library/rename {from, to}` renames a folder.
+- Model registries (lineage):
+  - `GET /api/registries` lists the attached ones.
+  - `POST /api/registries {uri, profile?, label?}` returns `{job}`. It attaches a registry and reads it, or re-reads it
+    if already attached.
+  - `DELETE /api/registries?uri=` detaches one.
+  - The layout is `<architecture>/<brand>/<version>/MANIFEST.yaml` under any prefix. `/api/models` and
+    `/api/lineage?view=models` cover every attached registry.
+
+CLI: `cst data import <paths> --folder <f>`, `cst data mkdir|move|rename-folder|rmdir`, `cst registry attach|list|detach`.

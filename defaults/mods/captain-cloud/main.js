@@ -5,7 +5,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay } from "herdr";
-import { api, watchWorkspace } from "./kit/cst.js";
+import { api, watchWorkspace, keepAwake } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Empty, Problem } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -26,6 +26,7 @@ const form = (path) => () => openOverlay({ mod: "captain-commands", kind: "dialo
 
 export default class CaptainCloud extends View {
   init(_props, cx) {
+    keepAwake(cx);
     this.summary = null;
     this.problem = null;
     this.testing = {};
