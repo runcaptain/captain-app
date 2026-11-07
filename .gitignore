@@ -12,3 +12,6 @@
 /defaults/**/kit/*.d.ts
 /defaults/**/kit/jsconfig.json
 /defaults/captain/kit/*.d.ts
+
+# CAPTAIN: a stray build inside the vendored kit
+/vendor/gpui-kit/target

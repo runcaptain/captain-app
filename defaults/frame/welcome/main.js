@@ -3,7 +3,8 @@
 // records finished or skipped in shared "frame.welcomed". The palette's
 // "Captain: onboarding" (app.welcome) opens it again.
 //
-// Pages 1-3: the interface. Page 4: their work, a live checklist read from the
+// Page 1: where this workspace keeps its work, then a drop zone for their files, then an optional model registry
+// (kit/setup.js, shared with New workspace). Pages 2-4: the interface. Page 5: their work, a live checklist read from the
 // Captain Search daemon (GET /api/onboarding): each step done or next, the one
 // command behind "Show the command", and a Do it button that opens a designed form.
 
@@ -13,8 +14,9 @@ import { theme, props, closeOverlay, setShared, keys, openOverlay, appHome, spac
 import { api } from "./kit/cst.js";
 import { Skeleton, ServiceError } from "./kit/ui.js";
 import { isDark, palette } from "./kit/tokens.js";
+import { StorageSetup } from "./kit/setup.js";
 
-const PAGES = 4;
+const PAGES = 5;
 const I = (name) => `mods/captain-nav/${name}.svg`;
 
 const SECTIONS = [
@@ -52,6 +54,9 @@ export default class Welcome extends View {
     this.error = null;
     this.copied = null;
     this.seeding = false;
+    // Storage first (Edgar: "I'd rather this storage also be connected as well during onboarding").
+    this.setup = new StorageSetup({ first: true, done: () => { this.page = 2; } });
+    this.setup.start(cx);
     this.refresh(cx);
     cx.timer.every(4000, (cx) => { if (this.page === PAGES) this.refresh(cx); });
   }
@@ -198,9 +203,11 @@ export default class Welcome extends View {
     const empty = !this.steps.some((s) => s.id === "data" && s.done);
     return v_flex()
       .child(this.title(c, "Your work", `${this.workspace ? `Workspace ${this.workspace}. ` : ""}From a dataset to a decision, read from your real records: a step is done only when it is.`))
-      .when(empty, (e) => e.child(h_flex().gap(12).items_center().p(12).mb(6).bg(c.blueLight)
-        .child(div().flex_1().min_w(0).child(this.para(c, "No data yet? The demo seeds a small catalog, queries, judgments and a baseline to try every step on.")))
-        .child(this.button(c, "demo-seed", this.seeding ? "Setting it up..." : "Try the demo store", true, (_e, cx) => this.seed(cx)))))
+      // The synthetic store is a small secondary link, never the default: your own data comes first (page 1).
+      .when(empty, (e) => e.child(h_flex().gap(6).items_center().pb(8)
+        .child(div().text_size(12).text_color(c.grey500).child("Just looking around?"))
+        .child(div().id("demo-seed").text_size(12).text_color(c.blue).cursor_pointer().hover((s) => s.text_color(c.navy))
+          .on_click((_e, cx) => this.seed(cx)).child(this.seeding ? "Setting up the demo store..." : "Try the demo store"))))
       .when(Boolean(this.error), (e) => e.child(div().pb(6).text_size(12.5).text_color(c.fail).child(this.error)))
       .children(this.steps.map((s, i) => this.step(c, s, i)));
   }
@@ -212,7 +219,7 @@ export default class Welcome extends View {
       if (this.page === PAGES) this.refresh(cx);
       cx.notify();
     };
-    const pages = [this.pageNav, this.pageShells, this.pageYours, this.pageWork];
+    const pages = [(c) => this.setup.body(c), this.pageNav, this.pageShells, this.pageYours, this.pageWork];
     return v_flex().id("welcome").size_full().bg(c.surface).text_color(c.navy).font_family("Inter")
       .child(h_flex().h(52).flex_none().px(20).gap(10).items_center().border_b(1).border_color(c.rule).cursor_grab()
         .child(image("mods/captain-nav/captain.png").size(24).flex_none())
@@ -228,8 +235,10 @@ export default class Welcome extends View {
         .child(Scrollbar.vertical("welcome-body").absolute().inset_0()))
       .child(h_flex().h(60).flex_none().px(20).gap(8).items_center().border_t(1).border_color(c.rule)
         .when(this.page > 1, (e) => e.child(this.button(c, "w-back", "Back", false, (_e, cx) => go(this.page - 1, cx))))
+        .when(this.page === 1 && this.setup.step === "storage", (e) => e.child(div().id("w-later").text_size(12.5).text_color(c.grey500).cursor_pointer()
+          .hover((s) => s.text_color(c.navy)).on_click((_e, cx) => go(2, cx)).child("Set this up later")))
         .child(div().flex_1())
-        .child(this.page < PAGES
+        .child(this.page === 1 ? this.setup.footer(c) : this.page < PAGES
           ? this.button(c, "w-next", "Next", true, (_e, cx) => go(this.page + 1, cx))
           : this.button(c, "w-done", "Start", true, () => this.finish("finished"))));
   }

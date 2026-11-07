@@ -6,7 +6,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, openOverlay } from "herdr";
-import { api, watchWorkspace, keepAwake } from "./kit/cst.js";
+import { api, watchWorkspace } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
 
@@ -32,7 +32,6 @@ const task = (id, args) => () => openOverlay({ mod: "captain-forms", kind: "dial
 
 export default class CaptainHandoff extends View {
   init(_props, cx) {
-    keepAwake(cx);
     this.open = null;
     this.detail = null;
     this.tab = "readiness";

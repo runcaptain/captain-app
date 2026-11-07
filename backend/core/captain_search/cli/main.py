@@ -286,6 +286,9 @@ def sql(
     conn = _load_conn(c, conn_name)
     try:
         r = run_sql(conn, text, limit=limit, allow_large=local)
+        from ..metastore import record_query
+
+        record_query(c, conn_name, text, rows=r.table.num_rows, ms=r.elapsed_ms, source="cli")
     except WriteRefused as e:
         fail(str(e))
     except TooLarge as e:

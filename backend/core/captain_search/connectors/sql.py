@@ -67,6 +67,24 @@ def _default_port(engine: str) -> int:
     return {"postgres": 5432, "postgresql": 5432, "redshift": 5439, "mysql": 3306, "trino": 8080}.get(engine, 5432)
 
 
+@contextlib.contextmanager
+def open_engine(conn: Connection):
+    """A SQLAlchemy engine for a connection, with secrets filled in and the ssh tunnel open. Disposed on exit."""
+    if conn.network.mode == "remote-runner":
+        raise NotImplementedError("remote-runner connections run through `cst serve` on the runner")
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+
+    url = make_url(render_secrets(conn.url))
+    tunnel = _tunnel(conn, url) if conn.network.mode == "ssh-tunnel" else contextlib.nullcontext(url)
+    with tunnel as real_url:
+        eng = create_engine(real_url)
+        try:
+            yield eng
+        finally:
+            eng.dispose()
+
+
 def run_sql(conn: Connection, sql: str, *, limit: int | None = None, allow_large: bool = False,
             params: dict | None = None) -> Result:
     if not conn.writable:

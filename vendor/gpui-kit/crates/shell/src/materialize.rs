@@ -297,6 +297,8 @@ struct StateStyles {
     hover: Option<StyleRefinement>,
     active: Option<StyleRefinement>,
     focus: Option<StyleRefinement>,
+    /// CAPTAIN: while files from outside the app are dragged over the element.
+    drag_over: Option<StyleRefinement>,
 }
 
 impl StateStyles {
@@ -1651,9 +1653,17 @@ where
 /// differ. Components that are not interactive silently ignore state styles
 /// rather than failing the render — the script gets a `tracing` warning.
 fn with_hover<E: InteractiveElement>(element: E, states: &StateStyles) -> E {
-    match states.hover.clone() {
+    let element = match states.hover.clone() {
         Some(hover) => element.hover(move |mut style| {
             style.refine(&hover);
+            style
+        }),
+        None => element,
+    };
+    // CAPTAIN: `.drag_over(s => ...)`, the highlight while Finder files are over a drop target.
+    match states.drag_over.clone() {
+        Some(over) => element.drag_over::<gpui::ExternalPaths>(move |mut style, _, _, _| {
+            style.refine(&over);
             style
         }),
         None => element,
@@ -2677,6 +2687,7 @@ pub(in crate::materialize) fn resolve_ops(
                 let resolved = resolve_state(arena, *node);
                 match *name {
                     "hover" => states.hover = Some(resolved),
+                    "drag_over" => states.drag_over = Some(resolved),
                     "active" => states.active = Some(resolved),
                     "focus" => states.focus = Some(resolved),
                     // Not a runtime state at all: the one style from which

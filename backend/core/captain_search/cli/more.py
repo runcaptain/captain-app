@@ -778,4 +778,5 @@ from . import appctl  # noqa: E402,F401  cst app: open the desktop app and drive
 from . import invest  # noqa: E402,F401  investigations and signals
 from . import ext  # noqa: E402,F401  extensions and the captain/ project folder
 from . import library  # noqa: E402,F401  data import, folders, model registries
+from . import tables  # noqa: E402,F401  the table browser
 from . import jobs  # noqa: E402,F401  cst job and cst compute setup

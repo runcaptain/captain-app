@@ -110,8 +110,13 @@ pub fn parse_discovery(line: &str) -> Option<(u16, String)> {
 /// Captain Search's home: $CST_HOME, else ~/.config/captain-search. Workspaces' agent
 /// folders live in <home>/agent/<workspace>.
 pub fn cst_home() -> Option<PathBuf> {
-    std::env::var_os("CST_HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/captain-search")))
+    let set = std::env::var_os("CST_HOME").filter(|v| !v.is_empty()).map(PathBuf::from);
+    // CAPTAIN: a test window never falls back to the person's own home: it would show (and could
+    // change) their real workspaces. Without its own CST_HOME it has no backend at all.
+    if set.is_none() && crate::test_window() {
+        return None;
+    }
+    set.or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/captain-search")))
 }
 
 fn serve_json() -> Option<PathBuf> {
@@ -196,6 +201,11 @@ pub fn ensure(ready: impl Fn() + Send + 'static) {
     if d.state != State::Idle {
         return;
     }
+    // CAPTAIN: a test window without its own CST_HOME starts nothing (it would serve the person's real home).
+    let Some(home) = cst_home() else {
+        d.state = State::Failed("This test window has no CST_HOME of its own, so it starts no services.".into());
+        return;
+    };
     if let Some((port, token)) = running() {
         // Not ours: reuse it, never stop it.
         d.state = State::Ready { port, token };
@@ -208,6 +218,7 @@ pub fn ensure(ready: impl Fn() + Send + 'static) {
         return;
     };
     let mut cmd = Command::new(&bin);
+    cmd.env("CST_HOME", &home);
     cmd.args(["serve", "--port", "0"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     {
         use std::os::unix::process::CommandExt;

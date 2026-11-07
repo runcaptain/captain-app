@@ -1940,6 +1940,8 @@ const ELEMENT_METHODS: &str = r#"    /**
      * ignored, so a chain and a block body both work.
      */
     hover<Self extends Element>(this: Self, declare: (el: NativeElement) => NativeElement | void): Self;
+    /** CAPTAIN: styles while files dragged from outside the app (Finder) are over this element; pair with `on_drop`. */
+    drag_over<Self extends Element>(this: Self, declare: (el: NativeElement) => NativeElement | void): Self;
     /** Styles applied while the element is pressed. */
     active<Self extends Element>(this: Self, declare: (el: NativeElement) => NativeElement | void): Self;
     /** Styles applied while the element has focus. */

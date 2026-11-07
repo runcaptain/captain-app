@@ -5,7 +5,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, run, setShared, shared } from "herdr";
-import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
+import { api, retry, details, watchWorkspace } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
@@ -135,8 +135,6 @@ export default class CaptainRuns extends View {
       }
     });
     // Another space, another workspace: drop what was shown and load this tab again.
-    // Answers can stall until the next redraw in the app: redraw while any request waits.
-    keepAwake(cx);
     watchWorkspace(cx, (cx) => {
       this.data = {}; this.sel = {}; this.detail = {}; this.open = {}; this.grader = null; this.error = null;
       this.load(cx, this.tab);

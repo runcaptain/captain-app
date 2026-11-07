@@ -3765,6 +3765,9 @@ impl AppWindow {
         }
         // Herdr was launched again: this window comes to the front instead.
         if cmd.get("raise").is_some() {
+            if crate::test_window() {
+                return json!({ "ok": true });
+            }
             cx.activate(true);
             window.activate_window();
             return json!({ "ok": true });
