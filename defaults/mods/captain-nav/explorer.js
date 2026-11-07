@@ -2,7 +2,7 @@
 // (GET /api/explorer, kit/scopes.js): the scope groups (Brand > Site > Engine by default, Brand and Site optional),
 // unscoped engines, Projects, and Settings > Scope model, with All engines and All experiments as real lists, like
 // folders (Edgar: "All Experiments and All Engines aren't lists"): the engines (GET /api/engines) and the experiments
-// newest first (GET /api/backtests, ordered by GET /api/runs), each following the Explorer's pick. Selecting a node sets
+// newest first (GET /api/backtests: latest run, else creation), each following the Explorer's pick. Selecting a node sets
 // shared "captain.scope" = {kind: scope | engine | project | view, id, label}, which the five sections read to
 // filter to it and below; "All engines" is the whole workspace. Each scope's and engine's menu holds its actions
 // (Add brand, Add site, Add engine, Rename, Move, Archive), which open captain-scope.
@@ -58,10 +58,11 @@ export class Explorer {
     cx.spawn(async (cx) => {
       try {
         const sample = Boolean(shared("captain.explorer.sample"));
-        const [r, en, bt, rn] = await Promise.all([loadExplorer(),
-          sample ? null : api("/api/engines", { scoped: false }), sample ? null : api("/api/backtests"), sample ? null : api("/api/runs?limit=500")]);
+        const [r, en, bt] = await Promise.all([loadExplorer(),
+          sample ? null : api("/api/engines", { scoped: false }), sample ? null : api("/api/backtests")]);
         this.engines = en ? (en.ok ? (en.data ?? []).filter((e) => !e.archived) : this.engines ?? null) : null;
-        this.experiments = bt ? (bt.ok ? this.newestFirst(bt.data ?? [], rn?.ok ? rn.data ?? [] : []) : this.experiments ?? null) : [];
+        // Already newest first (the services sort by latest run, else creation).
+        this.experiments = bt ? (bt.ok ? bt.data ?? [] : this.experiments ?? null) : [];
         // Rows that move under the pointer take a click meant for something else, so note when the shape changed.
         const shape = JSON.stringify(r.tree, (k, v) => (k === "pipelines" ? undefined : v));
         if (shape !== this.shape) { this.shape = shape; this.movedAt = Date.now(); }
@@ -72,15 +73,6 @@ export class Explorer {
         cx.notify();
       }
     });
-  }
-
-  /** Experiments newest first: by their latest run (GET /api/runs is newest first), the ones never run last. Each
-   *  carries its latest run's state for the marker. */
-  newestFirst(backtests, runs) {
-    const latest = new Map();
-    runs.forEach((r, i) => { if (!latest.has(r.name)) latest.set(r.name, { ...r, order: i }); });
-    return backtests.map((b) => ({ ...b, last: latest.get(b.name) ?? null }))
-      .sort((a, b) => (a.last?.order ?? 1e9) - (b.last?.order ?? 1e9) || String(a.name).localeCompare(String(b.name)));
   }
 
   // What's folded, per workspace (shared "captain.explorer.folds" = {workspace: {key: open}}). Everything starts open
@@ -176,7 +168,7 @@ export class Explorer {
           : [{ kind: "hint", key: "all-engines/none", label: "No engines yet: add one", overlay: ADD_ENGINE }] };
       }
       if (n.kind === "view" && n.id === "all-experiments") {
-        const first = exps.slice(0, FIRST).map((b) => ({ kind: "experiment", key: `all-experiments/${b.name}`, name: b.name, latest: b.latest, last: b.last, runs: b.runs }));
+        const first = exps.slice(0, FIRST).map((b) => ({ kind: "experiment", key: `all-experiments/${b.name}`, name: b.name, latest: b.latest, lastRun: b.last_run, runs: b.runs }));
         return { kind: "list", id: n.id, key: n.id, label: n.label, about: ABOUT[n.id], count: exps.length, children: exps.length
           ? [...first, ...(exps.length > FIRST ? [{ kind: "more", key: "all-experiments/more", label: `Show all ${exps.length}` }] : [])]
           : [{ kind: "hint", key: "all-experiments/none", label: "No experiments yet: run one", overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "backtest" } } }] };
@@ -188,10 +180,9 @@ export class Explorer {
     });
   }
 
-  /** An experiment's marker: its latest run finished, didn't finish, or it has never run. */
+  /** An experiment's marker: it has run (and when, on hover), or it hasn't yet. */
   marker(c, n) {
-    const r = n.last;
-    const [color, words] = !r ? [c.grey300, "Not run yet"] : r.complete === false ? [c.warn ?? "#d97706", "Its latest run didn't finish"] : [c.good, `Latest run ${String(r.created ?? "").slice(0, 10)}`];
+    const [color, words] = n.lastRun ? [c.good, `Latest run ${String(n.lastRun).slice(0, 10)}`] : [c.grey300, "Not run yet"];
     return div().id(`ex-mark-${n.key}`).size(7).flex_none().rounded_full().bg(color).tooltip(words);
   }
 
