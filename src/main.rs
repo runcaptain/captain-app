@@ -216,6 +216,11 @@ fn main() {
         });
 }
 
+/// CAPTAIN: true for a test copy started by a real-window check (CAPTAIN_TEST_WINDOW=1).
+pub(crate) fn test_window() -> bool {
+    std::env::var("CAPTAIN_TEST_WINDOW").is_ok_and(|v| v == "1")
+}
+
 /// The main window, on a connected core.
 pub fn open_main(core: std::sync::Arc<hc::Core>, requests: async_channel::Receiver<mods::Request>, cx: &mut App) {
             let (window_bounds, display_id) = place::initial(cx);
@@ -238,9 +243,15 @@ pub fn open_main(core: std::sync::Arc<hc::Core>, requests: async_channel::Receiv
                 window_decorations: Some(WindowDecorations::Client),
                 // Herdr Dev and other side-by-side builds get their own dock icon.
                 app_id: Some(std::env::var("CAPTAIN_APP_ID").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| brand::BUNDLE_ID.into())),
+                // CAPTAIN: a test copy (CAPTAIN_TEST_WINDOW=1, set by the real-window checks) opens behind
+                // whatever the person is using and never takes the keyboard, so it can't be mistaken for
+                // their Captain or interrupt their typing.
+                focus: !test_window(),
                 ..Default::default()
             };
             cx.open_window(options, |window, cx| cx.new(|cx| window::AppWindow::new(core, requests, window, cx)))
                 .expect("cannot open the Captain window");
-            cx.activate(true);
+            if !test_window() {
+                cx.activate(true);
+            }
 }

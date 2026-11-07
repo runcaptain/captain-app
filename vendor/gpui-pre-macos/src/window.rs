@@ -2999,6 +2999,12 @@ fn report_visibility(window_state: &Arc<Mutex<MacWindowState>>) {
         .detach();
 }
 
+/// CAPTAIN: a test copy (CAPTAIN_TEST_WINDOW=1) opens behind the person's windows, where AppKit soon reports it
+/// covered. It keeps drawing anyway, so a real-window check's screenshots show the current frame, not a stale one.
+fn keeps_drawing_when_hidden() -> bool {
+    std::env::var("CAPTAIN_TEST_WINDOW").is_ok_and(|v| v == "1")
+}
+
 extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
@@ -3010,7 +3016,7 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
         {
             lock.move_traffic_light();
             lock.start_display_link();
-        } else {
+        } else if !keeps_drawing_when_hidden() {
             lock.stop_display_link();
         }
     }

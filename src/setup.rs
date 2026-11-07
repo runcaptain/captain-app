@@ -52,7 +52,9 @@ pub fn open(need: Need, requests: async_channel::Receiver<Request>, cx: &mut App
     let icon = Arc::new(Image::from_bytes(ImageFormat::Png, ICON.to_vec()));
     cx.open_window(options, |_, cx| cx.new(|_| Setup { need, state: State::Ready, requests: Some(requests), icon }))
         .expect("cannot open the Captain window");
-    cx.activate(true);
+    if !crate::test_window() {
+        cx.activate(true);
+    }
 }
 
 impl Setup {
