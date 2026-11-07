@@ -928,8 +928,9 @@ Chained builders with GPUI's snake_case names: `div()`, `h_flex()`,
 `.rounded(n)`; `.id("unique")` then `.on_click(...)`, `.on_mouse_down("right", ...)`,
 `.hover((s) => s.bg(c))`, `.on_scroll_wheel(...)`; keyboard: `this.h = cx.focus_handle()`
 in init, `.track_focus(this.h).on_key_down((e, cx) => …)`, `this.h.focus()`.
-`.on_drop((event, cx) => …)` on a plain layout element receives external files as
-`event.paths` (absolute paths). The feedback form accepts dropped images with
+`.on_drop((event, cx) => …)` on a plain layout element receives files and folders
+dragged in from Finder as `event.paths` (absolute paths), and `.drag_over((s) => s.bg(c))`
+styles it while they're over it, so a drop target can show where they'll land. The feedback form accepts dropped images with
 the same limits, previews and removal as picked images.
 `.on_hover((hovered, cx) => …)` reports pointer entry and exit on buttons
 and other interactive controls too.

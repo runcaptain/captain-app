@@ -53,7 +53,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "seeding a scratch workspace"
-CST_HOME=$WORK/cst "$CST" init forms --storage "$WORK/store" >/dev/null 2>&1
+CST_HOME=$WORK/cst "$CST" init test --storage "$WORK/store" >/dev/null 2>&1
 CST_HOME=$WORK/cst "$CST" demo seed >/dev/null 2>&1
 
 # Every task, with values that bring out the fields that only appear after a choice.
@@ -120,5 +120,9 @@ for n in $NAMES; do
   if [[ "$SHOWN" != *captain-forms* ]]; then echo "$n: NOT ON SCREEN (overlays: $SHOWN) $OUT/$n.png"; app status | python3 -c "import json,sys; print(json.load(sys.stdin).get('errors'))"; fail=1; continue; fi
   if python3 tests/mod-render/forms-shot.py "$OUT/$n.png" && [[ $errs == 0 ]]; then echo "$n: drawn"; else echo "$n: NOT DRAWN ($(python3 tests/mod-render/forms-shot.py "$OUT/$n.png" --verbose | cut -c1-120); errors $errs) $OUT/$n.png"; fail=1; fi
 done
+# New workspace: storage, then the drop zone (kit/setup.js). The welcome tour's first page draws the same flow, but
+# the tour opens as its own window, outside this window's shot; `captain-app check defaults/frame/welcome` covers it.
+shoot captain-setup setup
+if [[ "$SHOWN" == *captain-setup* ]] && python3 tests/mod-render/forms-shot.py "$OUT/setup.png" --any; then echo "setup: drawn"; else echo "setup: NOT DRAWN ($SHOWN) $OUT/setup.png"; fail=1; fi
 [[ $fail == 0 ]] && echo "all forms drawn" || echo "shots: $OUT"
 exit $fail

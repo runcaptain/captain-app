@@ -27,7 +27,8 @@ def analyze(path):
     if right - left < w * 0.2:
         return {"ok": False, "why": "no dialog found"}
     # Its side padding is white from top to bottom, broken only by the 1 px header and footer rules.
-    scale = (right - left) / 560
+    # Forms are 560 px wide at 1x. With --any (another dialog width), the scale comes from the 1100 px test window.
+    scale = (right - left) / 560 if "--any" not in sys.argv else max(1, round(w / 1100))
     m = max(2, int(6 * scale))
     rws = [white(left + m, y) and white(right - 1 - m, y) for y in range(h)]
     for y in range(1, h - 3):

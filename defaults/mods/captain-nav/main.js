@@ -58,6 +58,8 @@ const TASK_ENTRIES = [
   ["dataset-class", "New dataset class", "class type role catalog queries judgments"],
   ["demo", "Try the demo store", "sample example data"],
 ];
+// New workspace: where it keeps its work, then a drop zone, then an optional model registry (captain-setup).
+const SETUP = { mod: "captain-setup", kind: "dialog", width: 600, height: 640 };
 const go = (section, extra) => ({ mod: "captain-go", kind: "popup", width: 1, height: 1, props: { section, ...extra } });
 
 export function staticEntries(sections) {
@@ -68,6 +70,7 @@ export function staticEntries(sections) {
     { name: "captain-nav.theme-dark", args: {}, group: "Captain", title: "Switch to dark", words: "appearance theme dark mode night" },
     { name: "captain-nav.theme-system", args: {}, group: "Captain", title: "Match the system appearance", words: "appearance theme system auto" },
     { name: "captain-nav.space-new", args: {}, group: "Captain", title: "New space for this workspace", words: "space workspace terminals" },
+    { group: "Captain", title: "New workspace...", words: "workspace storage folder bucket s3 gcs azure create start import drop", overlay: SETUP },
     { name: "app.welcome", args: {}, group: "Captain", title: "Show the Captain tour", words: "onboarding welcome checklist start setup" },
     { group: "Captain", title: "Cloud and compute", words: "aws gcp azure login profile region compute", overlay: { mod: "captain-cloud", kind: "dialog", width: 760, height: 640 } },
     { group: "Captain", title: "Run a cst command...", words: "cli advanced power command", overlay: { mod: "captain-commands", kind: "dialog", width: 560, height: 560, props: { menu: "all" } } },
@@ -224,6 +227,9 @@ export default class CaptainNav extends View {
         .children((this.workspaces?.length ? this.workspaces : [this.workspace]).map((w) => h_flex().id(`space-new-${w ?? "default"}`).h(28).px(16).gap(6).items_center().cursor_pointer().text_size(12.5).text_color(c.blue)
           .hover((s) => s.bg(c.blueLight)).on_click((_e, cx) => { this.spacesOpen = false; cx.spawn(async (cx) => { await this.newSpace(undefined, w); cx.notify(); }); })
           .child(svg("mods/captain-nav/plus.svg").size(12)).child(`New space${w ? ` for ${w}` : ""}`)))
+        .child(h_flex().id("workspace-new").h(28).px(16).gap(6).items_center().cursor_pointer().text_size(12.5).text_color(c.blue)
+          .hover((s) => s.bg(c.blueLight)).on_click((_e, cx) => { this.spacesOpen = false; cx.notify(); openOverlay(SETUP); })
+          .child(svg("mods/captain-nav/plus.svg").size(12)).child("New workspace..."))
         .when(Boolean(current), (x) => x.child(h_flex().id("space-rename").h(28).px(16).items_center().cursor_pointer().text_size(12.5).text_color(c.grey900)
           .hover((s) => s.bg(c.surface2)).on_click((_e, cx) => { this.spacesOpen = false; cx.notify();
             openOverlay({ mod: "prompt", kind: "dialog", width: 380, props: { title: "Rename space", hint: current.name, command: { name: "space.rename", args: { id: current.id } } } }); })
