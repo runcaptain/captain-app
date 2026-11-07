@@ -137,13 +137,13 @@ export class Profiler {
     const cell = (w, el) => (w === 0 ? div().flex_1().min_w(120) : div().w(w).flex_none()).px(8).truncate().child(el);
     return v_flex().id("prof-slow").gap(0).border_1().border_color(c.rule)
       .child(h_flex().h(26).items_center().bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium()
-        .child(cell(0, "Slowest queries")).child(cell(116, "Arm")).child(cell(76, "Total")).child(cell(128, "Most time in")).child(cell(80, "Candidates")))
+        .child(cell(0, "Slowest queries")).child(cell(116, "Arm")).child(cell(76, "Total")).child(cell(120, "Most time in")).child(cell(92, "Candidates")))
       .children(rows.map((q, i) => h_flex().id(`prof-slow-${i}`).h(26).items_center().border_b(1).border_color(c.rule).text_size(12).cursor_pointer()
         .hover((s) => s.bg(c.blueLight)).tooltip(q.query_id ? "Explain why it ranked as it did, stage by stage" : "This query has no id in the run, so it can't be explained")
         .when(!!q.query_id, (e) => e.on_click(() => openOverlay({ mod: "captain-explain", kind: "dialog", width: 0.9, height: 0.9, props: { run, query_id: q.query_id } })))
         .child(cell(0, q.query)).child(cell(116, div().font_family(MONO).child(q.arm)))
         .child(cell(76, div().font_family(MONO).child(ms(q.total_ms))))
-        .child(cell(128, `${q.dominant_stage ?? "none"}${q.stages_ms?.[q.dominant_stage] != null ? `, ${ms(q.stages_ms[q.dominant_stage])}` : ""}`))
-        .child(cell(80, div().font_family(MONO).child(q.candidates === null || q.candidates === undefined ? "" : int(q.candidates))))));
+        .child(cell(120, `${q.dominant_stage ?? "none"}${q.stages_ms?.[q.dominant_stage] != null ? `, ${ms(q.stages_ms[q.dominant_stage])}` : ""}`))
+        .child(cell(92, div().font_family(MONO).child(q.candidates === null || q.candidates === undefined ? "" : int(q.candidates))))));
   }
 }

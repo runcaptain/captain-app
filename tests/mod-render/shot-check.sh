@@ -19,7 +19,7 @@ block_of() { case "$1" in captain-data) echo data ;; captain-runs) echo runs ;; 
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:import" "captain-data:import-table") ;;
+    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
     captain-runs) EXTRA+=("captain-runs:jobs") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
@@ -146,6 +146,7 @@ props_of() {
     captain-data:notebook) echo '{"tab": "notebooks", "notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:models) echo '{"tab": "models"}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;
+    captain-data:quality) echo '{"pageTab": "quality"}' ;;
     captain-data:insights) echo '{"pageTab": "insights"}' ;;
     captain-data:lineage) echo '{"pageTab": "lineage"}' ;;
     captain-runs:grading) echo '{"tab": "grading"}' ;;
@@ -204,7 +205,7 @@ EOF
   ok=0
   # The notebook view runs every cell on a fresh Python first: give it time to finish before judging.
   [[ "$view" == captain-data:notebook || "$view" == captain-data:chart || "$view" == captain-data:bignotebook ]] && sleep 25
-  [[ "$view" == captain-data:import* || "$view" == captain-compare:profile ]] && sleep 8
+  [[ "$view" == captain-data:import* || "$view" == captain-compare:profile || "$view" == captain-data:quality ]] && sleep 8
   for i in $(seq 1 12); do
     sleep 1.5
     # A window in the background may not draw a new frame after its data arrives, and shot saves the last frame
