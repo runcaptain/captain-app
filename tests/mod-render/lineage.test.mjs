@@ -63,3 +63,15 @@ assert.equal(traced, 'price', 'a column is traced');
 g.setColumns([{ from: { node: 't:orders', column: 'amount' }, to: { node: 'd:catalog', column: 'price' } }]);
 assert.equal(g.columnAt('t:orders'), 'amount');
 console.log('lineage test: ok');
+
+// No focus (a project's whole lineage): columns by longest path from the roots.
+const { ranks } = await import('../../defaults/captain/kit/lineage.js');
+const r = ranks(graph);
+assert.equal(r.get('t:orders'), 0);
+assert.equal(r.get('d:catalog'), 1);
+assert.equal(r.get('p:ranker'), 2, 'after its longest input (catalog), not its model');
+assert.equal(r.get('h:prod'), 4);
+const whole = new LineageGraph({ id: 'all' });
+whole.set(graph, null);
+assert.equal(whole.layout().pos.size, graph.nodes.length, 'every node shown');
+console.log('lineage ranks: ok');

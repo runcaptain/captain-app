@@ -8,7 +8,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { theme, shared, props as layoutProps } from "herdr";
-import { api, retry, details, watchWorkspace } from "./kit/cst.js";
+import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
@@ -122,6 +122,8 @@ export default class CaptainCompare extends View {
         this.open(cx, o.backtest, v);
       }
     });
+    // The Explorer's pick filters the backtests: reload them, keeping the open run if it's still listed.
+    watchScope(cx, (cx) => { this.backtests = null; this.loadBacktests(cx); cx.notify(); });
     // Another space, another workspace: back to its first run.
     watchWorkspace(cx, (cx) => {
       this.sel = null; this.run = null; this.compat = null; this.hist = null; this.side = null; this.backtests = null; this.error = null;
@@ -142,7 +144,10 @@ export default class CaptainCompare extends View {
       const h = shared("captain.compare") ?? (this.wantProps.backtest ? { backtest: this.wantProps.backtest, version: this.wantProps.version ?? 1 } : null);
       const first = h?.backtest ? h : this.backtests?.[0] ? { backtest: this.backtests[0].name, version: this.backtests[0].latest } : null;
       if (h) this.handed = `${h.backtest}@${h.version}`;
-      if (first) this.open(cx, first.backtest, first.version);
+      // The run on screen stays when it's still listed (the list reloads when the Explorer's pick changes).
+      const kept = this.sel && (this.backtests ?? []).some((b) => b.name === this.sel.backtest);
+      if (first && !kept) this.open(cx, first.backtest, first.version);
+      else if (!first && !kept) { this.sel = null; this.run = null; }
       cx.notify();
     });
   }

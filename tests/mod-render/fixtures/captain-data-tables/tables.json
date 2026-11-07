@@ -1,0 +1,1 @@
+[{"connection": "wh", "engine": "snowflake", "pulled_at": "2026-11-06T20:00:00+00:00", "schemas": 1, "tables": 1}, {"connection": "pg", "engine": "postgres", "pulled_at": null, "schemas": null, "tables": null}]

@@ -8,7 +8,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { theme, shared, props as layoutProps } from "herdr";
-import { api, retry, details, watchWorkspace } from "./kit/cst.js";
+import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button, Badge } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
@@ -146,6 +146,14 @@ export default class CaptainData extends View {
         else { this.wanted = o.dataset; this.load(cx); }
         cx.notify();
       }
+    });
+    // The Explorer's pick (a brand, site, engine or project) filters every list: reload what's shown.
+    watchScope(cx, (cx) => {
+      this.load(cx);
+      this.lib.load(cx);
+      if (this.models.regs !== null) this.models.load(cx);
+      if (this.tables.conns !== null) this.tables.load(cx);
+      cx.notify();
     });
     // Another space, another workspace: start over on its datasets and labels.
     watchWorkspace(cx, (cx) => {

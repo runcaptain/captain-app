@@ -31,6 +31,11 @@ process.on('uncaughtException', (e) => { stop(); console.error(e); process.exit(
 const line = await new Promise((res, rej) => { let b = ''; serve.stdout.on('data', (d) => { b += d; if (b.includes('\n')) res(b.split('\n')[0]); }); serve.on('exit', () => rej(new Error('cst serve exited'))); });
 const j = JSON.parse(line);
 globalThis.__shared = { 'captain.daemon': { state: 'ready', base: `http://127.0.0.1:${j.port}`, token: j.token } };
+const call = async (p, body) => (await fetch(`http://127.0.0.1:${j.port}${p}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${j.token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })).json();
+await call('/api/projects', { name: 'Acme' });
+const brand = await call('/api/scopes', { type: 'brand', name: 'Acme Shop' });
+// The Explorer has the brand picked: the import's "For" defaults to it.
+globalThis.__shared['captain.scope'] = { kind: 'scope', id: brand.id, label: 'Acme Shop' };
 globalThis.__props = { overlay: 'o1' };
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'captain-import-'));
@@ -57,17 +62,24 @@ h.mod.name.set_value('shop-products');
 await h.click(`folder-${h.mod.folders.indexOf('Shop')}`);
 assert.equal(h.mod.folder, 'Shop');
 await h.click('import-go');
-await until((t) => /Imported shop-products \(version 1\) into Shop: [\d,]+ rows\./.test(t), 'imported into a folder');
+assert.equal(h.mod.dest.id, brand.id, 'defaults to the Explorer pick');
+await until((t) => /Imported shop-products \(version 1\) into Shop, for Acme Shop: [\d,]+ rows\./.test(t), 'imported into a folder, for the brand');
+const scoped = await (await fetch(`http://127.0.0.1:${j.port}/api/datasets`, { headers: { Authorization: `Bearer ${j.token}`, 'X-CST-Scope': `scope:${brand.id}` } })).json();
+assert.ok(scoped.some((d) => d.name.endsWith('shop-products')), `the brand's datasets include it: ${JSON.stringify(scoped).slice(0, 200)}`);
 const tree = await (await fetch(`http://127.0.0.1:${j.port}/api/datasets/tree`, { headers: { Authorization: `Bearer ${j.token}` } })).json();
 const shop = tree.folders.find((f) => f.path === 'Shop');
 assert.ok(shop && shop.datasets.some((d) => d.leaf === 'shop-products'), `the dataset is in Shop: ${JSON.stringify(shop)?.slice(0, 200)}`);
 
 await h.click('step-1');
 await h.click('src-file');
+// This time for the project, which the import itself records.
+await h.click(`dest-${h.mod.dests.findIndex((d) => d.kind === 'project' && d.id === 'acme')}`);
 h.mod.path.set_value(drop);
 await h.click('folder-0');
 await h.click('file-go');
 await until((t) => /Added 1 dataset, skipped 1: .*isn't a table/.test(t), 'file import with a skipped file');
+const acme = await call('/api/projects/acme');
+assert.ok(JSON.stringify(acme).includes('rugs'), `the project holds the imported file: ${JSON.stringify(acme).slice(0, 300)}`);
 
 stop();
 fs.rmSync(work, { recursive: true, force: true });

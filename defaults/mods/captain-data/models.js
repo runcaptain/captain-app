@@ -8,6 +8,8 @@ import { api } from "./kit/cst.js";
 import { MONO } from "./kit/tokens.js";
 import { Button } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
+import { LineageGraph } from "./kit/lineage.js";
+import { shared } from "herdr";
 
 const sentence = (t) => { const s = String(t ?? "").trim(); return s ? `${s[0].toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}` : ""; };
 function ago(iso) {
@@ -37,14 +39,46 @@ export class Models {
     this.uri = InputState.new({ placeholder: "s3://bucket/models" });
     this.label = InputState.new({ placeholder: "Name it (optional)" });
     this.uri.on("submit", (_e, cx) => this.attach(cx));
+    // Whose models: All, a project, or a brand, site or engine (the Explorer's pick by default).
+    this.owners = [{ kind: null, id: null, name: "All" }];
+    this.owner = null;
+    this.projectGraph = new LineageGraph({ id: "project-lineage", onFocus: () => {} });
+    this.projectLineage = null;
+  }
+
+  /** The models route for the chosen owner. The filter here decides, so the request isn't also scoped by the header. */
+  modelsPath() {
+    const o = this.owner;
+    if (!o?.kind) return "/api/models";
+    return o.kind === "project" ? `/api/models?project=${encodeURIComponent(o.id)}` : `/api/models?scope=${encodeURIComponent(`${o.kind}:${o.id}`)}`;
   }
 
   load(cx) {
     cx.spawn(async (cx) => {
-      const [r, m, p] = await Promise.all([api("/api/registries"), api("/api/models"), api("/api/cloud/profiles")]);
+      if (this.owners.length === 1) {
+        const ex = await api("/api/explorer", { scoped: false });
+        const walk = (nodes) => { for (const n of nodes ?? []) {
+          if (["scope", "engine", "project"].includes(n.kind) && n.id) this.owners.push({ kind: n.kind, id: n.id, name: n.name ?? n.label });
+          walk(n.children);
+        } };
+        if (ex.ok) walk(ex.data?.tree);
+        const pick = shared("captain.scope");
+        this.owner = this.owners.find((o) => o.kind === pick?.kind && o.id === pick?.id) ?? this.owners[0];
+      }
+      const [r, m, p] = await Promise.all([api("/api/registries"), api(this.modelsPath(), { scoped: false }), api("/api/cloud/profiles")]);
       if (r.ok) { this.regs = Array.isArray(r.data) ? r.data : []; this.error = null; } else if (!r.starting) this.error = r;
       this.models = m.ok && Array.isArray(m.data) ? m.data : [];
       this.profiles = p.ok && Array.isArray(p.data) ? p.data : [];
+      // A project: its whole model lineage (models, parents, the pipelines serving them, the backtests comparing them).
+      this.projectLineage = null;
+      if (this.owner?.kind === "project") {
+        const l = await api(`/api/projects/${encodeURIComponent(this.owner.id)}/lineage`, { scoped: false });
+        if (l.ok) {
+          const split = (label) => { const mm = /^(.*)@v?(\d+)$/.exec(String(label ?? "")); return mm ? { label: mm[1], version: mm[2] } : { label }; };
+          this.projectLineage = { nodes: (l.data.nodes ?? []).map((n) => ({ ...n, ...split(n.label ?? n.id) })), edges: l.data.edges ?? [] };
+          this.projectGraph.set(this.projectLineage, null);
+        }
+      }
       cx.notify();
     });
   }
@@ -143,6 +177,15 @@ export class Models {
           .child(div().text_size(11.5).text_color(c.grey900).child(`${r.models == null ? "Not read yet" : `${r.models} model${r.models === 1 ? "" : "s"}`}, synced ${ago(r.synced_at)}`)))
         .child(Button(c, `reg-sync-${i}`, "Sync", (_e, cx) => this.sync(cx, r), { small: true, disabled: !!this.job }))
         .child(Button(c, `reg-detach-${i}`, this.confirm === r.uri ? "Detach? Click again" : "Detach", (_e, cx) => this.detach(cx, r), { kind: "quiet", small: true }))))
+      .when(this.owners.length > 1, (e) => e.child(h_flex().id("model-owners").gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
+        .child(div().flex_none().text_color(c.grey500).child("Whose"))
+        .children(this.owners.map((o, i) => div().id(`owner-${i}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer()
+          .border_1().border_color(this.owner === o ? c.blue : c.grey300).bg(this.owner === o ? c.blueLight : c.surface).text_color(this.owner === o ? c.blue : c.grey900)
+          .on_click((_e, cx) => { this.owner = o; this.load(cx); cx.notify(); }).child(o.name)))))
+      .when(!!this.projectLineage?.nodes?.length, (e) => e.child(v_flex().gap(6)
+        .child(div().text_size(14).font_semibold().child(`${this.owner.name}: models, what they were built from, and where they run`))
+        .child(this.projectGraph.render(c))))
+      .when(this.owner?.kind && !this.models.length && this.regs !== null, (e) => e.child(div().text_size(12).text_color(c.grey500).child(`No models for ${this.owner.name} yet.`)))
       .when(this.models.length > 0, (e) => e.child(this.lineage(c)));
   }
 

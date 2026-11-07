@@ -7,7 +7,7 @@
 //    into a folder (POST /api/sql {save}, then POST /api/library/move).
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, EditorState, Editor } from "gpui-base";
-import { theme, props, closeOverlay, openOverlay, pickFolder, home } from "herdr";
+import { theme, props, closeOverlay, openOverlay, pickFolder, home, shared } from "herdr";
 import { api } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
@@ -50,11 +50,26 @@ export default class CaptainImport extends View {
     this.busy = false;
     this.path = InputState.new({ placeholder: "~/Downloads/catalogs" });
     this.name = InputState.new({ placeholder: "Name the dataset, like products" });
-    this.sql = EditorState.new({ language: "sql", value: "", font_family: MONO, font_size: 13, line_numbers: true });
+    // SQL for databases (and PostHog's HogQL); JSON for a Google Analytics 4 report spec.
+    this.editors = {
+      sql: EditorState.new({ language: "sql", value: "", font_family: MONO, font_size: 13, line_numbers: true }),
+      json: EditorState.new({ language: "json", value: "", font_family: MONO, font_size: 13, line_numbers: true }),
+    };
+    this.dests = [{ kind: null, id: null, name: "None" }];
+    this.dest = this.dests[0];
     this.path.on("submit", (_e, cx) => this.importFiles(cx, [expand(this.path.value())]));
     cx.spawn(async (cx) => {
-      const [k, t] = await Promise.all([api("/api/connections"), api("/api/datasets/tree")]);
+      // Every source and folder, whatever the Explorer has picked: the pick is where the import goes, not what it reads.
+      const [k, t, ex] = await Promise.all([api("/api/connections", { scoped: false }), api("/api/datasets/tree", { scoped: false }), api("/api/explorer", { scoped: false })]);
       this.conns = k.ok && Array.isArray(k.data) ? k.data : [];
+      // Where it belongs: a project, or a brand, site or engine from the Explorer. The Explorer's pick is the default.
+      const walk = (nodes, depth) => { for (const n of nodes ?? []) {
+        if (["scope", "engine", "project"].includes(n.kind) && n.id) this.dests.push({ kind: n.kind, id: n.id, name: n.name ?? n.label, type: n.type, depth });
+        walk(n.children, n.kind === "group" ? depth : depth + 1);
+      } };
+      if (ex.ok) walk(ex.data?.tree, 0);
+      const pick = shared("captain.scope");
+      this.dest = this.dests.find((d) => d.kind === pick?.kind && d.id === pick?.id) ?? this.dests[0];
       if (t.ok) { const walk = (n) => { for (const f of n.folders ?? []) { this.folders.push(f.path); walk(f); } }; walk(t.data ?? {}); }
       cx.notify();
     });
@@ -62,6 +77,12 @@ export default class CaptainImport extends View {
   }
 
   close() { closeOverlay(props().overlay); }
+
+  /** The editor for this source: JSON for Google Analytics 4, SQL for everything else. */
+  get sql() {
+    const k = (this.conns ?? []).find((x) => x.name === this.source?.conn);
+    return this.editors[(k?.kind ?? k?.engine) === "ga4" ? "json" : "sql"];
+  }
 
   pick(cx, source) {
     this.source = source;
@@ -82,7 +103,7 @@ export default class CaptainImport extends View {
       else this.tree = { error: "Couldn't list its tables." };
       // The backend's suggestions ({pulled, suggestions: [{title, why, query}]}), else ones made here from the tables.
       const list = s.ok ? (Array.isArray(s.data) ? s.data : s.data?.suggestions) : null;
-      this.suggestions = Array.isArray(list) && list.length ? list.map((x) => ({ title: x.title, sql: x.query ?? x.sql, why: x.why })) : localSuggestions(t.ok ? t.data : null);
+      this.suggestions = Array.isArray(list) && list.length ? list.map((x) => ({ title: x.title, sql: typeof (x.query ?? x.sql) === "string" ? x.query ?? x.sql : JSON.stringify(x.query, null, 2), why: x.why, kind: x.kind })) : localSuggestions(t.ok ? t.data : null);
       cx.notify();
     });
   }
@@ -120,8 +141,9 @@ export default class CaptainImport extends View {
         this.polling = false;
         if (r.ok && r.data.status === "done") {
           this.importJob = null;
-          this.busy = false;
           const res = r.data.result ?? {};
+          await this.link([...(res.imported ?? []), ...(res.updated ?? [])].map((x) => String(x.ref ?? "").replace(/@v\d+$/, "")).filter(Boolean));
+          this.busy = false;
           const n = (res.imported ?? []).length + (res.updated ?? []).length;
           this.note = { text: `Added ${n} dataset${n === 1 ? "" : "s"}${(res.skipped ?? []).length ? `, skipped ${res.skipped.length}: ${res.skipped.map((x) => sentence(x.reason)).join(" ")}` : "."}`, tone: n ? "good" : "muted" };
         } else if (r.ok && r.data.status === "failed") {
@@ -134,7 +156,8 @@ export default class CaptainImport extends View {
     }
   }
 
-  useQuery(cx, sql, name) {
+  useQuery(cx, sql, name, kind) {
+    this.kindHint = kind ?? null;
     this.sql.set_value(sql);
     if (name && !this.name.value().trim()) this.name.set_value(name);
     this.step = 3;
@@ -163,16 +186,26 @@ export default class CaptainImport extends View {
     const conn = this.source.conn, sql = this.sql.value().trim(), folder = this.folder;
     this.busy = true;
     cx.spawn(async (cx) => {
-      const r = await api("/api/sql", { body: { conn, sql, save: name }, timeout: 600 });
+      const dest = this.dest;
+      const r = await api("/api/sql", { body: { conn, sql, save: name, kind: this.kindHint ?? undefined, project: dest.kind === "project" ? dest.id : undefined }, timeout: 600 });
       if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't import it.", tone: "fail" }; cx.notify(); return; }
       const ref = r.data.dataset ?? name;
       if (folder) await api("/api/library/move", { body: { names: [ref.replace(/@v\d+$/, "")], folder } });
+      const linked = await this.link([ref.replace(/@v\d+$/, "")]);
       this.busy = false;
-      this.note = { text: `Imported ${ref.replace(/@v(\d+)$/, " (version $1)")}${folder ? ` into ${folder}` : ""}: ${fmtInt(r.data.row_count)} rows.`, tone: "good" };
+      this.note = { text: `Imported ${ref.replace(/@v(\d+)$/, " (version $1)")}${folder ? ` into ${folder}` : ""}${dest.kind ? `, for ${dest.name}` : ""}: ${fmtInt(r.data.row_count)} rows.${linked}`, tone: linked ? "muted" : "good" };
       this.done = true;
       cx.notify();
     });
     cx.notify();
+  }
+
+  /** Attach datasets to the chosen brand, site or engine (a project is set by the import itself). "" when fine. */
+  async link(names) {
+    const d = this.dest;
+    if (!d.kind || d.kind === "project" || !names.length) return "";
+    const r = await api("/api/scopes/link", { body: { items: names.map((name) => ({ kind: "dataset", name })), [d.kind === "engine" ? "engine" : "scope"]: d.id } });
+    return r.ok ? "" : ` It couldn't be linked to ${d.name}: ${sentence(r.data?.error ?? r.error) || "try again from the Explorer."}`;
   }
 
   importFiles(cx, paths) {
@@ -180,7 +213,7 @@ export default class CaptainImport extends View {
     if (!paths.length) return;
     this.busy = true;
     cx.spawn(async (cx) => {
-      const r = await api("/api/datasets/import", { body: { paths, folder: this.folder } });
+      const r = await api("/api/datasets/import", { body: { paths, folder: this.folder, project: this.dest.kind === "project" ? this.dest.id : undefined } });
       if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't start the import.", tone: "fail" }; cx.notify(); return; }
       this.importJob = r.data.job;
       cx.notify();
@@ -241,7 +274,17 @@ export default class CaptainImport extends View {
           .child(Button(c, "file-pick", "Choose a folder", (_e, cx) => cx.spawn(async (cx) => { const p = await pickFolder({ prompt: "Import" }); if (p) this.importFiles(cx, [p]); }), { small: true }))
           .child(Button(c, "file-go", this.busy ? "Importing" : "Import", (_e, cx) => this.importFiles(cx, [expand(this.path.value())]), { kind: "primary", small: true, disabled: this.busy })))
         .child(this.folderPick(c))
+        .child(this.destPick(c))
         .child(div().text_size(11.5).text_color(c.grey500).child("You can also drag files from Finder onto Data and signals."))));
+  }
+
+  destPick(c) {
+    return h_flex().id("import-dest").gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
+      .child(div().flex_none().text_color(c.grey500).child("For"))
+      .children(this.dests.map((d, i) => div().id(`dest-${i}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer()
+        .border_1().border_color(this.dest === d ? c.blue : c.grey300).text_color(this.dest === d ? c.blue : c.grey900)
+        .tooltip(d.kind ? `${d.kind === "project" ? "Project" : d.type ? `${d.type[0].toUpperCase()}${d.type.slice(1)}` : "Engine"}: ${d.name}` : "Not tied to a brand or project")
+        .on_click((_e, cx) => { this.dest = d; cx.notify(); }).child(d.name)));
   }
 
   folderPick(c) {
@@ -274,8 +317,10 @@ export default class CaptainImport extends View {
         .when(this.suggestions === null, (e) => e.child(Skeleton(c, 4)))
         .when(Array.isArray(this.suggestions) && !this.suggestions.length, (e) => e.child(div().text_size(12).text_color(c.grey500).child("Read its tables to get suggestions.")))
         .children((this.suggestions ?? []).map((s, i) => v_flex().id(`sug-${i}`).gap(4).p(10).cursor_pointer().border_1().border_color(c.rule).hover((st) => st.border_color(c.blue))
-          .on_click((_e, cx) => this.useQuery(cx, s.sql, s.table))
-          .child(div().text_size(12.5).font_medium().child(s.title))
+          .on_click((_e, cx) => this.useQuery(cx, s.sql, s.table, s.kind))
+          .child(h_flex().gap(8).items_center()
+            .child(div().flex_1().min_w(0).text_size(12.5).font_medium().child(s.title))
+            .child(Button(c, `sug-preview-${i}`, "Preview", (_e, cx) => this.useQuery(cx, s.sql, s.table, s.kind), { small: true })))
           .when(!!s.why, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(s.why)))
           .child(div().text_size(11.5).font_family(MONO).text_color(c.grey900).truncate().child(s.sql))))
         .child(Button(c, "write-own", "Write my own query", (_e, cx) => { this.step = 3; cx.notify(); }, { small: true })));
@@ -296,6 +341,7 @@ export default class CaptainImport extends View {
           .child(div().w(60).flex_none().text_size(12).text_color(c.grey900).child("Name"))
           .child(h_flex().flex_1().min_w(0).h(28).px(8).items_center().border_1().border_color(c.grey300).child(Input.new(this.name).w_full().text_size(12).text_color(c.navy))))
         .child(this.folderPick(c))
+        .child(this.destPick(c))
         .child(h_flex().gap(8)
           .child(Button(c, "import-go", this.busy ? "Importing" : this.done ? "Import again" : "Import", (_e, cx) => this.importQuery(cx), { kind: "primary", small: true, disabled: this.busy || !p?.grid }))
           .when(!!this.done, (e) => e.child(Button(c, "import-close-done", "Done", () => this.close(), { small: true })))
