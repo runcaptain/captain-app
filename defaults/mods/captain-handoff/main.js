@@ -39,14 +39,17 @@ export default class CaptainHandoff extends View {
       id: "handoffs",
       rowKey: (r) => String(r.id),
       onRow: (r, cx) => this.show(r.id, cx),
-      empty: "No handoffs yet.",
+      // What a handoff is, and how to make one.
+      empty: (c) => Empty(c, "No handoffs yet",
+        "A handoff passes a pipeline version that won its backtest to your own deployment process, after Captain checks it's ready. Captain deploys nothing itself, and records what went live and how it did.",
+        Button(c, "ho-empty-new", "Hand off a candidate", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "handoff" } }), { kind: "primary" })),
       columns: [
         { key: "pipeline", label: "Candidate", render: (r, c) => RefChip(c, r.pipeline ?? r.id) },
-        { key: "environment", label: "Environment", width: 150, render: (r) => `${r.environment ?? ""}${r.tier ? ` (${r.tier})` : ""}` },
+        { key: "environment", label: "Environment", width: 150, optional: true, render: (r) => `${r.environment ?? ""}${r.tier ? ` (${r.tier})` : ""}` },
         { key: "stage", label: "Stage", width: 110, render: (r, c) => Badge(c, words(stage(r)), stage(r) === "live" ? "good" : stage(r) === "deployed" ? "blue" : "neutral") },
-        { key: "readiness", label: "Readiness", width: 120, render: (r, c) => { const x = readiness(r); return Badge(c, x.overridden ? `${x.ok}/${x.all}, overridden` : `${x.ok}/${x.all} passed`, x.overridden ? "warn" : x.ok === x.all ? "good" : "bad"); } },
-        { key: "evidence", label: "Evidence", width: 130, render: (r) => words(r.evidence?.evidence_label ?? "none") },
-        { key: "outcomes", label: "Outcomes", width: 80, render: (r) => String((r.links ?? []).filter((e) => e.kind === "outcome").length) },
+        { key: "readiness", label: "Readiness", width: 120, optional: true, render: (r, c) => { const x = readiness(r); return Badge(c, x.overridden ? `${x.ok}/${x.all}, overridden` : `${x.ok}/${x.all} passed`, x.overridden ? "warn" : x.ok === x.all ? "good" : "bad"); } },
+        { key: "evidence", label: "Evidence", width: 130, optional: true, render: (r) => words(r.evidence?.evidence_label ?? "none") },
+        { key: "outcomes", label: "Outcomes", width: 80, optional: true, render: (r) => String((r.links ?? []).filter((e) => e.kind === "outcome").length) },
         { key: "created_at", label: "Handed off", width: 130, render: (r) => day(r.created_at) },
       ],
       fetch: async () => {
@@ -167,7 +170,7 @@ export default class CaptainHandoff extends View {
   list(c) {
     return v_flex().size_full().p(24).gap(14)
       .child(h_flex().gap(12).items_center()
-        .child(v_flex().flex_1().gap(2)
+        .child(v_flex().flex_1().min_w(0).gap(2)
           .child(div().text_size(20).font_semibold().text_color(c.navy).child("Handoff"))
           .child(div().text_size(12.5).text_color(c.grey500).child("Captain hands candidates to your deployment process and deploys nothing itself. What went live, and how it did, is recorded here.")))
         .child(Button(c, "ho-new", "Hand off a candidate", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "handoff" } }), { kind: "primary" })))

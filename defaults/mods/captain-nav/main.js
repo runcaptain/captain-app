@@ -50,19 +50,21 @@ function find(node, id) {
 // The palette speaks in tasks and places, not commands (Edgar: "not a CLI wrapper").
 // Raw cst commands sit behind one "Run a cst command..." entry; agents use the CLI.
 const TASK_ENTRIES = [
-  ["investigation", "New investigation", "question hypothesis start"],
-  ["dataset", "Import a dataset", "file csv parquet sql upload catalog queries judgments"],
-  ["database", "Connect a database", "postgres snowflake bigquery mysql redshift sql"],
-  ["cloud", "Connect a cloud account", "aws gcp azure login credentials"],
-  ["compute", "Add a place to run work", "compute cloud run backtests serve"],
-  ["handoff", "Hand off a candidate", "promote deploy ship release"],
-  ["backtest", "Run a backtest", "compare evaluate offline experiment ndcg"],
-  ["grading", "Start grading", "judgments labels relevance human"],
-  ["dataset-class", "New dataset class", "class type role catalog queries judgments"],
-  ["rankings", "Compare your own rankings", "bring import rankings results system offline compare evaluate"],
-  ["explain", "Explain a query", "debug why ranking stage score trace query debugger"],
-  ["sandbox", "What if...", "sandbox sweep tune knobs settings parameters try offline what if"],
-  ["demo", "Try the demo store", "sample example data"],
+  // [task, title, search words, icon: the New menu's for the same task (captain-forms/tasks.js)]
+  ["investigation", "New investigation", "question hypothesis start", "search"],
+  ["dataset", "Import a dataset", "file csv parquet sql upload catalog queries judgments", "database"],
+  ["database", "Connect a database", "postgres snowflake bigquery mysql redshift sql", "server"],
+  ["cloud", "Connect a cloud account", "aws gcp azure login credentials", "cloud"],
+  ["mlflow", "Connect MLflow", "mlflow tracking experiments models registry", "flask-conical"],
+  ["compute", "Add a place to run work", "compute cloud run backtests serve", "boxes"],
+  ["handoff", "Hand off a candidate", "promote deploy ship release", "send"],
+  ["backtest", "Run a backtest", "compare evaluate offline experiment ndcg", "flask-conical"],
+  ["grading", "Start grading", "judgments labels relevance human", "square-check"],
+  ["dataset-class", "New dataset class", "class type role catalog queries judgments", "tag"],
+  ["rankings", "Compare your own rankings", "bring import rankings results system offline compare evaluate", "git-compare"],
+  ["explain", "Explain a query", "debug why ranking stage score trace query debugger", "layers"],
+  ["sandbox", "What if...", "sandbox sweep tune knobs settings parameters try offline what if", "activity"],
+  ["demo", "Try the demo store", "sample example data", "sparkles"],
 ];
 // New workspace: where it keeps its work, then a drop zone, then an optional model registry (captain-setup).
 const SETUP = { mod: "captain-setup", kind: "dialog", width: 600, height: 640 };
@@ -70,20 +72,20 @@ const go = (section, extra) => ({ mod: "captain-go", kind: "popup", width: 1, he
 
 export function staticEntries(sections) {
   return [
-    ...TASK_ENTRIES.map(([task, title, words]) => ({ group: "Captain", title, words,
+    ...TASK_ENTRIES.map(([task, title, words, ic]) => ({ group: "Captain", title, words, icon: icon(ic),
       overlay: task === "dataset" ? { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} }
         : task === "rankings" ? { mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }
         : task === "explain" ? { mod: "captain-explain", kind: "dialog", width: 0.9, height: 0.9 }
         : task === "sandbox" ? { mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9 } : { mod: "captain-forms", kind: "dialog", width: 560, props: { task } } })),
-    ...sections.map((s) => ({ group: "Captain", title: `Go to ${s.label}`, words: `section ${s.label}`, overlay: go(s.id) })),
-    { name: "captain-nav.theme-light", args: {}, group: "Captain", title: "Switch to light", words: "appearance theme light mode" },
-    { name: "captain-nav.theme-dark", args: {}, group: "Captain", title: "Switch to dark", words: "appearance theme dark mode night" },
-    { name: "captain-nav.theme-system", args: {}, group: "Captain", title: "Match the system appearance", words: "appearance theme system auto" },
-    { name: "captain-nav.space-new", args: {}, group: "Captain", title: "New space for this workspace", words: "space workspace terminals" },
-    { group: "Captain", title: "New workspace...", words: "workspace storage folder bucket s3 gcs azure create start import drop", overlay: SETUP },
-    { name: "app.welcome", args: {}, group: "Captain", title: "Show the Captain tour", words: "onboarding welcome checklist start setup" },
-    { group: "Captain", title: "Cloud and compute", words: "aws gcp azure login profile region compute", overlay: { mod: "captain-cloud", kind: "dialog", width: 760, height: 640 } },
-    { group: "Captain", title: "Run a cst command...", words: "cli advanced power command", overlay: { mod: "captain-commands", kind: "dialog", width: 560, height: 560, props: { menu: "all" } } },
+    ...sections.map((s) => ({ group: "Captain", title: `Go to ${s.label}`, words: `section ${s.label}`, icon: s.icon && !String(s.icon).includes("/") ? icon(s.icon) : undefined, overlay: go(s.id) })),
+    { name: "captain-nav.theme-light", args: {}, group: "Captain", icon: icon("sun"), title: "Switch to light", words: "appearance theme light mode" },
+    { name: "captain-nav.theme-dark", args: {}, group: "Captain", icon: icon("moon"), title: "Switch to dark", words: "appearance theme dark mode night" },
+    { name: "captain-nav.theme-system", args: {}, group: "Captain", icon: icon("monitor"), title: "Match the system appearance", words: "appearance theme system auto" },
+    { name: "captain-nav.space-new", args: {}, group: "Captain", icon: icon("terminal"), title: "New space for this workspace", words: "space workspace terminals" },
+    { group: "Captain", icon: icon("folder-open"), title: "New workspace...", words: "workspace storage folder bucket s3 gcs azure create start import drop", overlay: SETUP },
+    { name: "app.welcome", args: {}, group: "Captain", icon: icon("compass"), title: "Show the Captain tour", words: "onboarding welcome checklist start setup" },
+    { group: "Captain", icon: icon("cloud"), title: "Cloud and compute", words: "aws gcp azure login profile region compute", overlay: { mod: "captain-cloud", kind: "dialog", width: 760, height: 640 } },
+    { group: "Captain", icon: icon("terminal"), title: "Run a cst command...", words: "cli advanced power command", overlay: { mod: "captain-commands", kind: "dialog", width: 560, height: 560, props: { menu: "all" } } },
   ];
 }
 
@@ -91,11 +93,11 @@ export function staticEntries(sections) {
 export function openEntries(datasets, investigations, backtests = []) {
   return [
     ...backtests.slice(0, 200).flatMap((b) => [
-      { group: "Captain", title: `Open ${b.name}`, words: "backtest run", overlay: go("runs", { backtest: b.name }) },
-      { group: "Captain", title: `Compare ${b.name}`, words: "backtest comparison results", overlay: go("comparisons", { backtest: b.name }) },
+      { group: "Captain", icon: icon("flask-conical"), title: `Open ${b.name}`, words: "backtest run", overlay: go("runs", { backtest: b.name }) },
+      { group: "Captain", icon: icon("git-compare"), title: `Compare ${b.name}`, words: "backtest comparison results", overlay: go("comparisons", { backtest: b.name }) },
     ]),
-    ...datasets.slice(0, 200).map((d) => ({ group: "Captain", title: `Open ${d.name}`, words: `dataset ${d.kind ?? ""}`, overlay: go("data", { dataset: d.name }) })),
-    ...investigations.slice(0, 200).map((i) => ({ group: "Captain", title: `Open investigation: ${i.title ?? i.id}`, words: `investigation ${i.state ?? ""}`, overlay: go("investigations", { investigation: i.id }) })),
+    ...datasets.slice(0, 200).map((d) => ({ group: "Captain", icon: icon("table"), title: `Open ${d.name}`, words: `dataset ${d.kind ?? ""}`, overlay: go("data", { dataset: d.name }) })),
+    ...investigations.slice(0, 200).map((i) => ({ group: "Captain", icon: icon("search"), title: `Open investigation: ${i.title ?? i.id}`, words: `investigation ${i.state ?? ""}`, overlay: go("investigations", { investigation: i.id }) })),
   ];
 }
 
