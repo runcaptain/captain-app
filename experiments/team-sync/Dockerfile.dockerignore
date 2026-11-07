@@ -1,0 +1,11 @@
+**/__pycache__
+**/*.pyc
+**/.env*
+**/server.env
+**/fixture.json
+**/.artifacts
+**/*.db
+**/*.sqlite*
+**/build
+**/*.egg-info
+.git

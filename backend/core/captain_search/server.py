@@ -143,6 +143,9 @@ async def _http(request: Request, exc: HTTPException):
 
 A = [Depends(auth)]
 
+from .collaboration.routes import router as team_router
+app.include_router(team_router, dependencies=A)
+
 # ---- workspace --------------------------------------------------------------------------
 
 

@@ -1,0 +1,35 @@
+# Optional HTTPS edge. Explicitly opt in with --profile https.
+services:
+  caddy:
+    image: caddy:2.11.9-alpine
+    profiles: [https]
+    environment:
+      CST_TEAM_HOSTNAME: ${CST_TEAM_HOSTNAME:?Set the operator-owned HTTPS hostname}
+    ports:
+      - ${CST_TEAM_HTTPS_BIND:-127.0.0.1}:${CST_TEAM_HTTP_PORT:-8080}:80
+      - ${CST_TEAM_HTTPS_BIND:-127.0.0.1}:${CST_TEAM_HTTPS_PORT:-8443}:443
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile.common:/etc/caddy/Caddyfile.common:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:2018/health]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+volumes:
+  caddy_data:
+  caddy_config:

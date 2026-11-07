@@ -29,6 +29,10 @@ app.add_typer(ws_app, name="workspace")
 app.add_typer(secret_app, name="secret")
 app.add_typer(conn_app, name="conn")
 app.add_typer(data_app, name="data")
+from .sync import app as sync_app
+app.add_typer(sync_app, name="team")
+from .team_server import app as team_server_app
+app.add_typer(team_server_app, name="team-server")
 
 
 @dataclass

@@ -15,3 +15,10 @@
 
 # CAPTAIN: a stray build inside the vendored kit
 /vendor/gpui-kit/target
+
+# Isolated synthetic native acceptance profile, never shipped.
+/.team-ui2/
+
+# Python test/runtime output.
+__pycache__/
+*.pyc

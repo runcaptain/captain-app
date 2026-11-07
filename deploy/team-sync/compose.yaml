@@ -1,0 +1,39 @@
+# Operator-prepared token-first deployment. Configure HTTPS before remote company use.
+services:
+  migrate:
+    build:
+      context: ../..
+      dockerfile: experiments/team-sync/Dockerfile
+    command: [cst, team-server, migrate]
+    env_file: server.env
+    restart: 'no'
+  api:
+    build:
+      context: ../..
+      dockerfile: experiments/team-sync/Dockerfile
+    command: [cst, team-server, serve, --host, 0.0.0.0, --port, '8000']
+    env_file: server.env
+    environment:
+      CST_TEAM_ARTIFACT_ROOT: /artifacts
+    ports:
+      - 127.0.0.1:8081:8000
+    volumes:
+      - artifacts:/artifacts
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  artifacts:

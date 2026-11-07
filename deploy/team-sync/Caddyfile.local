@@ -1,0 +1,11 @@
+{
+	admin off
+	skip_install_trust
+}
+
+import /etc/caddy/Caddyfile.common
+
+https://sync.test {
+	tls internal
+	import team_proxy
+}

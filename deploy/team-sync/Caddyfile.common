@@ -1,0 +1,22 @@
+(team_proxy) {
+	request_body {
+		max_size 8388608
+	}
+	reverse_proxy api:8000 {
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 120s
+		}
+	}
+}
+
+# Container-local readiness only. No unauthenticated API forwarding here.
+http://127.0.0.1:2018 {
+	bind 127.0.0.1
+	handle /health {
+		reverse_proxy api:8000
+	}
+	handle {
+		respond 404
+	}
+}

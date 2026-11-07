@@ -1,0 +1,9 @@
+# Synthetic TLS verification only. Compose 2.24.4+ supports !override.
+# Use a separate project name and remove only that project's volumes afterward.
+services:
+  caddy:
+    command: [caddy, run, --config, /etc/caddy/Caddyfile.local, --adapter, caddyfile]
+    ports: !override
+      - 127.0.0.1:${CST_TEAM_LOCAL_HTTPS_PORT:-8443}:443
+    volumes:
+      - ./Caddyfile.local:/etc/caddy/Caddyfile.local:ro
