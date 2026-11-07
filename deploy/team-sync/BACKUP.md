@@ -103,3 +103,30 @@ same quiesced database point. Include all referenced immutable blobs and staging
 objects required by unfinished uploads. Database-only restore can leave metadata
 pointing at unavailable objects. Cross-region copies, Object Lock, restore permissions,
 and worker state recovery are not verified by this local-volume drill.
+
+## Restored sync history and older clients
+
+Schema version 4 adds a durable random history identifier per workspace. Every successful
+restore rotates that identifier, including repeated restores of the same archive. The
+restored database also requires history identifiers for workspaces created later, so
+recreating a workspace lost in the rollback cannot revive a legacy cache. This
+happens before the helper reports success; a failure leaves the target offline.
+The backup's cursor and permission epoch remain unchanged, but neither can authenticate
+a client cursor from the discarded timeline. Updated clients send the history identifier
+on changes and mutations and rebase from a fresh snapshot when it differs. Retained
+local proposals become conflicts requiring explicit review. Edits to existing records absent from the authorized restored snapshot are removed.
+New unsent records retain conflicted proposals; discard and recreate them explicitly
+after reviewing the restored data when no existing record can be used for resolution.
+
+Older clients without history identifiers may read full snapshots, but their incremental
+requests are rejected after restore and their metadata writes require an updated client.
+Do not work around this by clearing the restored history requirement. Normal workspaces
+that have never been restored preserve legacy feed/write compatibility. Backup format 2 explicitly records schema 4. Format 1 and other schema versions are
+rejected before target mutation, even with `--replace-existing`; their missing history
+metadata cannot be assumed safe. Keep the original archive unchanged. To recover an old
+archive, use the matching old restore tooling in a separate isolated database and volume,
+with no API or worker allowed to connect. Apply the current operator migrations there,
+then recapture using this helper and restore the new format-2 archive into the intended
+target. The final restore rotates history and requires upgraded clients before service
+resumes. Do not serve the intermediate upgraded copy: migration alone does not identify
+it as a restored timeline. Never bypass the format guard or manually relabel a manifest.

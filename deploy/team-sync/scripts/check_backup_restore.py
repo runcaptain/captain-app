@@ -36,9 +36,9 @@ def main():
             path.chmod(0o600)
             return path
         source_env, restored_env = env(source_pg), env(restored_pg)
-        def operator(*args):
+        def operator(*args, pg_env=source_env):
             return docker('run', '--rm', '--network', name, '--user', f'{os.getuid()}:{os.getgid()}',
-                          '--env-file', str(source_env), '-v', str(root) + ':/output', image,
+                          '--env-file', str(pg_env), '-v', str(root) + ':/output', image,
                           'cst', 'team-server', *args).stdout.strip()
         def start_api(container, pg_env, volume):
             docker('run', '-d', '--name', container, '--network', name, '--read-only', '--tmpfs', '/tmp',
@@ -113,6 +113,15 @@ def main():
             assert docker('inspect', '-f', '{{.State.Running}}', source_api).stdout.strip() == 'true'
             assert backup.stat().st_mode & 0o077 == 0
             assert all(path.stat().st_mode & 0o077 == 0 for path in backup.iterdir())
+            # A client advanced beyond this backup before the incident. Its
+            # discarded branch must not survive when restored cursors catch up.
+            source = origin(source_api)
+            wait_ready(lambda: request(source, '/health'), 'source API after backup')
+            request(source, base + '/mutations', body=dict(mutation, mutation_id=uuid.uuid4().hex,
+                    expected_revision=1, body={'branch': 'discarded'}))
+            request(source, base + '/mutations', body=dict(mutation, mutation_id=uuid.uuid4().hex, record_id='lost-after-backup'))
+            stale = request(source, base + '/snapshot')
+            assert stale['cursor'] == before['cursor'] + 2
             docker('stop', source_api)
             run_helper('backup', source_pg, source_volume, '--writer', source_api, '--output', str(root / 'stopped-backup'))
             assert docker('inspect', '-f', '{{.State.Running}}', source_api).stdout.strip() == 'false'
@@ -133,6 +142,14 @@ def main():
             assert 'checksum mismatch' in denied.stderr
             # Restore refuses populated targets, even before clearing any rows.
             docker('exec', restored_pg, 'psql', '-U', 'synthetic', '-d', 'synthetic', '-c', 'CREATE TABLE keep_me (id integer);')
+            legacy = root / 'legacy-backup'
+            shutil.copytree(backup, legacy)
+            legacy_manifest = json.loads((legacy / 'manifest.json').read_text())
+            legacy_manifest['format'] = 1
+            legacy_manifest.pop('schema_version')
+            (legacy / 'manifest.json').write_text(json.dumps(legacy_manifest))
+            denied = run_helper('restore', restored_pg, restored_volume, '--input', str(legacy), '--replace-existing', expected=1)
+            assert 'target not modified' in denied.stderr
             denied = run_helper('restore', restored_pg, restored_volume, '--input', str(backup), expected=1)
             assert 'not empty' in denied.stderr
             assert docker('exec', restored_pg, 'psql', '-U', 'synthetic', '-d', 'synthetic', '-Atc',
@@ -148,7 +165,8 @@ def main():
             after = request(restored, base + '/snapshot')
             before['records'].sort(key=lambda row: row['id'])
             after['records'].sort(key=lambda row: row['id'])
-            assert before == after
+            assert after['history_id'] != before['history_id']
+            assert {k: v for k, v in before.items() if k != 'history_id'} == {k: v for k, v in after.items() if k != 'history_id'}
             assert request(restored, base + '/identity')['user_id'] == 'alice'
             assert {row['id'] for row in request(restored, base + '/snapshot', user='bob')['records']} == {'shared', 'artifact'}
             request(restored, base + '/mutations', user='bob', body=dict(mutation, mutation_id=uuid.uuid4().hex, record_id='denied'), expected=403)
@@ -159,6 +177,40 @@ def main():
             for token in tokens.values():
                 assert token not in dump
                 assert hashlib.sha256(token.encode()).hexdigest() in dump
+            previous_history = stale['history_id']
+            histories = {previous_history}
+            for cycle in range(2):
+                if cycle:
+                    docker('stop', restored_api)
+                    run_helper('restore', restored_pg, restored_volume, '--input', str(backup), '--replace-existing')
+                    docker('start', restored_api)
+                    restored = origin(restored_api)
+                    wait_ready(lambda: request(restored, '/health'), 'repeated restore API')
+                current = request(restored, base + '/snapshot')
+                history = current['history_id']
+                assert history not in histories, 'Repeated restores must never reuse archived history'
+                histories.add(history)
+                request(restored, base + '/mutations', body=dict(mutation, mutation_id=uuid.uuid4().hex,
+                        expected_revision=1, history_id=history, body={'branch': 'restored-' + str(cycle)}))
+                request(restored, base + '/mutations', body=dict(mutation, mutation_id=uuid.uuid4().hex,
+                        record_id='replacement-after-restore', history_id=history))
+                current = request(restored, base + '/snapshot')
+                assert current['cursor'] == stale['cursor'] and current['epoch'] == stale['epoch']
+                feed = base + '/changes?after=' + str(stale['cursor']) + '&epoch=' + str(stale['epoch'])
+                request(restored, feed + '&history_id=' + previous_history, expected=409)
+                request(restored, feed, expected=409)  # legacy clients must rebase too
+                assert request(restored, feed + '&history_id=' + history)['changes'] == []
+                rows = {row['id']: row for row in current['records']}
+                assert 'lost-after-backup' not in rows
+                assert rows['shared']['body'] == {'branch': 'restored-' + str(cycle)}
+                request(restored, base + '/mutations', body=dict(mutation, expected_revision=1,
+                        history_id=previous_history), expected=409)
+                operator('grant', 'alice', 'recreated-after-restore', '--role', 'admin', pg_env=restored_env)
+                recreated = '/v1/workspaces/recreated-after-restore'
+                assert request(restored, recreated + '/snapshot')['cursor'] == 0
+                request(restored, recreated + '/changes?after=0&epoch=1', expected=409)
+                previous_history = history
+            print('PASS: repeated restore histories differ; caught-up stale and legacy cursors reset; stale mutations rejected; recreated workspaces require history')
             print('PASS: quiesced metadata+artifact backup, separate PostgreSQL17 restore, byte integrity, private ACL, reader role, revoked token and hash-only persistence')
             print('PASS: checksum and path traversal rejection before restore, nonempty target preserved, writer restarted after backup failure')
         finally:

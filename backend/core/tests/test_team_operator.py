@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, insert, select
 from typer.testing import CliRunner
 
 from captain_search.cli.main import app
-from captain_search.collaboration.migrations import migrate, require_current, versions
+from captain_search.collaboration.migrations import LATEST_VERSION, migrate, require_current, versions
 from captain_search.collaboration.operator import enroll, list_members, revoke
 from captain_search.collaboration.server import identities, metadata, records, users, workspaces
 
@@ -15,13 +15,13 @@ def test_upgrade_preserves_existing_rows_and_repeats(tmp_path):
         db.execute(insert(users).values(id='legacy', token_hash='unchanged'))
         db.execute(insert(workspaces).values(id='team', cursor=9, epoch=3))
         db.execute(insert(records).values(workspace='team', id='draft', kind='config', owner_id='legacy', visibility='private', revision=4, body={'keep':True}, deleted=False))
-    assert migrate(engine) == migrate(engine) == 3
+    assert migrate(engine) == migrate(engine) == LATEST_VERSION
     require_current(engine)
     with engine.connect() as db:
         assert db.execute(select(users.c.token_hash)).scalar() == 'unchanged'
         assert db.execute(select(records.c.body)).scalar() == {'keep':True}
         assert db.execute(select(workspaces.c.cursor)).scalar() == 9
-        assert list(db.execute(select(versions.c.version)).scalars()) == [1, 2, 3]
+        assert list(db.execute(select(versions.c.version)).scalars()) == list(range(1, LATEST_VERSION + 1))
 
 
 def test_immutable_binding_and_revoke(tmp_path):
@@ -96,11 +96,11 @@ def test_concurrent_migration_serializes(tmp_path):
         finally:
             engine.dispose()
     with ThreadPoolExecutor(max_workers=4) as pool:
-        assert list(pool.map(lambda _: upgrade(), range(4))) == [3, 3, 3, 3]
+        assert list(pool.map(lambda _: upgrade(), range(4))) == [LATEST_VERSION] * 4
     engine = create_engine(url)
     require_current(engine)
     with engine.connect() as db:
-        assert list(db.execute(select(versions.c.version)).scalars()) == [1, 2, 3]
+        assert list(db.execute(select(versions.c.version)).scalars()) == list(range(1, LATEST_VERSION + 1))
 
 
 def test_postgres_operator_transactions_when_configured():
@@ -112,7 +112,7 @@ def test_postgres_operator_transactions_when_configured():
         pytest.skip('requires isolated PostgreSQL')
     engine = create_engine(url)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        assert list(pool.map(lambda _: migrate(engine), range(4))) == [3, 3, 3, 3]
+        assert list(pool.map(lambda _: migrate(engine), range(4))) == [LATEST_VERSION] * 4
     suffix = uuid.uuid4().hex
     args = dict(issuer='https://synthetic.example/', subject=suffix, user_id=suffix, workspace=suffix, role='admin')
     enroll(engine, **args)

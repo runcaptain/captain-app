@@ -4,13 +4,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import (JSON, Boolean, Column, Integer, MetaData, String, Table,
-                        and_, create_engine, insert, select, update)
+                        and_, create_engine, false, insert, select, update)
 from sqlalchemy.pool import StaticPool
 
 metadata = MetaData()
@@ -24,7 +25,9 @@ identities = Table('sync_identities', metadata,
 workspaces = Table('sync_workspaces', metadata,
     Column('id', String(100), primary_key=True),
     Column('cursor', Integer, nullable=False, default=0),
-    Column('epoch', Integer, nullable=False, default=1))
+    Column('epoch', Integer, nullable=False, default=1),
+    Column('history_id', String(32), nullable=False, default=lambda: uuid.uuid4().hex),
+    Column('history_required', Boolean, nullable=False, server_default=false()))
 members = Table('sync_members', metadata,
     Column('workspace', String(100), primary_key=True),
     Column('user_id', String(100), primary_key=True),
@@ -68,12 +71,14 @@ class Mutation(BaseModel):
     record_id: str = Field(min_length=1, max_length=100)
     kind: str = Field(min_length=1, max_length=50)
     expected_revision: int = Field(ge=0)
+    history_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{32}$')
     visibility: Literal['private', 'workspace'] = 'private'
     body: dict = Field(default_factory=dict)
     deleted: bool = False
 
 
 class MemberChange(BaseModel):
+    history_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{32}$')
     role: Literal['reader', 'editor', 'admin', 'revoked']
 
 
@@ -83,6 +88,12 @@ def visible(record, user):
 
 def public_record(row):
     return {k: row[k] for k in ('id', 'kind', 'owner_id', 'visibility', 'revision', 'body', 'deleted')}
+
+
+def require_history(workspace, history_id):
+    """Fence writes and cursors from a discarded restore timeline."""
+    if (history_id is not None and history_id != workspace['history_id']) or (history_id is None and workspace['history_required']):
+        raise HTTPException(409, {'code': 'history_reset_required', 'history_id': workspace['history_id']})
 
 
 def prior_receipt(db, workspace, user, mutation_id, request):
@@ -197,7 +208,7 @@ def create_app(database_url=None, fixture=None, artifact_root=None, *, oidc=None
         with engine.begin() as db:
             user = actor(db, authorization)
             w, role = access(db, workspace, user)
-            return {'workspace': workspace, 'user_id': user, 'epoch': w['epoch'], 'role': role}
+            return {'workspace': workspace, 'user_id': user, 'epoch': w['epoch'], 'role': role, 'history_id': w['history_id']}
 
     @app.get('/v1/workspaces/{workspace}/snapshot')
     def snapshot(workspace: str, authorization: str = Header(default='')):
@@ -206,14 +217,16 @@ def create_app(database_url=None, fixture=None, artifact_root=None, *, oidc=None
             w, _ = access(db, workspace, user)
             rows = db.execute(select(records).where(records.c.workspace == workspace)).mappings()
             data = [public_record(r) for r in rows if visible(r, user) and not r['deleted']]
-            return {'workspace': workspace, 'cursor': w['cursor'], 'epoch': w['epoch'], 'records': data}
+            return {'workspace': workspace, 'cursor': w['cursor'], 'epoch': w['epoch'], 'history_id': w['history_id'], 'records': data}
 
     @app.get('/v1/workspaces/{workspace}/changes')
     def feed(workspace: str, after: int = Query(ge=0), epoch: int = Query(ge=1),
-             limit: int = Query(default=100, ge=1, le=500), authorization: str = Header(default='')):
+             limit: int = Query(default=100, ge=1, le=500), history_id: str | None = Query(default=None, max_length=32),
+             authorization: str = Header(default='')):
         with engine.begin() as db:
             user = actor(db, authorization)
             w, _ = access(db, workspace, user)
+            require_history(w, history_id)
             if epoch != w['epoch']:
                 raise HTTPException(409, {'code': 'reset_required', 'epoch': w['epoch']})
             if after > w['cursor']:
@@ -231,7 +244,7 @@ def create_app(database_url=None, fixture=None, artifact_root=None, *, oidc=None
                         event['record'] = record
                     result.append(event)
             cursor = rows[-1]['cursor'] if rows else after
-            return {'workspace': workspace, 'epoch': w['epoch'], 'cursor': cursor,
+            return {'workspace': workspace, 'epoch': w['epoch'], 'history_id': w['history_id'], 'cursor': cursor,
                     'changes': result, 'has_more': cursor < w['cursor']}
 
     @app.get('/v1/workspaces/{workspace}/records/{record_id}/versions/{revision}')
@@ -250,7 +263,7 @@ def create_app(database_url=None, fixture=None, artifact_root=None, *, oidc=None
 
     @app.post('/v1/workspaces/{workspace}/mutations')
     def mutate(workspace: str, change: Mutation, authorization: str = Header(default='')):
-        request = change.model_dump()
+        request = change.model_dump(exclude_none=True)
         if len(json.dumps(request).encode()) > 262144:
             raise HTTPException(413, 'metadata_too_large')
         with engine.begin() as db:
@@ -258,6 +271,7 @@ def create_app(database_url=None, fixture=None, artifact_root=None, *, oidc=None
             w, role = access(db, workspace, user)
             if role not in ('editor', 'admin'):
                 raise HTTPException(403, 'write_denied')
+            require_history(w, change.history_id)
             prior = prior_receipt(db, workspace, user, change.mutation_id, request)
             if prior:
                 return prior
@@ -285,7 +299,7 @@ def create_app(database_url=None, fixture=None, artifact_root=None, *, oidc=None
                     version = db.execute(select(versions.c.record).where(and_(versions.c.workspace == workspace,
                         versions.c.record_id == pin['record_id'], versions.c.revision == pin['revision']))).scalar()
                     current = db.execute(select(records).where(and_(records.c.workspace == workspace, records.c.id == pin['record_id']))).mappings().first()
-                    if not version or not current or not visible(current, user) or current['deleted']:
+                    if not version or not current or not visible(current, user) or not visible(version, user) or current['deleted']:
                         raise HTTPException(422, 'pin_not_available')
                     if version['kind'] in ('research_snapshot', 'job'):
                         raise HTTPException(422, 'snapshot_pins_must_be_input_records')
@@ -303,6 +317,7 @@ def create_app(database_url=None, fixture=None, artifact_root=None, *, oidc=None
             w, role = access(db, workspace, user)
             if role != 'admin':
                 raise HTTPException(403, 'admin_required')
+            require_history(w, change.history_id)
             if not db.execute(select(users.c.id).where(users.c.id == member)).first():
                 raise HTTPException(404, 'user_not_found')
             where = and_(members.c.workspace == workspace, members.c.user_id == member)

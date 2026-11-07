@@ -159,3 +159,18 @@ def test_private_revision_cannot_be_published_indirectly(team):
     snap['body']={'pins':[{'record_id':'draft','revision':2}]}
     assert c.post(root+'/mutations', headers=h[a], json=snap).status_code==200
     assert c.get(root+'/records/draft/versions/2',headers=h[b]).status_code==200
+
+
+def test_private_snapshot_cannot_pin_another_users_hidden_revision(team):
+    c, _, w, alice, bob, _, headers = team
+    root = f'/v1/workspaces/{w}'
+    assert c.post(root+'/mutations', headers=headers[alice], json=mutation('input', visibility='private')).status_code == 200
+    assert c.post(root+'/mutations', headers=headers[alice], json=mutation('input', 1, 'workspace')).status_code == 200
+    snapshot = mutation('bob-snapshot', visibility='private')
+    snapshot['kind'] = 'research_snapshot'
+    snapshot['body'] = {'pins': [{'record_id': 'input', 'revision': 1}]}
+    rejected = c.post(root+'/mutations', headers=headers[bob], json=snapshot)
+    assert rejected.status_code == 422
+    assert rejected.json()['detail'] == 'pin_not_available'
+    snapshot['body']['pins'][0]['revision'] = 2
+    assert c.post(root+'/mutations', headers=headers[bob], json=snapshot).status_code == 200

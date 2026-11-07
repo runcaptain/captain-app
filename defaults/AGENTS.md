@@ -1042,6 +1042,9 @@ including a small hc skill you can install with the user's permission.
 ## Captain team collaboration
 
 The Captain palette's **Team collaboration** entry opens the `captain-team` mod.
+The editor keeps the selected revision when you pull newer records, so stale drafts
+conflict instead of overwriting them. A restored server history clears the editor;
+reload and review before saving or resolving a draft.
 Connect with a server URL, workspace and masked access token using the protected
 local `/api/team/connect` route. The daemon validates access and stores credentials
 in the OS keychain; the mod clears the token field after each attempt. Company SSO

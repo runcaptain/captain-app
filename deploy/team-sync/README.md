@@ -143,7 +143,10 @@ the desktop onboarding path; an environment credential cannot be removed by UI l
 
 ## Storage, upgrades and operations
 
-Schema migrations are forward-only and currently include the token table in version 3.
+Schema migrations are forward-only. Version 3 adds the token table; version 4 adds
+workspace history IDs. Paired restore rotates those IDs before the API resumes.
+Clients must reload restored history and explicitly review stale drafts. Upgrade clients
+before resuming writes after restore; legacy writers without history IDs are rejected.
 Serving requires the current schema and performs no automatic DDL in production modes.
 Run migrations with operator DDL credentials, then serve with credentials limited to
 application reads/writes and schema-version reads. Back up PostgreSQL and artifact bytes

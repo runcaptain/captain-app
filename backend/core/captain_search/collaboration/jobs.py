@@ -5,12 +5,16 @@ from sqlalchemy import and_, select
 from typing import Literal
 
 from .server import (commit_record, members, prior_receipt, public_record,
-                    records, versions, visible)
+                    records, versions, visible, require_history)
 
 TERMINAL = {'succeeded', 'failed', 'cancelled'}
 
 
-class Submit(BaseModel):
+class HistoryChange(BaseModel):
+    history_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{32}$')
+
+
+class Submit(HistoryChange):
     mutation_id: str = Field(min_length=1, max_length=100)
     job_id: str = Field(min_length=1, max_length=100)
     snapshot_id: str = Field(min_length=1, max_length=100)
@@ -18,13 +22,13 @@ class Submit(BaseModel):
     visibility: Literal['private', 'workspace'] = 'private'
 
 
-class Attempt(BaseModel):
+class Attempt(HistoryChange):
     mutation_id: str = Field(min_length=1, max_length=100)
     expected_revision: int = Field(ge=1)
     runner_id: str = Field(min_length=1, max_length=100)
 
 
-class Event(BaseModel):
+class Event(HistoryChange):
     mutation_id: str = Field(min_length=1, max_length=100)
     attempt: int = Field(ge=1)
     sequence: int = Field(ge=1)
@@ -32,7 +36,7 @@ class Event(BaseModel):
     progress: float = Field(ge=0, le=1, allow_inf_nan=False)
 
 
-class Cancel(BaseModel):
+class Cancel(HistoryChange):
     mutation_id: str = Field(min_length=1, max_length=100)
     expected_revision: int = Field(ge=1)
 
@@ -82,11 +86,12 @@ def register_jobs(app, engine, actor, access):
 
     @app.post('/v1/workspaces/{workspace}/jobs')
     def submit(workspace: str, change: Submit, authorization: str = Header(default='')):
-        request = {'operation':'submit_job', **change.model_dump()}
+        request = {'operation':'submit_job', **change.model_dump(exclude_none=True)}
         with engine.begin() as db:
             user = actor(db, authorization)
             w, role = access(db, workspace, user)
             editor(role)
+            require_history(w, change.history_id)
             prior = prior_receipt(db, workspace, user, change.mutation_id, request)
             if prior:
                 return prior
@@ -104,11 +109,12 @@ def register_jobs(app, engine, actor, access):
 
     @app.post('/v1/workspaces/{workspace}/jobs/{job_id}/attempts')
     def attempt(workspace: str, job_id: str, change: Attempt, authorization: str = Header(default='')):
-        request = {'operation':'start_attempt', 'job_id':job_id, **change.model_dump()}
+        request = {'operation':'start_attempt', 'job_id':job_id, **change.model_dump(exclude_none=True)}
         with engine.begin() as db:
             user = actor(db, authorization)
             w, role = access(db, workspace, user)
             editor(role)
+            require_history(w, change.history_id)
             old = get_job(db, workspace, job_id, user)
             control(old, user, role)
             prior = prior_receipt(db, workspace, user, change.mutation_id, request)
@@ -124,20 +130,23 @@ def register_jobs(app, engine, actor, access):
                 raise HTTPException(422, 'runner_not_authorized')
             available_snapshot(db, workspace, body['snapshot_id'], body['snapshot_revision'], change.runner_id)
             body = dict(body, state='running', attempt=body['attempt'] + 1, runner_id=change.runner_id,
-                        event_sequence=0, progress=0.0)
+                        event_sequence=0, progress=0.0, attempt_history_id=w['history_id'])
             return save(db, workspace, w, user, request, change, old, body)
 
     @app.post('/v1/workspaces/{workspace}/jobs/{job_id}/events')
     def event(workspace: str, job_id: str, change: Event, authorization: str = Header(default='')):
-        request = {'operation':'runner_event', 'job_id':job_id, **change.model_dump()}
+        request = {'operation':'runner_event', 'job_id':job_id, **change.model_dump(exclude_none=True)}
         with engine.begin() as db:
             user = actor(db, authorization)
             w, role = access(db, workspace, user)
             editor(role)
+            require_history(w, change.history_id)
             old = get_job(db, workspace, job_id, user)
             body = old['body']
             if body['runner_id'] != user:
                 raise HTTPException(403, 'assigned_runner_required')
+            if body.get('attempt_history_id') != w['history_id'] and (w['history_required'] or body.get('attempt_history_id') is not None):
+                raise HTTPException(409, 'stale_attempt_history')
             prior = prior_receipt(db, workspace, user, change.mutation_id, request)
             if prior:
                 return prior
@@ -158,11 +167,12 @@ def register_jobs(app, engine, actor, access):
 
     @app.post('/v1/workspaces/{workspace}/jobs/{job_id}/cancel')
     def cancel(workspace: str, job_id: str, change: Cancel, authorization: str = Header(default='')):
-        request = {'operation':'request_cancel', 'job_id':job_id, **change.model_dump()}
+        request = {'operation':'request_cancel', 'job_id':job_id, **change.model_dump(exclude_none=True)}
         with engine.begin() as db:
             user = actor(db, authorization)
             w, role = access(db, workspace, user)
             editor(role)
+            require_history(w, change.history_id)
             old = get_job(db, workspace, job_id, user)
             control(old, user, role)
             prior = prior_receipt(db, workspace, user, change.mutation_id, request)

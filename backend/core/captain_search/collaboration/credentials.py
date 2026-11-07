@@ -66,7 +66,79 @@ def token(config):
         raise KeychainUnavailable('Unable to read the native OS keychain') from None
 
 
+def _sync_directory():
+    if os.name != 'nt':
+        directory = os.open(home(), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+
+def _pending_accounts():
+    try:
+        value = json.loads((home() / 'credential-cleanup.json').read_text())
+    except FileNotFoundError:
+        return set()
+    if not isinstance(value, list) or not all(isinstance(account, str) for account in value):
+        raise ValueError('Invalid pending credential cleanup')
+    for account in value:
+        uuid.UUID(account)
+    return set(value)
+
+
+def _write_pending(accounts):
+    """Only opaque account locators are stored, never credentials or identity."""
+    path = home() / 'credential-cleanup.json'
+    if not accounts:
+        path.unlink(missing_ok=True)
+        _sync_directory()
+        return
+    fd, name = tempfile.mkstemp(prefix='.credential-cleanup-', dir=home())
+    try:
+        with os.fdopen(fd, 'w') as out:
+            json.dump(sorted(accounts), out)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(name, path)
+        _sync_directory()
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+def _record_pending(account):
+    accounts = _pending_accounts()
+    accounts.add(account)
+    _write_pending(accounts)
+
+
+def _cleanup_pending(backend, message):
+    accounts = _pending_accounts()
+    if not accounts:
+        return
+    active = read()
+    remaining = set()
+    for account in accounts:
+        # A failed replacement may leave the old connection active. Its locator
+        # is still durable, so it is neither orphaned nor eligible for deletion.
+        if active and account == active['account']:
+            continue
+        try:
+            if backend.get_password(_service(), account) is not None:
+                backend.delete_password(_service(), account)
+        except Exception:
+            remaining.add(account)
+    _write_pending(remaining)
+    if remaining:
+        raise KeychainUnavailable(message) from None
+
+
 def save(server, workspace, token, identity):
+    with lock():
+        return _save(server, workspace, token, identity)
+
+
+def _save(server, workspace, token, identity):
     backend = _keyring()
     root = home()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -85,47 +157,41 @@ def save(server, workspace, token, identity):
             json.dump(config, f)
             f.flush()
             os.fsync(f.fileno())
+        if old:
+            # Journal the old locator before publishing its replacement.
+            _record_pending(old['account'])
         os.replace(name, root / 'connection.json')
         replaced = True
-        if os.name != 'nt':
-            directory = os.open(root, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+        _sync_directory()
     except Exception:
         # Once published, the locator must retain its keychain entry even if
         # directory fsync fails. A later status can safely restore it.
         if not replaced:
-            try:
-                backend.delete_password(_service(), config['account'])
-            except Exception:
-                pass
+            _record_pending(config['account'])
+            _cleanup_pending(backend, 'Connection save failed; OS keychain cleanup needs retry')
         raise
     finally:
         if name:
             Path(name).unlink(missing_ok=True)
-    if old:
-        try:
-            backend.delete_password(_service(), old['account'])
-        except Exception:
-            # New connection is durable. Old locator is no longer reachable by
-            # the app, but caller must see that keychain cleanup needs attention.
-            raise KeychainUnavailable('Connected, but previous keychain credential cleanup failed') from None
+    _cleanup_pending(backend, 'Connected, but previous keychain credential cleanup failed; retry sign out')
     return config
 
 
 def delete():
-    config = read()
-    # Removing the locator first hides the cache even if OS deletion is denied.
-    (home() / 'connection.json').unlink(missing_ok=True)
-    if config:
-        try:
-            backend = _keyring()
-            if backend.get_password(_service(), config['account']) is not None:
-                backend.delete_password(_service(), config['account'])
-        except Exception:
-            raise KeychainUnavailable('Signed out locally, but OS keychain removal failed') from None
+    with lock():
+        config = read()
+        if config:
+            # Persist the locator before hiding the connection. A failed OS
+            # deletion remains retryable after sign-out and process restart.
+            _record_pending(config['account'])
+            (home() / 'connection.json').unlink(missing_ok=True)
+            _sync_directory()
+        if _pending_accounts():
+            try:
+                backend = _keyring()
+            except Exception:
+                raise KeychainUnavailable('Signed out locally, but OS keychain removal failed; retry sign out') from None
+            _cleanup_pending(backend, 'Signed out locally, but OS keychain removal failed; retry sign out')
 
 
 @contextmanager

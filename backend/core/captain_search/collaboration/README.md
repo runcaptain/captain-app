@@ -17,7 +17,8 @@ cst team-server token issue lewis --output /private/onboarding/lewis.token
 cst team-server serve
 ```
 
-Use PostgreSQL for company service. Schema version 3 adds separate credential records;
+Use PostgreSQL for company service. Schema version 4 adds workspace history IDs for
+restore-safe cache and draft handling. Version 3 added separate credential records;
 legacy user hashes are preserved for compatibility but never accepted in production
 token mode. Serving requires a current schema and performs no automatic DDL. Migrations
 are forward-only, serialized and reject unknown newer versions.
@@ -86,6 +87,31 @@ New records are private. Edits retain kind/visibility. Save queues a draft; only
 publishes. Conflicts retain the proposal and require explicit reviewed resolution.
 Pull before reviewing a conflict. Discard removes a local proposal only, never undoes
 a published change. Team workspace selection is independent of bucket workspace UI.
+
+## Restore history and domain writes
+
+Workspace identity, snapshot and change-feed responses include `history_id`. Restore
+rotates this identifier before clients reconnect. Current clients attach it to mutations;
+after restore, omitted or old identifiers receive 409 `history_reset_required` before
+any old receipt is returned. Pull replaces the cache and marks retained proposals as
+conflicts for review. A desktop editor retains its selected revision rather than silently
+adopting the revision from a later pull. Changing server history clears the open editor.
+
+Artifact begin/finalize and all job submit/attempt/event/cancel JSON bodies accept
+`history_id`. Raw artifact PUT requests carry the same value in `X-CST-History-ID`.
+These fields are mandatory after a workspace restore. Upload authorization and history
+are checked before reading bytes and again before accepting them. A lease from an old
+history cannot be uploaded or finalized even when a caller supplies the new identifier.
+Begin again with a fresh mutation ID and the current history to replace a stale pending
+upload for the same artifact ID. Already-published artifact downloads remain available
+under the normal visibility and membership checks.
+
+Running job attempts also belong to their starting history. Old workers cannot complete
+restored attempts by learning the new identifier. An authorized controller must review
+the job and start a new attempt using the current history and job revision; subsequent
+events carry both the new attempt number and current history. This API tracks state;
+it does not start a compute workload. Never blindly retry a historical operation after
+a restore. Review its current state and use a new mutation ID for the reviewed action.
 
 ## Artifacts and optional SSO
 

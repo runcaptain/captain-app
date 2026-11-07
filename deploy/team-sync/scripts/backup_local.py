@@ -69,6 +69,8 @@ def backup(args):
                 running.append(container)
                 docker('stop', '--time', '30', container)
         idle(args)
+        if sql(args, "SELECT string_agg(version::text, ',' ORDER BY version) FROM sync_schema_versions") != '1,2,3,4':
+            raise RuntimeError('Backup requires current schema 4; migrate through the matching operator before capture')
         with (target / 'metadata.dump').open('xb') as out:
             os.chmod(out.name, 0o600)
             docker('exec', args.postgres, 'pg_dump', '-U', args.user, '-d', args.database,
@@ -81,7 +83,7 @@ def backup(args):
             out.flush()
             os.fsync(out.fileno())
         idle(args)
-        manifest = {'format': 1, 'storage': 'local', 'database': args.database,
+        manifest = {'format': 2, 'schema_version': 4, 'storage': 'local', 'database': args.database,
                     'postgres_major': 17,
                     'files': {name: digest(target / name) for name in ('metadata.dump', 'artifacts.tar')}}
         with (target / 'manifest.json').open('x') as out:
@@ -109,8 +111,11 @@ def backup(args):
 
 def validate_archive(root):
     manifest = json.loads((root / 'manifest.json').read_text())
-    if manifest.get('format') != 1 or manifest.get('storage') != 'local' or manifest.get('postgres_major') != 17:
-        raise ValueError('Unsupported backup manifest')
+    if manifest.get('format') == 1:
+        raise ValueError('Legacy backup requires an isolated offline upgrade and recapture; target not modified')
+    if (manifest.get('format') != 2 or manifest.get('schema_version') != 4
+            or manifest.get('storage') != 'local' or manifest.get('postgres_major') != 17):
+        raise ValueError('Unsupported backup manifest or schema; target not modified')
     if set(manifest.get('files', {})) != {'metadata.dump', 'artifacts.tar'}:
         raise ValueError('Incomplete backup manifest')
     for name, expected in manifest['files'].items():
@@ -148,6 +153,11 @@ def restore(args):
         if result.returncode:
             raise RuntimeError('Database restore failed; target remains offline')
     helper(args, root, 'tar', '-xpf', '/backup/artifacts.tar', '-C', '/artifacts')
+    # Never reuse the backup's history, even when restoring the same archive
+    # repeatedly. Old cursors and revision-based drafts must be rebased first.
+    history = uuid.uuid4().hex
+    sql(args, "BEGIN; UPDATE sync_workspaces SET history_id='" + history +
+        "', history_required=TRUE; ALTER TABLE sync_workspaces ALTER COLUMN history_required SET DEFAULT TRUE; COMMIT;")
     print('RESTORE COMPLETE: metadata and local artifacts restored; verify before starting writers')
 
 

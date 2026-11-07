@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, insert, select, update
 from typer.testing import CliRunner
 
 from captain_search.cli.main import app as cli
-from captain_search.collaboration.migrations import migrate, versions
+from captain_search.collaboration.migrations import LATEST_VERSION, migrate, versions
 from captain_search.collaboration.operator import grant, revoke
 from captain_search.collaboration.server import create_app, from_env, users
 from captain_search.collaboration.tokens import issue, list_tokens, revoke_token, tokens
@@ -178,9 +178,9 @@ def test_upgrade_v2_preserves_user_and_adds_no_tokens(tmp_path):
     migrate(engine)
     with engine.begin() as db:
         tokens.drop(db)
-        db.execute(versions.delete().where(versions.c.version == 3))
+        db.execute(versions.delete().where(versions.c.version >= 3))
         db.execute(insert(users).values(id='old', token_hash='legacy-hash'))
-    assert migrate(engine) == 3
+    assert migrate(engine) == LATEST_VERSION
     assert list_tokens(engine) == []
     with engine.connect() as db:
         assert db.execute(select(users.c.token_hash)).scalar() == 'legacy-hash'

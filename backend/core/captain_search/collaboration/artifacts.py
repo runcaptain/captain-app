@@ -12,10 +12,10 @@ from fastapi import Header, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, Integer, String, Table, UniqueConstraint, and_, insert, select, update
+from sqlalchemy import Column, Integer, String, Table, UniqueConstraint, and_, delete, insert, select, update
 
 from .server import (commit_record, digest, metadata, prior_receipt, receipts,
-                    records, visible)
+                    records, visible, require_history)
 
 MAX_BYTES = 8 * 1024 * 1024
 uploads = Table('sync_artifact_uploads', metadata,
@@ -28,10 +28,12 @@ uploads = Table('sync_artifact_uploads', metadata,
     Column('visibility', String(10), nullable=False),
     Column('state', String(12), nullable=False),
     Column('staged_file', String(100)),
+    Column('history_id', String(32)),
     UniqueConstraint('workspace', 'artifact_id'))
 
 
 class Begin(BaseModel):
+    history_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{32}$')
     mutation_id: str = Field(min_length=1, max_length=100)
     artifact_id: str = Field(min_length=1, max_length=100)
     sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
@@ -40,6 +42,7 @@ class Begin(BaseModel):
 
 
 class Finalize(BaseModel):
+    history_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{32}$')
     mutation_id: str = Field(min_length=1, max_length=100)
 
 
@@ -143,6 +146,10 @@ def register_artifacts(app, engine, actor, access, root, *, store=None):
             raise HTTPException(404, 'upload_not_found')
         return row
 
+    def current_upload(row, workspace):
+        if row['history_id'] != workspace['history_id']:
+            raise HTTPException(409, 'stale_upload_history')
+
     def hash_file(path):
         hasher = hashlib.sha256()
         total = 0
@@ -162,38 +169,46 @@ def register_artifacts(app, engine, actor, access, root, *, store=None):
 
     @app.post('/v1/workspaces/{workspace}/artifacts/uploads')
     def begin(workspace: str, change: Begin, authorization: str = Header(default='')):
-        request = {'operation':'begin_artifact', **change.model_dump()}
+        request = {'operation':'begin_artifact', **change.model_dump(exclude_none=True)}
         with engine.begin() as db:
             user = actor(db, authorization)
-            _, role = access(db, workspace, user)
+            w, role = access(db, workspace, user)
             editor(role)
+            require_history(w, change.history_id)
             prior = prior_receipt(db, workspace, user, change.mutation_id, request)
             if prior:
                 return prior
             exists = db.execute(select(records.c.id).where(and_(records.c.workspace == workspace,
                 records.c.id == change.artifact_id))).first()
-            pending = db.execute(select(uploads.c.id).where(and_(uploads.c.workspace == workspace,
-                uploads.c.artifact_id == change.artifact_id))).first()
+            pending = db.execute(select(uploads).where(and_(uploads.c.workspace == workspace,
+                uploads.c.artifact_id == change.artifact_id))).mappings().first()
+            if not exists and pending and pending['history_id'] != w['history_id']:
+                # A restored pending lease can be replaced with a newly reviewed upload.
+                db.execute(delete(uploads).where(uploads.c.id == pending['id']))
+                pending = None
             if exists or pending:
                 raise HTTPException(409, 'artifact_id_exists')
             upload_id = uuid.uuid4().hex
             db.execute(insert(uploads).values(id=upload_id, workspace=workspace, owner_id=user,
                 artifact_id=change.artifact_id, sha256=change.sha256, size=change.size,
-                visibility=change.visibility, state='staged'))
+                visibility=change.visibility, state='staged', history_id=w['history_id']))
             response = {'upload_id':upload_id, 'max_bytes':MAX_BYTES}
             db.execute(insert(receipts).values(workspace=workspace, user_id=user,
                 mutation_id=change.mutation_id, digest=digest(request), response=response))
             return response
 
     @app.put('/v1/workspaces/{workspace}/artifacts/uploads/{upload_id}')
-    async def upload(workspace: str, upload_id: str, request: Request, authorization: str = Header(default='')):
+    async def upload(workspace: str, upload_id: str, request: Request, authorization: str = Header(default=''),
+                     history_id: str | None = Header(default=None, alias='X-CST-History-ID', max_length=32)):
         # Authorize before reading bytes; do not hold a workspace lock while
         # awaiting the network. Reauthorize after upload before accepting it.
         with engine.begin() as db:
             user = actor(db, authorization)
-            _, role = access(db, workspace, user)
+            w, role = access(db, workspace, user)
             editor(role)
+            require_history(w, history_id)
             row = stage(db, workspace, upload_id, user)
+            current_upload(row, w)
             if row['state'] == 'published':
                 raise HTTPException(409, 'artifact_already_published')
             expected_size, expected_sha = row['size'], row['sha256']
@@ -224,9 +239,11 @@ def register_artifacts(app, engine, actor, access, root, *, store=None):
                 await run_in_threadpool(store.stage, workspace, filename, temporary)
             with engine.begin() as db:
                 user = actor(db, authorization)
-                _, role = access(db, workspace, user)
+                w, role = access(db, workspace, user)
                 editor(role)
+                require_history(w, history_id)
                 row = stage(db, workspace, upload_id, user)
+                current_upload(row, w)
                 if row['state'] == 'published':
                     raise HTTPException(409, 'artifact_already_published')
                 db.execute(update(uploads).where(uploads.c.id == upload_id)
@@ -239,12 +256,14 @@ def register_artifacts(app, engine, actor, access, root, *, store=None):
 
     @app.post('/v1/workspaces/{workspace}/artifacts/uploads/{upload_id}/finalize')
     def finalize(workspace: str, upload_id: str, change: Finalize, authorization: str = Header(default='')):
-        request = {'operation':'finalize_artifact', 'upload_id':upload_id, **change.model_dump()}
+        request = {'operation':'finalize_artifact', 'upload_id':upload_id, **change.model_dump(exclude_none=True)}
         with engine.begin() as db:
             user = actor(db, authorization)
             w, role = access(db, workspace, user)
             editor(role)
+            require_history(w, change.history_id)
             row = stage(db, workspace, upload_id, user)
+            current_upload(row, w)
             prior = prior_receipt(db, workspace, user, change.mutation_id, request)
             if prior:
                 return prior

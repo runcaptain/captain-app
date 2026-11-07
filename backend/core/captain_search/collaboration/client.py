@@ -7,6 +7,12 @@ import json
 import sqlite3
 import uuid
 
+_UNSPECIFIED_HISTORY = object()
+
+
+class StaleEditorError(ValueError):
+    """An open editor belongs to a replaced server history."""
+
 
 def write_permission_denied(response):
     if response.status_code != 403:
@@ -60,6 +66,10 @@ class SyncClient:
 
     def bootstrap(self):
         data = self._check(self.http.get(self._url('snapshot')))
+        old_history = self._get('history_id')
+        history = data.get('history_id')
+        history_changed = bool(history and old_history != history and (old_history is not None
+            or self._get('cursor') is not None or self._get('permission_reset_pending')))
         with self.db:
             self.db.execute('DELETE FROM records')
             for record in data['records']:
@@ -68,9 +78,17 @@ class SyncClient:
             for mutation_id, payload in self.db.execute('SELECT id,payload FROM outbox').fetchall():
                 mutation = json.loads(payload)
                 if mutation['expected_revision'] > 0 and mutation['record_id'] not in allowed:
+                    # Restores may also remove access. Do not expose proposals
+                    # for an existing record outside the authorized snapshot.
                     self.db.execute('DELETE FROM outbox WHERE id=?', (mutation_id,))
+                elif history_changed:
+                    self.db.execute("UPDATE outbox SET state='conflict',error='server_history_changed' WHERE id=?", (mutation_id,))
+                elif history and old_history is None:
+                    mutation['history_id'] = history
+                    self.db.execute('UPDATE outbox SET payload=? WHERE id=?', (json.dumps(mutation), mutation_id))
             self._set('cursor', data['cursor'])
             self._set('epoch', data['epoch'])
+            self._set('history_id', history)
             self._set('permission_reset_pending', False)
         return data
 
@@ -85,8 +103,10 @@ class SyncClient:
         if self._get('cursor') is None:
             return self.bootstrap()
         while True:
-            response = self.http.get(self._url('changes'), params={
-                'after': self._get('cursor'), 'epoch': self._get('epoch'), 'limit': 100})
+            params = {'after': self._get('cursor'), 'epoch': self._get('epoch'), 'limit': 100}
+            if self._get('history_id'):
+                params['history_id'] = self._get('history_id')
+            response = self.http.get(self._url('changes'), params=params)
             if response.status_code == 409:
                 # Authorization or visibility changed. Never retain old shared rows.
                 with self.db:
@@ -103,10 +123,14 @@ class SyncClient:
                         self._store(change['record'])
                 self._set('cursor', data['cursor'])
                 self._set('epoch', data['epoch'])
+                if data.get('history_id'):
+                    self._set('history_id', data['history_id'])
             if not data['has_more']:
                 return data
 
-    def queue_edit(self, record_id, kind, body, visibility=None, expected_revision=None):
+    def queue_edit(self, record_id, kind, body, visibility=None, expected_revision=None, expected_history=_UNSPECIFIED_HISTORY):
+        if expected_history is not _UNSPECIFIED_HISTORY and expected_history != self._get('history_id'):
+            raise StaleEditorError('Server history changed. Reload the record before editing.')
         record = self.get(record_id)
         if visibility is None:
             visibility = record['visibility'] if record else 'private'
@@ -115,6 +139,8 @@ class SyncClient:
         mutation = {'mutation_id': str(uuid.uuid4()), 'record_id': record_id,
                     'kind': kind, 'expected_revision': expected_revision,
                     'visibility': visibility, 'body': body, 'deleted': False}
+        if self._get('history_id'):
+            mutation['history_id'] = self._get('history_id')
         with self.db:
             self.db.execute('INSERT INTO outbox(id,payload) VALUES (?,?)',
                             (mutation['mutation_id'], json.dumps(mutation)))
@@ -159,8 +185,10 @@ class SyncClient:
         if not removed:
             raise ValueError('Local draft not found')
 
-    def resolve(self, mutation_id, body):
-        """Replace a conflict with an explicitly reviewed proposal at the cached revision."""
+    def resolve(self, mutation_id, body, expected_revision=None, expected_history=_UNSPECIFIED_HISTORY):
+        """Keep the reviewed revision even if a later pull refreshes the cache."""
+        if expected_history is not _UNSPECIFIED_HISTORY and expected_history != self._get('history_id'):
+            raise StaleEditorError('Server history changed. Reload the record before resolving.')
         if self._get('permission_reset_pending'):
             raise ValueError('Pull current permissions before resolving a conflict')
         row = self.db.execute('SELECT payload,state FROM outbox WHERE id=?', (mutation_id,)).fetchone()
@@ -171,7 +199,12 @@ class SyncClient:
         if not current:
             raise ValueError('The record is no longer in the authorized cache')
         replacement = str(uuid.uuid4())
-        mutation.update(mutation_id=replacement, body=body, expected_revision=current['revision'])
+        mutation.update(mutation_id=replacement, body=body,
+                        expected_revision=current['revision'] if expected_revision is None else expected_revision)
+        if self._get('history_id'):
+            mutation['history_id'] = self._get('history_id')
+        else:
+            mutation.pop('history_id', None)
         with self.db:
             self.db.execute('INSERT INTO outbox(id,payload) VALUES (?,?)', (replacement, json.dumps(mutation)))
             self.db.execute('DELETE FROM outbox WHERE id=?', (mutation_id,))

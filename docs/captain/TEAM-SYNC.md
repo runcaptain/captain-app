@@ -41,6 +41,10 @@ before successful sign-in.
 Previously cached data may remain visible offline until the next server contact.
 Sign out is handled by the daemon and then the view clears its editor and reloads status.
 
+The editor preserves the revision selected before editing, including across Pull latest.
+A changed server history clears the editor and requires reloading. Conflict resolution
+also uses the selected revision, so another update cannot be silently overwritten.
+
 ## Verification
 
 `node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/captain-team.test.mjs`

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 
 from .session import connection, AuthenticationRequired
-from .client import write_permission_denied
+from .client import write_permission_denied, StaleEditorError
 from . import login
 
 router = APIRouter(prefix="/api/team")
@@ -35,6 +35,8 @@ def session():
         raise HTTPException(503, "Team server unavailable; drafts remain local") from None
     except sqlite3.Error:
         raise HTTPException(503, "Local team cache is busy or unavailable") from None
+    except StaleEditorError:
+        raise HTTPException(409, "Server history changed. Reload the record before editing or resolving.") from None
     except (ValueError, OSError):
         raise HTTPException(400, "Team configuration or draft is invalid") from None
 
@@ -43,6 +45,8 @@ class Edit(BaseModel):
     body: dict
     kind: str | None = Field(default=None, max_length=100)
     visibility: Literal["private", "workspace"] | None = None
+    expected_revision: int | None = Field(default=None, ge=0, strict=True)
+    expected_history: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 @router.get("/records")
@@ -50,6 +54,7 @@ def records():
     with session() as client:
         return {"records": [json.loads(r[0]) for r in client.db.execute("SELECT data FROM records ORDER BY id")],
                 "drafts": client.drafts(), "cursor": client._get("cursor"), "cached": True,
+                "history_id": client._get("history_id"),
                 "workspace": client.workspace, "server": str(client.http.base_url)}
 
 
@@ -72,14 +77,20 @@ def edit(record_id: str, value: Edit):
     with session() as client:
         current = client.get(record_id)
         kind = value.kind or (current['kind'] if current else 'config')
-        mutation = client.queue_edit(record_id, kind, value.body, value.visibility)
+        expected = {'expected_revision': value.expected_revision}
+        if 'expected_history' in value.model_fields_set:
+            expected['expected_history'] = value.expected_history
+        mutation = client.queue_edit(record_id, kind, value.body, value.visibility, **expected)
         return {"mutation_id": mutation, "state": "pending"}
 
 
 @router.post("/drafts/{mutation_id}/resolve")
 def resolve(mutation_id: str, value: Edit):
     with session() as client:
-        replacement = client.resolve(mutation_id, value.body)
+        expected = {'expected_revision': value.expected_revision}
+        if 'expected_history' in value.model_fields_set:
+            expected['expected_history'] = value.expected_history
+        replacement = client.resolve(mutation_id, value.body, **expected)
         return {"mutation_id": replacement, "state": "pending"}
 
 
