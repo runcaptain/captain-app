@@ -11,6 +11,8 @@ import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { TASKS } from "./tasks.js";
 
+const IMPORT = { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} };
+
 export default class CaptainForms extends View {
   init(_props, cx) {
     this.values = {};
@@ -195,7 +197,8 @@ export default class CaptainForms extends View {
     return v_flex().size_full().bg(c.surface).font_family(FONT).py(6)
       .child(div().px(14).pt(4).pb(6).text_size(11).font_medium().text_color(c.grey500).child("NEW"))
       .children(TASKS.filter((t) => !t.hidden).map((t) => h_flex().id(`new-${t.id}`).px(14).py(8).gap(12).items_start().cursor_pointer().hover((s) => s.bg(c.surface2))
-        .on_click(() => { this.close(); openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: t.id } }); })
+        // Import a dataset is desktop-app's wizard (sources, tables, a preview); the form stays for agents.
+        .on_click(() => { this.close(); openOverlay(t.id === "dataset" ? IMPORT : { mod: "captain-forms", kind: "dialog", width: 560, props: { task: t.id } }); })
         .child(div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon(t.icon)).size(15)))
         .child(v_flex().flex_1().min_w(0).gap(2)
           .child(div().text_size(13.5).font_medium().text_color(c.navy).child(t.label))

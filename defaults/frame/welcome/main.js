@@ -31,7 +31,7 @@ const SECTIONS = [
 // screen where it's done. The command stays behind "Show the command".
 const STEP_DO = {
   cloud: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "cloud" } },
-  data: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "dataset" } },
+  data: { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} },
   investigation: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "investigation" } },
   run: { mod: "captain-go", kind: "popup", width: 1, height: 1, props: { section: "investigations" } },
   decision: { mod: "captain-go", kind: "popup", width: 1, height: 1, props: { section: "investigations" } },

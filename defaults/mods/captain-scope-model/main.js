@@ -1,23 +1,24 @@
-// CAPTAIN: Settings > Scope model (Edgar's spec, 2026-11-06). How this workspace organizes its engines:
-//   Scope types   Brand and Site, plus your own (Region, Team, ...).
-//   Terminology   each type's singular, plural and description; they write labels like "Add brand".
-//   Hierarchy     which types may hold which; a choice that would make a loop is refused.
-//   Explorer      the order types group in, and which levels show.
-//   Metadata      fields every scope of a type carries.
-// Reads and saves GET/PUT /api/scope-model (kit/scopes.js). Inputs are made when the model loads or a type or field
-// is added, never in render.
+// CAPTAIN: Settings > Scope model (Edgar's spec, 2026-11-06), on GET/PUT /api/scope-model (kit/scopes.js):
+//   Scope types      Brand and Site, plus your own (Region, Team, ...). Keys are stable; words are free to change.
+//   Terminology      each type's singular, plural and description, which write labels like "Add brand".
+//   Hierarchy        which types may hold which; any type may also sit at the top level. A loop is refused here,
+//                    and the services check everything again.
+//   Explorer         the order types group in, and which levels show.
+//   Metadata fields  facts each type's scopes carry, asked for when one is added.
+// Saving sends expect_revision; a refusal comes back as plain reasons, shown as they are.
+// Inputs are made when the model loads or a type is added, never in render.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, props, closeOverlay, setShared, shared } from "herdr";
 import { palette, isDark, FONT } from "./kit/tokens.js";
-import { Button, Tabs, plainError } from "./kit/ui.js";
+import { Button, Tabs } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { api } from "./kit/cst.js";
 import { DEFAULT_MODEL, makesCycle } from "./kit/scopes.js";
 
 const TABS = [["types", "Scope types"], ["terms", "Terminology"], ["hierarchy", "Hierarchy"], ["explorer", "Explorer"], ["fields", "Metadata fields"]];
 const clone = (x) => JSON.parse(JSON.stringify(x));
-const slug = (s) => String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const keyOf = (s) => String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(\d)/, "t$1").slice(0, 32);
 
 export default class ScopeModel extends View {
   init(_props, cx) {
@@ -25,86 +26,82 @@ export default class ScopeModel extends View {
     this.model = null; this.live = false; this.dirty = false; this.busy = false; this.error = null; this.saved = false;
     this.states = {};
     this.newType = InputState.new({ placeholder: "e.g. Region" });
-    this.newField = InputState.new({ placeholder: "e.g. Owner" });
+    this.newField = {};
     cx.spawn(async (cx) => {
-      if (shared("captain.explorer.sample")) { this.model = clone(DEFAULT_MODEL); }
-      else {
-        const r = await api("/api/scope-model", { scoped: false });
-        this.live = r.ok && Boolean(r.data);
-        this.model = clone(this.live ? r.data : DEFAULT_MODEL);
-      }
-      this.model.fields ??= [];
-      this.model.explorer ??= { order: [...this.model.types.map((t) => t.id), "engine"], hidden: [] };
+      const r = shared("captain.explorer.sample") ? null : await api("/api/scope-model", { scoped: false });
+      this.live = Boolean(r?.ok && r.data);
+      this.model = clone(this.live ? r.data : DEFAULT_MODEL);
+      this.model.explorer ??= { order: this.model.types.map((t) => t.key), hidden: [] };
+      this.model.explorer.hidden ??= [];
+      for (const t of this.model.types) t.fields ??= [];
       this.makeStates();
       cx.notify();
     });
   }
 
-  /** One input per term (singular, plural, description) of every type and of engines. */
+  /** Inputs for every type's words, and one "new field" input per type. */
   makeStates() {
-    for (const t of [...this.model.types, { id: "engine", ...this.model.engine }]) {
+    for (const t of this.model.types) {
       for (const k of ["singular", "plural", "description"]) {
-        const key = `${t.id}.${k}`;
+        const key = `${t.key}.${k}`;
         if (this.states[key]) continue;
         const st = InputState.new({});
         st.set_value(String(t[k] ?? ""));
-        st.on("change", () => { const target = t.id === "engine" ? this.model.engine : this.model.types.find((x) => x.id === t.id); if (target) target[k] = st.value(); this.touch(); });
+        st.on("change", () => { const target = this.model.types.find((x) => x.key === t.key); if (target) target[k] = st.value(); this.touch(); });
         this.states[key] = st;
       }
+      this.newField[t.key] ??= InputState.new({ placeholder: "e.g. Owner" });
     }
   }
 
   touch() { this.dirty = true; this.saved = false; this.error = null; }
-
-  allKinds() { return [...this.model.types.map((t) => ({ id: t.id, label: t.singular })), { id: "engine", label: this.model.engine?.singular ?? "Engine" }]; }
+  label(key) { return this.model.types.find((t) => t.key === key)?.singular ?? key; }
 
   addType(cx) {
     const singular = this.newType.value().trim();
-    const id = slug(singular);
-    if (!id) { this.error = "Name the new scope type."; cx.notify(); return; }
-    if (id === "engine" || id === "workspace" || this.model.types.some((t) => t.id === id)) { this.error = `There's already a scope type called ${singular}.`; cx.notify(); return; }
-    this.model.types.push({ id, singular, plural: `${singular}s`, description: "", parents: ["workspace"] });
-    this.model.explorer.order.splice(Math.max(0, this.model.explorer.order.indexOf("engine")), 0, id);
-    this.model.engine.parents = [...new Set([...(this.model.engine.parents ?? []), id])];
+    const key = keyOf(singular);
+    if (!key) { this.error = "Name the new scope type."; cx.notify(); return; }
+    if (key === "engine" || key === "project" || this.model.types.some((t) => t.key === key)) { this.error = `There's already a type called ${singular}.`; cx.notify(); return; }
+    this.model.types.push({ key, singular, plural: `${singular}s`, description: "", parents: [], fields: [] });
+    this.model.explorer.order.push(key);
     this.newType.set_value("");
     this.makeStates(); this.touch(); cx.notify();
   }
 
-  removeType(cx, id) {
-    this.model.types = this.model.types.filter((t) => t.id !== id);
-    for (const t of this.model.types) t.parents = (t.parents ?? []).filter((p) => p !== id);
-    this.model.engine.parents = (this.model.engine.parents ?? []).filter((p) => p !== id);
-    this.model.explorer.order = this.model.explorer.order.filter((k) => k !== id);
+  removeType(cx, key) {
+    this.model.types = this.model.types.filter((t) => t.key !== key);
+    for (const t of this.model.types) t.parents = (t.parents ?? []).filter((p) => p !== key);
+    this.model.explorer.order = this.model.explorer.order.filter((k) => k !== key);
+    this.model.explorer.hidden = this.model.explorer.hidden.filter((k) => k !== key);
     this.touch(); cx.notify();
   }
 
-  toggleParent(cx, kind, parent) {
-    const t = kind === "engine" ? this.model.engine : this.model.types.find((x) => x.id === kind);
+  toggleParent(cx, key, parent) {
+    const t = this.model.types.find((x) => x.key === key);
     const has = (t.parents ?? []).includes(parent);
-    if (!has && kind !== "engine" && makesCycle(this.model, kind, parent)) {
-      this.error = `A ${t.singular.toLowerCase()} can't sit under a ${this.allKinds().find((k) => k.id === parent)?.label.toLowerCase() ?? parent}: that would make a loop.`;
+    if (!has && makesCycle(this.model, key, parent)) {
+      this.error = `A ${t.singular.toLowerCase()} can't sit inside a ${this.label(parent).toLowerCase()}: that would make a loop.`;
       cx.notify(); return;
     }
-    if (has && (t.parents ?? []).length === 1) { this.error = `A ${t.singular.toLowerCase()} needs at least one place it can go.`; cx.notify(); return; }
     t.parents = has ? t.parents.filter((p) => p !== parent) : [...(t.parents ?? []), parent];
     this.touch(); cx.notify();
   }
 
-  moveOrder(cx, id, by) {
+  moveOrder(cx, key, by) {
     const o = this.model.explorer.order;
-    const i = o.indexOf(id), j = i + by;
+    const i = o.indexOf(key), j = i + by;
     if (i < 0 || j < 0 || j >= o.length) return;
     [o[i], o[j]] = [o[j], o[i]];
     this.touch(); cx.notify();
   }
 
-  addField(cx) {
-    const label = this.newField.value().trim();
-    const key = slug(label).replace(/-/g, "_");
+  addField(cx, t) {
+    const label = this.newField[t.key].value().trim();
+    const key = keyOf(label);
     if (!key) { this.error = "Name the field."; cx.notify(); return; }
-    if (this.model.fields.some((f) => f.key === key)) { this.error = `There's already a field called ${label}.`; cx.notify(); return; }
-    this.model.fields.push({ key, label, applies_to: this.allKinds().map((k) => k.id), required: false });
-    this.newField.set_value("");
+    if (t.fields.some((f) => f.key === key)) { this.error = `${t.plural} already have a field called ${label}.`; cx.notify(); return; }
+    t.fields.push({ key, label, required: false });
+    this.newField[t.key].set_value("");
     this.touch(); cx.notify();
   }
 
@@ -112,10 +109,17 @@ export default class ScopeModel extends View {
     if (!this.live) { this.error = "This workspace's services don't keep a scope model yet, so nothing was saved."; cx.notify(); return; }
     this.busy = true; this.error = null; cx.notify();
     cx.spawn(async (cx) => {
-      const r = await api("/api/scope-model", { method: "PUT", body: this.model, scoped: false });
+      const { types, explorer, engine_types } = this.model;
+      const r = await api("/api/scope-model", { method: "PUT", body: { types, explorer, engine_types, expect_revision: this.model.revision }, scoped: false });
       this.busy = false;
-      if (r.ok) { this.dirty = false; this.saved = true; setShared("captain.explorer.rev", Date.now()); }
-      else this.error = plainError(r.error, "Captain couldn't save the scope model.");
+      if (r.ok) {
+        this.model.revision = r.data?.revision ?? (this.model.revision ?? 1) + 1;
+        this.dirty = false; this.saved = true;
+        setShared("captain.explorer.rev", Date.now());
+      } else {
+        // The services' reasons, as they are ("the hierarchy has a loop: ...", "the scope model changed ...").
+        this.error = String(r.error || "Captain couldn't save the scope model.");
+      }
       cx.notify();
     });
   }
@@ -135,74 +139,69 @@ export default class ScopeModel extends View {
 
   types(c) {
     return v_flex().gap(8)
-      .child(this.intro(c, "The kinds of scope this workspace organizes engines by. Brand and Site are optional: a workspace can keep its engines at the top level."))
-      .children(this.model.types.map((t) => h_flex().id(`type-${t.id}`).h(40).px(12).gap(10).items_center().border_1().border_color(c.rule)
-        .child(div().flex_1().min_w(0).child(div().text_size(13).font_semibold().child(t.singular)).child(div().text_size(11.5).text_color(c.grey500).truncate().child(t.description || "No description yet.")))
-        .child(t.builtin ? div().text_size(11.5).text_color(c.grey500).child("Built in")
-          : Button(c, `type-rm-${t.id}`, "Remove", (_e, cx) => this.removeType(cx, t.id), { small: true }))))
+      .child(this.intro(c, "The kinds of scope this workspace organizes engines by. They're optional: a workspace can keep its engines at the top level."))
+      .children(this.model.types.map((t) => h_flex().id(`type-${t.key}`).h(42).px(12).gap(10).items_center().border_1().border_color(c.rule)
+        .child(div().flex_1().min_w(0).child(div().text_size(13).font_semibold().child(t.singular || t.key))
+          .child(div().text_size(11.5).text_color(c.grey500).truncate().child(t.description || "No description yet.")))
+        .child(Button(c, `type-rm-${t.key}`, "Remove", (_e, cx) => this.removeType(cx, t.key), { small: true }))))
       .child(h_flex().pt(6).gap(8).items_center()
         .child(div().w(220).child(this.input(c, "type-new", this.newType)))
-        .child(Button(c, "type-add", "Add a scope type", (_e, cx) => this.addType(cx), { small: true })));
+        .child(Button(c, "type-add", "Add a scope type", (_e, cx) => this.addType(cx), { small: true })))
+      .child(div().pt(4).text_size(12).text_color(c.grey500).child("Removing a type that scopes still use is refused when you save: archive or move them first."));
   }
 
   terms(c) {
     return v_flex().gap(14)
       .child(this.intro(c, "The words Captain uses for each type: in the Explorer, its menus (\"Add brand\") and every screen."))
-      .children([...this.model.types, { id: "engine", ...this.model.engine }].map((t) => v_flex().gap(6)
-        .child(div().text_size(12.5).font_semibold().child(t.id === "engine" ? "Engines" : t.singular || t.id))
+      .children(this.model.types.map((t) => v_flex().gap(6)
+        .child(div().text_size(12.5).font_semibold().child(t.singular || t.key))
         .child(h_flex().gap(8)
-          .child(v_flex().flex_1().gap(3).child(div().text_size(11.5).text_color(c.grey500).child("Singular")).child(this.input(c, `t-${t.id}-s`, this.states[`${t.id}.singular`])))
-          .child(v_flex().flex_1().gap(3).child(div().text_size(11.5).text_color(c.grey500).child("Plural")).child(this.input(c, `t-${t.id}-p`, this.states[`${t.id}.plural`]))))
-        .child(v_flex().gap(3).child(div().text_size(11.5).text_color(c.grey500).child("Description")).child(this.input(c, `t-${t.id}-d`, this.states[`${t.id}.description`])))));
+          .child(v_flex().flex_1().gap(3).child(div().text_size(11.5).text_color(c.grey500).child("Singular")).child(this.input(c, `t-${t.key}-s`, this.states[`${t.key}.singular`])))
+          .child(v_flex().flex_1().gap(3).child(div().text_size(11.5).text_color(c.grey500).child("Plural")).child(this.input(c, `t-${t.key}-p`, this.states[`${t.key}.plural`]))))
+        .child(v_flex().gap(3).child(div().text_size(11.5).text_color(c.grey500).child("Description")).child(this.input(c, `t-${t.key}-d`, this.states[`${t.key}.description`])))));
   }
 
   hierarchy(c) {
-    const kinds = this.allKinds();
-    const parents = [{ id: "workspace", label: "Top level" }, ...this.model.types.map((t) => ({ id: t.id, label: t.singular }))];
     return v_flex().gap(12)
-      .child(this.intro(c, "Where each kind may sit. A choice that would put a type inside itself is refused."))
-      .children(kinds.map((k) => {
-        const t = k.id === "engine" ? this.model.engine : this.model.types.find((x) => x.id === k.id);
-        return v_flex().gap(6).child(div().text_size(12.5).font_semibold().child(`${k.label} can sit under`))
-          .child(h_flex().flex_wrap().gap(6).children(parents.filter((p) => p.id !== k.id).map((p) =>
-            this.chip(c, `h-${k.id}-${p.id}`, p.label, (t.parents ?? []).includes(p.id), (_e, cx) => this.toggleParent(cx, k.id, p.id)))));
-      }));
+      .child(this.intro(c, "Which types each type may sit inside. Every type may also sit at the top level, and engines can belong to any scope."))
+      .children(this.model.types.map((t) => v_flex().gap(6).child(div().text_size(12.5).font_semibold().child(`${t.singular || t.key} can sit inside`))
+        .child(h_flex().flex_wrap().gap(6)
+          .children(this.model.types.filter((p) => p.key !== t.key).map((p) =>
+            this.chip(c, `h-${t.key}-${p.key}`, p.singular || p.key, (t.parents ?? []).includes(p.key), (_e, cx) => this.toggleParent(cx, t.key, p.key))))
+          .when(this.model.types.length < 2, (e) => e.child(div().text_size(12).text_color(c.grey500).child("Add another type first."))))));
   }
 
   explorer(c) {
     const o = this.model.explorer.order;
-    const label = (id) => this.allKinds().find((k) => k.id === id)?.label ?? id;
     const hidden = new Set(this.model.explorer.hidden ?? []);
     return v_flex().gap(8)
-      .child(this.intro(c, "How the Explorer groups the tree, top to bottom, and which levels it shows. A hidden level's children move up a level."))
-      .children(o.map((id, i) => h_flex().id(`ord-${id}`).h(36).px(12).gap(8).items_center().border_1().border_color(c.rule)
+      .child(this.intro(c, "How the Explorer groups the tree, top to bottom, and which levels it shows. A hidden level's scopes step aside and what's inside them moves up."))
+      .children(o.map((key, i) => h_flex().id(`ord-${key}`).h(36).px(12).gap(8).items_center().border_1().border_color(c.rule)
         .child(div().w(18).text_size(12).text_color(c.grey500).child(String(i + 1)))
-        .child(div().flex_1().text_size(13).text_color(hidden.has(id) ? c.grey500 : c.navy).child(label(id)))
-        .child(this.chip(c, `vis-${id}`, hidden.has(id) ? "Hidden" : "Shown", !hidden.has(id), (_e, cx) => {
+        .child(div().flex_1().text_size(13).text_color(hidden.has(key) ? c.grey500 : c.navy).child(this.label(key)))
+        .child(this.chip(c, `vis-${key}`, hidden.has(key) ? "Hidden" : "Shown", !hidden.has(key), (_e, cx) => {
           const h = new Set(this.model.explorer.hidden ?? []);
-          if (h.has(id)) h.delete(id); else h.add(id);
+          if (h.has(key)) h.delete(key); else h.add(key);
           this.model.explorer.hidden = [...h]; this.touch(); cx.notify();
         }))
-        .child(Button(c, `ord-up-${id}`, "Up", (_e, cx) => this.moveOrder(cx, id, -1), { small: true, disabled: i === 0 }))
-        .child(Button(c, `ord-down-${id}`, "Down", (_e, cx) => this.moveOrder(cx, id, 1), { small: true, disabled: i === o.length - 1 }))));
+        .child(Button(c, `ord-up-${key}`, "Up", (_e, cx) => this.moveOrder(cx, key, -1), { small: true, disabled: i === 0 }))
+        .child(Button(c, `ord-down-${key}`, "Down", (_e, cx) => this.moveOrder(cx, key, 1), { small: true, disabled: i === o.length - 1 }))))
+      .child(div().pt(4).text_size(12).text_color(c.grey500).child("Engines always show under the deepest scope they belong to."));
   }
 
   fields(c) {
-    const kinds = this.allKinds();
-    return v_flex().gap(10)
-      .child(this.intro(c, "Facts every scope of a type carries, like an owner or a market. Captain asks for them when someone adds one."))
-      .children(this.model.fields.map((f) => v_flex().id(`fld-${f.key}`).gap(6).p(10).border_1().border_color(c.rule)
-        .child(h_flex().items_center().child(div().flex_1().text_size(13).font_semibold().child(f.label ?? f.key))
-          .child(Button(c, `fld-rm-${f.key}`, "Remove", (_e, cx) => { this.model.fields = this.model.fields.filter((x) => x.key !== f.key); this.touch(); cx.notify(); }, { small: true })))
-        .child(h_flex().flex_wrap().gap(6).children(kinds.map((k) => this.chip(c, `fld-${f.key}-${k.id}`, k.label, (f.applies_to ?? []).includes(k.id), (_e, cx) => {
-          const s = new Set(f.applies_to ?? []);
-          if (s.has(k.id)) s.delete(k.id); else s.add(k.id);
-          f.applies_to = [...s]; this.touch(); cx.notify();
-        }))))))
-      .when(!this.model.fields.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("No fields yet.")))
-      .child(h_flex().pt(6).gap(8).items_center()
-        .child(div().w(220).child(this.input(c, "fld-new", this.newField)))
-        .child(Button(c, "fld-add", "Add a field", (_e, cx) => this.addField(cx), { small: true })));
+    return v_flex().gap(14)
+      .child(this.intro(c, "Facts each type's scopes carry, like an owner or a market. Captain asks for them when someone adds one."))
+      .children(this.model.types.map((t) => v_flex().gap(6)
+        .child(div().text_size(12.5).font_semibold().child(t.plural || t.key))
+        .children(t.fields.map((f) => h_flex().id(`fld-${t.key}-${f.key}`).h(32).px(10).gap(8).items_center().border_1().border_color(c.rule)
+          .child(div().flex_1().text_size(12.5).child(f.label ?? f.key))
+          .child(this.chip(c, `fld-req-${t.key}-${f.key}`, "Required", Boolean(f.required), (_e, cx) => { f.required = !f.required; this.touch(); cx.notify(); }))
+          .child(Button(c, `fld-rm-${t.key}-${f.key}`, "Remove", (_e, cx) => { t.fields = t.fields.filter((x) => x.key !== f.key); this.touch(); cx.notify(); }, { small: true }))))
+        .when(!t.fields.length, (e) => e.child(div().text_size(12).text_color(c.grey500).child("No fields yet.")))
+        .child(h_flex().gap(8).items_center()
+          .child(div().w(200).child(this.input(c, `fld-new-${t.key}`, this.newField[t.key])))
+          .child(Button(c, `fld-add-${t.key}`, "Add a field", (_e, cx) => this.addField(cx, t), { small: true })))));
   }
 
   render() {
@@ -215,10 +214,10 @@ export default class ScopeModel extends View {
         .child(div().flex_1().text_size(15).font_semibold().child("Scope model"))
         .child(div().id("sm-close").text_size(12.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
           .on_click(() => closeOverlay(props()?.overlay)).child(this.dirty ? "Cancel" : "Close")))
-      .child(div().px(20).child(Tabs(c, "sm-tabs", TABS.map(([id, label]) => ({ id, label })), this.tab, (id, cx) => { this.tab = id; this.error = null; cx.notify(); })))
+      .child(div().px(20).child(Tabs(c, "sm-tabs", TABS.map(([id, label]) => ({ id, label })), this.tab, (id, cx) => { this.tab = id; cx.notify(); })))
       .child(div().id("sm-body").flex_1().min_h(0).overflow_y_scroll().child(div().px(20).py(16).child(body)))
-      .child(h_flex().h(60).flex_none().px(20).gap(10).items_center().border_t(1).border_color(c.rule)
-        .child(div().flex_1().min_w(0).text_size(12.5).text_color(this.error ? c.fail : c.good)
+      .child(h_flex().min_h(60).flex_none().px(20).py(10).gap(10).items_center().border_t(1).border_color(c.rule)
+        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(this.error ? c.fail : c.good)
           .child(this.error ?? (this.saved ? "Saved." : this.model && !this.live ? "Not saved anywhere yet: this workspace's services don't keep a scope model." : "")))
         .child(Button(c, "sm-save", this.busy ? "Saving..." : "Save", (_e, cx) => this.save(cx), { kind: "primary", disabled: !this.dirty || this.busy })));
   }

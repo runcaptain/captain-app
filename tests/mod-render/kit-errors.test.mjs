@@ -12,4 +12,5 @@ assert.equal(plainError('operation timed out'), 'This took too long.');
 assert.equal(plainError(''), fb);
 assert.equal(plainError("There's already a workspace called demo."), "There's already a workspace called demo.");
 assert.equal(plainError('This login isn\'t allowed to write to s3://acme/captain.'), 'This login isn\'t allowed to write to s3://acme/captain.');
+assert.equal(plainError('an engine is one of search, recommendation'), 'an engine is one of search, recommendation');
 console.log('kit errors test: ok');

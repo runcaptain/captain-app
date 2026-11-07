@@ -66,7 +66,8 @@ const go = (section, extra) => ({ mod: "captain-go", kind: "popup", width: 1, he
 
 export function staticEntries(sections) {
   return [
-    ...TASK_ENTRIES.map(([task, title, words]) => ({ group: "Captain", title, words, overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task } } })),
+    ...TASK_ENTRIES.map(([task, title, words]) => ({ group: "Captain", title, words,
+      overlay: task === "dataset" ? { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} } : { mod: "captain-forms", kind: "dialog", width: 560, props: { task } } })),
     ...sections.map((s) => ({ group: "Captain", title: `Go to ${s.label}`, words: `section ${s.label}`, overlay: go(s.id) })),
     { name: "captain-nav.theme-light", args: {}, group: "Captain", title: "Switch to light", words: "appearance theme light mode" },
     { name: "captain-nav.theme-dark", args: {}, group: "Captain", title: "Switch to dark", words: "appearance theme dark mode night" },
@@ -117,9 +118,9 @@ export default class CaptainNav extends View {
       });
     }
     this.explorer = new Explorer();
-    this.explorer.start(cx, this.workspace);
+    this.explorer.start(cx);
     this.refresh(cx);
-    watchWorkspace(cx, (cx) => { this.cloud = null; setShared("captain.scope", null); this.refresh(cx); this.explorer.load(cx, workspace()); });
+    watchWorkspace(cx, (cx) => { this.cloud = null; setShared("captain.scope", null); this.refresh(cx); this.explorer.load(cx); });
     // Every 3 s until Captain's services answer, then every 15 s.
     this.tick = 0;
     cx.timer.every(3000, (cx) => { this.tick++; if (this.state !== "ready" || this.tick % 5 === 0) this.refresh(cx); });
@@ -139,8 +140,6 @@ export default class CaptainNav extends View {
         this.error = ws.ok ? null : ws.error;
         if (ws.ok) {
           this.workspace = ws.data?.name ?? null;
-          const shownWs = workspace() ?? this.workspace;
-          if (this.explorer && this.explorer.workspaceName !== shownWs) this.explorer.load(cx, shownWs);
           // The services' current workspace names new spaces and is unbound terminals' CST_WORKSPACE.
           if (!workspace() && this.workspace && shared("captain.workspace") !== this.workspace) setShared("captain.workspace", this.workspace);
           const all = await api("/api/workspaces");
