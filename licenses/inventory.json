@@ -164,6 +164,13 @@
       ]
     },
     {
+      "name": "Red Hat Mono fonts (Captain terminals)",
+      "source": "https://github.com/google/fonts/tree/main/ofl/redhatmono (variable TTFs, unchanged)",
+      "files": [
+        "assets/fonts/OFL-RedHatMono.txt"
+      ]
+    },
+    {
       "name": "Inter fonts (Captain sidebar)",
       "source": "https://github.com/rsms/inter (v4.1 release, extras/ttf, unchanged)",
       "files": [
