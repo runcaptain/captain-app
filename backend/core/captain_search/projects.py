@@ -25,7 +25,8 @@ from .storage.backend import Conflict, NotFound
 from .workspace import Context, whoami
 
 KEY = "projects.yaml"
-KINDS = ("connection", "dataset", "pipeline", "backtest", "investigation", "registry", "model", "signal", "grading")
+KINDS = ("connection", "dataset", "pipeline", "backtest", "investigation", "registry", "model", "signal", "grading",
+         "notebook")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
@@ -199,7 +200,8 @@ def _all(ctx: Context) -> dict[str, list[str]]:
     from . import investigations as INV
 
     out = {"connection": ctx.connections(), "dataset": ctx.registry.names("dataset"),
-           "pipeline": ctx.registry.names("pipeline"), "backtest": ctx.registry.names("backtest")}
+           "pipeline": ctx.registry.names("pipeline"), "backtest": ctx.registry.names("backtest"),
+           "notebook": ctx.registry.names("notebook")}
     try:
         out["investigation"] = [i["id"] for i in INV.listing(ctx)]
     except Exception:  # noqa: BLE001
@@ -225,6 +227,62 @@ def contents(ctx: Context, pid: str) -> dict:
         out[kind] = [n for n in names if r.of(kind, n) == pid]
     out["models"] = [m for m in _models(ctx) if r.of("model", m["id"], brand=m.get("brand")) == pid]
     return {"project": p, **out}
+
+
+def home(ctx: Context, pid: str) -> dict:
+    """A project's home screen: its datasets, models, notebooks and recent runs, each with what a row needs."""
+    from . import mlflow_bridge as MF
+
+    c = contents(ctx, pid)
+
+    def latest(kind, n):
+        try:
+            m = ctx.registry.resolve(kind, n)[0]
+            return m
+        except Exception:  # noqa: BLE001
+            return None
+
+    datasets = []
+    for n in c["dataset"]:
+        m = latest("dataset", n)
+        if m is not None:
+            datasets.append({"name": n, "version": m.version, "kind": getattr(m.kind, "value", m.kind),
+                             "rows": m.row_count, "created_at": m.created_at.isoformat(timespec="seconds"),
+                             "created_by": m.created_by, "description": m.description})
+    pipelines = []
+    for n in c["pipeline"]:
+        m = latest("pipeline", n)
+        if m is not None:
+            pipelines.append({"name": n, "version": m.version, "engine": m.engine,
+                              "created_at": m.created_at.isoformat(timespec="seconds"), "created_by": m.created_by})
+    notebooks = []
+    for n in c["notebook"]:
+        m = latest("notebook", n)
+        if m is not None:
+            notebooks.append({"name": n, "version": m.version, "created_at": m.created_at.isoformat(timespec="seconds"),
+                              "created_by": m.created_by})
+    runs = []
+    for n in c["backtest"]:
+        try:
+            r = ctx.registry.resolve("backtest-run", n)[0]
+        except Exception:  # noqa: BLE001
+            continue
+        runs.append({"backtest": n, "run": f"{r.name}@v{r.version}", "created_at": r.created_at.isoformat(timespec="seconds"),
+                     "arms": [a.arm for a in r.arms]})
+    runs.sort(key=lambda r: r["created_at"], reverse=True)
+    try:
+        links = MF.links(ctx)
+    except Exception:  # noqa: BLE001
+        links = {}
+    mine = {p["name"] for p in pipelines}
+    mlflow = [{"model": k.rpartition("@")[0], "version": k.rpartition("@")[2], "pipeline": v}
+              for k, v in links.items() if v in mine]
+    return {"project": c["project"], "datasets": sorted(datasets, key=lambda d: d["created_at"], reverse=True),
+            "pipelines": pipelines, "models": c["models"], "mlflow_models": mlflow, "notebooks": notebooks,
+            "runs": runs[:20], "connections": c["connection"], "investigations": c["investigation"],
+            "counts": {"datasets": len(datasets), "pipelines": len(pipelines), "notebooks": len(notebooks),
+                       "runs": len(runs), "models": len(c["models"]) + len(mlflow)},
+            "empty": not (datasets or pipelines or notebooks or runs or c["models"])}
 
 
 def member_filter(ctx: Context, pid: str | None, kind: str):

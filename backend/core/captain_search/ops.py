@@ -533,8 +533,10 @@ def backtest_launch(ctx, name: str, compute: str | None = None, progress=None, d
     """Run locally, or submit to the backtest's (or the given) compute target."""
     from . import compute as C
 
+    from . import settings as ST
+
     bt = ctx.registry.load("backtest", name)
-    target = C.get(ctx, compute or bt.compute or "local")
+    target = C.get(ctx, compute or bt.compute or ST.default_compute(ctx, "backtest") or "local")
     if target["kind"] == "local":
         if dry_run:
             return {"compute": target["name"], "plan": C.plan_backtest(ctx, target, name)}

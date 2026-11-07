@@ -1,9 +1,24 @@
-"""Scope model (Brand > Site > Engine by default), engines as persistent identities, and the Explorer tree."""
+"""Scope model (empty by default, Brand > Site when the team picks the suggestion), engines as persistent identities,
+and the Explorer tree."""
 import pytest
 
 from captain_search import projects as PR
 from captain_search import scopes as SC
-from captain_search.workspace import init_workspace
+from captain_search.workspace import init_workspace as _init
+
+
+def init_workspace(*a, **k):
+    """A workspace whose team took the suggested levels (Brand, then Site)."""
+    c = _init(*a, **k)
+    SC.set_model(c, {**SC.model(c), "types": SC.SUGGESTED, "explorer": {"order": ["brand", "site"], "hidden": []}})
+    return c
+
+
+def test_scope_model_starts_empty(tmp_path):
+    c = _init("e", str(tmp_path / "e"))
+    assert SC.model(c)["types"] == [] and SC.explorer(c)
+    with pytest.raises(ValueError, match="no scope levels yet"):
+        SC.add_scope(c, "brand", "A")
 
 
 def test_explorer_follows_the_spec_tree(tmp_path):
@@ -43,8 +58,8 @@ def test_hierarchy_rules(tmp_path):
         SC.set_model(c, no_site)
     renamed = {**m, "types": [{**t, "singular": "Storefront", "plural": "Storefronts"} if t["key"] == "site" else t
                               for t in m["types"]]}
-    new = SC.set_model(c, renamed, expect_revision=1)
-    assert new["revision"] == 2 and SC.explorer(c)["tree"][2]["children"][0]["children"][0]["label"] == "Storefronts"
+    new = SC.set_model(c, renamed, expect_revision=m["revision"])
+    assert new["revision"] == m["revision"] + 1 and SC.explorer(c)["tree"][2]["children"][0]["children"][0]["label"] == "Storefronts"
 
 
 def test_registry_brand_maps_to_a_scope(tmp_path):

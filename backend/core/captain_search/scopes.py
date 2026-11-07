@@ -32,15 +32,20 @@ KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 DEFAULT_MODEL = {
     "revision": 1,
-    "types": [
-        {"key": "brand", "singular": "Brand", "plural": "Brands", "description": "A business or company you build search for.",
-         "parents": [], "fields": []},
-        {"key": "site", "singular": "Site", "plural": "Sites",
-         "description": "A website or app. An identity, not just a hostname.", "parents": ["brand"], "fields": []},
-    ],
-    "explorer": {"order": ["brand", "site"], "hidden": []},
+    # Empty until the team defines its own levels (Edgar, 2026-11-07: "the scope model should be empty by default").
+    # SUGGESTED is offered in Settings as a one-click start.
+    "types": [],
+    "explorer": {"order": [], "hidden": []},
     "engine_types": ["search", "recommendation"],
 }
+
+
+SUGGESTED = [
+    {"key": "brand", "singular": "Brand", "plural": "Brands", "description": "A business or company you build search for.",
+     "parents": [], "fields": []},
+    {"key": "site", "singular": "Site", "plural": "Sites",
+     "description": "A website or app. An identity, not just a hostname.", "parents": ["brand"], "fields": []},
+]
 
 
 def _now() -> str:
@@ -154,6 +159,9 @@ def add_scope(ctx: Context, type_key: str, name: str, parent: str | None = None,
     m = model(ctx)
     t = next((t for t in m["types"] if t["key"] == type_key), None)
     if t is None:
+        if not m["types"]:
+            raise ValueError("There are no scope levels yet. Add one in Settings, Scope model (for example Brand), "
+                             "then add scopes to it.")
         raise ValueError(f"no scope type {type_key!r}. Types: {', '.join(x['key'] for x in m['types'])}")
     if not name.strip():
         raise ValueError(f"name the {t['singular'].lower()}")
