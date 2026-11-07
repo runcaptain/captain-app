@@ -556,3 +556,20 @@ Backtest runs now carry `manifest` (see docs/extending.md).
     `/api/lineage?view=models` cover every attached registry.
 
 CLI: `cst data import <paths> --folder <f>`, `cst data mkdir|move|rename-folder|rmdir`, `cst registry attach|list|detach`.
+
+## Table browser (Querybook's table explorer)
+
+- `GET /api/tables` lists each connection with what's been read of it: `{connection, engine, pulled_at, schemas, tables}`.
+- `POST /api/tables/{conn}/pull {schemas?}` returns `{job}`. It reads schemas, tables, views, columns, types and
+  comments through SQLAlchemy's inspector, falling back to `information_schema` where a driver can't reflect. The
+  result is cached in the workspace as `metastore/<conn>.json`. Read-only on the database.
+- `GET /api/tables/{conn}` returns the cached schemas and tables. It's a 404, with a sentence, until the first pull.
+- `GET /api/tables/{conn}/{schema}/{table}` returns columns, comment and `pulled_at`, plus `insights`:
+  `{queries, frequent_users, queried_with, examples}`.
+- `GET /api/tables/{conn}/{schema}/{table}/sample?n=&where=&order=&desc=` returns a few rows through the read-only guard.
+- `GET /api/tables/search?q=&conn=` searches table names, comments and column names. Name matches rank first.
+- Insights come from a log of every query run through Captain (the app's SQL, notebook SQL cells and `cst sql`). The
+  log is append-only under `metastore/queries/<day>/`. The tables each query reads are found by parsing it with
+  SQLGlot.
+
+CLI: `cst tables pull|list|show|search|sample`.
