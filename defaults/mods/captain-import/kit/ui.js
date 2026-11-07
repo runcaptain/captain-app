@@ -155,7 +155,8 @@ export function Line(c, values, { height = 120, min, max } = {}) {
  * A table: a fixed list (`rows`) or server paging (`fetch({offset, limit, sort, desc})` resolving
  * `{rows, total}`). Rows are virtualized, so only what's visible is built. Keep the instance on the view.
  *
- *   this.table = new Table({ id: "inv", columns: [{key, label, width?, sortable?, render?(row, c)}],
+ *   this.table = new Table({ id: "inv", columns: [{key, label, width?, sortable?, optional?, render?(row, c)}],
+ *   (optional columns drop, last first, when the table is too narrow; empty may be a function (c) => element)
  *                            rows?, fetch?, pageSize: 100, rowKey: (row) => row.id, onRow: (row, cx) => ... });
  *   this.table.load(cx);            // after a filter changes too
  *   this.table.render(c, cx)        // in render()
@@ -163,6 +164,7 @@ export function Line(c, values, { height = 120, min, max } = {}) {
 export class Table {
   constructor({ id, columns, rows = null, fetch = null, pageSize = 100, rowKey = (r, i) => String(r.id ?? i), onRow = null, rowHeight = 34, empty = "Nothing here yet." }) {
     Object.assign(this, { id, columns, fetch, pageSize, rowKey, onRow, rowHeight, empty });
+    this.width = null; // measured: columns marked optional drop, last first, until the rest fit
     this.rows = rows ?? [];
     this.total = rows ? rows.length : 0;
     this.offset = 0;
@@ -198,11 +200,27 @@ export class Table {
     else cx.notify();
   }
 
+  /** The columns that fit the measured width: fixed widths, gaps, and 160 for each flexible column. */
+  shown() {
+    if (!this.width) return this.columns;
+    const need = (cols) => 24 + cols.reduce((a, col) => a + (col.width ?? 160), 0) + 12 * Math.max(0, cols.length - 1);
+    const cols = [...this.columns];
+    for (let i = cols.length - 1; i >= 0 && need(cols) > this.width; i--) if (cols[i].optional) cols.splice(i, 1);
+    return cols;
+  }
+
+  /** A column's cell: fixed columns start at their width and may shrink, truncating, so a narrow table still shows
+   *  every column it keeps; a flexible column takes the rest and keeps 120. */
+  cell(col) {
+    return div().when(col.width != null, (e) => e.w(col.width).flex_shrink(1).min_w(Math.min(col.width, 48)))
+      .when(col.width == null, (e) => e.flex_1().min_w(120));
+  }
+
   header(c) {
     return h_flex().h(32).flex_none().px(12).gap(12).items_center().bg(c.surface2).border_b(1).border_color(c.rule)
       .text_size(11.5).font_medium().text_color(c.grey500)
-      .children(this.columns.map((col) => {
-        const cell = div().id(`${this.id}-h-${col.key}`).when(col.width != null, (e) => e.w(col.width).flex_none()).when(col.width == null, (e) => e.flex_1().min_w(0))
+      .children(this.shown().map((col) => {
+        const cell = this.cell(col).id(`${this.id}-h-${col.key}`)
           .truncate().child(col.label + (this.sort === col.key ? (this.desc ? "  (desc)" : "  (asc)") : ""));
         return col.sortable && this.fetch ? cell.cursor_pointer().hover((s) => s.text_color(c.navy)).on_click((_e, cx) => this.toggleSort(col.key, cx)) : cell;
       }));
@@ -211,9 +229,9 @@ export class Table {
   row(c, r, i) {
     return h_flex().h(this.rowHeight).px(12).gap(12).items_center().border_b(1).border_color(c.rule).text_size(13).text_color(c.navy)
       .when(Boolean(this.onRow), (e) => e.cursor_pointer().hover((s) => s.bg(c.surface2)))
-      .children(this.columns.map((col) => {
+      .children(this.shown().map((col) => {
         const v = col.render ? col.render(r, c) : String(r[col.key] ?? "");
-        return div().when(col.width != null, (e) => e.w(col.width).flex_none()).when(col.width == null, (e) => e.flex_1().min_w(0)).truncate()
+        return this.cell(col).truncate()
           .when(Boolean(col.mono), (e) => e.font_family(MONO).text_size(12)).child(v);
       }));
   }
@@ -232,7 +250,7 @@ export class Table {
       : this.state === "failed" ? div().p(12).child(ServiceError(c, this.error))
       : this.state === "starting" ? Skeleton(c)
       : (this.state === "loading" || this.state === "idle") && !this.rows.length ? Loading(c)
-      : !this.rows.length ? Empty(c, this.empty)
+      : !this.rows.length ? (typeof this.empty === "function" ? this.empty(c) : Empty(c, this.empty))
       : div().flex_1().min_h(0).relative()
         .child(v_virtual_list(this.id, this.rows.length, this.rowHeight, (i) => this.rowKey(this.rows[i], i),
           (range) => this.rows.slice(range.start, range.end).map((r, k) => this.row(c, r, range.start + k)))
@@ -241,7 +259,10 @@ export class Table {
             if (r) this.onRow(r, cx);
           })))
         .child(Scrollbar.vertical(this.id).viewport_from_layout().absolute().inset_0());
-    return v_flex().size_full().min_h(0).bg(c.surface).border_1().border_color(c.rule).font_family(FONT)
+    return v_flex().id(`${this.id}-table`).size_full().min_h(0).bg(c.surface).border_1().border_color(c.rule).font_family(FONT)
+      // Optional columns drop once the width is known. It doesn't always arrive for a screen shown later from a stack
+      // (seen on an empty Handoff), so the cells also shrink to fit without it.
+      .on_size_change((size, cx) => { if (Math.abs((this.width ?? 0) - size.width) > 1) { this.width = size.width; cx.notify(); } })
       .child(this.header(c)).child(body).child(this.pager(c) ?? div());
   }
 }

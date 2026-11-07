@@ -20,3 +20,11 @@ export const knownAgents = async () => globalThis.__agents ?? [];
 export const spaces = () => globalThis.__spaces ?? [];
 export const pickFolder = async () => globalThis.__pickFolder ?? null;
 export const appBinary = () => "/usr/bin/false";
+// The palette (frame/palette): the app's commands, layouts and key bindings.
+export const commands = () => globalThis.__commands ?? [];
+export const layouts = () => globalThis.__layouts ?? [];
+export const keys = () => globalThis.__keys ?? [];
+// captain-nav's sidebar.
+export const appHome = () => '/tmp/captain-app';
+export const machines = () => globalThis.__machines ?? [];
+export const nextCommand = async () => null;

@@ -44,15 +44,18 @@ export default class CaptainInvestigations extends View {
       id: "investigations",
       rowKey: (r) => String(r.id),
       onRow: (r, cx) => this.show(r.id, cx),
-      empty: "No investigations yet.",
+      // What an investigation is, and the way to start one.
+      empty: (c) => Empty(c, "No investigations yet",
+        "An investigation is one question about your search, like \"does the tuned ranker help long queries?\", with its hypothesis, the runs that test it, and the decision you make. Agents in a space can work on it with you.",
+        Button(c, "inv-empty-new", "New investigation", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "investigation" } }), { kind: "primary" })),
       columns: [
         { key: "title", label: "Investigation", render: (r) => r.title ?? r.id },
         { key: "state", label: "State", width: 130, render: (r, c) => Badge(c, words(r.state), toneOf(r.state)) },
-        { key: "latest_run", label: "Latest run", width: 120, render: (r, c) => r.latest_run ? Badge(c, words(r.latest_run.status ?? r.latest_run), toneOf(r.latest_run.status ?? r.latest_run)) : "none" },
-        { key: "runs", label: "Runs", width: 50, render: (r) => String(Array.isArray(r.runs) ? r.runs.length : r.runs ?? 0) },
-        { key: "decision", label: "Decision", width: 120, render: (r) => outcome(r.decision) ?? "not yet" },
-        { key: "initiator", label: "Opened by", width: 140, render: (r) => who(r.initiator) },
-        { key: "updated_at", label: "Updated", width: 90, render: (r) => when(r.updated_at) },
+        { key: "latest_run", label: "Latest run", width: 120, optional: true, render: (r, c) => r.latest_run ? Badge(c, words(r.latest_run.status ?? r.latest_run), toneOf(r.latest_run.status ?? r.latest_run)) : "none" },
+        { key: "runs", label: "Runs", width: 50, optional: true, render: (r) => String(Array.isArray(r.runs) ? r.runs.length : r.runs ?? 0) },
+        { key: "decision", label: "Decision", width: 120, optional: true, render: (r) => outcome(r.decision) ?? "not yet" },
+        { key: "initiator", label: "Opened by", width: 140, optional: true, render: (r) => who(r.initiator) },
+        { key: "updated_at", label: "Updated", width: 90, optional: true, render: (r) => when(r.updated_at) },
       ],
       fetch: async () => {
         const r = await api(`/api/investigations${query({ state: this.state, q: this.q })}`);
@@ -67,6 +70,10 @@ export default class CaptainInvestigations extends View {
     watchScope(cx, (cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); });
     watchWorkspace(cx, (cx) => { this.open = null; this.detail = null; this.bound = undefined; this.table.load(cx); cx.notify(); });
     cx.timer.every(10000, (cx) => (this.open ? this.load(this.open, cx) : this.table.load(cx)));
+    // Experiments an agent or a person proposed, waiting for a person's approval (the sidebar's count).
+    this.proposals = []; this.reviewing = null;
+    this.loadProposals(cx);
+    cx.timer.every(10000, (cx) => this.loadProposals(cx));
     // "Open investigation: ..." from the palette (captain-go sets shared "captain.open").
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
@@ -106,7 +113,43 @@ export default class CaptainInvestigations extends View {
 
   reload(cx) {
     this.table.load(cx);
+    this.loadProposals(cx);
     cx.notify();
+  }
+
+  loadProposals(cx) {
+    cx.spawn(async (cx) => {
+      const r = await api("/api/proposals?status=proposed");
+      this.proposals = r.ok && Array.isArray(r.data) ? r.data : [];
+      cx.notify();
+    });
+  }
+
+  review(cx, p, decision) {
+    this.reviewing = p.id; cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/proposals/${encodeURIComponent(p.id)}/review`, { body: { decision, note: "" } });
+      this.reviewing = null;
+      if (!r.ok) notify({ title: "Couldn't record the review", body: String(r.error ?? ""), level: "error" });
+      else notify({ title: decision === "approved" ? "Approved" : "Rejected", body: decision === "approved" ? `${p.title}: run it from the CLI or ask the agent that proposed it.` : p.title, level: "info" });
+      this.loadProposals(cx);
+    });
+  }
+
+  /** Proposed experiments, each with what it tests and who proposed it, and Approve or Reject. */
+  toReview(c) {
+    const ps = this.proposals ?? [];
+    if (!ps.length) return null;
+    return v_flex().id("inv-proposals").gap(8).p(14).border_1().border_color(c.blue).bg(c.blueLight)
+      .child(div().text_size(13).font_semibold().text_color(c.navy).child(`${ps.length} proposed ${ps.length === 1 ? "experiment" : "experiments"} to review`))
+      .child(div().text_size(12).text_color(c.grey900).child("Nothing runs until a person approves it. Agents can propose, but only a person can approve."))
+      .children(ps.slice(0, 5).map((p) => h_flex().id(`inv-prop-${p.id}`).gap(10).items_center().p(10).bg(c.surface).border_1().border_color(c.rule)
+        .child(v_flex().flex_1().min_w(0).gap(2)
+          .child(div().text_size(13).font_medium().text_color(c.navy).child(p.title ?? p.id))
+          .child(div().text_size(12).text_color(c.grey900).child(p.hypothesis ?? ""))
+          .child(div().text_size(11.5).text_color(c.grey500).child(`Proposed by ${p.agent ? `the agent ${p.agent}` : p.author ?? "someone"}${(p.arms ?? []).length ? `: ${[].concat(p.arms).map((a) => a.pipeline ?? a).join(" vs ")}` : ""}`)))
+        .child(Button(c, `inv-approve-${p.id}`, "Approve", (_e, cx) => this.review(cx, p, "approved"), { kind: "primary", small: true, disabled: this.reviewing === p.id }))
+        .child(Button(c, `inv-reject-${p.id}`, "Reject", (_e, cx) => this.review(cx, p, "rejected"), { small: true, disabled: this.reviewing === p.id }))));
   }
 
   show(id, cx) {
@@ -166,10 +209,13 @@ export default class CaptainInvestigations extends View {
   list(c) {
     return v_flex().size_full().p(24).gap(14)
       .child(h_flex().gap(12).items_center()
-        .child(div().flex_1().text_size(20).font_semibold().text_color(c.navy).child("Investigations"))
-        .child(div().id("inv-search").w(260).h(32).px(10).flex().items_center().bg(c.surface).border_1().border_color(c.grey300).cursor_text()
+        .child(div().flex_none().text_size(20).font_semibold().text_color(c.navy).child("Investigations"))
+        .child(div().flex_1())
+        // The search gives way first when the section is narrow.
+        .child(div().id("inv-search").flex_shrink(1).min_w(120).w(260).h(32).px(10).flex().items_center().bg(c.surface).border_1().border_color(c.grey300).cursor_text()
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.search).w_full().text_size(13).text_color(c.navy)))
         .child(Button(c, "inv-new", "New investigation", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "investigation" } }), { kind: "primary" })))
+      .child(this.toReview(c) ?? div())
       .child(Tabs(c, "inv-state", STATES.map(([id, label]) => ({ id, label })), this.state, (id, cx) => { this.state = id; this.reload(cx); }))
       .child(div().flex_1().min_h(0).child(this.table.render(c)));
   }

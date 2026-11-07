@@ -98,10 +98,12 @@ function entries() {
   // words, name, args} or {..., overlay: openOverlay spec}]}): Captain's cst commands.
   for (const extra of Object.values(shared("palette.extra") ?? {})) {
     for (const e of Array.isArray(extra) ? extra : []) {
-      if (e?.title && e?.group) list.push({ name: e.name ?? "overlay", args: e.args ?? e.overlay?.props ?? {}, group: e.group, title: e.title, words: e.words ?? "", overlay: e.overlay });
+      if (e?.title && e?.group) list.push({ name: e.name ?? "overlay", args: e.args ?? e.overlay?.props ?? {}, group: e.group, title: e.title, words: e.words ?? "", overlay: e.overlay, icon: e.icon });
     }
   }
-  return list.map((e) => ({ ...e, id: `${e.name}:${JSON.stringify(e.args)}` }));
+  // An entry that opens a screen is that screen and its title: several open with no props, and keyed by name and
+  // args alone they shared one id ("overlay:{}"), so all but one went missing from the list.
+  return list.map((e) => ({ ...e, id: e.overlay ? `overlay:${e.overlay.mod}:${JSON.stringify(e.args)}:${e.title}` : `${e.name}:${JSON.stringify(e.args)}` }));
 }
 
 // The key bound to an entry: `name` or `name:value` in keys.json.
@@ -268,6 +270,8 @@ export default class Palette extends View {
           .when(on, (el) => el.bg(t.selected))
           .hover((s) => s.bg(t.hover))
           .on_click(() => this.go(r.e))
+          // An icon (an app path, icons/...) when the entry brings one: the New menu's tasks show the same.
+          .when(Boolean(r.e.icon), (el) => el.child(svg(r.e.icon).size(14).flex_none().text_color(on ? t.foreground : t.dim)))
           .child(div().flex_1().min_w(0).child(this.title(t, r.e.title, r.hits, on)))
           .when(Boolean(this.query), (el) => el.child(div().text_size(11.5).text_color(t.dim).child(r.e.group)))
           .when(Boolean(k), (el) => el.child(key(k))),
