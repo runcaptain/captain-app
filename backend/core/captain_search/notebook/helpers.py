@@ -46,6 +46,9 @@ def sql(conn_name: str, text: str, var: str | None = None, limit: int | None = N
     ctx = _context()
     conn = ctx.load_connection(conn_name)
     r = run_sql(conn, text, limit=limit, allow_large=local)
+    from captain_search.metastore import record_query
+
+    record_query(ctx, conn_name, text, rows=r.table.num_rows, ms=r.elapsed_ms, source="notebook")
     df = r.table.to_pandas()
     b = table_bundle(df, var)
     b["ms"] = r.elapsed_ms

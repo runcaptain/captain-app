@@ -223,6 +223,55 @@ def connection_test(name: str):
     return {"name": name, "ok": True, "ms": r.elapsed_ms}
 
 
+@app.get("/api/tables", dependencies=A)
+def tables_overview():
+    """Each connection, and what's been read of its tables."""
+    from . import metastore as MS
+
+    return MS.overview(ctx())
+
+
+@app.get("/api/tables/search", dependencies=A)
+def tables_search(q: str, conn: str | None = None, limit: int = 50):
+    from . import metastore as MS
+
+    return MS.search(ctx(), q, conn, limit)
+
+
+@app.post("/api/tables/{conn}/pull", dependencies=A)
+def tables_pull(conn: str, body: dict | None = None):
+    """Read the connection's schemas, tables and columns into the workspace's cache. Runs as a job."""
+    from . import metastore as MS
+
+    c = ctx()
+    c.load_connection(conn)
+    sch = (body or {}).get("schemas")
+    return {"job": _job(lambda p: MS.pull(c, conn, sch, progress=p), f"read the tables of {conn}")}
+
+
+@app.get("/api/tables/{conn}", dependencies=A)
+def tables_of(conn: str):
+    from . import metastore as MS
+
+    return MS.schemas(ctx(), conn)
+
+
+@app.get("/api/tables/{conn}/{schema}/{table}", dependencies=A)
+def table_detail(conn: str, schema: str, table: str):
+    """Columns, comment, when it was read, and insights: frequent users, tables queried with it, example queries."""
+    from . import metastore as MS
+
+    return MS.table(ctx(), conn, schema, table)
+
+
+@app.get("/api/tables/{conn}/{schema}/{table}/sample", dependencies=A)
+def table_sample(conn: str, schema: str, table: str, n: int = 20, where: str | None = None,
+                 order: str | None = None, desc: bool = False):
+    from . import metastore as MS
+
+    return MS.sample(ctx(), conn, schema, table, n, where, order, desc)
+
+
 @app.post("/api/sql", dependencies=A)
 def sql(body: dict):
     from .connectors.sql import run_sql
@@ -230,6 +279,9 @@ def sql(body: dict):
     c = ctx()
     conn = c.load_connection(body["conn"])
     r = run_sql(conn, body["sql"], limit=body.get("limit"))
+    from .metastore import record_query
+
+    record_query(c, body["conn"], body["sql"], rows=r.table.num_rows, ms=r.elapsed_ms, source="app")
     out = {"columns": [{"name": f.name, "type": str(f.type)} for f in r.table.schema],
            "rows": [list(map(_jsonable, row.values())) for row in r.table.slice(0, 1000).to_pylist()],
            "row_count": r.table.num_rows, "truncated": r.truncated, "ms": r.elapsed_ms}
