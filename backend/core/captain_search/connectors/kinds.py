@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 
 F = dict  # a field: name, label, type (text, number, secret, path, choice), required, default, help, placeholder, choices
 
@@ -76,6 +76,20 @@ KINDS: list[dict] = [
     {"kind": "sqlserver", "label": "SQL Server", "icon": "microsoftsqlserver", "dialect": "tsql", "driver": "pymssql",
      "module": "pymssql", "docs": "https://docs.sqlalchemy.org/en/20/dialects/mssql.html",
      "fields": [HOST, _f("port", "Port", "number", default=1433), DB, USER, PASSWORD]},
+    {"kind": "posthog", "label": "PostHog", "icon": "posthog", "dialect": "clickhouse", "driver": "(built in)",
+     "module": "urllib", "docs": "https://posthog.com/docs/hogql",
+     "fields": [_f("host", "PostHog address", default="https://us.posthog.com",
+                   help="https://us.posthog.com, https://eu.posthog.com, or your own instance"),
+                _f("project_id", "Project ID", help="The number in your project's URL"),
+                _f("api_key", "Personal API key", "secret", help="Settings > Personal API keys, with the query:read scope")],
+     "note": "Queries are HogQL, PostHog's SQL. Read-only."},
+    {"kind": "ga4", "label": "Google Analytics 4", "icon": "googleanalytics", "dialect": None,
+     "driver": "google-analytics-data", "module": "google.analytics.data_v1beta",
+     "docs": "https://developers.google.com/analytics/devguides/reporting/data/v1",
+     "fields": [_f("property_id", "Property ID", help="Admin > Property details. Digits only"),
+                _f("credentials_path", "Service account key file", "path", required=False,
+                   help="Leave empty to use your Google Cloud login. The account needs Viewer on the property")],
+     "note": "Reports, not SQL: pick dimensions and metrics. If GA4 exports to BigQuery, connect BigQuery for raw events."},
     {"kind": "duckdb", "label": "DuckDB file", "icon": "duckdb", "dialect": "duckdb", "driver": "duckdb-engine",
      "module": "duckdb_engine", "docs": "https://duckdb.org/docs/guides/python/sql_on_pandas",
      "fields": [_f("path", "Database file", "path", placeholder="/path/to/data.duckdb")]},
@@ -160,6 +174,11 @@ def build(kind: str, conn: str, values: dict) -> dict:
             {"protocol": "https" if (v.get("https") or "yes") == "yes" else None})
     elif kind == "sqlserver":
         url = f"mssql+pymssql://{auth()}{v['host']}:{v['port']}/{q(v['database'])}"
+    elif kind == "posthog":
+        host = urlparse(v["host"] if "://" in v["host"] else f"https://{v['host']}")
+        url = f"posthog+{host.scheme}://key:{sec('api_key')}@{host.netloc}/{q(v['project_id'])}"
+    elif kind == "ga4":
+        url = f"ga4://{q(v['property_id'])}" + params({"credentials_path": v.get("credentials_path")})
     elif kind == "duckdb":
         url = f"duckdb:///{v['path']}"
     else:  # sqlite

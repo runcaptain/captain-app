@@ -23,6 +23,7 @@ DIALECTS = {
     "databricks": "databricks",
     "clickhouse": "clickhouse",
     "sqlserver": "tsql",
+    "posthog": "clickhouse",
 }
 
 READ_ROOTS = (exp.Select, exp.SetOperation, exp.Describe, exp.Show)

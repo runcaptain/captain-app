@@ -623,3 +623,17 @@ Routes:
   connection's own login, read-only. Other databases get a plain refusal.
 - `GET /api/profile?dataset=<name>[@vN]` returns rows, age, and per column the type, null share, distinct count, min
   and max.
+
+## Import from sources: suggested sample queries and previews
+
+- Connection kinds now include **PostHog** (HogQL over its query API, with a personal API key stored as a secret,
+  guarded read-only) and **Google Analytics 4** (Data API reports: the "query" is JSON
+  `{dimensions, metrics, start, end, filter: {dimension, equals}, limit}`). Both work with previews, saving, the
+  query log and the table browser. GA4's BigQuery export is recognized when BigQuery is connected.
+- `GET /api/connections/{name}/suggestions` returns `{pulled, suggestions: [{id, title, why, kind, query}]}`.
+  Suggestions come from the read tables: search logs (top searches, zero-result searches, per day), catalogs
+  (sample, per category), event streams (per day, recent), the GA4 BigQuery export (site search terms), or a small
+  sample. PostHog and GA4 get their own. Every query is bounded by a LIMIT or a time window. `pulled: false` means
+  read the tables first.
+- `POST /api/connections/{name}/preview {query, limit<=1000}` returns `{columns, rows, row_count, limited, ms}` and
+  saves nothing. Save with `POST /api/sql {conn, sql, save, kind, project?}`.

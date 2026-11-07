@@ -97,15 +97,12 @@ def _comment_from_information_schema(eng, schema: str, table: str) -> str | None
 # ---- pull and read the cache --------------------------------------------------------------
 
 
-def pull(ctx: Context, conn_name: str, schemas: list[str] | None = None, max_tables: int = 5000,
-         progress=lambda f: None) -> dict:
-    """Read the connection's metadata and cache it. Returns a summary."""
+def _read_sql_metadata(conn, schemas, max_tables, progress):
+    """Schemas, tables, views and columns through SQLAlchemy's inspector, with information_schema fallbacks."""
     from sqlalchemy import inspect
 
     from .connectors.sql import open_engine
 
-    conn = ctx.load_connection(conn_name)
-    t0 = time.time()
     out_schemas, n_tables, errors = [], 0, []
     with open_engine(conn) as eng:
         insp = inspect(eng)
@@ -142,6 +139,21 @@ def pull(ctx: Context, conn_name: str, schemas: list[str] | None = None, max_tab
                     t["comment"] = _comment_from_information_schema(eng, sch, tname)
                 entry["tables"].append(t)
             out_schemas.append(entry)
+    return out_schemas, n_tables, errors
+
+
+def pull(ctx: Context, conn_name: str, schemas: list[str] | None = None, max_tables: int = 5000,
+         progress=lambda f: None) -> dict:
+    """Read the connection's metadata and cache it. Returns a summary."""
+    conn = ctx.load_connection(conn_name)
+    t0 = time.time()
+    from .connectors import sources
+
+    if conn.engine in sources.ENGINES:  # PostHog and Google Analytics describe themselves over their APIs
+        out_schemas, errors = sources.describe(conn), []
+        n_tables = sum(len(x["tables"]) for x in out_schemas)
+    else:
+        out_schemas, n_tables, errors = _read_sql_metadata(conn, schemas, max_tables, progress)
     doc = {"connection": conn_name, "engine": conn.engine, "pulled_at": _now(), "pulled_by": whoami(),
            "seconds": round(time.time() - t0, 2), "schemas": out_schemas, "errors": errors,
            "truncated": n_tables >= max_tables}
@@ -236,13 +248,18 @@ def sample(ctx: Context, conn_name: str, schema: str, name: str, n: int = 20, wh
     from .workspace import render_secrets
 
     conn = ctx.load_connection(conn_name)
-    prep = make_url(render_secrets(conn.url)).get_dialect()().identifier_preparer
-    qual = ".".join(prep.quote(x) for x in [*_parts(schema), name] if x)
+    if conn.engine == "ga4":
+        raise ValueError("Google Analytics has no rows to sample. Run one of the suggested reports instead.")
+    if conn.engine == "posthog":
+        qual, prep = name, None
+    else:
+        prep = make_url(render_secrets(conn.url)).get_dialect()().identifier_preparer
+        qual = ".".join(prep.quote(x) for x in [*_parts(schema), name] if x)
     sql = f"SELECT * FROM {qual}"
     if where:
         sql += f" WHERE {where}"
     if order:
-        sql += f" ORDER BY {prep.quote(order)}{' DESC' if desc else ''}"
+        sql += f" ORDER BY {prep.quote(order) if prep else order}{' DESC' if desc else ''}"
     sql += f" LIMIT {max(1, min(int(n), 1000))}"
     try:
         r = run_sql(conn, sql, limit=n)

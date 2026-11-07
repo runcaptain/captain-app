@@ -170,6 +170,27 @@ def extensions_list():
     return {"extensions": [e.public() for e in reg.items], "errors": reg.errors, "project": reg.project}
 
 
+@app.get("/api/connections/{name}/suggestions", dependencies=A)
+def connection_suggestions(name: str):
+    """Sample queries for this source, from its tables (read them first) or, for PostHog and Google Analytics, from
+    what those products record. Each is bounded by a LIMIT or a time window."""
+    from . import suggest as SG
+
+    return SG.suggestions(ctx(), name)
+
+
+@app.post("/api/connections/{name}/preview", dependencies=A)
+def connection_preview(name: str, body: dict):
+    """{query, limit<=1000}: the rows, without saving anything. Save with POST /api/sql {conn, sql, save, kind,
+    project?}."""
+    from . import suggest as SG
+
+    q = str(body.get("query", "")).strip()
+    if not q:
+        raise ValueError("write a query, or pick a suggested one")
+    return SG.preview(ctx(), name, q, int(body.get("limit", 1000)))
+
+
 @app.get("/api/lineage/graph", dependencies=A)
 def lineage_graph(node: str | None = None, up: int = 2, down: int = 2):
     """Data and model lineage. With node=<id>, only what's within `up` steps upstream and `down` downstream, each node

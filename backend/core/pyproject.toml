@@ -42,7 +42,7 @@ postgres = ["psycopg[binary]>=3.1"]
 # Every database the app's "Connect a database" form offers (connectors/kinds.py). Captain.app bundles this extra.
 warehouses = ["psycopg[binary]>=3.1", "snowflake-sqlalchemy>=1.7", "databricks-sqlalchemy>=2.0", "sqlalchemy-bigquery>=1.11",
               "pymysql>=1.1", "trino[sqlalchemy]>=0.330", "pyathena[sqlalchemy]>=3.9", "clickhouse-sqlalchemy>=0.3",
-              "pymssql>=2.3", "duckdb-engine>=0.13"]
+              "pymssql>=2.3", "duckdb-engine>=0.13", "google-analytics-data>=0.18"]
 dev = ["pytest>=8", "moto[s3]>=5", "boto3>=1.35"]
 
 [project.scripts]
