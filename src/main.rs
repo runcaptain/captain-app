@@ -230,6 +230,9 @@ pub(crate) fn test_window() -> bool {
 
 /// The main window, on a connected core.
 pub fn open_main(core: std::sync::Arc<hc::Core>, requests: async_channel::Receiver<mods::Request>, cx: &mut App) {
+    // CAPTAIN: mods can't read the environment, so test hooks that act on their own (captain-sandbox runs a small
+    // sweep on open) check shared "app.testWindow". Written every launch, so a real window always reads false.
+    mods::set_shared("app.testWindow".into(), serde_json::Value::Bool(test_window()));
             let (window_bounds, display_id) = place::initial(cx);
             let options = WindowOptions {
                 window_bounds: Some(window_bounds),
