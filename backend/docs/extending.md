@@ -49,3 +49,84 @@ version and source. A run made from uncommitted code says so.
 
 Extensions are code that runs with your permissions, like dbt models. Loading a folder runs its Python. Load only
 folders you trust, and run anything else on a compute target, never in the app.
+
+## Team views
+
+A team view is a screen your team builds in code, in the project, without changing Captain: your own dashboard over
+runs, a review queue, a view of your logs. Captain loads it from `captain/views/<name>/`, lists it under the
+Explorer's Views (under "From <project>"), opens it in its own pane, and reloads it when a file changes.
+
+### The folder
+
+```
+captain/views/<name>/
+  mod.json      {"title": "Catalog rows", "place": "none", "icon": "table",
+                 "overlay": {"width": 0.8, "height": 0.85}, "captain": {"view_api": 1}}
+  main.js       an ordinary gpui-kit mod: export default class extends View { init(props, cx) {...} render() {...} }
+  README.md
+  .gitignore    kit/
+```
+
+- `title` names it in the Explorer. `icon` is one of the kit's icon names (`defaults/captain/kit/icons.js`, for
+  example table, chart-line, database, flask-conical). `overlay` sizes its pane: up to 1 is a share of the window.
+- `captain.view_api` is the view API it's written for. This Captain understands `1`. A view asking for more says
+  "Update Captain" instead of loading.
+- Don't commit a `kit/` folder: Captain puts its kit there when it loads the view, so a view always gets the kit of
+  the Captain it runs in.
+
+`cst view new <name>` scaffolds that folder from the template in `defaults/captain/view-template/` (it shows a
+dataset's rows in the result grid, filtered to the Explorer's pick).
+
+### Checking it
+
+`captain-app check captain/views/<name>` loads the view once with the kit, the way Captain will, and says exactly
+what's wrong, naming your files. Run it before you push, and have an agent run it after every change. It never
+writes into your folder.
+
+### Loading and errors
+
+Captain copies each view into its mods folder as `team-<name>`, with the kit as `./kit`, and copies it again when a
+file changes. A changed view is checked first: if the check fails, it isn't copied, its last good version stays,
+the Explorer shows it as "(last good version)", and opening it shows that version with the check's words. Other
+views never notice. A view removed from the project goes away.
+
+### What a view can use
+
+From the kit (`./kit/...`), the same pieces Captain's own screens use:
+
+| Module | What it gives you |
+|---|---|
+| `cst.js` | `api(path, {method, body, timeout, scoped})`: Captain's services, resolving `{ok, status, data, error, starting, failed, timedOut}`, never throwing. `watchScope(cx, fn)` and `watchWorkspace(cx, fn)` call you when the Explorer's pick or the space's workspace changes. `details()` for Copy details. |
+| `ui.js` | `Card`, `Badge`, `Button`, `Tabs`, `Empty`, `ErrorState`, `Problem`, `Skeleton`, `Loading`, `Bars`, `Line`, `Table`, and `plainError(text, fallback)` so a raw key or path never reaches a person. |
+| `grid.js` | `ResultGrid`: a query's rows with sort, filters, column stats, CSV download and TSV copy. |
+| `chart.js`, `charts.js` | bars, lines and scatter from a table. |
+| `lineage.js` | `LineageGraph`, the drawn lineage graph. |
+| `tokens.js` | `palette(isDark(theme()))` (Captain's colors in light and dark), `FONT`, `MONO`, `RADIUS`. |
+| `icons.js`, `brands.js` | `icon(name)` for `svg()`; `Brand(c, kind, size)` for a database's or cloud's mark. |
+| `scopes.js` | the scope model's words and the Explorer's pick (`currentScope()`). |
+| `agent.js` | `askAgent(cx, prompt)`, `copyPrompt(cx, prompt)`, `openForm(task, args)`. |
+
+From `"herdr"`: `theme()`, `shared`/`setShared`, `openOverlay`/`closeOverlay`, `notify`, `exec`, `readTextFile`,
+`pickFolder` and the rest of the mod API (the app's `AGENTS.md`, "The `herdr` module").
+
+### Which routes a view may call
+
+Any route in [api.md](api.md), through `api()`, which adds the token, the space's workspace (`X-CST-Workspace`) and
+the Explorer's pick. Prefer reading:
+
+- the lists: `/api/datasets`, `/api/datasets/tree`, `/api/pipelines`, `/api/backtests`, `/api/runs`,
+  `/api/investigations`, `/api/models`, `/api/connections`, `/api/grading`, `/api/signals`;
+- a record and its parts: `/api/datasets/{name}/rows`, `/api/runs/{name}`, `/api/runs/{run}/queries`,
+  `/api/lineage`, `/api/engines`, `/api/explorer`.
+
+A view that writes (records a decision, starts a backtest) should do it through the same routes Captain's forms
+use, after the person asks for it, and say what it did. A view never holds a secret: passwords go to
+`POST /api/secrets` from Captain's own forms.
+
+### The Explorer's pick
+
+While the person has a scope, engine or project picked, every request a view makes carries
+`X-CST-Scope: <kind>:<id>` (`scope`, `engine`, `project`, or `view`, which filters nothing), and the list routes
+return only what belongs to it and below. So a view filters with no work of its own. Call `watchScope(cx, ...)` to
+reload when the pick changes, and pass `api(path, {scoped: false})` for a request that must cover the whole
+workspace.

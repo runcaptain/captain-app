@@ -94,6 +94,13 @@ fn main() {
         attach_console();
     }
     // `herdr-app check <mod>` / `herdr-app types <mod>`: gpui-shell's own checker, with Herdr's module installed.
+    // CAPTAIN: a team view (captain/views/<name>/, its mod.json naming a "captain" view API) is checked with the
+    // Captain kit injected, the way the app loads it: on a copy, never touching the author's folder.
+    if args.get(1).map(String::as_str) == Some("check")
+        && let Some(code) = args.get(2).and_then(|dir| mods::check_team_view(std::path::Path::new(dir)))
+    {
+        std::process::exit(code);
+    }
     if matches!(args.get(1).map(String::as_str), Some("check" | "types")) {
         mods::install_check_policy();
         gpui_shell::host::main_with_components(gpui_shell::FrozenComponentRegistry::default());

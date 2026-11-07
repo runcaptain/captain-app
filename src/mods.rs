@@ -84,6 +84,71 @@ pub fn write_workspace() -> std::io::Result<()> {
     sync_defaults(&mods_dir(), &dir.join("installed.json"), DEFAULT_MODS)
 }
 
+/// CAPTAIN: the newest team view API this app understands (a view's mod.json: `"captain": {"view_api": 1}`).
+pub const TEAM_VIEW_API: u64 = 1;
+
+/// `captain-app check <dir>` for a team view: None when `dir` isn't one (the ordinary check runs). Otherwise checks
+/// its view API, copies it to a temporary folder with the Captain kit as ./kit (from the shipped captain-nav), runs
+/// the ordinary check there, and returns its exit code.
+pub fn check_team_view(dir: &Path) -> Option<i32> {
+    // The copy this makes is checked the ordinary way.
+    if std::env::var_os("CAPTAIN_TEAM_VIEW_STAGED").is_some() {
+        return None;
+    }
+    let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("mod.json")).ok()?).ok()?;
+    let api = manifest.get("captain")?.get("view_api").and_then(|v| v.as_u64());
+    let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    match api {
+        None => {
+            eprintln!("{name}: mod.json's \"captain\" needs \"view_api\": {TEAM_VIEW_API}");
+            return Some(1);
+        }
+        Some(v) if v > TEAM_VIEW_API => {
+            eprintln!("{name}: it needs view API {v}, and this Captain understands up to {TEAM_VIEW_API}. Update Captain.");
+            return Some(1);
+        }
+        _ => {}
+    }
+    let tmp = std::env::temp_dir().join(format!("captain-view-check-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    if let Err(e) = copy_tree(dir, &tmp, &|p| p.file_name().is_some_and(|n| n == "kit" || n == "node_modules" || n == ".git")) {
+        eprintln!("{name}: couldn't copy it to check: {e}");
+        return Some(1);
+    }
+    for (path, bytes) in DEFAULT_MODS {
+        if let Some(rest) = path.strip_prefix("captain-nav/kit/") {
+            let f = tmp.join("kit").join(rest);
+            let _ = std::fs::create_dir_all(f.parent().unwrap());
+            let _ = std::fs::write(&f, bytes);
+        }
+    }
+    println!("team view {name} (view API {}), checked with the Captain kit:", api.unwrap_or(TEAM_VIEW_API));
+    let out = std::env::current_exe().ok().and_then(|exe| std::process::Command::new(exe).arg("check").arg(&tmp).env("CAPTAIN_TEAM_VIEW_STAGED", "1").output().ok());
+    let code = out.as_ref().and_then(|o| o.status.code()).unwrap_or(1);
+    // Errors name the author's files, not the copy.
+    let src = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let tmp_real = std::fs::canonicalize(&tmp).unwrap_or_else(|_| tmp.clone());
+    for (bytes, err) in out.iter().flat_map(|o| [(&o.stdout, false), (&o.stderr, true)]) {
+        let text = String::from_utf8_lossy(bytes).replace(&*tmp_real.to_string_lossy(), &src.to_string_lossy()).replace(&*tmp.to_string_lossy(), &src.to_string_lossy());
+        if err { eprint!("{text}") } else { print!("{text}") }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    Some(code)
+}
+
+fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for e in std::fs::read_dir(from)? {
+        let e = e?;
+        let p = e.path();
+        if skip(&p) {
+            continue;
+        }
+        if e.file_type()?.is_dir() { copy_tree(&p, &to.join(e.file_name()), skip)? } else { std::fs::copy(&p, to.join(e.file_name()))?; }
+    }
+    Ok(())
+}
+
 static SYNC_NOTES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 pub fn take_sync_notes() -> Vec<String> {
@@ -931,6 +996,8 @@ fn module(inst: Instance, copy: u64) -> HostModule {
         .async_function("hc", |a| Ok(exec_future("hc".into(), strings(a.get(0)), None, None, EXEC_LIMIT)))
         .function("home", |_| Ok(home().to_string_lossy().into_owned().into()))
         .function("appHome", |_| Ok(app_dir().to_string_lossy().into_owned().into()))
+        // CAPTAIN: this app's own binary, so a mod can run `captain-app check` (team views do before loading a change).
+        .function("appBinary", |_| Ok(std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default().into()))
         .function("fonts", |_| Ok(to_host(&json!(*FONTS.lock().unwrap()))))
         .function("updates", |_| Ok(to_host(&crate::update::status())))
         .function("presentUpdateNotes", |a| {

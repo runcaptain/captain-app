@@ -17,13 +17,14 @@
 // that keeps them current.
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, layout, props, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
+import { theme, run, layout, props, notify, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
 import { api, retry, workspace, watchWorkspace } from "./kit/cst.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { isDark, palette } from "./kit/tokens.js";
 import { getAppearance, setAppearance } from "./kit/appearance.js";
 import { Explorer } from "./explorer.js";
+import { TeamViews } from "./teamviews.js";
 
 const ITEMS = [
   { id: "investigations", label: "Investigations", icon: "search", badge: "/api/proposals?status=proposed", badgeLabel: "proposals to review" },
@@ -119,6 +120,9 @@ export default class CaptainNav extends View {
     }
     this.explorer = new Explorer();
     this.explorer.start(cx);
+    // Team views from the project's captain/views/ (teamviews.js).
+    this.teamViews = new TeamViews();
+    this.teamViews.start(cx);
     this.refresh(cx);
     watchWorkspace(cx, (cx) => { this.cloud = null; setShared("captain.scope", null); this.refresh(cx); this.explorer.load(cx); });
     // Every 3 s until Captain's services answer, then every 15 s.
@@ -239,6 +243,21 @@ export default class CaptainNav extends View {
           .hover((s) => s.bg(c.surface2)).on_click((_e, cx) => { this.spacesOpen = false; cx.notify();
             openOverlay({ mod: "prompt", kind: "dialog", width: 380, props: { title: "Rename space", hint: current.name, command: { name: "space.rename", args: { id: current.id } } } }); })
           .child("Rename this space")))));
+  }
+
+  // The project's own views (captain/views/<name>/), under a "From <project>" label. A view with a problem says what
+  // it is instead of opening.
+  teamRows(c, rail) {
+    const views = shared("captain.team.views") ?? [];
+    if (!views.length) return null;
+    const project = String(shared("captain.team.project") ?? "").replace(/\/captain\/?$/, "").split("/").pop() || "your project";
+    return v_flex().w_full().pt(4)
+      .when(!rail, (e) => e.child(div().h(20).px(14).flex().items_center().text_size(10.5).font_semibold().text_color(c.grey500).child(`FROM ${project.toUpperCase()}`)))
+      .children(views.map((v) => this.row(c, { id: v.mod, label: v.problem ? `${v.title} (${v.installed ? "last good version" : "can't load"})` : v.title, icon: icon(v.icon) }, false, rail, () => {
+        // A view with a problem: its last good version, if there is one, and the check's words either way.
+        if (v.problem) notify({ title: v.installed ? `${v.title}: showing the last good version` : `${v.title} can't load`, body: v.problem, level: "error" });
+        if (!v.problem || v.installed) openOverlay({ mod: v.mod, kind: "dialog", width: v.size?.width ?? 0.8, height: v.size?.height ?? 0.85 });
+      })));
   }
 
   narrow() {
@@ -366,7 +385,8 @@ export default class CaptainNav extends View {
           .when(Boolean(shared("captain.scope")), (x) => x.child(div().id("nav-scope-clear").min_w(0).flex_1().truncate().text_size(11).text_color(c.blue).cursor_pointer()
             .tooltip("Show the whole workspace").on_click((_e, cx) => { setShared("captain.scope", null); cx.notify(); })
             .child(`in ${shared("captain.scope")?.label ?? ""}`)))))
-        .children(this.items().map((it) => this.row(c, it, it.id === active, rail, go(it)))))
+        .children(this.items().map((it) => this.row(c, it, it.id === active, rail, go(it))))
+        .child(this.teamRows(c, rail) ?? div()))
       .child(this.agentRows(c, rail) ?? div())
       .child(v_flex().w_full().flex_none().py(8).border_t(1).border_color(c.rule)
         .child(this.cloudChip(c, rail) ?? div())

@@ -86,7 +86,7 @@ fn fixture(populated: bool, props: Value, update: Value) -> BTreeMap<String, Val
         ("telemetry".into(), json!({"enabled":true,"setting":true,"sends":true,"off_because":null,"endpoint":"https://invalid.example", "draft":{},"queued":[],"last_sent":null})),
         ("window".into(), json!({"platform":"linux","titlebar":"none","buttons":true,"maximized":false,"fullscreen":false,"active":true})),
         ("placement".into(), Value::Null),
-        ("home".into(), json!("/fixture")), ("appHome".into(), json!("/fixture/app")),
+        ("home".into(), json!("/fixture")), ("appHome".into(), json!("/fixture/app")), ("appBinary".into(), json!("/fixture/captain-app")),
         ("keys".into(), Value::Array(serde_json::from_str::<BTreeMap<String, BTreeMap<String, String>>>(include_str!("../../defaults/keys.json")).unwrap().into_iter().flat_map(|(section, bindings)| bindings.into_iter().map(move |(keys, action)| json!({"section":section,"keys":keys,"action":action}))).collect())),
         ("commands".into(), Value::Array(crate::commands::COMMANDS.iter().map(|c| json!({"name":c.name,"about":c.about,"args":c.args.iter().map(|a| json!({"name":a.name,"required":a.required})).collect::<Vec<_>>()})).collect())),
     ]);
