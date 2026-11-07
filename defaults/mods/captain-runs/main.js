@@ -4,7 +4,7 @@
 // for Comparisons, which pages it from the backend.
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { theme, run, setShared, shared, props as layoutProps } from "herdr";
+import { theme, run, setShared, shared, openOverlay, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
@@ -366,7 +366,9 @@ export default class CaptainRuns extends View {
         return e.child(v_flex().p(14).gap(8)
           .child(div().text_size(13).font_medium().child(title))
           .child(div().text_size(12).line_height("18px").text_color(c.grey900).child(body))
-          .when(!!action, (e) => e.child(Button(c, `empty-${tab}`, action, () => openForm(task), { small: true }))));
+          .when(!!action, (e) => e.child(Button(c, `empty-${tab}`, action, () => openForm(task), { small: true })))
+          // Results from your own system compare the same way (captain-rankings).
+          .when(tab === "backtests", (e) => e.child(Button(c, "empty-rankings", "Compare your own rankings", () => openOverlay({ mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }), { small: true, kind: "quiet" }))));
       })
       .children(rows.map((x) => {
         const active = x.name === this.sel[tab];

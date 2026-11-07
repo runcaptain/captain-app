@@ -7,7 +7,7 @@
 // holds or sorts a whole result set (docs/captain/RISKS.md).
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
-import { theme, shared, props as layoutProps } from "herdr";
+import { theme, shared, openOverlay, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
@@ -295,7 +295,10 @@ export default class CaptainCompare extends View {
     return v_flex().id("compare-runs").w(w).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
       .when(!!this.error, (e) => e.child(div().p(10).child(trouble(c, "backtests-load", this.errorR, this.error, (cx) => this.loadBacktests(cx)))))
       .when(this.backtests === null && !this.error, (e) => e.child(div().child(Skeleton(c, 8))))
-      .when(Array.isArray(this.backtests) && !this.backtests.length, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("No backtests yet.")))
+      .when(Array.isArray(this.backtests) && !this.backtests.length, (e) => e.child(v_flex().p(12).gap(8)
+        .child(div().text_size(12.5).text_color(c.grey500).child("No backtests yet."))
+        // Results from your own system compare the same way (captain-rankings).
+        .child(Button(c, "empty-rankings", "Compare your own rankings", () => openOverlay({ mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }), { small: true }))))
       .children((this.backtests ?? []).map((b) => {
         const active = this.sel?.backtest === b.name;
         return v_flex().w_full().flex_none().border_b(1).border_color(c.rule)

@@ -63,7 +63,7 @@ PREVIEW=$(node --import ./tests/mod-render/stubs/register.mjs -e '
   const { TASKS } = await import("./defaults/mods/captain-forms/tasks.js");
   const extra = { dataset: [{ from: "sql" }], cloud: [{ provider: "aws", auth: "keys" }], compute: [{ kind: "aws-batch" }], database: [{ kind: "snowflake" }, { kind: "databricks" }] };
   const list = [];
-  for (const t of TASKS) { list.push(t.id); for (const values of extra[t.id] ?? []) list.push({ task: t.id, values }); }
+  for (const t of TASKS.filter((t) => !t.opens)) { list.push(t.id); for (const values of extra[t.id] ?? []) list.push({ task: t.id, values }); }
   list.push("menu");
   console.log(JSON.stringify(list));')
 NAMES=$(echo "$PREVIEW" | python3 -c "import json,sys; print(' '.join((('new-menu' if e == 'menu' else e) if isinstance(e,str) else e['task']+'-'+'-'.join(str(v) for v in e['values'].values())) for e in json.load(sys.stdin)))")
@@ -146,7 +146,7 @@ if [[ "$SHOWN" == *captain-setup* ]] && python3 tests/mod-render/forms-shot.py "
 # The Explorer (its sample tree, turned on only in this window) and the scope screens.
 close_all
 sleep 1; app shot "$OUT/explorer.png" >/dev/null; echo "explorer: shot $OUT/explorer.png"
-for m in captain-scope-model captain-scope; do
+for m in captain-scope-model captain-scope captain-rankings; do
   shoot "$m" "$m"
   if [[ "$SHOWN" == *"$m"* ]] && python3 tests/mod-render/forms-shot.py "$OUT/$m.png" --any; then echo "$m: drawn"; else echo "$m: NOT DRAWN ($SHOWN) $OUT/$m.png"; fail=1; fi
 done

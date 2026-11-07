@@ -189,6 +189,13 @@ export const TASKS = [
     },
   },
   {
+    // Its own screen (captain-rankings): a file, a check, an import. The New menu and the palette open it.
+    id: "rankings", label: "Compare your own rankings", icon: "git-compare",
+    about: "Import your own system's ranked results and compare them like any backtest.",
+    opens: { mod: "captain-rankings", kind: "dialog", width: 760, height: 660 },
+    fields: [],
+  },
+  {
     id: "dataset-class", label: "New dataset class", icon: "tag",
     about: "A class groups datasets by what they are for, and says which experiments can use them.",
     fields: [
