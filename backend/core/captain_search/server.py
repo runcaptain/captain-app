@@ -278,6 +278,58 @@ def prepare_import(body: dict):
     return {"job": _job(lambda p: PP.import_prepared(c, src, progress=p, **kw), "prepare data for training")}
 
 
+@app.get("/api/mlflow", dependencies=A)
+def mlflow_status():
+    """Where Captain reads MLflow from (read-only), and which model versions are linked to pipelines."""
+    from . import mlflow_bridge as MF
+
+    return MF.status(ctx())
+
+
+@app.put("/api/mlflow", dependencies=A)
+def mlflow_configure(body: dict):
+    """{uri, token_secret?} for a tracking server, or {databricks_connection} for Databricks' managed MLflow."""
+    from . import mlflow_bridge as MF
+
+    return MF.configure(ctx(), body.get("uri"), body.get("token_secret"), body.get("databricks_connection"))
+
+
+@app.get("/api/mlflow/experiments", dependencies=A)
+def mlflow_experiments():
+    from . import mlflow_bridge as MF
+
+    return MF.experiments(ctx())
+
+
+@app.get("/api/mlflow/experiments/{exp_id}/runs", dependencies=A)
+def mlflow_runs(exp_id: str, limit: int = 100):
+    from . import mlflow_bridge as MF
+
+    return MF.runs(ctx(), exp_id, limit)
+
+
+@app.get("/api/mlflow/models", dependencies=A)
+def mlflow_models():
+    from . import mlflow_bridge as MF
+
+    return MF.models(ctx())
+
+
+@app.post("/api/mlflow/links", dependencies=A)
+def mlflow_link(body: dict):
+    """Say which Captain pipeline serves an MLflow model version: {model, version, pipeline}."""
+    from . import mlflow_bridge as MF
+
+    return MF.link(ctx(), body["model"], str(body["version"]), body["pipeline"])
+
+
+@app.get("/api/mlflow/lineage", dependencies=A)
+def mlflow_lineage():
+    from . import mlflow_bridge as MF
+
+    return MF.lineage(ctx())
+
+
 @app.post("/api/sandbox/sweep", dependencies=A)
 def sandbox_sweep(body: dict):
     """Turn up to three knobs: {pipeline, queries, judgments, knobs?, sample?, top?, seed?, metric?}. Runs the grid on
