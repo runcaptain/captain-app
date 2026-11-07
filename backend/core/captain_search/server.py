@@ -535,10 +535,12 @@ def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class
 
 
 @app.get("/api/dataset-classes", dependencies=A)
-def dataset_classes():
+def dataset_classes(project: str | None = None):
+    """Classes and their dataset counts. Counts follow ?project= and the Explorer's X-CST-Scope, like the lists."""
     from . import classes as CL
 
-    return {"classes": CL.listing(ctx()), "roles": CL.ROLES}
+    c = ctx()
+    return {"classes": CL.listing(c, _member(c, project, "dataset")), "roles": CL.ROLES}
 
 
 @app.post("/api/dataset-classes", dependencies=A)

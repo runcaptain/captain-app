@@ -74,3 +74,25 @@ def test_scope_header_filters_lists(tmp_path, monkeypatch):
     assert by(f"engine:{eng['id']}", "/api/pipelines") == ["demo-bm25"]
     assert len(by("view:all-engines", "/api/pipelines")) > 1
     assert cl.get("/api/datasets", headers={**h, "X-CST-Scope": "bogus:x"}).status_code == 400
+
+
+def test_link_refuses_unknown_targets_and_class_counts_follow_the_pick(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from captain_search import demo, server
+
+    c = init_workspace("acme", str(tmp_path / "b"))
+    demo.seed(c, progress=lambda s: None)
+    b = SC.add_scope(c, "brand", "Acme Shop")
+    with pytest.raises(ValueError, match="no scope 'acme-shop'"):
+        SC.link(c, [{"kind": "dataset", "name": "demo-catalog"}], scope="acme-shop")
+    with pytest.raises(ValueError, match="no engine"):
+        SC.link(c, [{"kind": "dataset", "name": "demo-catalog"}], engine="nope")
+    SC.link(c, [{"kind": "dataset", "name": "demo-catalog"}], scope=b["id"])
+    monkeypatch.setattr(server, "_ctx", None)
+    cl = TestClient(server.app)
+    h = {"Authorization": f"Bearer {server.TOKEN}"}
+    assert cl.post("/api/scopes/link", headers=h, json={"items": [{"kind": "dataset", "name": "x"}], "scope": "acme-shop"}).status_code == 400
+    everything = {x["name"]: x["datasets"] for x in cl.get("/api/dataset-classes", headers=h).json()["classes"]}
+    scoped = {x["name"]: x["datasets"] for x in cl.get("/api/dataset-classes", headers={**h, "X-CST-Scope": f"scope:{b['id']}"}).json()["classes"]}
+    assert sum(scoped.values()) <= 1 < sum(everything.values())
