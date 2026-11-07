@@ -111,6 +111,7 @@ export default class CaptainData extends View {
     const p = layoutProps?.() ?? {};
     if (p.tab === "models" || p.tab === "labels" || p.tab === "tables") this.tab = p.tab;
     if (p.pageTab) this.page.tab = p.pageTab;
+    if (p.dataset) this.wanted = String(p.dataset); // a dataset to open instead of the first
     if (p.find) this.lib.find.set_value(String(p.find)); // a search to start with
     if (p.flatAll) this.lib.flatAll = true;
     if (p.tablesTab) this.tables.tab = p.tablesTab; // "rows": the first table's rows, once it's picked
@@ -120,6 +121,7 @@ export default class CaptainData extends View {
     if (p.tab === "tables") this.tables.load(cx);
     if (p.tab === "labels") this.loadLabels(cx);
     if (p.tab === "models") this.models.load(cx);
+    if (p.tab === "models" && p.registryAttach) this.models.toggleAttach(cx); // the attach form, open on the bucket list
     if (p.tab === "notebooks") {
       this.tab = "notebooks";
       this.nb.want = p.notebook ?? null;

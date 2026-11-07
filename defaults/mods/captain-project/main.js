@@ -3,9 +3,12 @@
 // its datasets, pipelines, models (registry and MLflow), notebooks, recent runs, investigations and connections, each
 // opening where it lives: a dataset in Data, a run in Comparisons, an investigation in Investigations, a notebook, a
 // model or a connection in Data's tab for it, a pipeline in What if.
+// Choose models (Edgar, 2026-11-07: "change which models were included"): every registry model, by brand, each with a
+// box. A whole brand includes its future models too (PUT /api/projects/{id} brands). One model is put in or left out
+// on its own (POST /api/projects/assign), which beats the brand rule.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, shared, setShared, run, openOverlay } from "herdr";
+import { theme, shared, setShared, run, openOverlay, props as layoutProps } from "herdr";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { api, watchScope, watchWorkspace, watchRecords } from "./kit/cst.js";
 import { Badge, Button, Empty, Skeleton, Problem } from "./kit/ui.js";
@@ -18,7 +21,9 @@ const go = (section, extra) => { setShared("captain.open", { section, ...extra, 
 export default class ProjectHome extends View {
   init(_props, cx) {
     this.home = null; this.problem = null; this.projects = null;
+    this.choosing = false; this.allModels = null; this.owners = {}; this.note = null; this.busy = false;
     this.load(cx);
+    if ((layoutProps?.() ?? {}).chooseModels) this.toggleChoosing(cx); // a layout, or the real-window check
     watchScope(cx, (cx) => this.load(cx));
     watchWorkspace(cx, (cx) => this.load(cx));
     watchRecords(cx, (cx) => this.load(cx));
@@ -53,6 +58,94 @@ export default class ProjectHome extends View {
     });
   }
 
+  /** Every registry model, and which project holds each brand, for the picker. */
+  loadChoices(cx) {
+    cx.spawn(async (cx) => {
+      const [m, p] = await Promise.all([api("/api/models", { scoped: false }), api("/api/projects", { scoped: false })]);
+      this.allModels = m.ok && Array.isArray(m.data) ? m.data : [];
+      this.owners = {};
+      for (const pr of p.ok ? (Array.isArray(p.data) ? p.data : p.data?.projects ?? []) : []) for (const b of pr.brands ?? []) this.owners[b] = pr;
+      cx.notify();
+    });
+  }
+
+  toggleChoosing(cx) {
+    this.choosing = !this.choosing;
+    this.note = null;
+    if (this.choosing) this.loadChoices(cx);
+    cx.notify();
+  }
+
+  /** Save one change, then read the project again. */
+  change(cx, req, note) {
+    if (this.busy) return;
+    this.busy = true;
+    cx.spawn(async (cx) => {
+      for (const [path, opts] of req) {
+        const r = await api(path, { ...opts, scoped: false });
+        if (!r.ok) { this.busy = false; this.note = { text: String(r.data?.detail ?? r.error ?? "Couldn't save that."), tone: "fail" }; cx.notify(); return; }
+      }
+      this.busy = false;
+      this.note = { text: note, tone: "good" };
+      setShared("captain.explorer.rev", Date.now()); // the Explorer and other screens count again
+      this.load(cx);
+      this.loadChoices(cx);
+    });
+    cx.notify();
+  }
+
+  toggleModel(cx, m, isIn) {
+    const pid = this.home.project.id;
+    this.change(cx, [["/api/projects/assign", { body: { project: isIn ? null : pid, items: [{ kind: "model", name: m.id }] } }]],
+      isIn ? `Left ${m.brand} ${m.version} out of ${this.home.project.name}.` : `Added ${m.brand} ${m.version} to ${this.home.project.name}.`);
+  }
+
+  toggleBrand(cx, brand, models, on) {
+    const p = this.home.project;
+    const brands = on ? (p.brands ?? []).filter((b) => b !== brand) : [...(p.brands ?? []), brand];
+    const req = [[`/api/projects/${encodeURIComponent(p.id)}`, { method: "PUT", body: { brands } }]];
+    // Turning a brand on brings back every model of it, including ones left out one by one.
+    if (!on) req.push(["/api/projects/assign", { body: { project: p.id, clear: true, items: models.map((m) => ({ kind: "model", name: m.id })) } }]);
+    this.change(cx, req, on ? `${brand}'s models are no longer included by brand. Models you added one by one stay.` : `Every ${brand} model is in ${p.name}, and new ones will be too.`);
+  }
+
+  box(c, on) {
+    return svg(icon(on ? "square-check" : "square")).size(15).flex_none().text_color(on ? c.blue : c.grey500);
+  }
+
+  /** The picker: every registry model by brand, with a box for the brand and one for each model. */
+  chooser(c) {
+    const h = this.home, all = this.allModels;
+    if (!all) return div().px(14).py(10).text_size(12.5).text_color(c.grey500).child("Reading the registries...");
+    if (!all.length) return div().px(14).py(10).text_size(12.5).text_color(c.grey500).child("No registry models yet. Attach a registry in Data and signals, Models.");
+    const mine = new Set((h.models ?? []).map((m) => m.id));
+    const byBrand = new Map();
+    for (const m of all) { if (!byBrand.has(m.brand)) byBrand.set(m.brand, []); byBrand.get(m.brand).push(m); }
+    const brands = [...byBrand.keys()].sort();
+    return v_flex().id("ph-choose").max_h(420).overflow_y_scrollbar().border_b(1).border_color(c.rule).bg(c.surface2)
+      .child(div().px(14).py(8).text_size(12).text_color(c.grey900).child("Tick a brand to include all its models, and the ones trained later. Or tick models one by one."))
+      .children(brands.map((b, bi) => {
+        const ms = byBrand.get(b).sort((x, y) => String(x.version).localeCompare(String(y.version), undefined, { numeric: true }));
+        const on = (h.project.brands ?? []).includes(b);
+        const other = !on && this.owners[b] && this.owners[b].id !== h.project.id ? this.owners[b].name : null;
+        return v_flex().id(`ph-cb-${bi}`)
+          .child(h_flex().id(`ph-brand-${bi}`).h(32).px(14).gap(8).items_center().cursor_pointer().hover((s) => s.bg(c.surface))
+            .on_click((_e, cx) => this.toggleBrand(cx, b, ms, on))
+            .child(this.box(c, on))
+            .child(div().text_size(12.5).font_semibold().child(`All ${b} models`))
+            .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(
+              `${ms.filter((m) => mine.has(m.id)).length} of ${ms.length} in this project${other ? `. Now in ${other}, ticking moves the brand here` : ""}`)))
+          .children(ms.map((m, i) => {
+            const isIn = mine.has(m.id);
+            return h_flex().id(`ph-pick-${bi}-${i}`).h(28).pl(36).pr(14).gap(8).items_center().cursor_pointer().hover((s) => s.bg(c.surface))
+              .on_click((_e, cx) => this.toggleModel(cx, m, isIn))
+              .child(this.box(c, isIn))
+              .child(div().w(180).flex_none().truncate().font_family(MONO).text_size(12).child(`${m.brand} ${m.version}`))
+              .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child([m.architecture, m.status_kind ?? m.status].filter(Boolean).join(", ")));
+          }));
+      }));
+  }
+
   // One row that opens something: a name, a line under it, chips, and where it goes.
   row(c, id, title, sub, chips, onClick, mono = true) {
     return h_flex().id(id).min_h(40).px(14).py(6).gap(10).items_center().border_b(1).border_color(c.rule).cursor_pointer()
@@ -65,11 +158,13 @@ export default class ProjectHome extends View {
   }
 
   // A section: its title and count, its rows, or one line saying how something joins it.
-  section(c, key, title, items, rowOf, empty) {
+  section(c, key, title, items, rowOf, empty, action = null, extra = null) {
     return v_flex().id(`ph-${key}`).w_full().border_1().border_color(c.rule).bg(c.surface)
       .child(h_flex().h(34).px(14).gap(8).items_center().border_b(1).border_color(c.rule)
         .child(div().text_size(12).font_semibold().text_color(c.grey500).child(title.toUpperCase()))
-        .child(div().text_size(12).font_family(MONO).text_color(c.grey500).child(int(items.length))))
+        .child(div().flex_1().text_size(12).font_family(MONO).text_color(c.grey500).child(int(items.length)))
+        .when(Boolean(action), (e) => e.child(action)))
+      .when(Boolean(extra), (e) => e.child(extra))
       .children(items.length ? items.slice(0, 12).map((x, i) => rowOf(x, i)) : [div().px(14).py(10).text_size(12.5).text_color(c.grey500).child(empty)]);
   }
 
@@ -90,8 +185,10 @@ export default class ProjectHome extends View {
           () => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: p.name } })),
         `No pipelines yet. ${joins}`))
       .child(this.section(c, "models", "Models", models,
-        (m, i) => this.row(c, `ph-md-${i}`, m.model ?? m.name ?? "", m.pipeline ? `${m.from}, served by ${m.pipeline}` : m.from, [m.version != null ? `v${m.version}` : null], () => go("data", { view: "models" })),
-        "No models yet. A registry brand that maps to the project brings its models."))
+        (m, i) => this.row(c, `ph-md-${i}`, m.model ?? m.name ?? m.brand ?? m.id ?? "", m.pipeline ? `${m.from}, served by ${m.pipeline}` : [m.from, m.architecture, m.status_kind].filter(Boolean).join(", "), [m.version != null ? (/^\d+$/.test(String(m.version)) ? `v${m.version}` : String(m.version)) : null], () => go("data", { view: "models" })),
+        "No models yet. Choose models, or tick a registry brand to bring all of its models.",
+        Button(c, "ph-choose-models", this.choosing ? "Done" : "Choose models", (_e, cx) => this.toggleChoosing(cx), { small: true, kind: this.choosing ? "primary" : "secondary" }),
+        this.choosing ? v_flex().child(this.note ? div().px(14).py(6).text_size(12).text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text) : null).child(this.chooser(c)) : null))
       .child(this.section(c, "notebooks", "Notebooks", h.notebooks ?? [],
         (n, i) => this.row(c, `ph-nb-${i}`, n.name ?? n.title ?? "", n.description ?? "", [], () => go("data", { view: "notebooks", notebook: n.name })),
         "No notebooks yet. Assign a saved notebook to the project."))

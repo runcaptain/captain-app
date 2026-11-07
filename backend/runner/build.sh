@@ -19,7 +19,9 @@ case "$image" in
       aws ecr get-login-password --region "$region" | docker login --username AWS --password-stdin "$registry"
     fi ;;
 esac
-docker buildx build --platform linux/amd64 -f runner/Dockerfile -t "$image" --load .
+# --provenance/--sbom off and Docker media types: SageMaker rejects an OCI image index
+# ("Unsupported manifest media type application/vnd.oci.image.index.v1+json"); ECS, Batch and the rest take either.
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false -f runner/Dockerfile -t "$image" --load .
 # docker push, not buildx --push: it retries each layer, where buildx gives up after 60 seconds on a slow uplink
 if [ -n "$push" ]; then docker push "$image"; fi
 echo "$image"

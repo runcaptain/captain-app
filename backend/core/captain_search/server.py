@@ -314,10 +314,12 @@ def mlflow_runs(exp_id: str, limit: int = 100):
 
 
 @app.get("/api/mlflow/models", dependencies=A)
-def mlflow_models():
+def mlflow_models(include_system: bool = False):
+    """Registered models. On Databricks: Unity Catalog, then the legacy workspace registry when it's on. Databricks'
+    built-in models (the system catalog) are left out unless include_system=true."""
     from . import mlflow_bridge as MF
 
-    return MF.models(ctx())
+    return MF.models(ctx(), include_system=include_system)
 
 
 @app.post("/api/mlflow/links", dependencies=A)
@@ -520,7 +522,7 @@ def project_assign(body: dict):
     """{project: id or null, items: [{kind, name}]}. Moves nothing: it only says which project each item is in."""
     from . import projects as PR
 
-    return PR.assign(ctx(), body.get("project"), list(body.get("items") or []))
+    return PR.assign(ctx(), body.get("project"), list(body.get("items") or []), bool(body.get("clear")))
 
 
 @app.get("/api/projects/{pid}/home", dependencies=A)
@@ -952,6 +954,41 @@ def registries_attach(body: dict):
         raise ValueError("name the registry's address, like s3://bucket/models")
     return {"job": _job(lambda p: AT.attach(c, uri, body.get("profile") or None, body.get("label"), progress=p),
                         f"attach {uri}")}
+
+
+@app.get("/api/registries/discover", dependencies=A)
+def registries_discover(profile: str | None = None):
+    """Every S3 bucket the login can see, each marked as a registry, empty, other, or unreadable. Reads only."""
+    from . import attach as AT
+    from . import registry_setup as RS
+
+    c = ctx()
+    if profile is None:
+        _, profile = AT.resolve(c, "s3://x", None)
+    return {**RS.discover(c, profile), "profile": profile}
+
+
+@app.get("/api/registries/template", dependencies=A)
+def registries_template(bucket: str, region: str = "us-west-1", format: str = "terraform"):  # noqa: A002
+    from . import registry_setup as RS
+
+    return RS.template(bucket, region, format)
+
+
+@app.post("/api/registries/create", dependencies=A)
+def registries_create(body: dict):
+    """Make a registry bucket through a CloudFormation stack, then attach it. Runs as a job."""
+    from . import attach as AT
+    from . import registry_setup as RS
+
+    c = ctx()
+    bucket = RS.check_name(str(body.get("bucket", "")))
+    region = str(body.get("region") or "us-west-1")
+    profile = body.get("profile") or None
+    if profile is None:
+        _, profile = AT.resolve(c, f"s3://{bucket}", None)
+    return {"job": _job(lambda p: RS.create(c, bucket, region, profile, body.get("label"), progress=p),
+                        f"create registry {bucket}")}
 
 
 @app.delete("/api/registries", dependencies=A)

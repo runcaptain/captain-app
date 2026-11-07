@@ -6,6 +6,11 @@ from .engines import make_engine, timed_search
 
 def serve_pipeline(ctx, ref: str, host: str = "127.0.0.1", port: int = 8080):
     import uvicorn
+
+    uvicorn.run(make_app(ctx, ref), host=host, port=port, log_level="warning")
+
+
+def make_app(ctx, ref: str):
     from fastapi import FastAPI
 
     from . import ops
@@ -27,4 +32,13 @@ def serve_pipeline(ctx, ref: str, host: str = "127.0.0.1", port: int = 8080):
         ids, ms = timed_search(eng, str(body["query"]), int(body.get("k", 20)))
         return {"ids": ids, "ms": round(ms, 3), "pipeline": ops.ref(pm)}
 
-    uvicorn.run(api, host=host, port=port, log_level="warning")
+    # SageMaker's contract for a serving container: GET /ping answers 200 when ready, POST /invocations does the work.
+    @api.get("/ping")
+    def ping():
+        return {"ok": True}
+
+    @api.post("/invocations")
+    def invocations(body: dict):
+        return search(body)
+
+    return api

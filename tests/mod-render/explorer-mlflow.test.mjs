@@ -64,4 +64,13 @@ const again = new Explorer();
 again.start(cx);
 await flush();
 assert.ok(texts(again.render(c)).join(' | ').includes('/rankers'), 'left open, read at start');
+// Projects starts with All (Edgar, 2026-11-07): lit while nothing is picked, and clicking it clears a project pick.
+t = texts(again.render(c)).join(' | ');
+assert.ok(/Projects \| (\.\.\. \| )?All \| Acme/.test(t), `All first under Projects: ${t}`);
+again.firstAt = Date.now() - 5000;
+again.movedAt = 0;
+find(again.render(c), 'ex-acme').call('on_click')[0]({}, cx);
+assert.equal(globalThis.__shared['captain.scope']?.id, 'acme', 'a project picked');
+find(again.render(c), 'ex-projects/all').call('on_click')[0]({}, cx);
+assert.equal(globalThis.__shared['captain.scope'] ?? null, null, 'All clears the pick');
 console.log('explorer-mlflow render test: ok');

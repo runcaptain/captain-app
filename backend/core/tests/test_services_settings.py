@@ -31,7 +31,7 @@ def test_services_list_names_everything_without_secrets(ctx):
 
 
 def test_saved_default_compute_is_used_by_backtests(ctx):
-    C.add(ctx, "dbx", "databricks-jobs", None, None, {"connection": "x", "job_id": "42"})
+    C.add(ctx, "dbx", "databricks-jobs", None, None, {"auth": "connection", "connection": "x", "job_id": "42"})
     ST.set_compute(ctx, backtest="dbx")
     assert ST.default_compute(ctx) == "dbx"
     # The saved default is chosen: a local workspace can't use cloud compute, which proves it didn't fall back to local.
@@ -70,3 +70,62 @@ def test_services_list_says_each_connections_database(ctx):
     conns = SV.listing(ctx)["connections"]
     demo_store = next(c for c in conns if c["name"] == "demo-store")
     assert demo_store["kind"] == ctx.load_connection("demo-store").engine != "connection"
+
+
+def test_warehouse_targets_sign_in_with_their_own_secrets(ctx, monkeypatch):
+    """Secrets go to the keychain, the shared target file keeps only their names, and every call is signed."""
+    import httpx
+    import yaml
+
+    from captain_search import workspace as W
+    from captain_search.compute_providers import warehouses as WH
+
+    vault = {}
+    monkeypatch.setattr(W, "set_secret", lambda n, v: vault.__setitem__(n, v))
+    monkeypatch.setattr(W, "get_secret", lambda n: vault[n])
+    with pytest.raises(ValueError, match="needs: host, token"):
+        C.add(ctx, "dbx-bad", "databricks-jobs", None, None, {"auth": "token", "job_id": "1"})
+    t = C.add(ctx, "dbx-tok", "databricks-jobs", None, None,
+              {"auth": "token", "host": "https://dbc-1.cloud.databricks.com/", "token": "dapi-SECRET", "job_id": "7"})
+    stored = ctx.store.get("compute/dbx-tok.yaml").decode()
+    assert "dapi-SECRET" not in stored and yaml.safe_load(stored)["config"]["token_secret"] == "COMPUTE_DBX_TOK_TOKEN"
+    host, h = WH.databricks_auth(ctx, t["config"])
+    assert host == "dbc-1.cloud.databricks.com" and h["Authorization"] == "Bearer dapi-SECRET"
+    assert h["User-Agent"].startswith("captain-search/")
+
+    seen = []
+
+    def fake_post(url, data=None, auth=None, headers=None, timeout=None):
+        seen.append((url, data, auth))
+        return httpx.Response(200, json={"access_token": "oauth-TOKEN", "expires_in": 3600},
+                              request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    sp = C.add(ctx, "dbx-sp", "databricks-jobs", None, None, {"auth": "service-principal", "host": "dbc-2.cloud.databricks.com",
+                                                             "client_id": "cid", "client_secret": "csec", "job_id": "7"})
+    _, h = WH.databricks_auth(ctx, sp["config"])
+    WH.databricks_auth(ctx, sp["config"])  # cached: one token request
+    assert h["Authorization"] == "Bearer oauth-TOKEN" and len(seen) == 1
+    assert seen[0][0] == "https://dbc-2.cloud.databricks.com/oidc/v1/token" and seen[0][2] == ("cid", "csec")
+    assert seen[0][1] == {"grant_type": "client_credentials", "scope": "all-apis"}
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    pem = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+    with pytest.raises(ValueError, match="needs: private key"):
+        C.add(ctx, "sf-bad", "snowflake-spcs", None, None, {"auth": "key-pair", "account": "o-a", "user": "svc",
+                                                             "compute_pool": "P", "image": "/d/s/r/i:1"})
+    sf = C.add(ctx, "sf", "snowflake-spcs", None, None, {"auth": "key-pair", "account": "o-a", "user": "svc", "role": "R",
+                                                          "private_key": pem, "compute_pool": "P", "image": "/d/s/r/i:1"})
+    assert "PRIVATE KEY" not in ctx.store.get("compute/sf.yaml").decode()
+    made = {}
+    import sqlalchemy
+
+    monkeypatch.setattr(sqlalchemy, "create_engine", lambda url, connect_args=None: made.update(url=url, args=connect_args)
+                        or type("E", (), {"dispose": lambda self: None})())
+    with WH.SnowparkContainersProvider(sf, ctx)._engine():
+        pass
+    assert made["url"].startswith("snowflake://svc@o-a/?") and "role=R" in made["url"] and "application=Captain_Search" in made["url"]
+    assert isinstance(made["args"]["private_key"], bytes) and len(made["args"]["private_key"]) > 1000

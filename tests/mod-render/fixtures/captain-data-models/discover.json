@@ -1,0 +1,5 @@
+{"account": "123456789012", "registries": 1, "truncated": false, "profile": null, "buckets": [
+ {"bucket": "team-models", "region": "us-west-1", "kind": "registry", "uri": "s3://team-models", "detail": "models in architecture / brand / version folders", "attached": false},
+ {"bucket": "example-models", "region": "us-west-1", "kind": "registry", "uri": "s3://example-models/registry", "detail": "has a registry index", "attached": true},
+ {"bucket": "raw-logs", "region": "us-east-1", "kind": "other", "uri": "s3://raw-logs", "detail": "4 folders, no model manifests", "attached": false},
+ {"bucket": "locked", "region": null, "kind": "no-access", "uri": "s3://locked", "detail": "this login can't read it", "attached": false}]}

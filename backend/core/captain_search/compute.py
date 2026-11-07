@@ -46,10 +46,29 @@ def add(ctx: Context, name: str, kind: str, profile: str | None, region: str | N
     spec = km.get(kind)
     if spec is None:
         raise ValueError(f"unknown compute kind {kind!r}: {', '.join(km)}")
-    cfg = {f["name"]: config.get(f["name"], f.get("default")) for f in spec["fields"]}
+    cfg = {}
     for f in spec["fields"]:
-        if f["required"] and not str(cfg.get(f["name"]) or "").strip():
+        n = f["name"]
+        if f.get("type") == "secret":
+            # Never in the target file (it's shared in the bucket): the value goes to this computer's keychain, and
+            # the target keeps the keychain name. A caller may also pass <field>_secret naming an existing entry.
+            raw = config.get(n)
+            ref = config.get(f"{n}_secret")
+            if raw not in (None, ""):
+                from .workspace import set_secret
+
+                ref = f"COMPUTE_{name}_{n}".upper().replace("-", "_")
+                set_secret(ref, str(raw))
+            if ref:
+                cfg[f"{n}_secret"] = ref
+            continue
+        cfg[n] = config.get(n, f.get("default"))
+    for f in spec["fields"]:
+        val = cfg.get(f"{f['name']}_secret") if f.get("type") == "secret" else cfg.get(f["name"])
+        if f["required"] and not str(val or "").strip():
             raise ValueError(f"{f['label']} is required for {spec['label']}")
+    if kind in ("databricks-jobs", "snowflake-spcs"):
+        _check_warehouse_auth(kind, cfg)
     if spec["provider"] in ("aws", "gcp", "azure") and not profile:
         raise ValueError(f"{spec['label']} needs a {spec['provider']} cloud profile")
     t = {"name": name, "kind": kind, "provider": spec["provider"], "profile": profile, "region": region,
@@ -61,6 +80,22 @@ def add(ctx: Context, name: str, kind: str, profile: str | None, region: str | N
     else:
         ctx.store.put_new(_key(name), dump_yaml(t))
     return t
+
+
+def _check_warehouse_auth(kind: str, cfg: dict) -> None:
+    """Say at add time which sign-in fields are missing, rather than at the first job."""
+    mode = cfg.get("auth")
+    need = {("databricks-jobs", "token"): ["host", "token_secret"],
+            ("databricks-jobs", "service-principal"): ["host", "client_id", "client_secret_secret"],
+            ("databricks-jobs", "connection"): ["connection"],
+            ("snowflake-spcs", "key-pair"): ["account", "user", "private_key_secret"],
+            ("snowflake-spcs", "password"): ["account", "user", "password_secret"],
+            ("snowflake-spcs", "connection"): ["connection"]}.get((kind, mode))
+    if need is None:
+        raise ValueError(f"unknown sign-in {mode!r} for {kind}")
+    missing = [n.removesuffix("_secret").replace("_", " ") for n in need if not cfg.get(n)]
+    if missing:
+        raise ValueError(f"signing in with {mode} needs: {', '.join(missing)}")
 
 
 def get(ctx: Context, name: str) -> dict:
@@ -203,6 +238,19 @@ def plan_serve(ctx: Context, target: dict, pipeline_ref: str, env_name: str) -> 
 
 
 def execute_serve(ctx: Context, target: dict, plan: list[dict]) -> dict:
+    """Run a serving plan. A cloud's refusal comes back as one sentence naming the step, not a traceback."""
+    try:
+        return _execute_serve(ctx, target, plan)
+    except Exception as e:  # noqa: BLE001
+        resp = getattr(e, "response", None)
+        if isinstance(resp, dict) and resp.get("Error"):
+            err = resp["Error"]
+            op = getattr(e, "operation_name", "the call")
+            raise RuntimeError(f"{target.get('kind')} refused {op}: {err.get('Message') or err.get('Code')}") from None
+        raise
+
+
+def _execute_serve(ctx: Context, target: dict, plan: list[dict]) -> dict:
     from . import cloud
 
     out = {}

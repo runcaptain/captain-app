@@ -69,3 +69,46 @@ def registry_list():
 @registry_app.command("detach")
 def registry_detach(uri: str):
     emit(AT.detach(ctx(), uri), f"detached {uri}. Its snapshots stay.")
+
+
+@registry_app.command("discover")
+def registry_discover(profile: Optional[str] = typer.Option(None, "--profile", help="AWS login (cst cloud list)")):
+    """List the S3 buckets this login can see, and mark the ones that hold a model registry. Reads only."""
+    from .. import registry_setup as RS
+
+    c = ctx()
+    if profile is None:
+        _, profile = AT.resolve(c, "s3://x", None)
+    r = RS.discover(c, profile)
+    lines = [f"{b['kind']:<10} {b['uri']:<60} {b['region'] or '':<12} {b['detail']}{'  (attached)' if b['attached'] else ''}"
+             for b in r["buckets"]]
+    emit(r, "\n".join(lines) + f"\n{r['registries']} registr{'y' if r['registries'] == 1 else 'ies'} in "
+         f"{len(r['buckets'])} buckets" if lines else "no buckets this login can see")
+
+
+@registry_app.command("create")
+def registry_create(bucket: str, region: str = typer.Option("us-west-1", "--region"),
+                    profile: Optional[str] = typer.Option(None, "--profile", help="AWS login (cst cloud list)"),
+                    terraform: Optional[str] = typer.Option(None, "--terraform", help="write Terraform to this file instead of creating"),
+                    cloudformation: Optional[str] = typer.Option(None, "--cloudformation", help="write the CloudFormation template to this file instead"),
+                    dry_run: bool = typer.Option(False, "--dry-run")):
+    """Make a model registry bucket (private, encrypted, versioned) through a CloudFormation stack, and attach it.
+    With --terraform or --cloudformation, write the infrastructure code instead, for your own pipeline to apply."""
+    from .. import registry_setup as RS
+
+    for path, fmt in ((terraform, "terraform"), (cloudformation, "cloudformation")):
+        if path:
+            t = RS.template(bucket, region, fmt)
+            with open(path, "w") as f:
+                f.write(t["text"])
+            emit({**t, "path": path, "text": None}, f"wrote {path}. Apply it with: {t['how']}")
+            return
+    if dry_run:
+        emit({"bucket": RS.check_name(bucket), "region": region, "stack": RS.stack_name(bucket)},
+             f"would create stack {RS.stack_name(bucket)} with bucket {bucket} in {region}, then attach it")
+        return
+    c = ctx()
+    if profile is None:
+        _, profile = AT.resolve(c, f"s3://{bucket}", None)
+    r = RS.create(c, bucket, region, profile)
+    emit(r, f"made {r['uri']} in {region} (CloudFormation stack {r['stack']}) and attached it")

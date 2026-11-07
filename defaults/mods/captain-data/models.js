@@ -2,6 +2,9 @@
 // one (an address like s3://bucket/prefix and a cloud login, POST /api/registries as a job; the same address again
 // syncs it), detaching one (DELETE /api/registries?uri=), and every model across all of them grouped by architecture,
 // each with what it was built from (GET /api/models). Registries are read, never written.
+// Attaching starts from a list of the login's S3 buckets with the registries marked (GET /api/registries/discover),
+// and a team without one can make one: through a CloudFormation stack in their account (POST /api/registries/create,
+// a job), or as Terraform or a CloudFormation template saved to Downloads (GET /api/registries/template).
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { api } from "./kit/cst.js";
@@ -9,7 +12,7 @@ import { MONO } from "./kit/tokens.js";
 import { Button } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { LineageGraph } from "./kit/lineage.js";
-import { shared } from "herdr";
+import { shared, writeTextFile, readTextFile, home } from "herdr";
 import { withMlflow } from "./kit/mlflow.js";
 
 const sentence = (t) => { const s = String(t ?? "").trim(); return s ? `${s[0].toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}` : ""; };
@@ -40,6 +43,15 @@ export class Models {
     this.uri = InputState.new({ placeholder: "s3://bucket/models" });
     this.label = InputState.new({ placeholder: "Name it (optional)" });
     this.uri.on("submit", (_e, cx) => this.attach(cx));
+    this.disc = null; // {loading} | {account, buckets, registries} | {error}: the login's buckets
+    this.discFor = undefined;
+    this.showAll = false;
+    this.typing = false; // typing an address instead of picking a bucket
+    this.making = false; // the Create a registry panel
+    this.region = "us-west-1";
+    this.find = InputState.new({ placeholder: "Find a bucket" });
+    this.find.on("change", (_e, cx) => cx.notify());
+    this.newName = InputState.new({ placeholder: "captain-models" });
     // Whose models: All, a project, or a brand, site or engine (the Explorer's pick by default).
     this.owners = [{ kind: null, id: null, name: "All" }];
     this.owner = null;
@@ -102,6 +114,79 @@ export class Models {
     this.run(cx, { uri, profile: this.profile ?? undefined, label: this.label.value().trim() || undefined }, `Reading ${uri}`);
   }
 
+  toggleAttach(cx) {
+    this.attaching = !this.attaching;
+    if (this.attaching) this.loadBuckets(cx);
+    cx.notify();
+  }
+
+  /** The login's S3 buckets, registries first. Reads only; takes a few seconds on an account with many buckets. */
+  loadBuckets(cx, force = false) {
+    const key = this.profile ?? "";
+    if (this.discFor === key && !force && this.disc && !this.disc.error) return;
+    this.discFor = key;
+    this.disc = { loading: true };
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/registries/discover${this.profile ? `?profile=${encodeURIComponent(this.profile)}` : ""}`, { timeout: 120 });
+      if (this.discFor !== key) return;
+      if (r.ok) {
+        this.disc = r.data;
+        if (!this.newName.value().trim() && r.data.account) this.newName.set_value(`captain-models-${r.data.account}`);
+        if (!r.data.registries) this.making = true; // nothing to pick: offer to make one
+      } else {
+        this.disc = { error: r.status === 404 && /not found/i.test(String(r.data?.detail ?? r.error)) ? "Listing buckets needs a newer Captain backend. Type the address instead."
+          : sentence(r.data?.detail ?? r.error) || "Couldn't list this login's buckets." };
+        this.typing = true;
+      }
+      cx.notify();
+    });
+  }
+
+  pickLogin(cx, name) {
+    this.profile = name;
+    this.loadBuckets(cx);
+    cx.notify();
+  }
+
+  attachBucket(cx, b) {
+    this.run(cx, { uri: b.uri, profile: this.profile ?? undefined, label: b.bucket }, `Reading ${b.uri}`);
+  }
+
+  /** Make a registry bucket in AWS through a CloudFormation stack, then attach it (a job). */
+  create(cx) {
+    const bucket = this.newName.value().trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket)) {
+      this.note = { text: "A bucket name is 3 to 63 lowercase letters, digits and hyphens.", tone: "fail" };
+      cx.notify();
+      return;
+    }
+    this.note = null;
+    cx.spawn(async (cx) => {
+      const r = await api("/api/registries/create", { body: { bucket, region: this.region, profile: this.profile ?? undefined }, timeout: 30 });
+      if (!r.ok) { this.note = { text: sentence(r.data?.detail ?? r.error) || "Couldn't start.", tone: "fail" }; cx.notify(); return; }
+      this.job = { id: r.data.job, label: `Creating s3://${bucket} in ${this.region}`, done: `Made s3://${bucket} and attached it. It's empty until your training writes its first model.`, progress: 0 };
+      cx.notify();
+    });
+  }
+
+  /** The same registry as infrastructure code, saved to Downloads for the team's own pipeline to apply. */
+  saveTemplate(cx, format) {
+    const bucket = this.newName.value().trim().toLowerCase() || "captain-models";
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/registries/template?bucket=${encodeURIComponent(bucket)}&region=${encodeURIComponent(this.region)}&format=${format}`);
+      if (!r.ok) { this.note = { text: sentence(r.data?.detail ?? r.error) || "Couldn't make it.", tone: "fail" }; cx.notify(); return; }
+      const path = `${home()}/Downloads/${r.data.filename}`;
+      try {
+        const old = await readTextFile(path);
+        await writeTextFile(path, r.data.text, old);
+        this.note = { text: `Saved ~/Downloads/${r.data.filename}. Apply it with: ${r.data.how}`, tone: "good" };
+      } catch {
+        this.note = { text: `Couldn't write ~/Downloads/${r.data.filename}.`, tone: "fail" };
+      }
+      cx.notify();
+    });
+  }
+
   sync(cx, reg) {
     this.run(cx, { uri: reg.uri, profile: reg.profile ?? undefined, label: reg.label ?? undefined }, `Syncing ${reg.label ?? reg.uri}`);
   }
@@ -131,7 +216,8 @@ export class Models {
         this.attaching = false;
         this.uri.set_value("");
         this.label.set_value("");
-        this.note = { text: `${j.label.replace(/^Reading /, "Attached ").replace(/^Syncing /, "Synced ")}.`, tone: "good" };
+        this.note = { text: j.done ?? `${j.label.replace(/^Reading /, "Attached ").replace(/^Syncing /, "Synced ")}.`, tone: "good" };
+        this.disc = null; // the list marks what's attached: read it again next time
         this.load(cx);
       } else if (r.data.status === "failed") {
         this.job = null;
@@ -159,7 +245,7 @@ export class Models {
       .child(h_flex().gap(10).items_center()
         .child(div().text_size(14).font_semibold().child("Model registries"))
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.grey900).child("Where your trained models live. Captain reads them for lineage and never writes to them."))
-        .child(Button(c, "reg-attach", "Attach a registry", (_e, cx) => { this.attaching = !this.attaching; cx.notify(); }, { kind: "primary", small: true })))
+        .child(Button(c, "reg-attach", "Attach a registry", (_e, cx) => this.toggleAttach(cx), { kind: "primary", small: true })))
       .when(this.attaching, (e) => e.child(this.form(c)))
       .when(!!this.job, (e) => e.child(v_flex().gap(6).p(10).border_1().border_color(c.rule)
         .child(h_flex().text_size(12).child(div().flex_1().child(this.job.label)).child(div().font_family(MONO).text_color(c.grey500).child(`${Math.round((this.job.progress ?? 0) * 100)}%`)))
@@ -192,21 +278,84 @@ export class Models {
   }
 
   form(c) {
-    const box = (id, st) => div().id(id).flex_1().min_w(0).h(28).px(8).flex().items_center().border_1().border_color(c.grey300).child(Input.new(st).w_full().text_size(12).text_color(c.navy));
-    return v_flex().gap(8).p(12).border_1().border_color(c.blue).bg(c.surface2)
-      .child(h_flex().gap(8).items_center().text_size(12).child(div().w(70).flex_none().text_color(c.grey900).child("Address")).child(box("reg-uri", this.uri)))
-      .child(h_flex().gap(8).items_center().text_size(12).child(div().w(70).flex_none().text_color(c.grey900).child("Name")).child(box("reg-label", this.label)))
-      .child(h_flex().gap(8).items_center().text_size(12)
-        .child(div().w(70).flex_none().text_color(c.grey900).child("Login"))
+    const box = (id, st) => div().id(id).flex_1().min_w(0).h(28).px(8).flex().items_center().border_1().border_color(c.grey300).bg(c.surface).child(Input.new(st).w_full().text_size(12).text_color(c.navy));
+    const opt = (id, on, label, click) => div().id(id).h(22).px(6).flex().flex_none().items_center().cursor_pointer().text_size(12)
+      .border_1().border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.grey900).on_click(click).child(label);
+    const link = (id, label, click) => div().id(id).flex_none().cursor_pointer().text_size(12).text_color(c.blue).on_click(click).child(label);
+    const label = (t) => div().w(70).flex_none().text_color(c.grey900).child(t);
+    return v_flex().id("reg-form").gap(12).p(12).border_1().border_color(c.blue).bg(c.surface2)
+      .child(h_flex().gap(8).items_center().text_size(12).child(label("Login"))
         .child(h_flex().flex_1().flex_wrap().gap(4)
-          .child(div().id("reg-prof-none").h(22).px(6).flex().items_center().cursor_pointer().border_1().border_color(this.profile ? c.grey300 : c.blue).text_color(this.profile ? c.grey900 : c.blue)
-            .on_click((_e, cx) => { this.profile = null; cx.notify(); }).child("This computer's default"))
-          .children(this.profiles.map((p) => div().id(`reg-prof-${p.name}`).h(22).px(6).flex().items_center().cursor_pointer()
-            .border_1().border_color(this.profile === p.name ? c.blue : c.grey300).text_color(this.profile === p.name ? c.blue : c.grey900)
-            .on_click((_e, cx) => { this.profile = p.name; cx.notify(); }).child(`${p.name}${p.provider ? ` (${p.provider})` : ""}`)))))
-      .child(h_flex().gap(8)
-        .child(Button(c, "reg-attach-go", "Attach and read", (_e, cx) => this.attach(cx), { kind: "primary", small: true, disabled: !!this.job }))
-        .child(Button(c, "reg-attach-cancel", "Cancel", (_e, cx) => { this.attaching = false; cx.notify(); }, { kind: "quiet", small: true })));
+          .child(opt("reg-prof-none", !this.profile, "This computer's default", (_e, cx) => this.pickLogin(cx, null)))
+          .children(this.profiles.filter((p) => !p.provider || p.provider === "aws").map((p) =>
+            opt(`reg-prof-${p.name}`, this.profile === p.name, p.name, (_e, cx) => this.pickLogin(cx, p.name))))))
+      .child(this.bucketList(c, link))
+      .child(v_flex().gap(8)
+        .child(link("reg-type", this.typing ? "Hide the address field" : "Type an address instead", (_e, cx) => { this.typing = !this.typing; cx.notify(); }))
+        .when(this.typing, (e) => e
+          .child(h_flex().gap(8).items_center().text_size(12).child(label("Address")).child(box("reg-uri", this.uri)))
+          .child(h_flex().gap(8).items_center().text_size(12).child(label("Name")).child(box("reg-label", this.label)))
+          .child(h_flex().gap(8).child(Button(c, "reg-attach-go", "Attach and read", (_e, cx) => this.attach(cx), { kind: "primary", small: true, disabled: !!this.job })))))
+      .child(div().h(1).bg(c.rule))
+      .child(this.makePanel(c, box, opt, label))
+      .child(h_flex().gap(8).child(Button(c, "reg-attach-cancel", "Close", (_e, cx) => { this.attaching = false; cx.notify(); }, { kind: "quiet", small: true })));
+  }
+
+  /** The login's buckets: registries first and ready to attach, the rest behind Show all. */
+  bucketList(c, link) {
+    const d = this.disc;
+    const head = h_flex().gap(8).items_center()
+      .child(div().text_size(13).font_medium().child("Your S3 buckets"))
+      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.grey500).child(
+        !d || d.loading ? "" : d.error ? "" : `${d.registries} registr${d.registries === 1 ? "y" : "ies"} in ${d.buckets.length} bucket${d.buckets.length === 1 ? "" : "s"}${d.account ? ` in account ${d.account}` : ""}`))
+      .child(div().id("reg-disc-refresh").flex_none().cursor_pointer().on_click((_e, cx) => this.loadBuckets(cx, true)).child(this.icon("refresh", 13, c.grey900)));
+    if (!d || d.loading) return v_flex().gap(6).child(head).child(div().text_size(12).text_color(c.grey900).child("Looking through this login's buckets for model registries. This takes a few seconds."));
+    if (d.error) return v_flex().gap(6).child(head).child(div().text_size(12).text_color(c.fail).child(d.error));
+    const q = this.find.value().trim().toLowerCase();
+    const shown = d.buckets.filter((b) => (this.showAll || b.kind === "registry") && (!q || b.uri.toLowerCase().includes(q)));
+    const KIND = { registry: ["registry", "good"], empty: ["empty", "neutral"], other: ["not a registry", "neutral"], workspace: ["Captain workspace", "neutral"], "no-access": ["can't read", "bad"] };
+    return v_flex().gap(6).child(head)
+      .when(!d.registries && !this.showAll, (e) => e.child(div().text_size(12).text_color(c.grey900).child("None of these buckets holds a model registry yet. Make one below, or show every bucket.")))
+      .when(this.showAll, (e) => e.child(div().id("reg-find").h(28).px(8).flex().items_center().border_1().border_color(c.grey300).bg(c.surface).child(Input.new(this.find).w_full().text_size(12))))
+      .child(v_flex().id("reg-buckets").max_h(320).overflow_y_scrollbar().gap(4).children(shown.slice(0, 200).map((b, i) => {
+        const [k, tone] = KIND[b.kind] ?? [b.kind, "neutral"];
+        const can = b.kind === "registry" && !b.attached;
+        return h_flex().id(`reg-b-${i}`).gap(8).items_center().px(8).py(6).border_1().border_color(c.rule).bg(c.surface)
+          .when(can, (e) => e.cursor_pointer().on_click((_e, cx) => this.attachBucket(cx, b)))
+          .child(this.icon("database", 14, b.kind === "registry" ? c.navy : c.grey500))
+          .child(v_flex().flex_1().min_w(0)
+            .child(div().truncate().text_size(12.5).font_family(MONO).text_color(b.kind === "registry" ? c.navy : c.grey900).child(b.uri.replace(/^s3:\/\//, "")))
+            .child(div().truncate().text_size(11.5).text_color(c.grey500).child([b.region, b.detail].filter(Boolean).join(", "))))
+          .child(this.chip(c, k, tone))
+          .when(b.attached, (e) => e.child(this.chip(c, "attached", "blue")))
+          .when(can, (e) => e.child(Button(c, `reg-b-go-${i}`, "Attach", (_e, cx) => this.attachBucket(cx, b), { kind: "primary", small: true, disabled: !!this.job })));
+      })))
+      .child(link("reg-showall", this.showAll ? "Show registries only" : `Show all ${d.buckets.length} buckets`, (_e, cx) => { this.showAll = !this.showAll; cx.notify(); }));
+  }
+
+  /** Make a registry: in AWS now through CloudFormation, or as Terraform or a template for the team to apply. */
+  makePanel(c, box, opt, label) {
+    const head = h_flex().id("reg-make-head").gap(8).items_center().cursor_pointer().on_click((_e, cx) => { this.making = !this.making; cx.notify(); })
+      .child(this.icon(this.making ? "chevron-down" : "chevron-right", 12, c.grey900))
+      .child(div().text_size(13).font_medium().child("No registry yet? Create one"));
+    if (!this.making) return head;
+    const REGIONS = ["us-west-1", "us-west-2", "us-east-1", "us-east-2", "eu-west-1", "eu-central-1", "ap-southeast-1"];
+    return v_flex().gap(8).child(head)
+      .child(div().text_size(12).line_height("18px").text_color(c.grey900).child(
+        "A private, encrypted, versioned S3 bucket for models at architecture / brand / version. Captain makes it through a CloudFormation stack in your AWS account, so it shows in the AWS console with its history. Deleting the stack keeps the bucket and its models. If your team manages infrastructure in code, save it as Terraform or CloudFormation instead."))
+      .child(h_flex().gap(8).items_center().text_size(12).child(label("Bucket")).child(box("reg-new-name", this.newName)))
+      .child(h_flex().gap(8).items_center().text_size(12).child(label("Region"))
+        .child(h_flex().flex_1().flex_wrap().gap(4).children(REGIONS.map((r) => opt(`reg-region-${r}`, this.region === r, r, (_e, cx) => { this.region = r; cx.notify(); })))))
+      .child(h_flex().gap(8).flex_wrap()
+        .child(Button(c, "reg-create", "Create in AWS", (_e, cx) => this.create(cx), { kind: "primary", small: true, disabled: !!this.job }))
+        .child(Button(c, "reg-tf", "Save Terraform", (_e, cx) => this.saveTemplate(cx, "terraform"), { small: true }))
+        .child(Button(c, "reg-cfn", "Save CloudFormation", (_e, cx) => this.saveTemplate(cx, "cloudformation"), { small: true })));
+  }
+
+  countText() {
+    const n = new Set(this.models.map((m) => m.registry).filter(Boolean)).size || (this.regs ?? []).length;
+    const from = (this.regs ?? []).length ? `across ${n} registr${n === 1 ? "y" : "ies"}` : "from a registry read earlier and not attached now";
+    return `${this.models.length} model${this.models.length === 1 ? "" : "s"} ${from}. Click a model to show what it was built from.`;
   }
 
   /** Every model across the attached registries, by architecture, each with what it was built from. */
@@ -218,7 +367,7 @@ export class Models {
     const related = new Set(focus ? [focus.id, ...(focus.parent_ids ?? focus.parents ?? []).map(String)] : []);
     return v_flex().gap(10)
       .child(h_flex().gap(8).items_center().child(this.icon("lineage", 15, c.navy)).child(div().text_size(14).font_semibold().child("Models and lineage"))
-        .child(div().text_size(12).text_color(c.grey500).child(`${this.models.length} across ${(this.regs ?? []).length} registr${(this.regs ?? []).length === 1 ? "y" : "ies"}. Click a model to show what it was built from.`)))
+        .child(div().text_size(12).text_color(c.grey500).child(this.countText())))
       .children(order.map((a) => v_flex().gap(4)
         .child(div().text_size(12).font_medium().text_color(c.grey900).child(a))
         .children(byArch.get(a).sort((x, y) => `${x.brand}${x.version}`.localeCompare(`${y.brand}${y.version}`, undefined, { numeric: true })).map((m) => {

@@ -103,8 +103,9 @@ def update(ctx: Context, pid: str, name: str | None = None, description: str | N
     return _update(ctx, ch)
 
 
-def assign(ctx: Context, pid: str | None, items: list[dict]) -> dict:
-    """Put items ({kind, name}) in a project, or take them out with pid None."""
+def assign(ctx: Context, pid: str | None, items: list[dict], clear: bool = False) -> dict:
+    """Put items ({kind, name}) in a project, or take them out with pid None. clear=True forgets the choice instead,
+    so the rules decide again (a model's brand, a name that starts with the project's id)."""
     for it in items:
         if it.get("kind") not in KINDS:
             raise ValueError(f"a project holds {', '.join(KINDS)}, not {it.get('kind')!r}")
@@ -114,7 +115,9 @@ def assign(ctx: Context, pid: str | None, items: list[dict]) -> dict:
             _get(doc, pid)
         for it in items:
             key = f"{it['kind']}:{it['name']}"
-            if pid is None:
+            if clear:
+                doc["members"].pop(key, None)
+            elif pid is None:
                 doc["members"][key] = None  # explicit "not in a project", beats the name rules
             else:
                 doc["members"][key] = pid
@@ -277,7 +280,9 @@ def home(ctx: Context, pid: str) -> dict:
     mine = {p["name"] for p in pipelines}
     mlflow = [{"model": k.rpartition("@")[0], "version": k.rpartition("@")[2], "pipeline": v}
               for k, v in links.items() if v in mine]
-    return {"project": c["project"], "datasets": sorted(datasets, key=lambda d: d["created_at"], reverse=True),
+    doc, _ = _read(ctx)
+    brands = sorted(b for b, q in doc["brands"].items() if q == pid)
+    return {"project": {**c["project"], "brands": brands}, "datasets": sorted(datasets, key=lambda d: d["created_at"], reverse=True),
             "pipelines": pipelines, "models": c["models"], "mlflow_models": mlflow, "notebooks": notebooks,
             "runs": runs[:20], "connections": c["connection"], "investigations": c["investigation"],
             "counts": {"datasets": len(datasets), "pipelines": len(pipelines), "notebooks": len(notebooks),

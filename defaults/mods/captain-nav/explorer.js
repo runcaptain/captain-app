@@ -146,6 +146,12 @@ export class Explorer {
     if (n.kind === "group" || n.kind === "list") return;
     // A hint row does what it says ("No engines yet: add one"); "Show all" opens Runs.
     if (n.kind === "hint") { if (n.overlay) openOverlay(n.overlay); return; }
+    // All: no project or scope picked, so every section shows the whole workspace. A project home goes back to a view.
+    if (n.kind === "all") {
+      setShared("captain.scope", null);
+      if (this.onEnginePage?.()) run("layout.select", { stack: "sections", child: "data" });
+      return;
+    }
     if (n.kind === "more") { run("layout.select", { stack: "sections", child: "runs" }); return; }
     // An experiment opens in Comparisons, at its latest run.
     if (n.kind === "experiment") {
@@ -204,7 +210,10 @@ export class Explorer {
       .filter((n) => !(n.kind === "group" && n.type !== "project" && !(n.children ?? []).length))
       .map((n) => (n.kind === "group" && n.type === "project" && !(n.children ?? []).length
         ? { ...n, children: [{ kind: "hint", key: "projects/none", label: "No projects yet: add one", overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "project" } } }] }
-        : n));
+        // All, first under Projects (Edgar, 2026-11-07): back to the whole workspace, no project picked.
+        : n.kind === "group" && n.type === "project"
+          ? { ...n, children: [{ kind: "all", key: "projects/all", label: "All", about: "Everything in this workspace, not only one project's" }, ...n.children] }
+          : n));
     const projects = tree.filter((n) => n.kind === "group" && n.type === "project");
     return [...projects, ...tree.filter((n) => !projects.includes(n))];
   }
@@ -223,7 +232,7 @@ export class Explorer {
   row(c, n, depth, holder, path) {
     const key = nodeKey(n, path);
     const scope = currentScope();
-    const on = Boolean(scope) && scope.kind === n.kind && scope.id === n.id;
+    const on = n.kind === "all" ? !scope : Boolean(scope) && scope.kind === n.kind && scope.id === n.id;
     const kids = n.children ?? [];
     const open = kids.length > 0 && this.isOpen(key);
     const acts = this.actions(n, holder);
@@ -243,7 +252,7 @@ export class Explorer {
           .child(svg(icon(open ? "chevron-down" : "chevron-right")).size(11))))
       .child(n.kind === "experiment" ? div().size(13).flex_none().flex().items_center().justify_center().child(this.marker(c, n))
         : hint ? div().size(13).flex_none()
-        : svg(icon(n.kind === "list" ? (n.id === "all-experiments" ? "flask-conical" : "boxes") : nodeIcon(n))).size(13).flex_none().text_color(on ? c.blue : c.grey500))
+        : svg(icon(n.kind === "all" ? "boxes" : n.kind === "list" ? (n.id === "all-experiments" ? "flask-conical" : "boxes") : nodeIcon(n))).size(13).flex_none().text_color(on ? c.blue : c.grey500))
       .child(div().flex_1().min_w(0).truncate().child(nodeName(n)))
       .when(count > 0, (e) => e.child(div().min_w(20).px(6).text_size(10.5).line_height("18px").font_family("JetBrains Mono")
         .bg(c.surface2).text_color(c.grey900).flex().justify_center().child(String(count))))
