@@ -170,6 +170,78 @@ def extensions_list():
     return {"extensions": [e.public() for e in reg.items], "errors": reg.errors, "project": reg.project}
 
 
+@app.get("/api/explorer", dependencies=A)
+def explorer_tree():
+    """The Explorer: All engines, All experiments, the scope tree (Brand > Site > Engine by default), Projects and
+    Settings. Ids are stable. The same engine can appear under several scopes."""
+    from . import scopes as SC
+
+    return SC.explorer(ctx())
+
+
+@app.get("/api/scope-model", dependencies=A)
+def scope_model_get():
+    from . import scopes as SC
+
+    return SC.model(ctx())
+
+
+@app.put("/api/scope-model", dependencies=A)
+def scope_model_put(body: dict):
+    """Replace the scope model (types, terminology, hierarchy, explorer). Refused with reasons if invalid.
+    Send expect_revision to avoid overwriting someone else's change."""
+    from . import scopes as SC
+
+    rev = body.pop("expect_revision", None)
+    return SC.set_model(ctx(), body, rev)
+
+
+@app.post("/api/scopes", dependencies=A)
+def scope_add(body: dict):
+    from . import scopes as SC
+
+    return SC.add_scope(ctx(), body.get("type", ""), str(body.get("name", "")), body.get("parent"), body.get("fields"))
+
+
+@app.put("/api/scopes/{sid}", dependencies=A)
+def scope_update(sid: str, body: dict):
+    from . import scopes as SC
+
+    return SC.update_scope(ctx(), sid, body.get("name"), body["parent"] if "parent" in body else False,
+                           body.get("archived"), body.get("fields"))
+
+
+@app.get("/api/engines", dependencies=A)
+def engines_list():
+    from . import scopes as SC
+
+    return SC._data(ctx())["engines"]
+
+
+@app.post("/api/engines", dependencies=A)
+def engine_add(body: dict):
+    from . import scopes as SC
+
+    return SC.add_engine(ctx(), str(body.get("name", "")), body.get("type", "search"), body.get("scopes"),
+                         body.get("pipelines"), body.get("description", ""))
+
+
+@app.put("/api/engines/{eid}", dependencies=A)
+def engine_update(eid: str, body: dict):
+    from . import scopes as SC
+
+    return SC.update_engine(ctx(), eid, **{k: body.get(k) for k in ("name", "type", "scopes", "pipelines",
+                                                                    "description", "archived")})
+
+
+@app.post("/api/scopes/link", dependencies=A)
+def scope_link(body: dict):
+    """{items: [{kind, name}], scope? | engine?}: which scope or engine records belong to. Neither unlinks."""
+    from . import scopes as SC
+
+    return SC.link(ctx(), list(body.get("items") or []), body.get("scope"), body.get("engine"))
+
+
 @app.get("/api/projects", dependencies=A)
 def projects_list():
     """Projects (one per company) with what each holds: connections, datasets, pipelines, models, backtests,

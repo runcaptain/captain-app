@@ -592,3 +592,17 @@ Routes:
 - `?project=<id>`, or `?project=none` for unclaimed items, filters `/api/datasets`, `/api/datasets/tree`,
   `/api/pipelines`, `/api/backtests`, `/api/investigations`, `/api/models` and `/api/connections`.
 - `POST /api/datasets/import` and `POST /api/sql` with `save` accept `project`, which puts the result in that project.
+
+## Scope model, engines and the Explorer
+
+- `GET /api/explorer` returns the navigation tree: All engines, All experiments, scope groups (Brand > Site > Engine
+  by default), unscoped engines, Projects, and Settings > Scope model. It also returns `actions` (Add brand, Add site,
+  Add engine) and the model's `model_revision`.
+- `GET /api/scope-model` returns the model. `PUT /api/scope-model {types, explorer, engine_types, expect_revision?}`
+  replaces it, and is refused with reasons on unknown parents, loops, removed types still in use, or a stale revision.
+  Each type is `{key, singular, plural, description, parents, fields}`. Keys are stable, and labels are free to change.
+- `POST /api/scopes {type, name, parent?, fields?}` adds a scope. `PUT /api/scopes/{id} {name?, parent?, archived?,
+  fields?}` renames, moves (validated) or archives one. A scope's `fields.registry_brands` maps registry brands to it.
+- `GET|POST /api/engines`, `PUT /api/engines/{id}`: engines are persistent identities `{name, type: search |
+  recommendation, scopes, pipelines}`. A pipeline belongs to the engine that lists it.
+- `POST /api/scopes/link {items, scope? | engine?}` attaches records to a scope or an engine.
