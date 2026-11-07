@@ -121,6 +121,7 @@ export default class CaptainData extends View {
     if (p.tab === "tables") this.tables.load(cx);
     if (p.tab === "labels") this.loadLabels(cx);
     if (p.tab === "models") this.models.load(cx);
+    if (p.tab === "models" && p.registryAttach) this.models.toggleAttach(cx); // the attach form, open on the bucket list
     if (p.tab === "notebooks") {
       this.tab = "notebooks";
       this.nb.want = p.notebook ?? null;

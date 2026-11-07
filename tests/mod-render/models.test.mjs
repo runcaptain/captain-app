@@ -13,6 +13,9 @@ const root = path.resolve(here, '../..');
 globalThis.__fixtures = path.join(here, 'fixtures/captain-data-models');
 globalThis.__routes = [
   [/^\/api\/registries$/, 'job-start', 'POST'],
+  [/^\/api\/registries\/create$/, 'job-start', 'POST'],
+  [/^\/api\/registries\/discover(\?.*)?$/, 'discover'],
+  [/^\/api\/registries\/template\?/, 'template'],
   [/^\/api\/registries\?uri=/, 'detached', 'DELETE'],
   [/^\/api\/registries$/, 'registries'],
   [/^\/api\/models(\?.*)?$/, 'models'],
@@ -42,20 +45,56 @@ assert.ok(t.includes('shop v2') && t.includes('built from') && t.includes('shop@
 await h.click('model-shop@v2');
 assert.equal(h.mod.models.focus, 'shop@v2');
 
-// Attach: address, login, name, then the job finishes and the list reloads.
+// Attach opens on the login's buckets, registries first; an attached one has no Attach button. Only AWS logins show.
 await h.click('reg-attach');
+await h.idle();
+t = h.text();
+assert.ok(t.includes('1 registry in 4 buckets in account 123456789012') && t.includes('team-models') && !t.includes('raw-logs'), `bucket list: ${t.slice(0, 600)}`);
+assert.ok(!t.includes('gcp-team'), 'only AWS logins');
+await h.click('reg-showall');
+assert.ok(h.text().includes('raw-logs') && h.text().includes("can't read"), 'show all buckets');
+await h.click('reg-b-go-0');
+await h.idle();
+let post0 = globalThis.__bodies.filter(([p, o]) => p === '/api/registries' && o?.body).pop();
+assert.deepEqual(JSON.parse(JSON.stringify(post0[1].body)), { uri: 's3://team-models', label: 'team-models' }, 'attach a picked bucket');
+await h.layoutLists({});
+assert.ok(h.text().includes('Attached s3://team-models.') && !h.mod.models.attaching, 'picked bucket attached');
+
+// Create one: the name defaults from the account, region picked, a create job; and Terraform saved to Downloads.
+await h.click('reg-attach');
+await h.idle();
+assert.equal(h.mod.models.newName.value(), 'captain-models-123456789012');
+await h.click('reg-make-head');
+await h.click('reg-region-us-east-2');
+await h.click('reg-create');
+await h.idle();
+post0 = globalThis.__bodies.filter(([p, o]) => p === '/api/registries/create' && o?.body).pop();
+assert.deepEqual(JSON.parse(JSON.stringify(post0[1].body)), { bucket: 'captain-models-123456789012', region: 'us-east-2' }, 'create body');
+await h.layoutLists({});
+assert.ok(h.text().includes('Made s3://captain-models-123456789012 and attached it.'), `create note: ${h.text().slice(0, 400)}`);
+await h.click('reg-attach');
+await h.idle();
+if (!h.mod.models.making) await h.click('reg-make-head');
+await h.click('reg-tf');
+await h.idle();
+assert.ok(globalThis.__asked.some((p) => p.startsWith('/api/registries/template?bucket=captain-models-123456789012&region=us-east-2&format=terraform')), 'template request');
+
+// Or type the address: address, login, name, then the job finishes and the list reloads.
+await h.click('reg-type');
 h.mod.models.uri.set_value('s3://new-bucket/models');
 h.mod.models.label.set_value('New registry');
-await h.click('reg-prof-gcp-team');
+await h.click('reg-prof-aws');
 await h.click('reg-attach-go');
 await h.idle();
 const post = globalThis.__bodies.filter(([p, o]) => p === '/api/registries' && o?.body).pop();
-assert.deepEqual(post[1].body, { uri: 's3://new-bucket/models', profile: 'gcp-team', label: 'New registry' }, 'attach body');
+assert.deepEqual(post[1].body, { uri: 's3://new-bucket/models', profile: 'aws', label: 'New registry' }, 'attach body');
 await h.layoutLists({});
 assert.ok(h.text().includes('Attached s3://new-bucket/models.'), `attach note: ${h.text().slice(0, 400)}`);
 
 // A bad address is refused before any request.
 await h.click('reg-attach');
+await h.idle();
+if (!h.mod.models.typing) await h.click('reg-type');
 h.mod.models.uri.set_value('not-an-address');
 await h.click('reg-attach-go');
 assert.ok(h.text().includes("Type the registry's address, like s3://bucket/models."), 'address check');

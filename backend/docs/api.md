@@ -831,3 +831,31 @@ CLI: `cst mlflow use --uri URL | --databricks CONN`, `cst mlflow experiments|run
 - `GET /api/projects/{id}/home` returns `{project, datasets, pipelines, models, mlflow_models, notebooks, runs,
   connections, investigations, counts, empty}` for a project's home screen. Saved notebooks can now be assigned to
   projects (kind `notebook`).
+
+## Finding and making a model registry (AWS)
+
+- `GET /api/registries/discover?profile=` lists every S3 bucket the login can see, registries first. Each bucket is
+  `{bucket, region, kind, uri, detail, attached}`, where kind is one of:
+  - `registry`: models in `<architecture>/<brand>/<version>/MANIFEST.yaml`, at the root or under a folder (`uri` points
+    at that folder), or an `INDEX.md` or `.captain/registry.yaml`;
+  - `empty`;
+  - `workspace`: a Captain workspace, whose datasets share that folder shape;
+  - `other`;
+  - `no-access`.
+
+  It only reads. On a 91-bucket account it takes about 15 seconds. CLI: `cst registry discover`.
+- `GET /api/registries/template?bucket=&region=&format=terraform|cloudformation` returns `{format, filename, text,
+  how}`: the registry bucket as infrastructure code, for a team's own pipeline to apply.
+- `POST /api/registries/create {bucket, region, profile?}` is a job. It makes the bucket through a CloudFormation stack,
+  `captain-model-registry-<bucket>`. The bucket is:
+  - versioned and encrypted (SSE-S3);
+  - fully private, with the bucket owner owning every object;
+  - closed to plain HTTP;
+  - kept when the stack is deleted.
+
+  The job then writes `INDEX.md` and `.captain/registry.yaml` and attaches the bucket, which has 0 models.
+  - CLI: `cst registry create <bucket> --region us-west-1`.
+  - `--terraform main.tf` or `--cloudformation t.yaml` writes the code instead.
+  - The login needs `cloudformation:CreateStack` and the S3 bucket-configuration permissions.
+
+A registry with an `INDEX.md` and no models yet attaches without error. Before this change it was refused.

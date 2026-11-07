@@ -165,6 +165,7 @@ props_of() {
     captain-compare:side) python3 tests/mod-render/first-query.py "$CSTH" ;;
     captain-data:notebook) echo '{"tab": "notebooks", "notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:models) echo '{"tab": "models"}' ;;
+    captain-data:models-attach) echo '{"tab": "models", "registryAttach": true}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;
     captain-data:import-run) echo '{"importWith": {"conn": "demo-store", "table": "products", "name": "hello", "autoImport": true}}' ;;
     captain-data:quality) echo '{"pageTab": "quality"}' ;;
@@ -232,6 +233,7 @@ EOF
   [[ "$view" == captain-data:notebook || "$view" == captain-data:chart || "$view" == captain-data:bignotebook ]] && sleep 25
   [[ "$view" == captain-data:import* || "$view" == captain-compare:profile || "$view" == captain-data:quality ]] && sleep 8
   [[ "$view" == captain-data:import-run ]] && sleep 14
+  [[ "$view" == captain-data:models-attach ]] && sleep 25  # it lists every bucket of the login first
   for i in $(seq 1 12); do
     sleep 1.5
     # A window in the background may not draw a new frame after its data arrives, and shot saves the last frame

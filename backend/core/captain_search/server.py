@@ -953,6 +953,41 @@ def registries_attach(body: dict):
                         f"attach {uri}")}
 
 
+@app.get("/api/registries/discover", dependencies=A)
+def registries_discover(profile: str | None = None):
+    """Every S3 bucket the login can see, each marked as a registry, empty, other, or unreadable. Reads only."""
+    from . import attach as AT
+    from . import registry_setup as RS
+
+    c = ctx()
+    if profile is None:
+        _, profile = AT.resolve(c, "s3://x", None)
+    return {**RS.discover(c, profile), "profile": profile}
+
+
+@app.get("/api/registries/template", dependencies=A)
+def registries_template(bucket: str, region: str = "us-west-1", format: str = "terraform"):  # noqa: A002
+    from . import registry_setup as RS
+
+    return RS.template(bucket, region, format)
+
+
+@app.post("/api/registries/create", dependencies=A)
+def registries_create(body: dict):
+    """Make a registry bucket through a CloudFormation stack, then attach it. Runs as a job."""
+    from . import attach as AT
+    from . import registry_setup as RS
+
+    c = ctx()
+    bucket = RS.check_name(str(body.get("bucket", "")))
+    region = str(body.get("region") or "us-west-1")
+    profile = body.get("profile") or None
+    if profile is None:
+        _, profile = AT.resolve(c, f"s3://{bucket}", None)
+    return {"job": _job(lambda p: RS.create(c, bucket, region, profile, body.get("label"), progress=p),
+                        f"create registry {bucket}")}
+
+
 @app.delete("/api/registries", dependencies=A)
 def registries_detach(uri: str):
     from . import attach as AT

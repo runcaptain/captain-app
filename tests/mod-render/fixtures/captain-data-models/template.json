@@ -1,0 +1,1 @@
+{"format": "terraform", "filename": "captain-model-registry.tf", "text": "resource \"aws_s3_bucket\" \"registry\" {}\n", "how": "terraform init && terraform apply"}

@@ -140,8 +140,10 @@ def import_registry(ctx: Context, uri: str | None = None, profile: str | None = 
     if not uri:
         raise ValueError("name a model registry (s3://<bucket>), or set CST_MODEL_REGISTRY")
     data = scan(uri, profile, s3)
-    if not data["models"]:
-        raise ValueError(f"no <architecture>/<brand>/<version>/MANIFEST.yaml found under {uri}")
+    if not data["models"] and not data["index_md"]:
+        # A new registry (Captain made it, or a team started one) has an INDEX.md and no models yet: that's fine.
+        raise ValueError(f"no <architecture>/<brand>/<version>/MANIFEST.yaml found under {uri}, and no INDEX.md: "
+                         "this doesn't look like a model registry")
     for m in data["models"]:
         ids = {x["id"] for x in data["models"]}
         m["parent_ids"] = [f"{m['brand']}@{p}" for p in m["parents"]]
