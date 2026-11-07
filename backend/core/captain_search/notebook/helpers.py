@@ -139,8 +139,22 @@ def page(var: str, offset: int = 0, limit: int = 100, order: str | None = None, 
     display({PAGE_MIME: page_of(ns[var], offset, limit, order, desc, where, count)}, raw=True)
 
 
+def dataset(ref: str, v: int | None = None):
+    """A saved dataset as a DataFrame: `cst.dataset("catalogs/products")`, or a version with v=3 or "name@v3". The read
+    is logged for the dataset's Insights (who reads it)."""
+    from captain_search.data import datasets as DS
+    from captain_search.data import reads as RD
+
+    ctx = _context()
+    name, _, ver = str(ref).partition("@v")
+    m = ctx.registry.load("dataset", name, v if v is not None else (int(ver) if ver.isdigit() else None))
+    df = DS.load_table(ctx, m).to_pandas()
+    RD.record(ctx, m.name, m.version, "notebook")
+    return df
+
+
 def install():
-    """Show DataFrames as Captain tables."""
+    """Show DataFrames as Captain tables, and give notebooks `cst` (cst.dataset, cst.sql)."""
     try:
         import pandas as pd
         from IPython import get_ipython
@@ -149,5 +163,8 @@ def install():
         if ip is None:
             return
         ip.display_formatter.mimebundle_formatter.for_type(pd.DataFrame, lambda df, include=None, exclude=None: {TABLE_MIME: table_bundle(df)})
+        import sys
+
+        ip.user_ns.setdefault("cst", sys.modules[__name__])  # cst.dataset("name") in a Python cell
     except Exception:
         pass

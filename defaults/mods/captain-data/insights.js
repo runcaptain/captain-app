@@ -3,6 +3,8 @@
 // - one line on how much uses it, then what does: pipelines built on it, runs scored with it, environments it reached
 //   and datasets made from it, each with how far downstream it is and who made it when;
 // - saved notebooks that name it;
+// - frequent readers: who read its rows in the last 90 days, how often, and how (the app, a notebook's cst.dataset(),
+//   an agent, the CLI), from the services' read log;
 // - who works with it (made its versions, built on it);
 // - recent activity, newest first.
 // A row opens what it names: a run in Comparisons, a dataset or a notebook here.
@@ -24,6 +26,7 @@ function ago(iso) {
   const s = (Date.now() - t) / 1000;
   return s < 90 ? "just now" : s < 5400 ? `${Math.round(s / 60)} minutes ago` : s < 129600 ? `${Math.round(s / 3600)} hours ago` : `${Math.round(s / 86400)} days ago`;
 }
+const VIA = { app: "in the app", notebook: "in notebooks", agent: "as an agent", cli: "from the command line" };
 const away = (level) => (level <= 1 ? "uses it directly" : `${level} steps downstream`);
 
 export class DatasetInsights {
@@ -73,7 +76,8 @@ export class DatasetInsights {
     if (d.error) return v_flex().id("ds-insights").p(20).child(div().p(12).bg(c.failLight).border_1().border_color(c.fail).text_size(12.5).text_color(c.fail).child(d.error));
     const n = d.counts ?? {};
     const parts = KINDS.filter(([k]) => n[k]).map(([k, , one, many]) => plural(n[k], one, many));
-    const nothing = !parts.length && !n.notebooks;
+    const rd = d.readers ?? { reads: 0, readers: [] };
+    const nothing = !parts.length && !n.notebooks && !rd.reads;
     const section = (title, body) => v_flex().gap(4).child(div().text_size(12.5).font_medium().text_color(c.navy).child(title)).child(body);
     // Rows wrap in a narrow pane: the name first, the details under it when there's no room beside it.
     const row = (id, cells, onClick) => h_flex().id(id).min_h(28).py(4).px(8).gap_x(10).gap_y(2).flex_wrap().items_center().border_b(1).border_color(c.rule).text_size(12)
@@ -81,7 +85,7 @@ export class DatasetInsights {
     return v_flex().id("ds-insights").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(12).gap(16)
       .child(div().text_size(13.5).text_color(c.navy).child(nothing
         ? "Nothing uses this dataset yet. Pipelines built on it, runs scored with it and notebooks that name it will show here."
-        : `Used by ${parts.length ? parts.join(", ") : "nothing yet"}. Named in ${plural(n.notebooks ?? 0, "notebook", "notebooks")}.`))
+        : `Used by ${parts.length ? parts.join(", ") : "nothing yet"}. Named in ${plural(n.notebooks ?? 0, "notebook", "notebooks")}. Read ${plural(rd.reads, "time", "times")} in the last ${int(rd.days ?? 90)} days.`))
       .children(KINDS.filter(([k]) => (d.used_by?.[k] ?? []).length).map(([k, title]) => section(title, v_flex().border_1().border_color(c.rule)
         .children(d.used_by[k].map((e, i) => row(`ins-${k}-${i}`, [
           div().min_w(140).max_w(320).flex_1().truncate().font_family(MONO).text_color(e.kind === "run" || e.kind === "dataset" ? c.blue : c.navy).child(e.label),
@@ -94,6 +98,12 @@ export class DatasetInsights {
           div().min_w(140).max_w(320).flex_1().truncate().font_family(MONO).text_color(c.blue).child(nb.name),
           div().flex_1().text_color(c.grey900).child(`named in ${plural(nb.cells, "cell", "cells")}`),
         ], (_ev, cx) => this.openNotebook(cx, nb.name)))))))
+      .when((rd.readers ?? []).length > 0, (e) => e.child(section("Frequent readers", v_flex().border_1().border_color(c.rule)
+        .children(rd.readers.slice(0, 12).map((r, i) => row(`ins-reader-${i}`, [
+          div().min_w(140).max_w(320).flex_1().truncate().text_color(c.navy).child(r.agent ? `${r.agent} (agent, for ${r.user})` : r.user),
+          div().flex_none().text_color(c.grey900).child(`${plural(r.reads, "read", "reads")}, ${Object.entries(r.via ?? {}).sort((a, b) => b[1] - a[1]).map(([k]) => VIA[k] ?? k).join(", ")}`),
+          div().min_w(120).flex_1().truncate().text_color(c.grey500).child([r.versions?.length ? `version${r.versions.length === 1 ? "" : "s"} ${r.versions.join(", ")}` : null, ago(r.last)].filter(Boolean).join(", ")),
+        ]))))))
       .when((d.people ?? []).length > 0, (e) => e.child(section("Who works with it", v_flex().border_1().border_color(c.rule)
         .children(d.people.map((p, i) => row(`ins-person-${i}`, [
           div().min_w(140).max_w(320).flex_1().truncate().text_color(c.navy).child(p.user),
@@ -105,6 +115,6 @@ export class DatasetInsights {
           div().min_w(120).flex_1().truncate().text_color(c.grey900).child(a.who ?? ""),
           div().flex_1().min_w(0).truncate().text_color(c.navy).child(a.what),
         ]))))))
-      .child(div().text_size(11.5).text_color(c.grey500).child(`From Captain's own records: lineage up to three steps downstream, the last ${plural(Math.min(d.versions_total ?? 0, 10), "version", "versions")} of ${plural(d.versions_total ?? 0, "version", "versions")}, and saved notebooks.`));
+      .child(div().text_size(11.5).text_color(c.grey500).child(`From Captain's own records: reads in the app, notebooks, agents and the CLI (once per reader every 10 minutes), lineage up to three steps downstream, the last ${plural(Math.min(d.versions_total ?? 0, 10), "version", "versions")} of ${plural(d.versions_total ?? 0, "version", "versions")}, and saved notebooks.`));
   }
 }

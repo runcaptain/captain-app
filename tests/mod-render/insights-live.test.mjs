@@ -44,7 +44,15 @@ await until(() => (h.mod.list ?? []).some((d) => d.name === 'demo-catalog'), 'da
 h.mod.select(h.cx, 'demo-catalog');
 await until(() => h.mod.detail?.name === 'demo-catalog', 'the catalog open');
 await h.click('dtab-insights');
-await until((t) => t.includes('Used by 2 pipelines, 2 runs, 1 environment, 3 datasets. Named in 1 notebook.'), 'the summary');
+// Reads: the page's own Sample data (the app), and an agent at the CLI.
+spawnSync(cst, ['data', 'head', 'demo-catalog'], { env: { ...env, CST_AGENT: 'claude' } });
+await h.click('dtab-sample');
+await until(() => h.mod.page.rows && !h.mod.page.rows.loading && h.mod.page.rows.table.rows.length > 0, 'sample rows read');
+await h.click('dtab-insights');
+h.mod.page.insights.reset();
+h.mod.page.insights.load(h.cx, h.mod.detail);
+await until((t) => t.includes('Used by 2 pipelines, 2 runs, 1 environment, 3 datasets. Named in 1 notebook. Read 2 times in the last 90 days.'), 'the summary');
+assert.ok(h.text().includes('Frequent readers') && h.text().includes('claude (agent, for') && h.text().includes('1 read, as an agent') && h.text().includes('1 read, in the app'), `frequent readers: ${h.text().slice(0, 900)}`);
 const t = h.text();
 for (const s of ['Pipelines built on it', 'demo-bm25@v1', 'Runs scored with it', 'demo-tuned-vs-bm25@v1', 'Environments it reached', 'staging',
   'Datasets made from it', 'demo-queries@v1', 'uses it directly', '2 steps downstream', 'Notebooks that name it', 'catalog-checks', 'named in 1 cell',

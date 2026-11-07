@@ -37,6 +37,12 @@ All responses are JSON. Errors: HTTP 4xx/5xx with `{"error": "plain sentence"}`.
 | GET | `/api/datasets/{name}/head` | `?v=&n=50` | `{columns, rows}` |
 | GET | `/api/datasets/{name}/insights` | | what uses it, from Captain's own records: `{used_by: {pipeline, run, environment, dataset: [{id, label, name, version, level, via, section, created_by, created_at}]}, notebooks: [{name, cells}], people: [{user, versions, builds}], activity: [{at, who, what, kind, id}], versions, versions_total, counts}`. `level` is how many steps downstream and `via` which of its versions. An unknown name is a 404 in words |
 
+**Who reads a dataset.** Rows read through the app (`/rows`, `/head`), `cst.dataset("name")` in a notebook, and
+`cst data head` / `pull` (an agent's when `CST_AGENT` is set) append one small record each to
+`metastore/reads/<dataset>/<day>/` (data/reads.py). The same reader of the same version the same way counts once per
+10 minutes, so paging isn't a read per page, and a failed write never fails the read. Insights' `readers` sums the
+last 90 days: `{days, reads, by_via: {app, notebook, agent, cli}, readers: [{user, agent, reads, via, versions, last}]}`.
+
 ## Pipelines, backtests, deploys
 
 | Method | Path | Body / query | Returns |

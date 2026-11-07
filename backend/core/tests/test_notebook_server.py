@@ -173,6 +173,10 @@ def test_kernel_pages_a_result_over_the_socket(ctx):
             p = next(e for e in evs if e["type"] == "page")
             assert p["cell_id"] == "r1" and p["total"] == 3000 and p["rows"][0] == [1999] and len(p["rows"]) == 50
             assert not any(e["type"] == "status" for e in evs), "a page doesn't show the notebook as running"
+            # cst.dataset() reads a saved dataset in a Python cell.
+            ws.send_json({"type": "execute", "cell_id": "d", "kind": "python", "code": "print(len(cst.dataset('demo-catalog')))"})
+            evs = until_done(ws, "d")
+            assert any(e["type"] == "stream" and e["text"].strip() == "480" for e in evs), evs
             ws.send_json({"type": "page", "req": "r2", "var": "gone"})
             evs = until_done(ws, "r2")
             err = next(e for e in evs if e["type"] == "error")

@@ -341,6 +341,9 @@ def data_head(ref: str, n: int = typer.Option(10, "-n")):
     c = ctx()
     m = _resolve(c, ref)
     t = ds.load_table(c, m)
+    from ..data import reads as RD
+
+    RD.record(c, m.name, m.version, "cli")  # "agent" when CST_AGENT is set
     emit(t.slice(0, n).to_pylist(), table_text(t, n))
 
 
@@ -348,6 +351,9 @@ def data_head(ref: str, n: int = typer.Option(10, "-n")):
 def data_pull(ref: str, out: str = typer.Option(".", "-o", help="Output directory")):
     c = ctx()
     m = _resolve(c, ref)
+    from ..data import reads as RD
+
+    RD.record(c, m.name, m.version, "cli")
     big = m.row_count > 1_000_000
     if big:
         fail(f"{ref} has {m.row_count:,} rows. Datasets that large stay in the cloud. Read it from a runner instead.")

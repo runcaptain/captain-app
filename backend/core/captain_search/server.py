@@ -939,13 +939,20 @@ def dataset_rows(name: str, v: int | None = None, file: str | None = None, offse
     from .workspace import load_config
 
     profile = (load_config().get("workspaces", {}).get(c.workspace.name) or {}).get("profile")
-    return browse.rows(c, m, file, offset, limit, order, desc, search, where, count, profile)
+    out = browse.rows(c, m, file, offset, limit, order, desc, search, where, count, profile)
+    from .data import reads as RD
+
+    RD.record(c, m.name, m.version, "app")  # who reads it (Insights); once per reader per 10 minutes
+    return out
 
 
 @app.get("/api/datasets/{name:path}/head", dependencies=A)
 def dataset_head(name: str, v: int | None = None, n: int = 50):
     c = ctx()
     m = c.registry.load("dataset", name, v)
+    from .data import reads as RD
+
+    RD.record(c, m.name, m.version, "app")
     if m.external and not m.files:
         from . import browse
 

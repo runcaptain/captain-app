@@ -98,13 +98,21 @@ def dataset_insights(ctx: Context, name: str, max_versions: int = 10, depth: int
         if cells:
             notebooks.append({"name": nb["name"], "cells": len(cells)})
 
+    # Who reads it (data/reads.py): the app, notebooks, agents and the CLI, over the last 90 days.
+    from . import reads as RD
+
+    try:
+        read = RD.readers(ctx, name)
+    except Exception:  # noqa: BLE001  insights without the read log rather than none
+        read = {"days": 90, "reads": 0, "by_via": {}, "readers": []}
     people = sorted({u for u in list(makers) + list(builders) if u},
                     key=lambda u: -(makers[u] + builders[u]))
     activity = sorted([a for a in activity if a["at"]], key=lambda a: a["at"], reverse=True)[:20]
     return {
         "dataset": name, "versions": versions, "versions_total": len(vs),
         "used_by": by_kind,
-        "counts": {k: len(v) for k, v in by_kind.items()} | {"notebooks": len(notebooks)},
+        "counts": {k: len(v) for k, v in by_kind.items()} | {"notebooks": len(notebooks), "reads": read["reads"]},
+        "readers": read,
         "notebooks": notebooks,
         "people": [{"user": u, "versions": makers[u], "builds": builders[u]} for u in people],
         "activity": activity,
