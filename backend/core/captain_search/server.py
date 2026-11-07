@@ -143,12 +143,17 @@ def lineage(view: str = "artifacts"):
 
 
 @app.get("/api/connections", dependencies=A)
-def connections():
+def connections(project: str | None = None):
     import yaml
 
+    from . import projects as PR
+
     c = ctx()
+    inp = PR.member_filter(c, project, "connection")
     out = []
     for n in c.connections():
+        if not inp(n):
+            continue
         raw = yaml.safe_load(c.store.get(c.conn_key(n)))
         if not raw.get("deleted"):
             out.append({"name": n, "engine": raw["engine"], "network": raw["network"]["mode"], "writable": raw["writable"]})
@@ -163,6 +168,185 @@ def extensions_list():
 
     reg = X.load(ctx().workspace.name, fresh=True)
     return {"extensions": [e.public() for e in reg.items], "errors": reg.errors, "project": reg.project}
+
+
+@app.get("/api/connections/{name}/suggestions", dependencies=A)
+def connection_suggestions(name: str):
+    """Sample queries for this source, from its tables (read them first) or, for PostHog and Google Analytics, from
+    what those products record. Each is bounded by a LIMIT or a time window."""
+    from . import suggest as SG
+
+    return SG.suggestions(ctx(), name)
+
+
+@app.post("/api/connections/{name}/preview", dependencies=A)
+def connection_preview(name: str, body: dict):
+    """{query, limit<=1000}: the rows, without saving anything. Save with POST /api/sql {conn, sql, save, kind,
+    project?}."""
+    from . import suggest as SG
+
+    q = str(body.get("query", "")).strip()
+    if not q:
+        raise ValueError("write a query, or pick a suggested one")
+    return SG.preview(ctx(), name, q, int(body.get("limit", 1000)))
+
+
+@app.get("/api/lineage/graph", dependencies=A)
+def lineage_graph(node: str | None = None, up: int = 2, down: int = 2):
+    """Data and model lineage. With node=<id>, only what's within `up` steps upstream and `down` downstream, each node
+    with its level (negative is upstream). Without a node, the whole graph."""
+    from . import lineage as LN
+
+    c = ctx()
+    if node:
+        return LN.neighborhood(c, node, max(0, min(up, 10)), max(0, min(down, 10)))
+    return LN.graph(c)
+
+
+@app.get("/api/lineage/columns", dependencies=A)
+def lineage_columns(dataset: str, column: str):
+    """Which warehouse table columns one column of a SQL-made dataset came from."""
+    from . import lineage as LN
+
+    return LN.columns(ctx(), dataset, column)
+
+
+@app.post("/api/lineage/import/{conn}", dependencies=A)
+def lineage_import(conn: str, body: dict | None = None):
+    """Read Databricks Unity Catalog's or Snowflake's own lineage into the graph. Runs as a job."""
+    from . import lineage as LN
+
+    c = ctx()
+    c.load_connection(conn)
+    days = int((body or {}).get("days", 30))
+    return {"job": _job(lambda p: LN.import_external(c, conn, days), f"read {conn}'s lineage")}
+
+
+@app.get("/api/profile", dependencies=A)
+def profile(dataset: str):
+    """Quality per column (null share, distinct values, min, max) and freshness, for a dataset version."""
+    from . import lineage as LN
+
+    return LN.profile_dataset(ctx(), dataset)
+
+
+@app.get("/api/explorer", dependencies=A)
+def explorer_tree():
+    """The Explorer: All engines, All experiments, the scope tree (Brand > Site > Engine by default), Projects and
+    Settings. Ids are stable. The same engine can appear under several scopes."""
+    from . import scopes as SC
+
+    return SC.explorer(ctx())
+
+
+@app.get("/api/scope-model", dependencies=A)
+def scope_model_get():
+    from . import scopes as SC
+
+    return SC.model(ctx())
+
+
+@app.put("/api/scope-model", dependencies=A)
+def scope_model_put(body: dict):
+    """Replace the scope model (types, terminology, hierarchy, explorer). Refused with reasons if invalid.
+    Send expect_revision to avoid overwriting someone else's change."""
+    from . import scopes as SC
+
+    rev = body.pop("expect_revision", None)
+    return SC.set_model(ctx(), body, rev)
+
+
+@app.post("/api/scopes", dependencies=A)
+def scope_add(body: dict):
+    from . import scopes as SC
+
+    return SC.add_scope(ctx(), body.get("type", ""), str(body.get("name", "")), body.get("parent"), body.get("fields"))
+
+
+@app.put("/api/scopes/{sid}", dependencies=A)
+def scope_update(sid: str, body: dict):
+    from . import scopes as SC
+
+    return SC.update_scope(ctx(), sid, body.get("name"), body["parent"] if "parent" in body else False,
+                           body.get("archived"), body.get("fields"))
+
+
+@app.get("/api/engines", dependencies=A)
+def engines_list():
+    from . import scopes as SC
+
+    return SC._data(ctx())["engines"]
+
+
+@app.post("/api/engines", dependencies=A)
+def engine_add(body: dict):
+    from . import scopes as SC
+
+    return SC.add_engine(ctx(), str(body.get("name", "")), body.get("type", "search"), body.get("scopes"),
+                         body.get("pipelines"), body.get("description", ""))
+
+
+@app.put("/api/engines/{eid}", dependencies=A)
+def engine_update(eid: str, body: dict):
+    from . import scopes as SC
+
+    return SC.update_engine(ctx(), eid, **{k: body.get(k) for k in ("name", "type", "scopes", "pipelines",
+                                                                    "description", "archived")})
+
+
+@app.post("/api/scopes/link", dependencies=A)
+def scope_link(body: dict):
+    """{items: [{kind, name}], scope? | engine?}: which scope or engine records belong to. Neither unlinks."""
+    from . import scopes as SC
+
+    return SC.link(ctx(), list(body.get("items") or []), body.get("scope"), body.get("engine"))
+
+
+@app.get("/api/projects", dependencies=A)
+def projects_list():
+    """Projects (one per company) with what each holds: connections, datasets, pipelines, models, backtests,
+    investigations and registries."""
+    from . import projects as PR
+
+    return PR.listing(ctx())
+
+
+@app.post("/api/projects", dependencies=A)
+def project_create(body: dict):
+    from . import projects as PR
+
+    return PR.create(ctx(), str(body.get("name", "")), body.get("description", ""), body.get("brands"))
+
+
+@app.post("/api/projects/assign", dependencies=A)
+def project_assign(body: dict):
+    """{project: id or null, items: [{kind, name}]}. Moves nothing: it only says which project each item is in."""
+    from . import projects as PR
+
+    return PR.assign(ctx(), body.get("project"), list(body.get("items") or []))
+
+
+@app.get("/api/projects/{pid}", dependencies=A)
+def project_detail(pid: str):
+    from . import projects as PR
+
+    return PR.contents(ctx(), pid)
+
+
+@app.put("/api/projects/{pid}", dependencies=A)
+def project_update(pid: str, body: dict):
+    from . import projects as PR
+
+    return PR.update(ctx(), pid, body.get("name"), body.get("description"), body.get("archived"), body.get("brands"))
+
+
+@app.get("/api/projects/{pid}/lineage", dependencies=A)
+def project_lineage(pid: str):
+    """The project's models (from attached registries, by brand), the pipelines serving them, and the backtests
+    that compared those pipelines."""
+    from . import projects as PR
+
+    return PR.lineage(ctx(), pid)
 
 
 @app.get("/api/connections/kinds", dependencies=A)
@@ -290,6 +474,10 @@ def sql(body: dict):
                         provenance=Provenance(source="sql", connection=body["conn"], sql=body["sql"]),
                         description=body.get("description", ""), truncated=r.truncated)
         out["dataset"] = ops.ref(m)
+        if body.get("project"):
+            from . import projects as PR
+
+            PR.assign(c, body["project"], [{"kind": "dataset", "name": m.name}])
     return out
 
 
@@ -300,12 +488,16 @@ def _jsonable(v):
 
 
 @app.get("/api/datasets", dependencies=A)
-def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class")):
+def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class"), project: str | None = None):
     from . import classes as CL
+    from . import projects as PR
 
     c = ctx()
+    inp = PR.member_filter(c, project, "dataset")
     out = []
     for n in c.registry.names("dataset"):
+        if not inp(n):
+            continue
         m = c.registry.load("dataset", n)
         if kind and m.dataset_kind.value != kind:
             continue
@@ -347,15 +539,17 @@ def dataset_class_delete(name: str):
 
 
 @app.get("/api/datasets/tree", dependencies=A)
-def dataset_tree(cls: str | None = Query(None, alias="class")):
-    """The workspace as folders, the way the person organized it (see library.py)."""
+def dataset_tree(cls: str | None = Query(None, alias="class"), project: str | None = None):
+    """The workspace as folders, the way the person organized it (see library.py). ?project= shows one project's."""
     from . import classes as CL
     from . import library as LIB
+    from . import projects as PR
 
     c = ctx()
+    inp = PR.member_filter(c, project, "dataset")
 
     def entry(n):
-        if cls and cls not in CL.classes_of(c, n):
+        if (cls and cls not in CL.classes_of(c, n)) or not inp(n):
             return None
         m = c.registry.load("dataset", n)
         return {"name": n, "leaf": n.split("/")[-1], "latest": m.version, "kind": m.dataset_kind.value,
@@ -404,7 +598,8 @@ def datasets_import(body: dict):
     paths = [str(p) for p in body.get("paths") or []]
     if not paths:
         raise ValueError("drop at least one file or folder")
-    return {"job": _job(lambda p: IM.import_paths(c, paths, body.get("folder", ""), progress=p),
+    project = body.get("project")
+    return {"job": _job(lambda p: IM.import_paths(c, paths, body.get("folder", ""), progress=p, project=project),
                         f"import {len(paths)} item(s)")}
 
 
@@ -503,10 +698,15 @@ def dataset(name: str, v: int | None = None):
 
 
 @app.get("/api/pipelines", dependencies=A)
-def pipelines():
+def pipelines(project: str | None = None):
+    from . import projects as PR
+
     c = ctx()
+    inp = PR.member_filter(c, project, "pipeline")
     out = []
     for n in c.registry.names("pipeline"):
+        if not inp(n):
+            continue
         m = c.registry.load("pipeline", n)
         out.append({"name": n, "latest": m.version, "engine": m.engine, "repro_status": m.repro_status.value,
                     "by": m.created_by, "created": m.created_at.isoformat(), "description": m.description})
@@ -688,10 +888,13 @@ def handoff_outcome(hid: str, body: dict):
 
 
 @app.get("/api/investigations", dependencies=A)
-def investigations_list(state: str | None = None, q: str | None = None):
+def investigations_list(state: str | None = None, q: str | None = None, project: str | None = None):
     from . import investigations as INV
+    from . import projects as PR
 
-    return INV.listing(ctx(), state, q)
+    c = ctx()
+    inp = PR.member_filter(c, project, "investigation")
+    return [i for i in INV.listing(c, state, q) if inp(i["id"])]
 
 
 @app.post("/api/investigations", dependencies=A)
@@ -812,10 +1015,15 @@ def pipeline(name: str, v: int | None = None):
 
 
 @app.get("/api/backtests", dependencies=A)
-def backtests():
+def backtests(project: str | None = None):
+    from . import projects as PR
+
     c = ctx()
+    inp = PR.member_filter(c, project, "backtest")
     out = []
     for n in c.registry.names("backtest"):
+        if not inp(n):
+            continue
         m = c.registry.load("backtest", n)
         out.append({"name": n, "latest": m.version, "arms": m.arms, "primary_metric": m.preregistration.primary_metric,
                     "runs": len(c.registry.versions("backtest-run", n))})
@@ -1334,10 +1542,13 @@ def registry_import(body: dict):
 
 
 @app.get("/api/models", dependencies=A)
-def models_list():
+def models_list(project: str | None = None):
     from . import models as MD
+    from . import projects as PR
 
-    return MD.listing(ctx())
+    c = ctx()
+    inp = PR.member_filter(c, project, "model")
+    return [m for m in MD.listing(c) if inp(m["id"], brand=m.get("brand"))]
 
 
 @app.get("/api/models/{mid:path}", dependencies=A)

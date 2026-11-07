@@ -573,3 +573,67 @@ CLI: `cst data import <paths> --folder <f>`, `cst data mkdir|move|rename-folder|
   SQLGlot.
 
 CLI: `cst tables pull|list|show|search|sample`.
+
+## Projects (one per company)
+
+A project groups one company's connections, datasets, pipelines, models, backtests, investigations and registries
+inside a workspace. Membership is organization only, and nothing moves or is copied. An item is in a project when:
+- it was assigned there (`POST /api/projects/assign {project, items: [{kind, name}]}`; project null takes items out);
+- a registry brand maps to the project (`brands`, which default to the project's id). This claims its models and the
+  pipelines linked to them;
+- or a dataset's folder, or a dataset, pipeline or backtest name, starts with the project's id.
+
+Routes:
+- `GET /api/projects` lists projects with counts per kind. `POST /api/projects {name, description?, brands?}` makes
+  one. `PUT /api/projects/{id} {name?, description?, archived?, brands?}` changes one.
+- `GET /api/projects/{id}` lists everything in it, by kind, including registry models.
+- `GET /api/projects/{id}/lineage` returns the project's models, their parents and architectures, the pipelines
+  serving them, and the backtests that compared those pipelines.
+- `?project=<id>`, or `?project=none` for unclaimed items, filters `/api/datasets`, `/api/datasets/tree`,
+  `/api/pipelines`, `/api/backtests`, `/api/investigations`, `/api/models` and `/api/connections`.
+- `POST /api/datasets/import` and `POST /api/sql` with `save` accept `project`, which puts the result in that project.
+
+## Scope model, engines and the Explorer
+
+- `GET /api/explorer` returns the navigation tree: All engines, All experiments, scope groups (Brand > Site > Engine
+  by default), unscoped engines, Projects, and Settings > Scope model. It also returns `actions` (Add brand, Add site,
+  Add engine) and the model's `model_revision`.
+- `GET /api/scope-model` returns the model. `PUT /api/scope-model {types, explorer, engine_types, expect_revision?}`
+  replaces it, and is refused with reasons on unknown parents, loops, removed types still in use, or a stale revision.
+  Each type is `{key, singular, plural, description, parents, fields}`. Keys are stable, and labels are free to change.
+- `POST /api/scopes {type, name, parent?, fields?}` adds a scope. `PUT /api/scopes/{id} {name?, parent?, archived?,
+  fields?}` renames, moves (validated) or archives one. A scope's `fields.registry_brands` maps registry brands to it.
+- `GET|POST /api/engines`, `PUT /api/engines/{id}`: engines are persistent identities `{name, type: search |
+  recommendation, scopes, pipelines}`. A pipeline belongs to the engine that lists it.
+- `POST /api/scopes/link {items, scope? | engine?}` attaches records to a scope or an engine.
+
+## Lineage and quality (Unity Catalog style)
+
+- `GET /api/lineage/graph?node=<id>&up=2&down=2` returns the nodes within `up` steps upstream and `down` downstream,
+  each with `level` (negative is upstream), plus `more_upstream` and `more_downstream`. Without `node`, it returns the
+  whole graph.
+  - Node ids: `table:<conn>/<schema.table>`, `dataset:<name>@v<n>` (or `dataset:<name>` for the newest),
+    `pipeline:…`, `run:…`, `model:<brand>@<v>`, `connection:…`, `environment:…`, `architecture:…`.
+  - Edges come from Captain's records, attached registries, the SQL that made each dataset (warehouse table, then
+    dataset), and imported warehouse lineage.
+- `GET /api/lineage/columns?dataset=&column=` returns `{sources: [{table, column, node}], path, known, reason}`. It
+  traces the dataset's SQL with SQLGlot against the pulled table metadata.
+- `POST /api/lineage/import/{conn} {days?}` returns `{job}`. It reads Databricks Unity Catalog's
+  `system.access.table_lineage` and `column_lineage`, or Snowflake's `ACCOUNT_USAGE.ACCESS_HISTORY`, with the
+  connection's own login, read-only. Other databases get a plain refusal.
+- `GET /api/profile?dataset=<name>[@vN]` returns rows, age, and per column the type, null share, distinct count, min
+  and max.
+
+## Import from sources: suggested sample queries and previews
+
+- Connection kinds now include **PostHog** (HogQL over its query API, with a personal API key stored as a secret,
+  guarded read-only) and **Google Analytics 4** (Data API reports: the "query" is JSON
+  `{dimensions, metrics, start, end, filter: {dimension, equals}, limit}`). Both work with previews, saving, the
+  query log and the table browser. GA4's BigQuery export is recognized when BigQuery is connected.
+- `GET /api/connections/{name}/suggestions` returns `{pulled, suggestions: [{id, title, why, kind, query}]}`.
+  Suggestions come from the read tables: search logs (top searches, zero-result searches, per day), catalogs
+  (sample, per category), event streams (per day, recent), the GA4 BigQuery export (site search terms), or a small
+  sample. PostHog and GA4 get their own. Every query is bounded by a LIMIT or a time window. `pulled: false` means
+  read the tables first.
+- `POST /api/connections/{name}/preview {query, limit<=1000}` returns `{columns, rows, row_count, limited, ms}` and
+  saves nothing. Save with `POST /api/sql {conn, sql, save, kind, project?}`.

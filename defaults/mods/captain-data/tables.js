@@ -68,6 +68,9 @@ export class Tables {
     cx.spawn(async (cx) => {
       const r = await api(`/api/tables/${enc(conn)}`);
       this.trees.set(conn, r.ok ? r.data : { missing: r.status === 404 ? "Not read yet." : "Couldn't load its tables." });
+      // Nothing open yet: open the first table, so the page shows something useful.
+      const first = r.ok ? (r.data.schemas ?? []).find((x) => (x.tables ?? []).length) : null;
+      if (!this.sel && first) this.pick(cx, conn, first.name, first.tables[0].name);
       cx.notify();
     });
   }
@@ -280,10 +283,10 @@ export class Tables {
       .when(!(p.columns ?? []).length, (e) => e.child(div().text_size(12).text_color(c.grey500).child("No columns were read for this table. Read the connection again.")))
       .child(v_flex().border_1().border_color(c.rule)
         .children(cols.map((x, i) => h_flex().id(`tcol-${i}`).min_h(30).px(10).py(5).gap(10).items_center().border_b(1).border_color(c.rule).text_size(12.5)
-          .child(div().w(200).flex_none().truncate().font_family(MONO).child(x.name))
-          .child(div().w(140).flex_none().truncate().font_family(MONO).text_size(11.5).text_color(c.grey900).child(String(x.type ?? "").toLowerCase()))
-          .child(div().w(70).flex_none().text_size(11).text_color(c.grey500).child(x.nullable === false ? "required" : ""))
-          .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.grey900).child(x.comment ?? "")))));
+          .child(div().flex_1().min_w(80).truncate().font_family(MONO).child(x.name))
+          .child(div().flex_none().max_w(130).truncate().font_family(MONO).text_size(11.5).text_color(c.grey900).child(String(x.type ?? "").toLowerCase()))
+          .when(x.nullable === false, (e) => e.child(div().flex_none().text_size(11).text_color(c.grey500).child("required")))
+          .when(!!x.comment, (e) => e.child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.grey900).child(x.comment))))));
   }
 
   sampleView(c, p) {

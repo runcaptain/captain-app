@@ -29,7 +29,19 @@ cp -R dist/Captain.app ~/Applications/ && open ~/Applications/Captain.app
 - **New, then Try the demo store** loads sample stores, so every screen has something in it.
 - The right side is a real terminal. Claude Code or Codex there can drive everything with the `cst` command.
 
-## Known problems right now (2026-11-06)
+## Getting the latest
 
-- Comparisons may say "Couldn't load backtests." A fix is in progress. The other screens work.
-- The native notebook isn't in this build. It's on the `feat/native-runs-kit` branch.
+```sh
+cd ~/Code/workbench/captain-app && git pull && scripts/package-captain-macos
+cp -R dist/Captain.app ~/Applications/
+```
+
+Quit Captain first, then copy over the old one.
+
+## Known gaps (2026-11-06)
+
+- Snowflake, Databricks and BigQuery haven't been tested against live accounts. Postgres, MySQL, ClickHouse and Trino
+  have (`pytest -m docker` in backend/core).
+- Cloud compute: AWS ECS and Batch work. Google Cloud, Azure and Modal are tested against fakes only.
+- The Explorer tree (Brand > Site > Engine), projects and the lineage graph have their backend in place. Their screens
+  are being built.

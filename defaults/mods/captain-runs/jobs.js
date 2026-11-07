@@ -128,7 +128,7 @@ export class Jobs {
   // ---- drawing ---------------------------------------------------------------------------------------------------
 
   render(c, w) {
-    const lw = Math.max(260, Math.min(380, Math.floor(w * 0.36)));
+    const lw = Math.max(240, Math.min(340, Math.floor(w * 0.34)));
     return h_flex().id("jobs").flex_1().min_h(0).child(this.side(c, lw)).child(this.detail(c));
   }
 
@@ -170,9 +170,10 @@ export class Jobs {
     const details = JSON.stringify({ id: j.id, target: j.target, kind: j.target_kind, region: j.region, state: j.state, reason: j.reason, command: (j.argv ?? []).join(" "), exit_code: j.exit_code, where: l.where ?? null }, null, 2);
     const fact = (k, v) => v ? v_flex().gap(2).child(div().text_size(10.5).text_color(c.grey500).child(k.toUpperCase())).child(div().text_size(12.5).child(v)) : null;
     return v_flex().id("job-detail").flex_1().min_w(0).h_full().px(20).py(14).gap(12)
-      .child(h_flex().gap(10).items_center()
-        .child(div().flex_1().min_w(0).truncate().text_size(15).font_medium().child(jobWords(j)))
+      .child(div().text_size(15).font_medium().child(jobWords(j)))
+      .child(h_flex().flex_wrap().gap(10).items_center()
         .child(this.stateChip(c, j))
+        .child(div().flex_1())
         .when(live, (e) => e.child(Button(c, `job-stop-${j.id}`, this.confirm === j.id ? "Stop it? Click again" : "Stop", (_e, cx) => this.stop(cx, j), { small: true })))
         .child(Button(c, `job-copy-${j.id}`, "Copy details", (_e, cx) => cx.write_to_clipboard(details), { kind: "quiet", small: true })))
       .when(!!j.reason && j.state !== "succeeded", (e) => e.child(div().text_size(12.5).text_color(j.state === "failed" ? c.fail : c.grey900).child(j.reason)))

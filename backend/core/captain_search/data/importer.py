@@ -72,7 +72,8 @@ def _sha(path: Path) -> str:
     return h.hexdigest()
 
 
-def import_paths(ctx: Context, paths: list[str], folder: str = "", progress=lambda f: None) -> dict:
+def import_paths(ctx: Context, paths: list[str], folder: str = "", progress=lambda f: None,
+                 project: str | None = None) -> dict:
     """Returns {imported: [...], updated: [...], unchanged: [...], skipped: [{path, reason}]}."""
     folder = LIB._clean(folder)
     out = {"imported": [], "updated": [], "unchanged": [], "skipped": []}
@@ -112,5 +113,11 @@ def import_paths(ctx: Context, paths: list[str], folder: str = "", progress=lamb
         LIB.move(ctx, [name], dest)
         (out["updated"] if prev is not None else out["imported"]).append(
             {"ref": f"{m.name}@v{m.version}", "folder": dest, "kind": kind.value, "rows": m.row_count, "file": f.name})
+    if project:
+        from .. import projects as PR
+
+        names = [x["ref"].split("@")[0] for x in out["imported"] + out["updated"]] + [u.split("@")[0] for u in out["unchanged"]]
+        if names:
+            PR.assign(ctx, project, [{"kind": "dataset", "name": n} for n in names])
     progress(1.0)
     return out
