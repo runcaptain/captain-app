@@ -57,6 +57,16 @@ export default class CaptainForms extends View {
     });
   }
 
+  /** A choice clicked: show it now, then reload what depends on it. The click's cx is good only during the click, so
+   *  the reload runs on its own task. Awaiting with the click's cx left the pick unshown: Edgar clicked Compare and
+   *  With in "Run a backtest" and nothing changed. */
+  pick(cx, f, o) {
+    this.values[f.key] = o.value;
+    delete this.errors[f.key];
+    cx.notify();
+    cx.spawn(async (cx) => this.loadOptions(cx));
+  }
+
   async loadOptions(cx) {
     // The services' own fields can be choices too (a database kind's), so walk what's shown, twice: a choice
     // can bring more fields with it.
@@ -114,7 +124,7 @@ export default class CaptainForms extends View {
         const on = this.values[f.key] === o.value;
         return h_flex().id(`f-${f.key}-${o.value}`).h(30).flex_none().px(10).gap(8).items_center().cursor_pointer()
           .bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).text_size(12.5).hover((s) => (on ? s : s.bg(c.surface2)))
-          .on_click((_e, cx) => { this.values[f.key] = o.value; delete this.errors[f.key]; this.loadOptions(cx); })
+          .on_click((_e, cx) => this.pick(cx, f, o))
           .when(Boolean(o.brand), (e) => e.child(Brand(c, o.brand, 14)))
           .child(div().flex_1().min_w(0).truncate().child(o.label))
           .when(Boolean(o.chip), (e) => e.child(Badge(c, o.chip, on ? "blue" : "neutral")));
@@ -131,7 +141,7 @@ export default class CaptainForms extends View {
       return h_flex().id(`f-${f.key}-${o.value}`).flex_1().min_w(0).h(40).px(10).gap(8).items_center().cursor_pointer().border_1()
         .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).text_size(12.5)
         .hover((s) => (on ? s : s.border_color(c.blue)))
-        .on_click((_e, cx) => { this.values[f.key] = o.value; delete this.errors[f.key]; this.loadOptions(cx); })
+        .on_click((_e, cx) => this.pick(cx, f, o))
         .child(Brand(c, o.brand ?? o.value, 18))
         .child(div().flex_1().min_w(0).truncate().child(o.label))
         .when(Boolean(o.chip), (e) => e.child(div().text_size(10.5).text_color(c.grey500).child(o.chip)));
@@ -156,7 +166,7 @@ export default class CaptainForms extends View {
           const on = this.values[f.key] === o.value;
           return h_flex().id(`f-${f.key}-${o.value}`).h(30).px(10).gap(6).items_center().cursor_pointer().border_1()
             .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).text_size(12.5)
-            .on_click((_e, cx) => { this.values[f.key] = o.value; delete this.errors[f.key]; this.loadOptions(cx); })
+            .on_click((_e, cx) => this.pick(cx, f, o))
             .when(Boolean(o.brand), (e) => e.child(Brand(c, o.brand, 14)))
             .child(o.label).when(Boolean(o.chip), (e) => e.child(Badge(c, o.chip, on ? "blue" : "neutral")));
         }));
