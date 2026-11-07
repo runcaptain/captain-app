@@ -45,4 +45,13 @@ for (const t of ['tab-queries', 'tab-segments', 'tab-surfaces']) {
   assert.ok(/imported from a readout/.test(text) && /No .* for this run/.test(text), `${t}: human empty state`);
   assert.ok(!/stored rankings|Loading/.test(text), `${t}: no raw error, not loading`);
 }
+
+// A run whose record is gone: one sentence, Retry and Copy details; the storage key only on the clipboard.
+globalThis.__routes.unshift([/^\/api\/runs\/[^?]+\?v=/, 'missing']);
+h.mod.open(h.cx, 'demos/aptdeco/ab6c-seg', 0);
+await h.idle();
+text = h.text();
+assert.ok(text.includes("This run's record is missing from the workspace."), `missing record sentence: ${text.slice(0, 300)}`);
+assert.ok(!/MANIFEST|backtest-runs\//.test(text), 'no storage key on screen');
+assert.ok(text.includes('Retry') && text.includes('Copy details'), 'actions');
 console.log('imported-run render test: ok');

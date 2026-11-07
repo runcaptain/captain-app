@@ -34,14 +34,17 @@ function cronEnglish(cron) {
 
 /** A failed call in words for people: the backend's own sentence when it answered, else a plain one. Transport
  *  details (hosts, ports, tool output) never show: they go behind Copy details. */
-function say(r, fallback) {
+function say(r, fallback, missing) {
   if (r?.timedOut) return "This took too long.";
   // The services went away or never came up: the kit's own plain sentence ("Captain's services stopped.").
   // Belt and braces: anything that reads like a tool's or transport's output never shows.
   if (r?.failed && r.error && !/curl|127\.0|localhost|\bport\b|https?:|error sending|traceback|engine|daemon/i.test(r.error)) return String(r.error);
   const e = String(r?.error ?? "");
   // A route this backend doesn't have answers FastAPI's bare "Not Found": not a sentence for people.
-  if (r?.status && e && !/^HTTP \d+$/.test(e) && !/^(Not Found|Method Not Allowed|Internal Server Error)$/i.test(e)) return e;
+  // A storage key or path ("backtest-runs/x/v1/MANIFEST.yaml") isn't a sentence either: it goes to Copy details.
+  const pathy = /^[\w.@-]+(\/[\w.@-]+)+$/.test(e.trim()) || /\.(ya?ml|json|parquet|csv)$/i.test(e.trim());
+  if (r?.status === 404 && missing) return missing;
+  if (r?.status && e && !pathy && !/^HTTP \d+$/.test(e) && !/^(Not Found|Method Not Allowed|Internal Server Error)$/i.test(e)) return e;
   if (/time ?out|timed out/i.test(e)) return "This took too long.";
   return fallback;
 }
