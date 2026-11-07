@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
-import { cstBin, tidy } from './backend.mjs';
+import { cstBin, tidy, startScopeModel } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
@@ -31,6 +31,8 @@ process.on('uncaughtException', (e) => { stop(); console.error(e); process.exit(
 const line = await new Promise((res, rej) => { let b = ''; serve.stdout.on('data', (d) => { b += d; if (b.includes('\n')) res(b.split('\n')[0]); }); serve.on('exit', () => rej(new Error('cst serve exited'))); });
 const j = JSON.parse(line);
 globalThis.__shared = { 'captain.daemon': { state: 'ready', base: `http://127.0.0.1:${j.port}`, token: j.token } };
+// A new workspace's scope model is empty: start it with Brand, then Site, as the one-click start does.
+await startScopeModel(`http://127.0.0.1:${j.port}`, j.token);
 const call = async (p, body) => (await fetch(`http://127.0.0.1:${j.port}${p}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${j.token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })).json();
 await call('/api/projects', { name: 'Acme' });
 // The scope model starts empty: take the suggested Brand, then Site, as Settings offers.

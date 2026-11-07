@@ -24,3 +24,15 @@ export function tidy(dir) {
   process.on('exit', () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
   return dir;
 }
+
+/** A new workspace's scope model starts empty (backend/docs/api.md). Apply the suggested start (Brand, then Site), as
+ *  the one-click "Start with Brand, then Site" does, so live tests can add brands and sites. */
+export async function startScopeModel(base, token) {
+  const h = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const now = await (await fetch(`${base}/api/scope-model`, { headers: h })).json();
+  if ((now.types ?? []).length) return now;
+  const { types } = await (await fetch(`${base}/api/scope-model/suggested`, { headers: h })).json();
+  const r = await fetch(`${base}/api/scope-model`, { method: 'PUT', headers: h, body: JSON.stringify({ ...now, types, explorer: { order: types.map((t) => t.key), hidden: [] }, expect_revision: now.revision }) });
+  if (!r.ok) throw new Error(`scope model: ${r.status} ${await r.text()}`);
+  return r.json();
+}
