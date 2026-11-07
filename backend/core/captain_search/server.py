@@ -255,6 +255,38 @@ def profile(dataset: str):
     return LN.profile_dataset(ctx(), dataset)
 
 
+@app.post("/api/rankings/validate", dependencies=A)
+def rankings_validate(body: dict):
+    """Check a rankings file before importing: {path | dataset, mapping?, judgments?}. Returns {ok, errors, warnings,
+    stats, available}, all in plain words."""
+    from . import rankings as RK
+    from .data import datasets as DS
+
+    c = ctx()
+    if body.get("path"):
+        import os
+
+        t = DS.read_file(os.path.expanduser(body["path"]))
+    else:
+        t = DS.load_table(c, c.registry.resolve("dataset", body["dataset"])[0])
+    return RK.validate(t, body.get("mapping"), judgments=bool(body.get("judgments")))
+
+
+@app.post("/api/rankings/import", dependencies=A)
+def rankings_import(body: dict):
+    """Import ranked results from a team's own system as a comparison run. Runs as a job.
+    {name, path | dataset, mapping?, baseline?, labels_from?, judgments?, primary_metric?, mde?, hypothesis?, project?}"""
+    from . import rankings as RK
+
+    c = ctx()
+    src = body.get("path") or body.get("dataset")
+    if not src or not body.get("name"):
+        raise ValueError("give the rankings (a path or a dataset) and a name for the comparison")
+    kw = {k: body[k] for k in ("mapping", "baseline", "labels_from", "judgments", "primary_metric", "mde", "hypothesis",
+                               "project", "catalog") if body.get(k) not in (None, "")}
+    return {"job": _job(lambda p: RK.import_rankings(c, body["name"], src, **kw), f"import rankings {body['name']}")}
+
+
 @app.get("/api/explorer", dependencies=A)
 def explorer_tree():
     """The Explorer: All engines, All experiments, the scope tree (Brand > Site > Engine by default), Projects and
