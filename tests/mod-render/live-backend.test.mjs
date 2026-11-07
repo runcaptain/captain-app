@@ -11,11 +11,12 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
+import { cstBin } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
-const cst = spawnSync('sh', ['-c', 'command -v cst'], { encoding: 'utf8' }).stdout.trim();
-if (!cst) { console.log('live-backend render test: skipped (no cst on PATH)'); process.exit(0); }
+const { bin: cst, why } = cstBin();
+if (!cst) { console.log(`live-backend render test: skipped (${why})`); process.exit(0); }
 const python = fs.readFileSync(cst, 'utf8').split('\n')[0].replace(/^#!/, '');
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cst-live-'));

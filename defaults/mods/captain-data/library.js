@@ -241,6 +241,8 @@ export class Library {
         .child(div().id("lib-note-x").cursor_pointer().on_click((_e, cx) => { this.note = null; cx.notify(); }).child(this.icon("x", 11)))))
       .child(div().id("lib-tree").flex_1().min_h(0).overflow_y_scrollbar()
         .on_drop((e, cx) => this.importPaths(cx, e.paths ?? [], this.cur))
+        // Files from Finder over the tree: it lights up, so it's clear a drop lands in the current folder.
+        .drag_over((st) => st.bg(c.blueLight))
         .when(t === null && !this.error, (e) => e.child(div().p(12).text_size(12).text_color(c.grey500).child("")))
         .when(!!this.host.listError, (e) => e.child(div().p(10).child(this.host.troubleView(c, "datasets-list", this.host.listR, this.host.listError, (cx) => this.refresh(cx)))))
         .when(!!this.error && !this.host.listError, (e) => e.child(div().p(10).child(this.host.troubleView(c, "folders", this.error, "Couldn't load your folders.", (cx) => this.load(cx)))))
@@ -307,6 +309,7 @@ export class Library {
       .on_click((_e, cx) => { this.cur = f.path; if (!root) { if (this.open.has(f.path)) this.open.delete(f.path); else this.open.add(f.path); } cx.notify(); })
       .on_mouse_up("left", (_e, cx) => { if (this.drag) { this.release(cx, f.path); cx.stop_propagation(); } })
       .on_drop((e, cx) => { this.importPaths(cx, e.paths ?? [], f.path); cx.stop_propagation(); })
+      .drag_over((st) => st.bg(c.blueLight).text_color(c.blue))
       .when(!root, (e) => e.child(this.icon(open ? "chevron-down" : "chevron-right", 11, c.grey500)))
       .child(this.icon(open && !root ? "folder-open" : "folder", 14, on ? c.blue : c.grey900))
       .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().text_color(on ? c.blue : c.navy).child(f.name))
@@ -364,7 +367,8 @@ export class Library {
   empty(c) {
     return v_flex().id("lib-empty").flex_1().p(24).items_center().justify_center()
       .on_drop((e, cx) => this.importPaths(cx, e.paths ?? [], ""))
-      .child(v_flex().w_full().max_w(560).py(48).px(24).gap(12).items_center().border_2().border_dashed().border_color(c.grey300)
+      .child(v_flex().id("lib-drop-box").w_full().max_w(560).py(48).px(24).gap(12).items_center().border_2().border_dashed().border_color(c.grey300)
+        .drag_over((st) => st.border_color(c.blue).bg(c.blueLight))
         .child(this.icon("folder-open", 30, c.grey500))
         .child(div().text_size(16).font_semibold().text_center().child("Drag your catalogs, queries, judgments and logs here"))
         .child(div().max_w(440).text_center().text_size(12.5).line_height("19px").text_color(c.grey900)

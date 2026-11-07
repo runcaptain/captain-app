@@ -10,12 +10,12 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
+import { cstBin } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
-const local = path.join(root, 'backend/core/.venv/bin/cst');
-const cst = fs.existsSync(local) ? local : spawnSync('sh', ['-c', 'command -v cst'], { encoding: 'utf8' }).stdout.trim();
-if (!cst) { console.log('library-live render test: skipped (no cst)'); process.exit(0); }
+const { bin: cst, why } = cstBin();
+if (!cst) { console.log(`library-live render test: skipped (${why})`); process.exit(0); }
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cst-lib-'));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
