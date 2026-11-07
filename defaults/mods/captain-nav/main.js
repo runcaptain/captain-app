@@ -18,7 +18,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, layout, props, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
-import { api, retry, workspace, watchWorkspace, keepAwake } from "./kit/cst.js";
+import { api, retry, workspace, watchWorkspace } from "./kit/cst.js";
 import { icon } from "./kit/icons.js";
 import { isDark, palette } from "./kit/tokens.js";
 import { getAppearance, setAppearance } from "./kit/appearance.js";
@@ -88,7 +88,6 @@ export function openEntries(datasets, investigations, backtests = []) {
 
 export default class CaptainNav extends View {
   init(_props, cx) {
-    keepAwake(cx);
     this.workspace = null;
     this.counts = {};
     this.agentsOpen = true;

@@ -56,41 +56,10 @@ export function watchWorkspace(cx, fn) {
 /** Call Captain's services. Resolves {ok, status, data, error, starting, failed}; never rejects.
  *  starting: still coming up (show a skeleton). failed: give up and show ServiceError. */
 export async function api(path, opts) {
-  INFLIGHT++;
-  // A request that never answers would hold its screen forever: each one gets a deadline (opts.timeout seconds,
-  // default 20), and keepAwake's timer ends it with "This took too long." when it passes.
-  let expire;
-  const deadline = new Promise((resolve) => { expire = resolve; });
-  const waiter = { at: Date.now() + (opts?.timeout ?? 20) * 1000, expire };
-  WAITING.add(waiter);
-  try {
-    return await Promise.race([call(path, opts), deadline]);
-  } finally {
-    WAITING.delete(waiter);
-    INFLIGHT--;
-  }
+  return call(path, opts);
 }
 
-// Requests with a deadline (see api).
-const WAITING = new Set();
-function expireLate() {
-  const now = Date.now();
-  for (const w of WAITING) if (now > w.at) {
-    WAITING.delete(w);
-    LAST_DETAIL = "a request got no answer before its deadline";
-    w.expire({ ok: false, timedOut: true, error: "This took too long." });
-  }
-}
 
-// Requests still waiting on an answer, across this mod.
-let INFLIGHT = 0;
-
-/** Redraw a screen every 250 ms while any of its requests is still waiting. Workaround: in the app, an answer that
- *  arrives inside cx.spawn may not reach the screen until something else redraws it, so a screen with nothing else
- *  going on sat on its skeleton for good (Comparisons, "Loading the run", 2026-11-06). Costs nothing when idle. */
-export function keepAwake(cx) {
-  cx.timer.every(250, (cx) => { if (INFLIGHT > 0) { expireLate(); cx.notify(); } });
-}
 
 async function call(path, { method = "GET", body, timeout = 20 } = {}) {
   const d = await services();
@@ -110,6 +79,8 @@ async function call(path, { method = "GET", body, timeout = 20 } = {}) {
     // went away or are restarting. Never show the transport's own words: quiet while they come up, then one plain
     // sentence with Retry. The raw text goes behind Copy details only.
     LAST_DETAIL = `${method} ${path}: ${String(e?.message ?? e)}`;
+    // fetch gives up after 30 s by itself (gpui-kit fetch.rs, TIMEOUT), so no request holds its screen forever.
+    if (/timed? ?out/i.test(String(e?.message ?? e))) return { ok: false, timedOut: true, error: "This took too long." };
     if (Date.now() - BORN < PATIENCE_MS) return { ok: false, starting: true, error: null };
     return { ok: false, failed: true, stopped: true, error: "Captain's services stopped." };
   }

@@ -2371,6 +2371,14 @@ impl ShellRuntime {
         );
         let initialized = self.initialize(&object, None);
         let nested = self.flush_pending_nested_views(window, cx);
+        // CAPTAIN: run what init queued (anything after its first `await`) now, while this view is
+        // the current one, as instantiate_nested_view does. Left in the queue, the next entry point
+        // to drain it ran it, often another mod's timer: the requests it made and the tasks spawned
+        // from their answers belonged to that mod, and their cx.notify() redrew it instead of this
+        // one, which sat on its skeleton in an idle window.
+        if initialized.is_ok() && nested.is_ok() {
+            scheduler::drain_runtime_jobs(self, window, cx);
+        }
         if let Err(error) = initialized.and(nested) {
             if let Some(application) = application {
                 self.release_application_generation(&application, cx);

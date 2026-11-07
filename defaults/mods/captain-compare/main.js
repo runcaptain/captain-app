@@ -8,7 +8,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { theme, shared, props as layoutProps } from "herdr";
-import { api, retry, details, watchWorkspace, keepAwake } from "./kit/cst.js";
+import { api, retry, details, watchWorkspace } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
@@ -119,8 +119,6 @@ export default class CaptainCompare extends View {
       }
     });
     // Another space, another workspace: back to its first run.
-    // Answers can stall until the next redraw in the app: redraw while any request waits.
-    keepAwake(cx);
     watchWorkspace(cx, (cx) => {
       this.sel = null; this.run = null; this.compat = null; this.hist = null; this.side = null; this.backtests = null; this.error = null;
       this.q = this.freshQueries();

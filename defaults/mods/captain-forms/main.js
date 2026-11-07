@@ -9,11 +9,9 @@ import { palette, isDark, FONT } from "./kit/tokens.js";
 import { Button, Badge, ServiceError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { TASKS } from "./tasks.js";
-import { keepAwake } from "./kit/cst.js";
 
 export default class CaptainForms extends View {
   init(_props, cx) {
-    keepAwake(cx);
     this.values = {};
     // Test hook: opened bare (`captain-app do mod.open`), shared "captain.forms.preview" picks a form,
     // so a test copy can show any form on screen. People never set it.

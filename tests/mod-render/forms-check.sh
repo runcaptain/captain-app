@@ -5,7 +5,7 @@
 # and cst workspace), steps through every task with the preview hook (shared "captain.forms.preview", one form per
 # bare `mod.open`), screenshots each at 1100x750, and fails on window errors, gpui-kit's "This view could not be
 # rendered" banner, or a mostly blank form (forms-shot.py). It first proves the analyzer fails a broken and a blank
-# form. Everything it starts is stopped by pid or by its own session.
+# form. The window never takes focus, and everything it starts is stopped by pid or by its own session.
 #
 #   tests/mod-render/forms-check.sh [captain-app binary]      default: target/debug/captain-app
 set -euo pipefail
@@ -18,13 +18,36 @@ OUT=${SHOT_DIR:-$WORK/shots}
 SESSION=test-forms-$$
 mkdir -p "$OUT" "$HOME_DIR/mods"
 APP_PID=""
+HC=$(command -v herdr-core || echo "$HOME/.local/bin/herdr-core")
+# End and remove every terminal in this window's core session (asking only while it runs: asking a stopped
+# session anything starts it again). Same steps as shot-check.sh.
+end_terminals() {
+  for t in $(HC_SESSION=$SESSION "$HC" ls --all 2>/dev/null | python3 -c "import json,sys; print(' '.join(x['address'] for x in json.load(sys.stdin).get('terminals', [])))" 2>/dev/null); do
+    HC_SESSION=$SESSION "$HC" kill "$t" >/dev/null 2>&1 || true
+    sleep 0.5
+    HC_SESSION=$SESSION "$HC" rm "$t" >/dev/null 2>&1 || true
+  done
+}
 cleanup() {
+  # A window that quits parks its live terminals in a holder that outlives `server stop`: end them while the
+  # window still runs, quit it, stop the server, then stop any late holder (its launchd wrapper first).
+  [[ -n "$APP_PID" ]] && kill -0 "$APP_PID" 2>/dev/null && end_terminals
   [[ -n "$APP_PID" ]] && kill "$APP_PID" 2>/dev/null || true
-  sleep 1
+  for _ in $(seq 1 30); do [[ -n "$APP_PID" ]] && kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.5; done
+  [[ -d "$HOME/.local/state/herdr-core/$SESSION" ]] && HC_SESSION=$SESSION "$HC" server stop >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do
+    sleep 3
+    pgrep -f "herdr-core hold.*/$SESSION/" >/dev/null || continue
+    for h in $(pgrep -f "herdr-core hold.*/$SESSION/" || true); do
+      w=$(ps -o ppid= -p "$h" | tr -d ' ')
+      if [[ -n "$w" && "$w" != 1 ]] && ps -o command= -p "$w" | grep -q -- "--hc-launchd"; then kill "$w" 2>/dev/null || true; fi
+      kill "$h" 2>/dev/null || true
+    done
+  done
+  rm -rf "$HOME/.local/state/herdr-core/$SESSION"
   for p in $(pgrep -f "cst serve" || true); do
     if ps eww -p "$p" | tr ' ' '\n' | grep -qx "CST_HOME=$WORK/cst"; then kill "$p" 2>/dev/null || true; fi
   done
-  HC_SESSION=$SESSION hc server stop >/dev/null 2>&1 || HC_SESSION=$SESSION ~/.local/bin/herdr-core server stop >/dev/null 2>&1 || true
   rm -rf "$HOME_DIR"
 }
 trap cleanup EXIT
@@ -60,7 +83,7 @@ JS
 printf '{"appearance":"light"}\n' > "$HOME_DIR/settings.json"
 printf '{"captain.forms.preview":%s,"frame.welcomed":"skipped"}\n' "$PREVIEW" > "$HOME_DIR/shared.json"
 printf '{"state":"windowed","bounds":[80,80,1100,750]}\n' > "$HOME_DIR/window.json"
-CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION CST_BIN=$CST CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
+CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_BIN=$CST CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
 for _ in $(seq 1 60); do [[ -S $HOME_DIR/captain-app.sock ]] && break; sleep 0.5; done
 [[ -S $HOME_DIR/captain-app.sock ]] || { echo "the window did not start: $(tail -5 "$WORK/app.log")"; exit 1; }
