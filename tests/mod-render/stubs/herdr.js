@@ -18,3 +18,4 @@ export const window = () => ({ platform: 'macos', fullscreen: false });
 export const focused = () => ({ space: globalThis.__space ?? "s1" });
 export const knownAgents = async () => globalThis.__agents ?? [];
 export const spaces = () => globalThis.__spaces ?? [];
+export const pickFolder = async () => globalThis.__pickFolder ?? null;

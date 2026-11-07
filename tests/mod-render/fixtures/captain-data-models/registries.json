@@ -1,0 +1,1 @@
+[{"id": "a1", "uri": "s3://example-models/registry", "profile": "aws", "label": "Team registry", "attached_by": "someone", "synced_at": "2026-11-06T20:00:00+00:00", "models": 3, "snapshot": "registry@v2"}]
