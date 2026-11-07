@@ -24,7 +24,7 @@ const MODES = {
   transport: { ok: false, error: RAW },
 };
 const SCREENS = {
-  'captain-data': ['tab-labels', 'tab-notebooks', 'tab-models', 'tab-datasets'],
+  'captain-data': ['tab-labels', 'tab-tables', 'tab-notebooks', 'tab-models', 'tab-datasets'],
   'captain-runs': ['tab-workflows', 'tab-grading', 'tab-replays', 'tab-backtests'],
   'captain-compare': ['tab-queries', 'tab-segments', 'tab-surfaces', 'tab-overview'],
 };

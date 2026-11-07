@@ -79,3 +79,31 @@ def test_routes(ctx, tmp_path, monkeypatch):
     r = c.post("/api/sql", headers=h, json={"conn": "wh", "sql": "select * from shop.searches"})
     assert r.status_code == 200
     assert c.get("/api/tables/wh/" + _shop(ctx) + "/searches", headers=h).json()["insights"]["queries"] == 1
+
+
+def test_a_catalog_with_a_dash_in_its_name(tmp_path):
+    """DuckDB names the schema of a file called t-store.duckdb '"t-store".main'. Columns, search and samples must
+    still work (they read nothing when the quotes were kept)."""
+    db = tmp_path / "t-store.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create table products as select i as id, 'item ' || i as title, i * 2.5 as price from range(5) t(i)")
+    con.close()
+    c = init_workspace("t", str(tmp_path / "bucket"))
+    c.save_connection(Connection(org="captain", workspace="t", created_by=whoami(), name="store", engine="duckdb",
+                                 url=f"duckdb:///{db}"))
+    assert MS._parts('"t-store".main') == ["t-store", "main"]
+    MS.pull(c, "store")
+    sch = next(s for s in MS.schemas(c, "store")["schemas"] if s["name"].endswith("main"))
+    t = next(t for t in sch["tables"] if t["name"] == "products")
+    assert [x["name"] for x in MS.table(c, "store", sch["name"], "products")["columns"]] == ["id", "title", "price"], t
+    hits = MS.search(c, "price", "store")
+    assert any("products" in (r.get("name"), r.get("table")) for r in hits), hits
+    s = MS.sample(c, "store", sch["name"], "products", n=2, order="price", desc=True)
+    assert len(s["rows"]) == 2 and float(s["rows"][0][2]) == 10.0
+
+
+def test_a_broken_sample_is_a_sentence(ctx):
+    MS.pull(ctx, "wh")
+    with pytest.raises(ValueError) as e:
+        MS.sample(ctx, "wh", _shop(ctx), "products", where="no_such_column > 1")
+    assert str(e.value).startswith("Couldn't read sample rows of products:")
