@@ -106,4 +106,29 @@ def test_a_broken_sample_is_a_sentence(ctx):
     MS.pull(ctx, "wh")
     with pytest.raises(ValueError) as e:
         MS.sample(ctx, "wh", _shop(ctx), "products", where="no_such_column > 1")
-    assert str(e.value).startswith("Couldn't read sample rows of products:")
+    assert str(e.value).startswith("Couldn't read rows of products:")
+
+
+def test_full_table_pages_match_the_imported_dataset(ctx):
+    """A warehouse table, paged before import, and the same rows after import as a dataset: same kinds, same cells."""
+    from captain_search import browse, suggest as SG
+    from captain_search.connectors.sql import run_sql
+    from captain_search.data import datasets as DS
+    from captain_search.model.entities import DatasetKind, Provenance
+
+    MS.pull(ctx, "wh")
+    shop = _shop(ctx)
+    first = MS.table_rows(ctx, "wh", shop, "products", 0, 10, order="id", count=True)
+    second = MS.table_rows(ctx, "wh", shop, "products", 10, 10, order="id")
+    last = MS.table_rows(ctx, "wh", shop, "products", 25, 10, order="id")
+    assert first["total"] == 30 and first["has_more"] and second["rows"][0][0] == 10
+    assert len(last["rows"]) == 5 and not last["has_more"]
+    assert [c["kind"] for c in first["columns"]] == ["integer", "text", "decimal"]
+    sql = f"SELECT * FROM {shop}.products ORDER BY id"
+    prev = SG.preview(ctx, "wh", sql, 10)
+    assert prev["rows"] == first["rows"] and prev["columns"] == first["columns"] and prev["limited"] is True
+    m = DS.snapshot(ctx, "products-copy", run_sql(ctx.load_connection("wh"), sql).table, kind=DatasetKind.catalog,
+                    provenance=Provenance(source="sql", connection="wh", sql=sql))
+    after = browse.rows(ctx, m, None, 0, 10, order="id")
+    assert after["rows"] == first["rows"]
+    assert [c["kind"] for c in after["columns"]] == [c["kind"] for c in first["columns"]]

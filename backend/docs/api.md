@@ -655,3 +655,15 @@ Routes:
 `GET /api/runs?backtest=&project=&limit=` lists every backtest run, newest first: `{name, version, created, mode,
 compute, arms, complete, wall_s, by}`. Grading queues are in scope when linked there or when they grade an in-scope
 pipeline. Signals are in scope when linked there or when they're evidence on an in-scope investigation.
+
+## One shape for rows, before and after import
+
+Every route that returns rows answers in the same shape (backend/core/captain_search/data/cells.py): dataset rows,
+warehouse table rows, query previews, samples and `POST /api/sql`. The shape is `{columns: [{name, type, kind}], rows,
+offset, limit, has_more, total?, ms, filtered, sql?}`.
+- `kind` is one of text, integer, number, decimal, bool, date, time, timestamp, list, struct, binary or other. It's
+  the same whether the source names the type in Arrow or DuckDB terms.
+- Cells: lists and structs are JSON text, decimals are exact text, times are ISO 8601, NaN is null.
+- `GET /api/tables/{conn}/{schema}/{table}/rows?offset=&limit<=1000&order=&desc=&where=&count=` pages through a whole
+  warehouse table, every column. The page query is translated per database. `/sample` is its first page.
+- `POST /api/connections/{name}/preview` returns the same page, plus `row_count` and `limited`.

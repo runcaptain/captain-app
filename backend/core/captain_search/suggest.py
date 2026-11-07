@@ -193,16 +193,15 @@ def _ga4() -> list[dict]:
 
 
 def preview(ctx, conn_name: str, query: str, limit: int = 1000) -> dict:
-    """Run a query with a hard cap (at most 1,000 rows) and return them without saving anything."""
+    """Run a query with a hard cap (at most 1,000 rows) and return them without saving anything, in the same shape
+    as a dataset's rows and a table's rows (data/cells.py). row_count and limited stay for older screens."""
     from . import metastore as MS
     from .connectors.sql import run_sql
-    from .server import _jsonable
+    from .data.cells import page_from_arrow
 
     conn = ctx.load_connection(conn_name)
     n = max(1, min(int(limit), 1000))
-    r = run_sql(conn, query, limit=n)
-    MS.record_query(ctx, conn_name, query, rows=r.table.num_rows, ms=r.elapsed_ms, source="preview")
-    return {"columns": [{"name": f.name, "type": str(f.type)} for f in r.table.schema],
-            "rows": [list(map(_jsonable, row.values())) for row in r.table.to_pylist()],
-            "row_count": r.table.num_rows, "limited": r.truncated or r.table.num_rows >= n, "ms": r.elapsed_ms}
-
+    r = run_sql(conn, query, limit=n + 1)
+    MS.record_query(ctx, conn_name, query, rows=min(r.table.num_rows, n), ms=r.elapsed_ms, source="preview")
+    page = page_from_arrow(r.table, offset=0, limit=n, ms=r.elapsed_ms, sql=query)
+    return {**page, "row_count": len(page["rows"]), "limited": page["has_more"]}
