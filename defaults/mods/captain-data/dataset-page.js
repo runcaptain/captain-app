@@ -20,6 +20,7 @@ import { int, num } from "./kit/num.js";
 // The Health tab (a queries or judgments set): app-shell's, self-contained in the kit.
 import { EvalHealth } from "./kit/evals.js";
 import { DatasetInsights } from "./insights.js";
+import { withMlflow } from "./kit/mlflow.js";
 
 const enc = (name) => String(name).split("/").map(encodeURIComponent).join("/");
 const fmtInt = (n) => int(n ?? 0);
@@ -92,7 +93,10 @@ export class DatasetPage {
       if (this.graphFor !== id) return;
       if (!r.ok) { this.graphError = "Couldn't load its lineage."; cx.notify(); return; }
       const nodes = (r.data.nodes ?? []).map((n) => ({ ...n, ...split(n.label ?? n.id), columns: n.id === this.nodeId(d) ? (d.schema_fields ?? []).map((f) => f.name) : n.columns }));
-      this.lineage.set({ nodes, edges: r.data.edges ?? [] }, id);
+      // MLflow runs and model versions upstream of the pipelines they serve, when MLflow is connected and linked.
+      const g = await withMlflow({ nodes, edges: r.data.edges ?? [] });
+      if (this.graphFor !== id) return;
+      this.lineage.set(g, id);
       cx.notify();
     });
   }

@@ -10,6 +10,7 @@ import { Button } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { LineageGraph } from "./kit/lineage.js";
 import { shared } from "herdr";
+import { withMlflow } from "./kit/mlflow.js";
 
 const sentence = (t) => { const s = String(t ?? "").trim(); return s ? `${s[0].toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}` : ""; };
 function ago(iso) {
@@ -76,6 +77,7 @@ export class Models {
         if (l.ok) {
           const split = (label) => { const mm = /^(.*)@v?(\d+)$/.exec(String(label ?? "")); return mm ? { label: mm[1], version: mm[2] } : { label }; };
           this.projectLineage = { nodes: (l.data.nodes ?? []).map((n) => ({ ...n, ...split(n.label ?? n.id) })), edges: l.data.edges ?? [] };
+          this.projectLineage = await withMlflow(this.projectLineage); // MLflow upstream of its pipelines
           this.projectGraph.set(this.projectLineage, null);
         }
       }

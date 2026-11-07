@@ -66,3 +66,24 @@ def test_errors_in_words(ctx, monkeypatch):
     monkeypatch.setattr(httpx, "request", lambda *a, **k: httpx.Response(403, request=httpx.Request("POST", "https://x")))
     with pytest.raises(PermissionError, match="refused the login"):
         MF.experiments(ctx)
+
+
+def test_a_refused_login_reaches_the_app_as_a_sentence(ctx, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from captain_search import server
+
+    monkeypatch.setattr(server, "_ctx", ctx)
+    c = TestClient(server.app, raise_server_exceptions=False)
+    h = {"Authorization": f"Bearer {server.TOKEN}"}
+    assert c.put("/api/mlflow", headers=h, json={"uri": "https://mlflow.example.com"}).status_code == 200
+    monkeypatch.setattr(httpx, "request", lambda *a, **k: httpx.Response(403, request=httpx.Request("POST", "https://x")))
+    r = c.get("/api/mlflow/experiments", headers=h)
+    assert r.status_code == 403 and r.json()["error"].startswith("MLflow refused the login")
+
+    def down(*a, **k):
+        raise httpx.ConnectError("no route", request=httpx.Request("POST", "https://x"))
+
+    monkeypatch.setattr(httpx, "request", down)
+    r = c.get("/api/mlflow/models", headers=h)
+    assert r.status_code == 502 and r.json()["error"].startswith("Couldn't reach MLflow")

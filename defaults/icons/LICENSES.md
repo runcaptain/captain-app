@@ -27,6 +27,7 @@ Simple Icons) show a neutral glyph. AWS, Google Cloud and Azure use the vendor m
 | brand-duckdb.svg | DuckDB | https://duckdb.org | |
 | brand-sqlite.svg | SQLite | https://github.com/sqlite/sqlite | |
 | brand-elasticsearch.svg | Elasticsearch | https://www.elastic.co/brand | https://www.elastic.co/brand |
+| brand-mlflow.svg | MLflow | https://github.com/mlflow/mlflow | https://mlflow.org |
 | brand-opensearch.svg | OpenSearch | https://opensearch.org/trademark-brand-policy.html | https://opensearch.org/trademark-brand-policy.html |
 | brand-algolia.svg | Algolia | https://algolia.frontify.com/d/1AZwVNcFZiu7/style-guide | https://algolia.frontify.com/d/1AZwVNcFZiu7/style-guide |
 | brand-modal.svg | Modal | https://modal.com | |

@@ -2,7 +2,7 @@
 // the palette and onboarding all open these. The CLI is for agents; nothing here shows
 // a command name or a flag.
 import { api, connectionsChanged } from "./kit/cst.js";
-import { exec, home } from "herdr";
+import { exec, home, setShared } from "herdr";
 
 const list = async (path, map) => {
   const r = await api(path);
@@ -149,6 +149,37 @@ export const TASKS = [
       const r = await api("/api/cloud/profiles", { body: { name: v.name, provider: v.provider, auth: v.auth, region: v.region || undefined, fields, secrets } });
       if (r.ok) await api(`/api/cloud/profiles/${encodeURIComponent(v.name)}/test`, { method: "POST", body: {}, timeout: 60 });
       return ok(r, `Connected ${v.name}.`);
+    },
+  },
+  {
+    // MLflow, read-only (backend/docs/api.md, "MLflow bridge"): a Databricks connection's managed MLflow, or any
+    // tracking server. Saved, then read once, so a refused login says so here, in the services' words.
+    id: "mlflow", label: "Connect MLflow", icon: "flask-conical",
+    about: "See your MLflow experiments, runs and registered models in Captain, read-only, and draw them into lineage. Captain never changes anything in MLflow.",
+    load: async () => ({ conns: ((await api("/api/connections")).data ?? []).filter((k) => (k.engine ?? k.kind) === "databricks") }),
+    fields: [
+      { key: "from", label: "Read it from", kind: "choice", default: "databricks", required: true,
+        options: [{ value: "databricks", label: "A Databricks connection" }, { value: "uri", label: "A tracking server" }] },
+      { key: "conn", label: "Databricks connection", kind: "choice", required: true, when: (v) => v.from === "databricks",
+        options: (ctx) => (ctx.conns ?? []).map((k) => ({ value: k.name, label: k.name, brand: "databricks" })),
+        empty: "No Databricks connection yet. Connect one first, or use a tracking server.",
+        help: "Its host and token are reused. The token needs the mlflow scope." },
+      { key: "uri", label: "Tracking server", placeholder: "https://mlflow.example.com", required: true, when: (v) => v.from === "uri" },
+      { key: "token", label: "Token", kind: "secret", optional: true, when: (v) => v.from === "uri", help: "Kept in your keychain. Leave it empty if the server needs no login." },
+    ],
+    submit: async (v) => {
+      let tokenSecret;
+      if (v.from === "uri" && v.token) {
+        tokenSecret = "MLFLOW_TOKEN";
+        const s = await api("/api/secrets", { body: { name: tokenSecret, value: String(v.token) } });
+        if (!s.ok) return { ok: false, error: "Couldn't save the token to your keychain." };
+      }
+      const r = await api("/api/mlflow", { method: "PUT", body: v.from === "databricks" ? { databricks_connection: v.conn } : { uri: String(v.uri).trim(), token_secret: tokenSecret } });
+      if (!r.ok) return ok(r, "");
+      setShared("captain.mlflow.changed", Date.now()); // an open MLflow list reads again
+      const t = await api("/api/mlflow/experiments", { timeout: 60 });
+      if (t.ok) return { ok: true, message: `Connected MLflow: ${t.data.length} experiment${t.data.length === 1 ? "" : "s"}.` };
+      return { ok: false, error: `Saved, but Captain couldn't read MLflow. ${plain(t.data?.error ?? t.error)}` };
     },
   },
   {

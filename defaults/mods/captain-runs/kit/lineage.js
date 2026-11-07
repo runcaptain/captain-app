@@ -11,6 +11,7 @@ import { div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { MONO } from "./tokens.js";
 import { icon } from "./icons.js";
+import { BRANDS } from "./brands.js";
 
 const NODE_W = 196;
 const NODE_H = 52;
@@ -23,6 +24,8 @@ export const KINDS = {
   pipeline: ["Pipeline", "workflow"], model: ["Model", "boxes"], backtest: ["Backtest", "flask-conical"],
   run: ["Backtest run", "flask-conical"], handoff: ["Handoff", "send"], label: ["Label", "tag"],
   notebook: ["Notebook", "file-text"], registry: ["Registry", "cloud"],
+  // MLflow, read through the bridge (kit/mlflow.js withMlflow): drawn with its own mark.
+  "mlflow-run": ["MLflow run", "brand:mlflow"], "mlflow-model": ["MLflow model", "brand:mlflow"],
 };
 
 const ends = (e) => [e.from ?? e.src, e.to ?? e.dst];
@@ -135,6 +138,8 @@ export class LineageGraph {
   }
 
   icon(name, size, color) {
+    // "brand:mlflow": a product's mark in its own color (kit/brands.js), whatever color was asked.
+    if (String(name).startsWith("brand:")) { const b = BRANDS[name.slice(6)]; return svg(`icons/brand-${name.slice(6)}.svg`).size(size).flex_none().when(!!b, (e) => e.text_color(b.hex)); }
     return svg(icon(name)).size(size).flex_none().when(!!color, (e) => e.text_color(color));
   }
 

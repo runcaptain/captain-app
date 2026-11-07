@@ -20,6 +20,7 @@ export const BRANDS = {
   opensearch: { title: "OpenSearch", hex: "#005EB8" },
   algolia: { title: "Algolia", hex: "#003DFF" },
   modal: { title: "Modal", hex: "#7FEE64" },
+  mlflow: { title: "MLflow", hex: "#0194E2" },
 };
 
 // The names Captain uses for engines, clouds and connection kinds, to a mark's slug.

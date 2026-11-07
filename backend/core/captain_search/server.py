@@ -113,7 +113,9 @@ async def _err(request: Request, exc: Exception):
 
     from .storage.backend import AlreadyExists
 
-    code = 404 if isinstance(exc, NotFound) else 409 if isinstance(exc, (Conflict, AlreadyExists)) else 400
+    code = (404 if isinstance(exc, NotFound) else 409 if isinstance(exc, (Conflict, AlreadyExists))
+            # Another service refused us, or couldn't be reached (MLflow, a warehouse): its sentence, not a bare 500.
+            else 403 if isinstance(exc, PermissionError) else 502 if isinstance(exc, ConnectionError) else 400)
     if isinstance(exc, AlreadyExists):  # the raw key ("compute/x.yaml") is not a sentence; name what exists
         key = str(exc).strip("'\"")
         thing, _, rest = key.partition("/")
@@ -130,7 +132,7 @@ from .storage.backend import AlreadyExists as _AlreadyExists  # noqa: E402
 from .storage.backend import Conflict as _Conflict  # noqa: E402
 
 for _cls in (NotFound, ValueError, KeyError, WriteRefused, TooLarge, LLMUnavailable, NotImplementedError, _Conflict,
-             _AlreadyExists):
+             _AlreadyExists, PermissionError, ConnectionError):
     app.add_exception_handler(_cls, _err)
 
 
