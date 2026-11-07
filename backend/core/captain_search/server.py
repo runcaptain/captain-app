@@ -1292,6 +1292,28 @@ def job(jid: str):
     return J.show(ctx(), jid)
 
 
+@app.get("/api/explain", dependencies=A)
+def explain_query(pipeline: str, q: str, vs: str | None = None, query_id: str | None = None,
+                  judgments: str | None = None, k: int = 50):
+    """Why a pipeline ranked this: a trace per stage. With vs=<pipeline>, both traces and the first stage where a
+    relevant result was lost (needs query_id and judgments for grades)."""
+    from . import explain as EX
+
+    c = ctx()
+    k = max(1, min(int(k), 200))
+    if vs:
+        return EX.compare_traces(c, pipeline, vs, q, query_id, judgments, k)
+    return EX.trace(c, pipeline, q, query_id, judgments, k)
+
+
+@app.get("/api/runs/{name:path}/queries/{qid}/explain", dependencies=A)
+def run_query_explain(name: str, qid: str, a: str | None = None, b: str | None = None, k: int = 50):
+    """Explain one query of a comparison run, both arms, with its grades and the first divergence."""
+    from . import explain as EX
+
+    return EX.from_run(ctx(), name, qid, a, b, max(1, min(int(k), 200)))
+
+
 @app.get("/api/runs/{name:path}/queries/{qid}", dependencies=A)
 def run_query_side_by_side(name: str, qid: str, a: str | None = None, b: str | None = None, k: int = 20):
     from . import compare as CP
