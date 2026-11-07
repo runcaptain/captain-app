@@ -14,6 +14,7 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { PathBuilder } from "gpui-kit";
 import { MONO } from "./tokens.js";
+import { num as decimals } from "./num.js";
 
 export const MAX = 400;
 export const MARKS = [["line", "Line"], ["area", "Stacked area"], ["bar", "Bar"], ["hbar", "Horizontal bar"], ["pie", "Pie"], ["doughnut", "Doughnut"], ["scatter", "Scatter"], ["bubble", "Bubble"], ["table", "Table"]];
@@ -94,7 +95,7 @@ export function fmt(v, format) {
   const a = Math.abs(v);
   const short = a >= 1e9 ? `${(v / 1e9).toFixed(1)}B` : a >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : a >= 1e4 ? `${(v / 1e3).toFixed(1)}k` : Number.isInteger(v) ? String(v) : v.toFixed(a < 1 ? 3 : 2);
   if (format === "$") return `$${short}`;
-  if (format === "%") return `${(v * 100).toLocaleString("en-US", { maximumFractionDigits: 1 })}%`;
+  if (format === "%") return `${decimals(v * 100, 1)}%`;
   return short;
 }
 

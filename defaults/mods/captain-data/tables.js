@@ -12,9 +12,13 @@ import { icon } from "./kit/icons.js";
 import { ResultGrid } from "./kit/grid.js";
 import { openForm } from "./kit/agent.js";
 import { Brand } from "./kit/brands.js";
+import { int } from "./kit/num.js";
 
 const enc = encodeURIComponent;
-const fmtInt = (n) => Number(n ?? 0).toLocaleString("en-US");
+const fmtInt = (n) => int(n ?? 0);
+// "Nov 6, 2026, 7:42 PM", without Intl (the app's JavaScript has no locale data).
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const stamp = (d) => `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}, ${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")} ${d.getHours() < 12 ? "AM" : "PM"}`;
 const sentence = (t) => { const s = String(t ?? "").trim(); return s ? `${s[0].toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}` : ""; };
 function ago(iso) {
   if (!iso) return null;
@@ -115,7 +119,7 @@ export class Tables {
           const res = r.data.result ?? {};
           const sys = j.system;
           this.note = r.data.status === "done"
-            ? { text: `Read ${fmtInt(res.table_edges)} table link${res.table_edges === 1 ? "" : "s"} and ${fmtInt(res.column_edges)} column link${res.column_edges === 1 ? "" : "s"} from ${sys}, as of ${new Date().toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}. They're in every dataset's Lineage tab.`, tone: "good" }
+            ? { text: `Read ${fmtInt(res.table_edges)} table link${res.table_edges === 1 ? "" : "s"} and ${fmtInt(res.column_edges)} column link${res.column_edges === 1 ? "" : "s"} from ${sys}, as of ${stamp(new Date())}. They're in every dataset's Lineage tab.`, tone: "good" }
             : { text: sentence(r.data.error ?? r.data.message) || `Couldn't read lineage from ${sys}.`, tone: "fail" };
           cx.notify();
           return;

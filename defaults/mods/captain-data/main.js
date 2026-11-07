@@ -18,6 +18,7 @@ import { Models } from "./models.js";
 import { Tables } from "./tables.js";
 import { DatasetPage } from "./dataset-page.js";
 import { openOverlay } from "herdr";
+import { int } from "./kit/num.js";
 
 /** The import wizard, starting in this folder. */
 const openImport = (folder) => openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { folder } });
@@ -27,12 +28,12 @@ const ICON = (n) => `mods/captain-data/icons/${n}.svg`;
 const enc = (name) => name.split("/").map(encodeURIComponent).join("/");
 const stripAnsi = (s) => String(s ?? "").replace(/\u001b\[[0-9;]*m/g, "");
 const numeric = (t) => /int|double|float|decimal|numeric|real|bigint|hugeint|number/i.test(t ?? "");
-const fmtInt = (n) => (n === null || n === undefined ? "" : Number(n).toLocaleString("en-US"));
+const fmtInt = (n) => int(n);
 const typeIcon = (t) => (numeric(t) ? "number" : /bool/i.test(t) ? "bool" : /date|time/i.test(t) ? "date" : /json|struct|map|list/i.test(t) ? "json" : "text");
 
 function cellText(v) {
   if (v === null || v === undefined) return "null";
-  if (typeof v === "number") return Number.isInteger(v) ? v.toLocaleString("en-US") : String(+v.toFixed(6));
+  if (typeof v === "number") return Number.isInteger(v) ? int(v) : String(+v.toFixed(6));
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
 }

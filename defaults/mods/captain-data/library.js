@@ -14,8 +14,9 @@ import { MONO } from "./kit/tokens.js";
 import { Button } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { openForm } from "./kit/agent.js";
+import { int } from "./kit/num.js";
 
-const fmtInt = (n) => Number(n ?? 0).toLocaleString("en-US");
+const fmtInt = (n) => int(n ?? 0);
 const plural = (n, w) => `${fmtInt(n)} ${w}${n === 1 ? "" : "s"}`;
 const expand = (p) => String(p ?? "").trim().replace(/^~(?=\/|$)/, home());
 const sentence = (t) => { const s = String(t ?? "").trim(); return s ? `${s[0].toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}` : ""; };

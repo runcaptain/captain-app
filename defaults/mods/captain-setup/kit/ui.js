@@ -4,6 +4,7 @@ import { div, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar } from "gpui-base";
 import { FONT, MONO } from "./tokens.js";
 import { retry, details } from "./cst.js";
+import { int } from "./num.js";
 
 /** A bordered panel with an optional title row and actions. */
 export function Card(c, { title, actions, pad = 16 } = {}, ...children) {
@@ -220,7 +221,7 @@ export class Table {
     if (!this.fetch || this.total <= this.pageSize) return null;
     const from = this.total ? this.offset + 1 : 0, to = Math.min(this.offset + this.rows.length, this.total);
     return h_flex().h(36).flex_none().px(12).gap(8).items_center().border_t(1).border_color(c.rule)
-      .child(div().flex_1().text_size(12).text_color(c.grey500).child(`${from.toLocaleString()} to ${to.toLocaleString()} of ${this.total.toLocaleString()}`))
+      .child(div().flex_1().text_size(12).text_color(c.grey500).child(`${int(from)} to ${int(to)} of ${int(this.total)}`))
       .child(Button(c, `${this.id}-prev`, "Previous", (_e, cx) => this.load(cx, Math.max(0, this.offset - this.pageSize)), { small: true, disabled: this.offset === 0 }))
       .child(Button(c, `${this.id}-next`, "Next", (_e, cx) => this.load(cx, this.offset + this.pageSize), { small: true, disabled: to >= this.total }));
   }

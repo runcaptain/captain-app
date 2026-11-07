@@ -14,6 +14,7 @@ import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
 import { metricWords, warningIcon } from "./kit/words.js";
 import { icon as kitIcon } from "./kit/icons.js";
+import { int } from "./kit/num.js";
 
 const PAGE = 200;
 const ROW = 28;
@@ -484,7 +485,7 @@ export default class CaptainCompare extends View {
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .child(this.icon("search", 13, c.grey500)).child(div().flex_1().min_w(0).child(Input.new(this.qSearch).w_full().text_size(12).text_color(c.navy))))
         .child(div().flex_1())
-        .child(div().text_size(12).text_color(c.grey900).child(q.total === null ? "" : `${total.toLocaleString("en-US")} of ${(q.unfiltered ?? total).toLocaleString("en-US")} queries`)))
+        .child(div().text_size(12).text_color(c.grey900).child(q.total === null ? "" : `${int(total)} of ${int(q.unfiltered ?? total)} queries`)))
       .when(!!q.error, (e) => e.child(div().px(20).text_size(12.5).text_color(c.fail).child(q.error)))
       .child(h_flex().flex_1().min_h(0).px(20).pb(10).gap(12)
         .when(!narrow, (e) => e.child(v_flex().w(side ? listW : "100%").flex_none().when(!side, (e) => e.flex_1()).min_w(0).h_full().border_1().border_color(c.rule)

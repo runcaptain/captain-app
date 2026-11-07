@@ -24,6 +24,7 @@ import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input, Popup } f
 import { writeTextFile, readTextFile, home } from "herdr";
 import { MONO } from "./tokens.js";
 import { icon } from "./icons.js";
+import { int, num } from "./num.js";
 
 const ROW = 26;
 const COL = 160;
@@ -46,8 +47,8 @@ const FORMATS = {
 const isNum = (v) => typeof v === "number" || (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)));
 const toNum = (v) => (typeof v === "number" ? v : Number(v));
 const text = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
-const fmtInt = (n) => Number(n ?? 0).toLocaleString("en-US");
-const fmtNum = (n) => (Number.isInteger(n) ? fmtInt(n) : Number(n).toLocaleString("en-US", { maximumFractionDigits: 4 }));
+const fmtInt = (n) => int(n ?? 0);
+const fmtNum = (n) => (Number.isInteger(n) ? fmtInt(n) : num(n, 4));
 const human = (n) => {
   const a = Math.abs(n);
   return a >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : a >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : a >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : fmtNum(n);
@@ -237,8 +238,8 @@ export class ResultGrid {
     if (type === "number" && isNum(v)) {
       const n = toNum(v);
       if (f === "commas") return fmtNum(n);
-      if (f === "dollar") return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      if (f === "percent") return `${(n * 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
+      if (f === "dollar") return `$${num(n, 2, 2)}`;
+      if (f === "percent") return `${num(n * 100, 2)}%`;
       if (f === "human") return human(n);
       return String(v);
     }

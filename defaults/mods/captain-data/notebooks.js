@@ -19,6 +19,7 @@ import { ChartView, MARKS, AGGS, COLORS as CHART_COLORS, shape as shapeChart } f
 import { ResultGrid } from "./kit/grid.js";
 import { askAgent, copyPrompt } from "./kit/agent.js";
 import { SqlTools } from "./sql-tools.js";
+import { int } from "./kit/num.js";
 
 const KINDS = { sql: ["SQL", "database"], python: ["Python", "terminal"], markdown: ["Text", "file-text"], chart: ["Chart", "bar-chart-3"] };
 const LANG = { sql: "sql", python: "python", markdown: "markdown" };
@@ -27,7 +28,7 @@ const LIMIT = 1000; // Querybook's default row limit for a query cell
 const LIMITS = [100, 1000, 10000, 100000];
 const COL = 150;
 const enc = (name) => String(name).split("/").map(encodeURIComponent).join("/");
-const fmtInt = (n) => Number(n ?? 0).toLocaleString("en-US");
+const fmtInt = (n) => int(n ?? 0);
 const secs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`);
 const cellText = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 const expand = (p) => String(p ?? "").trim().replace(/^~(?=\/|$)/, home());

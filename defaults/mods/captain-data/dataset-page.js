@@ -14,11 +14,12 @@ import { ResultGrid } from "./kit/grid.js";
 import { MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { LineageGraph } from "./kit/lineage.js";
+import { int, num } from "./kit/num.js";
 
 const enc = (name) => String(name).split("/").map(encodeURIComponent).join("/");
-const fmtInt = (n) => Number(n ?? 0).toLocaleString("en-US");
+const fmtInt = (n) => int(n ?? 0);
 const fmtBytes = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : b >= 1e3 ? `${(b / 1e3).toFixed(1)} kB` : `${b ?? 0} B`);
-const pct = (x) => (x == null ? "" : `${(x * 100).toLocaleString("en-US", { maximumFractionDigits: 1 })}%`);
+const pct = (x) => (x == null ? "" : `${num(x * 100, 1)}%`);
 function ago(iso) {
   const t = Date.parse(iso ?? "");
   if (!Number.isFinite(t)) return "";

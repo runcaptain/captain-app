@@ -20,9 +20,10 @@ import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { ResultGrid } from "./kit/grid.js";
+import { int } from "./kit/num.js";
 
 const enc = encodeURIComponent;
-const fmtInt = (n) => Number(n ?? 0).toLocaleString("en-US");
+const fmtInt = (n) => int(n ?? 0);
 const sentence = (t) => { const s = String(t ?? "").trim(); return s ? `${s[0].toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}` : ""; };
 const expand = (p) => String(p ?? "").trim().replace(/^~(?=\/|$)/, home());
 // Product analytics sources: connected ones show with the databases; the rest offer their connect form.

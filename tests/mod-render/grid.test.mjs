@@ -2,6 +2,10 @@
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/grid.test.mjs
 import assert from 'node:assert/strict';
 import { detectType, columnStats, passes, ResultGrid } from '../../defaults/captain/kit/grid.js';
+import { int, num } from '../../defaults/captain/kit/num.js';
+
+// Numbers group their own digits: the app's JavaScript has no locale data for toLocaleString.
+assert.deepEqual([int(12480), int(-1234567), int(999), int(null), num(1234.5678), num(0.1, 4), num(2, 2, 2), num(-0.004)], ['12,480', '-1,234,567', '999', '', '1,234.57', '0.1', '2.00', '0']);
 
 assert.equal(detectType('price', 'double', [1.5, 2]), 'number');
 assert.equal(detectType('n', '', ['1', '2', '3']), 'number');
