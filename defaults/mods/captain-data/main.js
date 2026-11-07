@@ -417,7 +417,10 @@ export default class CaptainData extends View {
     const l = ls?.find((x) => x.name === this.labelSel) ?? null;
     const events = (this.list ?? []).filter((d) => (d.classes ?? []).some((k) => this.classes.find((x) => x.name === k)?.role === "events"));
     const listW = Math.max(200, Math.min(280, Math.floor(w * 0.26)));
-    return h_flex().flex_1().min_h(0)
+    // What a label is, always in view (Edgar didn't know what labels do).
+    const about = div().id("labels-about").flex_none().px(16).py(8).border_b(1).border_color(c.rule).text_size(12.5).line_height("18px").text_color(c.grey900)
+      .child("A label grades each search from what shoppers did, so you can train and judge without grading by hand. For example, deep-search is 1 when a shopper clicked one of the top 3 results.");
+    return v_flex().flex_1().min_h(0).child(about).child(h_flex().flex_1().min_h(0)
       .child(v_flex().id("label-list").w(listW).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
         .when(ls === null, (e) => e.child(div().child(Skeleton(c, 8))))
         .when(!!this.labelsError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child(this.labelsError)))
@@ -451,7 +454,7 @@ export default class CaptainData extends View {
               .when(!events.length, (e) => e.child(div().text_size(12).text_color(c.grey500).child("No events datasets in this workspace.")))
               .children(events.slice(0, 12).map((d) => this.chip(c, `${d.name}@v${d.latest}`, null, this.previewLogs === `${d.name}@v${d.latest}`, (_e, cx) => this.loadPreview(cx, `${d.name}@v${d.latest}`)))))
             .when(!!this.previewError, (e) => e.child(div().text_size(12.5).text_color(c.fail).child(this.previewError)))
-            .when(!!this.preview, (e) => e.child(this.previewTable(c, this.preview)))));
+            .when(!!this.preview, (e) => e.child(this.previewTable(c, this.preview))))));
   }
 
   previewTable(c, p) {
