@@ -262,7 +262,8 @@ mod tests {
         let mut other = model();
         other.remove_pane("p");
         Document::capture(&other, None).replace(&mut m, None);
-        assert!(m.active_space().is_none());
+        // CAPTAIN: the space outlives its last pane, so the view falls back to it, empty: no tab, no focused pane.
+        assert!(m.active_tab().is_none() && m.focused_pane().is_none());
     }
     #[test]
     fn late_remote_load_restores_only_that_machines_view() {

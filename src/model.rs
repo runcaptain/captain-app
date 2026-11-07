@@ -370,6 +370,8 @@ impl Model {
     }
 
     /// Removes a tab. Returns its terminal addresses and whether its space closed.
+    /// CAPTAIN: a space never closes with its last tab (Edgar, 2026-11-07: "closing a terminal must never close the
+    /// space"). It stays open and empty, with no terminal made for it; only space.close closes a space.
     pub fn remove_tab(&mut self, ctx: &str) -> (Vec<String>, bool) {
         let Some(pi) = self.spaces.iter().position(|p| p.tab(ctx).is_some()) else { return (vec![], false) };
         let p = &mut self.spaces[pi];
@@ -379,12 +381,7 @@ impl Model {
             // The tab that slides into the slot, or the last one.
             p.active = p.tabs.get(ci).or(p.tabs.last()).map(|c| c.id.clone());
         }
-        let closed = p.tabs.is_empty();
-        if closed {
-            let id = p.id.clone();
-            self.remove_space(&id);
-        }
-        (addresses(&removed.root), closed)
+        (addresses(&removed.root), false)
     }
 
     /// Removes a space (remembered in `recent`). Returns its terminal addresses.
@@ -713,20 +710,23 @@ mod tests {
     }
 
     #[test]
-    fn closing_the_last_pane_closes_tab_then_space_and_remembers_it() {
+    fn closing_the_last_pane_closes_the_tab_and_never_the_space() {
         let mut m = model_with_one();
         m.add_tab("p1", Tab::new("c2", "docs", "x2", "t2"));
         m.add_space("p2", "web", "/src/web", Tab::new("c3", "deploy", "x3", "t3"));
         assert_eq!(m.active.as_deref(), Some("p2"));
-        assert_eq!(m.remove_pane("x3"), (true, true));
-        assert_eq!(m.active.as_deref(), Some("p1"));
-        assert_eq!(m.recent, [Recent { name: "web".into(), folder: "/src/web".into() }]);
-        // A tab closes with its last pane; the space stays while it has another.
-        assert_eq!(m.remove_pane("x2"), (true, false));
-        assert_eq!(m.active_tab().map(|c| c.id.as_str()), Some("c1"));
-        // Opening it again takes it off the recent list.
-        m.add_space("p4", "web", "/src/web", Tab::new("c4", "x", "x4", "t4"));
+        // CAPTAIN: the last tab goes, the space stays open, shown and empty.
+        assert_eq!(m.remove_pane("x3"), (true, false));
+        assert_eq!(m.active.as_deref(), Some("p2"));
+        assert!(m.active_space().is_some_and(|p| p.tabs.is_empty()));
+        assert!(m.active_tab().is_none());
         assert!(m.recent.is_empty());
+        // A tab closes with its last pane in a space with others too.
+        assert_eq!(m.remove_pane("x2"), (true, false));
+        assert_eq!(m.spaces.len(), 2);
+        // Closing the space itself still closes it, and remembers it.
+        m.remove_space("p2");
+        assert_eq!(m.recent, [Recent { name: "web".into(), folder: "/src/web".into() }]);
     }
 
     #[test]

@@ -2925,13 +2925,8 @@ impl AppWindow {
             }
             "tab.close" => {
                 let Some(id) = Self::owned(a, "id").or(active_ctx) else { return self.fail("no tab to close") };
-                let Some(p) = self.model.space_of(&id) else { return self.fail(format!("no tab {id:?}")) };
-                // The last tab takes its space with it: ask like closing the space.
-                if p.tabs.len() == 1 {
-                    let mut args = json!({ "id": p.id });
-                    args["confirmed"] = a.get("confirmed").cloned().unwrap_or(Value::Null);
-                    return self.dispatch("space.close", &args, person, window, cx);
-                }
+                if self.model.space_of(&id).is_none() { return self.fail(format!("no tab {id:?}")) }
+                // CAPTAIN: the last tab no longer takes its space with it; the space stays open and empty.
                 let (addrs, _) = self.model.remove_tab(&id);
                 self.kill(&addrs, cx);
             }
@@ -4144,6 +4139,36 @@ impl AppWindow {
             Content::Context { .. } => match self.model.active_tab() {
                 Some(c) => self.render_node(c.shown(), focused, self.pane_frame(), cx),
                 None if self.documents.get("").is_some_and(|s| s.layout() == "loading") => div().size_full().into_any_element(),
+                // CAPTAIN: a space whose last terminal closed stays open, empty: say so, and offer one. Nothing starts
+                // a terminal by itself.
+                None if self.model.active_space().is_some() => {
+                    let space = self.model.active_space().map(|p| p.id.clone()).unwrap_or_default();
+                    let key = crate::keys::listing().into_iter().find(|(_, _, a)| a == "tab.new").map(|(_, k, _)| format!("  ({k})"));
+                    div()
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .items_center()
+                        .justify_center()
+                        .text_color(c("dim"))
+                        .child("No terminals here.")
+                        .child(
+                            div()
+                                .id("empty-space-new-terminal")
+                                .px_3()
+                                .py_1()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(c("border"))
+                                .text_color(c("foreground"))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(c("raised")))
+                                .on_click(cx.listener(move |this, _, w, cx| this.run("tab.new", json!({ "space": space }), w, cx)))
+                                .child(format!("New terminal{}", key.unwrap_or_default())),
+                        )
+                        .into_any_element()
+                }
                 None => {
                     let key = crate::keys::listing().into_iter().find(|(_, _, a)| a == "space.new").map(|(_, k, _)| format!(" ({k})"));
                     div()

@@ -36,7 +36,7 @@ const NAMED = [
   ...["left", "right", "up", "down"].map((d) => ["pane.swap", { direction: d }, "Pane", `Swap pane ${d}`, "move"]),
   ["space.new", {}, "Space", "New space", "workspace"],
   ["space.rename", {}, "Space", "Rename space", "workspace"],
-  ["space.close", {}, "Space", "Close space", "workspace kill"],
+  // CAPTAIN: no "Close space": the space is always open (Edgar, 2026-11-07).
   ["space.next", {}, "Space", "Next space", "workspace"],
   ["space.prev", {}, "Space", "Previous space", "workspace"],
   ["layout.switch", {}, "Layout", "Next layout", "look switch"],
