@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "strategy_options": {
+    "checkpoint_remote": {
+      "provider": "github",
+      "repo": "runcaptain/captain-app-checkpoints"
+    }
+  },
+  "checkpoints": {
+    "primary": {
+      "type": "git-refs"
+    }
+  }
+}
