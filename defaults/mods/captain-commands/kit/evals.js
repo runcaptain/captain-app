@@ -13,6 +13,7 @@ import { api } from "./cst.js";
 import { Badge, Button, Skeleton, plainError } from "./ui.js";
 import { icon } from "./icons.js";
 import { MONO } from "./tokens.js";
+import { int } from "./num.js";
 
 const pct = (x) => (x == null ? "" : `${Math.round(x * 100)}%`);
 const kindOf = (d) => d?.kind ?? (d?.classes ?? []).find((k) => ["queries", "judgments", "events", "catalog"].includes(k)) ?? null;
@@ -152,7 +153,7 @@ export class EvalHealth {
           .child(div().text_size(11.5).font_semibold().text_color(c.grey500).child("SEARCHED OFTEN, NOT IN THE SET"))
           .children(rep.top_unseen.slice(0, 8).map((u, i) => h_flex().id(`eh-u-${i}`).gap(8)
             .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.navy).child(u.query))
-            .child(div().text_size(12).font_family(MONO).text_color(c.grey500).child(Number(u.searches ?? 0).toLocaleString("en-US"))))) : div(),
+            .child(div().text_size(12).font_family(MONO).text_color(c.grey500).child(int(u.searches ?? 0))))) : div(),
       ]))
       .child(this.section(c, "Are the grades still true?", [
         this.expandable(c, "retired", "grades on products that are gone", st.retired ?? [], (x) => `${x.query_id} ${x.product_id} (grade ${x.grade})`),
