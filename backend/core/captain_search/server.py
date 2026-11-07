@@ -311,10 +311,12 @@ def mlflow_runs(exp_id: str, limit: int = 100):
 
 
 @app.get("/api/mlflow/models", dependencies=A)
-def mlflow_models():
+def mlflow_models(include_system: bool = False):
+    """Registered models. On Databricks: Unity Catalog, then the legacy workspace registry when it's on. Databricks'
+    built-in models (the system catalog) are left out unless include_system=true."""
     from . import mlflow_bridge as MF
 
-    return MF.models(ctx())
+    return MF.models(ctx(), include_system=include_system)
 
 
 @app.post("/api/mlflow/links", dependencies=A)

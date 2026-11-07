@@ -88,3 +88,42 @@ def test_a_refused_login_reaches_the_app_as_a_sentence(ctx, monkeypatch):
     r = c.get("/api/mlflow/models", headers=h)
     assert r.status_code == 502 and r.json()["error"] == ("Couldn't reach MLflow at mlflow.example.com. Check the address in "
                                                          "Connect MLflow, and that the server is running.")
+
+
+def test_databricks_reads_unity_catalog_and_a_disabled_registry_isnt_a_login_error(ctx, monkeypatch):
+    calls = []
+
+    def req(method, url, json=None, params=None, headers=None, timeout=None):
+        calls.append(url)
+        msg = "The legacy workspace model registry is disabled for the current Databricks workspace."
+        return httpx.Response(403, json={"error_code": "PERMISSION_DENIED", "message": msg},
+                              request=httpx.Request(method, url))
+
+    def get(url, params=None, headers=None, timeout=None):
+        calls.append(url)
+        if url.endswith("/unity-catalog/models"):
+            body = {"registered_models": [
+                {"full_name": "main.search.ranker", "catalog_name": "main", "comment": "ours", "updated_at": 1762400000000},
+                {"full_name": "system.ai.llama", "catalog_name": "system"}]}
+        else:
+            body = {"model_versions": [{"version": 2, "run_id": "r1", "status": "READY", "source": "dbfs:/m",
+                                        "aliases": [{"alias_name": "champion", "version_num": 2}]}]}
+        return httpx.Response(200, json=body, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "request", req)
+    monkeypatch.setattr(httpx, "get", get)
+    monkeypatch.setattr(MF, "_endpoint", lambda c: ("https://dbc-1.cloud.databricks.com", {"Authorization": "Bearer x"}))
+    monkeypatch.setattr(MF, "_read", lambda c: ({"databricks_connection": "dbx"}, None))
+    m = MF.models(ctx)
+    assert [x["name"] for x in m] == ["main.search.ranker"]  # the system catalog is hidden
+    assert m[0]["registry"] == "unity-catalog" and m[0]["versions"][0] == {
+        "version": "2", "run_id": "r1", "status": "READY", "stage": None, "source": "dbfs:/m", "created": None,
+        "aliases": ["champion"]}
+    assert len(MF.models(ctx, include_system=True)) == 2
+    with pytest.raises(MF.RegistryDisabled):
+        MF._legacy_models(ctx)
+    monkeypatch.setattr(httpx, "request", lambda *a, **k: httpx.Response(
+        403, json={"message": "Provided access token does not have required scopes: mlflow"},
+        request=httpx.Request("POST", "https://x")))
+    with pytest.raises(PermissionError, match="mlflow scope"):
+        MF.experiments(ctx)
