@@ -8,6 +8,7 @@ import { theme, props, closeOverlay, openOverlay, notify, shared, setShared } fr
 import { palette, isDark, FONT } from "./kit/tokens.js";
 import { Button, Badge, ServiceError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
+import { Brand } from "./kit/brands.js";
 import { TASKS } from "./tasks.js";
 
 export default class CaptainForms extends View {
@@ -48,11 +49,16 @@ export default class CaptainForms extends View {
   }
 
   async loadOptions(cx) {
-    for (const f of this.task.fields) {
-      if (f.kind !== "choice") continue;
-      const o = typeof f.options === "function" ? await f.options(this.ctx, this.values) : f.options;
-      this.options[f.key] = o ?? [];
-      if (this.values[f.key] === undefined && this.options[f.key].length === 1 && f.required) this.values[f.key] = this.options[f.key][0].value;
+    // The services' own fields can be choices too (a database kind's), so walk what's shown, twice: a choice
+    // can bring more fields with it.
+    for (let pass = 0; pass < 2; pass++) {
+      for (const f of this.shown()) {
+        if (f.kind !== "choice") continue;
+        const o = typeof f.options === "function" ? await f.options(this.ctx, this.values) : f.options;
+        this.options[f.key] = o ?? [];
+        if (this.values[f.key] === undefined && f.default !== undefined) this.values[f.key] = f.default;
+        if (this.values[f.key] === undefined && this.options[f.key].length === 1 && f.required) this.values[f.key] = this.options[f.key][0].value;
+      }
     }
     // Fields the services describe (a sign-in's, a compute kind's) appear with the choice.
     this.ensureStates();
@@ -81,7 +87,12 @@ export default class CaptainForms extends View {
     for (const f of this.task.fields) {
       if (f.when && !f.when(this.values)) continue;
       if (f.kind === "dynamic") {
-        for (const d of f.fields(this.ctx, this.values)) out.push({ key: `af:${d.name}`, label: d.label ?? d.name, kind: d.secret ? "secret" : "text", required: Boolean(d.required), default: d.default });
+        for (const d of f.fields(this.ctx, this.values)) {
+          const type = d.secret ? "secret" : d.type === "secret" ? "secret" : d.type === "choice" ? "choice" : "text";
+          const choices = (d.choices ?? []).map((ch) => (typeof ch === "object" ? { value: ch.value, label: ch.label ?? String(ch.value) } : { value: ch, label: String(ch) }));
+          out.push({ key: `af:${d.key ?? d.name}`, label: d.label ?? d.name, kind: type, required: Boolean(d.required), optional: Boolean(d.optional),
+            default: d.default ?? undefined, placeholder: d.placeholder ?? undefined, help: d.help ?? undefined, ...(type === "choice" ? { options: choices } : {}) });
+        }
       } else out.push(f);
     }
     return out;
@@ -95,13 +106,32 @@ export default class CaptainForms extends View {
         return h_flex().id(`f-${f.key}-${o.value}`).h(30).flex_none().px(10).gap(8).items_center().cursor_pointer()
           .bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).text_size(12.5).hover((s) => (on ? s : s.bg(c.surface2)))
           .on_click((_e, cx) => { this.values[f.key] = o.value; delete this.errors[f.key]; this.loadOptions(cx); })
+          .when(Boolean(o.brand), (e) => e.child(Brand(c, o.brand, 14)))
           .child(div().flex_1().min_w(0).truncate().child(o.label))
           .when(Boolean(o.chip), (e) => e.child(Badge(c, o.chip, on ? "blue" : "neutral")));
       }));
   }
 
+  // A picker of products (database engines): a grid of tiles, each with its mark, three to a row.
+  gridChoice(c, f, opts) {
+    const rows = [];
+    for (let i = 0; i < opts.length; i += 3) rows.push(opts.slice(i, i + 3));
+    return v_flex().gap(6).children(rows.map((row, r) => h_flex().gap(6).children([...row.map((o) => {
+      const on = this.values[f.key] === o.value;
+      return h_flex().id(`f-${f.key}-${o.value}`).flex_1().min_w(0).h(40).px(10).gap(8).items_center().cursor_pointer().border_1()
+        .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).text_size(12.5)
+        .hover((s) => (on ? s : s.border_color(c.blue)))
+        .on_click((_e, cx) => { this.values[f.key] = o.value; delete this.errors[f.key]; this.loadOptions(cx); })
+        .child(Brand(c, o.brand ?? o.value, 18))
+        .child(div().flex_1().min_w(0).truncate().child(o.label))
+        .when(Boolean(o.chip), (e) => e.child(div().text_size(10.5).text_color(c.grey500).child(o.chip)));
+    }), ...Array(3 - row.length).fill(0).map((_, k) => div().id(`f-${f.key}-pad-${r}-${k}`).flex_1())])));
+  }
+
   field(c, f) {
     const err = this.errors[f.key];
+    // Help can depend on what's picked (a database kind's note: "Signs in with your AWS login").
+    const help = typeof f.help === "function" ? f.help(this.ctx, this.values) : f.help;
     const label = h_flex().gap(6).items_baseline()
       .child(div().text_size(13).font_medium().text_color(c.navy).child(f.label))
       .when(Boolean(f.optional), (e) => e.child(div().text_size(11.5).text_color(c.grey500).child("optional")));
@@ -110,12 +140,14 @@ export default class CaptainForms extends View {
       const opts = this.options[f.key];
       control = !opts ? div().h(30).w(160).bg(c.surface2)
         : !opts.length ? div().text_size(12.5).text_color(c.grey500).child(f.empty ?? "Nothing to pick yet.")
+        : f.grid ? this.gridChoice(c, f, opts)
         : opts.length > 8 ? this.longChoice(c, f, opts)
         : h_flex().flex_wrap().gap(6).children(opts.map((o) => {
           const on = this.values[f.key] === o.value;
           return h_flex().id(`f-${f.key}-${o.value}`).h(30).px(10).gap(6).items_center().cursor_pointer().border_1()
             .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).text_size(12.5)
             .on_click((_e, cx) => { this.values[f.key] = o.value; delete this.errors[f.key]; this.loadOptions(cx); })
+            .when(Boolean(o.brand), (e) => e.child(Brand(c, o.brand, 14)))
             .child(o.label).when(Boolean(o.chip), (e) => e.child(Badge(c, o.chip, on ? "blue" : "neutral")));
         }));
     } else if (f.kind === "toggle") {
@@ -133,7 +165,7 @@ export default class CaptainForms extends View {
     }
     return v_flex().gap(5).child(label).child(control)
       .when(Boolean(err), (e) => e.child(div().text_size(12).text_color(c.fail).child(err)))
-      .when(!err && Boolean(f.help), (e) => e.child(div().text_size(12).line_height("17px").text_color(c.grey500).child(f.help)));
+      .when(!err && Boolean(help), (e) => e.child(div().text_size(12).line_height("17px").text_color(c.grey500).child(help)));
   }
 
   submit(cx) {

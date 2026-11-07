@@ -265,8 +265,8 @@ export class StorageSetup {
       .drag_over((s) => s.border_color(c.blue).bg(c.blueLight))
       .on_drop((event, cx) => this.importPaths(cx, event.paths ?? []))
       .child(svg(icon("upload")).size(28).text_color(c.blue))
-      .child(div().text_size(14).font_semibold().text_color(c.navy).child("Drop files or folders here"))
-      .child(div().text_size(12).text_color(c.grey500).child("CSV, TSV, Parquet or JSON lines, up to 2 GB a file. Folders keep their structure."));
+      .child(div().text_size(14).font_semibold().text_color(c.navy).child("Drag your catalogs, queries, judgments and logs here"))
+      .child(div().px(24).text_size(12).text_color(c.grey500).child("Drop files or whole folders: CSV, TSV, Parquet, JSON or JSON lines. Folders keep their structure, and dropping a file again makes a new version."));
     return v_flex().gap(14)
       .child(div().text_size(18).font_semibold().text_color(c.navy).child("Bring in your work"))
       .child(this.note(c, `Drag your catalogs, queries, judgments and logs in from Finder. They land in ${this.created ?? "this workspace"}, and you can organize them into folders in Data and signals.`))

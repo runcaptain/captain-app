@@ -76,30 +76,53 @@ export const TASKS = [
   },
   {
     id: "database", label: "Connect a database", icon: "server",
-    about: "Postgres, MySQL, Snowflake, BigQuery or Redshift, to import data with SQL.",
+    about: "Snowflake, Databricks, BigQuery, Postgres and more, to read tables and import data with SQL. Passwords and tokens stay in your keychain.",
+    // Every kind and its own fields come from the services (GET /api/connections/kinds), so a new kind needs no
+    // change here.
+    load: async () => ({ kinds: (await api("/api/connections/kinds")).data ?? [] }),
     fields: [
-      { key: "name", label: "Name", placeholder: "warehouse", required: true },
-      { key: "db", label: "Kind", kind: "choice", default: "postgres",
-        options: ["postgres", "mysql", "snowflake", "bigquery", "redshift"].map((e) => ({ value: e, label: { postgres: "PostgreSQL", mysql: "MySQL", snowflake: "Snowflake", bigquery: "BigQuery", redshift: "Redshift" }[e] })) },
-      { key: "url", label: "Address", placeholder: "postgresql://reader@db.internal:5432/shop", required: true, help: "Without the password: it goes below and stays in your keychain." },
-      { key: "password", label: "Password", kind: "secret", optional: true },
-      { key: "writable", label: "Allow writes", kind: "toggle", default: false, help: "Off keeps Captain read-only on this database." },
+      { key: "kind", label: "Database", kind: "choice", grid: true, required: true,
+        options: (ctx) => (ctx.kinds ?? []).map((k) => ({ value: k.kind, label: k.label, brand: k.icon })),
+        help: (ctx, v) => {
+          const k = (ctx.kinds ?? []).find((x) => x.kind === v.kind);
+          if (!k) return null;
+          if (k.installed === false) return `Captain can't reach ${k.label} on this computer yet: its driver isn't installed.`;
+          return k.note ?? null;
+        } },
+      { key: "name", label: "Name", placeholder: "warehouse", required: true, when: (v) => Boolean(v.kind), help: "How you'll pick this database later." },
+      { key: "*kind-fields", kind: "dynamic", when: (v) => Boolean(v.kind),
+        fields: (ctx, v) => ((ctx.kinds ?? []).find((k) => k.kind === v.kind)?.fields ?? [])
+          .map((f) => ({ ...f, key: `${v.kind}.${f.name}`, optional: !f.required })) },
+      { key: "writable", label: "Allow writes", kind: "toggle", default: false, when: (v) => Boolean(v.kind), help: "Off keeps Captain read-only on this database." },
     ],
-    submit: async (v) => {
-      const taken = (await api("/api/connections")).data ?? [];
-      if (taken.some((c) => c.name === v.name)) return { ok: false, error: `A database named ${v.name} is already connected. Pick another name.` };
-      let url = v.url.trim();
-      if (v.password) {
-        // The password goes to the keychain (POST /api/secrets) and nowhere else; the address names it.
-        const secret = `${v.name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_PASSWORD`;
-        const m = url.match(/^([a-z0-9+]+:\/\/)([^@/:]+)(?::[^@/]*)?@(.*)$/i);
-        if (!m) return { ok: false, error: "Put the user name in the address, like postgresql://reader@db.internal:5432/shop, so Captain knows where the password goes." };
-        const s = await api("/api/secrets", { body: { name: secret, value: v.password } });
-        if (!s.ok) return { ok: false, error: s.error ?? "Couldn't save the password to your keychain." };
-        url = `${m[1]}${m[2]}:{secret:${secret}}@${m[3]}`;
+    submit: async (v, ctx) => {
+      const kind = (ctx.kinds ?? []).find((k) => k.kind === v.kind);
+      if (!kind) return { ok: false, error: "Pick a database." };
+      const name = String(v.name ?? "").trim();
+      // Submitting again after a failed test replaces what this form saved, and nothing else.
+      if (ctx.saved !== name && ((await api("/api/connections")).data ?? []).some((c) => c.name === name)) {
+        return { ok: false, error: `A database named ${name} is already connected. Pick another name.` };
       }
-      // cst calls the database kind its engine.
-      return ok(await run(["conn", "add"], { name: v.name, engine: v.db, url, writable: Boolean(v.writable) }), `Connected ${v.name}.`);
+      const fields = {};
+      for (const f of kind.fields ?? []) {
+        const val = v[`af:${v.kind}.${f.name}`];
+        if (val === undefined || val === "") continue;
+        if (f.type === "secret") {
+          // The keychain, and nowhere else (POST /api/secrets), under the name the services expect.
+          const secret = `${name}_${f.name}`.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+          const s = await api("/api/secrets", { body: { name: secret, value: String(val) } });
+          if (!s.ok) return { ok: false, error: s.error ?? `Couldn't save the ${f.label.toLowerCase()} to your keychain.` };
+          fields[`${f.name}_set`] = true;
+        } else {
+          fields[f.name] = f.type === "number" ? Number(val) : val;
+        }
+      }
+      const r = await api("/api/connections", { body: { name, kind: v.kind, fields, writable: Boolean(v.writable), ...(ctx.saved === name ? { replace: true } : {}) } });
+      if (!r.ok) return ok(r, "");
+      ctx.saved = name;
+      const t = await api(`/api/connections/${encodeURIComponent(name)}/test`, { body: {}, timeout: 60 });
+      if (t.ok && t.data?.ok) return { ok: true, message: `Connected ${name}. It answered in ${Math.round(t.data.ms ?? 0)} ms.` };
+      return { ok: false, error: `Saved ${name}, but Captain couldn't reach it: ${t.data?.error ?? t.error ?? "no answer"}. Fix the details and connect again.` };
     },
   },
   {
@@ -107,7 +130,7 @@ export const TASKS = [
     about: "AWS, Google Cloud or Azure, for your data and to run work there. Secrets stay in your keychain.",
     load: async () => ({ providers: (await api("/api/cloud/providers")).data ?? [] }),
     fields: [
-      { key: "provider", label: "Cloud", kind: "choice", required: true, options: (ctx) => (ctx.providers ?? []).map((p) => ({ value: p.provider, label: { aws: "AWS", gcp: "Google Cloud", azure: "Azure" }[p.provider] ?? p.provider })) },
+      { key: "provider", label: "Cloud", kind: "choice", required: true, options: (ctx) => (ctx.providers ?? []).map((p) => ({ value: p.provider, label: { aws: "AWS", gcp: "Google Cloud", azure: "Azure" }[p.provider] ?? p.provider, brand: p.provider })) },
       { key: "auth", label: "Sign in with", kind: "choice", required: true, when: (v) => Boolean(v.provider),
         options: (ctx, v) => ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).map((a) => ({ value: a.mode, label: a.label })) },
       { key: "name", label: "Name", placeholder: "work-aws", required: true, help: "How you'll pick this login later." },
@@ -130,7 +153,7 @@ export const TASKS = [
     about: "Run backtests and serve candidates in your cloud instead of on this computer.",
     load: async () => ({ kinds: (await api("/api/compute/kinds")).data ?? [], profiles: (await api("/api/cloud/profiles")).data ?? [] }),
     fields: [
-      { key: "kind", label: "Where", kind: "choice", required: true, options: (ctx) => (ctx.kinds ?? []).map((k) => ({ value: k.kind, label: k.label ?? k.kind, chip: k.provider })) },
+      { key: "kind", label: "Where", kind: "choice", required: true, options: (ctx) => (ctx.kinds ?? []).map((k) => ({ value: k.kind, label: k.label ?? k.kind, chip: k.provider, brand: k.provider === "local" ? null : k.provider })) },
       { key: "name", label: "Name", placeholder: "aws-batch", required: true },
       { key: "profile", label: "Cloud account", kind: "choice", optional: true, empty: "None yet. Connect a cloud account first, or leave this empty for this computer.", options: (ctx) => (ctx.profiles ?? []).map((p) => ({ value: p.name, label: p.name, chip: p.provider })) },
       { key: "region", label: "Region", optional: true, placeholder: "us-west-1" },
