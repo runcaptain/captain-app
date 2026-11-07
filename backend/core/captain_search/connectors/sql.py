@@ -101,6 +101,12 @@ def open_engine(conn: Connection):
 
 def run_sql(conn: Connection, sql: str, *, limit: int | None = None, allow_large: bool = False,
             params: dict | None = None) -> Result:
+    from . import sources
+
+    if conn.engine in sources.ENGINES:
+        if conn.engine == "posthog":
+            check_read_only(sql, conn.engine)
+        return sources.run(conn, sql, limit if limit is not None else (None if allow_large else conn.row_limit_local))
     if not conn.writable:
         check_read_only(sql, conn.engine)
     if conn.network.mode == "remote-runner":

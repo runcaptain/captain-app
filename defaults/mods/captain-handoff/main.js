@@ -6,7 +6,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, openOverlay } from "herdr";
-import { api, watchWorkspace } from "./kit/cst.js";
+import { api, watchWorkspace, watchScope } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
 
@@ -57,6 +57,8 @@ export default class CaptainHandoff extends View {
       },
     });
     this.table.load(cx);
+    // The Explorer pick: the list reloads filtered to it (the services read X-CST-Scope).
+    watchScope(cx, (cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); });
     watchWorkspace(cx, (cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); });
     cx.timer.every(15000, (cx) => (this.open ? this.load(this.open, cx) : this.table.load(cx)));
   }

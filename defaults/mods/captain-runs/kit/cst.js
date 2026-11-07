@@ -61,7 +61,7 @@ export async function api(path, opts) {
 
 
 
-async function call(path, { method = "GET", body, timeout = 20 } = {}) {
+async function call(path, { method = "GET", body, timeout = 20, scoped = true } = {}) {
   const d = await services();
   // Why they didn't start (a tool's output, a path, a port) goes behind Copy details, never on screen.
   if (!d.base && d.error) LAST_DETAIL = String(d.error);
@@ -71,6 +71,9 @@ async function call(path, { method = "GET", body, timeout = 20 } = {}) {
     const headers = { Authorization: `Bearer ${d.token}` };
     const ws = workspace();
     if (ws) headers["X-CST-Workspace"] = ws;
+    // The Explorer's pick (shared "captain.scope"): the services filter to it and below. Absent: the whole workspace.
+    const scope = shared("captain.scope");
+    if (scope?.id && scoped) headers["X-CST-Scope"] = `${scope.kind}:${scope.id}`;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     r = await fetch(d.base + path, { method: body !== undefined && method === "GET" ? "POST" : method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
     text = await r.text();
@@ -107,4 +110,16 @@ export function query(params) {
   const parts = Object.entries(params ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== "")
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
   return parts.length ? `?${parts.join("&")}` : "";
+}
+
+/** Call `fn(cx)` when the Explorer's pick (shared "captain.scope") changes, so a view reloads for it. */
+export function watchScope(cx, fn) {
+  const key = () => { const s = shared("captain.scope"); return s?.id ? `${s.kind}:${s.id}` : ""; };
+  let last = key();
+  cx.timer.every(300, (cx) => {
+    const now = key();
+    if (now === last) return;
+    last = now;
+    fn(cx);
+  });
 }

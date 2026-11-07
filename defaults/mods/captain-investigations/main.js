@@ -8,7 +8,7 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, openOverlay, notify, run, spaces, focused, shared, setShared, exec, knownAgents } from "herdr";
-import { api, query, watchWorkspace } from "./kit/cst.js";
+import { api, query, watchWorkspace, watchScope } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
 import { View } from "gpui-kit";
@@ -63,6 +63,8 @@ export default class CaptainInvestigations extends View {
     });
     this.table.load(cx);
     // Another space's workspace: back to the list, read from there.
+    // The Explorer pick: the list reloads filtered to it (the services read X-CST-Scope).
+    watchScope(cx, (cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); });
     watchWorkspace(cx, (cx) => { this.open = null; this.detail = null; this.bound = undefined; this.table.load(cx); cx.notify(); });
     cx.timer.every(10000, (cx) => (this.open ? this.load(this.open, cx) : this.table.load(cx)));
     // "Open investigation: ..." from the palette (captain-go sets shared "captain.open").
