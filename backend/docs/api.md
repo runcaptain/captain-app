@@ -730,3 +730,22 @@ Pull a warehouse table, a query or a dataset in as clean, training-ready data.
   imported rankings can't be replayed, and the error says so.
 
 CLI: `cst explain <pipeline> -q "..." [--vs <pipeline>] [--query-id --judgments]`.
+
+## Profiler: where the time goes (plan 5)
+
+Every stage in the query debugger's trace now carries `timing_ms`. Retrieval adds `candidates`, and the final stage
+adds `total_ms`.
+- `POST /api/runs/{run}/profile {max_queries?, memory?}` returns `{job}`. Its result is `{run, queries, arms:
+  [profile], skipped, summary, measured_on}`. Arms from imported rankings are skipped with a reason. `summary` reads
+  like "X adds 4.0 ms at p99 against Y, most of it in boosts (+3.8 ms)".
+- `POST /api/profile/pipeline {pipeline, queries: dataset ref | [texts], memory?}` returns `{job}`. Its result is one
+  profile.
+- A profile is `{pipeline, engine, queries, explained, total: {p50_ms, p95_ms, p99_ms, mean_ms}, stages: [{stage,
+  kind, p50_ms, p95_ms, p99_ms, mean_ms, share}], slowest: [{query, total_ms, dominant_stage, stages_ms,
+  candidates}], memory: {peak_python_bytes_p50, peak_python_bytes_max, what}, budget, measured_on}`.
+- Budgets live in the pipeline spec as `budget: {p99_ms: 120, stages: {retrieve: 30, rules: 5}}`. Stage keys are kinds
+  or names. `budget` returns `{ok, breaches: [sentences]}`.
+- Every number is offline replay on this computer, at concurrency 1, and says so. Memory is Python allocations
+  (tracemalloc), not process RSS.
+
+CLI: `cst profile <run>` or `cst profile <pipeline> --queries <dataset:split>`.
