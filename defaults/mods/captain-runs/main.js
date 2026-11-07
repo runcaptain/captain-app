@@ -40,7 +40,8 @@ function say(r, fallback) {
   // Belt and braces: anything that reads like a tool's or transport's output never shows.
   if (r?.failed && r.error && !/curl|127\.0|localhost|\bport\b|https?:|error sending|traceback|engine|daemon/i.test(r.error)) return String(r.error);
   const e = String(r?.error ?? "");
-  if (r?.status && e && !/^HTTP \d+$/.test(e)) return e;
+  // A route this backend doesn't have answers FastAPI's bare "Not Found": not a sentence for people.
+  if (r?.status && e && !/^HTTP \d+$/.test(e) && !/^(Not Found|Method Not Allowed|Internal Server Error)$/i.test(e)) return e;
   if (/time ?out|timed out/i.test(e)) return "This took too long.";
   return fallback;
 }

@@ -1,14 +1,13 @@
-// The kit ends a request that never answers: fetch gives up after 30 s by itself, and api() turns that into
-// "This took too long.", so a screen retries instead of loading forever.
+// The kit turns a request that times out (fetch's own deadline) into "This took too long.", with no status, so a
+// screen retries it instead of loading forever, and never shows the transport's words.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/kit-timeout.test.mjs
 import assert from 'node:assert/strict';
 globalThis.__shared = { 'captain.daemon': { state: 'ready', base: 'http://127.0.0.1:9', token: 't' } };
-globalThis.fetch = () => Promise.reject(new Error('error sending request for url: operation timed out'));
+globalThis.fetch = async () => { throw new Error('operation timed out after 30s'); };
 const { api } = await import('../../defaults/captain/kit/cst.js');
 const r = await api('/api/backtests');
 assert.equal(r.ok, false);
-assert.equal(r.timedOut, true);
 assert.equal(r.error, 'This took too long.');
-assert.ok(!r.status, 'no status: screens treat it as a failure to retry');
+assert.ok(r.timedOut && !r.status, 'a timeout, with no status: screens retry it');
 console.log('kit timeout test: ok');
 process.exit(0);

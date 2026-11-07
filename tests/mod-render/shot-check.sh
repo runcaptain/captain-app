@@ -19,7 +19,7 @@ block_of() { case "$1" in captain-data) echo data ;; captain-runs) echo runs ;; 
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart") ;;
+    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:models") ;;
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries") ;;
   esac
 done
@@ -119,6 +119,7 @@ props_of() {
   case "$1" in
     captain-compare:side) python3 tests/mod-render/first-query.py "$CSTH" ;;
     captain-data:notebook) echo '{"tab": "notebooks", "notebook": "shot-notebook", "runAll": true}' ;;
+    captain-data:models) echo '{"tab": "models"}' ;;
     captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;
     captain-compare:imported) echo '{"backtest": "demos/shot/imported-readout", "version": 1}' ;;
     captain-compare:imported-queries) echo '{"backtest": "demos/shot/imported-readout", "version": 1, "tab": "queries"}' ;;

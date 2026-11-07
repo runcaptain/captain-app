@@ -111,6 +111,17 @@ export function harness(Mod) {
       await settle();
       render();
     },
+    /** Fire a handler registered on the element with this id: on_drop ({paths}), on_mouse_down / on_mouse_up
+     *  (registered with a button first: the handler is the last argument). */
+    async fire(id, method, event = {}, ranges) {
+      const e = all(ranges).find((x) => typeof x.call === 'function' && x.call('id')?.[0] === id);
+      if (!e) throw new Error(`no element with id ${id}`);
+      const args = e.call(method);
+      if (!args) throw new Error(`${id} has no ${method}`);
+      args[args.length - 1]({ modifiers: {}, ...event }, cx);
+      await settle();
+      render();
+    },
     async click(id, ranges) {
       const e = all(ranges).find((x) => typeof x.call === 'function' && x.call('id')?.[0] === id);
       if (!e) throw new Error(`no element with id ${id}`);

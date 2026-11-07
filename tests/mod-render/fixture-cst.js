@@ -13,7 +13,10 @@ export async function api(p, opts = {}) {
   if (globalThis.__down) return { ...globalThis.__down };
   // The engine is not up yet: what kit/cst.js answers while the app starts the daemon.
   if (globalThis.__starting) return { ok: false, starting: true, error: "Captain's engine is starting." };
-  for (const [re, file] of routes) {
+  // A route may name a method as its third item: [/path/, 'file', 'POST'].
+  const method = opts.method ?? (opts.body !== undefined ? 'POST' : 'GET');
+  for (const [re, file, want] of routes) {
+    if (want && want !== method) continue;
     if (re.test(p)) {
       const data = JSON.parse(fs.readFileSync(path.join(dir, `${file}.json`), 'utf8'));
       const ok = !(data && typeof data === 'object' && !Array.isArray(data) && 'error' in data && Object.keys(data).length === 1);

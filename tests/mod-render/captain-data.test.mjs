@@ -18,6 +18,7 @@ globalThis.__routes = [
   [/\/rows\?.*where=/, 'bad-where'],
   [/\/rows\?.*offset=200(&|$)/, 'rows1'],
   [/\/rows\?/, 'rows0'],
+  [/^\/api\/datasets\/tree$/, 'tree'],
   [/^\/api\/datasets(\?|$)/, 'datasets'],
   [/^\/api\/datasets\/[^?]+$/, 'detail'],
   [/^\/api\/labels\/[^/]+\/preview/, 'preview'],
@@ -45,8 +46,12 @@ const datasets = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'da
 
 // The list, the classes, the first dataset's detail.
 let text = h.text();
+if (process.env.SHOW) console.log(text.slice(0, 1500));
 // Versioned names show as the name plus a version chip, never "name@v1".
-for (const d of datasets) assert.ok(text.includes(`${d.name} | v${d.latest}`), `list shows ${d.name}`);
+// A directory: folders (expanded at first), each dataset by its own name inside its folder, with its version chip.
+for (const d of datasets) assert.ok(text.includes(`${d.name.split('/').pop()} | v${d.latest}`), `list shows ${d.name}`);
+for (const f of ['All datasets', 'demo-historic-replay', 'logs']) assert.ok(text.includes(f), `folder ${f}`);
+assert.ok(text.includes('Import files') && text.includes('New folder'), 'directory actions');
 assert.ok(!/@v\d/.test(text), 'no raw name@v ref anywhere');
 assert.ok(text.includes('catalog'), 'class chips');
 assert.ok(text.includes('demo-catalog | v1'), 'detail header');

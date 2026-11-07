@@ -13,7 +13,8 @@ const root = path.resolve(here, '../..');
 const LIST = { 'captain-data': /^\/api\/datasets(\?|$)/, 'captain-runs': /^\/api\/backtests$/, 'captain-compare': /^\/api\/backtests$/ };
 // Each screen's own fixtures (tests/mod-render/fixtures/<mod>), enough to draw its list and first detail.
 const ROUTES = {
-  'captain-data': [[/^\/api\/dataset-classes/, 'classes'], [/\/rows\?/, 'rows0'], [/^\/api\/datasets(\?|$)/, 'datasets'], [/^\/api\/datasets\/[^?]+$/, 'detail'], [/^\/api\/labels$/, 'labels']],
+  'captain-data': [[/^\/api\/dataset-classes/, 'classes'], [/\/rows\?/, 'rows0'], [/^\/api\/datasets\/tree$/, 'tree'],
+  [/^\/api\/datasets(\?|$)/, 'datasets'], [/^\/api\/datasets\/[^?]+$/, 'detail'], [/^\/api\/labels$/, 'labels']],
   'captain-runs': [[/^\/api\/backtests$/, 'backtests'], [/^\/api\/backtests\/[^?]+$/, 'backtest'], [/^\/api\/runs\//, 'run']],
   'captain-compare': [[/^\/api\/backtests$/, 'backtests'], [/\/compatibility$/, 'compat'], [/\/histogram/, 'hist'], [/\/queries\?/, 'queries0'], [/^\/api\/runs\/[^?]+\?v=/, 'run']],
 };
