@@ -238,6 +238,19 @@ def plan_serve(ctx: Context, target: dict, pipeline_ref: str, env_name: str) -> 
 
 
 def execute_serve(ctx: Context, target: dict, plan: list[dict]) -> dict:
+    """Run a serving plan. A cloud's refusal comes back as one sentence naming the step, not a traceback."""
+    try:
+        return _execute_serve(ctx, target, plan)
+    except Exception as e:  # noqa: BLE001
+        resp = getattr(e, "response", None)
+        if isinstance(resp, dict) and resp.get("Error"):
+            err = resp["Error"]
+            op = getattr(e, "operation_name", "the call")
+            raise RuntimeError(f"{target.get('kind')} refused {op}: {err.get('Message') or err.get('Code')}") from None
+        raise
+
+
+def _execute_serve(ctx: Context, target: dict, plan: list[dict]) -> dict:
     from . import cloud
 
     out = {}

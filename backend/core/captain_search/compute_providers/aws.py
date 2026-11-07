@@ -252,6 +252,8 @@ class SageMakerProvider(_AWS):
     """Serving only. Deploys go through compute.plan_serve and compute.execute_serve."""
     kind, label = "aws-sagemaker", "AWS SageMaker endpoint"
     purposes = ["serve"]
+    # Captain's AWS account, us-west-1, ml.t2.medium: demo-bm25@v1 deployed, /invocations matched local results, deleted.
+    live_tested = "2026-11-07"
     can_logs = can_cancel = False
     fields = [
         {"name": "image", "label": "Serving image URI (ECR)", "required": True},
