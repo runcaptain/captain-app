@@ -12,6 +12,8 @@ import { shared, setShared, openOverlay, run, layout } from "herdr";
 import { icon } from "./kit/icons.js";
 import { api, workspace } from "./kit/cst.js";
 import { loadExplorer, words, childKinds, nodeIcon, nodeName, nodeKey, currentScope } from "./kit/scopes.js";
+import { MlflowList } from "./kit/mlflow.js";
+import { Brand } from "./kit/brands.js";
 
 const INDENT = 12;
 // A click this soon after the tree appears, or after its rows moved, is ignored (see meant()).
@@ -26,7 +28,7 @@ const ADD_ENGINE = DIALOG({ action: "add", kind: "engine", type: "engine", paren
 // The experiments list shows this many, then "Show all N" (which opens Runs).
 const FIRST = 20;
 // Folded until opened: a long list shouldn't push the tree down on first look.
-const START_CLOSED = new Set(["all-experiments"]);
+const START_CLOSED = new Set(["all-experiments", "mlflow"]);
 
 export class Explorer {
   constructor() {
@@ -37,10 +39,14 @@ export class Explorer {
     this.menu = null;
     this.loading = false;
     this.rev = null;
+    // MLflow, read-only (kit/mlflow.js): read the first time its heading opens, so a workspace without it pays nothing.
+    this.mlflow = new MlflowList({ id: "ex-ml", onSetup: () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "mlflow" } }) });
+    this.mlflowLoaded = false;
   }
 
   start(cx) {
     this.load(cx);
+    if (this.isOpen("mlflow")) this.openMlflow(cx); // left open last time
     // A dialog that changed the tree bumps shared "captain.explorer.rev"; the services' tree is re-read now and then.
     cx.timer.every(1000, (cx) => {
       const rev = shared("captain.explorer.rev") ?? null;
@@ -86,6 +92,34 @@ export class Explorer {
     const all = { ...(shared("captain.explorer.folds") ?? {}) };
     all[ws] = { ...(all[ws] ?? {}), [key]: !this.isOpen(key) };
     setShared("captain.explorer.folds", all);
+  }
+
+  /** The MLflow heading: opens and closes like the lists above it (remembered per workspace), through the same click
+   *  guard, and reads MLflow the first time it opens. */
+  toggleMlflow(cx) {
+    if (!this.meant()) return;
+    this.toggle("mlflow");
+    if (this.isOpen("mlflow")) this.openMlflow(cx);
+    cx.notify();
+  }
+
+  openMlflow(cx) {
+    if (this.mlflowLoaded) return;
+    this.mlflowLoaded = true;
+    this.mlflow.load(cx);
+  }
+
+  mlflowRow(c) {
+    const open = this.isOpen("mlflow");
+    return v_flex().w_full()
+      .child(h_flex().id("ex-mlflow").h(26).flex_none().pl(8).pr(6).gap(5).items_center().cursor_pointer()
+        .bg(c.surface).text_color(c.navy).text_size(12.5).font_medium().hover((s) => s.bg(c.surface2))
+        .tooltip("Experiments, runs and registered models from MLflow, read-only")
+        .on_click((_e, cx) => this.toggleMlflow(cx))
+        .child(div().size(12).flex_none().flex().items_center().justify_center().text_color(c.grey500).child(svg(icon(open ? "chevron-down" : "chevron-right")).size(11)))
+        .child(Brand(c, "mlflow", 13))
+        .child(div().flex_1().min_w(0).truncate().child("MLflow")))
+      .when(open, (e) => e.child(div().pl(10).child(this.mlflow.render(c, 220))));
   }
 
   // Whether the engine page is the section on show (the sections stack's active child).
@@ -238,6 +272,11 @@ export class Explorer {
           .hover((s) => s.text_color(c.navy)).on_click((_e, cx) => { this.menu = this.menu === "top" ? null : "top"; cx.notify(); })
           .child(svg(icon("plus")).size(12))))
       .when(this.menu === "top", (e) => e.child(this.menuList(c, "top", top, 8)))
-      .children(this.shown().map((n, i) => this.row(c, n, 0, null, `t${i}`)));
+      // MLflow goes after Projects, before the Scope model row.
+      .children(this.shown().flatMap((n, i) => {
+        const r = this.row(c, n, 0, null, `t${i}`);
+        return n.kind === "group" && n.type === "project" ? [r, this.mlflowRow(c)] : [r];
+      }))
+      .when(!this.shown().some((n) => n.kind === "group" && n.type === "project"), (e) => e.child(this.mlflowRow(c)));
   }
 }
