@@ -74,7 +74,7 @@ captain/views/<name>/
 - Don't commit a `kit/` folder: Captain puts its kit there when it loads the view, so a view always gets the kit of
   the Captain it runs in.
 
-`cst view new <name>` scaffolds that folder from the template in `defaults/captain/view-template/` (it shows a
+`cst view new <name>` scaffolds that folder from the template in `backend/core/captain_search/view_template/` (it shows a
 dataset's rows in the result grid, filtered to the Explorer's pick).
 
 ### Checking it
