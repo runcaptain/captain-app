@@ -133,7 +133,7 @@ export class DatasetPage {
     this.rowsFor = key;
     const path = `/api/datasets/${enc(d.name)}/rows`;
     const extra = { v: d.version, file: this.file ?? undefined };
-    this.rows = new ResultGrid({ id: "ds-rows", name: d.name, searchable: true, load: (q) => api(`${path}${query({ ...q, ...extra })}`, { timeout: 60 }) });
+    this.rows = new ResultGrid({ id: "ds-rows", name: d.name, searchable: true, openRow: this.openRow ?? null, load: (q) => api(`${path}${query({ ...q, ...extra })}`, { timeout: 60 }) });
     this.rows.fetch(cx);
   }
 

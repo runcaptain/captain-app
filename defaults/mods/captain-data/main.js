@@ -111,6 +111,7 @@ export default class CaptainData extends View {
     const p = layoutProps?.() ?? {};
     if (p.tab === "models" || p.tab === "labels" || p.tab === "tables") this.tab = p.tab;
     if (p.pageTab) this.page.tab = p.pageTab;
+    if (Number.isInteger(p.openRow)) this.page.openRow = p.openRow; // a sample row to open, for screenshots
     if (p.dataset) this.wanted = String(p.dataset); // a dataset to open instead of the first
     if (p.find) this.lib.find.set_value(String(p.find)); // a search to start with
     if (p.flatAll) this.lib.flatAll = true;

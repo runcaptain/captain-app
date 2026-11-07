@@ -19,7 +19,7 @@ block_of() { case "$1" in captain-project) echo project ;; captain-data) echo da
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:samplefiles" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
+    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:samplefiles" "captain-data:samplerow" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
     captain-runs) EXTRA+=("captain-runs:jobs") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
@@ -171,6 +171,7 @@ props_of() {
     captain-compare:side) python3 tests/mod-render/first-query.py "$CSTH" ;;
     captain-data:notebook) echo '{"tab": "notebooks", "notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:models) echo '{"tab": "models"}' ;;
+    captain-data:samplerow) echo '{"pageTab":"sample","dataset":"shot-multifile","openRow":2}' ;;
     captain-project:choose) echo '{"chooseModels": true}' ;;
     captain-data:models-attach) echo '{"tab": "models", "registryAttach": true}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;

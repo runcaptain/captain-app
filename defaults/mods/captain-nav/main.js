@@ -58,12 +58,11 @@ const TASK_ENTRIES = [
   ["mlflow", "Connect MLflow", "mlflow tracking experiments models registry", "flask-conical"],
   ["compute", "Add a place to run work", "compute cloud run backtests serve", "boxes"],
   ["handoff", "Hand off a candidate", "promote deploy ship release", "send"],
-  ["backtest", "Run a backtest", "compare evaluate offline experiment ndcg", "flask-conical"],
+  ["backtest", "Run a backtest", "compare evaluate offline experiment ndcg what if settings tune knobs sweep sandbox", "flask-conical"],
   ["grading", "Start grading", "judgments labels relevance human", "square-check"],
   ["dataset-class", "New dataset class", "class type role catalog queries judgments", "tag"],
   ["rankings", "Compare your own rankings", "bring import rankings results system offline compare evaluate", "git-compare"],
   ["explain", "Explain a query", "debug why ranking stage score trace query debugger", "layers"],
-  ["sandbox", "What if...", "sandbox sweep tune knobs settings parameters try offline what if", "activity"],
   ["demo", "Try the demo store", "sample example data", "sparkles"],
 ];
 // New workspace: where it keeps its work, then a drop zone, then an optional model registry (captain-setup).

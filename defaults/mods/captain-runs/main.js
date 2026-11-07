@@ -426,9 +426,9 @@ export default class CaptainRuns extends View {
         .child(Button(c, "bt-prompt", "Copy prompt", (_e, cx) => copyPrompt(cx, backtestPrompt(name, b, r)), { kind: "quiet", small: true })))
       .child(h_flex().flex_wrap().gap(16).text_size(12).text_color(c.grey900)
         .children((b.arms ?? []).map((a, i) => h_flex().gap(6).items_center().child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(named(c, a))
-          // What if... (captain-sandbox): try other settings of this arm's pipeline.
+          // Backtest settings (captain-sandbox): try other settings of this arm's pipeline.
           .child(div().id(`bt-whatif-${i}`).text_size(11.5).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
-            .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: String(a) } })).child("What if..."))))
+            .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: String(a) } })).child("Backtest settings"))))
         .child(div().child(b.preregistration?.primary_metric ? `Judged on ${metricWords(b.preregistration.primary_metric)}${b.preregistration.mde ? `, looking for a change of at least ${b.preregistration.mde}` : ""}` : "")))
       .child(h_flex().flex_wrap().gap(6).children((b.runs ?? []).map((x) => {
         const on = x.version === this.detail.runV;

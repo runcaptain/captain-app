@@ -150,7 +150,7 @@ export default class Engine extends View {
       .child(div().px(14).py(8).text_size(12).font_semibold().text_color(c.grey500).child("PIPELINES"))
       .child(pipes.length ? v_flex().border_t(1).border_color(c.rule).children(pipes.map((x, i) => h_flex().child(div().flex_1().min_w(0).child(this.row(c, `eng-pl-${i}`, `${x.name}@v${x.latest ?? 1}`, x.description ?? "", [x.engine, x.repro_status && x.repro_status.replace(/-/g, " ")])))
         .child(div().id(`eng-whatif-${i}`).px(14).text_size(12).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
-          .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: x.name } })).child("What if..."))))
+          .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: x.name } })).child("Backtest settings"))))
         : div().px(14).pb(8).text_size(12.5).text_color(c.grey500).child("No pipeline versions here yet."))
       .child(div().px(14).pt(14).pb(8).text_size(12).font_semibold().text_color(c.grey500).child("MODELS"))
       .child(models.length ? v_flex().border_t(1).border_color(c.rule).children(models.map((x, i) => this.row(c, `eng-md-${i}`, x.name ?? x.id, [x.architecture, x.brand].filter(Boolean).join(", "), [x.version != null ? `v${x.version}` : null, when(x.created)])))

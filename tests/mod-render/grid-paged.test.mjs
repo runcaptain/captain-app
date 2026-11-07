@@ -85,7 +85,7 @@ assert.ok(textOf(g.render(c)).join(' | ').includes('That WHERE does not parse.')
 // A row clicked: every column in full, the list as JSON.
 g.whereBox.set_value('');
 await click(g, 'gwhere-p');
-g.openRow = 0;
+g.toggleRow(0);
 t = textOf(g.render(c)).join(' | ');
-assert.ok(t.includes('Row 1') && t.includes('"a",'), 'row in full');
+assert.ok(t.includes('Row 1') && g.rowText.state.value().includes('"a",'), 'row in full, as selectable text');
 console.log('grid-paged test: ok');

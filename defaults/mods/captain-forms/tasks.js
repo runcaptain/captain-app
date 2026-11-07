@@ -2,7 +2,7 @@
 // the palette and onboarding all open these. The CLI is for agents; nothing here shows
 // a command name or a flag.
 import { api, connectionsChanged } from "./kit/cst.js";
-import { exec, home, setShared } from "herdr";
+import { exec, home, setShared, openOverlay } from "herdr";
 
 const list = async (path, map) => {
   const r = await api(path);
@@ -261,21 +261,29 @@ export const TASKS = [
   },
   {
     id: "backtest", label: "Run a backtest", icon: "flask-conical",
-    about: "Compare two versions of your search on the same queries, and see whether the difference is real.",
+    about: "Compare two versions of your search on the same queries, or try other settings of one version, and see whether the difference is real.",
     fields: [
-      { key: "name", label: "Name", placeholder: "tuned-vs-current", required: true, help: "Letters, digits and dashes." },
-      { key: "a", label: "Compare", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet." },
-      { key: "b", label: "With", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet." },
-      { key: "mode", label: "Shoppers", kind: "choice", default: "simulated",
+      { key: "kind", label: "What to test", kind: "choice", default: "versions",
+        options: [{ value: "versions", label: "Two versions" }, { value: "settings", label: "Other settings of one version" }] },
+      { key: "name", label: "Name", placeholder: "tuned-vs-current", required: true, help: "Letters, digits and dashes.", when: (v) => v.kind !== "settings" },
+      { key: "a", label: "Compare", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet.", when: (v) => v.kind !== "settings" },
+      { key: "b", label: "With", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet.", when: (v) => v.kind !== "settings" },
+      { key: "pipeline", label: "Version", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet.", when: (v) => v.kind === "settings",
+        help: "Captain tries other values of its numeric settings, a quick pass on a sample of queries first." },
+      { key: "mode", label: "Shoppers", kind: "choice", default: "simulated", when: (v) => v.kind !== "settings",
         options: [{ value: "simulated", label: "Simulated shoppers" }, { value: "historic", label: "Replay logged searches" }] },
       { key: "queries", label: "Queries", kind: "choice", required: true, options: () => byRole("queries"), empty: "No query sets yet. Import one first." },
       { key: "judgments", label: "Judgments", kind: "choice", required: true, options: () => byRole("judgments"), empty: "No judgments yet. Import or grade some first." },
       { key: "logs", label: "Logged searches", kind: "choice", required: true, when: (v) => v.mode === "historic", options: () => byRole("events"), empty: "No logs yet. Import some first." },
       { key: "hypothesis", label: "What do you expect, and why", kind: "long", required: true, placeholder: "The tuned ranker finds more relevant products for long queries",
-        help: "Written down before the run, so the result can't move the goalposts." },
-      { key: "mde", label: "Smallest gain worth acting on", default: "0.003", help: "In nDCG@10. Smaller differences count as noise." },
+        help: "Written down before the run, so the result can't move the goalposts.", when: (v) => v.kind !== "settings" },
+      { key: "mde", label: "Smallest gain worth acting on", default: "0.003", help: "In nDCG@10. Smaller differences count as noise.", when: (v) => v.kind !== "settings" },
     ],
     submit: async (v) => {
+      if (v.kind === "settings") {
+        openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: v.pipeline, queries: v.queries, judgments: v.judgments } });
+        return { ok: true, message: `Trying settings of ${String(v.pipeline).split("@")[0]}` };
+      }
       if (v.a === v.b) return { ok: false, error: "Pick two different versions to compare." };
       const plan = await api("/api/backtests", { body: {
         name: v.name.trim(), arms: [v.a, v.b], queries: v.queries, judgments: v.judgments, hypothesis: v.hypothesis.trim(),

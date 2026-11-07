@@ -2,7 +2,7 @@
 // opens it, with the project as the pick (shared "captain.scope" {kind: "project"}). From GET /api/projects/{id}/home:
 // its datasets, pipelines, models (registry and MLflow), notebooks, recent runs, investigations and connections, each
 // opening where it lives: a dataset in Data, a run in Comparisons, an investigation in Investigations, a notebook, a
-// model or a connection in Data's tab for it, a pipeline in What if.
+// model or a connection in Data's tab for it, a pipeline in Backtest settings.
 // Choose models (Edgar, 2026-11-07: "change which models were included"): every registry model, by brand, each with a
 // box. A whole brand includes its future models too (PUT /api/projects/{id} brands). One model is put in or left out
 // on its own (POST /api/projects/assign), which beats the brand rule.
@@ -181,7 +181,7 @@ export default class ProjectHome extends View {
           () => go("comparisons", { backtest: r.backtest, version: Number(String(r.run ?? "").split("@v")[1]) || undefined })),
         `No runs yet. Run a backtest on one of its pipelines.`))
       .child(this.section(c, "pipelines", "Pipelines", h.pipelines ?? [],
-        (p, i) => this.row(c, `ph-pl-${i}`, `${p.name}@v${p.version ?? 1}`, `Try other settings in What if... (by ${p.created_by ?? "?"} ${day(p.created_at)})`, [],
+        (p, i) => this.row(c, `ph-pl-${i}`, `${p.name}@v${p.version ?? 1}`, `Backtest other settings (by ${p.created_by ?? "?"} ${day(p.created_at)})`, [],
           () => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: p.name } })),
         `No pipelines yet. ${joins}`))
       .child(this.section(c, "models", "Models", models,

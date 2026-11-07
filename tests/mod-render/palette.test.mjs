@@ -21,7 +21,7 @@ test('every Captain palette entry is listed once, with an icon', () => {
   const ids = all.map((e) => e.id);
   assert.equal(new Set(ids).size, ids.length, `duplicate ids: ${ids.filter((x, i) => ids.indexOf(x) !== i)}`);
   const titles = all.map((e) => e.title);
-  for (const t of ['Compare your own rankings', 'Connect MLflow', 'Explain a query', 'What if...', 'New workspace...', 'Cloud and compute', 'New investigation', 'Import a dataset']) {
+  for (const t of ['Compare your own rankings', 'Connect MLflow', 'Explain a query', 'New workspace...', 'Cloud and compute', 'New investigation', 'Import a dataset']) {
     assert.ok(titles.includes(t), `${t} is in the palette`);
   }
   const captain = all.filter((e) => e.group === 'Captain');

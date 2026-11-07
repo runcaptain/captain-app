@@ -1,11 +1,11 @@
-// CAPTAIN: What if... (plan 1, backend/docs/api.md "What-if sandbox"). Try settings of a pipeline offline before an
+// CAPTAIN: Backtest settings, formerly What if... (opened from Run a backtest, "Other settings of one version"; plan 1, backend/docs/api.md "What-if sandbox"). Try settings of a pipeline offline before an
 // A/B test: up to three knobs from its spec (numeric paths, plus spec.tunables when declared), each with values or a
 // min:max:steps range, over queries and judgments. POST /api/sandbox/sweep runs a quick pass on a sample, then the best
 // on every query. One knob draws mean nDCG against its value with interval whiskers and the current value marked; two
 // draw a heat grid. Full-pass cells carry verdicts and slice flips. A picked cell can show its ripple (POST
 // /api/sandbox/ripple: moved most, regressions, a must-not-break list) or become the next version (POST
 // /api/sandbox/promote), then a backtest against the current one.
-// Props: {pipeline?}.
+// Props: {pipeline?, queries?, judgments?}.
 // Test hook (test windows only, shared "app.testWindow"): opened bare, shared "captain.sandbox.preview" = [{pipeline,
 // knobs: {path: "values"}, sample?}, ...] runs a sweep on open, the next entry each time, so a real-window check can
 // shoot the line and the grid.
@@ -49,18 +49,22 @@ export default class Sandbox extends View {
   init(_props, cx) {
     this.p = props() ?? {};
     this.pipeline = this.p.pipeline ? String(this.p.pipeline).split("@")[0] : null;
+    const bare = (x) => (x ? String(x).replace(/@v?\d+$/, "") : null);
     this.spec = null; this.knobs = []; this.states = {};
     this.queries = null; this.judgments = null;
     this.result = null; this.busy = null; this.error = null; this.progress = null;
     this.cell = null; this.ripple = null; this.promoted = null;
     this.mustNot = InputState.new({ placeholder: "e.g. running shoes, rain jacket" });
     cx.spawn(async (cx) => {
-      const [p, d] = await Promise.all([api("/api/pipelines"), api("/api/datasets")]);
+      const [p, d, cl] = await Promise.all([api("/api/pipelines"), api("/api/datasets"), api("/api/dataset-classes")]);
       this.pipelines = p.ok ? p.data ?? [] : [];
       this.datasets = d.ok ? d.data ?? [] : [];
-      const of = (k) => this.datasets.filter((x) => kindOf(x) === k).map((x) => x.name);
-      this.queries = of("queries").find((n) => !n.includes("/")) ?? of("queries")[0] ?? null;
-      this.judgments = of("judgments").find((n) => !n.includes("/")) ?? of("judgments")[0] ?? null;
+      // A dataset's role comes from its classes (as in Run a backtest), else its kind.
+      const roles = new Map((cl.ok ? cl.data?.classes ?? [] : []).map((k) => [k.name, k.role]));
+      for (const x of this.datasets) x.role = (x.classes ?? []).map((k) => roles.get(k)).find((r) => r === "queries" || r === "judgments") ?? kindOf(x);
+      const of = (k) => this.names(k);
+      this.queries = bare(this.p.queries) ?? of("queries").find((n) => !n.includes("/")) ?? of("queries")[0] ?? null;
+      this.judgments = bare(this.p.judgments) ?? of("judgments").find((n) => !n.includes("/")) ?? of("judgments")[0] ?? null;
       const pre = !this.p.pipeline && shared("app.testWindow") === true ? shared("captain.sandbox.preview") : null;
       const run = Array.isArray(pre) && pre.length ? pre[(Number(shared("captain.sandbox.preview.at")) || 0) % pre.length] : null;
       if (run) { setShared("captain.sandbox.preview.at", (Number(shared("captain.sandbox.preview.at")) || 0) + 1); this.pipeline = run.pipeline; this.sample = run.sample; }
@@ -76,6 +80,8 @@ export default class Sandbox extends View {
       cx.notify();
     });
   }
+
+  names(role) { return (this.datasets ?? []).filter((x) => x.role === role).map((x) => x.name); }
 
   async loadSpec(cx) {
     this.spec = null; this.knobs = []; this.result = null; this.cell = null;
@@ -114,7 +120,7 @@ export default class Sandbox extends View {
       if (!v) { this.error = `Write ${k.path}'s values as 1, 1.2, 1.5 or a range like 0.8:2:4.`; cx.notify(); return; }
       knobs[k.path] = v;
     }
-    if (!this.pipeline || !this.queries || !this.judgments) { this.error = "Pick a pipeline, its queries and its judgments."; cx.notify(); return; }
+    if (!this.pipeline || !this.queries || !this.judgments) { this.error = "Pick a version, its queries and its judgments."; cx.notify(); return; }
     if (!Object.keys(knobs).length && !this.spec?.tunables) { this.error = "Pick at least one knob."; cx.notify(); return; }
     this.busy = "sweep"; this.error = null; this.result = null; this.cell = null; this.ripple = null; this.promoted = null; this.progress = null; cx.notify();
     cx.spawn(async (cx) => {
@@ -145,7 +151,7 @@ export default class Sandbox extends View {
   promote(cx) {
     this.busy = "promote"; this.error = null; cx.notify();
     cx.spawn(async (cx) => {
-      const r = await api("/api/sandbox/promote", { body: { pipeline: this.pipeline, values: this.cell.values, note: `From What if: ${Object.entries(this.cell.values).map(([k, v]) => `${k} ${v}`).join(", ")}` } });
+      const r = await api("/api/sandbox/promote", { body: { pipeline: this.pipeline, values: this.cell.values, note: `From a settings backtest: ${Object.entries(this.cell.values).map(([k, v]) => `${k} ${v}`).join(", ")}` } });
       this.busy = null;
       if (!r.ok) { this.error = plainError(r.error, "Captain couldn't make the next version."); cx.notify(); return; }
       this.promoted = r.data;
@@ -164,25 +170,34 @@ export default class Sandbox extends View {
   }
 
   form(c) {
-    const names = (k) => (this.datasets ?? []).filter((x) => kindOf(x) === k).map((x) => x.name);
+    const names = (k) => this.names(k);
     const row = (label, child) => v_flex().gap(6).child(div().text_size(12.5).font_semibold().text_color(c.navy).child(label)).child(child);
+    const none = (text) => div().text_size(12.5).text_color(c.grey500).child(text);
+    const pills = (k, id, cur, set, empty) => names(k).length
+      ? h_flex().flex_wrap().gap(6).children(names(k).map((n) => this.pill(c, `${id}-${n}`, n, cur === n, () => set(n))))
+      : none(empty);
+    // A trained model from a registry has no settings to turn: say so, and offer what fits instead.
+    const nothing = this.offer && !this.offer.length;
+    const ready = this.pipeline && this.queries && this.judgments && (this.knobs.length > 0 || Boolean(this.spec?.tunables));
     return v_flex().gap(14).p(16).border_1().border_color(c.rule)
-      .child(row("Pipeline", !this.pipelines ? div().h(28).w(200).bg(c.surface2) : h_flex().flex_wrap().gap(6).children(this.pipelines.map((p) =>
+      .child(row("Version", !this.pipelines ? div().h(28).w(200).bg(c.surface2) : h_flex().flex_wrap().gap(6).children(this.pipelines.map((p) =>
         this.pill(c, `sb-pipe-${p.name}`, p.name, this.pipeline === p.name, (cx) => { this.pipeline = p.name; cx.spawn(async (cx) => this.loadSpec(cx)); }, `v${p.latest}`)))))
       .child(row(`Knobs, up to ${MAX_KNOBS}`, !this.offer ? div().h(28).w(200).bg(c.surface2) : this.offer.length
         ? h_flex().flex_wrap().gap(6).children(this.offer.map((k) => this.pill(c, `sb-knob-${k.path}`, k.path, this.knobs.some((x) => x.path === k.path), (cx) => this.toggleKnob(cx, k), k.current != null ? `now ${k.current}` : null)))
-        : div().text_size(12.5).text_color(c.grey500).child("This pipeline has no numeric settings to try.")))
+        : v_flex().gap(8).items_start()
+          .child(none(`${this.pipeline} has no numeric settings to try. A trained model from a registry is one fixed version. Compare it with another version instead.`))
+          .child(Button(c, "sb-versions", "Compare two versions", () => { closeOverlay(props()?.overlay); openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "backtest", values: { kind: "versions", a: `${this.pipeline}@v${this.version ?? 1}` } } }); }, { small: true }))))
       .children(this.knobs.map((k) => h_flex().gap(10).items_center()
         .child(div().w(160).flex_none().text_size(12.5).font_family(MONO).text_color(c.navy).child(k.path))
         .child(div().id(`sb-v-${k.path}`).flex_1().h(30).flex().items_center().px(10).border_1().border_color(c.grey300).cursor_text()
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.states[k.path]).w_full().text_size(12.5).text_color(c.navy)))
         .child(div().text_size(11.5).text_color(c.grey500).child("values, or min:max:steps"))))
-      .child(h_flex().gap(16)
-        .child(v_flex().flex_1().min_w(0).child(row("Queries", h_flex().flex_wrap().gap(6).children(names("queries").map((n) => this.pill(c, `sb-q-${n}`, n, this.queries === n, () => { this.queries = n; }))))))
-        .child(v_flex().flex_1().min_w(0).child(row("Judgments", h_flex().flex_wrap().gap(6).children(names("judgments").map((n) => this.pill(c, `sb-j-${n}`, n, this.judgments === n, () => { this.judgments = n; })))))))
+      .when(!nothing, (e) => e.child(h_flex().gap(16)
+        .child(v_flex().flex_1().min_w(0).child(row("Queries", pills("queries", "sb-q", this.queries, (n) => { this.queries = n; }, "No query sets yet. Import one in Data and signals."))))
+        .child(v_flex().flex_1().min_w(0).child(row("Judgments", pills("judgments", "sb-j", this.judgments, (n) => { this.judgments = n; }, "No judgments yet. Import or grade some first.")))))
       .child(h_flex().gap(10).items_center()
-        .child(Button(c, "sb-run", this.busy === "sweep" ? (this.progress != null ? `Trying... ${Math.round(this.progress * 100)}%` : "Trying...") : "Try these settings", (_e, cx) => this.sweep(cx), { kind: "primary", disabled: Boolean(this.busy) }))
-        .child(div().text_size(12).text_color(c.grey500).child("A quick pass on a sample first, then the best settings on every query.")));
+        .child(Button(c, "sb-run", this.busy === "sweep" ? (this.progress != null ? `Trying... ${Math.round(this.progress * 100)}%` : "Trying...") : "Try these settings", (_e, cx) => this.sweep(cx), { kind: "primary", disabled: Boolean(this.busy) || !ready }))
+        .child(div().text_size(12).text_color(c.grey500).child(ready ? "A quick pass on a sample first, then the best settings on every query." : "Pick at least one setting, the queries and the judgments."))));
   }
 
   // One knob: mean nDCG against the value, each point with its interval, the current value marked.
@@ -305,8 +320,8 @@ export default class Sandbox extends View {
       .child(h_flex().h(56).flex_none().px(20).gap(12).items_center().border_b(1).border_color(c.rule)
         .child(div().size(28).flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("flask-conical")).size(15)))
         .child(v_flex().flex_1().min_w(0)
-          .child(div().text_size(15).font_semibold().child("What if..."))
-          .child(div().text_size(12).text_color(c.grey500).child("Try other settings of a pipeline on your graded queries, before an A/B test.")))
+          .child(div().text_size(15).font_semibold().child("Backtest settings"))
+          .child(div().text_size(12).text_color(c.grey500).child("Try other values of one version's settings on your graded queries, then backtest the best against today's.")))
         .child(div().id("sb-close").text_size(12.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
           .on_click(() => closeOverlay(props()?.overlay)).child("Close")))
       .child(div().id("sb-body").flex_1().min_h(0).overflow_y_scroll().child(v_flex().px(20).py(16).gap(16)
