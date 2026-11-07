@@ -59,7 +59,7 @@ CST_HOME=$WORK/cst "$CST" demo seed >/dev/null 2>&1
 # Every task, with values that bring out the fields that only appear after a choice.
 PREVIEW=$(node --import ./tests/mod-render/stubs/register.mjs -e '
   const { TASKS } = await import("./defaults/mods/captain-forms/tasks.js");
-  const extra = { dataset: [{ from: "sql" }], cloud: [{ provider: "aws", auth: "keys" }], compute: [{ kind: "aws-batch" }] };
+  const extra = { dataset: [{ from: "sql" }], cloud: [{ provider: "aws", auth: "keys" }], compute: [{ kind: "aws-batch" }], database: [{ kind: "snowflake" }, { kind: "databricks" }] };
   const list = [];
   for (const t of TASKS) { list.push(t.id); for (const values of extra[t.id] ?? []) list.push({ task: t.id, values }); }
   console.log(JSON.stringify(list));')

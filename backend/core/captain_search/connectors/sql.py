@@ -67,6 +67,20 @@ def _default_port(engine: str) -> int:
     return {"postgres": 5432, "postgresql": 5432, "redshift": 5439, "mysql": 3306, "trino": 8080}.get(engine, 5432)
 
 
+def _returns_rows(sql: str, engine: str) -> bool:
+    import sqlglot
+    from sqlglot import exp
+
+    from .guard import DIALECTS
+
+    try:
+        tree = sqlglot.parse_one(sql, read=DIALECTS.get(engine))
+    except Exception:  # noqa: BLE001
+        return False
+    return isinstance(tree, (exp.Select, exp.SetOperation, exp.Describe, exp.Show)) or (
+        isinstance(tree, exp.Query) and not tree.find(exp.Insert, exp.Update, exp.Delete))
+
+
 @contextlib.contextmanager
 def open_engine(conn: Connection):
     """A SQLAlchemy engine for a connection, with secrets filled in and the ssh tunnel open. Disposed on exit."""
@@ -103,11 +117,17 @@ def run_sql(conn: Connection, sql: str, *, limit: int | None = None, allow_large
     with tunnel as real_url:
         eng = create_engine(real_url)
         try:
-            with eng.connect() as c:
+            # Writable connections run in a transaction that commits. Reads never commit.
+            with (eng.begin() if conn.writable else eng.connect()) as c:
                 if not conn.writable and conn.engine in ("postgres", "postgresql", "redshift"):
                     # belt and braces: the database itself refuses writes in this transaction
                     c.exec_driver_sql("SET TRANSACTION READ ONLY")
-                res = c.execution_options(stream_results=True).execute(text(sql), params or {})
+                # Stream reads in batches. A server-side cursor can only wrap a statement that returns rows, so a write
+                # on a writable Postgres connection ran into "DECLARE ... CURSOR FOR create table".
+                reads = not conn.writable or _returns_rows(sql, conn.engine)
+                res = c.execution_options(stream_results=reads).execute(text(sql), params or {})
+                if not res.returns_rows:
+                    return Result(table=pa.table({}), truncated=False, elapsed_ms=int((time.time() - t0) * 1000))
                 cols = list(res.keys())
                 rows: list[tuple] = []
                 truncated = False

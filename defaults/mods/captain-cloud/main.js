@@ -9,6 +9,7 @@ import { api, watchWorkspace } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Empty, Problem } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
+import { Brand } from "./kit/brands.js";
 
 const SHORT = { aws: "AWS", gcp: "Google Cloud", azure: "Azure", local: "This computer" };
 
@@ -57,7 +58,7 @@ export default class CaptainCloud extends View {
     const status = t ? (t.ok ? `Signed in as ${t.identity ?? "?"}, checked ${ago(t.at) ?? "earlier"}` : `Last check failed ${ago(t.at) ?? ""}: ${t.error ?? ""}`) : "Not checked yet";
     return v_flex().gap(4).pb(10).border_b(1).border_color(c.rule)
       .child(h_flex().gap(8).items_center()
-        .child(svg(icon("cloud")).size(15).text_color(c.navy))
+        .child(Brand(c, p.provider, 15))
         .child(div().text_size(13.5).font_semibold().text_color(c.navy).child(p.name))
         .child(Badge(c, SHORT[p.provider] ?? p.label ?? p.provider, "neutral"))
         .when(active, (e) => e.child(Badge(c, "in use", "blue")))
@@ -89,7 +90,7 @@ export default class CaptainCloud extends View {
             : [Empty(c, "No cloud connected", "Add a login for AWS, Google Cloud or Azure. Secrets stay in your keychain.")])))
         .child(Card(c, { title: `Compute targets (${compute.length})`, actions: [Button(c, "compute-add", "Add target", form(["compute", "add"]), { small: true })] },
           ...(compute.length ? compute.map((t) => h_flex().gap(8).items_center().pb(8).border_b(1).border_color(c.rule)
-            .child(svg(icon("server")).size(14).text_color(c.navy))
+            .child(t.provider && t.provider !== "local" ? Brand(c, t.provider, 14) : svg(icon("server")).size(14).text_color(c.navy))
             .child(div().text_size(13).font_semibold().text_color(c.navy).child(t.name))
             .child(Badge(c, t.kind, "neutral"))
             .child(div().flex_1().text_size(12).text_color(c.grey500).child([SHORT[t.provider] ?? t.provider, t.region, t.profile && `login ${t.profile}`].filter(Boolean).join(", ")))

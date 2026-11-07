@@ -55,4 +55,5 @@ include = ["captain_search*"]
 captain_search = ["skills_builtin/*/SKILL.md"]
 
 [tool.pytest.ini_options]
+markers = ["docker: needs a running Docker daemon (real databases in containers)"]
 testpaths = ["tests"]

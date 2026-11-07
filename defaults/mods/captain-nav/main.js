@@ -20,6 +20,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { theme, run, layout, props, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
 import { api, retry, workspace, watchWorkspace } from "./kit/cst.js";
 import { icon } from "./kit/icons.js";
+import { Brand } from "./kit/brands.js";
 import { isDark, palette } from "./kit/tokens.js";
 import { getAppearance, setAppearance } from "./kit/appearance.js";
 
@@ -307,7 +308,7 @@ export default class CaptainNav extends View {
     return h_flex().id("cloud-chip").mx(rail ? 0 : 14).my(4).h(30).gap(8).items_center().cursor_pointer()
       .when(rail, (e) => e.w_full().justify_center()).when(!rail, (e) => e.px(8).border_1().border_color(c.grey300))
       .hover((x) => x.bg(c.surface2)).tooltip(`${text}. ${tip}`).on_click(open)
-      .child(svg(icon("cloud")).size(14).text_color(a ? c.navy : c.grey500))
+      .child(a ? Brand(c, a.provider, 14) : svg(icon("cloud")).size(14).text_color(c.grey500))
       .when(!rail, (e) => e.child(div().flex_1().min_w(0).truncate().text_size(12).text_color(a ? c.navy : c.grey500).child(text)))
       .child(div().size(7).rounded_full().bg(dot));
   }

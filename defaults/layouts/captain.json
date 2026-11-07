@@ -111,7 +111,10 @@
           },
           "window_drag": true,
           "content": {
-            "mod": "tabs"
+            "mod": "tabs",
+            "props": {
+              "inset": false
+            }
           }
         },
         {

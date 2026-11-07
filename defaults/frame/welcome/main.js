@@ -10,7 +10,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar } from "gpui-base";
-import { theme, props, closeOverlay, setShared, keys, openOverlay, appHome, spaces, run } from "herdr";
+import { theme, props, closeOverlay, setShared, keys, openOverlay, spaces, run } from "herdr";
 import { api } from "./kit/cst.js";
 import { Skeleton, ServiceError } from "./kit/ui.js";
 import { isDark, palette } from "./kit/tokens.js";
@@ -155,19 +155,14 @@ export default class Welcome extends View {
   }
 
   pageYours(c) {
-    const home = appHome().replace(/^\/Users\/[^/]+/, "~");
-    return v_flex()
-      .child(this.title(c, "Everything here is a file you can change", "Captain redraws within a second of a save, and so can your agent."))
-      .child(v_flex().gap(8)
-        .child(this.code(c, "y-layouts", `${home}/layouts/`))
-        .child(this.para(c, "The whole window, as JSON: what's on the left, in the middle and on the right."))
-        .child(this.code(c, "y-keys", `${home}/keys.json`))
-        .child(this.para(c, "Every key."))
-        .child(this.code(c, "y-mods", `${home}/mods/`))
-        .child(this.para(c, "Panels and views as small JavaScript programs. The sidebar is one: clone it to change it."))
-        .child(this.code(c, "y-check", "captain-app check <mod folder>"))
-        .child(this.para(c, "Loads a mod once and says exactly what's wrong.")))
-      .child(div().pt(12).child(this.para(c, `${home}/AGENTS.md is the manual. Ask an agent in a shell to read it and change the app for you.`)));
+    const idea = (title, text) => v_flex().gap(6)
+      .child(div().text_size(15).font_semibold().text_color(c.navy).child(title))
+      .child(this.para(c, text));
+    return v_flex().gap(16)
+      .child(this.title(c, "Make Captain your own", "Your coding agent can customize the interface and the data models behind it."))
+      .child(idea("Your interface", "Rearrange your workspace and build custom panels for the way you work."))
+      .child(idea("Your data models", "Define and extend datasets, signals and experiments in code to fit your project."))
+      .child(div().pt(8).child(this.para(c, "Describe what you need to your agent. Keep the changes in code, alongside your work.")));
   }
 
   step(c, s, i) {
@@ -220,6 +215,7 @@ export default class Welcome extends View {
       cx.notify();
     };
     const pages = [(c) => this.setup.body(c), this.pageNav, this.pageShells, this.pageYours, this.pageWork];
+    const customizing = pages[this.page - 1] === this.pageYours;
     return v_flex().id("welcome").size_full().bg(c.surface).text_color(c.navy).font_family("Inter")
       .child(h_flex().h(52).flex_none().px(20).gap(10).items_center().border_b(1).border_color(c.rule).cursor_grab()
         .child(image("mods/captain-nav/captain.png").size(24).flex_none())
@@ -227,19 +223,19 @@ export default class Welcome extends View {
         .child(div().flex_1())
         .children([...Array(PAGES)].map((_, i) => div().w(i + 1 === this.page ? 16 : 6).h(6).bg(i + 1 === this.page ? c.blue : c.grey300)))
         .child(div().w(12))
-        .child(div().id("w-skip").text_size(12.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
-          .on_click(() => this.finish("skipped")).child("Skip")))
+        .when(!customizing, (e) => e.child(div().id("w-skip").text_size(12.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
+          .on_click(() => this.finish("skipped")).child("Skip"))))
       .child(div().flex_1().min_h(0).relative()
         .child(div().id("welcome-body").size_full().overflow_y_scroll()
           .child(div().px(24).pt(22).pb(20).child(pages[this.page - 1].call(this, c))))
         .child(Scrollbar.vertical("welcome-body").absolute().inset_0()))
       .child(h_flex().h(60).flex_none().px(20).gap(8).items_center().border_t(1).border_color(c.rule)
-        .when(this.page > 1, (e) => e.child(this.button(c, "w-back", "Back", false, (_e, cx) => go(this.page - 1, cx))))
+        .when(this.page > 1 && !customizing, (e) => e.child(this.button(c, "w-back", "Back", false, (_e, cx) => go(this.page - 1, cx))))
         .when(this.page === 1 && this.setup.step === "storage", (e) => e.child(div().id("w-later").text_size(12.5).text_color(c.grey500).cursor_pointer()
           .hover((s) => s.text_color(c.navy)).on_click((_e, cx) => go(2, cx)).child("Set this up later")))
         .child(div().flex_1())
         .child(this.page === 1 ? this.setup.footer(c) : this.page < PAGES
-          ? this.button(c, "w-next", "Next", true, (_e, cx) => go(this.page + 1, cx))
+          ? this.button(c, "w-next", customizing ? "Continue" : "Next", true, (_e, cx) => go(this.page + 1, cx))
           : this.button(c, "w-done", "Start", true, () => this.finish("finished"))));
   }
 }

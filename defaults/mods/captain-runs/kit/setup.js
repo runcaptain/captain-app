@@ -11,7 +11,7 @@ import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { pickFolder, openOverlay, run, spaces, shared, setShared } from "herdr";
 import { api } from "./cst.js";
-import { Button } from "./ui.js";
+import { Button, plainError } from "./ui.js";
 import { icon } from "./icons.js";
 
 const CLOUDS = [
@@ -104,7 +104,7 @@ export class StorageSetup {
       const r = await api("/api/storage/check", { body: { uri, profile: this.where === "cloud" ? this.profile : null } });
       this.busy = null;
       if (r.ok) this.check = { ...r.data, uri };
-      else this.error = r.error || "Captain couldn't check that place.";
+      else this.error = plainError(r.error, "Captain couldn't check that place.");
       cx.notify();
     });
   }
@@ -117,11 +117,11 @@ export class StorageSetup {
     cx.spawn(async (cx) => {
       const body = { name, storage_uri: this.check.uri, ...(this.where === "cloud" && this.profile ? { profile: this.profile } : {}) };
       const made = await api("/api/workspaces", { body });
-      if (!made.ok) { this.busy = null; this.error = made.status === 409 ? `There's already a workspace called ${name}.` : made.error; cx.notify(); return; }
+      if (!made.ok) { this.busy = null; this.error = made.status === 409 ? `There's already a workspace called ${name}.` : plainError(made.error, "Captain couldn't make the workspace."); cx.notify(); return; }
       const ws = made.data?.name ?? name;
       const used = await api(`/api/workspaces/${encodeURIComponent(ws)}/use`, { body: {} });
       this.busy = null;
-      if (!used.ok) { this.error = used.error; cx.notify(); return; }
+      if (!used.ok) { this.error = plainError(used.error, "Captain couldn't switch to it."); cx.notify(); return; }
       this.bindSpace(ws);
       this.created = ws;
       this.step = "drop";
@@ -148,11 +148,11 @@ export class StorageSetup {
     cx.notify();
     cx.spawn(async (cx) => {
       const r = await api("/api/datasets/import", { body: { paths, folder: "" } });
-      if (!r.ok || !r.data?.job) { entry.state = "failed"; entry.error = r.error || "Captain couldn't start the import."; cx.notify(); return; }
+      if (!r.ok || !r.data?.job) { entry.state = "failed"; entry.error = plainError(r.error, "Captain couldn't start the import."); cx.notify(); return; }
       const out = await finished(cx, r.data.job, (p) => { entry.progress = p; cx.notify(); });
       entry.state = out.ok ? "done" : "failed";
       entry.result = out.result ?? null;
-      entry.error = out.ok ? null : out.error;
+      entry.error = out.ok ? null : plainError(out.error, "The import didn't finish.");
       cx.notify();
     });
   }
@@ -169,7 +169,7 @@ export class StorageSetup {
       const out = r.ok && r.data?.job ? await finished(cx, r.data.job) : { ok: false, error: r.error || "Captain couldn't attach it." };
       this.busy = null;
       if (out.ok) this.registry = out.result ?? {};
-      else this.error = out.error;
+      else this.error = plainError(out.error, "Captain couldn't attach it.");
       cx.notify();
     });
   }
@@ -248,7 +248,7 @@ export class StorageSetup {
           .child(v_flex().flex_1().gap(6).child(this.label(c, "Bucket")).child(this.input(c, "setup-bucket", this.bucket)))
           .child(v_flex().flex_1().gap(6).child(this.label(c, "Folder in it", true)).child(this.input(c, "setup-prefix", this.prefix)))))
       .when(Boolean(ch), (e) => e.child(v_flex().gap(4).p(10).bg(ch.ok && !ch.existing_workspace ? c.blueLight : c.surface2)
-        .when(Boolean(ch.error), (x) => x.child(this.note(c, ch.error, "fail")))
+        .when(Boolean(ch.error), (x) => x.child(this.note(c, plainError(ch.error, "Captain couldn't reach that place."), "fail")))
         .when(!ch.error, (x) => x.child(this.note(c, ch.can_write ? "Captain can read and write here." : ch.can_read ? "Captain can read here but not write." : "Captain can't read here.", ch.can_write ? "good" : "fail")))
         .when(Boolean(ch.existing_workspace), (x) => x.child(h_flex().gap(10).items_center()
           .child(div().flex_1().min_w(0).child(this.note(c, `This already holds the workspace ${ch.existing_workspace}.`)))
@@ -265,8 +265,8 @@ export class StorageSetup {
       .drag_over((s) => s.border_color(c.blue).bg(c.blueLight))
       .on_drop((event, cx) => this.importPaths(cx, event.paths ?? []))
       .child(svg(icon("upload")).size(28).text_color(c.blue))
-      .child(div().text_size(14).font_semibold().text_color(c.navy).child("Drop files or folders here"))
-      .child(div().text_size(12).text_color(c.grey500).child("CSV, TSV, Parquet or JSON lines, up to 2 GB a file. Folders keep their structure."));
+      .child(div().text_size(14).font_semibold().text_color(c.navy).child("Drag your catalogs, queries, judgments and logs here"))
+      .child(div().px(24).text_size(12).text_color(c.grey500).child("Drop files or whole folders: CSV, TSV, Parquet, JSON or JSON lines. Folders keep their structure, and dropping a file again makes a new version."));
     return v_flex().gap(14)
       .child(div().text_size(18).font_semibold().text_color(c.navy).child("Bring in your work"))
       .child(this.note(c, `Drag your catalogs, queries, judgments and logs in from Finder. They land in ${this.created ?? "this workspace"}, and you can organize them into folders in Data and signals.`))

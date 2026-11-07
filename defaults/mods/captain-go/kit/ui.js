@@ -73,9 +73,22 @@ export function Empty(c, title, body, action) {
 }
 
 /** Something failed: what, in the daemon's words, and a retry. */
+/** An error as people should read it: the backend's sentence, or `fallback` when what came back isn't one (a storage
+ *  key or path like "backtest-runs/x/v1/MANIFEST.yaml", a bare "Not Found" or "HTTP 500", or a tool's or transport's
+ *  output). The same rule desktop-app's screens use (captain-data say()). */
+export function plainError(message, fallback = "Something went wrong.") {
+  const e = String(message ?? "").trim();
+  if (!e) return fallback;
+  if (/^[\w.@-]+(\/[\w.@-]+)+$/.test(e) || /\.(ya?ml|json|parquet|csv)$/i.test(e)) return fallback;
+  if (/^HTTP \d+$/.test(e) || /^(Not Found|Method Not Allowed|Internal Server Error|Bad Request)$/i.test(e)) return fallback;
+  if (/curl|127\.0|localhost|\bport \d|error sending|traceback|engine|daemon/i.test(e)) return fallback;
+  if (/time ?out|timed out/i.test(e)) return "This took too long.";
+  return e;
+}
+
 export function ErrorState(c, message, retry) {
   return h_flex().w_full().p(12).gap(10).items_start().bg(c.failLight).border_1().border_color(c.fail)
-    .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.fail).child(String(message)))
+    .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.fail).child(plainError(message)))
     .when(Boolean(retry), (e) => e.child(retry));
 }
 
