@@ -78,6 +78,20 @@ await until(ex, () => Boolean(ex.mod.ex.tree), 'the Explorer loaded');
 let t = ex.text();
 assert.ok(t.includes('All engines') && t.includes('All experiments') && t.includes('Scope model'), `base tree: ${t}`);
 assert.equal(ex.mod.ex.live, true, 'the Explorer reads the services');
+// Each workspace-wide row says what it holds, in one line (Edgar couldn't tell them apart).
+assert.ok(t.includes("The search and recommendation systems you're improving, across every brand"), 'All engines explains itself');
+assert.ok(t.includes("Every comparison you've run, newest first"), 'All experiments explains itself');
+
+// All engines with none yet: what an engine is, an example, and a button that opens the add dialog.
+const { default: EngineMod } = await import(path.join(await copy('captain-engine'), 'main.js'));
+const none = harness(EngineMod);
+await none.start();
+await until(none, () => none.text().includes('No engines yet'), 'the engines page explains an empty workspace');
+assert.ok(none.text().includes('AptDeco product search'), 'it gives an example');
+globalThis.__overlays = [];
+await none.click('eng-add-first');
+assert.equal(globalThis.__overlays.at(-1)?.mod, 'captain-scope', 'Add your first engine opens the add dialog');
+assert.equal(globalThis.__overlays.at(-1)?.props?.kind, 'engine');
 
 // 2. Add a brand, a site in it, and an engine in the site.
 let h = await act({ action: 'add', kind: 'scope', type: 'brand', parent: null }, (h) => h.mod.name.set_value('Acme Outdoors'));
@@ -99,6 +113,7 @@ await ex.start();
 await until(ex, () => ex.text().includes('Product search'), 'the Explorer shows the new engine');
 t = ex.text();
 for (const name of ['Brands', 'Acme Outdoors', 'Sites', 'US storefront', 'Engines', 'Product search']) assert.ok(t.includes(name), `${name} in the Explorer: ${t}`);
+assert.equal(ex.mod.ex.engineCount(), 1, 'All engines counts the one engine');
 assert.ok(t.indexOf('Acme Outdoors') < t.indexOf('US storefront') && t.indexOf('US storefront') < t.indexOf('Product search'), 'nested in order');
 
 // 4. A click in the Explorer's first moments is ignored (the click that brings the window forward lands on whatever

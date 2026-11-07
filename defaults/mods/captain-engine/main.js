@@ -154,15 +154,23 @@ export default class Engine extends View {
         : div().px(14).text_size(12.5).text_color(c.grey500).child("No models here yet. Attach a model registry to see them."));
   }
 
-  // No engine picked: the workspace's engines, to pick one.
+  // No engine picked (All engines): the workspace's engines, to pick one, and what an engine is when there are none.
   chooser(c) {
-    const es = this.engines;
+    const es = (this.engines ?? []).filter((e) => !e.archived);
+    const add = () => openOverlay({ mod: "captain-scope", kind: "dialog", width: 460, props: { action: "add", kind: "engine", type: "engine", parent: null } });
     return v_flex().size_full().p(24).gap(12)
-      .child(div().text_size(18).font_semibold().text_color(c.navy).child("Engines"))
-      .child(div().text_size(13).text_color(c.grey900).child("Pick an engine in the Explorer, or here, to see its investigations, experiments, runs and versions."))
-      .child(!es ? Skeleton(c, 3) : !es.length
-        ? Empty(c, "No engines yet", "Add one from the Explorer's + menu: name the search or recommendation system you measure.")
-        : v_flex().border_t(1).border_color(c.rule).children(es.filter((e) => !e.archived).map((e, i) => this.row(c, `eng-pick-${i}`, e.name, SERVES[e.type] ?? e.type,
+      .child(h_flex().items_center().gap(12)
+        .child(div().flex_1().text_size(18).font_semibold().text_color(c.navy).child("All engines"))
+        .when(es.length > 0, (e) => e.child(Button(c, "eng-add", "Add engine", add, { small: true }))))
+      .child(div().text_size(13).text_color(c.grey900).child("The search and recommendation systems you're improving, across every brand. Pick one to see its experiments, runs and versions."))
+      .child(!this.engines ? Skeleton(c, 3) : !es.length
+        ? v_flex().id("eng-empty").mt(12).p(24).gap(10).items_center().border_1().border_color(c.rule).bg(c.surface2)
+          .child(svg(icon("search")).size(28).text_color(c.blue))
+          .child(div().text_size(15).font_semibold().text_color(c.navy).child("No engines yet"))
+          .child(div().max_w(460).text_size(13).line_height("20px").text_color(c.grey900).child("An engine is one lasting name for a search or recommendation system. Its models and pipelines change over time; the engine stays, so its history stays together."))
+          .child(div().text_size(12.5).text_color(c.grey500).child("For example: AptDeco product search."))
+          .child(div().pt(4).child(Button(c, "eng-add-first", "Add your first engine", add, { kind: "primary" })))
+        : v_flex().border_t(1).border_color(c.rule).children(es.map((e, i) => this.row(c, `eng-pick-${i}`, e.name, SERVES[e.type] ?? e.type,
           [`${(e.pipelines ?? []).length} pipelines`], (_ev, cx) => { setShared("captain.scope", { kind: "engine", id: e.id, label: e.name }); cx.notify(); }))));
   }
 
