@@ -43,7 +43,7 @@ const until = async (ok, what) => {
 };
 const nb = () => h.mod.nb;
 
-await until(() => nb().conns.length > 0, 'connections loaded');
+await until(() => (nb().conns ?? []).length > 0, 'connections loaded');
 nb().newName.set_value('tools');
 await h.click('nb-new-go');
 await until(() => nb().cells.length > 0 && nb().editors.size > 0, 'a new notebook with a SQL cell');

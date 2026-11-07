@@ -151,7 +151,7 @@ export class SqlTools {
   }
 
   engine(cell) {
-    return this.nb.conns.find((k) => k.name === cell.meta.conn)?.engine;
+    return (this.nb.conns ?? []).find((k) => k.name === cell.meta.conn)?.engine;
   }
 
   loadSnippets(cx, cell) {

@@ -1,7 +1,7 @@
 // CAPTAIN: the things a person makes in Captain, as tasks in plain words. The New menu,
 // the palette and onboarding all open these. The CLI is for agents; nothing here shows
 // a command name or a flag.
-import { api } from "./kit/cst.js";
+import { api, connectionsChanged } from "./kit/cst.js";
 import { exec, home } from "herdr";
 
 const list = async (path, map) => {
@@ -122,6 +122,7 @@ export const TASKS = [
       const r = await api("/api/connections", { body: { name, kind: v.kind, fields, writable: Boolean(v.writable), ...(ctx.saved === name ? { replace: true } : {}) } });
       if (!r.ok) return ok(r, "");
       ctx.saved = name;
+      connectionsChanged(); // Tables, Notebooks and the import wizard relist now, not at their next start
       const t = await api(`/api/connections/${encodeURIComponent(name)}/test`, { body: {}, timeout: 60 });
       if (t.ok && t.data?.ok) return { ok: true, message: `Connected ${name}. It answered in ${Math.round(t.data.ms ?? 0)} ms.` };
       return { ok: false, error: `Saved ${name}, but Captain couldn't reach it: ${t.data?.error ?? t.error ?? "no answer"}. Fix the details and connect again.` };

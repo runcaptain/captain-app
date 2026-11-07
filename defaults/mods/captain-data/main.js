@@ -8,7 +8,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { theme, shared, props as layoutProps } from "herdr";
-import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
+import { api, retry, details, watchWorkspace, watchScope, watchConnections } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button, Badge } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
@@ -117,6 +117,8 @@ export default class CaptainData extends View {
     const p = layoutProps?.() ?? {};
     if (p.tab === "models" || p.tab === "labels" || p.tab === "tables") this.tab = p.tab;
     if (p.pageTab) this.page.tab = p.pageTab;
+    // {importWith: {conn, sql, name}}: the import wizard, open on that query (a layout, or the real-window check).
+    if (p.importWith) cx.timer.after(1500, () => openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { start: p.importWith } }));
     if (p.tab === "tables") this.tables.load(cx);
     if (p.tab === "models") this.models.load(cx);
     if (p.tab === "notebooks") {
@@ -143,7 +145,10 @@ export default class CaptainData extends View {
       if (o?.section === "data" && o.dataset && o.at !== this.opened) {
         this.opened = o.at;
         this.tab = "datasets";
-        if (this.list?.some((d) => d.name === o.dataset)) this.select(cx, o.dataset);
+        // Just imported, or opened from elsewhere: reload the folders and open them down to it.
+        this.lib.revealing = o.dataset;
+        this.lib.load(cx);
+        if (this.list?.some((d) => d.name === o.dataset) && !o.fresh) this.select(cx, o.dataset);
         else { this.wanted = o.dataset; this.load(cx); }
         cx.notify();
       }
@@ -154,6 +159,12 @@ export default class CaptainData extends View {
       this.lib.load(cx);
       if (this.models.regs !== null) this.models.load(cx);
       if (this.tables.conns !== null) this.tables.load(cx);
+      cx.notify();
+    });
+    // A database connected or removed anywhere in the app: relist it here.
+    watchConnections(cx, (cx) => {
+      if (this.tables.conns !== null || this.tab === "tables") this.tables.load(cx);
+      this.nb.loadConns(cx);
       cx.notify();
     });
     // Another space, another workspace: start over on its datasets and labels.
@@ -187,6 +198,13 @@ export default class CaptainData extends View {
         if (this.wanted && this.list.some((d) => d.name === this.wanted)) {
           this.select(cx, this.wanted);
           this.wanted = null;
+        } else if (this.wanted) {
+          // The Explorer's pick hides it: say so rather than leave the import nowhere to be seen.
+          const pick = shared("captain.scope");
+          this.lib.note = { text: `${this.wanted} isn't shown because the Explorer has ${pick?.label ?? "a brand or project"} picked. Clear the Explorer's pick (under Explorer in the sidebar) to see it.`, tone: "muted" };
+          this.lib.revealing = null;
+          this.wanted = null;
+          if (!this.sel || !this.list.some((d) => d.name === this.sel)) { if (this.list[0]) this.select(cx, this.list[0].name); }
         } else if (!this.sel || !this.list.some((d) => d.name === this.sel)) {
           if (this.list[0]) this.select(cx, this.list[0].name);
         }
@@ -336,7 +354,7 @@ export default class CaptainData extends View {
     const t = (id, label, icon) => h_flex().id(`tab-${id}`).h(28).px(12).gap(6).items_center().cursor_pointer()
       .border_r(1).border_color(c.grey300).text_size(12.5)
       .bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
-      .on_click((_e, cx) => { this.tab = id; if (id === "labels" && !this.labels) this.loadLabels(cx); if (id === "notebooks" && this.nb.list === null) this.nb.load(cx); if (id === "models" && this.models.regs === null) this.models.load(cx); if (id === "tables" && this.tables.conns === null) this.tables.load(cx); cx.notify(); })
+      .on_click((_e, cx) => { this.tab = id; if (id === "labels" && !this.labels) this.loadLabels(cx); if (id === "notebooks" && this.nb.list === null) this.nb.load(cx); if (id === "models" && this.models.regs === null) this.models.load(cx); if (id === "tables") this.tables.show(cx); if (id === "notebooks" && this.nb.list !== null) this.nb.loadConns(cx); cx.notify(); })
       .child(this.icon(icon, 13)).child(div().child(label));
     return h_flex().flex_none().border_1().border_color(c.grey300)
       .child(t("datasets", "Datasets", "table")).child(t("labels", "Labels", "tag")).child(t("tables", "Tables", "database")).child(t("notebooks", "Notebooks", "folder-open")).child(t("models", "Models", "lineage"));

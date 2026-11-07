@@ -70,9 +70,26 @@ export class Library {
         this.error = null;
         if (!this.opened) { this.opened = true; for (const f of this.tree.folders ?? []) this.open.add(f.path); }
         if (this.cur && !find(this.tree, this.cur)) this.cur = "";
+        if (this.revealing) { this.reveal(this.revealing); }
       } else if (!r.starting) this.error = r;
       cx.notify();
     });
+  }
+
+  /** Open the tree down to a dataset's folder and make that folder current (after an import, or "Open" from elsewhere).
+   *  Waits for the next tree load when the dataset isn't in this one yet. */
+  reveal(name, cx) {
+    const walk = (node) => {
+      if ((node.datasets ?? []).some((d) => d.name === name)) return node.path ?? "";
+      for (const f of node.folders ?? []) { const p = walk(f); if (p !== null) return p; }
+      return null;
+    };
+    const path = this.tree ? walk(this.tree) : null;
+    if (path === null) { this.revealing = name; if (cx) this.load(cx); return; }
+    this.revealing = null;
+    const parts = path ? path.split("/") : [];
+    for (let i = 1; i <= parts.length; i++) this.open.add(parts.slice(0, i).join("/"));
+    this.cur = path;
   }
 
   refresh(cx) {
@@ -296,7 +313,11 @@ export class Library {
       if (this.open.has(f.path)) out.push(...this.rows(c, f, depth + 1));
     }
     const cls = this.host.cls;
-    for (const d of node.datasets ?? []) if (!cls || (d.classes ?? []).includes(cls)) out.push(this.datasetRow(c, d, depth));
+    const shown = (node.datasets ?? []).filter((d) => !cls || (d.classes ?? []).includes(cls));
+    // Top-level datasets sit under their own heading, so they aren't lost below the folders.
+    if (depth === 1 && shown.length && (node.folders ?? []).length) out.push(h_flex().id("lib-loose").h(26).flex_none().pl(8 + depth * 14 + 17).pr(8).items_center().text_size(11).text_color(c.grey500)
+      .child(div().flex_1().child("Not in a folder")).child(div().child(fmtInt(shown.length))));
+    for (const d of shown) out.push(this.datasetRow(c, d, depth));
     return out;
   }
 

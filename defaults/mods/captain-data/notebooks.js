@@ -36,7 +36,8 @@ const plainNote = (t) => { const s = String(t ?? "").trim(); return s ? `${s[0].
 export class Notebooks {
   constructor() {
     this.list = null;
-    this.conns = [];
+    this.conns = null; // null until listed: never "No database connected" from a list that wasn't fetched
+    this.connsError = null;
     this.formats = [];
     this.open = null; // {name, version, base, draft}
     this.cells = [];
@@ -63,16 +64,33 @@ export class Notebooks {
 
   load(cx) {
     cx.spawn(async (cx) => {
+      const seq = (this.connSeq = (this.connSeq ?? 0) + 1);
       const [nb, cs, fs] = await Promise.all([api("/api/notebooks"), api("/api/connections"), api("/api/notebook-formats")]);
       this.list = nb.ok && Array.isArray(nb.data) ? nb.data : [];
       // A notebook made before the list arrived (from a table's example query) stays in it.
       if (this.open?.name && !this.list.some((n) => n.name === this.open.name)) this.list.unshift({ name: this.open.name, latest: null, has_draft: true });
       this.listError = nb.ok ? null : "Couldn't load notebooks.";
-      this.conns = cs.ok && Array.isArray(cs.data) ? cs.data : [];
+      if (seq === this.connSeq) this.setConns(cs);
       this.formats = fs.ok && Array.isArray(fs.data) ? fs.data.filter((f) => f.export) : [];
       const want = this.want && this.list.some((n) => n.name === this.want) ? this.want : this.list[0]?.name;
       this.want = null;
       if (!this.open && want) this.openNotebook(cx, want);
+      cx.notify();
+    });
+  }
+
+  setConns(r) {
+    if (r.ok && Array.isArray(r.data)) { this.conns = r.data; this.connsError = null; }
+    else if (!r.starting) this.connsError = "Couldn't list the databases. Refresh to try again.";
+  }
+
+  /** Relist the connections (the tab was opened, or one was connected or removed elsewhere). */
+  loadConns(cx) {
+    const seq = (this.connSeq = (this.connSeq ?? 0) + 1);
+    cx.spawn(async (cx) => {
+      const r = await api("/api/connections");
+      if (seq !== this.connSeq) return; // only the newest answer counts
+      this.setConns(r);
       cx.notify();
     });
   }
@@ -97,7 +115,7 @@ export class Notebooks {
       if (!r.ok) { this.open = { name, error: "Couldn't open this notebook." }; cx.notify(); return; }
       this.open = { name, version: r.data.version, base: r.data.notebook, draft: !!r.data.draft };
       this.cells = fromNotebook(r.data.notebook);
-      if (!this.cells.length) this.cells = [newCell("sql", [], this.conns[0]?.name)];
+      if (!this.cells.length) this.cells = [newCell("sql", [], this.conns?.[0]?.name)];
       // Opened from a table's example query: that query, on its connection, as the first cell.
       if (this.seedSql) {
         const cell = newCell("sql", [], this.seedSql.conn);
@@ -321,7 +339,7 @@ export class Notebooks {
   // ---- editing ---------------------------------------------------------------------------------------------------
 
   add(cx, kind, after) {
-    const cell = newCell(kind, this.cells, this.conns[0]?.name);
+    const cell = newCell(kind, this.cells, this.conns?.[0]?.name);
     if (kind === "chart") {
       const vars = [...tablesByVar(this.cells).keys()];
       cell.meta.chart = { mark: "bar", data: vars[vars.length - 1] };
@@ -522,6 +540,7 @@ export class Notebooks {
   }
 
   connPicker(c, cell) {
+    if (this.conns === null) return div().text_size(11.5).text_color(this.connsError ? c.fail : c.grey500).child(this.connsError ?? "Listing databases");
     if (!this.conns.length) return div().text_size(11.5).text_color(c.fail).child("No database connected");
     return h_flex().id(`conn-${cell.id}`).min_w(0).gap(4).overflow_x_scrollbar()
       .children(this.conns.map((k) => {

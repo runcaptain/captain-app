@@ -19,7 +19,7 @@ block_of() { case "$1" in captain-data) echo data ;; captain-runs) echo runs ;; 
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:sqltools" "captain-data:models" "captain-data:tables" "captain-data:lineage") ;;
+    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:sqltools" "captain-data:import" "captain-data:models" "captain-data:tables" "captain-data:lineage") ;;
     captain-runs) EXTRA+=("captain-runs:jobs") ;;
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries") ;;
   esac
@@ -91,6 +91,8 @@ CST_PY=$(head -1 "$(command -v "$CSTCMD")" | sed 's/^#!//')
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-imported.py >/dev/null
 # A notebook: text, a SQL cell on the demo store, a Python cell and a chart of the SQL result.
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-notebook.py >/dev/null
+# hello-world from another query, so the import view shows the name clash.
+CST_HOME=$WORK/cst "$CSTCMD" sql demo-store -e "select 1 as a" --save hello-world >/dev/null 2>&1 || true
 # The demo store's tables, read, and one finished local job, for the Tables and Jobs views.
 CST_HOME=$WORK/cst "$CSTCMD" tables pull demo-store >/dev/null 2>&1 || true
 CST_HOME=$WORK/cst "$CSTCMD" job run local -- data list >/dev/null 2>&1 || true
@@ -136,6 +138,7 @@ props_of() {
     captain-data:lineage) echo '{"pageTab": "lineage"}' ;;
     captain-runs:jobs) echo '{"tab": "jobs"}' ;;
     captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;
+    captain-data:import) echo '{"importWith": {"conn": "demo-store", "sql": "select * from products limit 1000", "name": "Hello World"}}' ;;
     captain-data:sqltools) echo '{"tab": "notebooks", "notebook": "shot-sql-tools", "sqlTools": {"panel": "filled"}}' ;;
     captain-compare:imported) echo '{"backtest": "demos/shot/imported-readout", "version": 1}' ;;
     captain-compare:imported-queries) echo '{"backtest": "demos/shot/imported-readout", "version": 1, "tab": "queries"}' ;;
@@ -144,7 +147,10 @@ props_of() {
 }
 
 fail=0
-for view in "${MODS[@]}" ${EXTRA[@]+"${EXTRA[@]}"}; do
+VIEWS=("${MODS[@]}" ${EXTRA[@]+"${EXTRA[@]}"})
+# SHOT_ONLY="view view": just those views.
+[[ -n "${SHOT_ONLY:-}" ]] && read -r -a VIEWS <<< "$SHOT_ONLY"
+for view in "${VIEWS[@]}"; do
   m=${view%%:*}
   props=$(props_of "$view")
   block=$(block_of "$m")
@@ -152,6 +158,8 @@ for view in "${MODS[@]}" ${EXTRA[@]+"${EXTRA[@]}"}; do
   rm -rf "$HOME_DIR/mods/$m"
   mkdir -p "$HOME_DIR/mods" "$HOME_DIR/layouts"
   cp -R "defaults/mods/$m" "$HOME_DIR/mods/$m"
+  # The import wizard opens over Data and signals.
+  [[ "$view" == captain-data:import ]] && { rm -rf "$HOME_DIR/mods/captain-import"; cp -R defaults/mods/captain-import "$HOME_DIR/mods/captain-import"; }
   rm -f "$HOME_DIR/mods/$m/gpui-kit.d.ts" "$HOME_DIR/mods/$m/jsconfig.json"
   # Captain's own layout can't be edited (edits land in a copy), so each view gets its own personal layout,
   # a copy of the shipped one with this block set; switching to a new layout builds its mods fresh.
@@ -176,6 +184,7 @@ EOF
   ok=0
   # The notebook view runs every cell on a fresh Python first: give it time to finish before judging.
   [[ "$view" == captain-data:notebook || "$view" == captain-data:chart ]] && sleep 25
+  [[ "$view" == captain-data:import ]] && sleep 8
   for i in $(seq 1 12); do
     sleep 1.5
     # A window in the background may not draw a new frame after its data arrives, and shot saves the last frame

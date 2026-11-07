@@ -75,7 +75,16 @@ async function call(path, { method = "GET", body, timeout = 20, scoped = true } 
     const scope = shared("captain.scope");
     if (scope?.id && scope.kind !== "view" && scoped) headers["X-CST-Scope"] = `${scope.kind}:${scope.id}`;
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    r = await fetch(d.base + path, { method: body !== undefined && method === "GET" ? "POST" : method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+    const verb = body !== undefined && method === "GET" ? "POST" : method;
+    const send = () => fetch(d.base + path, { method: verb, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+    try {
+      r = await send();
+    } catch (e) {
+      // A read is safe to ask again: the server closes a connection after a few idle seconds, and a request sent on
+      // it just then is reset ("read ECONNRESET"). Ask once more on a new one. A write is never sent twice.
+      if (verb !== "GET" || /timed? ?out/i.test(String(e?.message ?? e))) throw e;
+      r = await send();
+    }
     text = await r.text();
   } catch (e) {
     // Any transport failure ("error sending request for url ...", refused, reset, a body cut off): the services
@@ -118,6 +127,22 @@ export function watchScope(cx, fn) {
   let last = key();
   cx.timer.every(300, (cx) => {
     const now = key();
+    if (now === last) return;
+    last = now;
+    fn(cx);
+  });
+}
+
+/** Say that a connection was saved or removed (shared "captain.connections.changed"), so every open screen relists. */
+export function connectionsChanged() {
+  setShared("captain.connections.changed", Date.now());
+}
+
+/** Call `fn(cx)` when a connection is saved or removed anywhere in the app (connectionsChanged). */
+export function watchConnections(cx, fn) {
+  let last = shared("captain.connections.changed") ?? null;
+  cx.timer.every(300, (cx) => {
+    const now = shared("captain.connections.changed") ?? null;
     if (now === last) return;
     last = now;
     fn(cx);

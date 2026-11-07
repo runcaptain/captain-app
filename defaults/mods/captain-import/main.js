@@ -1,14 +1,18 @@
 // CAPTAIN: Import a dataset, in three steps, as an overlay (openOverlay({mod: "captain-import", kind: "dialog"})).
+// Props: {folder?} starts in that folder; {start: {conn, sql, name}} opens on that query's preview.
 // 1. Where from: a grid of sources. A file or folder from this computer, every connected database with its mark, and
 //    "Connect a new source" (the typed database form). Product analytics sources show as coming.
 // 2. A database's tables (read once through the table browser) and suggested queries: the backend's own
 //    (GET /api/connections/{name}/suggestions) when it has them, else ones made here from the tables.
 // 3. Preview up to 1,000 rows (POST /api/connections/{name}/preview, else POST /api/sql), then import it as a dataset
-//    into a folder (POST /api/sql {save}, then POST /api/library/move).
+//    into a folder (POST /api/sql {save}, then POST /api/library/move). The folder starts from the kind (catalogs/,
+//    queries/, judgments/, logs/, imports/), the name shows as it will be saved, a name already used by other data
+//    says so, and an empty result asks first. When it's in, the wizard closes, a toast says what came in, and Data and
+//    signals opens on the new dataset (shared "captain.open").
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, EditorState, Editor } from "gpui-base";
-import { theme, props, closeOverlay, openOverlay, pickFolder, home, shared } from "herdr";
-import { api } from "./kit/cst.js";
+import { theme, props, closeOverlay, openOverlay, pickFolder, home, shared, setShared, notify, run } from "herdr";
+import { api, watchConnections } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -22,6 +26,23 @@ const expand = (p) => String(p ?? "").trim().replace(/^~(?=\/|$)/, home());
 // Product analytics sources: connected ones show with the databases; the rest offer their connect form.
 const ANALYTICS = [["posthog", "PostHog", "Product events, queried with HogQL"], ["ga4", "Google Analytics 4", "Site search terms and pages"]];
 const plainSchema = (s) => String(s ?? "").replace(/"/g, "");
+// Where each kind of dataset goes unless you pick another folder.
+export const KIND_FOLDER = { catalog: "catalogs", queries: "queries", judgments: "judgments", events: "logs", logs: "logs", generic: "imports" };
+
+/** The name a dataset is saved under: lower case, words joined by "-" ("Hello World" is "hello-world"). */
+export function datasetName(text) {
+  return String(text ?? "").trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/-{2,}/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, 100);
+}
+
+/** A folder path as the library keeps it: lower case words split by "/". */
+export function folderPath(text) {
+  return String(text ?? "").split("/").map(datasetName).filter(Boolean).join("/");
+}
+
+/** The kind a query's rows most likely are, from the suggestion or the query's words. */
+const kindOf = (hint, sql) => hint ?? (/\b(search|query|queries)\b/i.test(sql) ? "queries" : /\b(event|log|logs|clicks?|pageviews?)\b/i.test(sql) ? "events" : "generic");
+// A query over a recent time window (its rows depend on what happened lately).
+const timeWindow = (sql) => /\binterval\b|date_sub|dateadd|date_add|current_date|current_timestamp|now\(\)|\b\d+\s*days?\b|daysago|-\d+d\b/i.test(sql);
 
 /** Queries worth starting from, made from a database's tables when the backend has none to suggest. */
 export function localSuggestions(tree) {
@@ -46,10 +67,19 @@ export default class CaptainImport extends View {
     this.preview = null; // {grid, rows, ms} | {error} | {loading}
     this.folders = [""];
     this.folder = props()?.folder ?? "";
+    this.folderTouched = !!props()?.folder; // picked by hand (or opened in a folder): the kind no longer moves it
+    this.newFolder = InputState.new({ placeholder: "Or type a new folder, like imports/2026" });
+    this.newFolder.on("change", (_e, cx) => cx.notify());
+    this.names = new Set(); // every dataset name in the workspace, to catch a name already in use
+    this.clash = null; // {name, version, source, same} when the name is taken
+    this.clashFor = null;
+    this.allowNewVersion = false;
+    this.confirmEmpty = false;
     this.note = null;
     this.busy = false;
     this.path = InputState.new({ placeholder: "~/Downloads/catalogs" });
     this.name = InputState.new({ placeholder: "Name the dataset, like products" });
+    this.name.on("change", (_e, cx) => { this.allowNewVersion = false; cx.notify(); });
     // SQL for databases (and PostHog's HogQL); JSON for a Google Analytics 4 report spec.
     this.editors = {
       sql: EditorState.new({ language: "sql", value: "", font_family: MONO, font_size: 13, line_numbers: true }),
@@ -58,10 +88,36 @@ export default class CaptainImport extends View {
     this.dests = [{ kind: null, id: null, name: "None" }];
     this.dest = this.dests[0];
     this.path.on("submit", (_e, cx) => this.importFiles(cx, [expand(this.path.value())]));
+    this.loadSources(cx);
+    cx.timer.every(500, (cx) => this.tick(cx));
+    // A database connected from here ("Connect a new source") or anywhere else shows up at once.
+    watchConnections(cx, (cx) => cx.spawn(async (cx) => {
+      const seq = (this.connSeq = (this.connSeq ?? 0) + 1);
+      const k = await api("/api/connections", { scoped: false });
+      if (seq !== this.connSeq) return;
+      if (k.ok && Array.isArray(k.data)) this.conns = k.data;
+      cx.notify();
+    }));
+  }
+
+  /** Sources, folders, destinations and the names in use. Asked again until the services answer. */
+  loadSources(cx) {
     cx.spawn(async (cx) => {
       // Every source and folder, whatever the Explorer has picked: the pick is where the import goes, not what it reads.
-      const [k, t, ex] = await Promise.all([api("/api/connections", { scoped: false }), api("/api/datasets/tree", { scoped: false }), api("/api/explorer", { scoped: false })]);
-      this.conns = k.ok && Array.isArray(k.data) ? k.data : [];
+      const [k, t, ex, ds] = await Promise.all([api("/api/connections", { scoped: false }), api("/api/datasets/tree", { scoped: false }), api("/api/explorer", { scoped: false }), api("/api/datasets", { scoped: false })]);
+      if (ds.ok && Array.isArray(ds.data)) this.names = new Set(ds.data.map((d) => d.name));
+      // Not answered yet (the services are starting, or a request failed): keep the placeholder and ask again shortly,
+      // never an empty list that stays empty.
+      if (!(k.ok && Array.isArray(k.data))) {
+        this.sourcesTries = (this.sourcesTries ?? 0) + 1;
+        if (k.failed || this.sourcesTries > 40) this.note = { text: "Couldn't list your databases. Close this and try again.", tone: "fail" };
+        else cx.timer.after(750, (cx) => this.loadSources(cx));
+        cx.notify();
+        return;
+      }
+      this.conns = k.data;
+      this.dests = [{ kind: null, id: null, name: "None" }];
+      this.folders = [""];
       // Where it belongs: a project, or a brand, site or engine from the Explorer. The Explorer's pick is the default.
       const walk = (nodes, depth) => { for (const n of nodes ?? []) {
         if (["scope", "engine", "project"].includes(n.kind) && n.id) this.dests.push({ kind: n.kind, id: n.id, name: n.name ?? n.label, type: n.type, depth });
@@ -71,9 +127,53 @@ export default class CaptainImport extends View {
       const pick = shared("captain.scope");
       this.dest = this.dests.find((d) => d.kind === pick?.kind && d.id === pick?.id) ?? this.dests[0];
       if (t.ok) { const walk = (n) => { for (const f of n.folders ?? []) { this.folders.push(f.path); walk(f); } }; walk(t.data ?? {}); }
+      // Opened on a query (props.start = {conn, sql, name}): straight to its preview.
+      const start = props()?.start;
+      if (start?.conn && this.conns.some((k) => k.name === start.conn)) {
+        this.source = { kind: "db", conn: start.conn };
+        this.sql.set_value(start.sql ?? "");
+        if (start.name) this.name.set_value(start.name);
+        this.step = 3;
+        this.runPreview(cx);
+      }
       cx.notify();
     });
-    cx.timer.every(500, (cx) => this.tick(cx));
+  }
+
+  /** The name it will be saved under. */
+  get finalName() { return datasetName(this.name.value()); }
+
+  /** The folder it goes into: the typed one, else the picked one, else the kind's. */
+  get target() {
+    const typed = folderPath(this.newFolder.value());
+    if (typed) return typed;
+    if (this.folderTouched) return this.folder;
+    return KIND_FOLDER[kindOf(this.kindHint, this.sql.value())] ?? "imports";
+  }
+
+  /** A name nobody has used: the name itself, else name-2, name-3 ... */
+  freshName(base) {
+    base = datasetName(base) || "dataset";
+    if (!this.names.has(base)) return base;
+    for (let i = 2; ; i++) if (!this.names.has(`${base}-${i}`)) return `${base}-${i}`;
+  }
+
+  /** Is this name taken, and by what? Looked up when the name changes. */
+  checkName(cx) {
+    const name = this.finalName;
+    if (name === this.clashFor) return;
+    this.clashFor = name;
+    this.clash = null;
+    if (!name || !this.names.has(name)) return;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/datasets/${name.split("/").map(enc).join("/")}`, { scoped: false });
+      if (this.clashFor !== name || !r.ok) return;
+      const pv = r.data.provenance ?? {};
+      const source = pv.connection ? `${pv.connection}: ${String(pv.sql ?? "").replace(/\s+/g, " ").slice(0, 80)}` : pv.source ?? "a file";
+      const same = pv.connection === this.source?.conn && String(pv.sql ?? "").trim() === this.sql.value().trim();
+      this.clash = { name, version: r.data.version, source, same };
+      cx.notify();
+    });
   }
 
   close() { closeOverlay(props().overlay); }
@@ -120,6 +220,7 @@ export default class CaptainImport extends View {
   }
 
   tick(cx) {
+    if (this.step === 3 && this.source?.kind === "db") this.checkName(cx);
     if (this.pullJob && !this.polling) {
       this.polling = true;
       cx.spawn(async (cx) => {
@@ -144,8 +245,11 @@ export default class CaptainImport extends View {
           const res = r.data.result ?? {};
           await this.link([...(res.imported ?? []), ...(res.updated ?? [])].map((x) => String(x.ref ?? "").replace(/@v\d+$/, "")).filter(Boolean));
           this.busy = false;
-          const n = (res.imported ?? []).length + (res.updated ?? []).length;
-          this.note = { text: `Added ${n} dataset${n === 1 ? "" : "s"}${(res.skipped ?? []).length ? `, skipped ${res.skipped.length}: ${res.skipped.map((x) => sentence(x.reason)).join(" ")}` : "."}`, tone: n ? "good" : "muted" };
+          const done = [...(res.imported ?? []), ...(res.updated ?? [])].map((x) => String(x.ref ?? "").replace(/@v\d+$/, "")).filter(Boolean);
+          const n = done.length;
+          const skipped = (res.skipped ?? []).length ? ` Skipped ${res.skipped.length}: ${res.skipped.map((x) => sentence(x.reason)).join(" ")}` : "";
+          if (n) this.finish(done[0], `Added ${n} dataset${n === 1 ? "" : "s"}`, `${n === 1 ? done[0] : `${done[0]} and ${n - 1} more`}${this.folder ? `, into ${this.folder}` : ""}.${skipped}`, skipped ? "warning" : "success");
+          else this.note = { text: `Nothing was added.${skipped}`, tone: "muted" };
         } else if (r.ok && r.data.status === "failed") {
           this.importJob = null;
           this.busy = false;
@@ -159,7 +263,9 @@ export default class CaptainImport extends View {
   useQuery(cx, sql, name, kind) {
     this.kindHint = kind ?? null;
     this.sql.set_value(sql);
-    if (name && !this.name.value().trim()) this.name.set_value(name);
+    this.confirmEmpty = false;
+    // A suggestion's name, made unique: an import never quietly becomes a new version of other data.
+    if (name && !this.name.value().trim()) this.name.set_value(this.freshName(name));
     this.step = 3;
     this.runPreview(cx);
   }
@@ -169,35 +275,62 @@ export default class CaptainImport extends View {
     const sql = this.sql.value().trim();
     if (!sql) return;
     this.preview = { loading: true };
+    this.confirmEmpty = false;
+    this.clashFor = null; // the query may differ now: look the name up again
     cx.spawn(async (cx) => {
       let r = await api(`/api/connections/${enc(conn)}/preview`, { body: { query: sql, limit: 1000 }, timeout: 120 });
       if (!r.ok && r.status === 404 && /not found/i.test(String(r.error))) r = await api("/api/sql", { body: { conn, sql, limit: 1000 }, timeout: 120 });
       if (!r.ok) { this.preview = { error: sentence(r.data?.error ?? r.data?.detail ?? r.error) || "Couldn't run that query." }; cx.notify(); return; }
       const d = r.data;
-      this.preview = { grid: new ResultGrid({ id: "import-preview", name: this.name.value().trim() || "preview", table: { columns: d.columns, rows: d.rows, row_count: d.row_count ?? d.rows.length, limited: d.limited ?? d.truncated, limit: 1000 } }), rows: d.row_count ?? d.rows.length, ms: d.ms };
+      this.preview = { grid: new ResultGrid({ id: "import-preview", name: this.name.value().trim() || "preview", table: { columns: d.columns, rows: d.rows, row_count: d.row_count ?? d.rows.length, limited: d.limited ?? d.truncated, limit: 1000 } }), rows: d.row_count ?? d.rows.length, limited: !!(d.limited ?? d.truncated), ms: d.ms };
       cx.notify();
     });
     cx.notify();
   }
 
   importQuery(cx) {
-    const name = this.name.value().trim().replace(/\s+/g, "-");
+    const name = this.finalName;
     if (!name) { this.note = { text: "Name the dataset first.", tone: "fail" }; cx.notify(); return; }
-    const conn = this.source.conn, sql = this.sql.value().trim(), folder = this.folder;
+    if (this.clash && !this.clash.same && !this.allowNewVersion) { this.note = { text: `${name} already holds other data. Pick another name, or choose "Import as version ${this.clash.version + 1}".`, tone: "fail" }; cx.notify(); return; }
+    if (this.preview?.rows === 0 && !this.confirmEmpty) { this.confirmEmpty = true; cx.notify(); return; }
+    const conn = this.source.conn, sql = this.sql.value().trim(), folder = this.target;
+    const kind = this.kindHint ?? undefined;
+    const previewRows = this.preview?.limited ? null : this.preview?.rows;
     this.busy = true;
+    this.note = null;
     cx.spawn(async (cx) => {
       const dest = this.dest;
-      const r = await api("/api/sql", { body: { conn, sql, save: name, kind: this.kindHint ?? undefined, project: dest.kind === "project" ? dest.id : undefined }, timeout: 600 });
+      const r = await api("/api/sql", { body: { conn, sql, save: name, kind, project: dest.kind === "project" ? dest.id : undefined }, timeout: 600 });
       if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't import it.", tone: "fail" }; cx.notify(); return; }
       const ref = r.data.dataset ?? name;
-      if (folder) await api("/api/library/move", { body: { names: [ref.replace(/@v\d+$/, "")], folder } });
-      const linked = await this.link([ref.replace(/@v\d+$/, "")]);
+      const saved = ref.replace(/@v\d+$/, "");
+      const version = Number(/@v(\d+)$/.exec(ref)?.[1] ?? 1);
+      const moved = folder ? await api("/api/library/move", { body: { names: [saved], folder } }) : { ok: true };
+      const linked = await this.link([saved]);
       this.busy = false;
-      this.note = { text: `Imported ${ref.replace(/@v(\d+)$/, " (version $1)")}${folder ? ` into ${folder}` : ""}${dest.kind ? `, for ${dest.name}` : ""}: ${fmtInt(r.data.row_count)} rows.${linked}`, tone: linked ? "muted" : "good" };
-      this.done = true;
+      const rows = r.data.row_count ?? 0;
+      // Fewer rows than the query asked for: say it's everything there was.
+      const asked = Number(/\blimit\s+(\d+)\s*;?\s*$/i.exec(sql)?.[1] ?? 0);
+      const whole = /^\s*select\s+\*\s+from\s+[^\s]+\s+limit\s+\d+\s*;?\s*$/i.test(sql) ? "the whole table" : "everything the query returned";
+      const count = `${fmtInt(rows)} row${rows === 1 ? "" : "s"}${asked && rows < asked ? `, ${whole}` : ""}`;
+      const differs = previewRows != null && previewRows !== rows ? ` The preview showed ${fmtInt(previewRows)}: the data changed in between.` : "";
+      const forWhom = dest.kind ? `for ${dest.name}` : "";
+      const where = !moved.ok ? ` It stayed at the top level: ${sentence(moved.data?.error ?? moved.error) || "the folder move failed."}${forWhom ? ` It's ${forWhom}.` : ""}`
+        : folder ? ` In ${folder}${forWhom ? `, ${forWhom}` : ""}.` : forWhom ? ` ${forWhom[0].toUpperCase()}${forWhom.slice(1)}.` : "";
+      const body = `${count}.${where}${differs}${linked}`;
+      this.finish(saved, `Imported ${saved}, version ${version}`, body, linked || differs || !moved.ok ? "warning" : "success");
       cx.notify();
     });
     cx.notify();
+  }
+
+  /** It's in: a toast says what came in, Data and signals opens on it, and the wizard closes. */
+  finish(name, title, body, level = "success") {
+    this.names.add(name);
+    setShared("captain.open", { section: "data", dataset: name, fresh: true, at: Date.now() });
+    run("layout.select", { stack: "sections", child: "data" });
+    notify({ title, body, level, timeout: 12000, action: { name: "layout.select", args: { stack: "sections", child: "data" } } });
+    this.close();
   }
 
   /** Attach datasets to the chosen brand, site or engine (a project is set by the import itself). "" when fine. */
@@ -213,7 +346,7 @@ export default class CaptainImport extends View {
     if (!paths.length) return;
     this.busy = true;
     cx.spawn(async (cx) => {
-      const r = await api("/api/datasets/import", { body: { paths, folder: this.folder, project: this.dest.kind === "project" ? this.dest.id : undefined } });
+      const r = await api("/api/datasets/import", { body: { paths, folder: folderPath(this.newFolder.value()) || this.folder, project: this.dest.kind === "project" ? this.dest.id : undefined } });
       if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't start the import.", tone: "fail" }; cx.notify(); return; }
       this.importJob = r.data.job;
       cx.notify();
@@ -287,12 +420,51 @@ export default class CaptainImport extends View {
         .on_click((_e, cx) => { this.dest = d; cx.notify(); }).child(d.name)));
   }
 
-  folderPick(c) {
-    return h_flex().id("import-folder").gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
-      .child(div().flex_none().text_color(c.grey500).child("Into"))
-      .children(this.folders.map((f, i) => div().id(`folder-${i}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer()
-        .border_1().border_color(this.folder === f ? c.blue : c.grey300).text_color(this.folder === f ? c.blue : c.grey900)
-        .on_click((_e, cx) => { this.folder = f; cx.notify(); }).child(f || "Top level")));
+  folderPick(c, forQuery = false) {
+    const target = forQuery ? this.target : folderPath(this.newFolder.value()) || this.folder;
+    const typed = !!folderPath(this.newFolder.value());
+    const list = [...this.folders];
+    if (target && !list.includes(target)) list.push(target);
+    return v_flex().gap(6)
+      .child(h_flex().id("import-folder").gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
+        .child(div().w(60).flex_none().text_size(12).text_color(c.grey900).child("Folder"))
+        .children(list.map((f, i) => div().id(`folder-${i}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer()
+          .border_1().border_color(!typed && target === f ? c.blue : c.grey300).text_color(!typed && target === f ? c.blue : c.grey900)
+          .on_click((_e, cx) => { this.folder = f; this.folderTouched = true; this.newFolder.set_value(""); cx.notify(); })
+          .child(`${f || "Top level"}${f && !this.folders.includes(f) ? " (new)" : ""}`))))
+      .child(h_flex().gap(8).items_center()
+        .child(div().w(60).flex_none())
+        .child(h_flex().w(280).h(26).px(8).items_center().border_1().border_color(typed ? c.blue : c.grey300).child(Input.new(this.newFolder).w_full().text_size(11.5).text_color(c.navy))));
+  }
+
+  /** What it will be saved as, before anything is saved. */
+  saveLine(c) {
+    const name = this.finalName;
+    const typed = this.name.value().trim();
+    if (!name) return div().text_size(11.5).text_color(c.grey500).child("Name it to see where it goes.");
+    const v = this.clash?.same ? `, as version ${this.clash.version + 1}` : this.clash && this.allowNewVersion ? `, as version ${this.clash.version + 1}` : "";
+    return h_flex().id("import-save-as").gap(6).items_center().text_size(12)
+      .child(div().w(60).flex_none().text_color(c.grey900).child("Saved as"))
+      .child(div().font_family(MONO).text_color(c.navy).child(this.target ? `${this.target}/${name}` : name))
+      .child(div().text_color(c.grey500).child(`${typed && typed !== name ? `(from "${typed}")` : ""}${v}`));
+  }
+
+  clashView(c) {
+    const k = this.clash;
+    const fresh = this.freshName(k.name);
+    return v_flex().id("import-clash").gap(6).p(10).border_1().border_color(c.warn).text_size(12)
+      .child(div().text_color(c.navy).child(`${k.name} already exists (version ${k.version}, from ${k.source}). Import as a new version, or pick another name.`))
+      .child(h_flex().gap(6)
+        .child(Button(c, "clash-rename", `Name it ${fresh}`, (_e, cx) => { this.name.set_value(fresh); this.allowNewVersion = false; cx.notify(); }, { kind: "primary", small: true }))
+        .child(Button(c, "clash-version", `Import as version ${k.version + 1}`, (_e, cx) => { this.allowNewVersion = true; cx.notify(); }, { small: true, disabled: this.allowNewVersion })));
+  }
+
+  emptyView(c) {
+    const windowed = timeWindow(this.sql.value());
+    return v_flex().id("import-empty").gap(4).p(10).border_1().border_color(c.warn).text_size(12)
+      .child(div().text_color(c.navy).child("This query returned no rows. Import anyway?"))
+      .when(windowed, (e) => e.child(div().text_color(c.grey900).child("It looks at a recent time window, and this account may have had no events in it. Widen the window in the query and preview again.")))
+      .child(div().text_color(c.grey500).child("\"Import anyway\" saves an empty dataset."));
   }
 
   choose(c) {
@@ -328,23 +500,27 @@ export default class CaptainImport extends View {
 
   previewStep(c) {
     const p = this.preview;
-    return v_flex().id("import-preview-step").flex_1().min_h(0).p(16).gap(10)
-      .child(div().flex_none().h(130).border_1().border_color(c.rule).child(Editor.new(this.sql).size_full()))
+    // Scrolls as a whole: the grid has a fixed height, so it never draws over the rows under it.
+    return v_flex().id("import-preview-step").flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(10)
+      .child(div().flex_none().h(100).border_1().border_color(c.rule).child(Editor.new(this.sql).size_full()))
       .child(h_flex().flex_none().gap(8).items_center()
         .child(Button(c, "preview-run", "Preview 1,000 rows", (_e, cx) => this.runPreview(cx), { small: true }))
         .when(!!p?.grid, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`${fmtInt(p.rows)} rows${p.ms != null ? ` in ${p.ms} ms` : ""}`))))
       .when(!!p?.loading, (e) => e.child(Skeleton(c, 6)))
       .when(!!p?.error, (e) => e.child(div().p(10).bg(c.failLight).border_1().border_color(c.fail).text_size(12.5).text_color(c.fail).child(p.error)))
-      .when(!!p?.grid, (e) => e.child(div().flex_1().min_h(0).border_1().border_color(c.rule).child(p.grid.render(c, { height: 220 }))))
+      .when(!!p?.grid, (e) => e.child(div().flex_none().border_1().border_color(c.rule).child(p.grid.render(c, { height: 220 }))))
       .child(v_flex().flex_none().gap(8).pt(4).border_t(1).border_color(c.rule)
         .child(h_flex().gap(8).items_center()
           .child(div().w(60).flex_none().text_size(12).text_color(c.grey900).child("Name"))
           .child(h_flex().flex_1().min_w(0).h(28).px(8).items_center().border_1().border_color(c.grey300).child(Input.new(this.name).w_full().text_size(12).text_color(c.navy))))
-        .child(this.folderPick(c))
+        .child(this.folderPick(c, true))
         .child(this.destPick(c))
+        .child(this.saveLine(c))
+        .when(!!this.clash && !this.clash.same, (e) => e.child(this.clashView(c)))
+        .when(this.confirmEmpty, (e) => e.child(this.emptyView(c)))
         .child(h_flex().gap(8)
-          .child(Button(c, "import-go", this.busy ? "Importing" : this.done ? "Import again" : "Import", (_e, cx) => this.importQuery(cx), { kind: "primary", small: true, disabled: this.busy || !p?.grid }))
-          .when(!!this.done, (e) => e.child(Button(c, "import-close-done", "Done", () => this.close(), { small: true })))
+          .child(Button(c, "import-go", this.busy ? "Importing" : this.confirmEmpty ? "Import anyway" : this.clash && this.allowNewVersion ? `Import as version ${this.clash.version + 1}` : "Import", (_e, cx) => this.importQuery(cx),
+            { kind: "primary", small: true, disabled: this.busy || !p?.grid || !this.finalName || (!!this.clash && !this.clash.same && !this.allowNewVersion) }))
           .child(div().text_size(11.5).text_color(c.grey500).child("Imports the query's full result as a write-once dataset. Running it again later makes a new version."))));
   }
 }

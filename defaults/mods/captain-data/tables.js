@@ -32,6 +32,7 @@ export class Tables {
   constructor(host) {
     this.host = host;
     this.conns = null;
+    this.fresh = false; // the list was fetched since the tab was last shown: only then may it say "No database connected"
     this.error = null;
     this.trees = new Map(); // conn -> {schemas} | {missing: sentence}
     this.open = new Set(); // expanded conns and `${conn}/${schema}`
@@ -54,15 +55,25 @@ export class Tables {
   }
 
   load(cx) {
+    const seq = (this.loadSeq = (this.loadSeq ?? 0) + 1);
     cx.spawn(async (cx) => {
       const r = await api("/api/tables");
+      if (seq !== this.loadSeq) return; // a newer list was asked for: an older answer must not overwrite it
       if (r.ok) {
         this.conns = Array.isArray(r.data) ? r.data : [];
+        this.fresh = true;
         this.error = null;
+        for (const k of [...this.trees.keys()]) if (!this.conns.some((x) => x.connection === k)) this.trees.delete(k);
         for (const k of this.conns) if (k.pulled_at && !this.trees.has(k.connection)) { this.open.add(k.connection); this.loadConn(cx, k.connection); }
       } else if (!r.starting) this.error = r;
       cx.notify();
     });
+  }
+
+  /** The tab was opened: relist the connections, since one may have been added since this screen loaded. */
+  show(cx) {
+    this.fresh = false;
+    this.load(cx);
   }
 
   loadConn(cx, conn) {
@@ -213,9 +224,9 @@ export class Tables {
         .child(div().id("tables-note-x").cursor_pointer().on_click((_e, cx) => { this.note = null; cx.notify(); }).child(this.icon("x", 11)))))
       .child(v_flex().id("tables-tree").flex_1().min_h(0).overflow_y_scrollbar()
         .when(this.hits !== null, (e) => e.children(this.hitRows(c)))
-        .when(this.hits === null && this.conns === null && !this.error, (e) => e.child(Skeleton(c, 6)))
+        .when(this.hits === null && (this.conns === null || (!this.fresh && !this.conns.length)) && !this.error, (e) => e.child(Skeleton(c, 6)))
         .when(!!this.error, (e) => e.child(div().p(10).child(this.host.troubleView(c, "tables", this.error, "Couldn't load your databases.", (cx) => this.load(cx)))))
-        .when(this.hits === null && Array.isArray(this.conns) && !this.conns.length, (e) => e.child(v_flex().p(12).gap(6)
+        .when(this.hits === null && this.fresh && Array.isArray(this.conns) && !this.conns.length, (e) => e.child(v_flex().p(12).gap(6)
           .child(div().text_size(13).font_medium().child("No database connected"))
           .child(div().text_size(12).line_height("18px").text_color(c.grey900).child("Connect your warehouse to browse its tables, their columns and sample rows, and see how your team queries them."))
           .child(Button(c, "tables-connect", "Connect a database", () => openForm("database"), { kind: "primary", small: true }))))

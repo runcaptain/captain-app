@@ -7,8 +7,8 @@ export const setShared = (k, v) => ((globalThis.__shared ??= {})[k] = v);
 export const layout = () => ({ id: 'root', children: [] });
 export const agents = () => [];
 export const openOverlay = (o) => { (globalThis.__overlays ??= []).push(o); return 1; };
-export const closeOverlay = () => {};
-export const notify = () => {};
+export const closeOverlay = (id) => { (globalThis.__closed ??= []).push(id ?? null); };
+export const notify = (n) => { (globalThis.__toasts ??= []).push(n); return String(globalThis.__toasts.length); };
 // A test that needs real programs (forms-e2e.mjs) sets globalThis.__exec.
 export const exec = async (...a) => (globalThis.__exec ? globalThis.__exec(...a) : { code: 1, stdout: '', stderr: 'no exec in tests' });
 export const readTextFile = async (p) => (globalThis.__files ?? {})[p] ?? null;
