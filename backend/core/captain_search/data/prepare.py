@@ -255,7 +255,9 @@ def import_prepared(ctx, src: dict, role: str | None = None, mapping: dict | Non
         raise ValueError("Cleaning left no rows, so nothing was imported. Check the column choices.")
     spec = ROLES[out["role"]]
     folder = folder if folder is not None else spec["folder"]
-    name = check_name("/".join(x for x in (_slug(folder) if folder else "", _slug(name or default)) if x))
+    # A nested folder keeps its levels (imports/2026), each one made safe on its own.
+    folder_path = "/".join(_slug(x) for x in str(folder or "").split("/") if x.strip())
+    name = check_name("/".join(x for x in (folder_path, _slug(name or default)) if x))
     try:
         prev = ctx.registry.load("dataset", name)
     except Exception:  # noqa: BLE001

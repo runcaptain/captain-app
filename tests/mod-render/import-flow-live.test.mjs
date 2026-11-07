@@ -72,50 +72,65 @@ const wizard = async () => {
   if (w.text().includes("hasn't read")) { await w.click('read-tables'); await until(w, (t) => t.includes('Top searches'), 'suggestions'); }
   return w;
 };
+// Step 3 prepares the query for training: the services' guess of what it is, the column mapping, the cleaned rows.
 const preview = async (w, sql) => {
   await w.click('write-own');
   w.mod.sql.set_value(sql);
   await w.click('preview-run');
-  await until(w, (t) => /[\d,]+ rows in \d+ ms/.test(t), 'preview');
+  await until(w, (t) => / kept/.test(t) && !w.mod.prep.loading, 'prepared');
 };
 
 let w = await wizard();
 await preview(w, 'select * from products limit 1000');
+assert.equal(w.mod.prep.role, 'catalog', 'the services guess a catalog');
 w.mod.name.set_value('Hello World');
-await until(w, (t) => t.includes('imports/hello-world') && t.includes('(from "Hello World")'), 'the name and folder it will get');
+await until(w, (t) => t.includes('catalogs/hello-world') && t.includes('(from "Hello World")'), 'the name and folder it will get');
 await w.click('import-go');
 await until(w, () => globalThis.__closed.length > 0, 'the wizard closes itself');
 const toast = globalThis.__toasts[0];
-assert.equal(toast.title, 'Imported hello-world, version 1');
-assert.match(toast.body, /^480 rows, the whole table\. In imports\.$/, toast.body);
+assert.equal(toast.title, 'Imported catalogs/hello-world, version 1');
+assert.match(toast.body, /^480 rows in, 480 kept: .*Ready for training as catalog .*\. In catalogs\.$/, toast.body);
 assert.equal(toast.action.name, 'layout.select');
 assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections', child: 'data' }], 'Data and signals comes forward');
 // Data opens on it: the Datasets tab, the dataset selected, its folder open and current.
-await until(data, () => data.mod.tab === 'datasets' && data.mod.sel === 'hello-world' && data.mod.lib.cur === 'imports', 'selected in the tree');
-assert.ok(data.mod.lib.open.has('imports'), 'its folder is open');
-assert.ok(data.text().includes('hello-world'), 'shown in the tree');
+await until(data, () => data.mod.tab === 'datasets' && data.mod.sel === 'catalogs/hello-world' && data.mod.lib.cur === 'catalogs', 'selected in the tree');
+assert.ok(data.mod.lib.open.has('catalogs'), 'its folder is open');
 
-// ---- 3. The same name for another query: said, with a fresh name offered --------------------------------------------
+// ---- 3. The same name for other data: said, with a fresh name offered ---------------------------------------------
 w = await wizard();
-await preview(w, 'select * from products where 1 = 0');
+await preview(w, "select * from products where category = 'Camping'");
 w.mod.name.set_value('Hello World');
-await until(w, (t) => t.includes('hello-world already exists (version 1, from demo-store: select * from products limit 1000)'), 'the clash');
+await until(w, (t) => t.includes('catalogs/hello-world already exists (version 1, from demo-store'), 'the clash');
 assert.ok(w.text().includes('Name it hello-world-2') && w.text().includes('Import as version 2'), 'both ways out');
 await w.click('clash-rename');
 assert.equal(w.mod.name.value(), 'hello-world-2');
-
-// ---- 4. No rows: asked first -------------------------------------------------------------------------------------
 await until(w, (t) => !t.includes('already exists'), 'the clash is gone');
-await w.click('import-go');
-await until(w, (t) => t.includes('This query returned no rows. Import anyway?'), 'asked before an empty import');
-assert.equal(globalThis.__closed.length, 0, 'nothing imported yet');
-w.mod.sql.set_value("select * from events where ts > current_date - interval 7 day and 1 = 0");
-await until(w, (t) => t.includes('recent time window'), 'a time window is explained');
-w.mod.sql.set_value('select * from products where 1 = 0');
-await w.click('import-go');
-await until(w, () => globalThis.__closed.length > 0, 'imported anyway');
-assert.match(globalThis.__toasts[0].title, /^Imported hello-world-2, version 1$/);
-assert.match(globalThis.__toasts[0].body, /^0 rows/);
+
+// ---- 4. What it is, which column is which, and the cleaning ----------------------------------------------------------
+// Relevance labels need query_id, product_id and grade: unmapped ones are red, and Import waits.
+await w.click('role-judgments');
+await until(w, () => !w.mod.prep.loading && w.mod.prep.role === 'judgments' && w.mod.prep.result?.role === 'judgments', 'role changed');
+let t = w.text();
+assert.ok(t.includes('needs') && t.includes('required'), `the missing columns, in words: ${t.slice(0, 300)}`);
+assert.ok(w.mod.blocker, 'Import waits for them');
+// Pick product_id from the column list.
+await w.click('map-btn-product_id');
+const idIdx = w.mod.prep.result.columns.indexOf('id');
+await w.click(`map-product_id-c${idIdx}`);
+await until(w, () => !w.mod.prep.loading && w.mod.prep.mapping.product_id === 'id' && w.mod.prep.result.mapping.product_id === 'id', 'mapped');
+assert.ok(w.text().includes('id becomes product_id'), 'the report says what was renamed');
+// Back to a catalog; dedupe off, and the report drops that step.
+await w.click('role-catalog');
+await until(w, () => !w.mod.prep.loading && w.mod.prep.result?.role === 'catalog' && !w.mod.blocker, 'a catalog again');
+assert.ok(w.text().includes('duplicate id keep their first row'), 'dedupe is on by default');
+await w.click('clean-dedupe');
+await until(w, () => !w.mod.prep.loading && w.mod.prep.options.dedupe === false && !w.text().includes('duplicate id keep their first row'), 'dedupe off');
+
+// ---- 5. No rows: Import waits, and a time window is explained -------------------------------------------------------
+w.mod.sql.set_value("select * from products where 1 = 0 and current_date - interval 7 day < current_date");
+await w.click('preview-run');
+await until(w, (t) => t.includes('Cleaning left no rows') && t.includes('recent time window'), 'nothing to import, and why');
+assert.equal(globalThis.__closed.length, 0, 'nothing imported');
 
 stop();
 fs.rmSync(work, { recursive: true, force: true });

@@ -5,13 +5,14 @@
 //    "Connect a new source" (the typed database form). Product analytics sources show as coming.
 // 2. A database's tables (read once through the table browser) and suggested queries: the backend's own
 //    (GET /api/connections/{name}/suggestions) when it has them, else ones made here from the tables.
-// 3. Preview up to 1,000 rows (POST /api/connections/{name}/preview, else POST /api/sql), then import it as a dataset
-//    into a folder (POST /api/sql {save}, then POST /api/library/move). The folder starts from the kind (catalogs/,
-//    queries/, judgments/, logs/, imports/), the name shows as it will be saved, a name already used by other data
-//    says so, and an empty result asks first. When it's in, the wizard closes, a toast says what came in, and Data and
-//    signals opens on the new dataset (shared "captain.open").
+// 3. Prepare for training (POST /api/prepare/preview, on a sample): what the data is (the services' guess first),
+//    which column holds each field the role needs, the cleaning, and the cleaned rows with every change in words. A
+//    whole table goes this way too, never as a raw copy. Import runs POST /api/prepare/import as a job, into the
+//    role's folder (catalogs/, queries/, judgments/, logs/, imports/) unless another is picked; the full name shows
+//    first, and a name already used by other data says so. When it's in, the wizard closes, a toast says what came
+//    in, and Data and signals opens on the new dataset (shared "captain.open").
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex, InputState, Input, EditorState, Editor } from "gpui-base";
+import { h_flex, v_flex, InputState, Input, EditorState, Editor, Popup } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay, pickFolder, home, shared, setShared, notify, run } from "herdr";
 import { api, query, watchConnections } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
@@ -30,9 +31,10 @@ const plainSchema = (s) => String(s ?? "").replace(/"/g, "");
 // Where each kind of dataset goes unless you pick another folder.
 export const KIND_FOLDER = { catalog: "catalogs", queries: "queries", judgments: "judgments", events: "logs", logs: "logs", generic: "imports" };
 
-/** The name a dataset is saved under: lower case, words joined by "-" ("Hello World" is "hello-world"). */
+/** The name a dataset is saved under, by the services' own rule (data/prepare.py _slug): lower case letters and
+ *  digits, everything else one "-" ("Hello World" is "hello-world", "sales_v2" is "sales-v2"). */
 export function datasetName(text) {
-  return String(text ?? "").trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/-{2,}/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, 100);
+  return String(text ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
 }
 
 /** A folder path as the library keeps it: lower case words split by "/". */
@@ -41,6 +43,20 @@ export function folderPath(text) {
 }
 
 /** The kind a query's rows most likely are, from the suggestion or the query's words. */
+// "What is this?": the roles the services prepare data for, in words, and the role a suggestion's kind means.
+export const ROLES = [["catalog", "Catalog"], ["queries", "Search queries"], ["judgments", "Relevance labels"], ["events", "Events or logs"], ["generic", "Something else"]];
+const ROLE_OF_KIND = { catalog: "catalog", queries: "queries", judgments: "judgments", events: "events", logs: "events", generic: "generic" };
+// The cleaning the services do (all on by default).
+export const CLEANING = [["trim", "Trim text"], ["dedupe", "Drop duplicates"], ["keep_other_columns", "Keep other columns"]];
+
+/** The change report in one line: "6 rows in, 3 kept: supplierID becomes id, rows missing id are dropped". */
+export function reportLine(result) {
+  const r = result?.report ?? {};
+  const renames = Object.entries(result?.mapping ?? {}).filter(([to, from]) => from && from !== to).map(([to, from]) => `${from} becomes ${to}`);
+  const parts = [...renames, ...(r.steps ?? [])];
+  return `${fmtInt(r.rows_in)} row${r.rows_in === 1 ? "" : "s"} in, ${fmtInt(r.rows_out)} kept${parts.length ? `: ${parts.join(", ")}` : ""}${r.sampled ? " (on a 1,000-row sample)" : ""}.`;
+}
+
 const kindOf = (hint, sql) => hint ?? (/\b(search|query|queries)\b/i.test(sql) ? "queries" : /\b(event|log|logs|clicks?|pageviews?)\b/i.test(sql) ? "events" : "generic");
 // A query over a recent time window (its rows depend on what happened lately).
 const timeWindow = (sql) => /\binterval\b|date_sub|dateadd|date_add|current_date|current_timestamp|now\(\)|\b\d+\s*days?\b|daysago|-\d+d\b/i.test(sql);
@@ -71,7 +87,7 @@ export default class CaptainImport extends View {
     this.tree = null;
     this.suggestions = null;
     this.reading = false;
-    this.preview = null; // {grid, rows, ms} | {error} | {loading}
+    this.prep = null; // step 3: {source, role, mapping, options, result, grid, loading, error}
     this.folders = [""];
     this.folder = props()?.folder ?? "";
     this.folderTouched = !!props()?.folder; // picked by hand (or opened in a folder): the kind no longer moves it
@@ -81,7 +97,6 @@ export default class CaptainImport extends View {
     this.clash = null; // {name, version, source, same} when the name is taken
     this.clashFor = null;
     this.allowNewVersion = false;
-    this.confirmEmpty = false;
     this.note = null;
     this.busy = false;
     this.path = InputState.new({ placeholder: "~/Downloads/catalogs" });
@@ -155,24 +170,31 @@ export default class CaptainImport extends View {
   /** The name it will be saved under. */
   get finalName() { return datasetName(this.name.value()); }
 
-  /** The folder it goes into: the typed one, else the picked one, else the kind's. */
+  /** The folder it goes into: the typed one, else the picked one, else the role's (from the services). */
   get target() {
     const typed = folderPath(this.newFolder.value());
     if (typed) return typed;
-    if (this.folderTouched) return this.folder;
-    return KIND_FOLDER[kindOf(this.kindHint, this.sql.value())] ?? "imports";
+    if (this.folderTouched) return folderPath(this.folder); // as the services will save it (Shop is shop)
+    return this.prep?.result?.folder ?? KIND_FOLDER[kindOf(this.kindHint, this.sql.value())] ?? "imports";
   }
 
-  /** A name nobody has used: the name itself, else name-2, name-3 ... */
+  /** The dataset's full name: its folder, then its name (catalogs/products). */
+  get fullName() {
+    const n = this.finalName;
+    return n && this.target ? `${this.target}/${n}` : n;
+  }
+
+  /** A name nobody has used in the target folder: the name itself, else name-2, name-3 ... */
   freshName(base) {
     base = datasetName(base) || "dataset";
-    if (!this.names.has(base)) return base;
-    for (let i = 2; ; i++) if (!this.names.has(`${base}-${i}`)) return `${base}-${i}`;
+    const taken = (n) => this.names.has(this.target ? `${this.target}/${n}` : n) || this.names.has(n);
+    if (!taken(base)) return base;
+    for (let i = 2; ; i++) if (!taken(`${base}-${i}`)) return `${base}-${i}`;
   }
 
-  /** Is this name taken, and by what? Looked up when the name changes. */
+  /** Is this name taken, and by what? Looked up when the name or folder changes. */
   checkName(cx) {
-    const name = this.finalName;
+    const name = this.fullName;
     if (name === this.clashFor) return;
     this.clashFor = name;
     this.clash = null;
@@ -181,8 +203,10 @@ export default class CaptainImport extends View {
       const r = await api(`/api/datasets/${name.split("/").map(enc).join("/")}`, { scoped: false });
       if (this.clashFor !== name || !r.ok) return;
       const pv = r.data.provenance ?? {};
-      const source = pv.connection ? `${pv.connection}: ${String(pv.sql ?? "").replace(/\s+/g, " ").slice(0, 80)}` : pv.source ?? "a file";
-      const same = pv.connection === this.source?.conn && String(pv.sql ?? "").trim() === this.sql.value().trim();
+      const what = pv.sql ?? pv.table ?? "";
+      const source = pv.connection ? `${pv.connection}: ${String(what).replace(/\s+/g, " ").slice(0, 80)}` : pv.source ?? "a file";
+      const src = this.prep?.source ?? {};
+      const same = pv.connection === this.source?.conn && String(what).trim() === String(src.sql ?? src.table ?? "").trim();
       this.clash = { name, version: r.data.version, source, same };
       cx.notify();
     });
@@ -250,6 +274,20 @@ export default class CaptainImport extends View {
         cx.notify();
       });
     }
+    if (this.prepJob && !this.polling) {
+      this.polling = true;
+      cx.spawn(async (cx) => {
+        const r = await api(`/api/jobs/${enc(this.prepJob)}`);
+        this.polling = false;
+        if (r.ok && r.data.status === "done") { this.prepJob = null; await this.prepared(cx, r.data.result ?? {}); }
+        else if (r.ok && r.data.status === "failed") {
+          this.prepJob = null;
+          this.busy = false;
+          this.note = { text: sentence(r.data.error ?? r.data.message) || "The import stopped.", tone: "fail" };
+        }
+        cx.notify();
+      });
+    }
     if (this.importJob && !this.polling) {
       this.polling = true;
       cx.spawn(async (cx) => {
@@ -275,97 +313,123 @@ export default class CaptainImport extends View {
     }
   }
 
+  /** A suggested or written query: prepared for training like a table. */
   useQuery(cx, sql, name, kind) {
     this.kindHint = kind ?? null;
     this.sql.set_value(sql);
-    this.confirmEmpty = false;
-    // A suggestion's name, made unique: an import never quietly becomes a new version of other data.
-    if (name && !this.name.value().trim()) this.name.set_value(this.freshName(name));
-    this.step = 3;
-    this.runPreview(cx);
+    this.startPrepare(cx, { conn: this.source.conn, sql }, { role: ROLE_OF_KIND[kind] ?? null, name });
   }
 
-  /** A table picked: the whole table, a page at a time, in the kit grid Tables uses. Imports SELECT * of it. */
+  /** A table picked: prepared for training whole (never a raw copy). */
   useTable(cx, schema, table) {
-    const conn = this.source.conn;
     this.kindHint = null;
-    this.tableSel = { schema, table };
     this.sql.set_value(`select * from ${qualified(schema, table)}`);
-    if (!this.name.value().trim()) this.name.set_value(this.freshName(table));
-    this.confirmEmpty = false;
+    this.startPrepare(cx, { conn: this.source.conn, table: `${schema}.${table}` }, { name: table });
+  }
+
+  /** Step 3, "Prepare for training": the services guess the role and the column mapping, then the person adjusts. */
+  startPrepare(cx, source, { role = null, name = null } = {}) {
+    this.prep = { source, role, mapping: null, options: { trim: true, dedupe: true, keep_other_columns: true }, result: null, loading: false, error: null, open: null, seedName: name };
     this.clashFor = null;
+    this.allowNewVersion = false;
     this.step = 3;
-    const path = `/api/tables/${enc(conn)}/${enc(schema)}/${enc(table)}/rows`;
-    const grid = new ResultGrid({ id: "import-preview", name: table, load: (q) => api(`${path}${query(q)}`, { timeout: 120 }) });
-    this.preview = { grid, table: true };
-    grid.fetch(cx);
+    this.preparePreview(cx);
     cx.notify();
   }
 
-  /** Rows the preview found: a table's count, or the query's rows. Null while unknown. */
-  get previewCount() {
-    const p = this.preview;
-    if (!p?.grid) return null;
-    if (p.table) return p.grid.page.total ?? (p.grid.page.has_more || p.grid.loading ? null : (p.grid.table.rows ?? []).length);
-    return p.limited ? null : p.rows;
-  }
-
-  runPreview(cx) {
-    this.tableSel = null; // a query now, even if it began as a table
-    const conn = this.source.conn;
-    const sql = this.sql.value().trim();
-    if (!sql) return;
-    this.preview = { loading: true };
-    this.confirmEmpty = false;
-    this.clashFor = null; // the query may differ now: look the name up again
+  /** Ask for the cleaned preview with the current role, mapping and cleaning. Only the newest answer counts. */
+  preparePreview(cx) {
+    const p = this.prep;
+    if (!p?.source) return;
+    const seq = (p.seq = (p.seq ?? 0) + 1);
+    p.loading = true;
+    p.started = Date.now();
     cx.spawn(async (cx) => {
-      let r = await api(`/api/connections/${enc(conn)}/preview`, { body: { query: sql, limit: 1000 }, timeout: 120 });
-      if (!r.ok && r.status === 404 && /not found/i.test(String(r.error))) r = await api("/api/sql", { body: { conn, sql, limit: 1000 }, timeout: 120 });
-      if (!r.ok) { this.preview = { error: sentence(r.data?.error ?? r.data?.detail ?? r.error) || "Couldn't run that query." }; cx.notify(); return; }
+      const r = await api("/api/prepare/preview", { body: { source: p.source, role: p.role ?? undefined, mapping: p.mapping ?? undefined, options: p.options }, timeout: 180 });
+      if (this.prep !== p || seq !== p.seq) return;
+      p.loading = false;
+      if (!r.ok) { p.error = sentence(r.data?.error ?? r.data?.detail ?? r.error) || "Couldn't prepare this."; cx.notify(); return; }
       const d = r.data;
-      this.preview = { grid: new ResultGrid({ id: "import-preview", name: this.name.value().trim() || "preview", table: { columns: d.columns, rows: d.rows, row_count: d.row_count ?? d.rows.length, limited: d.limited ?? d.truncated, limit: 1000 } }), rows: d.row_count ?? d.rows.length, limited: !!(d.limited ?? d.truncated), ms: d.ms };
+      p.error = null;
+      p.result = d;
+      p.role = d.role;
+      p.mapping = { ...(d.mapping ?? {}) };
+      if (!this.name.value().trim()) this.name.set_value(this.freshName(p.seedName ?? d.suggested_name ?? "data"));
+      this.clashFor = null;
+      p.grid = new ResultGrid({ id: "import-preview", name: this.finalName || "prepared", table: { columns: d.page?.columns ?? [], rows: d.page?.rows ?? [], row_count: d.report?.rows_out } });
       cx.notify();
     });
     cx.notify();
   }
 
+  /** The query in the editor, prepared again (after editing it). */
+  runPreview(cx) {
+    const sql = this.sql.value().trim();
+    if (!sql || !this.source?.conn) return;
+    if (this.prep?.source && !this.prep.source.table) { this.prep.source = { conn: this.source.conn, sql }; this.clashFor = null; this.preparePreview(cx); }
+    else this.startPrepare(cx, { conn: this.source.conn, sql }, { role: ROLE_OF_KIND[this.kindHint] ?? null });
+  }
+
+  setRole(cx, role) {
+    const p = this.prep;
+    if (!p || p.role === role) return;
+    p.role = role;
+    p.mapping = null; // the services map the new role's columns afresh
+    p.open = null;
+    if (!this.folderTouched) this.clashFor = null;
+    this.preparePreview(cx);
+  }
+
+  setColumn(cx, field, col) {
+    const p = this.prep;
+    p.mapping = { ...(p.mapping ?? {}), [field]: col };
+    p.open = null;
+    this.preparePreview(cx);
+  }
+
+  toggleCleaning(cx, key) {
+    const p = this.prep;
+    p.options = { ...p.options, [key]: !p.options[key] };
+    this.preparePreview(cx);
+  }
+
+  /** What stops an import now, in words, or null. */
+  get blocker() {
+    const p = this.prep;
+    if (!p?.result) return p?.loading ? "Preparing" : "Prepare it first.";
+    if ((p.result.missing ?? []).length) return (p.result.report?.problems ?? [])[0] ?? `Pick a column for ${p.result.missing.join(", ")}.`;
+    if (p.result.report?.rows_out === 0) return "Cleaning left no rows. Check the column choices.";
+    if (!this.finalName) return "Name the dataset first.";
+    if (this.clash && !this.clash.same && !this.allowNewVersion) return `${this.clash.name} already holds other data.`;
+    return null;
+  }
+
+  /** Prepare the whole source and save it: a job, then the toast and Data on the new dataset. */
   importQuery(cx) {
-    const name = this.finalName;
-    if (!name) { this.note = { text: "Name the dataset first.", tone: "fail" }; cx.notify(); return; }
-    if (this.clash && !this.clash.same && !this.allowNewVersion) { this.note = { text: `${name} already holds other data. Pick another name, or choose "Import as version ${this.clash.version + 1}".`, tone: "fail" }; cx.notify(); return; }
-    if (this.previewCount === 0 && !this.confirmEmpty) { this.confirmEmpty = true; cx.notify(); return; }
-    const conn = this.source.conn, sql = this.sql.value().trim(), folder = this.target;
-    const kind = this.kindHint ?? undefined;
-    const previewRows = this.previewCount;
-    const whole = this.tableSel ? "the whole table" : null;
+    const p = this.prep;
+    const stop = this.blocker;
+    if (stop) { this.note = { text: stop, tone: "fail" }; cx.notify(); return; }
+    const dest = this.dest;
     this.busy = true;
     this.note = null;
     cx.spawn(async (cx) => {
-      const dest = this.dest;
-      const r = await api("/api/sql", { body: { conn, sql, save: name, kind, project: dest.kind === "project" ? dest.id : undefined }, timeout: 600 });
-      if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't import it.", tone: "fail" }; cx.notify(); return; }
-      const ref = r.data.dataset ?? name;
-      const saved = ref.replace(/@v\d+$/, "");
-      const version = Number(/@v(\d+)$/.exec(ref)?.[1] ?? 1);
-      const moved = folder ? await api("/api/library/move", { body: { names: [saved], folder } }) : { ok: true };
-      const linked = await this.link([saved]);
-      this.busy = false;
-      const rows = r.data.row_count ?? 0;
-      // Fewer rows than the query asked for: say it's everything there was.
-      const asked = Number(/\blimit\s+(\d+)\s*;?\s*$/i.exec(sql)?.[1] ?? 0);
-      const all = whole ?? (/^\s*select\s+\*\s+from\s+[^\s]+\s+limit\s+\d+\s*;?\s*$/i.test(sql) ? "the whole table" : "everything the query returned");
-      // Stopped at the laptop's row limit: say so, so a cut table is never taken for a whole one.
-      const count = r.data.truncated ? `The first ${fmtInt(rows)} rows: this computer's row limit stopped it. Run it on a cloud machine for the rest`
-        : `${fmtInt(rows)} row${rows === 1 ? "" : "s"}${(asked && rows < asked) || whole ? `, ${all}` : ""}`;
-      const differs = previewRows != null && previewRows !== rows ? ` The preview showed ${fmtInt(previewRows)}: the data changed in between.` : "";
-      const forWhom = dest.kind ? `for ${dest.name}` : "";
-      const where = !moved.ok ? ` It stayed at the top level: ${sentence(moved.data?.error ?? moved.error) || "the folder move failed."}${forWhom ? ` It's ${forWhom}.` : ""}`
-        : folder ? ` In ${folder}${forWhom ? `, ${forWhom}` : ""}.` : forWhom ? ` ${forWhom[0].toUpperCase()}${forWhom.slice(1)}.` : "";
-      const body = `${count}.${where}${differs}${linked}`;
-      this.finish(saved, `Imported ${saved}, version ${version}`, body, linked || differs || !moved.ok ? "warning" : "success");
+      const r = await api("/api/prepare/import", { body: { source: p.source, role: p.role, mapping: p.mapping, options: p.options, name: this.finalName, folder: this.target, project: dest.kind === "project" ? dest.id : undefined } });
+      if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't start the import.", tone: "fail" }; cx.notify(); return; }
+      this.prepJob = r.data.job;
       cx.notify();
     });
     cx.notify();
+  }
+
+  /** The prepare job finished: link it to the brand, then the toast and the jump. */
+  async prepared(cx, res) {
+    const dest = this.dest;
+    const linked = await this.link([res.name]);
+    this.busy = false;
+    const label = (this.prep?.result?.roles ?? []).find((x) => x.role === res.role || x.role === this.prep?.role)?.label ?? "dataset";
+    const where = res.folder ? ` In ${res.folder}${dest.kind ? `, for ${dest.name}` : ""}.` : dest.kind ? ` For ${dest.name}.` : "";
+    const body = `${reportLine({ ...this.prep?.result, report: res.report }).replace(/\.$/, "")}. Ready for training as ${label.toLowerCase()}.${where}${linked}`;
+    this.finish(res.name, `Imported ${res.name}, version ${res.version}`, body, linked ? "warning" : "success");
   }
 
   /** It's in: a toast says what came in, Data and signals opens on it, and the wizard closes. */
@@ -414,7 +478,7 @@ export default class CaptainImport extends View {
 
   render() {
     const c = palette(isDark(theme()));
-    const steps = [[1, "Where from"], [2, "What to bring in"], [3, "Preview and import"]];
+    const steps = [[1, "Where from"], [2, "What to bring in"], [3, "Prepare and import"]];
     return v_flex().id("import").size_full().bg(c.surface).rounded(RADIUS).font_family(FONT).text_color(c.navy)
       .child(h_flex().h(56).flex_none().px(20).gap(14).items_center().border_b(1).border_color(c.rule)
         .child(this.icon("database", 18, c.navy))
@@ -486,29 +550,21 @@ export default class CaptainImport extends View {
     const name = this.finalName;
     const typed = this.name.value().trim();
     if (!name) return div().text_size(11.5).text_color(c.grey500).child("Name it to see where it goes.");
-    const v = this.clash?.same ? `, as version ${this.clash.version + 1}` : this.clash && this.allowNewVersion ? `, as version ${this.clash.version + 1}` : "";
+    const vv = this.clash?.same ? `, as version ${this.clash.version + 1}` : this.clash && this.allowNewVersion ? `, as version ${this.clash.version + 1}` : "";
     return h_flex().id("import-save-as").gap(6).items_center().text_size(12)
       .child(div().w(60).flex_none().text_color(c.grey900).child("Saved as"))
       .child(div().font_family(MONO).text_color(c.navy).child(this.target ? `${this.target}/${name}` : name))
-      .child(div().text_color(c.grey500).child(`${typed && typed !== name ? `(from "${typed}")` : ""}${v}`));
+      .child(div().text_color(c.grey500).child(`${typed && typed !== name ? `(from "${typed}")` : ""}${vv}`));
   }
 
   clashView(c) {
     const k = this.clash;
-    const fresh = this.freshName(k.name);
+    const fresh = this.freshName(this.finalName);
     return v_flex().id("import-clash").gap(6).p(10).border_1().border_color(c.warn).text_size(12)
       .child(div().text_color(c.navy).child(`${k.name} already exists (version ${k.version}, from ${k.source}). Import as a new version, or pick another name.`))
       .child(h_flex().gap(6)
         .child(Button(c, "clash-rename", `Name it ${fresh}`, (_e, cx) => { this.name.set_value(fresh); this.allowNewVersion = false; cx.notify(); }, { kind: "primary", small: true }))
         .child(Button(c, "clash-version", `Import as version ${k.version + 1}`, (_e, cx) => { this.allowNewVersion = true; cx.notify(); }, { small: true, disabled: this.allowNewVersion })));
-  }
-
-  emptyView(c) {
-    const windowed = timeWindow(this.sql.value());
-    return v_flex().id("import-empty").gap(4).p(10).border_1().border_color(c.warn).text_size(12)
-      .child(div().text_color(c.navy).child("This query returned no rows. Import anyway?"))
-      .when(windowed, (e) => e.child(div().text_color(c.grey900).child("It looks at a recent time window, and this account may have had no events in it. Widen the window in the query and preview again.")))
-      .child(div().text_color(c.grey500).child("\"Import anyway\" saves an empty dataset."));
   }
 
   choose(c) {
@@ -543,17 +599,41 @@ export default class CaptainImport extends View {
   }
 
   previewStep(c) {
-    const p = this.preview;
-    // Scrolls as a whole: the grid has a fixed height, so it never draws over the rows under it.
+    const p = this.prep;
+    const r = p?.result;
+    const isQuery = !p?.source?.table;
+    const spec = (r?.roles ?? []).find((x) => x.role === p?.role);
+    const stop = this.blocker;
+    const secs = p?.loading ? Math.floor((Date.now() - (p.started ?? Date.now())) / 1000) : 0;
+    const label = (t) => div().w(96).flex_none().text_size(12).text_color(c.grey900).child(t);
+    const chip = (id, text, on, onClick) => div().id(id).h(24).px(8).flex().flex_none().items_center().cursor_pointer().text_size(12)
+      .border_1().border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.grey900).on_click(onClick).child(text);
     return v_flex().id("import-preview-step").flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(10)
-      .child(div().flex_none().h(100).border_1().border_color(c.rule).child(Editor.new(this.sql).size_full()))
-      .child(h_flex().flex_none().gap(8).items_center()
-        .child(Button(c, "preview-run", p?.table ? "Preview this query instead" : "Preview 1,000 rows", (_e, cx) => this.runPreview(cx), { small: true }))
-        .when(!!p?.grid && !p.table, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`${fmtInt(p.rows)} rows${p.ms != null ? ` in ${p.ms} ms` : ""}`)))
-        .when(!!p?.table, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`The whole of ${this.tableSel?.table ?? "the table"}, a page at a time. Import brings in every row.`))))
-      .when(!!p?.loading, (e) => e.child(Skeleton(c, 6)))
+      .child(div().text_size(13).font_medium().child("Prepare for training"))
+      .when(isQuery, (e) => e.child(div().flex_none().h(90).border_1().border_color(c.rule).child(Editor.new(this.sql).size_full()))
+        .child(h_flex().flex_none().gap(8).items_center()
+          .child(Button(c, "preview-run", p?.source ? "Prepare again" : "Prepare this query", (_e, cx) => this.runPreview(cx), { small: true }))
+          .when(timeWindow(this.sql.value()) && r?.report?.rows_in === 0, (e) => e.child(div().text_size(11.5).text_color(c.warn)
+            .child("No rows: this query looks at a recent time window, and this account may have had no events in it.")))))
+      .when(!isQuery, (e) => e.child(div().text_size(12).text_color(c.grey500).child(`The whole of ${p.source.table.split(".").pop()} on ${p.source.conn}, cleaned the way you choose below.`)))
       .when(!!p?.error, (e) => e.child(div().p(10).bg(c.failLight).border_1().border_color(c.fail).text_size(12.5).text_color(c.fail).child(p.error)))
-      .when(!!p?.grid, (e) => e.child(div().flex_none().border_1().border_color(c.rule).child(p.grid.render(c, { height: 220 }))))
+      .when(!!p?.loading && !r, (e) => e.child(v_flex().gap(6).child(div().text_size(12).text_color(c.grey900).child(`Reading a sample from ${p.source.conn}, ${secs} s`)).child(Skeleton(c, 5))))
+      .when(!!r, (e) => e
+        // What is this? The services' guess is preselected.
+        .child(h_flex().flex_wrap().gap(6).items_center().child(label("What is this?"))
+          .children(ROLES.map(([k, t]) => chip(`role-${k}`, t, p.role === k, (_e, cx) => this.setRole(cx, k)))))
+        // One row per column the role needs: required first, marked; an unmapped required one in red.
+        .child(v_flex().id("prep-map").gap(4)
+          .child(h_flex().items_center().child(label("Columns")).child(div().text_size(11.5).text_color(c.grey500).child(spec ? `What ${spec.label.toLowerCase()} needs, and which of your columns holds it.` : "")))
+          .children([...(spec?.required ?? []).map((f) => [f, true]), ...(spec?.optional ?? []).map((f) => [f, false])].map(([f, req]) => this.mapRow(c, f, req))))
+        .children((r.report?.problems ?? []).map((t, i) => div().id(`prep-problem-${i}`).text_size(12).text_color(c.fail).child(t)))
+        .children((r.report?.warnings ?? []).map((t, i) => div().id(`prep-warn-${i}`).text_size(12).text_color(c.warn).child(t)))
+        .child(h_flex().flex_wrap().gap(6).items_center().child(label("Cleaning"))
+          .children(CLEANING.map(([k, t]) => chip(`clean-${k}`, t, !!p.options[k], (_e, cx) => this.toggleCleaning(cx, k)))))
+        .child(h_flex().gap(8).items_start().child(label("What changes"))
+          .child(div().id("prep-report").flex_1().min_w(0).text_size(12).text_color(c.navy).child(reportLine(r)))
+          .when(!!p.loading, (e) => e.child(div().flex_none().text_size(11.5).text_color(c.grey500).child(`Updating, ${secs} s`))))
+        .when(!!p.grid, (e) => e.child(div().flex_none().border_1().border_color(c.rule).child(p.grid.render(c, { height: 200 })))))
       .child(v_flex().flex_none().gap(8).pt(4).border_t(1).border_color(c.rule)
         .child(h_flex().gap(8).items_center()
           .child(div().w(60).flex_none().text_size(12).text_color(c.grey900).child("Name"))
@@ -562,10 +642,33 @@ export default class CaptainImport extends View {
         .child(this.destPick(c))
         .child(this.saveLine(c))
         .when(!!this.clash && !this.clash.same, (e) => e.child(this.clashView(c)))
-        .when(this.confirmEmpty, (e) => e.child(this.emptyView(c)))
-        .child(h_flex().gap(8)
-          .child(Button(c, "import-go", this.busy ? "Importing" : this.confirmEmpty ? "Import anyway" : this.clash && this.allowNewVersion ? `Import as version ${this.clash.version + 1}` : p?.table ? "Import this table" : "Import", (_e, cx) => this.importQuery(cx),
-            { kind: "primary", small: true, disabled: this.busy || !p?.grid || !this.finalName || (!!this.clash && !this.clash.same && !this.allowNewVersion) }))
-          .child(div().text_size(11.5).text_color(c.grey500).child("Imports the query's full result as a write-once dataset. Running it again later makes a new version."))));
+        .child(h_flex().gap(8).items_center()
+          .child(Button(c, "import-go", this.busy ? "Importing" : this.clash && this.allowNewVersion ? `Import as version ${this.clash.version + 1}` : "Import for training", (_e, cx) => this.importQuery(cx),
+            { kind: "primary", small: true, disabled: this.busy || !!stop }))
+          .child(div().text_size(11.5).text_color(stop && r ? c.fail : c.grey500).child(stop && r ? stop : "Cleans the whole source the same way and saves it as a write-once dataset."))));
   }
+
+  /** One needed column: its name (required ones marked) and a list of the source's columns to pick from. */
+  mapRow(c, field, required) {
+    const p = this.prep;
+    const r = p.result;
+    const col = p.mapping?.[field] ?? null;
+    const missing = required && !col;
+    const trigger = h_flex().id(`map-btn-${field}`).h(24).w(220).px(8).gap(6).items_center().cursor_pointer().text_size(12)
+      .border_1().border_color(missing ? c.fail : p.open === field ? c.blue : c.grey300).bg(c.surface)
+      .on_click((_e, cx) => { p.open = p.open === field ? null : field; cx.notify(); })
+      .child(div().flex_1().min_w(0).truncate().font_family(MONO).text_color(col ? c.navy : missing ? c.fail : c.grey500).child(col ?? (required ? "Pick a column" : "Not used")))
+      .child(this.icon("chevron-down", 11, c.grey500));
+    const opt = (key, text, on, value) => div().id(`map-${field}-${key}`).h(24).px(8).flex().items_center().cursor_pointer().text_size(12).font_family(MONO)
+      .text_color(on ? c.blue : c.navy).when(on, (e) => e.bg(c.blueLight)).hover((st) => st.bg(c.surface2)).on_click((_e, cx) => this.setColumn(cx, field, value)).child(text);
+    return h_flex().id(`map-row-${field}`).gap(8).items_center()
+      .child(h_flex().w(96).flex_none().gap(3).items_center().text_size(12).font_family(MONO).text_color(missing ? c.fail : c.navy)
+        .child(div().truncate().child(field)).when(required, (e) => e.child(div().text_color(missing ? c.fail : c.grey500).child("*"))))
+      .child(Popup.new(`map-pop-${field}`, trigger).anchor("bottom_left")
+        .when(p.open === field, (e) => e.content(v_flex().id(`map-list-${field}`).w(240).max_h(260).overflow_y_scrollbar().py(4).bg(c.surface).border_1().border_color(c.grey300)
+          .child(opt("none", required ? "None" : "Not used", !col, null))
+          .children((r.columns ?? []).map((x, i) => opt(`c${i}`, x, col === x, x))))))
+      .when(missing, (e) => e.child(div().text_size(11.5).text_color(c.fail).child("required")));
+  }
+
 }

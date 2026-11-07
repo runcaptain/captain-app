@@ -87,3 +87,9 @@ def test_sql_and_dataset_sources(ctx):
     out = PP.import_prepared(ctx, {"conn": "lake", "table": f"{_shop(ctx)}.sales_suppliers"}, role="generic", name="raw")
     p2 = PP.preview(ctx, {"dataset": out["name"]}, role="catalog", mapping={"id": "supplierID", "title": "name"})
     assert p2["report"]["rows_in"] == 6 and p2["report"]["rows_out"] == 3
+
+
+def test_a_nested_folder_keeps_its_levels(ctx):
+    src = {"conn": "lake", "table": f"{_shop(ctx)}.sales_suppliers"}
+    out = PP.import_prepared(ctx, src, role="generic", name="Hello World", folder="Imports/2026 Q4")
+    assert out["name"] == "imports/2026-q4/hello-world"
