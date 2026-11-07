@@ -24,9 +24,10 @@ where you run `cst`.
 | `judges/` | `@judge("name")` | `fn(query, product) -> grade` or `(grade, reason)`, grade 0 to 3 |
 | `simulators/` | `@simulator("name")` | the same signature as the built-in `cascade-v1` |
 | `stages/` | `@engine("name")` | a class with `__init__(spec, products)` and `search(query, k) -> [product ids]` |
+| `compute/` | `@compute("name")` | a `ComputeProvider` subclass (`captain_search.compute_providers`): `plan`, `submit`, `status`, `logs`, `cancel`, `test`. It shows up as a kind in "Add a place to run work" |
 
 Import the decorators from `captain_search.extensions`. Installed Python packages can add the same four kinds through
-the entry point groups `captain_search.engines`, `.simulators`, `.judges` and `.metrics`.
+the entry point groups `captain_search.engines`, `.simulators`, `.judges` and `.metrics`, and `captain_search.compute`.
 
 ## How they're used
 

@@ -116,10 +116,23 @@ def _builtin() -> dict[str, type]:
 _plugin_errors: dict[str, str] = {}
 
 
-def classes() -> dict[str, type]:
-    """Every provider kind: built in, then entry points. A broken plugin is skipped and named in plugin_errors()."""
+def classes(workspace: str | None = None) -> dict[str, type]:
+    """Every provider kind: built in, entry points, then the team's captain/compute/ folder. A broken plugin is
+    skipped and named in plugin_errors()."""
     out = _builtin()
     _plugin_errors.clear()
+    try:
+        from .. import extensions as X
+
+        reg = X.load(workspace)
+        for e in reg.of("compute"):
+            if e.source.startswith("project:"):
+                out[e.name] = e.obj
+        for err in reg.errors:
+            if err["kind"] == "compute":
+                _plugin_errors[err["name"]] = f"{err['source']}: {err['error']}"
+    except Exception as ex:  # noqa: BLE001
+        _plugin_errors["captain/"] = f"the project folder failed to load: {ex}"
     for ep in entry_points(group=GROUP):
         try:
             cls = ep.load()
@@ -142,7 +155,7 @@ def plugin_errors() -> dict[str, str]:
 
 
 def get(target: dict, ctx=None) -> ComputeProvider:
-    cls = classes().get(target["kind"])
+    cls = classes(getattr(getattr(ctx, "workspace", None), "name", None)).get(target["kind"])
     if cls is None:
         extra = f" The plugin failed to load: {_plugin_errors[target['kind']]}" if target["kind"] in _plugin_errors else ""
         raise ValueError(f"no compute provider for kind {target['kind']!r}.{extra}")
