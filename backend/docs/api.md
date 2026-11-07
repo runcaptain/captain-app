@@ -573,3 +573,22 @@ CLI: `cst data import <paths> --folder <f>`, `cst data mkdir|move|rename-folder|
   SQLGlot.
 
 CLI: `cst tables pull|list|show|search|sample`.
+
+## Projects (one per company)
+
+A project groups one company's connections, datasets, pipelines, models, backtests, investigations and registries
+inside a workspace. Membership is organization only, and nothing moves or is copied. An item is in a project when:
+- it was assigned there (`POST /api/projects/assign {project, items: [{kind, name}]}`; project null takes items out);
+- a registry brand maps to the project (`brands`, which default to the project's id). This claims its models and the
+  pipelines linked to them;
+- or a dataset's folder, or a dataset, pipeline or backtest name, starts with the project's id.
+
+Routes:
+- `GET /api/projects` lists projects with counts per kind. `POST /api/projects {name, description?, brands?}` makes
+  one. `PUT /api/projects/{id} {name?, description?, archived?, brands?}` changes one.
+- `GET /api/projects/{id}` lists everything in it, by kind, including registry models.
+- `GET /api/projects/{id}/lineage` returns the project's models, their parents and architectures, the pipelines
+  serving them, and the backtests that compared those pipelines.
+- `?project=<id>`, or `?project=none` for unclaimed items, filters `/api/datasets`, `/api/datasets/tree`,
+  `/api/pipelines`, `/api/backtests`, `/api/investigations`, `/api/models` and `/api/connections`.
+- `POST /api/datasets/import` and `POST /api/sql` with `save` accept `project`, which puts the result in that project.

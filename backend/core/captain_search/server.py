@@ -143,12 +143,17 @@ def lineage(view: str = "artifacts"):
 
 
 @app.get("/api/connections", dependencies=A)
-def connections():
+def connections(project: str | None = None):
     import yaml
 
+    from . import projects as PR
+
     c = ctx()
+    inp = PR.member_filter(c, project, "connection")
     out = []
     for n in c.connections():
+        if not inp(n):
+            continue
         raw = yaml.safe_load(c.store.get(c.conn_key(n)))
         if not raw.get("deleted"):
             out.append({"name": n, "engine": raw["engine"], "network": raw["network"]["mode"], "writable": raw["writable"]})
@@ -163,6 +168,53 @@ def extensions_list():
 
     reg = X.load(ctx().workspace.name, fresh=True)
     return {"extensions": [e.public() for e in reg.items], "errors": reg.errors, "project": reg.project}
+
+
+@app.get("/api/projects", dependencies=A)
+def projects_list():
+    """Projects (one per company) with what each holds: connections, datasets, pipelines, models, backtests,
+    investigations and registries."""
+    from . import projects as PR
+
+    return PR.listing(ctx())
+
+
+@app.post("/api/projects", dependencies=A)
+def project_create(body: dict):
+    from . import projects as PR
+
+    return PR.create(ctx(), str(body.get("name", "")), body.get("description", ""), body.get("brands"))
+
+
+@app.post("/api/projects/assign", dependencies=A)
+def project_assign(body: dict):
+    """{project: id or null, items: [{kind, name}]}. Moves nothing: it only says which project each item is in."""
+    from . import projects as PR
+
+    return PR.assign(ctx(), body.get("project"), list(body.get("items") or []))
+
+
+@app.get("/api/projects/{pid}", dependencies=A)
+def project_detail(pid: str):
+    from . import projects as PR
+
+    return PR.contents(ctx(), pid)
+
+
+@app.put("/api/projects/{pid}", dependencies=A)
+def project_update(pid: str, body: dict):
+    from . import projects as PR
+
+    return PR.update(ctx(), pid, body.get("name"), body.get("description"), body.get("archived"), body.get("brands"))
+
+
+@app.get("/api/projects/{pid}/lineage", dependencies=A)
+def project_lineage(pid: str):
+    """The project's models (from attached registries, by brand), the pipelines serving them, and the backtests
+    that compared those pipelines."""
+    from . import projects as PR
+
+    return PR.lineage(ctx(), pid)
 
 
 @app.get("/api/connections/kinds", dependencies=A)
@@ -290,6 +342,10 @@ def sql(body: dict):
                         provenance=Provenance(source="sql", connection=body["conn"], sql=body["sql"]),
                         description=body.get("description", ""), truncated=r.truncated)
         out["dataset"] = ops.ref(m)
+        if body.get("project"):
+            from . import projects as PR
+
+            PR.assign(c, body["project"], [{"kind": "dataset", "name": m.name}])
     return out
 
 
@@ -300,12 +356,16 @@ def _jsonable(v):
 
 
 @app.get("/api/datasets", dependencies=A)
-def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class")):
+def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class"), project: str | None = None):
     from . import classes as CL
+    from . import projects as PR
 
     c = ctx()
+    inp = PR.member_filter(c, project, "dataset")
     out = []
     for n in c.registry.names("dataset"):
+        if not inp(n):
+            continue
         m = c.registry.load("dataset", n)
         if kind and m.dataset_kind.value != kind:
             continue
@@ -347,15 +407,17 @@ def dataset_class_delete(name: str):
 
 
 @app.get("/api/datasets/tree", dependencies=A)
-def dataset_tree(cls: str | None = Query(None, alias="class")):
-    """The workspace as folders, the way the person organized it (see library.py)."""
+def dataset_tree(cls: str | None = Query(None, alias="class"), project: str | None = None):
+    """The workspace as folders, the way the person organized it (see library.py). ?project= shows one project's."""
     from . import classes as CL
     from . import library as LIB
+    from . import projects as PR
 
     c = ctx()
+    inp = PR.member_filter(c, project, "dataset")
 
     def entry(n):
-        if cls and cls not in CL.classes_of(c, n):
+        if (cls and cls not in CL.classes_of(c, n)) or not inp(n):
             return None
         m = c.registry.load("dataset", n)
         return {"name": n, "leaf": n.split("/")[-1], "latest": m.version, "kind": m.dataset_kind.value,
@@ -404,7 +466,8 @@ def datasets_import(body: dict):
     paths = [str(p) for p in body.get("paths") or []]
     if not paths:
         raise ValueError("drop at least one file or folder")
-    return {"job": _job(lambda p: IM.import_paths(c, paths, body.get("folder", ""), progress=p),
+    project = body.get("project")
+    return {"job": _job(lambda p: IM.import_paths(c, paths, body.get("folder", ""), progress=p, project=project),
                         f"import {len(paths)} item(s)")}
 
 
@@ -503,10 +566,15 @@ def dataset(name: str, v: int | None = None):
 
 
 @app.get("/api/pipelines", dependencies=A)
-def pipelines():
+def pipelines(project: str | None = None):
+    from . import projects as PR
+
     c = ctx()
+    inp = PR.member_filter(c, project, "pipeline")
     out = []
     for n in c.registry.names("pipeline"):
+        if not inp(n):
+            continue
         m = c.registry.load("pipeline", n)
         out.append({"name": n, "latest": m.version, "engine": m.engine, "repro_status": m.repro_status.value,
                     "by": m.created_by, "created": m.created_at.isoformat(), "description": m.description})
@@ -688,10 +756,13 @@ def handoff_outcome(hid: str, body: dict):
 
 
 @app.get("/api/investigations", dependencies=A)
-def investigations_list(state: str | None = None, q: str | None = None):
+def investigations_list(state: str | None = None, q: str | None = None, project: str | None = None):
     from . import investigations as INV
+    from . import projects as PR
 
-    return INV.listing(ctx(), state, q)
+    c = ctx()
+    inp = PR.member_filter(c, project, "investigation")
+    return [i for i in INV.listing(c, state, q) if inp(i["id"])]
 
 
 @app.post("/api/investigations", dependencies=A)
@@ -812,10 +883,15 @@ def pipeline(name: str, v: int | None = None):
 
 
 @app.get("/api/backtests", dependencies=A)
-def backtests():
+def backtests(project: str | None = None):
+    from . import projects as PR
+
     c = ctx()
+    inp = PR.member_filter(c, project, "backtest")
     out = []
     for n in c.registry.names("backtest"):
+        if not inp(n):
+            continue
         m = c.registry.load("backtest", n)
         out.append({"name": n, "latest": m.version, "arms": m.arms, "primary_metric": m.preregistration.primary_metric,
                     "runs": len(c.registry.versions("backtest-run", n))})
@@ -1334,10 +1410,13 @@ def registry_import(body: dict):
 
 
 @app.get("/api/models", dependencies=A)
-def models_list():
+def models_list(project: str | None = None):
     from . import models as MD
+    from . import projects as PR
 
-    return MD.listing(ctx())
+    c = ctx()
+    inp = PR.member_filter(c, project, "model")
+    return [m for m in MD.listing(c) if inp(m["id"], brand=m.get("brand"))]
 
 
 @app.get("/api/models/{mid:path}", dependencies=A)
