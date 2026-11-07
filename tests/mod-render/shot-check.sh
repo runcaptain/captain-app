@@ -66,15 +66,21 @@ cleanup() {
   rm -rf "$HOME/.local/state/herdr-core/$SESSION"
   # The window starts its own cst serve on our workspace: stop that one, by pid, and nothing else.
   for p in $(pgrep -f "cst serve" || true); do
-    if ps eww -p "$p" | tr ' ' '\n' | grep -qx "CST_HOME=$WORK/cst"; then kill "$p" 2>/dev/null || true; fi
+    if ps eww -p "$p" | tr ' ' '\n' | grep -qx "CST_HOME=${CSTH:-$WORK/cst}"; then kill "$p" 2>/dev/null || true; fi
   done
   # The window's shared state, kept with the shots for debugging (no secrets: the backend token is not in it).
   cp "$HOME_DIR/shared.json" "$OUT/shared.json" 2>/dev/null || true
+  cp "$WORK/app.log" "$OUT/app.log" 2>/dev/null || true
   rm -rf "$HOME_DIR"
 }
 trap cleanup EXIT
 
 echo "seeding a scratch workspace"
+# SHOT_CST_HOME: shoot against an existing backend home (a copy of someone's workspace) instead of a seeded one.
+if [[ -n "${SHOT_CST_HOME:-}" ]]; then
+  CSTH=$SHOT_CST_HOME
+else
+CSTH=$WORK/cst
 CST_HOME=$WORK/cst cst init test --storage "$WORK/store" >/dev/null 2>&1
 CST_HOME=$WORK/cst cst demo seed >/dev/null 2>&1
 # An imported run (a readout only, no per-query rankings), as `cst demos import` makes them.
@@ -82,12 +88,13 @@ CST_PY=$(head -1 "$(command -v cst)" | sed 's/^#!//')
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-imported.py >/dev/null
 # A notebook: text, a SQL cell on the demo store, a Python cell and a chart of the SQL result.
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-notebook.py >/dev/null
+fi
 
 # Skip the first-start welcome (it opens over everything while shared "frame.welcomed" is unset).
 echo '{"frame.welcomed":"skipped"}' > "$HOME_DIR/shared.json"
 launch() {
   # "Captain (test)" in the title bar, so nobody mistakes this window for their own Captain.
-  CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
+  CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_HOME=$CSTH "$BIN" >"$WORK/app.log" 2>&1 &
   APP_PID=$!
   for _ in $(seq 1 60); do [[ -S $HOME_DIR/captain-app.sock ]] && break; sleep 0.5; done
   [[ -S $HOME_DIR/captain-app.sock ]] || { echo "the window did not start: $(tail -5 "$WORK/app.log")"; exit 1; }
@@ -110,7 +117,7 @@ covered && { echo "an overlay still covers the window: $(app status | python3 -c
 # Props for a view: the scratch workspace's first query of the seeded replay, read from its own serve.
 props_of() {
   case "$1" in
-    captain-compare:side) python3 tests/mod-render/first-query.py "$WORK/cst" ;;
+    captain-compare:side) python3 tests/mod-render/first-query.py "$CSTH" ;;
     captain-data:notebook) echo '{"tab": "notebooks", "notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;
     captain-compare:imported) echo '{"backtest": "demos/shot/imported-readout", "version": 1}' ;;

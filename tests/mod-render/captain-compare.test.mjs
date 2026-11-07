@@ -68,7 +68,9 @@ assert.ok(globalThis.__asked.some((p) => /sort=ndcg_a/.test(p) && /desc=true/.te
 
 // One query side by side: grade chips, movement icons, new and dropped.
 const row = fx('regressions').rows[0];
-await h.click(`q-${row.query_id}`, { 'compare-queries': [0, 30] });
+const loaded = [...h.mod.q.pages.entries()].flatMap(([pg, rows]) => rows.map((r, i) => [pg * 200 + i, r]));
+const at = loaded.find(([, r]) => r.query_id === row.query_id)?.[0] ?? 0;
+await h.itemClick('compare-queries', at, { 'compare-queries': [0, 30] });
 text = h.text({ 'compare-queries': [0, 30] });
 const q2 = fx('query2');
 assert.ok(text.includes(q2.a.items[0].title), 'A column');

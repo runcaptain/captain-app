@@ -10,6 +10,8 @@ export class El {
       get(t, k) {
         if (k in t) return t[k];
         if (typeof k === 'symbol') return undefined;
+        // The app refuses click handlers registered inside a virtual list's item renderer: use on_item_click.
+        if (k === 'on_click' && globalThis.__inItemRenderer) throw new Error("`on_click` cannot be registered from a virtual list's item renderer");
         return (...a) => {
           t.calls.push([k, a]);
           return t.proxy;

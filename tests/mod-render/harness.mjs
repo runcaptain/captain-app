@@ -38,7 +38,8 @@ export function harness(Mod) {
       const t0 = performance.now();
       globalThis.__rendering = true;
       let rows;
-      try { rows = draw({ start: a, end: Math.min(b, count) }, cx); } finally { globalThis.__rendering = false; }
+      globalThis.__inItemRenderer = true;
+      try { rows = draw({ start: a, end: Math.min(b, count) }, cx); } finally { globalThis.__rendering = false; globalThis.__inItemRenderer = false; }
       timings.push(performance.now() - t0);
       for (const r of rows) walk(r, f, ranges);
     }
@@ -97,6 +98,16 @@ export function harness(Mod) {
     /** Let spawned work run (kernel replies arrive on timers), then render. */
     async idle(ms = 60) {
       await new Promise((r) => setTimeout(r, ms));
+      await settle();
+      render();
+    },
+    /** Click item `index` of the virtual list `listId`: the list's on_item_click handler, with that item's key. */
+    async itemClick(listId, index, ranges) {
+      const list = all(ranges).find((x) => x.kind === 'v_virtual_list' && x.args[0] === listId);
+      if (!list) throw new Error(`no list ${listId}`);
+      const h = list.call('on_item_click')?.[0];
+      if (!h) throw new Error(`${listId} has no on_item_click`);
+      h(list.args[3](index), cx);
       await settle();
       render();
     },

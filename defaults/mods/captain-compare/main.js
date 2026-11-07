@@ -456,7 +456,6 @@ export default class CaptainCompare extends View {
         const on = side?.row?.query_id === r.query_id;
         out.push(h_flex().id(`q-${r.query_id}`).h(ROW).border_b(1).border_color(c.rule).text_size(12.5).items_center().cursor_pointer()
           .bg(on ? c.blueLight : c.surface).hover((s) => (on ? s : s.bg(c.surface2)))
-          .on_click((_e, cx) => this.openSide(cx, r))
           .child(h_flex().flex_1().min_w(0).px(8).gap(6).items_center()
             .child(this.icon(r.delta > 0 ? "up" : r.delta < 0 ? "down" : "flat", 12, r.delta > 0 ? c.blue : r.delta < 0 ? c.fail : c.grey500))
             .child(div().min_w(0).truncate().child(r.query)).tooltip(r.query))
@@ -480,7 +479,10 @@ export default class CaptainCompare extends View {
       .child(h_flex().flex_1().min_h(0).px(20).pb(10).gap(12)
         .when(!narrow, (e) => e.child(v_flex().w(side ? listW : "100%").flex_none().when(!side, (e) => e.flex_1()).min_w(0).h_full().border_1().border_color(c.rule)
           .child(head)
-          .child(div().flex_1().min_h(0).relative().child(list.size_full()).child(Scrollbar.vertical("compare-queries").viewport_from_layout().absolute().inset_0()))))
+          .child(div().flex_1().min_h(0).relative()
+            // A click on a row opens it side by side. Registered on the list: the app refuses on_click inside an item renderer.
+            .child(list.size_full().on_item_click((key, cx) => { const r = rowAt(Number(String(key).split(":")[1])); if (r) this.openSide(cx, r); }))
+            .child(Scrollbar.vertical("compare-queries").viewport_from_layout().absolute().inset_0()))))
         .when(!!side, (e) => e.child(this.sideBySide(c, side))));
   }
 
