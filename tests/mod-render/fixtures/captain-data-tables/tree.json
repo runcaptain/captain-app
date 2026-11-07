@@ -1,0 +1,1 @@
+{"connection": "wh", "pulled_at": "2026-11-06T20:00:00+00:00", "errors": [], "schemas": [{"name": "SHOP.PUBLIC", "tables": [{"name": "ORDERS", "type": "table", "columns": 3, "comment": null}]}]}

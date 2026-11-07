@@ -98,6 +98,12 @@ fi
 
 # Skip the first-start welcome (it opens over everything while shared "frame.welcomed" is unset).
 echo '{"frame.welcomed":"skipped"}' > "$HOME_DIR/shared.json"
+# SHOT_SCOPE=1: a brand with demo-catalog linked, picked in the Explorer from the start, so every list is filtered.
+if [[ -n "${SHOT_SCOPE:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
+  SID=$(CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-scope.py | tail -1)
+  printf '{"frame.welcomed":"skipped","captain.scope":{"kind":"scope","id":"%s","label":"Shot Brand"}}\n' "$SID" > "$HOME_DIR/shared.json"
+  echo "Explorer pick: $SID"
+fi
 launch() {
   # "Captain (test)" in the title bar, so nobody mistakes this window for their own Captain.
   CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_HOME=$CSTH "$BIN" >"$WORK/app.log" 2>&1 &

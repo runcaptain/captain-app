@@ -14,11 +14,14 @@ globalThis.__routes = [
   [/^\/api\/registries$/, 'job-start', 'POST'],
   [/^\/api\/registries\?uri=/, 'detached', 'DELETE'],
   [/^\/api\/registries$/, 'registries'],
-  [/^\/api\/models$/, 'models'],
+  [/^\/api\/models(\?.*)?$/, 'models'],
+  [/^\/api\/explorer$/, 'explorer'],
+  [/^\/api\/projects\/shop\/lineage$/, 'project-lineage'],
   [/^\/api\/cloud\/profiles$/, 'profiles'],
   [/^\/api\/jobs\//, 'job-done'],
 ];
-globalThis.__shared = {};
+// The Explorer has the project picked: Models opens on it.
+globalThis.__shared = { 'captain.scope': { kind: 'project', id: 'shop', label: 'Shop project' } };
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-models-'));
 fs.cpSync(path.join(root, 'defaults/mods/captain-data'), work, { recursive: true });
 fs.copyFileSync(path.join(root, 'defaults/captain/kit/cst.js'), path.join(work, 'kit/real-cst.js'));
@@ -63,4 +66,14 @@ await h.click('reg-detach-0');
 await h.idle();
 assert.ok(globalThis.__asked.some((p) => /^\/api\/registries\?uri=s3%3A%2F%2Fexample-models%2Fregistry$/.test(p)), 'detach request');
 assert.ok(/Detached Team registry/.test(h.text()), 'detach note');
+
+// Whose models: the Explorer's pick by default, the project's lineage drawn, and a brand filters the list.
+assert.equal(h.mod.models.owner.id, 'shop', 'defaults to the Explorer pick');
+assert.ok(globalThis.__asked.includes('/api/models?project=shop'), 'models for the project');
+t = h.text();
+assert.ok(t.includes('Shop project: models, what they were built from, and where they run') && t.includes('shop-ranker'), `project lineage drawn: ${t.slice(0, 300)}`);
+await h.click(`owner-${h.mod.models.owners.findIndex((o) => o.id === 'brand-shop-1a2b')}`);
+await h.idle();
+assert.ok(globalThis.__asked.includes('/api/models?scope=scope%3Abrand-shop-1a2b'), 'models for the brand');
+assert.ok(!h.text().includes('Shop project: models'), 'no project lineage for a brand');
 console.log('models render test: ok');

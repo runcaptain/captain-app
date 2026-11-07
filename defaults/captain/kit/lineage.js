@@ -51,6 +51,25 @@ export function levels(graph, focus, up, down) {
   return level;
 }
 
+/** With no focus, the whole graph: each node's column is its longest path from a node with nothing upstream. */
+export function ranks(graph) {
+  const ids = (graph.nodes ?? []).map((n) => n.id);
+  const ins = new Map(ids.map((id) => [id, []]));
+  for (const e of graph.edges ?? []) { const [a, b] = ends(e); if (ins.has(b) && ins.has(a)) ins.get(b).push(a); }
+  const rank = new Map();
+  const visit = (id, seen) => {
+    if (rank.has(id)) return rank.get(id);
+    if (seen.has(id)) return 0; // a cycle: break it here
+    seen.add(id);
+    const r = Math.max(-1, ...ins.get(id).map((p) => visit(p, seen))) + 1;
+    seen.delete(id);
+    rank.set(id, r);
+    return r;
+  };
+  for (const id of ids) visit(id, new Set());
+  return rank;
+}
+
 export class LineageGraph {
   constructor({ id, onFocus, onColumn }) {
     Object.assign(this, { id, onFocus, onColumn });
@@ -78,7 +97,7 @@ export class LineageGraph {
     const key = `${this.focus}|${this.up}|${this.down}|${(this.graph.nodes ?? []).length}|${(this.graph.edges ?? []).length}`;
     if (this.cache?.key === key) return this.cache;
     const byId = new Map((this.graph.nodes ?? []).map((n) => [n.id, n]));
-    const level = this.focus && byId.has(this.focus) ? levels(this.graph, this.focus, this.up, this.down) : new Map((this.graph.nodes ?? []).map((n) => [n.id, 0]));
+    const level = this.focus && byId.has(this.focus) ? levels(this.graph, this.focus, this.up, this.down) : ranks(this.graph);
     const cols = new Map();
     for (const [id, l] of level) if (byId.has(id)) { if (!cols.has(l)) cols.set(l, []); cols.get(l).push(byId.get(id)); }
     const order = [...cols.keys()].sort((a, b) => a - b);
@@ -164,11 +183,11 @@ export class LineageGraph {
     });
     const cols = focus?.columns ?? [];
     return v_flex().id(`${this.id}-wrap`).w_full().gap(10)
-      .child(h_flex().flex_wrap().gap(16).items_center()
+      .when(!!this.focus, (e) => e.child(h_flex().flex_wrap().gap(16).items_center()
         .child(this.step(c, "up", "Upstream", this.up, (v) => { this.up = v; }))
         .child(this.step(c, "down", "Downstream", this.down, (v) => { this.down = v; }))
         .when(L.hidden.up + L.hidden.down > 0, (e) => e.child(div().text_size(11.5).text_color(c.grey500)
-          .child(`${L.hidden.up + L.hidden.down} more ${L.hidden.up && L.hidden.down ? "further each way" : L.hidden.up ? "further upstream" : "further downstream"}`))))
+          .child(`${L.hidden.up + L.hidden.down} more ${L.hidden.up && L.hidden.down ? "further each way" : L.hidden.up ? "further upstream" : "further downstream"}`)))))
       .when(cols.length > 0, (e) => e.child(h_flex().id(`${this.id}-cols`).gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
         .child(div().flex_none().text_color(c.grey500).child("Trace a column"))
         .children(cols.map((col) => {

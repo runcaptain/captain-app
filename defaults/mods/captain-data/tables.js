@@ -95,6 +95,16 @@ export class Tables {
         j.polling = false;
         if (!r.ok) return;
         j.progress = r.data.progress ?? j.progress;
+        if (j.lineage && (r.data.status === "done" || r.data.status === "failed")) {
+          this.jobs.delete(conn);
+          const res = r.data.result ?? {};
+          const sys = j.system;
+          this.note = r.data.status === "done"
+            ? { text: `Read ${fmtInt(res.table_edges)} table link${res.table_edges === 1 ? "" : "s"} and ${fmtInt(res.column_edges)} column link${res.column_edges === 1 ? "" : "s"} from ${sys}, as of ${new Date().toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}. They're in every dataset's Lineage tab.`, tone: "good" }
+            : { text: sentence(r.data.error ?? r.data.message) || `Couldn't read lineage from ${sys}.`, tone: "fail" };
+          cx.notify();
+          return;
+        }
         if (r.data.status === "done" || r.data.status === "failed") {
           this.jobs.delete(conn);
           const res = r.data.result ?? {};
@@ -108,6 +118,17 @@ export class Tables {
         cx.notify();
       });
     }
+  }
+
+  /** Databricks' Unity Catalog and Snowflake keep their own lineage: read it into Captain's graph (a job). */
+  readLineage(cx, conn, system) {
+    const days = this.linDays ?? 30;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/lineage/import/${enc(conn)}`, { body: { days } });
+      if (!r.ok) { this.note = { text: sentence(r.data?.error ?? r.error) || `Couldn't read lineage from ${system}.`, tone: "fail" }; cx.notify(); return; }
+      this.jobs.set(conn, { id: r.data.job, progress: 0, lineage: true, system });
+      cx.notify();
+    });
   }
 
   find(cx) {
@@ -224,9 +245,19 @@ export class Tables {
         .child(div().flex_1().min_w(0).truncate().text_size(13).font_medium().child(conn))
         .when(!!k.engine, (e) => e.child(div().flex_none().h(18).px(5).flex().items_center().border_1().border_color(c.rule).text_size(10.5).text_color(c.grey900).child(k.engine))))
       .child(h_flex().gap(8).items_center().text_size(11.5).text_color(c.grey500)
-        .child(div().flex_1().min_w(0).truncate().child(job ? `Reading its tables, ${Math.round((job.progress ?? 0) * 100)}%`
+        .child(div().flex_1().min_w(0).truncate().child(job ? (job.lineage ? `Reading lineage from ${job.system}` : `Reading its tables, ${Math.round((job.progress ?? 0) * 100)}%`)
           : k.pulled_at ? `${fmtInt(k.tables)} tables, last read ${ago(k.pulled_at)}` : "Its tables haven't been read yet"))
-        .child(Button(c, `pull-${conn}`, k.pulled_at ? "Read again" : "Read its tables", (_e, cx) => this.pull(cx, conn), { small: true, disabled: !!job })))];
+        .child(Button(c, `pull-${conn}`, k.pulled_at ? "Read again" : "Read its tables", (_e, cx) => this.pull(cx, conn), { small: true, disabled: !!job })))
+      .when(["databricks", "snowflake"].includes(String(k.engine ?? "").toLowerCase()), (e) => {
+        const system = String(k.engine).toLowerCase() === "databricks" ? "Databricks" : "Snowflake";
+        return e.child(h_flex().gap(6).items_center().text_size(11.5).text_color(c.grey500)
+          .child(div().flex_none().child("Last"))
+          .children([30, 90].map((d) => div().id(`lin-days-${conn}-${d}`).h(20).px(5).flex().flex_none().items_center().cursor_pointer()
+            .border_1().border_color((this.linDays ?? 30) === d ? c.blue : c.grey300).text_color((this.linDays ?? 30) === d ? c.blue : c.grey900)
+            .on_click((_e, cx) => { this.linDays = d; cx.notify(); }).child(`${d} days`)))
+          .child(div().flex_1())
+          .child(Button(c, `lin-${conn}`, job?.lineage ? "Reading lineage" : `Read lineage from ${system}`, (_e, cx) => this.readLineage(cx, conn, system), { small: true, disabled: !!job })));
+      })];
     if (!open) return rows;
     if (tree?.missing) return [...rows, div().px(28).py(6).text_size(11.5).text_color(c.grey500).child(tree.missing)];
     for (const s of tree?.schemas ?? []) {

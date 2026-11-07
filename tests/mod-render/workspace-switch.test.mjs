@@ -39,5 +39,11 @@ for (const [mod, list] of Object.entries(LIST)) {
   globalThis.__space = 's2';
   await h.layoutLists({});
   assert.ok(globalThis.__asked.filter((p) => list.test(p)).length > before, `${mod}: reloaded after the switch`);
+  // The Explorer's pick changes (a brand): the list is asked for again.
+  const beforeScope = globalThis.__asked.filter((p) => list.test(p)).length;
+  globalThis.__shared['captain.scope'] = { kind: 'scope', id: 'brand-x', label: 'X' };
+  await h.layoutLists({});
+  assert.ok(globalThis.__asked.filter((p) => list.test(p)).length > beforeScope, `${mod}: reloaded after the Explorer pick changed`);
+  delete globalThis.__shared['captain.scope'];
 }
 console.log('workspace-switch render test: ok');
