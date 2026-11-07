@@ -1232,7 +1232,9 @@ def backtests(project: str | None = None):
         out.append({"name": n, "latest": m.version, "arms": m.arms, "primary_metric": m.preregistration.primary_metric,
                     "runs": len(runs), "created": m.created_at.isoformat(), "mode": m.mode,
                     "last_run": lr.created_at.isoformat() if lr else None,
-                    "last_run_complete": lr.complete if lr else None})
+                    # A run is saved only when it finished. `complete` means its top results are graded enough
+                    # (judged@10 of 0.9 or more) to trust relevance metrics, not that it finished.
+                    "last_run_graded": lr.complete if lr else None})
     out.sort(key=lambda x: x["last_run"] or x["created"], reverse=True)  # newest first: latest run, else creation
     return out
 
