@@ -164,9 +164,13 @@ props_of() {
     captain-data:notebook) echo '{"tab": "notebooks", "notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:models) echo '{"tab": "models"}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;
+    captain-data:import-run) echo '{"importWith": {"conn": "demo-store", "table": "products", "name": "hello", "autoImport": true}}' ;;
     captain-data:quality) echo '{"pageTab": "quality"}' ;;
     captain-data:insights) echo '{"pageTab": "insights"}' ;;
     captain-data:lineage) echo '{"pageTab": "lineage"}' ;;
+    captain-data:labels) echo '{"tab": "labels"}' ;;
+    captain-data:search) echo '{"find": "price"}' ;;
+    captain-data:flat) echo '{"flatAll": true}' ;;
     captain-runs:grading) echo '{"tab": "grading"}' ;;
     captain-runs:jobs) echo '{"tab": "jobs"}' ;;
     captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;
@@ -224,6 +228,7 @@ EOF
   # The notebook view runs every cell on a fresh Python first: give it time to finish before judging.
   [[ "$view" == captain-data:notebook || "$view" == captain-data:chart || "$view" == captain-data:bignotebook ]] && sleep 25
   [[ "$view" == captain-data:import* || "$view" == captain-compare:profile || "$view" == captain-data:quality ]] && sleep 8
+  [[ "$view" == captain-data:import-run ]] && sleep 14
   for i in $(seq 1 12); do
     sleep 1.5
     # A window in the background may not draw a new frame after its data arrives, and shot saves the last frame
@@ -262,7 +267,7 @@ if [[ -n "${SHOT_AUDIT:-}" ]]; then
   app do app.palette >/dev/null || true; shoot palette 2; app do app.palette >/dev/null || true
   app do app.settings >/dev/null || true; shoot settings 3; app do app.settings >/dev/null || true
   app do mod.open '{"name":"folds-open"}' >/dev/null || true; shoot explorer-mlflow 6
-  for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup; do
+  for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup captain-services captain-scope-model captain-cloud; do
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; shoot "dialog-$m" 4
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; sleep 1
   done

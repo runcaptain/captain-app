@@ -74,6 +74,18 @@ await until((t) => t.includes('catalog-checks'), 'insights again');
 await h.click('ins-nb-0');
 await until(() => h.mod.tab === 'notebooks' && h.mod.nb.open?.name === 'catalog-checks', 'the notebook open');
 
+// Search across folders: a column finds its dataset and says so; Show all lists foldered datasets flat.
+h.mod.tab = 'datasets';
+h.mod.lib.find.set_value('price');
+await until((t) => t.includes('across every folder') && t.includes('column price'), 'search by a column');
+assert.ok(h.mod.lib.found().some((x) => x.row.name === 'demo-catalog' && x.col === 'price'), 'demo-catalog, by its price column');
+h.mod.lib.find.set_value('historic judgments');
+await until((t) => t.includes('in demo-historic-replay'), 'a foldered dataset found, with its folder');
+h.mod.lib.find.set_value('');
+await h.click('lib-flat');
+await until((t) => t.includes('folders aside') && t.includes('in logs'), 'every dataset flat');
+assert.equal(h.mod.lib.found().length, h.mod.list.length, 'all of them');
+
 stop();
 console.log('insights-live render test: ok');
 process.exit(0);

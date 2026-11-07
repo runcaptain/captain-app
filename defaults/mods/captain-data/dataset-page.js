@@ -168,7 +168,7 @@ export class DatasetPage {
     const h = this.host;
     if (this.tab === "sample") return this.sample(c);
     if (this.tab === "details") return this.details(c, d);
-    if (this.tab === "lineage") return this.lineageView(c);
+    if (this.tab === "lineage") return this.lineageView(c, w);
     if (this.tab === "insights") return this.insights.render(c);
     if (this.tab === "quality") return this.quality(c, d);
     if (this.tab === "health") return v_flex().id("ds-health").flex_1().min_h(0).overflow_y_scrollbar().child(this.health.render(c));
@@ -224,12 +224,12 @@ export class DatasetPage {
       .when(!!d.judgment_source, (e) => e.child(row("Judgments from", String(d.judgment_source))));
   }
 
-  lineageView(c) {
+  lineageView(c, w) {
     if (this.graphError) return v_flex().flex_1().p(20).child(div().text_size(12.5).text_color(c.fail).child(this.graphError));
     if (!this.lineage.graph.nodes?.length) return v_flex().flex_1().child(Skeleton(c, 6));
     return v_flex().id("ds-lineage-view").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(10).gap(8)
-      .child(div().text_size(12).text_color(c.grey900).child("Where this dataset comes from and what uses it. Click a box to center on it."))
-      .child(this.lineage.render(c))
+      .child(div().text_size(12).text_color(c.grey900).child("Where this dataset comes from and what uses it. Double-click a box to center on it."))
+      .child(this.lineage.render(c, { width: w ? w - 40 - 2 - 12 : 0 })) // the view's padding, the canvas's border, a scrollbar
       .when(!!this.columnNote, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(this.columnNote)));
   }
 

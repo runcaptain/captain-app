@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { harness } from './harness.mjs';
-import { cstBin, tidy } from './backend.mjs';
+import { cstBin, tidy, startScopeModel } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
@@ -29,6 +29,8 @@ const line = await new Promise((res, rej) => { let b = ''; serve.stdout.on('data
 const j = JSON.parse(line);
 const base = `http://127.0.0.1:${j.port}`;
 globalThis.__shared = { 'captain.daemon': { state: 'ready', base, token: j.token } };
+// A new workspace's scope model is empty: start it with Brand, then Site, as the one-click start does.
+await startScopeModel(`http://127.0.0.1:${j.port}`, j.token);
 const get = async (p) => (await fetch(base + p, { headers: { Authorization: `Bearer ${j.token}` } })).json();
 
 // Each mod from its own copy, as the app loads them.

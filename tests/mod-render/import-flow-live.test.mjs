@@ -84,23 +84,22 @@ let w = await wizard();
 await preview(w, 'select * from products limit 1000');
 assert.equal(w.mod.prep.role, 'catalog', 'the services guess a catalog');
 w.mod.name.set_value('Hello World');
-await until(w, (t) => t.includes('catalogs/hello-world') && t.includes('(from "Hello World")'), 'the name and folder it will get');
+await until(w, (t) => t.includes('hello-world') && !t.includes('catalogs/hello-world') && t.includes('(from "Hello World")'), 'the name and folder it will get');
 await w.click('import-go');
 await until(w, () => globalThis.__closed.length > 0, 'the wizard closes itself');
 const toast = globalThis.__toasts[0];
-assert.equal(toast.title, 'Imported catalogs/hello-world, version 1');
-assert.match(toast.body, /^480 rows in, 480 kept: .*Ready for training as catalog .*\. In catalogs\.$/, toast.body);
+assert.equal(toast.title, 'Imported hello-world, version 1');
+assert.match(toast.body, /^480 rows in, 480 kept: .*Ready for training as catalog [^.]*\.$/, toast.body);
 assert.equal(toast.action.name, 'layout.select');
 assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections', child: 'data' }], 'Data and signals comes forward');
 // Data opens on it: the Datasets tab, the dataset selected, its folder open and current.
-await until(data, () => data.mod.tab === 'datasets' && data.mod.sel === 'catalogs/hello-world' && data.mod.lib.cur === 'catalogs', 'selected in the tree');
-assert.ok(data.mod.lib.open.has('catalogs'), 'its folder is open');
+await until(data, () => data.mod.tab === 'datasets' && data.mod.sel === 'hello-world' && data.mod.lib.cur === '', 'selected at the top level, where it shows under All datasets');
 
 // ---- 3. The same name for other data: said, with a fresh name offered ---------------------------------------------
 w = await wizard();
 await preview(w, "select * from products where category = 'Camping'");
 w.mod.name.set_value('Hello World');
-await until(w, (t) => t.includes('catalogs/hello-world already exists (version 1, from demo-store'), 'the clash');
+await until(w, (t) => t.includes('hello-world already exists (version 1, from demo-store'), 'the clash');
 assert.ok(w.text().includes('Name it hello-world-2') && w.text().includes('Import as version 2'), 'both ways out');
 await w.click('clash-rename');
 assert.equal(w.mod.name.value(), 'hello-world-2');

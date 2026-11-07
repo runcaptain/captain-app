@@ -55,3 +55,17 @@ def test_route(ctx, monkeypatch):
     r = c.get("/api/datasets/demo-judgments/insights", headers=h)
     assert r.status_code == 200 and r.json()["used_by"]["run"][0]["label"] == "demo-tuned-vs-bm25@v1"
     assert c.get("/api/datasets/nope/insights", headers=h).status_code == 404
+
+
+def test_datasets_list_carries_columns_and_searches_them(ctx, monkeypatch):
+    from captain_search import server
+
+    monkeypatch.setattr(server, "_ctx", ctx)
+    c = TestClient(server.app)
+    h = {"Authorization": f"Bearer {server.TOKEN}"}
+    rows = c.get("/api/datasets", headers=h).json()
+    cat = next(r for r in rows if r["name"] == "demo-catalog")
+    assert "price" in cat["columns"] and "title" in cat["columns"]
+    hits = [r["name"] for r in c.get("/api/datasets?q=price", headers=h).json()]
+    assert "demo-catalog" in hits and "demo-queries" not in hits
+    assert [r["name"] for r in c.get("/api/datasets?q=catalog%20price", headers=h).json()] == ["demo-catalog"]

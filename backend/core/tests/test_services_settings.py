@@ -63,3 +63,10 @@ def test_warehouse_compute_plans():
     with pytest.raises(ValueError, match="plain Snowflake name"):
         SnowparkContainersProvider({"config": {"connection": "sf", "compute_pool": "x; drop table t",
                                                "image": "i"}}).plan(job)
+
+
+def test_services_list_says_each_connections_database(ctx):
+    """Settings shows a connection's database (its mark and name), so `kind` is the engine, not the record type."""
+    conns = SV.listing(ctx)["connections"]
+    demo_store = next(c for c in conns if c["name"] == "demo-store")
+    assert demo_store["kind"] == ctx.load_connection("demo-store").engine != "connection"

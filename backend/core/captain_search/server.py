@@ -799,7 +799,9 @@ def _jsonable(v):
 
 
 @app.get("/api/datasets", dependencies=A)
-def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class"), project: str | None = None):
+def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class"), project: str | None = None,
+             q: str | None = None):
+    """Every dataset, with its columns' names. q: every word in its name, description or a column's name."""
     from . import classes as CL
     from . import projects as PR
 
@@ -815,8 +817,12 @@ def datasets(kind: str | None = None, cls: str | None = Query(None, alias="class
         mine = CL.classes_of(c, n)
         if cls and cls not in mine:
             continue
+        cols = [f.get("name") for f in (m.schema_fields or []) if isinstance(f, dict) and f.get("name")]
+        if q and not all(w in " ".join([n, m.description or "", *cols]).lower() for w in q.lower().split()):
+            continue
         out.append({"name": n, "latest": m.version, "kind": m.dataset_kind.value, "classes": mine, "rows": m.row_count,
-                    "by": m.created_by, "created": m.created_at.isoformat(), "description": m.description})
+                    "by": m.created_by, "created": m.created_at.isoformat(), "description": m.description,
+                    "columns": cols})
     return out
 
 

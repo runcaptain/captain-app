@@ -160,6 +160,7 @@ export default class CaptainImport extends View {
       if (start?.conn && start.table && this.conns.some((k) => k.name === start.conn)) {
         // A table by name: its tables load, then it opens whole.
         this.startTable = start.table;
+        this.autoImport = !!start.autoImport; // the real-window check: press Import once the preview is ready
         if (start.name) this.name.set_value(start.name);
         this.pick(cx, { kind: "db", conn: start.conn });
       } else if (start?.conn && this.conns.some((k) => k.name === start.conn)) {
@@ -176,13 +177,13 @@ export default class CaptainImport extends View {
   /** The name it will be saved under. */
   get finalName() { return datasetName(this.name.value()); }
 
-  /** The folder it goes into: the typed one, else the picked one, else the role's (from the services). */
-  /** The folder, exactly as shown and sent: the library keeps its capitals, so an import into "Shop" lands there. */
+  /** The folder, exactly as shown and sent: the typed one, else the picked one, else none. A new dataset goes to the
+   *  top level unless a folder is picked here, so it's always in plain sight under All datasets (Edgar's "hello" landed
+   *  in whatever folder happened to be open and he couldn't find it). The library keeps capitals ("Shop"). */
   get target() {
     const typed = folderShown(this.newFolder.value());
     if (typed) return typed;
-    if (this.folderTouched) return this.folder;
-    return this.prep?.result?.folder ?? KIND_FOLDER[kindOf(this.kindHint, this.sql.value())] ?? "imports";
+    return this.folderTouched ? this.folder : "";
   }
 
   /** The dataset's full name: its folder, then its name (catalogs/products). */
@@ -365,6 +366,7 @@ export default class CaptainImport extends View {
       p.mapping = { ...(d.mapping ?? {}) };
       if (!this.name.value().trim()) this.name.set_value(this.freshName(p.seedName ?? d.suggested_name ?? "data"));
       this.clashFor = null;
+      if (this.autoImport && !d.missing?.length) { this.autoImport = false; cx.timer?.after(500, (cx) => this.importQuery(cx)); }
       p.grid = new ResultGrid({ id: "import-preview", name: this.finalName || "prepared", table: { columns: d.page?.columns ?? [], rows: d.page?.rows ?? [], row_count: d.report?.rows_out } });
       cx.notify();
     });
