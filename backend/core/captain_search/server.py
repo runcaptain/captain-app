@@ -817,9 +817,12 @@ def backtest_run(name: str, body: dict | None = None):
 
 @app.get("/api/jobs/{jid}", dependencies=A)
 def job(jid: str):
-    if jid not in JOBS:
-        raise HTTPException(404, "no such job")
-    return JOBS[jid]
+    """A job started by this daemon (progress of a local run), or else a recorded compute job (jobs.py)."""
+    if jid in JOBS:
+        return JOBS[jid]
+    from . import jobs as J
+
+    return J.show(ctx(), jid)
 
 
 @app.get("/api/runs/{name:path}/queries/{qid}", dependencies=A)
@@ -1156,7 +1159,7 @@ def workspace_use(name: str):
 def compute_kinds():
     from . import compute as C
 
-    return C.KINDS
+    return C.kinds()
 
 
 @app.get("/api/compute", dependencies=A)
@@ -1178,6 +1181,28 @@ def compute_test(name: str):
     from . import compute as C
 
     return C.test(ctx(), name)
+
+
+@app.get("/api/jobs", dependencies=A)
+def jobs_list(refresh: bool = False, limit: int = 200):
+    """Jobs submitted to compute targets, newest first. refresh=true asks each unfinished job's provider first."""
+    from . import jobs as J
+
+    return J.listing(ctx(), refresh_active=refresh, limit=limit)
+
+
+@app.get("/api/jobs/{job_id}/logs", dependencies=A)
+def jobs_logs(job_id: str, since: str | None = None):
+    from . import jobs as J
+
+    return J.logs(ctx(), job_id, since)
+
+
+@app.post("/api/jobs/{job_id}/cancel", dependencies=A)
+def jobs_cancel(job_id: str):
+    from . import jobs as J
+
+    return J.cancel(ctx(), job_id)
 
 
 @app.get("/api/engines", dependencies=A)

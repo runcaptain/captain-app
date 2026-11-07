@@ -121,7 +121,7 @@ def test_compute_plans(ctx):
     plan = C.plan_backtest(ctx, t, "demo-tuned-vs-bm25")
     a = plan[0]["args"]
     assert plan[0]["call"] == "submit_job" and a["jobQueue"] == "q"
-    assert "backtest run demo-tuned-vs-bm25" in a["containerOverrides"]["command"][-1]
+    assert a["containerOverrides"]["command"][-3:] == ["backtest", "run", "demo-tuned-vs-bm25"]
     sm = C.add(ctx, "sm", "aws-sagemaker", "prod-aws", "us-west-1", {"image": "123.dkr.ecr/x:1", "execution_role_arn": "arn:role"})
     sp = C.plan_serve(ctx, sm, "demo-tuned@v1", "prod")
     assert [s["call"] for s in sp] == ["create_model", "create_endpoint_config", "update_endpoint_or_create"]

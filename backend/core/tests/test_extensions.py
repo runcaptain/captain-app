@@ -98,3 +98,46 @@ def test_store_demos_come_only_from_a_private_file(tmp_path, monkeypatch):
     (tmp_path / "d.yaml").write_text("registry: s3://example-registry\nbrands:\n  acme: {label: Acme}\n")
     monkeypatch.setenv("CST_DEMOS", str(tmp_path / "d.yaml"))
     assert brands.load_demos() == ("s3://example-registry", {"acme": {"label": "Acme"}})
+
+
+def test_project_folder_can_add_a_compute_provider(tmp_path, monkeypatch):
+    from captain_search import compute as C
+    from captain_search import compute_providers as P
+
+    path = _project(tmp_path, {"compute/slurm.py": '''
+from captain_search.compute_providers import ComputeProvider, status
+from captain_search.extensions import compute
+
+
+@compute("slurm", description="Our on-prem Slurm cluster")
+class Slurm(ComputeProvider):
+    provider, label = "none", "Slurm cluster"
+    fields = [{"name": "partition", "label": "Partition", "required": True}]
+
+    def plan(self, job):
+        return [{"service": "slurm", "call": "sbatch", "args": {"partition": self.config["partition"], "argv": job.argv}}]
+
+    def submit(self, job):
+        return {"id": "123"}
+
+    def status(self, handle):
+        return status("succeeded", "finished")
+
+    def logs(self, handle, since=None):
+        return {"lines": [], "next": None}
+
+    def cancel(self, handle):
+        return status("stopped", "cancelled")
+
+    def test(self):
+        return {"ok": True, "detail": "reachable"}
+''', "compute/broken.py": "from captain_search.extensions import compute\n@compute('nope')\nclass N:\n    pass\n"})
+    monkeypatch.setenv("CST_PROJECT", str(path))
+    reg = X.load(fresh=True)
+    assert reg.get("compute", "slurm").source == "project:compute/slurm.py"
+    assert any(e["name"] == "nope" and "ComputeProvider subclass" in e["error"] for e in reg.errors)
+    kinds = C.kind_map()
+    assert kinds["slurm"]["label"] == "Slurm cluster" and "ecs" in " ".join(kinds)
+    prov = P.get({"kind": "slurm", "config": {"partition": "gpu"}})
+    assert prov.test()["ok"] and prov.plan(P.Job(id="j", argv=["x"], label="l", env={}))[0]["args"]["partition"] == "gpu"
+    assert "nope" in P.plugin_errors()

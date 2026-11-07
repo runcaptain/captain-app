@@ -55,11 +55,13 @@ def retrain(ctx: Context, name: str, compute: str | None = None, local_exec: boo
                          "so a retrain knows what to run.")
     target = C.get(ctx, compute or train.get("compute") or "local")
     if target["kind"] != "local":
-        plan = C.plan_job(ctx, target, ["pipeline", "retrain", name, "--local-exec"], label=f"retrain-{name}")
+        plan, job = C.plan_and_job(ctx, target, ["pipeline", "retrain", name, "--local-exec"], label=f"retrain-{name}")
         if dry_run:
             return {"pipeline": ref(pm), "compute": target["name"], "plan": plan}
-        return {"pipeline": ref(pm), "compute": target["name"], "plan": plan, "submitted": C.execute(ctx, target, plan),
-                "detail": "the new version lands in the workspace bucket when the job finishes. Run `cst sync` to see it."}
+        rec = C.submit_job(ctx, target, job.argv, label=job.label, kind="retrain", job=job)
+        return {"pipeline": ref(pm), "compute": target["name"], "plan": plan, "job": rec["id"],
+                "submitted": {"provider_job": C.provider_job(rec["handle"]), "job": rec["id"]},
+                "detail": f"the new version lands in the workspace bucket when the job finishes. Follow it with `cst job show {rec['id']}`."}
     if dry_run:
         return {"pipeline": ref(pm), "compute": "local", "would_run": train["command"]}
     if not local_exec:

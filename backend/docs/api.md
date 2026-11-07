@@ -158,7 +158,94 @@ Dataset names may have up to 8 `/`-separated segments (`catalogs/acme/products`)
 | POST | `/api/compute/{name}/test` | | `{ok, detail}` |
 
 Kinds: `local`, `modal`, `aws-batch`, `aws-ecs`, `aws-sagemaker`, `gcp-cloud-run`, `gcp-vertex`,
-`azure-container-apps`, `azure-ml`.
+`azure-container-apps`, `azure-ml`, plus any a team adds (below). `/api/compute/kinds` items also carry
+`live_tested` (the date that kind last ran a real job on a real account, or null) and
+`capabilities:{logs, cancel}`.
+
+## Compute providers and jobs
+
+Every kind is a provider (`core/captain_search/compute_providers/`) with one interface:
+`plan(job)` (the API calls, for `--dry-run`), `submit(job) -> handle`, `status(handle)`, `logs(handle, since)`,
+`cancel(handle)`, `test()` and `describe()`. A job runs `cst <args>` once in the runner image (`runner/Dockerfile`,
+entrypoint `cst`). It gets `CST_STORAGE`, `CST_WORKSPACE`, `CST_USER`, `CST_JOB_ID` and `CST_COMPUTE`, attaches to
+that workspace in its bucket and writes results there, so cloud kinds need an `s3://`, `gs://` or `az://` workspace.
+
+Each submitted job is recorded at `jobs/<id>.yaml` in the workspace, so teammates see it too:
+`{id, kind, label, argv, target, target_kind, region, state, reason, handle, submitted_by, submitted_at, updated_at,
+started_at, finished_at, exit_code, run_seconds?, backtest?, cancelled_by?}`. `state` is one of `queued`, `running`,
+`succeeded`, `failed`, `stopped`, and `reason` is a sentence a person reads ("cst exited with code 2. The last log
+lines say why."). Reading an unfinished job asks its provider and saves the answer.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/jobs?refresh=false&limit=200` | | job records, newest first. `refresh=true` asks each unfinished job's provider first |
+| GET | `/api/jobs/{id}` | | a job this daemon is running (`{id, status, progress, log}`, as before), else the compute job record, refreshed |
+| GET | `/api/jobs/{id}/logs?since=<cursor>` | | `{job, lines:[{ts, message}], next, where?, note?}`. Pass `next` back as `since` for only the newer lines |
+| POST | `/api/jobs/{id}/cancel` | | the record, with `cancelled_by`. A finished job comes back unchanged with `note` |
+
+`POST /api/backtests/{name}/run` with a cloud `compute` returns `{job}` for the daemon's own progress; its `result`
+holds `job`, the compute job id to follow with the routes above.
+
+CLI: `cst job list [--refresh]`, `cst job show <id> [--wait]`, `cst job logs <id> [--since c] [--follow]`,
+`cst job cancel <id>`, and `cst job run <target> -- <cst args>` to run any command once on a target.
+`cst backtest run <name> --compute <target>` and `cst pipeline retrain <name> --compute <target>` submit and record
+a job the same way.
+
+Where each provider reads state and logs:
+
+| Kind | State from | Logs from | Cancel |
+|---|---|---|---|
+| `local` | the child process and its exit file | a file under `$CST_HOME/jobs/` | SIGTERM to the process group |
+| `aws-ecs` | `ecs:DescribeTasks` (lastStatus, stopCode, exit code) | CloudWatch, the task definition's `awslogs` stream | `ecs:StopTask` |
+| `aws-batch` | `batch:DescribeJobs` | CloudWatch, the job's log stream | `batch:TerminateJob` |
+| `gcp-cloud-run` | the Execution (`ExecutionsClient.get_execution`) | Cloud Logging, `cloud_run_job` by execution name | `cancel_execution` |
+| `gcp-vertex` | `get_custom_job` state | Cloud Logging, `ml_job` by job id | `cancel_custom_job` |
+| `azure-container-apps` | `job_execution` status | Log Analytics (set `log_analytics_workspace_id`) | `begin_stop_execution` |
+| `azure-ml` | `jobs.get` status | the job's `user_logs` | `jobs.begin_cancel` |
+| `modal` | `FunctionCall.get(timeout=0)` (cannot tell queued from running) | none from the SDK: the Modal dashboard | `FunctionCall.cancel` |
+
+Tested on a real account (2026-11-06): `local`, `aws-ecs` and `aws-batch` (Captain's AWS account, us-west-1, Batch on
+a Fargate compute environment). The others pass
+the same contract tests against fakes of their SDKs (`core/tests/test_compute_providers.py`) and have not run
+against a real account. What each needs before it can, and the test to run: [compute-live-testing.md](compute-live-testing.md).
+
+### Adding a provider
+
+A team adds a kind with an entry point in the `captain_search.compute` group, named by the kind:
+
+```toml
+[project.entry-points."captain_search.compute"]
+slurm = "acme_captain.slurm:SlurmProvider"
+```
+
+`SlurmProvider` subclasses `captain_search.compute_providers.ComputeProvider`: set `kind`, `provider` (the cloud
+login it needs: `aws`, `gcp`, `azure`, or anything else for none), `label`, `purposes` and `fields`, and implement
+the methods above. `status` returns `compute_providers.status(state, reason, started_at=, finished_at=, exit_code=)`.
+A plugin that fails to load, lacks a method or reuses a built-in name is skipped, and
+`compute_providers.plugin_errors()` says why.
+
+### Set up ECS for me
+
+`cst compute setup aws-ecs --profile <p> --region <r> [--name ecs] [--storage s3://...] [--dry-run]` makes, or
+reuses, everything an ECS target needs, prints each step, and adds the target to the open workspace:
+
+- ECR repository `captain-search-runner` (push the image with `runner/build.sh --push <uri>:<version>`)
+- CloudWatch log group `/captain-search/runner`, kept 30 days
+- IAM roles `captain-search-ecs-execution` (pull the image, write logs) and `captain-search-ecs-task` (read, write
+  and list the workspace prefix only, one inline policy per workspace)
+- Fargate cluster `captain-search`, security group `captain-search-runner` (no inbound)
+- task definition `captain-search-runner` (1 vCPU, 2 GB by default; a new revision only when something changed)
+
+Everything is tagged `captain:purpose=cst-compute`. A same-named resource without that tag is left alone and
+named in the output. Nothing runs between jobs. No NAT gateway is made: in a VPC without one, tasks get a public IP
+(`assign_public_ip: ENABLED`) to reach ECR, S3 and CloudWatch, and the security group still blocks inbound traffic.
+
+The AWS permissions it uses: `ecr:CreateRepository, DescribeRepositories, DescribeImages`;
+`logs:CreateLogGroup, PutRetentionPolicy, DescribeLogGroups`; `iam:GetRole, CreateRole, ListRoleTags,
+AttachRolePolicy, PutRolePolicy, PassRole`; `ecs:CreateCluster, DescribeClusters, RegisterTaskDefinition,
+DescribeTaskDefinition, TagResource`; `ec2:DescribeVpcs, DescribeSubnets, DescribeNatGateways,
+DescribeSecurityGroups, CreateSecurityGroup, CreateTags`. Running jobs uses `ecs:RunTask, DescribeTasks, StopTask,
+TagResource`, `iam:PassRole` on the two roles, and `logs:GetLogEvents`.
 
 ## Building a backtest from the app
 
@@ -174,7 +261,7 @@ Kinds: `local`, `modal`, `aws-batch`, `aws-ecs`, `aws-sagemaker`, `gcp-cloud-run
 | POST | `/api/populations` | `{name, simulator?, size, seed, click_judgments?, from_logs?}` | ShopperPopulation |
 | POST | `/api/backtests` | `{name, mode:"simulated"|"historic", arms:[...], queries?, judgments?, population?, logs?, hypothesis, primary, mde, compute?}` | Backtest |
 | POST | `/api/backtests/{name}/run` | `{compute?}` | `{job}` |
-| GET | `/api/jobs/{id}` | | adds `log:[lines]` and `compute` |
+| GET | `/api/jobs/{id}` | | adds `log:[lines]` and `compute` (see "Compute providers and jobs" for cloud jobs) |
 
 **Historic mode** replays real search logs. `logs` is an `events` dataset with columns
 `query, product_id, position, clicked, purchased` (optional `session_id, ts, price`). The run:

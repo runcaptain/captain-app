@@ -1,11 +1,21 @@
-# Remote runner: `cst serve` inside the network that holds the databases.
-# Put it behind a TLS proxy. Secrets come from the environment or a secrets manager, never a keychain.
+# The Captain runner image: `cst` is the entrypoint, so a compute job passes cst arguments only, e.g.
+#   docker run IMAGE -w <workspace> backtest run <name>
+# with CST_STORAGE and CST_WORKSPACE set: the job attaches to that workspace in its bucket (never creates one).
+# Cloud credentials come from the platform (ECS task role, Batch job role, workload identity), never from the image.
+#
+# Serving the daemon remotely: run it with `serve --host 0.0.0.0 --port 8765 --token "$CST_SERVE_TOKEN"` behind a
+# TLS proxy. Build: runner/build.sh (linux/amd64).
 FROM python:3.12-slim
 WORKDIR /app
-COPY core /app/core
-RUN pip install --no-cache-dir -e "/app/core[s3,postgres]"
-ENV CST_HOME=/data CST_ALLOW_REMOTE=1
-VOLUME /data
+COPY core/pyproject.toml /app/core/pyproject.toml
+COPY core/captain_search /app/core/captain_search
+# tini is process 1: it passes the platform's stop signal (ECS StopTask, Batch terminate, Cloud Run cancel) on to cst.
+# Without it cst is process 1, which ignores SIGTERM, so a cancelled job keeps running until the platform kills it.
+RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir "/app/core[s3,gcs,azure,postgres]" \
+ && useradd --create-home --uid 10001 cst
+USER cst
+ENV CST_HOME=/home/cst/.cst PYTHONUNBUFFERED=1 CST_ALLOW_REMOTE=1
 EXPOSE 8765
-# CST_SERVE_TOKEN must be set per deployment. Each request is logged with its SQL by the proxy.
-CMD ["sh", "-c", "test -n \"$CST_SERVE_TOKEN\" && cst serve --host 0.0.0.0 --port 8765 --token \"$CST_SERVE_TOKEN\""]
+ENTRYPOINT ["/usr/bin/tini", "--", "cst"]
+CMD ["--help"]

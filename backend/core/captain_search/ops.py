@@ -510,7 +510,7 @@ def backtest_run(ctx, name: str, progress=None) -> BacktestRun:
     segs = SEG.segments(qs, perq, bt.arms, bt.preregistration.mde) if jm else []
     surfaces = [SEG.score_surface(ctx, sf, bt.arms, bt.preregistration.mde, lambda a, q: _rankings(ctx, a, q)[3:5])
                 for sf in bt.surfaces]
-    run = BacktestRun(**_base(ctx), name=name, version=0, backtest=ref(bt), mode=bt.mode, compute=bt.compute or "local",
+    run = BacktestRun(**_base(ctx), name=name, version=0, backtest=ref(bt), mode=bt.mode, compute=os.environ.get("CST_COMPUTE") or bt.compute or "local",
                       arms=arms, comparisons=comps, segments=segs, surfaces=surfaces,
                       independent=independent, complete=complete, files=files, wall_s=round(_time.time() - t_start, 2),
                       manifest=_run_manifest(ctx, bt, pop),
@@ -524,15 +524,18 @@ def backtest_launch(ctx, name: str, compute: str | None = None, progress=None, d
 
     bt = ctx.registry.load("backtest", name)
     target = C.get(ctx, compute or bt.compute or "local")
-    plan = C.plan_backtest(ctx, target, name)
-    if dry_run:
-        return {"compute": target["name"], "plan": plan}
     if target["kind"] == "local":
+        if dry_run:
+            return {"compute": target["name"], "plan": C.plan_backtest(ctx, target, name)}
         r = backtest_run(ctx, name, progress=progress)
         return {"compute": "local", "run": ref(r)}
-    out = C.execute(ctx, target, plan)
-    return {"compute": target["name"], "plan": plan, "submitted": out,
-            "detail": "the run lands in the workspace bucket when the job finishes. Run `cst sync` to see it."}
+    plan, job = C.plan_and_job(ctx, target, ["backtest", "run", name], label=name, backtest=name)
+    if dry_run:
+        return {"compute": target["name"], "plan": plan}
+    rec = C.submit_job(ctx, target, job.argv, label=name, kind="backtest", job=job)
+    return {"compute": target["name"], "plan": plan, "job": rec["id"],
+            "submitted": {"provider_job": C.provider_job(rec["handle"]), "job": rec["id"]},
+            "detail": f"the run lands in the workspace bucket when the job finishes. Follow it with `cst job show {rec['id']}`."}
 
 
 def backtest_report(run: BacktestRun, bt: Backtest) -> str:

@@ -18,6 +18,7 @@ Interfaces (one each):
 - judge:     fn(query: str, product: dict) -> int | (int, str)    grade 0 to 3, optional rationale
 - simulator: fn(population, queries, search, relevance, products, seed=...) -> list[log dict], same as cascade-v1
 - engine:    class with __init__(spec, products) and search(query, k) -> list[str]; explain(query, k) optional
+- compute:   a compute_providers.ComputeProvider subclass: plan, submit, status, logs, cancel, test, describe
 """
 from __future__ import annotations
 
@@ -34,8 +35,9 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any, Callable
 
-KINDS = ("engine", "simulator", "judge", "metric")
-FOLDERS = {"engine": "stages", "simulator": "simulators", "judge": "judges", "metric": "metrics"}
+KINDS = ("engine", "simulator", "judge", "metric", "compute")
+FOLDERS = {"engine": "stages", "simulator": "simulators", "judge": "judges", "metric": "metrics", "compute": "compute"}
+GROUPS = {k: f"captain_search.{k}s" for k in KINDS} | {"compute": "captain_search.compute"}
 
 
 @dataclass
@@ -88,6 +90,14 @@ def engine(name: str, *, version: str = "1", description: str = "", deterministi
                                  deterministic=deterministic)
 
 
+def compute(name: str, *, version: str = "1", description: str = ""):
+    """@compute("slurm") on a ComputeProvider subclass: a place your organization runs Captain's jobs."""
+    def reg(cls):
+        cls.kind = name
+        return _register("compute", name, cls, version=version, description=description, deterministic=False)
+    return reg
+
+
 # ---- finding the project folder ---------------------------------------------------------------
 
 
@@ -110,6 +120,13 @@ def bind(workspace: str, path: str | None) -> None:
 def find_project(workspace: str | None = None, start: str | None = None) -> Path | None:
     """The captain/ folder (the directory holding captain.toml), or None."""
     cands = []
+    if workspace is None:
+        try:
+            from .workspace import load_config
+
+            workspace = os.environ.get("CST_WORKSPACE") or load_config().get("current")
+        except Exception:  # noqa: BLE001
+            workspace = None
     if os.environ.get("CST_PROJECT"):
         cands.append(Path(os.environ["CST_PROJECT"]).expanduser())
     if workspace:
@@ -175,13 +192,20 @@ def _builtins() -> list[Ext]:
     out += [Ext("metric", n, None, description=M.DEFINITIONS.get(n, ""), meta={"higher_is_better": n != "zero",
                                                                              "definition": M.DEFINITIONS.get(n, "")})
             for n in M.NAMES]
+    try:
+        from .compute_providers import _builtin
+
+        out += [Ext("compute", k, c, description=c.describe().get("label", ""), deterministic=False)
+                for k, c in _builtin().items()]
+    except Exception:  # noqa: BLE001  a missing cloud SDK shouldn't hide the other extensions
+        pass
     return out
 
 
 def _packages() -> tuple[list[Ext], list[dict]]:
     out, errors = [], []
     for kind in KINDS:
-        for ep in entry_points(group=f"captain_search.{kind}s"):
+        for ep in entry_points(group=GROUPS[kind]):
             dist = getattr(getattr(ep, "dist", None), "name", None) or ep.value.split(":")[0]
             ver = getattr(getattr(ep, "dist", None), "version", None) or "0"
             try:
@@ -263,6 +287,14 @@ def _validate(e: Ext) -> str | None:
         elif e.kind == "engine":
             if not (inspect.isclass(o) and callable(getattr(o, "search", None))):
                 return "an engine is a class with search(query, k)"
+        elif e.kind == "compute":
+            from .compute_providers import REQUIRED, ComputeProvider
+
+            if not (inspect.isclass(o) and issubclass(o, ComputeProvider)):
+                return "a compute provider is a ComputeProvider subclass (captain_search.compute_providers)"
+            missing = [m for m in REQUIRED if not callable(getattr(o, m, None))]
+            if missing:
+                return f"a compute provider needs {', '.join(missing)}"
     except Exception as ex:  # noqa: BLE001
         return f"failed on a small test case: {type(ex).__name__}: {ex}"
     return None

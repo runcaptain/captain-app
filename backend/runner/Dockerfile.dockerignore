@@ -1,0 +1,5 @@
+**
+!core/pyproject.toml
+!core/captain_search/**
+**/__pycache__
+**/*.pyc
