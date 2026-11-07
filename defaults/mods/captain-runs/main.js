@@ -2,9 +2,10 @@
 // over randomized logs, in the Captain Search desktop app's look. It replaces the web view of those screens.
 // Every list here is short (backtests, workflows, queues, replays); anything long (a run's per-query numbers) is
 // for Comparisons, which pages it from the backend.
-import { View, div, svg, PathBuilder } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, run, setShared, shared, openOverlay, props as layoutProps } from "herdr";
+import { Curve } from "./kit/chart.js";
 import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
@@ -133,13 +134,15 @@ export default class CaptainRuns extends View {
     // Until the list loads, ask again every 3 s: while the services start, and after any failure that wasn't the
     // backend answering (they stopped or restarted).
     cx.timer.every(3000, (cx) => { if (this.starting || (this.error && !this.errorR?.status)) this.load(cx, this.tab); });
-    // Opened by name (palette): shared "captain.open" {section: "runs", backtest, at}.
+    // Opened by name (palette): shared "captain.open" {section: "runs", backtest | replay, at}.
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
-      if (o?.section === "runs" && o.backtest && o.at !== this.opened) {
+      if (o?.section === "runs" && (o.backtest || o.replay) && o.at !== this.opened) {
         this.opened = o.at;
-        this.tab = "backtests";
-        this.pick(cx, "backtests", o.backtest);
+        const [tab, name] = o.replay ? ["replays", o.replay] : ["backtests", o.backtest];
+        this.tab = tab; this.grader = null;
+        if (!this.data[tab]) this.load(cx, tab);
+        this.pick(cx, tab, name);
         cx.notify();
       }
     });
@@ -650,26 +653,17 @@ export default class CaptainRuns extends View {
 
   /** One outcome's change against never treating, by trigger rate: a line, dashed when it is only directional. */
   curve(c, name, kind, pts, w, i) {
-    const H = 140;
     const ys = pts.map((p) => p.outcomes?.[name]?.delta_vs_never ?? 0);
     const lo = Math.min(0, ...ys), hi = Math.max(0, ...ys);
-    const span = hi - lo || 1;
-    const X = (r) => `${(4 + r * 92).toFixed(2)}%`;
-    const Y = (v) => `${(6 + (1 - (v - lo) / span) * 86).toFixed(2)}%`;
-    const color = [c.blue, c.navy, c.fail][i % 3];
-    let line = PathBuilder.stroke(2);
-    if (kind === "directional") line = line.dash_array([6, 4]);
-    pts.forEach((p, k) => (line = k ? line.line_to(X(p.trigger_rate), Y(ys[k])) : line.move_to(X(p.trigger_rate), Y(ys[k]))));
-    const zero = PathBuilder.stroke(1).move_to("4%", Y(0)).line_to("96%", Y(0));
     return v_flex().id(`curve-${name}`).w(w).gap(4)
       .child(h_flex().gap(6).text_size(12).child(div().font_medium().child(name)).child(div().text_color(c.grey500).child(`(${kind})`))
         .child(div().flex_1()).child(div().font_family(MONO).text_color(c.grey500).child(`${fmtD(lo)} to ${fmtD(hi)}`)))
-      .child(div().relative().w_full().h(H).border_1().border_color(c.rule)
-        .child(div().absolute().inset_0().child(window.paint_path(zero.build(), c.grey300)))
-        .child(div().absolute().inset_0().child(window.paint_path(line.build(), color))))
+      // The kit's Curve (kit/chart.js): its line used to draw flat along the top in the app.
+      .child(Curve(c, pts.map((p, k) => ({ x: p.trigger_rate, y: ys[k] })), { height: 140, color: [c.blue, c.navy, c.fail][i % 3], dashed: kind === "directional" }))
       .child(h_flex().text_size(10.5).text_color(c.grey500).font_family(MONO)
         .child(div().child("0%")).child(div().flex_1()).child(div().child("trigger rate")).child(div().flex_1()).child(div().child("100%")));
   }
+
 
   render() {
     const c = palette(isDark(theme()));

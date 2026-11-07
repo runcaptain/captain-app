@@ -133,6 +133,12 @@ function tableView(c, data, spec) {
 }
 
 /** Axis bounds and a value-to-pixel map (top of the plot is 0). Log scale keeps positive values only. */
+function niceStep(raw) {
+  if (!(raw > 0) || !Number.isFinite(raw)) return 1;
+  const p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+}
+
 function scaleY(values, spec, top, bottom) {
   const log = spec.scale === "log";
   const vals = values.filter((v) => Number.isFinite(v) && (!log || v > 0));
@@ -140,10 +146,19 @@ function scaleY(values, spec, top, bottom) {
   let hi = Number.isFinite(num(spec.max)) ? num(spec.max) : Math.max(log ? 0 : 0, ...vals);
   if (!Number.isFinite(lo)) lo = log ? 1 : 0;
   if (!Number.isFinite(hi) || hi === lo) hi = lo + 1;
+  // Round ticks (0, 20, 40, 60, not 0, 26, 52) unless the spec pins the range: about four steps of 1, 2, 2.5 or 5
+  // times a power of ten, the range widened to whole steps.
+  let ticks;
+  if (!log) {
+    const step = niceStep((hi - lo) / 4);
+    if (!Number.isFinite(num(spec.max))) hi = Math.ceil(hi / step - 1e-9) * step;
+    if (!Number.isFinite(num(spec.min))) lo = Math.floor(lo / step + 1e-9) * step;
+    ticks = [];
+    for (let v = lo; v <= hi + step * 1e-6 && ticks.length < 12; v += step) ticks.push(+v.toPrecision(12));
+  } else ticks = [lo, Math.sqrt(lo * hi), hi];
   const t = (v) => (log ? Math.log10(Math.max(v, 1e-12)) : v);
   const [a, b] = [t(lo), t(hi)];
   const y = (v) => bottom - ((t(v) - a) / (b - a || 1)) * (bottom - top);
-  const ticks = log ? [lo, Math.sqrt(lo * hi), hi] : [lo, (lo + hi) / 2, hi];
   return { y, ticks, lo, hi };
 }
 
@@ -162,9 +177,11 @@ function cartesian(c, data, shown, spec, width, height) {
   const kids = [];
   if (spec.mark === "scatter" || spec.mark === "bubble") {
     const pts = data.points ?? [];
-    const sy = scaleY(pts.map((p) => p.y), spec, top, bottom);
+    // Room for the largest mark, so bubbles at the edges aren't cut off.
+    const pad = spec.mark === "bubble" ? 17 : 4;
+    const sy = scaleY(pts.map((p) => p.y), spec, top + pad, bottom - pad);
     const xs = pts.map((p) => p.x), xlo = Math.min(...xs), xhi = Math.max(...xs);
-    const X = (v) => L + ((v - xlo) / (xhi - xlo || 1)) * (R - L);
+    const X = (v) => L + pad + ((v - xlo) / (xhi - xlo || 1)) * (R - L - 2 * pad);
     const zs = pts.map((p) => p.z).filter(Number.isFinite), zhi = Math.max(1, ...zs);
     kids.push(...axes(c, sy, spec, L, R, top, bottom));
     for (const p of pts) {
@@ -182,7 +199,13 @@ function cartesian(c, data, shown, spec, width, height) {
   const all = stack ? totals : shown.flatMap((s) => s.values);
   if (horizontal) {
     const sx = scaleY(all, spec, 0, 1); // reuse as a fraction: 1 at lo, 0 at hi
-    const rowH = Math.max(6, (bottom - top) / Math.max(1, n));
+    const barsBottom = bottom - 12; // the value axis sits under the bars
+    const rowH = Math.max(6, (barsBottom - top) / Math.max(1, n));
+    sx.ticks.forEach((t, i) => {
+      const x = L + (1 - sx.y(t)) * (R - L);
+      kids.push(div().absolute().left(x).top(top).h(barsBottom - top).w(1).bg(i === 0 ? c.grey300 : c.rule));
+      kids.push(div().absolute().left(x - 30).w(60).top(barsBottom + 2).text_center().text_size(10).font_family(MONO).text_color(c.grey500).child(fmt(t, spec.format)));
+    });
     data.categories.forEach((cat, ci) => {
       const yTop = top + ci * rowH;
       kids.push(div().absolute().left(0).w(L - 6).top(yTop + rowH / 2 - 7).text_right().truncate().text_size(10).text_color(c.grey500).child(cat));
@@ -274,8 +297,13 @@ function pie(c, data, shown, spec, width, height) {
     }
     a0 = a1;
   });
-  const legend = v_flex().absolute().left(size + 28).top(8).gap(4).text_size(11).children(vals.slice(0, 14).map((x, i) => h_flex().gap(5).items_center()
+  // As many rows as the height holds (about 18 px each), the rest counted.
+  const fits = Math.max(1, Math.min(14, Math.floor((height - 12) / 18)));
+  const rows = vals.length > fits ? fits - 1 : vals.length;
+  const legend = v_flex().absolute().left(size + 28).top(6).gap(2).text_size(11)
+    .children(vals.slice(0, rows).map((x, i) => h_flex().h(16).gap(5).items_center()
     .child(div().size(9).flex_none().bg(spec.colors?.[x.cat] ?? COLORS[i % COLORS.length]))
-    .child(div().max_w(Math.max(60, width - size - 90)).truncate().text_color(c.grey900).child(`${x.cat}  ${fmt(x.v / total, "%")}`))));
+    .child(div().max_w(Math.max(60, width - size - 90)).truncate().text_color(c.grey900).child(`${x.cat}  ${fmt(x.v / total, "%")}`))))
+    .when(vals.length > rows, (e) => e.child(div().h(16).text_color(c.grey500).child(`+${vals.length - rows} more`)));
   return div().relative().w(width).h(height).bg(c.surface).border_1().border_color(c.rule).children(kids).child(legend);
 }

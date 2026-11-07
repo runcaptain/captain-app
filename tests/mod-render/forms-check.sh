@@ -71,6 +71,26 @@ PREVIEW=$(node --import ./tests/mod-render/stubs/register.mjs -e '
   console.log(JSON.stringify(list));')
 NAMES=$(echo "$PREVIEW" | python3 -c "import json,sys; print(' '.join((('new-menu' if e == 'menu' else e) if isinstance(e,str) else e['task']+'-'+'-'.join(str(v) for v in e['values'].values())) for e in json.load(sys.stdin)))")
 
+# Screens with charts, opened through shared "captain.open" by a throwaway mod (the next entry of "test.nav" per open).
+mkdir -p "$HOME_DIR/mods/nav-shot"
+echo '{ "place": "none", "overlay": { "kind": "popup", "width": 1, "height": 1 } }' > "$HOME_DIR/mods/nav-shot/mod.json"
+cat > "$HOME_DIR/mods/nav-shot/main.js" <<'JS'
+import { View, div } from "gpui-kit";
+import { props, run, shared, setShared, closeOverlay } from "herdr";
+export default class NavShot extends View {
+  init(_p, cx) {
+    const list = shared("test.nav") ?? [], i = Number(shared("test.nav.at")) || 0, o = list[i % Math.max(1, list.length)];
+    setShared("test.nav.at", i + 1);
+    if (o) { setShared("captain.open", { ...o, at: Date.now() }); run("layout.select", { stack: "sections", child: o.section }); }
+    cx.timer.after(1, () => closeOverlay(props()?.overlay));
+  }
+  render() { return div(); }
+}
+JS
+# Every chart the kit draws (tests/mod-render/charts-gallery), with the kit beside it as mods need.
+mkdir -p "$HOME_DIR/mods/charts-gallery"
+cp tests/mod-render/charts-gallery/* "$HOME_DIR/mods/charts-gallery/"
+cp -R defaults/captain/kit "$HOME_DIR/mods/charts-gallery/kit"
 # Two throwaway mods that must fail the analyzer: one breaks like the bug did, one draws nothing.
 for kind in broken blank; do
   mkdir -p "$HOME_DIR/mods/forms-$kind"
@@ -87,7 +107,7 @@ export default class Blank extends View { render() { return div().size_full().bg
 JS
 
 printf '{"appearance":"light"}\n' > "$HOME_DIR/settings.json"
-printf '{"captain.forms.preview":%s,"frame.welcomed":"skipped","captain.explorer.sample":true,"captain.explain.preview":{"pipeline":"demo-bm25","q":"earbuds under 50","vs":"demo-tuned"},"captain.sandbox.preview":[{"pipeline":"demo-tuned","knobs":{"boosts.0.weight":"1, 1.15, 1.4, 1.8"},"sample":30},{"pipeline":"demo-tuned","knobs":{"boosts.0.weight":"1, 1.15, 1.4","fields.title":"2, 3"},"sample":30}]}\n' "$PREVIEW" > "$HOME_DIR/shared.json"
+printf '{"captain.forms.preview":%s,"frame.welcomed":"skipped","captain.explorer.sample":true,"captain.explain.preview":{"pipeline":"demo-bm25","q":"earbuds under 50","vs":"demo-tuned"},"test.nav":[{"section":"comparisons","backtest":"demo-tuned-vs-bm25"},{"section":"comparisons","backtest":"demo-tuned-vs-bm25","tab":"segments"},{"section":"comparisons","backtest":"demo-tuned-vs-bm25","tab":"profile","profile":true},{"section":"data","dataset":"demo-judgments","tab":"health"},{"section":"data","dataset":"demo-catalog","tab":"insights"},{"section":"data","dataset":"demo-catalog","tab":"quality"},{"section":"runs","replay":"shopping-trigger"}],"captain.sandbox.preview":[{"pipeline":"demo-tuned","knobs":{"boosts.0.weight":"1, 1.15, 1.4, 1.8"},"sample":30},{"pipeline":"demo-tuned","knobs":{"boosts.0.weight":"1, 1.15, 1.4","fields.title":"2, 3"},"sample":30}]}\n' "$PREVIEW" > "$HOME_DIR/shared.json"
 printf '{"state":"windowed","bounds":[80,80,1100,750]}\n' > "$HOME_DIR/window.json"
 CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_BIN=$CST CST_HOME=$WORK/cst "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
@@ -153,6 +173,20 @@ for m in captain-scope-model captain-scope captain-rankings captain-explain; do
   shoot "$m" "$m"
   if [[ "$SHOWN" == *"$m"* ]] && python3 tests/mod-render/forms-shot.py "$OUT/$m.png" --any; then echo "$m: drawn"; else echo "$m: NOT DRAWN ($SHOWN) $OUT/$m.png"; fail=1; fi
 done
+# The screens with charts: shot for a person to look at (the gallery below is the automatic check).
+# The terminal column hidden, so the screens get the width a person gives them (it's shown again after).
+app do layout.hide '{"id":"work"}' >/dev/null
+for shot in compare-overview compare-segments compare-profile data-health data-insights data-quality runs-replay; do
+  close_all
+  app do mod.open '{"name":"nav-shot"}' >/dev/null
+  sleep "$([[ $shot == compare-profile ]] && echo 30 || echo 8)"
+  app shot "$OUT/$shot.png" >/dev/null && echo "$shot: shot $OUT/$shot.png"
+done
+app do layout.show '{"id":"work"}' >/dev/null
+app do layout.select '{"stack":"sections","child":"investigations"}' >/dev/null
+# Charts: each chart type in a frame; a flat or missing chart fails, and the planted flat-line bug must be caught.
+shoot charts-gallery charts
+if [[ "$SHOWN" == *charts-gallery* ]] && python3 tests/mod-render/charts-shot.py "$OUT/charts.png"; then echo "charts: drawn $OUT/charts.png"; else echo "charts: NOT DRAWN ($SHOWN) $OUT/charts.png"; fail=1; fi
 # What if...: the test hook runs a small sweep on each open (one knob, then two), so the line and the grid draw.
 for shot in sandbox-line sandbox-grid; do
   close_all

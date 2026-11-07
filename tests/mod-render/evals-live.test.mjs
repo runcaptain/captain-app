@@ -62,7 +62,12 @@ const kitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'captain-evals-'));
 fs.cpSync(path.join(root, 'defaults/captain/kit'), kitDir, { recursive: true });
 const { EvalHealth } = await import(path.join(kitDir, 'evals.js'));
 const { palette } = await import(path.join(kitDir, 'tokens.js'));
-class HealthView { init(_p, cx) { this.h = new EvalHealth(); this.h.open(cx, { name: 'demo-judgments', kind: 'judgments' }); } render() { return this.h.render(palette(false)); } }
+// The record the dataset page hands it, as the services send it: kind "dataset", the role in classes.
+const record = await call('GET', '/api/datasets/demo-judgments');
+assert.equal(record.kind, 'dataset');
+assert.ok(EvalHealth.applies(record), 'the Health tab shows for a judgments set');
+assert.ok(!EvalHealth.applies(await call('GET', '/api/datasets/demo-catalog')), 'and not for a catalog');
+class HealthView { init(_p, cx) { this.h = new EvalHealth(); this.h.open(cx, record); } render() { return this.h.render(palette(false)); } }
 const until = async (h, ok, what) => { for (let i = 0; i < 120 && !ok(); i++) { await h.layoutLists({}); await h.idle(150); } assert.ok(ok(), `${what}: ${h.text().slice(0, 700)}`); };
 const h = harness(HealthView);
 await h.start();
