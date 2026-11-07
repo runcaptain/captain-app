@@ -58,7 +58,8 @@ def _write(ctx: Context, key: str, body, tag):
         raise Conflict("someone else changed this at the same moment. Reload and try again.") from None
 
 
-def listing(ctx: Context) -> list[dict]:
+def listing(ctx: Context, include=None) -> list[dict]:
+    """Classes with how many datasets carry each. include(name) -> bool limits the count (the Explorer's pick)."""
     doc, tag = _read(ctx, CLASSES_KEY, None)
     if doc is None:  # first use: seed the defaults, which the team can edit or delete
         doc = {"classes": [{**c, "created_by": "default", "created_at": _now()} for c in DEFAULTS]}
@@ -68,6 +69,8 @@ def listing(ctx: Context) -> list[dict]:
             doc, _ = _read(ctx, CLASSES_KEY, {"classes": []})
     counts: dict[str, int] = {}
     for n in ctx.registry.names("dataset"):
+        if include is not None and not include(n):
+            continue
         for c in classes_of(ctx, n):
             counts[c] = counts.get(c, 0) + 1
     return [{**c, "datasets": counts.get(c["name"], 0)} for c in doc["classes"]]

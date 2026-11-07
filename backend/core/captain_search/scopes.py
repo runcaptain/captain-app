@@ -247,8 +247,19 @@ def update_engine(ctx: Context, eid: str, **changes) -> dict:
 
 def link(ctx: Context, items: list[dict], scope: str | None = None, engine: str | None = None) -> dict:
     """Attach records ({kind, name}: dataset, connection, investigation, backtest, model, registry) to a scope or an
-    engine. Pipelines belong to engines through the engine's own list."""
+    engine. Pipelines belong to engines through the engine's own list. An unknown scope or engine is refused."""
+    kinds = ("dataset", "connection", "investigation", "backtest", "model", "registry", "pipeline")
+    for it in items:
+        if it.get("kind") not in kinds or not it.get("name"):
+            raise ValueError(f"each item needs a kind ({', '.join(kinds)}) and a name")
+    if scope and engine:
+        raise ValueError("link to a scope or an engine, not both")
+
     def ch(doc):
+        if scope and not any(s["id"] == scope and not s.get("archived") for s in doc["scopes"]):
+            raise ValueError(f"no scope {scope!r}. Scope ids look like brand-acme-1a2b: GET /api/explorer lists them.")
+        if engine and not any(e["id"] == engine and not e.get("archived") for e in doc["engines"]):
+            raise ValueError(f"no engine {engine!r}. GET /api/engines lists them.")
         for it in items:
             key = f"{it['kind']}:{it['name']}"
             if scope is None and engine is None:
