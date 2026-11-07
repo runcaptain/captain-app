@@ -16,6 +16,11 @@ import { Notebooks } from "./notebooks.js";
 import { Library } from "./library.js";
 import { Models } from "./models.js";
 import { Tables } from "./tables.js";
+import { DatasetPage } from "./dataset-page.js";
+import { openOverlay } from "herdr";
+
+/** The import wizard, starting in this folder. */
+const openImport = (folder) => openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { folder } });
 
 const PAGE = 200;
 const ROW = 26;
@@ -107,9 +112,11 @@ export default class CaptainData extends View {
     this.lib.load(cx);
     this.models = new Models(this);
     this.tables = new Tables(this);
+    this.page = new DatasetPage(this);
     // Layout props (a layout, or the real-window check): {tab: "notebooks", notebook, runAll}.
     const p = layoutProps?.() ?? {};
     if (p.tab === "models" || p.tab === "labels" || p.tab === "tables") this.tab = p.tab;
+    if (p.pageTab) this.page.tab = p.pageTab;
     if (p.tab === "tables") this.tables.load(cx);
     if (p.tab === "models") this.models.load(cx);
     if (p.tab === "notebooks") {
@@ -198,13 +205,15 @@ export default class CaptainData extends View {
   select(cx, name) {
     this.sel = name;
     this.detail = null;
+    this.page?.reset();
     this.search.set_value("");
     this.where.set_value("");
     this.resetGrid();
     cx.spawn(async (cx) => {
       const r = await api(`/api/datasets/${enc(name)}`);
       if (this.sel !== name) return;
-      this.detail = r.ok ? r.data : { error: say(r, "Couldn't load this dataset.") };
+      this.detail = r.ok ? r.data : { error: say(r, "Couldn't load this dataset.", "This dataset's record is missing from the workspace.") };
+      if (r.ok) this.page.open(cx, this.page.tab);
       cx.notify();
     });
     cx.notify();
@@ -332,7 +341,7 @@ export default class CaptainData extends View {
         .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your experiments read." : this.tab === "notebooks" ? "SQL, Python, notes and charts, saved as versions." : this.tab === "models" ? "Trained models from your registries, and what each was built from." : this.tab === "tables" ? "Your databases' tables, their columns and rows, and how they're queried." : "Rules that turn logged events into judgments."))
       .when(this.tab === "datasets", (e) => e
         .child(Button(c, "new-class", "New class", () => openForm("dataset-class"), { small: true }))
-        .child(Button(c, "import-dataset", "Import a dataset", () => openForm("dataset"), { kind: "primary", small: true })))
+        .child(Button(c, "import-dataset", "Import a dataset", () => openImport(this.lib?.cur ?? ""), { kind: "primary", small: true })))
       .when(this.tab === "labels", (e) => e
         .child(Button(c, "label-agent", "Ask an agent to define a label", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, LABEL_PROMPT)), { small: true })))
       .child(div().id("data-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()
@@ -349,7 +358,7 @@ export default class CaptainData extends View {
       .child(div().max_w(460).text_center().text_size(12.5).line_height("19px").text_color(c.grey900)
         .child("Experiments read four kinds of data: your catalog, the queries people search, judgments of what is relevant, and logs of what shoppers did. Import a file, save a SQL query, or start from the demo store."))
       .child(h_flex().gap(8)
-        .child(Button(c, "first-import", "Import a dataset", () => openForm("dataset"), { kind: "primary" }))
+        .child(Button(c, "first-import", "Import a dataset", () => openImport(this.lib?.cur ?? ""), { kind: "primary" }))
         .child(Button(c, "first-demo", "Try the demo store", () => openForm("demo"))));
   }
 
@@ -528,11 +537,24 @@ export default class CaptainData extends View {
       .child(h_flex().flex_none().gap(8).px(20).pb(8)
         .child(Button(c, "agent-dataset", "Open an agent in this space", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, datasetPrompt(d))), { small: true }))
         .child(Button(c, "prompt-dataset", "Copy prompt", (_e, cx) => copyPrompt(cx, datasetPrompt(d)), { kind: "quiet", small: true })))
-      .child(this.facts(c, d))
-      .child(this.schema(c, d))
-      .child(this.toolbar(c))
-      .child(this.grid_(c, w - 40))
-      .child(this.status(c));
+      .child(this.page.tabs(c))
+      .child(this.page.body(c, w, d));
+  }
+
+  /** Open an older (or newer) version of the dataset on the page. */
+  selectVersion(cx, name, v) {
+    this.sel = name;
+    this.detail = null;
+    this.page.reset();
+    this.resetGrid();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/datasets/${enc(name)}?v=${v}`);
+      if (this.sel !== name) return;
+      this.detail = r.ok ? r.data : { error: say(r, "Couldn't load this version.", "That version is missing from the workspace.") };
+      if (r.ok) this.page.open(cx, this.page.tab);
+      cx.notify();
+    });
+    cx.notify();
   }
 
   labelsPane(c, w) {

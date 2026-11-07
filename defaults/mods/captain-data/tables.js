@@ -11,6 +11,7 @@ import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { ResultGrid } from "./kit/grid.js";
 import { openForm } from "./kit/agent.js";
+import { Brand } from "./kit/brands.js";
 
 const enc = encodeURIComponent;
 const fmtInt = (n) => Number(n ?? 0).toLocaleString("en-US");
@@ -219,7 +220,7 @@ export class Tables {
       .child(h_flex().gap(6).items_center().cursor_pointer()
         .on_click((_e, cx) => { if (open) this.open.delete(conn); else { this.open.add(conn); if (!tree && k.pulled_at) this.loadConn(cx, conn); } cx.notify(); })
         .child(this.icon(open ? "chevron-down" : "chevron-right", 11, c.grey500))
-        .child(this.icon("database", 14, c.navy))
+        .child(Brand(c, k.engine, 14))
         .child(div().flex_1().min_w(0).truncate().text_size(13).font_medium().child(conn))
         .when(!!k.engine, (e) => e.child(div().flex_none().h(18).px(5).flex().items_center().border_1().border_color(c.rule).text_size(10.5).text_color(c.grey900).child(k.engine))))
       .child(h_flex().gap(8).items_center().text_size(11.5).text_color(c.grey500)

@@ -1,0 +1,1 @@
+{"rows": 480, "freshness": {"updated_at": "2026-11-06T21:47:06+00:00"}, "columns": [{"name": "id", "type": "string", "null_share": 0.0, "distinct": 480, "min": "p0000", "max": "p0479"}, {"name": "price", "type": "double", "null_share": 0.25, "distinct": 402, "min": 12.5, "max": 499.0}]}

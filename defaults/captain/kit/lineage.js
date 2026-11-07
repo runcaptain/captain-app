@@ -179,8 +179,9 @@ export class LineageGraph {
             .on_click((_e, cx) => { this.column = on ? null : name; if (on) this.colEdges = []; this.cache = null; this.onColumn?.(this.column, cx); cx.notify(); })
             .child(name);
         }))))
-      .child(div().id(`${this.id}-canvas`).w_full().h(Math.min(560, L.height + 16)).overflow_scrollbar().border_1().border_color(c.rule).bg(c.surface2)
-        .child(div().relative().w(L.width).h(L.height)
+      .child(div().id(`${this.id}-canvas`).w_full().flex_none().h(Math.min(560, L.height + 16)).overflow_scrollbar().border_1().border_color(c.rule).bg(c.surface2)
+        // A fixed-size canvas: flex_none so the scroll container doesn't shrink it (the boxes are placed in pixels).
+        .child(div().relative().flex_none().w(L.width).h(L.height).min_w(L.width).min_h(L.height)
           .child(layer(plain, c.grey300, 1.5) ?? div())
           .child(layer(lit, c.blue, 2.5) ?? div())
           .children(nodes)))

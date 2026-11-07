@@ -60,7 +60,8 @@ assert.ok(text.includes('price'), 'schema');
 // An icon on every dataset row.
 for (const row of h.byIdPrefix('ds-')) assert.ok(h.has(row, 'svg'), `icon on ${row.call('id')[0]}`);
 
-// The grid asks for the visible rows, then shows them.
+// The page opens on Overview (facts and schema). Sample data holds the grid: it asks for the visible rows, then shows them.
+await h.click('dtab-sample');
 await h.layoutLists({ 'data-grid': [0, 30] });
 text = h.text({ 'data-grid': [0, 30] });
 assert.ok(text.includes(String(rows0.rows[0][1])), 'first row shows');
