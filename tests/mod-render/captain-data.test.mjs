@@ -60,35 +60,37 @@ assert.ok(text.includes('price'), 'schema');
 // An icon on every dataset row.
 for (const row of h.byIdPrefix('ds-')) assert.ok(h.has(row, 'svg'), `icon on ${row.call('id')[0]}`);
 
-// The page opens on Overview (facts and schema). Sample data holds the grid: it asks for the visible rows, then shows them.
+// The page opens on Overview (facts and schema). Sample data is the kit grid every screen uses, paged by the services.
 await h.click('dtab-sample');
-await h.layoutLists({ 'data-grid': [0, 30] });
-text = h.text({ 'data-grid': [0, 30] });
+await h.idle(50);
+text = h.text({ 'grid-ds-rows': [0, 30] });
 assert.ok(text.includes(String(rows0.rows[0][1])), 'first row shows');
-assert.ok(/rows 1 to 30 of 480/.test(text), `status line: ${text.match(/rows [^|]*?of [\d,]+/)?.[0]}`);
+assert.ok(/1 to 200 of 480/.test(text), `pager: ${text.match(/\d+ to [^|]*/)?.[0]}`);
 assert.ok(rows0.columns.every((c) => text.includes(c.name)), 'every column header');
 
-// Scrolling into page 2 fetches it, and only it.
+// Next asks for the next page, and only it.
 const before = h.asked().length;
-await h.layoutLists({ 'data-grid': [195, 225] });
-text = h.text({ 'data-grid': [195, 225] });
+await h.click('gnext-ds-rows');
+await h.idle(50);
 assert.ok(h.asked().slice(before).some((p) => /offset=200/.test(p)), 'page 2 asked');
-assert.ok(text.includes(String(rows1.rows[5][1])), 'a page-2 row shows');
+text = h.text({ 'grid-ds-rows': [0, 30] });
+assert.ok(text.includes(String(rows1.rows[5][1])) && /201 to 400 of 480/.test(text), 'page 2 shows');
 
-// A header click sorts on the daemon.
-await h.click('col-price');
-await h.layoutLists({ 'data-grid': [0, 30] });
+// A header click sorts the whole dataset on the services.
+const price = h.mod.page.rows.table.columns.findIndex((c) => c.name === 'price');
+await h.click(`gh-ds-rows-${price}`);
+await h.idle(50);
 assert.ok(h.asked().some((p) => /order=price/.test(p) && !/desc=/.test(p)), 'sorted ascending');
-await h.click('col-price');
-await h.layoutLists({ 'data-grid': [0, 30] });
+await h.click(`gh-ds-rows-${price}`);
+await h.idle(50);
 assert.ok(h.asked().some((p) => /order=price/.test(p) && /desc=true/.test(p)), 'sorted descending');
 
-// A broken filter shows the daemon's sentence, without terminal colour codes.
-h.mod.where.set_value('price <<< 3');
-h.mod.where.handlers.submit({}, h.cx);
-await h.layoutLists({ 'data-grid': [0, 30] });
+// A broken filter shows the services' sentence, without terminal colour codes.
+h.mod.page.rows.whereBox.set_value('price <<< 3');
+await h.click('gwhere-ds-rows');
+await h.idle(50);
 text = h.text();
-assert.ok(text.includes('the filter is not valid SQL'), 'filter error shows');
+assert.ok(text.includes('The filter is not valid SQL'), 'filter error shows');
 assert.ok(!text.includes('\u001b['), 'no ANSI codes');
 
 // Labels: the list, the SQL, and a preview over an events dataset.

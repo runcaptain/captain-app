@@ -1,6 +1,7 @@
 // CAPTAIN: one page for a dataset, in the shape of Databricks Unity Catalog's table page. Tabs:
 // - Overview: description, who made it and when, rows, role, classes and tags, the schema.
-// - Sample data: the rows where they live (Data's paged grid: search, SQL filter, sort on the backend).
+// - Sample data: every row, a page at a time, in the kit grid every screen uses (GET /api/datasets/{name}/rows:
+//   search, WHERE and sort on the backend), so it reads the same as the table it came from.
 // - Details: every version (open any), its files, and its provenance: the source, connection, and the SQL that made it.
 // - Lineage: a drawn graph upstream and downstream (GET /api/lineage/graph when the backend has it, else /api/lineage,
 //   cut to the chosen depth here), with column-level lineage for a picked column (GET /api/lineage/columns).
@@ -8,7 +9,8 @@
 //   Hidden while the backend has no profile route.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { api } from "./kit/cst.js";
+import { api, query } from "./kit/cst.js";
+import { ResultGrid } from "./kit/grid.js";
 import { MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { LineageGraph } from "./kit/lineage.js";
@@ -38,6 +40,9 @@ export class DatasetPage {
     this.profile = null; // {columns, freshness} | {missing: true} | {error}
     this.profileFor = null;
     this.hasProfile = true; // false once the backend says it has no profile route
+    this.rows = null; // Sample data: the kit grid, paged
+    this.rowsFor = null;
+    this.file = null; // a dataset with several files: the one shown
   }
 
   /** A new dataset (or version) on the page: lineage and quality load again when their tab opens. */
@@ -45,12 +50,16 @@ export class DatasetPage {
     this.graphFor = null;
     this.profileFor = null;
     this.profile = null;
+    this.rows = null;
+    this.rowsFor = null;
+    this.file = null;
   }
 
   open(cx, tab) {
     this.tab = tab;
     if (tab === "lineage") this.loadLineage(cx);
     if (tab === "quality") this.loadProfile(cx);
+    if (tab === "sample") this.loadRows(cx);
     cx.notify();
   }
 
@@ -100,6 +109,19 @@ export class DatasetPage {
     });
   }
 
+  /** Sample data: the dataset's rows, paged by the services. */
+  loadRows(cx, force = false) {
+    const d = this.host.detail;
+    if (!d || d.error) return;
+    const key = `${d.name}@v${d.version}:${this.file ?? ""}`;
+    if (this.rowsFor === key && !force) return;
+    this.rowsFor = key;
+    const path = `/api/datasets/${enc(d.name)}/rows`;
+    const extra = { v: d.version, file: this.file ?? undefined };
+    this.rows = new ResultGrid({ id: "ds-rows", name: d.name, searchable: true, load: (q) => api(`${path}${query({ ...q, ...extra })}`, { timeout: 60 }) });
+    this.rows.fetch(cx);
+  }
+
   loadProfile(cx) {
     const d = this.host.detail;
     if (!d || d.error) return;
@@ -128,11 +150,27 @@ export class DatasetPage {
 
   body(c, w, d) {
     const h = this.host;
-    if (this.tab === "sample") return v_flex().flex_1().min_h(0).child(h.toolbar(c)).child(h.grid_(c, w - 40)).child(h.status(c));
+    if (this.tab === "sample") return this.sample(c);
     if (this.tab === "details") return this.details(c, d);
     if (this.tab === "lineage") return this.lineageView(c);
     if (this.tab === "quality") return this.quality(c, d);
     return v_flex().id("ds-overview").flex_1().min_h(0).overflow_y_scrollbar().pb(12).child(h.facts(c, d)).child(h.schema(c, d));
+  }
+
+  sample(c) {
+    const g = this.rows;
+    const files = g?.last?.files ?? [];
+    return v_flex().id("ds-sample").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(8).gap(8)
+      .when(files.length > 1, (e) => e.child(h_flex().id("ds-files").gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
+        .child(div().flex_none().text_color(c.grey500).child("File"))
+        .children(files.slice(0, 12).map((f, i) => {
+          const on = (this.file ?? files[0].file) === f.file;
+          return div().id(`ds-file-${i}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer()
+            .border_1().border_color(on ? c.blue : c.grey300).text_color(on ? c.blue : c.grey900)
+            .on_click((_e, cx) => { this.file = f.file; this.loadRows(cx); }).child(String(f.file).split("/").pop());
+        }))))
+      .when(!g, (e) => e.child(Skeleton(c, 8)))
+      .when(!!g, (e) => e.child(div().flex_none().border_1().border_color(c.rule).child(g.render(c, { height: 400 }))));
   }
 
   details(c, d) {

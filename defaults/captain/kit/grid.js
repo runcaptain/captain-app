@@ -54,7 +54,8 @@ const human = (n) => {
 const sayError = (r) => {
   if (r.timedOut) return "This took too long. Narrow it with a WHERE, or try again.";
   if (r.starting || r.failed) return "Captain's services aren't answering. Try again in a moment.";
-  const e = String(r.data?.error ?? r.data?.detail ?? r.error ?? "").trim();
+  // Terminal colour codes some engines put in their messages never reach the screen.
+  const e = String(r.data?.error ?? r.data?.detail ?? r.error ?? "").replace(/\u001b\[[0-9;]*m/g, "").trim();
   return e ? `${e[0].toUpperCase()}${e.slice(1)}${/[.!?]$/.test(e) ? "" : "."}` : "Couldn't load these rows.";
 };
 const csvCell = (v) => { const s = text(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
@@ -127,7 +128,7 @@ export function passes(v, f, type) {
 }
 
 export class ResultGrid {
-  constructor({ id, table, name, load, pageSize = 100 }) {
+  constructor({ id, table, name, load, pageSize = 100, searchable = false }) {
     this.id = id;
     this.name = name ?? table?.var ?? "result";
     this.openRow = null; // the row shown in full below the grid
@@ -139,6 +140,10 @@ export class ResultGrid {
       this.where = "";
       this.whereBox = InputState.new({ placeholder: "WHERE, for example: price < 100" });
       this.whereBox.on("submit", (_e, cx) => this.applyWhere(cx));
+      // A search across every column, for routes that take `search` (a dataset's rows).
+      this.search = "";
+      this.searchBox = searchable ? InputState.new({ placeholder: "Search every column" }) : null;
+      this.searchBox?.on("submit", (_e, cx) => this.applyWhere(cx));
       this.loading = false;
       this.error = null;
     }
@@ -150,7 +155,7 @@ export class ResultGrid {
   /** Ask the services for a page. Keeps the order and WHERE; a new WHERE or order starts at the first row. */
   fetch(cx, offset = this.page.offset) {
     const seq = (this.seq = (this.seq ?? 0) + 1);
-    const q = { offset, limit: this.page.limit, order: this.order?.name, desc: this.order?.desc ? "true" : undefined, where: this.where || undefined, count: this.page.total === null ? "true" : undefined };
+    const q = { offset, limit: this.page.limit, order: this.order?.name, desc: this.order?.desc ? "true" : undefined, where: this.where || undefined, search: this.search || undefined, count: this.page.total === null ? "true" : undefined };
     this.loading = true;
     cx.spawn(async (cx) => {
       const r = await this.load(q);
@@ -158,6 +163,7 @@ export class ResultGrid {
       this.loading = false;
       if (r.ok) {
         const d = r.data ?? {};
+        this.last = d; // the whole answer, for what a screen reads beside the rows (a dataset's files)
         const total = d.total ?? this.page.total;
         this.page = { offset: d.offset ?? offset, limit: d.limit ?? this.page.limit, has_more: !!d.has_more, total: total ?? null, ms: d.ms ?? null, sql: d.sql };
         this.error = null;
@@ -171,6 +177,7 @@ export class ResultGrid {
 
   applyWhere(cx) {
     this.where = this.whereBox.value().trim();
+    this.search = this.searchBox?.value().trim() ?? "";
     this.page.total = null; // a new WHERE: count again
     this.fetch(cx, 0);
   }
@@ -395,11 +402,13 @@ export class ResultGrid {
   whereRow(c) {
     const id = this.id;
     return h_flex().px(10).py(6).gap(8).items_center().border_b(1).border_color(c.rule).text_size(11.5)
+      .when(!!this.searchBox, (e) => e.child(div().w(200).flex_none().h(24).px(6).flex().items_center().border_1().border_color(this.search ? c.blue : c.grey300)
+        .child(Input.new(this.searchBox).w_full().text_size(11.5).text_color(c.navy))))
       .child(div().flex_none().text_color(c.grey500).child("Where"))
       .child(div().flex_1().min_w(0).max_w(480).h(24).px(6).flex().items_center().border_1().border_color(this.where ? c.blue : c.grey300)
         .child(Input.new(this.whereBox).w_full().text_size(11.5).font_family(MONO).text_color(c.navy)))
       .child(this.chip(c, `gwhere-${id}`, "Apply", false, (_e, cx) => this.applyWhere(cx)))
-      .when(!!this.where, (e) => e.child(this.chip(c, `gwhere-clear-${id}`, "Clear", false, (_e, cx) => { this.whereBox.set_value(""); this.applyWhere(cx); })))
+      .when(!!this.where || !!this.search, (e) => e.child(this.chip(c, `gwhere-clear-${id}`, "Clear", false, (_e, cx) => { this.whereBox.set_value(""); this.searchBox?.set_value(""); this.applyWhere(cx); })))
       .when(!!this.order, (e) => e.child(div().text_color(c.grey500).child(`sorted by ${this.order.name}${this.order.desc ? ", largest first" : ""}`)));
   }
 
@@ -461,7 +470,7 @@ export class ResultGrid {
           (_e, cx) => { if (this.paged) { this.order = { name: col.name, desc: false }; this.fetch(cx, 0); } else { this.sort = { col: j, desc: false }; cx.notify(); } }))
         .child(this.chip(c, `gs-desc-${id}-${j}`, type === "number" ? "Largest first" : "Z to A", this.paged ? this.order?.name === col.name && this.order.desc : this.sort?.col === j && this.sort.desc,
           (_e, cx) => { if (this.paged) { this.order = { name: col.name, desc: true }; this.fetch(cx, 0); } else { this.sort = { col: j, desc: true }; cx.notify(); } }))))
-      .when(this.paged, (e) => e.child(row("Filter", div().text_color(c.grey500).child("Filter the whole table with the Where box above."))))
+      .when(this.paged, (e) => e.child(row("Filter", div().text_color(c.grey500).child(`Filter the whole ${this.searchBox ? "dataset" : "table"} with the Where box above.`))))
       .when(!this.paged, (e) => e.child(row("Filter", h_flex().flex_wrap().gap(4).items_center()
         .children(ops.map(([k, label]) => this.chip(c, `gop-${id}-${j}-${k}`, label, op === k, (_e, cx) => { (this.pendingOp ??= {})[j] = k; cx.notify(); })))
         .when(!!a, (e) => e.child(box(a)))

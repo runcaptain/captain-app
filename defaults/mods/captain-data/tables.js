@@ -5,7 +5,7 @@
 // open in a notebook). Reading a database never writes to it.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { api } from "./kit/cst.js";
+import { api, query } from "./kit/cst.js";
 import { MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -40,18 +40,14 @@ export class Tables {
     this.sel = null; // {conn, schema, name}
     this.page = null; // the table page
     this.tab = "columns";
-    this.sample = null; // {grid, sql, ms} | {error}
+    this.rows = null; // the Rows tab: a kit grid paged through the whole table
     this.hits = null;
     this.note = null;
-    this.order = null;
-    this.desc = false;
     this.search = InputState.new({ placeholder: "Search tables and columns" });
     this.colFilter = InputState.new({ placeholder: "Filter columns" });
-    this.where = InputState.new({ placeholder: "WHERE, for example: price < 100" });
     this.search.on("submit", (_e, cx) => this.find(cx));
     this.search.on("change", (_e, cx) => { if (!this.search.value().trim()) { this.hits = null; cx.notify(); } });
     this.colFilter.on("change", (_e, cx) => cx.notify());
-    this.where.on("submit", (_e, cx) => this.loadSample(cx));
   }
 
   load(cx) {
@@ -155,38 +151,25 @@ export class Tables {
   pick(cx, conn, schema, name) {
     this.sel = { conn, schema, name };
     this.page = null;
-    this.sample = null;
-    this.order = null;
-    this.desc = false;
-    this.where.set_value("");
+    this.rows = null;
     this.colFilter.set_value("");
     cx.spawn(async (cx) => {
       const r = await api(`/api/tables/${enc(conn)}/${enc(schema)}/${enc(name)}`);
       if (this.sel?.name !== name || this.sel?.schema !== schema) return;
       this.page = r.ok ? r.data : { error: sentence(r.data?.error ?? r.error) || "Couldn't load this table." };
-      if (this.tab === "sample") this.loadSample(cx);
+      if (this.tab === "rows") this.loadRows(cx);
       cx.notify();
     });
     cx.notify();
   }
 
-  loadSample(cx) {
+  /** The Rows tab: the whole table, a page at a time, sorted and filtered by the services (kit grid, paged). */
+  loadRows(cx) {
     const s = this.sel;
     if (!s) return;
-    const q = new URLSearchParams({ n: "100" });
-    const w = this.where.value().trim();
-    if (w) q.set("where", w);
-    if (this.order) { q.set("order", this.order); if (this.desc) q.set("desc", "true"); }
-    this.sample = { loading: true };
-    cx.spawn(async (cx) => {
-      const r = await api(`/api/tables/${enc(s.conn)}/${enc(s.schema)}/${enc(s.name)}/sample?${q}`, { timeout: 60 });
-      if (this.sel !== s) return;
-      this.sample = r.ok
-        ? { grid: new ResultGrid({ id: "table-sample", name: `${s.name}-sample`, table: { columns: r.data.columns, rows: r.data.rows, row_count: r.data.rows.length } }), sql: r.data.sql, ms: r.data.ms }
-        : { error: sentence(r.data?.error ?? r.error) || "Couldn't read sample rows." };
-      cx.notify();
-    });
-    cx.notify();
+    const path = `/api/tables/${enc(s.conn)}/${enc(s.schema)}/${enc(s.name)}/rows`;
+    this.rows = new ResultGrid({ id: "table-rows", name: s.name, load: (q) => api(`${path}${query(q)}`, { timeout: 60 }) });
+    this.rows.fetch(cx);
   }
 
   /** An example query, as the first cell of a new notebook on that connection. */
@@ -228,7 +211,7 @@ export class Tables {
         .when(!!this.error, (e) => e.child(div().p(10).child(this.host.troubleView(c, "tables", this.error, "Couldn't load your databases.", (cx) => this.load(cx)))))
         .when(this.hits === null && this.fresh && Array.isArray(this.conns) && !this.conns.length, (e) => e.child(v_flex().p(12).gap(6)
           .child(div().text_size(13).font_medium().child("No database connected"))
-          .child(div().text_size(12).line_height("18px").text_color(c.grey900).child("Connect your warehouse to browse its tables, their columns and sample rows, and see how your team queries them."))
+          .child(div().text_size(12).line_height("18px").text_color(c.grey900).child("Connect your warehouse to browse its tables, their columns and every row, and see how your team queries them."))
           .child(Button(c, "tables-connect", "Connect a database", () => openForm("database"), { kind: "primary", small: true }))))
         .when(this.hits === null, (e) => e.children((this.conns ?? []).flatMap((k) => this.connRows(c, k)))));
   }
@@ -298,10 +281,10 @@ export class Tables {
       .child(this.icon("table", 22, c.grey500))
       .child(div().text_size(15).font_medium().child("Your warehouse's tables"))
       .child(div().max_w(440).text_center().text_size(12.5).line_height("19px").text_color(c.grey900)
-        .child("Read a connection's tables, then pick one: its columns, a sample of its rows, and how your team queries it."));
+        .child("Read a connection's tables, then pick one: its columns, all its rows, and how your team queries it."));
     if (!p) return v_flex().flex_1().child(Skeleton(c, 8));
     if (p.error) return v_flex().flex_1().p(24).child(div().p(14).bg(c.failLight).border_1().border_color(c.fail).text_size(13).text_color(c.fail).child(p.error));
-    const tabs = [["columns", `Columns ${fmtInt((p.columns ?? []).length)}`], ["sample", "Sample rows"], ["insights", `Insights ${fmtInt(p.insights?.queries ?? 0)}`]];
+    const tabs = [["columns", `Columns ${fmtInt((p.columns ?? []).length)}`], ["rows", "Rows"], ["insights", `Insights ${fmtInt(p.insights?.queries ?? 0)}`]];
     return v_flex().flex_1().min_w(0).h_full()
       .child(v_flex().flex_none().gap(6).px(20).pt(14).pb(10).border_b(1).border_color(c.rule)
         .child(h_flex().gap(8).items_center()
@@ -313,8 +296,8 @@ export class Tables {
         .when(!!p.error, (e) => e.child(div().text_size(12).text_color(c.warn).child(`Some details couldn't be read: ${p.error}`)))
         .child(h_flex().gap(4).pt(4).children(tabs.map(([id, label]) => div().id(`ttab-${id}`).h(26).px(10).flex().items_center().cursor_pointer().text_size(12)
           .border_1().border_color(this.tab === id ? c.navy : c.grey300).bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
-          .on_click((_e, cx) => { this.tab = id; if (id === "sample" && !this.sample) this.loadSample(cx); cx.notify(); }).child(label)))))
-      .child(this.tab === "columns" ? this.columns(c, p) : this.tab === "sample" ? this.sampleView(c, p) : this.insights(c, p));
+          .on_click((_e, cx) => { this.tab = id; if (id === "rows" && !this.rows) this.loadRows(cx); cx.notify(); }).child(label)))))
+      .child(this.tab === "columns" ? this.columns(c, p) : this.tab === "rows" ? this.rowsView(c) : this.insights(c, p));
   }
 
   columns(c, p) {
@@ -332,23 +315,12 @@ export class Tables {
           .when(!!x.comment, (e) => e.child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.grey900).child(x.comment))))));
   }
 
-  sampleView(c, p) {
-    const s = this.sample;
-    const cols = (p.columns ?? []).map((x) => x.name);
-    return v_flex().flex_1().min_h(0).px(20).py(10).gap(8)
-      .child(h_flex().gap(8).items_center()
-        .child(h_flex().flex_1().min_w(0).h(28).px(8).items_center().border_1().border_color(c.grey300).child(Input.new(this.where).w_full().text_size(12).font_family(MONO).text_color(c.navy)))
-        .child(Button(c, "sample-run", "Show rows", (_e, cx) => this.loadSample(cx), { kind: "primary", small: true })))
-      .when(cols.length > 0, (e) => e.child(h_flex().id("sample-order").gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
-        .child(div().flex_none().text_color(c.grey500).child("Order by"))
-        .children(["", ...cols].map((k) => div().id(`ord-${k || "none"}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer()
-          .border_1().border_color((this.order ?? "") === k ? c.blue : c.grey300).text_color((this.order ?? "") === k ? c.blue : c.grey900)
-          .on_click((_e, cx) => { if ((this.order ?? "") === k && k) this.desc = !this.desc; else { this.order = k || null; this.desc = false; } this.loadSample(cx); })
-          .child(k ? `${k}${(this.order ?? "") === k ? (this.desc ? ", largest first" : ", smallest first") : ""}` : "None")))))
-      .when(!s || s.loading, (e) => e.child(Skeleton(c, 8)))
-      .when(!!s?.error, (e) => e.child(div().p(12).bg(c.failLight).border_1().border_color(c.fail).text_size(12.5).text_color(c.fail).child(s.error)))
-      .when(!!s?.grid, (e) => e.child(div().flex_1().min_h(0).border_1().border_color(c.rule).child(s.grid.render(c, { height: 360 })))
-        .child(div().text_size(11).font_family(MONO).text_color(c.grey500).truncate().child(`${s.sql}  (${s.ms} ms)`)));
+  rowsView(c) {
+    const g = this.rows;
+    return v_flex().id("table-rows-tab").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(10).gap(8)
+      .when(!g, (e) => e.child(Skeleton(c, 8)))
+      .when(!!g, (e) => e.child(div().flex_none().border_1().border_color(c.rule).child(g.render(c, { height: 380 })))
+        .when(!!g.page?.sql, (e) => e.child(div().text_size(11).font_family(MONO).text_color(c.grey500).truncate().child(g.page.sql))));
   }
 
   insights(c, p) {
