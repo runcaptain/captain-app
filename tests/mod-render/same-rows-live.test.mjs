@@ -1,7 +1,7 @@
 // One table, three screens, the same rows: against a real backend (backend/core) on the demo store. The import wizard
-// previews the products table whole (paged), imports it, then Tables' Rows tab and the new dataset's Sample data show
-// it. All three use the kit grid on the one row shape, so the first page matches cell for cell, with the same column
-// kinds, sorted the same way.
+// prepares the products table for training (a catalog: nothing to clean) and imports it, then Tables' Rows tab and the
+// new dataset's Sample data show it. All three use the kit grid on the one row shape, so the first 100 rows match
+// cell for cell, with the same column kinds and the same total.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/same-rows-live.test.mjs
 import fs from 'node:fs';
 import os from 'node:os';
@@ -55,13 +55,16 @@ await w.click('src-demo-store');
 await until(w, () => (w.mod.tree?.schemas ?? []).some((s) => (s.tables ?? []).some((x) => x.name === 'products')), 'tables listed');
 const schema = w.mod.tree.schemas.find((s) => s.tables.some((x) => x.name === 'products')).name;
 await w.click(`tbl-${schema}-products`);
-await until(w, (t) => /1 to 100 of 480/.test(t) && t.includes('Import this table'), 'the whole table, paged');
-const fromWizard = await byId(w, w.mod.preview.grid);
+await until(w, (t) => t.includes('480 rows in, 480 kept') && t.includes('Import for training') && !w.mod.prep.loading, 'prepared for training');
+// The cleaned preview keeps the table's order, which is by id.
+const g0 = w.mod.prep.grid;
+const fromWizard = { columns: g0.table.columns.map((c) => [c.name, c.kind]), types: g0.types, rows: g0.firstPage().rows, of: w.mod.prep.result.report.rows_out };
 w.mod.name.set_value('products-copy');
 await until(w, (t) => t.includes('products-copy'), 'named');
 await w.click('import-go');
 await until(w, () => globalThis.__toasts.length > 0, 'imported');
-assert.match(globalThis.__toasts[0].body, /^480 rows, the whole table\./, globalThis.__toasts[0].body);
+assert.match(globalThis.__toasts[0].body, /^480 rows in, 480 kept/, globalThis.__toasts[0].body);
+assert.equal(globalThis.__toasts[0].title, 'Imported catalogs/products-copy, version 1');
 
 // 2. Tables: the same table's Rows tab. (The wizard's "open this dataset" was for a Data already running: drop it.)
 delete globalThis.__shared['captain.open'];
@@ -77,19 +80,23 @@ await until(data, (t) => /1 to 100 of 480/.test(t), () => `Rows pager: ${JSON.st
 const fromTables = await byId(data, data.mod.tables.rows);
 
 // 3. The dataset it became: Sample data.
-globalThis.__shared['captain.open'] = { section: 'data', dataset: 'products-copy', fresh: true, at: Date.now() };
-await until(data, () => data.mod.sel === 'products-copy' && !!data.mod.detail?.version, 'the dataset open');
+globalThis.__shared['captain.open'] = { section: 'data', dataset: 'catalogs/products-copy', fresh: true, at: Date.now() };
+await until(data, () => data.mod.sel === 'catalogs/products-copy' && !!data.mod.detail?.version, 'the dataset open');
+await until(data, (t) => t.includes('Sample data'), () => `the dataset page (tab ${data.mod.tab}, detail ${JSON.stringify(data.mod.detail)?.slice(0, 200)})`);
 await data.click('dtab-sample');
 await until(data, () => data.mod.page.rows && !data.mod.page.rows.loading && data.mod.page.rows.table.rows.length > 0, 'Sample data');
 const fromDataset = await byId(data, data.mod.page.rows);
 
 // Cell for cell, kind for kind.
-assert.deepEqual(fromTables.columns, fromWizard.columns, 'Tables and the wizard: the same columns and kinds');
+// The wizard's cleaned rows are exactly what was saved. Preparing puts the role's fields first (id, title,
+// description, ...), so Tables' raw rows hold the same values with the columns in the table's own order.
 assert.deepEqual(fromDataset.columns, fromWizard.columns, 'the dataset and the wizard: the same columns and kinds');
-assert.deepEqual(fromTables.types, fromWizard.types, 'formatted the same');
 assert.deepEqual(fromDataset.types, fromWizard.types, 'formatted the same');
-assert.deepEqual(fromTables.rows, fromWizard.rows, 'Tables shows the wizard\'s first page');
 for (let i = 0; i < fromWizard.rows.length; i++) assert.deepEqual(fromDataset.rows[i], fromWizard.rows[i], `dataset row ${i + 1}`);
+const byName = (x) => x.rows.map((r) => Object.fromEntries(x.columns.map(([n], j) => [n, r[j]])));
+const kinds = (x) => Object.fromEntries(x.columns);
+assert.deepEqual(kinds(fromTables), kinds(fromWizard), 'Tables: the same column kinds');
+assert.deepEqual(byName(fromTables), byName(fromWizard), 'Tables: the same rows, cell for cell by column');
 assert.equal(fromWizard.rows.length, 100);
 assert.deepEqual([fromWizard.of, fromTables.of, fromDataset.of], [480, 480, 480], 'the same total everywhere');
 
