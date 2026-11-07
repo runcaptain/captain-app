@@ -62,6 +62,8 @@ export class Tables {
         for (const k of [...this.trees.keys()]) if (!this.conns.some((x) => x.connection === k)) this.trees.delete(k);
         for (const k of this.conns) if (k.pulled_at && !this.trees.has(k.connection)) { this.open.add(k.connection); this.loadConn(cx, k.connection); }
       } else if (!r.starting) this.error = r;
+      // The services are still starting: ask again shortly, never sit on the placeholder.
+      else cx.timer.after(1000, (cx) => { if (seq === this.loadSeq) this.load(cx); });
       cx.notify();
     });
   }

@@ -46,13 +46,18 @@ await until((t) => /Read 2 tables in 1 schema of demo-store\./.test(t), 'read');
 await until((t) => t.includes('products') && t.includes('search_log') && /[a-z]+-store\.main/.test(t) && !t.includes('"'), 'schema tree, schema in words');
 const tableId = h.mod.tables.trees.get('demo-store').schemas[0].name;
 await h.click(`table-demo-store/${tableId}/products`);
-await until((t) => t.includes('Columns 8') && t.includes('price') && t.includes('double'), 'columns');
+await until((t) => t.includes('Columns 8') && t.includes('price') && /double|float/.test(t), 'columns');
 
-await h.click('ttab-sample');
-await until((t) => /SELECT \* FROM/.test(t), 'sample rows');
-await h.click('ord-price');
-await h.click('ord-price');
-await until((t) => /ORDER BY "?price"? DESC/.test(t) && t.includes('price, largest first'), 'ordered, largest first');
+// Rows: the whole table, paged, sorted on the services by a header click.
+await h.click('ttab-rows');
+await until((t) => /SELECT \* FROM/.test(t) && /1 to 100 of 480/.test(t), 'every row, paged');
+const price = h.mod.tables.rows.table.columns.findIndex((c) => c.name === 'price');
+await h.click(`gh-table-rows-${price}`);
+await until((t) => /ORDER BY "?price"?/.test(t), 'ordered');
+await h.click(`gh-table-rows-${price}`);
+await until((t) => /ORDER BY "?price"? DESC/.test(t) && t.includes('sorted by price, largest first'), 'ordered, largest first');
+await h.click('gnext-table-rows');
+await until((t) => /101 to 200 of 480/.test(t), 'next page');
 assert.ok(h.text().includes('Download CSV'), 'CSV export from the grid');
 
 await h.click('ttab-insights');

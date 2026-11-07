@@ -91,6 +91,7 @@ export class Notebooks {
       const r = await api("/api/connections");
       if (seq !== this.connSeq) return; // only the newest answer counts
       this.setConns(r);
+      if (r.starting) cx.timer.after(1000, (cx) => { if (seq === this.connSeq) this.loadConns(cx); });
       cx.notify();
     });
   }

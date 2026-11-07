@@ -1,5 +1,6 @@
 // CAPTAIN: Import a dataset, in three steps, as an overlay (openOverlay({mod: "captain-import", kind: "dialog"})).
-// Props: {folder?} starts in that folder; {start: {conn, sql, name}} opens on that query's preview.
+// Props: {folder?} starts in that folder; {start: {conn, sql | table, name}} opens on that query's preview, or that
+// table whole.
 // 1. Where from: a grid of sources. A file or folder from this computer, every connected database with its mark, and
 //    "Connect a new source" (the typed database form). Product analytics sources show as coming.
 // 2. A database's tables (read once through the table browser) and suggested queries: the backend's own
@@ -135,7 +136,12 @@ export default class CaptainImport extends View {
       if (t.ok) { const walk = (n) => { for (const f of n.folders ?? []) { this.folders.push(f.path); walk(f); } }; walk(t.data ?? {}); }
       // Opened on a query (props.start = {conn, sql, name}): straight to its preview.
       const start = props()?.start;
-      if (start?.conn && this.conns.some((k) => k.name === start.conn)) {
+      if (start?.conn && start.table && this.conns.some((k) => k.name === start.conn)) {
+        // A table by name: its tables load, then it opens whole.
+        this.startTable = start.table;
+        if (start.name) this.name.set_value(start.name);
+        this.pick(cx, { kind: "db", conn: start.conn });
+      } else if (start?.conn && this.conns.some((k) => k.name === start.conn)) {
         this.source = { kind: "db", conn: start.conn };
         this.sql.set_value(start.sql ?? "");
         if (start.name) this.name.set_value(start.name);
@@ -207,6 +213,9 @@ export default class CaptainImport extends View {
       if (t.ok) this.tree = t.data;
       else if (t.status === 404) this.tree = { unread: true };
       else this.tree = { error: "Couldn't list its tables." };
+      // Opened on a table by name (props.start.table): open it whole once its schema is known.
+      const want = this.startTable && (this.tree?.schemas ?? []).find((s) => (s.tables ?? []).some((x) => x.name === this.startTable));
+      if (want) { const table = this.startTable; this.startTable = null; this.useTable(cx, want.name, table); }
       // The backend's suggestions ({pulled, suggestions: [{title, why, query}]}), else ones made here from the tables.
       const list = s.ok ? (Array.isArray(s.data) ? s.data : s.data?.suggestions) : null;
       this.suggestions = Array.isArray(list) && list.length ? list.map((x) => ({ title: x.title, sql: typeof (x.query ?? x.sql) === "string" ? x.query ?? x.sql : JSON.stringify(x.query, null, 2), why: x.why, kind: x.kind })) : localSuggestions(t.ok ? t.data : null);

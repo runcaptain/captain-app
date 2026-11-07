@@ -22,9 +22,7 @@ import { openOverlay } from "herdr";
 /** The import wizard, starting in this folder. */
 const openImport = (folder) => openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { folder } });
 
-const PAGE = 200;
 const ROW = 26;
-const KEEP = 4; // pages kept on each side of the visible ones
 const ICON = (n) => `mods/captain-data/icons/${n}.svg`;
 const enc = (name) => name.split("/").map(encodeURIComponent).join("/");
 const stripAnsi = (s) => String(s ?? "").replace(/\u001b\[[0-9;]*m/g, "");
@@ -102,11 +100,6 @@ export default class CaptainData extends View {
     this.preview = null;
     this.previewLogs = null;
     this.previewError = null;
-    this.search = InputState.new({ placeholder: "Search text columns" });
-    this.where = InputState.new({ placeholder: "SQL condition, for example: price < 100" });
-    this.search.on("submit", (_e, cx) => this.query(cx, { search: this.search.value().trim() }));
-    this.where.on("submit", (_e, cx) => this.query(cx, { where: this.where.value().trim() }));
-    this.resetGrid();
     this.nb = new Notebooks();
     this.lib = new Library(this);
     this.lib.load(cx);
@@ -117,6 +110,7 @@ export default class CaptainData extends View {
     const p = layoutProps?.() ?? {};
     if (p.tab === "models" || p.tab === "labels" || p.tab === "tables") this.tab = p.tab;
     if (p.pageTab) this.page.tab = p.pageTab;
+    if (p.tablesTab) this.tables.tab = p.tablesTab; // "rows": the first table's rows, once it's picked
     // {importWith: {conn, sql, name}}: the import wizard, open on that query (a layout, or the real-window check).
     if (p.importWith) cx.timer.after(1500, () => openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { start: p.importWith } }));
     if (p.tab === "tables") this.tables.load(cx);
@@ -132,7 +126,6 @@ export default class CaptainData extends View {
     // The notebook: autosave its draft, and keep a running cell's clock moving.
     cx.timer.every(500, (cx) => { if (this.tab === "notebooks") this.nb.tick(cx); this.lib.tick(cx); if (this.models.job) this.models.tick(cx); if (this.tables.jobs.size) this.tables.tick(cx); });
     // Pages the grid asked for while drawing are fetched here, outside render.
-    cx.timer.every(120, (cx) => this.pump(cx));
     // Until the backend answers, ask again every 3 s: the screen never stays on "starting" by itself.
     cx.timer.every(3000, (cx) => {
       if (this.starting || (this.list === null && this.loadedOnce) || (this.listError && !this.listR?.status)) this.load(cx);
@@ -183,7 +176,6 @@ export default class CaptainData extends View {
       this.tables = new Tables(this);
       if (this.tab === "tables") this.tables.load(cx);
       if (this.tab === "notebooks") this.nb.load(cx);
-      this.resetGrid();
       this.load(cx);
       cx.notify();
     });
@@ -236,87 +228,11 @@ export default class CaptainData extends View {
     this.sel = name;
     this.detail = null;
     this.page?.reset();
-    this.search.set_value("");
-    this.where.set_value("");
-    this.resetGrid();
     cx.spawn(async (cx) => {
       const r = await api(`/api/datasets/${enc(name)}`);
       if (this.sel !== name) return;
       this.detail = r.ok ? r.data : { error: say(r, "Couldn't load this dataset.", "This dataset's record is missing from the workspace.") };
       if (r.ok) this.page.open(cx, this.page.tab);
-      cx.notify();
-    });
-    cx.notify();
-  }
-
-  resetGrid(over = {}) {
-    this.grid = { pages: new Map(), inflight: null, columns: this.grid?.columns ?? [], files: this.grid?.files ?? [], total: null, end: 0, hasMore: true, ms: null, error: null, want: [0, 0], seq: (this.grid?.seq ?? 0) + 1, order: null, desc: false, search: "", where: "", file: null, counting: false, ...over };
-  }
-
-  query(cx, change) {
-    const g = this.grid;
-    this.resetGrid({ order: g.order, desc: g.desc, search: g.search, where: g.where, file: g.file, ...change });
-    cx.notify();
-  }
-
-  url(offset, extra = {}) {
-    const g = this.grid;
-    const p = new URLSearchParams({ offset: String(offset), limit: String(PAGE), ...extra });
-    if (this.detail?.version) p.set("v", String(this.detail.version));
-    if (g.file) p.set("file", g.file);
-    if (g.order) {
-      p.set("order", g.order);
-      if (g.desc) p.set("desc", "true");
-    }
-    if (g.search) p.set("search", g.search);
-    if (g.where) p.set("where", g.where);
-    return `/api/datasets/${enc(this.sel)}/rows?${p}`;
-  }
-
-  /** Fetch one missing page near the visible rows, and drop pages far from them. */
-  pump(cx) {
-    const g = this.grid;
-    if (this.tab !== "datasets" || !this.sel || !this.detail || this.detail.error || g.inflight !== null || g.error) return;
-    const [a, b] = g.want;
-    const first = Math.floor(a / PAGE);
-    const last = Math.floor(Math.max(a, b - 1) / PAGE);
-    for (const k of [...g.pages.keys()]) if (k < first - KEEP || k > last + KEEP) g.pages.delete(k);
-    let page = null;
-    for (let p = first; p <= last; p++) if (!g.pages.has(p) && (g.hasMore || p * PAGE < g.end)) { page = p; break; }
-    if (page === null) return;
-    const seq = g.seq;
-    g.inflight = page;
-    cx.spawn(async (cx) => {
-      const r = await api(this.url(page * PAGE));
-      if (this.grid.seq !== seq) return;
-      const gg = this.grid;
-      gg.inflight = null;
-      if (!r.ok) {
-        gg.error = stripAnsi(say(r, "Couldn't load the rows."));
-      } else {
-        const d = r.data;
-        gg.pages.set(page, d.rows ?? []);
-        gg.columns = d.columns ?? gg.columns;
-        gg.files = d.files ?? gg.files;
-        gg.file = gg.file ?? d.file ?? null;
-        gg.ms = d.ms ?? null;
-        gg.end = Math.max(gg.end, page * PAGE + (d.rows?.length ?? 0));
-        if (page * PAGE + (d.rows?.length ?? 0) >= gg.end) gg.hasMore = !!d.has_more;
-        if (d.total !== undefined && d.total !== null) gg.total = d.total;
-      }
-      cx.notify();
-    });
-  }
-
-  count(cx) {
-    const seq = this.grid.seq;
-    this.grid.counting = true;
-    cx.spawn(async (cx) => {
-      const r = await api(this.url(0, { limit: "1", count: "true" }), { timeout: 120 });
-      if (this.grid.seq !== seq) return;
-      this.grid.counting = false;
-      if (r.ok && r.data?.total !== undefined) this.grid.total = r.data.total;
-      else this.grid.error = stripAnsi(say(r, "Couldn't count the rows."));
       cx.notify();
     });
     cx.notify();
@@ -453,104 +369,6 @@ export default class CaptainData extends View {
       .when(fields.length > shown.length, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`+${fields.length - shown.length} more`)));
   }
 
-  toolbar(c) {
-    const g = this.grid;
-    const box = (id, icon, input, w) => h_flex().id(id).h(28).gap(6).px(8).items_center().border_1().border_color(c.grey300).bg(c.surface)
-      .when(!!w, (e) => e.w(w).flex_none()).when(!w, (e) => e.flex_1().min_w(160))
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .child(this.icon(icon, 13, c.grey500)).child(div().flex_1().min_w(0).child(Input.new(input).w_full().text_size(12).text_color(c.navy)));
-    return h_flex().flex_none().flex_wrap().gap(8).px(20).py(8).items_center()
-      .child(box("grid-search", "search", this.search, 220))
-      .child(box("grid-where", "filter", this.where, null))
-      .when(!!g.where || !!g.search, (e) => e.child(h_flex().id("grid-clear").h(28).px(8).gap(5).items_center().cursor_pointer().text_size(12)
-        .border_1().border_color(c.grey300).text_color(c.grey900).hover((s) => s.text_color(c.blue))
-        .on_click((_e, cx) => { this.search.set_value(""); this.where.set_value(""); this.query(cx, { search: "", where: "" }); })
-        .child(this.icon("x", 12)).child(div().child("Clear"))))
-      .when(g.files.length > 1, (e) => e.child(h_flex().flex_none().gap(4).children(g.files.slice(0, 4).map((f) => this.chip(c, f.file.split("/").pop(), null, f.file === g.file, (_e, cx) => this.query(cx, { file: f.file }))))));
-  }
-
-  status(c) {
-    const g = this.grid;
-    const [a, b] = g.want;
-    // Until the list reports what it shows (first frame), just the total: never "rows 1 to 0".
-    const of = g.total !== null ? fmtInt(g.total) : g.hasMore && g.end ? `${fmtInt(g.end)}+` : g.end ? fmtInt(g.end) : "";
-    const seen = Math.min(b, g.end);
-    const shown = !g.end ? (g.inflight !== null ? "" : "no rows") : seen > a ? `rows ${fmtInt(a + 1)} to ${fmtInt(seen)} of ${of}` : `${of} rows`;
-    return h_flex().flex_none().h(32).px(20).gap(12).items_center().border_t(1).border_color(c.rule).text_size(12).text_color(c.grey900)
-      .child(div().child(shown))
-      .when(g.ms !== null, (e) => e.child(div().font_family(MONO).text_color(c.grey500).child(`${g.ms} ms`)))
-      .when(!!g.search || !!g.where, (e) => e.child(div().text_color(c.blue).child("filtered")))
-      .when(g.total === null && !g.error, (e) => e.child(h_flex().id("grid-count").h(24).px(8).gap(5).items_center().cursor_pointer()
-        .text_color(c.grey900).hover((s) => s.text_color(c.blue)).tooltip("Scans the data to count the rows")
-        .on_click((_e, cx) => this.count(cx)).child(this.icon("count", 12)).child(div().child(g.counting ? "Counting" : "Count rows"))));
-  }
-
-  /** Column widths that fill the grid; past its width, the grid scrolls sideways and nothing spills. */
-  widths(avail) {
-    const cols = this.grid.columns;
-    const base = cols.map((x) => (numeric(x.type) ? 110 : /bool/i.test(x.type) ? 80 : 200));
-    const sum = base.reduce((n, x) => n + x, 0);
-    if (sum >= avail || !sum) return base;
-    const k = avail / sum;
-    return base.map((x) => Math.floor(x * k));
-  }
-
-  grid_(c, w) {
-    const g = this.grid;
-    if (g.error) return v_flex().flex_1().p(20).child(h_flex().gap(8).items_start().p(12).border_1().border_color(c.fail).text_size(12.5).text_color(c.navy)
-      .child(this.icon("alert", 14, c.fail)).child(div().flex_1().min_w(0).child(g.error)));
-    const cols = g.columns;
-    const NUM = 56;
-    const ws = this.widths(Math.max(200, w - NUM - 2));
-    const total = NUM + ws.reduce((n, x) => n + x, 0);
-    const count = g.total !== null ? g.total : g.hasMore ? g.end + PAGE : g.end;
-    const rowAt = (i) => g.pages.get(Math.floor(i / PAGE))?.[i % PAGE];
-    const head = h_flex().w(total).h(ROW + 4).flex_none().bg(c.surface2).border_b(1).border_color(c.rule).text_size(12)
-      .child(div().w(NUM).flex_none().px(8).text_right().text_color(c.grey500).font_family(MONO).child("#"))
-      .children(cols.map((x, j) => {
-        const on = g.order === x.name;
-        return h_flex().id(`col-${x.name}`).w(ws[j]).flex_none().h_full().px(8).gap(5).items_center().cursor_pointer()
-          .border_l(1).border_color(c.rule).hover((s) => s.text_color(c.blue))
-          .tooltip(`Sort by ${x.name}`)
-          .on_click((_e, cx) => this.query(cx, on ? (g.desc ? { order: null, desc: false } : { desc: true }) : { order: x.name, desc: false }))
-          .child(this.icon(typeIcon(x.type), 11, c.grey500))
-          .child(div().flex_1().min_w(0).truncate().font_medium().text_color(on ? c.blue : c.navy).child(x.name))
-          .when(on, (e) => e.child(this.icon(g.desc ? "sort-desc" : "sort-asc", 12, c.blue)));
-      }));
-    const list = v_virtual_list("data-grid", Math.max(0, count), ROW, (i) => `${g.seq}:${i}`, (range) => {
-      g.want = [range.start, range.end];
-      const out = [];
-      for (let i = range.start; i < range.end; i++) {
-        const r = rowAt(i);
-        const row = h_flex().w(total).h(ROW).border_b(1).border_color(c.rule).text_size(12).items_center();
-        if (!r) {
-          out.push(row.child(div().w(NUM).flex_none().px(8).text_right().text_color(c.grey300).font_family(MONO).child(fmtInt(i + 1)))
-            .when(i < g.end || g.hasMore, (e) => e.child(div().mx(8).h(10).w("30%").bg(c.surface2))));
-          continue;
-        }
-        out.push(row.hover((s) => s.bg(c.blueLight))
-          .child(div().w(NUM).flex_none().px(8).text_right().text_color(c.grey500).font_family(MONO).child(fmtInt(i + 1)))
-          .children(cols.map((x, j) => {
-            const v = r[j];
-            const t = cellText(v);
-            return div().w(ws[j]).flex_none().h_full().px(8).border_l(1).border_color(c.rule).truncate()
-              .flex().items_center().when(numeric(x.type), (e) => e.justify_end().font_family(MONO))
-              .text_color(v === null || v === undefined ? c.grey500 : c.navy)
-              .when(t.length > 24, (e) => e.id(`cell-${i}-${j}`).tooltip(t.length > 600 ? `${t.slice(0, 600)}...` : t))
-              .child(t);
-          })));
-      }
-      return out;
-    });
-    return v_flex().flex_1().min_h(0).mx(20).mb(10).border_1().border_color(c.rule)
-      .child(div().id("grid-x").flex_1().min_h(0).overflow_x_scrollbar()
-        .child(v_flex().w(total).h_full()
-          .child(head)
-          .child(div().flex_1().min_h(0).relative()
-            .child(list.size_full())
-            .child(Scrollbar.vertical("data-grid").viewport_from_layout().absolute().inset_0()))));
-  }
-
   detailPane(c, w) {
     const d = this.detail;
     if (!this.sel) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick a dataset on the left.");
@@ -576,7 +394,6 @@ export default class CaptainData extends View {
     this.sel = name;
     this.detail = null;
     this.page.reset();
-    this.resetGrid();
     cx.spawn(async (cx) => {
       const r = await api(`/api/datasets/${enc(name)}?v=${v}`);
       if (this.sel !== name) return;

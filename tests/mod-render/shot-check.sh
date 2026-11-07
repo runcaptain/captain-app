@@ -19,7 +19,7 @@ block_of() { case "$1" in captain-data) echo data ;; captain-runs) echo runs ;; 
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:sqltools" "captain-data:import" "captain-data:models" "captain-data:tables" "captain-data:lineage") ;;
+    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:sqltools" "captain-data:import" "captain-data:import-table" "captain-data:sample" "captain-data:tablerows" "captain-data:models" "captain-data:tables" "captain-data:lineage") ;;
     captain-runs) EXTRA+=("captain-runs:jobs") ;;
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries") ;;
   esac
@@ -139,6 +139,9 @@ props_of() {
     captain-runs:jobs) echo '{"tab": "jobs"}' ;;
     captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;
     captain-data:import) echo '{"importWith": {"conn": "demo-store", "sql": "select * from products limit 1000", "name": "Hello World"}}' ;;
+    captain-data:import-table) echo '{"importWith": {"conn": "demo-store", "table": "products", "name": "Products"}}' ;;
+    captain-data:sample) echo '{"pageTab": "sample"}' ;;
+    captain-data:tablerows) echo '{"tab": "tables", "tablesTab": "rows"}' ;;
     captain-data:sqltools) echo '{"tab": "notebooks", "notebook": "shot-sql-tools", "sqlTools": {"panel": "filled"}}' ;;
     captain-compare:imported) echo '{"backtest": "demos/shot/imported-readout", "version": 1}' ;;
     captain-compare:imported-queries) echo '{"backtest": "demos/shot/imported-readout", "version": 1, "tab": "queries"}' ;;
@@ -159,7 +162,7 @@ for view in "${VIEWS[@]}"; do
   mkdir -p "$HOME_DIR/mods" "$HOME_DIR/layouts"
   cp -R "defaults/mods/$m" "$HOME_DIR/mods/$m"
   # The import wizard opens over Data and signals.
-  [[ "$view" == captain-data:import ]] && { rm -rf "$HOME_DIR/mods/captain-import"; cp -R defaults/mods/captain-import "$HOME_DIR/mods/captain-import"; }
+  [[ "$view" == captain-data:import* ]] && { rm -rf "$HOME_DIR/mods/captain-import"; cp -R defaults/mods/captain-import "$HOME_DIR/mods/captain-import"; }
   rm -f "$HOME_DIR/mods/$m/gpui-kit.d.ts" "$HOME_DIR/mods/$m/jsconfig.json"
   # Captain's own layout can't be edited (edits land in a copy), so each view gets its own personal layout,
   # a copy of the shipped one with this block set; switching to a new layout builds its mods fresh.
@@ -184,7 +187,7 @@ EOF
   ok=0
   # The notebook view runs every cell on a fresh Python first: give it time to finish before judging.
   [[ "$view" == captain-data:notebook || "$view" == captain-data:chart ]] && sleep 25
-  [[ "$view" == captain-data:import ]] && sleep 8
+  [[ "$view" == captain-data:import* ]] && sleep 8
   for i in $(seq 1 12); do
     sleep 1.5
     # A window in the background may not draw a new frame after its data arrives, and shot saves the last frame
