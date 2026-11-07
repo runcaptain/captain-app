@@ -130,3 +130,7 @@ then recapture using this helper and restore the new format-2 archive into the i
 target. The final restore rotates history and requires upgraded clients before service
 resumes. Do not serve the intermediate upgraded copy: migration alone does not identify
 it as a restored timeline. Never bypass the format guard or manually relabel a manifest.
+
+After restore, an owner or administrator may cancel a fenced old job attempt using
+the current history and revision. This closes the job record logically; it does not
+prove an external worker process stopped. Verify external compute separately.

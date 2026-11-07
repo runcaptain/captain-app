@@ -181,9 +181,16 @@ def register_jobs(app, engine, actor, access):
             revision(old, change.expected_revision)
             if old['body']['state'] in TERMINAL:
                 raise HTTPException(409, 'terminal_state')
-            # A queued job has never been assigned, so the server can confirm
-            # cancellation atomically. Running work needs runner confirmation.
+            # Current-history running work still needs runner confirmation.
+            # A restored attempt cannot publish any more events, so its owner
+            # or an admin can close the logical job without waiting forever for
+            # an acknowledgement that the history fence necessarily rejects.
+            # This does not claim its external process was physically stopped.
             body = dict(old['body'], cancel_requested=True)
+            stale_attempt = body.get('attempt_history_id') != w['history_id'] and (
+                w['history_required'] or body.get('attempt_history_id') is not None)
             if body['state'] == 'queued':
                 body['state'] = 'cancelled'
+            elif body['state'] == 'running' and stale_attempt:
+                body.update(state='cancelled', cancellation_reason='restored_attempt_fenced')
             return save(db, workspace, w, user, request, change, old, body)

@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 import httpx
 from .client import SyncClient
+from .credentials import prepare_private_file
 from . import login
 
 
@@ -44,9 +45,7 @@ def _connection(workspace, token, identity=None, server=None):
     path = home / (scope + ".sqlite")
     lock_path = home / (scope + ".lock.sqlite")
     for private_path in (path, lock_path):
-        fd = os.open(private_path, os.O_CREAT | os.O_RDWR, 0o600)
-        os.fchmod(fd, 0o600)
-        os.close(fd)
+        prepare_private_file(private_path)
     # A separate SQLite transaction serializes the whole network operation across
     # desktop threads and CLI processes, not just individual cache commits. This
     # prevents a delayed authorized response from restoring data after revocation.

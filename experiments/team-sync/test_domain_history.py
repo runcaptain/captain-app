@@ -1,6 +1,8 @@
 """Restored histories fence domain receipts, upload leases and running attempts."""
 import uuid
 
+import pytest
+
 from sqlalchemy import update
 
 from captain_search.collaboration.server import workspaces
@@ -101,3 +103,43 @@ def test_history_change_during_artifact_stream_is_rechecked(team):
     assert response.status_code == 409, response.text
     assert response.json()['detail']['code'] == 'history_reset_required'
     assert c.get(root+'/snapshot', headers=headers[alice]).json()['records'] == []
+
+
+@pytest.mark.parametrize('cancel_before_restore', [False, True])
+@pytest.mark.parametrize('administrator', [False, True])
+def test_restored_running_job_can_finish_cancellation_without_stale_runner(team, cancel_before_restore, administrator):
+    c, app, workspace, alice, bob, _, headers = team
+    root, _, _ = setup_job(team)
+    assert c.post(root+'/jobs/job/attempts', headers=headers[alice], json=attempt(bob)).status_code == 200
+    if cancel_before_restore:
+        before = {'mutation_id': uuid.uuid4().hex, 'expected_revision': 2}
+        assert c.post(root+'/jobs/job/cancel', headers=headers[alice], json=before).status_code == 200
+        assert job(c, root, headers[alice])['body']['state'] == 'running'
+    history = restore(app, workspace)
+    revision = job(c, root, headers[alice])['revision']
+    request = {'mutation_id': uuid.uuid4().hex, 'expected_revision': revision, 'history_id': history}
+    # Merely being the old assigned worker is not authority to close the job.
+    denied = c.post(root+'/jobs/job/cancel', headers=headers[bob], json=request)
+    assert denied.status_code == 403 and denied.json()['detail'] == 'job_owner_required'
+    # Same-history events are still fenced against the old attempt's history.
+    late = dict(event('cancelled'), history_id=history)
+    assert c.post(root+'/jobs/job/events', headers=headers[bob], json=late).json()['detail'] == 'stale_attempt_history'
+    actor = alice
+    if administrator:
+        promoted = c.put(root+'/members/'+bob, headers=headers[alice], json={'role': 'admin', 'history_id': history})
+        assert promoted.status_code == 200, promoted.text
+        actor = bob
+    stale = dict(request, mutation_id=uuid.uuid4().hex, expected_revision=revision-1)
+    assert c.post(root+'/jobs/job/cancel', headers=headers[actor], json=stale).status_code == 409
+    result = c.post(root+'/jobs/job/cancel', headers=headers[actor], json=request)
+    assert result.status_code == 200, result.text
+    assert c.post(root+'/jobs/job/cancel', headers=headers[actor], json=request).json() == result.json()
+    final = job(c, root, headers[alice])
+    assert final['revision'] == revision + 1
+    assert final['body']['state'] == 'cancelled' and final['body']['cancel_requested'] is True
+    assert final['body']['cancellation_reason'] == 'restored_attempt_fenced'
+    assert final['body']['attempt'] == 1
+    assert final['body']['attempt_history_id'] != history
+    assert c.post(root+'/jobs/job/events', headers=headers[bob], json=late).status_code == 409
+    restart = dict(attempt(bob, revision=final['revision']), history_id=history)
+    assert c.post(root+'/jobs/job/attempts', headers=headers[actor], json=restart).status_code == 409

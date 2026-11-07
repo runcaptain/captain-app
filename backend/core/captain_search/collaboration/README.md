@@ -119,6 +119,12 @@ Local artifact storage supports one server instance. An optional S3 adapter uses
 staging, bounded checksum verification and conditional immutable object publication,
 with server authorization on every read. Set `CST_TEAM_ARTIFACT_BUCKET` and optional
 `CST_TEAM_ARTIFACT_PREFIX`; see the runbook for IAM and lifecycle requirements.
+Accepted upload retries verify and reuse their existing stage. Concurrent retries do
+not replace accepted bytes. Failed acceptance removes only the request's unreferenced
+stage; S3 needs `DeleteObject` on the staging prefix only, never the blob prefix.
+If storage or database availability prevents proving that cleanup is safe, the service
+preserves the bytes and logs a sanitized cleanup warning. Operator staging lifecycle
+remains the fallback for outages and process crashes.
 
 To enable SSO later, explicitly set `CST_TEAM_AUTH_MODE=oidc` and configure HTTPS issuer,
 dedicated API audience and JWKS endpoint. Fixed RS256 verification checks issuer,

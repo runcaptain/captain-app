@@ -5,6 +5,7 @@ import hashlib
 import os
 import uuid
 import re
+import logging
 from pathlib import Path
 from typing import Literal
 
@@ -16,6 +17,7 @@ from sqlalchemy import Column, Integer, String, Table, UniqueConstraint, and_, d
 
 from .server import (commit_record, digest, metadata, prior_receipt, receipts,
                     records, visible, require_history)
+from .migrations import locked_transaction
 
 MAX_BYTES = 8 * 1024 * 1024
 uploads = Table('sync_artifact_uploads', metadata,
@@ -114,6 +116,13 @@ class S3ArtifactStore:
     def stage(self, workspace, filename, path):
         self.put(self.key(workspace, filename, staged=True), path.read_bytes())
 
+    def delete_stage(self, workspace, filename):
+        from botocore.exceptions import BotoCoreError, ClientError
+        try:
+            self.client.delete_object(Bucket=self.bucket, Key=self.key(workspace, filename, staged=True))
+        except (BotoCoreError, ClientError):
+            raise HTTPException(503, 'artifact_storage_unavailable') from None
+
     def publish(self, workspace, filename, size, sha):
         data = self.read(self.key(workspace, filename, staged=True), missing='artifact_not_ready')
         if len(data) != size or hashlib.sha256(data).hexdigest() != sha:
@@ -167,6 +176,21 @@ def register_artifacts(app, engine, actor, access, root, *, store=None):
         directory.mkdir(exist_ok=True, mode=0o700)
         return directory / sha
 
+    def verified_stage(workspace, row):
+        if row['state'] != 'uploaded' or not row['staged_file']:
+            return False
+        if store is not None:
+            data = store.read(store.key(workspace, row['staged_file'], staged=True), missing='artifact_not_ready')
+            actual = len(data), hashlib.sha256(data).hexdigest()
+        else:
+            try:
+                actual = hash_file(staging / row['staged_file'])
+            except FileNotFoundError:
+                raise HTTPException(409, 'artifact_not_ready') from None
+        if actual != (row['size'], row['sha256']):
+            raise HTTPException(422, 'artifact_integrity_mismatch')
+        return True
+
     @app.post('/v1/workspaces/{workspace}/artifacts/uploads')
     def begin(workspace: str, change: Begin, authorization: str = Header(default='')):
         request = {'operation':'begin_artifact', **change.model_dump(exclude_none=True)}
@@ -202,19 +226,24 @@ def register_artifacts(app, engine, actor, access, root, *, store=None):
                      history_id: str | None = Header(default=None, alias='X-CST-History-ID', max_length=32)):
         # Authorize before reading bytes; do not hold a workspace lock while
         # awaiting the network. Reauthorize after upload before accepting it.
-        with engine.begin() as db:
-            user = actor(db, authorization)
-            w, role = access(db, workspace, user)
-            editor(role)
-            require_history(w, history_id)
-            row = stage(db, workspace, upload_id, user)
-            current_upload(row, w)
-            if row['state'] == 'published':
-                raise HTTPException(409, 'artifact_already_published')
-            expected_size, expected_sha = row['size'], row['sha256']
+        def inspect_upload():
+            with engine.begin() as db:
+                user = actor(db, authorization)
+                w, role = access(db, workspace, user)
+                editor(role)
+                require_history(w, history_id)
+                row = stage(db, workspace, upload_id, user)
+                current_upload(row, w)
+                if row['state'] == 'published':
+                    raise HTTPException(409, 'artifact_already_published')
+                return row['size'], row['sha256'], verified_stage(workspace, row)
+        expected_size, expected_sha, ready = await run_in_threadpool(inspect_upload)
+        if ready:
+            return {'upload_id':upload_id, 'received':expected_size, 'ready':True}
         filename = uuid.uuid4().hex + '.upload'
         temporary = staging / filename
         accepted = False
+        remote_attempted = False
         try:
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             hasher = hashlib.sha256()
@@ -235,23 +264,49 @@ def register_artifacts(app, engine, actor, access, root, *, store=None):
                 os.fsync(directory_fd)
             finally:
                 os.close(directory_fd)
-            if store is not None:
-                await run_in_threadpool(store.stage, workspace, filename, temporary)
-            with engine.begin() as db:
-                user = actor(db, authorization)
-                w, role = access(db, workspace, user)
-                editor(role)
-                require_history(w, history_id)
-                row = stage(db, workspace, upload_id, user)
-                current_upload(row, w)
-                if row['state'] == 'published':
-                    raise HTTPException(409, 'artifact_already_published')
-                db.execute(update(uploads).where(uploads.c.id == upload_id)
-                    .values(staged_file=filename, state='uploaded'))
-            accepted = True
+            def accept_upload():
+                nonlocal remote_attempted
+                # Serialize contenders before remote staging. Keep blocking DB/S3
+                # work off the event loop so another request cannot deadlock it.
+                with locked_transaction(engine) as db:
+                    user = actor(db, authorization)
+                    w, role = access(db, workspace, user)
+                    editor(role)
+                    require_history(w, history_id)
+                    row = stage(db, workspace, upload_id, user)
+                    current_upload(row, w)
+                    if row['state'] == 'published':
+                        raise HTTPException(409, 'artifact_already_published')
+                    if verified_stage(workspace, row):
+                        return False
+                    if store is not None:
+                        remote_attempted = True
+                        store.stage(workspace, filename, temporary)
+                    db.execute(update(uploads).where(uploads.c.id == upload_id)
+                        .values(staged_file=filename, state='uploaded'))
+                return True
+            accepted = await run_in_threadpool(accept_upload)
             return {'upload_id':upload_id, 'received':total, 'ready':True}
         finally:
-            if not accepted or store is not None:
+            safe_to_remove = not accepted
+            if not accepted and (remote_attempted or temporary.exists()):
+                def referenced():
+                    with engine.connect() as db:
+                        return db.execute(select(uploads.c.id).where(uploads.c.staged_file == filename)).first() is not None
+                try:
+                    # A commit response can fail after the DB committed. Do not
+                    # remove bytes until their absence from metadata is confirmed.
+                    safe_to_remove = not await run_in_threadpool(referenced)
+                    if not safe_to_remove and remote_attempted:
+                        # Metadata confirms S3 holds the accepted stage; the local
+                        # spool is redundant even if the commit response was lost.
+                        temporary.unlink(missing_ok=True)
+                    if safe_to_remove and remote_attempted:
+                        await run_in_threadpool(store.delete_stage, workspace, filename)
+                except Exception:
+                    safe_to_remove = False
+                    logging.getLogger(__name__).warning('Artifact staging cleanup deferred; storage or database unavailable')
+            if safe_to_remove or (accepted and store is not None):
                 temporary.unlink(missing_ok=True)
 
     @app.post('/v1/workspaces/{workspace}/artifacts/uploads/{upload_id}/finalize')

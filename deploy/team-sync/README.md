@@ -154,11 +154,14 @@ together before upgrading. Restore both for incompatible rollback; do not restor
 metadata after new artifact publication. Test restores before company use.
 
 For S3, set `CST_TEAM_ARTIFACT_BUCKET` and optionally `CST_TEAM_ARTIFACT_PREFIX` (default
-`team-sync`). Use a scoped AWS role with GetObject/PutObject on that prefix. No public
-ACL, list or delete permissions are required by the adapter. Keep public access blocked.
+`team-sync`). Use a scoped AWS role with GetObject/PutObject on that prefix and
+DeleteObject restricted to `<prefix>/staging/*` for rejected upload cleanup. No blob
+delete, public ACL or list permission is required. Keep public access blocked.
 The adapter requests AES256 encryption and conditional immutable writes. A local
 `CST_TEAM_ARTIFACT_ROOT` remains required as a bounded upload spool. Expire only staging
 objects with a lifecycle long enough for delayed finalization, never blobs automatically.
+If storage or the database is unavailable during cleanup, the adapter logs a sanitized
+warning and preserves possibly committed data; the staging lifecycle handles leftovers.
 Coordinate S3 versioning/retention with DB backups. Live S3 verification remains separate.
 
 The reverse proxy must permit the bounded 8 MiB upload contract and appropriate timeouts.

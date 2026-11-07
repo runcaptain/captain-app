@@ -194,6 +194,20 @@ def delete():
             _cleanup_pending(backend, 'Signed out locally, but OS keychain removal failed; retry sign out')
 
 
+def prepare_private_file(path):
+    """Use POSIX mode 0600 where supported; Windows inherits directory ACLs."""
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        if hasattr(os, 'fchmod'):
+            os.fchmod(fd, 0o600)
+        else:
+            # Windows has no fchmod. chmod keeps the file writable there;
+            # confidentiality comes from the containing user's directory ACL.
+            os.chmod(path, 0o600)
+    finally:
+        os.close(fd)
+
+
 @contextmanager
 def lock():
     """Serialize saved credential changes with active cache use across processes."""
@@ -203,9 +217,7 @@ def lock():
     root = home()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = root / 'connection.lock'
-    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
-    os.fchmod(fd, 0o600)
-    os.close(fd)
+    prepare_private_file(path)
     db = sqlite3.connect(path, timeout=35)
     try:
         db.execute('BEGIN IMMEDIATE')
