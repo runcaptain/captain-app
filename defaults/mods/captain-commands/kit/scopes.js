@@ -63,7 +63,7 @@ export function makesCycle(model, key, parent) {
 export const nodeName = (n) => n.name ?? n.label ?? "";
 
 /** A stable key for a node: groups have no id, so their type and place stand in. */
-export const nodeKey = (n, path) => n.id ?? `${path}/${n.kind}:${n.type ?? ""}`;
+export const nodeKey = (n, path) => n.key ?? n.id ?? `${path}/${n.kind}:${n.type ?? ""}`;
 
 /** A glyph for a node (kit/icons.js names). */
 export function nodeIcon(n) {
