@@ -267,7 +267,7 @@ if [[ -n "${SHOT_AUDIT:-}" ]]; then
   app do app.palette >/dev/null || true; shoot palette 2; app do app.palette >/dev/null || true
   app do app.settings >/dev/null || true; shoot settings 3; app do app.settings >/dev/null || true
   app do mod.open '{"name":"folds-open"}' >/dev/null || true; shoot explorer-mlflow 6
-  for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup; do
+  for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup captain-services captain-scope-model captain-cloud; do
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; shoot "dialog-$m" 4
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; sleep 1
   done

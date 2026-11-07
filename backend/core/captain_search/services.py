@@ -16,7 +16,7 @@ def listing(ctx, check: bool = False) -> dict:
     for n in ctx.connections():
         try:
             c = ctx.load_connection(n)
-            item = {"name": n, "kind": c.kind, "writable": bool(getattr(c, "writable", False)),
+            item = {"name": n, "kind": c.engine, "writable": bool(getattr(c, "writable", False)),
                     "network": getattr(getattr(c, "network", None), "mode", None)}
         except Exception as e:  # noqa: BLE001
             item = {"name": n, "kind": None, "error": str(e)[:200]}
