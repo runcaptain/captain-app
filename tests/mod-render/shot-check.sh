@@ -168,6 +168,9 @@ props_of() {
     captain-data:quality) echo '{"pageTab": "quality"}' ;;
     captain-data:insights) echo '{"pageTab": "insights"}' ;;
     captain-data:lineage) echo '{"pageTab": "lineage"}' ;;
+    captain-data:labels) echo '{"tab": "labels"}' ;;
+    captain-data:search) echo '{"find": "price"}' ;;
+    captain-data:flat) echo '{"flatAll": true}' ;;
     captain-runs:grading) echo '{"tab": "grading"}' ;;
     captain-runs:jobs) echo '{"tab": "jobs"}' ;;
     captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;

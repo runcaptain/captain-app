@@ -93,7 +93,7 @@ export class Library {
       // Matched only through a column: say which.
       const inName = words.every((w) => `${d.name} ${d.description ?? ""}`.toLowerCase().includes(w));
       const col = !words.length || inName ? null : cols.find((c) => words.some((w) => c.toLowerCase().includes(w)));
-      out.push({ row: { ...(tree.get(d.name) ?? {}), ...d, leaf: d.name }, folder: where.get(d.name) ?? "", col });
+      out.push({ row: { ...d, ...(tree.get(d.name) ?? {}), leaf: tree.get(d.name)?.leaf ?? d.name.split("/").pop() }, folder: where.get(d.name) ?? "", col });
     }
     return out.sort((a, b) => a.row.name.localeCompare(b.row.name));
   }
