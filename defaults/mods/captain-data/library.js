@@ -59,6 +59,57 @@ export class Library {
     this.newFolder.on("submit", (_e, cx) => this.makeFolder(cx));
     this.importPath.on("submit", (_e, cx) => this.importPaths(cx, [expand(this.importPath.value())], this.cur));
     this.renameTo.on("submit", (_e, cx) => this.renameFolder(cx));
+    // Search every dataset, whatever folder it's in: its name, description and columns. Typing filters at once.
+    this.find = InputState.new({ placeholder: "Search datasets and columns" });
+    this.find.on("change", (_e, cx) => cx.notify());
+    this.flatAll = false; // every dataset in one list, folders aside
+  }
+
+  /** The folder each dataset is in, from the tree ("" at the top). */
+  folderOf() {
+    const out = new Map();
+    const walk = (node) => {
+      for (const d of node.datasets ?? []) out.set(d.name, node.path ?? "");
+      for (const f of node.folders ?? []) walk(f);
+    };
+    if (this.tree) walk(this.tree);
+    return out;
+  }
+
+  /** Datasets for the search (or every one, flat), each with where it is and what matched. */
+  found() {
+    const words = this.find.value().trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const where = this.folderOf();
+    const cls = this.host.cls;
+    const tree = new Map();
+    const walk = (node) => { for (const d of node.datasets ?? []) tree.set(d.name, d); for (const f of node.folders ?? []) walk(f); };
+    if (this.tree) walk(this.tree);
+    const out = [];
+    for (const d of this.host.list ?? []) {
+      if (cls && !(d.classes ?? []).includes(cls)) continue;
+      const cols = d.columns ?? [];
+      const hay = `${d.name} ${d.description ?? ""} ${cols.join(" ")}`.toLowerCase();
+      if (!words.every((w) => hay.includes(w))) continue;
+      // Matched only through a column: say which.
+      const inName = words.every((w) => `${d.name} ${d.description ?? ""}`.toLowerCase().includes(w));
+      const col = !words.length || inName ? null : cols.find((c) => words.some((w) => c.toLowerCase().includes(w)));
+      out.push({ row: { ...(tree.get(d.name) ?? {}), ...d, leaf: d.name }, folder: where.get(d.name) ?? "", col });
+    }
+    return out.sort((a, b) => a.row.name.localeCompare(b.row.name));
+  }
+
+  /** The search's results, or every dataset flat: one list, each row saying where it lives and what matched. */
+  flatRows(c) {
+    const hits = this.found();
+    const q = this.find.value().trim();
+    if (!hits.length) return [div().id("lib-found-none").p(12).text_size(12).text_color(c.grey500)
+      .child(q ? `No dataset matches "${q}". Search looks at names, descriptions and column names.` : "No datasets yet.")];
+    return [div().id("lib-found-count").px(10).py(6).text_size(11).text_color(c.grey500)
+      .child(q ? `${hits.length} match${hits.length === 1 ? "" : "es"} across every folder` : `All ${hits.length} datasets, folders aside`),
+    ...hits.map((h, i) => v_flex().id(`lib-found-${i}`).w_full()
+      .child(this.datasetRow(c, h.row, 0))
+      .when(!!h.folder || !!h.col, (e) => e.child(div().pl(8 + 17).pb(4).mt(-6).text_size(10.5).text_color(c.grey500)
+        .child([h.folder ? `in ${h.folder}` : null, h.col ? `column ${h.col}` : null].filter(Boolean).join(", ")))))];
   }
 
   // ---- data ------------------------------------------------------------------------------------------------------
@@ -264,7 +315,8 @@ export class Library {
         .when(t === null && !this.error, (e) => e.child(div().p(12).text_size(12).text_color(c.grey500).child("")))
         .when(!!this.host.listError, (e) => e.child(div().p(10).child(this.host.troubleView(c, "datasets-list", this.host.listR, this.host.listError, (cx) => this.refresh(cx)))))
         .when(!!this.error && !this.host.listError, (e) => e.child(div().p(10).child(this.host.troubleView(c, "folders", this.error, "Couldn't load your folders.", (cx) => this.load(cx)))))
-        .when(!!t, (e) => e.child(this.folderRow(c, { name: "All datasets", path: "", folders: t.folders, datasets: t.datasets }, 0, true))
+        .when(!!t && (!!this.find.value().trim() || this.flatAll), (e) => e.children(this.flatRows(c)))
+        .when(!!t && !this.find.value().trim() && !this.flatAll, (e) => e.child(this.folderRow(c, { name: "All datasets", path: "", folders: t.folders, datasets: t.datasets }, 0, true))
           .children(this.rows(c, t, 1))));
   }
 
@@ -277,6 +329,14 @@ export class Library {
         .child(Input.new(st).w_full().text_size(12).text_color(c.navy)))
       .child(Button(c, `${id}-go`, label, (_e, cx) => go(cx), { kind: "primary", small: true }));
     return v_flex().flex_none().gap(8).p(10).border_b(1).border_color(c.rule)
+      .child(h_flex().gap(6).items_center()
+        .child(h_flex().id("lib-find").flex_1().min_w(0).h(28).px(8).gap(6).items_center().border_1().border_color(this.find.value().trim() ? c.blue : c.grey300)
+          .child(this.icon("search", 12, c.grey500)).child(div().flex_1().min_w(0).child(Input.new(this.find).w_full().text_size(12).text_color(c.navy))))
+        .when(!!this.find.value().trim(), (e) => e.child(div().id("lib-find-clear").flex_none().cursor_pointer().text_size(12).text_color(c.blue)
+          .on_click((_e, cx) => { this.find.set_value(""); cx.notify(); }).child("Clear")))
+        .child(div().id("lib-flat").flex_none().h(28).px(8).flex().items_center().cursor_pointer().text_size(12).border_1()
+          .border_color(this.flatAll ? c.blue : c.grey300).bg(this.flatAll ? c.blueLight : c.surface).text_color(this.flatAll ? c.blue : c.grey900)
+          .tooltip("Every dataset in one list, folders aside").on_click((_e, cx) => { this.flatAll = !this.flatAll; cx.notify(); }).child("Show all")))
       .child(h_flex().flex_wrap().gap(4).items_center().text_size(12)
         .child(div().id("crumb-root").cursor_pointer().text_color(crumbs.length ? c.blue : c.navy).font_medium()
           .on_click((_e, cx) => { this.cur = ""; cx.notify(); }).child("All datasets"))
