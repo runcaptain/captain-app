@@ -87,6 +87,23 @@ export default class NavShot extends View {
   render() { return div(); }
 }
 JS
+# The Explorer folded so its MLflow heading is on screen, and open (it reads MLflow on first open).
+mkdir -p "$HOME_DIR/mods/folds-shot"
+cp -R defaults/captain/kit "$HOME_DIR/mods/folds-shot/kit"
+echo '{ "place": "none", "overlay": { "kind": "popup", "width": 1, "height": 1 } }' > "$HOME_DIR/mods/folds-shot/mod.json"
+cat > "$HOME_DIR/mods/folds-shot/main.js" <<'JS'
+import { View, div } from "gpui-kit";
+import { props, shared, setShared, closeOverlay } from "herdr";
+import { workspace } from "./kit/cst.js";
+export default class FoldsShot extends View {
+  init(_p, cx) {
+    const ws = workspace() ?? shared("captain.workspace") ?? "";
+    setShared("captain.explorer.folds", { ...(shared("captain.explorer.folds") ?? {}), [ws]: { "/group:brand": false, "sc-acme-outdoors": false, "all-engines": false, mlflow: true } });
+    cx.timer.after(1, () => closeOverlay(props()?.overlay));
+  }
+  render() { return div(); }
+}
+JS
 # Every chart the kit draws (tests/mod-render/charts-gallery), with the kit beside it as mods need.
 mkdir -p "$HOME_DIR/mods/charts-gallery"
 cp tests/mod-render/charts-gallery/* "$HOME_DIR/mods/charts-gallery/"
@@ -169,6 +186,8 @@ if [[ "$SHOWN" == *captain-setup* ]] && python3 tests/mod-render/forms-shot.py "
 # The Explorer (its sample tree, turned on only in this window) and the scope screens.
 close_all
 sleep 1; app shot "$OUT/explorer.png" >/dev/null; echo "explorer: shot $OUT/explorer.png"
+app do mod.open '{"name":"folds-shot"}' >/dev/null; sleep 6
+app shot "$OUT/explorer-mlflow.png" >/dev/null; echo "explorer-mlflow: shot $OUT/explorer-mlflow.png"
 for m in captain-scope-model captain-scope captain-rankings captain-explain; do
   shoot "$m" "$m"
   if [[ "$SHOWN" == *"$m"* ]] && python3 tests/mod-render/forms-shot.py "$OUT/$m.png" --any; then echo "$m: drawn"; else echo "$m: NOT DRAWN ($SHOWN) $OUT/$m.png"; fail=1; fi
