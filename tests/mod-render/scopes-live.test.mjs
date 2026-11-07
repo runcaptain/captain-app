@@ -140,6 +140,9 @@ await until(ex, () => (ex.mod.ex.experiments ?? []).length === 2, 'the experimen
 assert.ok(!ex.text().includes('demo-historic-replay'), 'folded at first');
 await ex.click('ex-all-experiments');
 assert.ok(ex.text().includes('demo-historic-replay') && ex.text().includes('demo-tuned-vs-bm25'), `opened: ${ex.text().slice(0, 400)}`);
+// Each experiment's marker says how its latest run went (last_run_complete): the demo's replay finished.
+const mark = ex.byIdPrefix('ex-mark-all-experiments/demo-historic-replay')[0]?.call('tooltip')?.[0] ?? '';
+assert.match(mark, /finished/, `the marker says it finished: ${mark}`);
 const ws = Object.keys(globalThis.__shared['captain.explorer.folds'] ?? {})[0];
 assert.equal(globalThis.__shared['captain.explorer.folds'][ws]['all-experiments'], true, 'the fold is remembered for this workspace');
 await ex.click('ex-all-experiments/demo-historic-replay');

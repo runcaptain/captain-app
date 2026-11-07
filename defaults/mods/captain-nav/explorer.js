@@ -168,7 +168,7 @@ export class Explorer {
           : [{ kind: "hint", key: "all-engines/none", label: "No engines yet: add one", overlay: ADD_ENGINE }] };
       }
       if (n.kind === "view" && n.id === "all-experiments") {
-        const first = exps.slice(0, FIRST).map((b) => ({ kind: "experiment", key: `all-experiments/${b.name}`, name: b.name, latest: b.latest, lastRun: b.last_run, runs: b.runs }));
+        const first = exps.slice(0, FIRST).map((b) => ({ kind: "experiment", key: `all-experiments/${b.name}`, name: b.name, latest: b.latest, lastRun: b.last_run, lastComplete: b.last_run_complete, runs: b.runs }));
         return { kind: "list", id: n.id, key: n.id, label: n.label, about: ABOUT[n.id], count: exps.length, children: exps.length
           ? [...first, ...(exps.length > FIRST ? [{ kind: "more", key: "all-experiments/more", label: `Show all ${exps.length}` }] : [])]
           : [{ kind: "hint", key: "all-experiments/none", label: "No experiments yet: run one", overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "backtest" } } }] };
@@ -180,9 +180,11 @@ export class Explorer {
     });
   }
 
-  /** An experiment's marker: it has run (and when, on hover), or it hasn't yet. */
+  /** An experiment's marker: its latest run finished, didn't finish, or it hasn't run yet (the date on hover). */
   marker(c, n) {
-    const [color, words] = n.lastRun ? [c.good, `Latest run ${String(n.lastRun).slice(0, 10)}`] : [c.grey300, "Not run yet"];
+    const day = String(n.lastRun ?? "").slice(0, 10);
+    const [color, words] = !n.lastRun ? [c.grey300, "Not run yet"]
+      : n.lastComplete === false ? [c.warn ?? "#d97706", `Its latest run, ${day}, didn't finish`] : [c.good, `Latest run ${day}, finished`];
     return div().id(`ex-mark-${n.key}`).size(7).flex_none().rounded_full().bg(color).tooltip(words);
   }
 
