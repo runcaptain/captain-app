@@ -18,6 +18,7 @@ import { fromNotebook, toNotebook, newCell, tablesByVar, errorSentence } from ".
 import { ChartView, MARKS, AGGS, COLORS as CHART_COLORS, shape as shapeChart } from "./kit/charts.js";
 import { ResultGrid } from "./kit/grid.js";
 import { askAgent, copyPrompt } from "./kit/agent.js";
+import { SqlTools } from "./sql-tools.js";
 
 const KINDS = { sql: ["SQL", "database"], python: ["Python", "terminal"], markdown: ["Text", "file-text"], chart: ["Chart", "bar-chart-3"] };
 const LANG = { sql: "sql", python: "python", markdown: "markdown" };
@@ -55,6 +56,7 @@ export class Notebooks {
     this.execCount = 0;
     this.newName = InputState.new({ placeholder: "Name a new notebook" });
     this.importPath = InputState.new({ placeholder: "~/Downloads/analysis.ipynb" });
+    this.sqlTools = new SqlTools(this);
   }
 
   // ---- data ------------------------------------------------------------------------------------------------------
@@ -87,6 +89,8 @@ export class Notebooks {
     this.releaseEditors();
     this.note = null;
     this.exporting = false;
+    this.sqlTools.cell = null;
+    this.sqlTools.varInputs.clear();
     cx.spawn(async (cx) => {
       const r = await api(`/api/notebooks/${enc(name)}`);
       if (this.open?.name !== name) return;
@@ -104,6 +108,8 @@ export class Notebooks {
       }
       for (const cell of this.cells) this.prepare(cell);
       if (this.runOnOpen) { this.runOnOpen = false; this.runAll(cx); }
+      const sqlCell = this.toolsOnOpen && this.cells.find((x) => x.kind === "sql");
+      if (sqlCell) { this.sqlTools.cell = sqlCell.id; if (this.toolsOnOpen.panel) this.sqlTools.show(cx, sqlCell, this.toolsOnOpen.panel); this.toolsOnOpen = null; }
       cx.notify();
     });
     cx.notify();
@@ -251,13 +257,22 @@ export class Notebooks {
       return false;
     }
     cell.source = this.editors.get(cell.id)?.value() ?? cell.source;
+    let code = cell.source;
+    if (cell.kind === "sql") {
+      try { code = this.sqlTools.rendered(cell); } catch (e) {
+        this.state.set(cell.id, { status: "failed" });
+        cell.outputs = [{ kind: "error", ename: "", evalue: e.message, traceback: [] }];
+        cx.notify();
+        return false;
+      }
+    }
     cell.outputs = [];
     for (const k of [...this.grids.keys()]) if (k.startsWith(`${cell.id}-`)) this.grids.delete(k);
     this.state.set(cell.id, { status: "running", started: Date.now() });
     cx.notify();
     let r;
     try {
-      r = await this.ensureKernel().execute(cx, { cell_id: cell.id, kind: cell.kind, code: cell.source, n: ++this.execCount, conn: cell.meta.conn ?? undefined, var: cell.meta.var ?? undefined, limit: cell.kind === "sql" ? cell.meta.limit ?? LIMIT : undefined });
+      r = await this.ensureKernel().execute(cx, { cell_id: cell.id, kind: cell.kind, code, n: ++this.execCount, conn: cell.meta.conn ?? undefined, var: cell.meta.var ?? undefined, limit: cell.kind === "sql" ? cell.meta.limit ?? LIMIT : undefined });
     } catch (e) {
       r = { ok: false, ms: 0, lost: true };
       cell.outputs.push({ kind: "error", ename: "", evalue: String(e?.message ?? "Couldn't start Python for this notebook."), traceback: [] });
@@ -468,6 +483,7 @@ export class Notebooks {
       .child(this.icon(ic, 13, c.navy)).child(div().text_size(12).font_medium().child(label))
       .child(div().flex_1())
       .child(this.status(c, cell))
+      .when(cell.kind === "sql", (e) => e.child(this.tool(c, `tools-${cell.id}`, "settings", "Format, explain, translate, snippets and history", (_e, cx) => this.sqlTools.toggle(cx, cell))))
       .when(code && !running, (e) => e.child(this.tool(c, `run-${cell.id}`, "play", "Run (Cmd-Enter)", (_e, cx) => this.runCell(cx, cell))))
       .when(running, (e) => e.child(this.tool(c, `stop-${cell.id}`, "circle-x", "Stop", () => this.stop())))
       .when(cell.kind === "markdown", (e) => e.child(this.tool(c, `edit-${cell.id}`, this.editing.has(cell.id) ? "check" : "file-text", this.editing.has(cell.id) ? "Done" : "Edit",
@@ -492,6 +508,7 @@ export class Notebooks {
           .tooltip(`Return at most ${fmtInt(n)} rows`).on_click((_e, cx) => { cell.meta.limit = n; this.edited(); cx.notify(); }).child(n >= 1000 ? `${n / 1000}k` : String(n))))
         .child(div().flex_none().child("as"))
         .child(div().w(120).h(22).px(6).flex().items_center().border_1().border_color(c.grey300).when(this.inputs.has(cell.id), (e) => e.child(Input.new(this.inputs.get(cell.id)).w_full().text_size(11.5).font_family(MONO).text_color(c.navy))))))
+      .when(cell.kind === "sql" && this.sqlTools.cell === cell.id, (e) => e.child(this.sqlTools.render(c, cell)))
       .when(showSource && this.editors.has(cell.id), (e) => e.child(div().flex_none().w_full().h(lines * 19 + 14).child(Editor.new(this.editors.get(cell.id)).size_full())))
       .when(cell.kind === "markdown" && !this.editing.has(cell.id), (e) => e.child(this.markdown(c, cell)))
       .when(cell.kind === "chart", (e) => e.child(this.chart(c, cell, w)))

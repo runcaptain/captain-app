@@ -113,7 +113,7 @@ export default class CaptainData extends View {
     this.models = new Models(this);
     this.tables = new Tables(this);
     this.page = new DatasetPage(this);
-    // Layout props (a layout, or the real-window check): {tab: "notebooks", notebook, runAll}.
+    // Layout props (a layout, or the real-window check): {tab: "notebooks", notebook, runAll, sqlTools}.
     const p = layoutProps?.() ?? {};
     if (p.tab === "models" || p.tab === "labels" || p.tab === "tables") this.tab = p.tab;
     if (p.pageTab) this.page.tab = p.pageTab;
@@ -123,6 +123,7 @@ export default class CaptainData extends View {
       this.tab = "notebooks";
       this.nb.want = p.notebook ?? null;
       this.nb.runOnOpen = !!p.runAll;
+      this.nb.toolsOnOpen = p.sqlTools ?? null; // {panel}: the first SQL cell's tools, open on that panel
       this.nb.load(cx);
     }
     this.load(cx);

@@ -6,6 +6,8 @@ every team to use.
 """
 from __future__ import annotations
 
+import re
+
 import sqlglot
 from sqlglot import exp
 
@@ -53,6 +55,12 @@ def check_read_only(sql: str, engine: str) -> None:
     if not stmts:
         raise WriteRefused("empty SQL")
     for s in stmts:
+        # EXPLAIN of a read is a read: allowed when what it explains passes the same check.
+        if isinstance(s, exp.Command) and str(s.this).upper() == "EXPLAIN":
+            inner = s.expression.name if isinstance(s.expression, exp.Literal) else str(s.expression or "")
+            inner = re.sub(r"(?is)^\s*(analyze|verbose|format\s+\w+)\s+", "", inner)
+            check_read_only(inner, engine)
+            continue
         if not isinstance(s, READ_ROOTS):
             raise WriteRefused(f"{type(s).__name__} is not allowed on a read-only connection")
         bad = next(s.find_all(*WRITE_NODES), None)

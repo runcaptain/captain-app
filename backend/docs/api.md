@@ -25,6 +25,13 @@ All responses are JSON. Errors: HTTP 4xx/5xx with `{"error": "plain sentence"}`.
 |---|---|---|---|
 | GET | `/api/connections` | | `[{name, engine, network, writable}]` |
 | POST | `/api/sql` | `{conn, sql, limit?, save?, kind?, description?}` | `{columns:[{name,type}], rows:[[…]], row_count, truncated, ms, dataset?}` (rows capped at 1000 in the response) |
+| POST | `/api/sql/format` | `{sql, case: upper or lower, conn? or dialect?}` | `{sql}`, pretty-printed; identifiers and literals as written |
+| POST | `/api/sql/transpile` | `{sql, to, conn? or from?}` | `{sql, from, to, warnings}` (what didn't carry over) |
+| POST | `/api/sql/explain` | `{conn, sql}` | `{connection, plan, ms}`; EXPLAIN of a read passes the read-only guard, of a write is refused |
+| GET | `/api/sql/history?conn=&status=ok or failed&source=app or notebook or preview or cli&q=&days=30&limit=200` | | queries run through Captain, newest first: `{id, connection, user, at, sql, tables, rows, ms, source, ok}`. Failed queries are logged too, and don't count as table usage |
+| GET | `/api/snippets?engine=&q=` | | `[{id, title, description, sql, engine, golden, vars, created_by, created_at}]`, recommended (`golden`) first |
+| POST | `/api/snippets` | `{title, sql, description?, engine?, golden?}` | the snippet; `vars` lists its `{{name}}` placeholders |
+| PUT, DELETE | `/api/snippets/{id}` | any of the POST fields | the snippet, or `{deleted}` |
 | GET | `/api/datasets` | `?kind=` | `[{name, latest, kind, rows, by, created}]` |
 | GET | `/api/datasets/{name}` | `?v=` | DatasetVersion manifest |
 | GET | `/api/datasets/{name}/head` | `?v=&n=50` | `{columns, rows}` |

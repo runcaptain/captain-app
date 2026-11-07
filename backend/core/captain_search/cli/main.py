@@ -284,10 +284,14 @@ def sql(
     text = execute if execute else open(file).read()
     c = ctx()
     conn = _load_conn(c, conn_name)
-    try:
-        r = run_sql(conn, text, limit=limit, allow_large=local)
-        from ..metastore import record_query
+    from ..metastore import record_query
 
+    try:
+        try:
+            r = run_sql(conn, text, limit=limit, allow_large=local)
+        except Exception:
+            record_query(c, conn_name, text, source="cli", ok=False)  # query history shows failures too
+            raise
         record_query(c, conn_name, text, rows=r.table.num_rows, ms=r.elapsed_ms, source="cli")
     except WriteRefused as e:
         fail(str(e))
