@@ -1308,6 +1308,36 @@ def explain_query(pipeline: str, q: str, vs: str | None = None, query_id: str | 
     return EX.trace(c, pipeline, q, query_id, judgments, k)
 
 
+@app.post("/api/runs/{name:path}/profile", dependencies=A)
+def run_profile(name: str, body: dict | None = None):
+    """Time and memory per stage for each replayable arm over the run's queries, with budgets and the p99 change
+    against the baseline. Offline replay on this computer. Runs as a job. {max_queries?, memory?}"""
+    from . import profile as PF
+
+    c = ctx()
+    b = body or {}
+    return {"job": _job(lambda p: PF.profile_run(c, name, int(b.get("max_queries", 200)), bool(b.get("memory", True)),
+                                                 progress=p), f"profile {name}")}
+
+
+@app.post("/api/profile/pipeline", dependencies=A)
+def pipeline_profile(body: dict):
+    """{pipeline, queries: dataset ref (with :split) or [query text], memory?}. Runs as a job."""
+    from . import ops
+    from . import profile as PF
+
+    c = ctx()
+    qsrc = body.get("queries")
+    if isinstance(qsrc, list):
+        qs = [{"query": str(x)} for x in qsrc]
+    elif isinstance(qsrc, str):
+        qs = ops.rows_of(c, qsrc)[1]
+    else:
+        raise ValueError("give queries: a dataset ref or a list of query texts")
+    return {"job": _job(lambda p: PF.profile_pipeline(c, body["pipeline"], qs, memory=bool(body.get("memory", True)),
+                                                      progress=p), f"profile {body.get('pipeline')}")}
+
+
 @app.get("/api/runs/{name:path}/queries/{qid}/explain", dependencies=A)
 def run_query_explain(name: str, qid: str, a: str | None = None, b: str | None = None, k: int = 50):
     """Explain one query of a comparison run, both arms, with its grades and the first divergence."""

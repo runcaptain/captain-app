@@ -31,6 +31,14 @@ def explain_bm25(eng, query: str, k: int = 50) -> list[dict]:
     from .engines import _price, tokens
 
     t0 = time.perf_counter()
+    clock = [t0]
+
+    def lap():
+        now = time.perf_counter()
+        ms = round((now - clock[0]) * 1000, 3)
+        clock[0] = now
+        return ms
+
     raw = tokens(query)
     q, limit, notes = list(raw), None, []
     if eng.spec.get("numeric_filter"):
@@ -46,7 +54,7 @@ def explain_bm25(eng, query: str, k: int = 50) -> list[dict]:
     understand = {"stage": "query understanding", "kind": "understand", "explained": True, "items": [],
                   "tokens": raw, "terms": q, "expanded_with": added, "synonyms": syn, "unknown_terms": unknown,
                   "notes": notes + ([f"no product contains: {', '.join(unknown)}"] if unknown else []),
-                  "timing_ms": None}
+                  "timing_ms": lap()}
     parts: dict[str, dict[str, float]] = defaultdict(dict)
     for f, w in eng.fields.items():
         for t in expanded:
@@ -65,7 +73,7 @@ def explain_bm25(eng, query: str, k: int = 50) -> list[dict]:
     retrieve = {"stage": "lexical retrieval (BM25)", "kind": "retrieve", "explained": True,
                 "notes": [f"{len(r0)} products match a query term", f"fields and weights: {eng.fields}"],
                 "items": [_item(p, i + 1, base[p], parts[p], title=title(p)) for i, p in enumerate(r0[:k])],
-                "timing_ms": None}
+                "candidates": len(r0), "timing_ms": lap()}
     scored, fired = dict(base), defaultdict(list)
     for boost in eng.spec.get("boosts") or []:
         for pid in scored:
@@ -79,7 +87,7 @@ def explain_bm25(eng, query: str, k: int = 50) -> list[dict]:
                       ["no boosts in this pipeline"],
              "items": [_item(p, i + 1, scored[p], {"before": base[p], "after": scored[p]}, fired[p],
                              moved=pos0[p] - (i + 1), title=title(p)) for i, p in enumerate(r1[:k])],
-             "timing_ms": None}
+             "timing_ms": lap()}
     removed = []
     if limit is not None:
         keep = {p: s for p, s in scored.items() if _price(eng.products[p]) is not None and _price(eng.products[p]) <= limit}
@@ -90,11 +98,11 @@ def explain_bm25(eng, query: str, k: int = 50) -> list[dict]:
     filt = {"stage": "price filter", "kind": "filter", "explained": True,
             "notes": [f"removed {len(removed)} over {limit:g}"] if limit is not None else ["no filter applied"],
             "removed": [{"id": p, "title": title(p), "price": eng.products[p].get("price")} for p in removed[:50]],
-            "items": [], "timing_ms": None}
+            "items": [], "timing_ms": lap()}
     final = {"stage": "final ranking", "kind": "final", "explained": True, "notes": [],
              "items": [_item(p, i + 1, scored[p], fired=fired[p], moved=pos1.get(p, i + 1) - (i + 1), title=title(p))
                        for i, p in enumerate(r2[:k])],
-             "timing_ms": round((time.perf_counter() - t0) * 1000, 2)}
+             "timing_ms": lap(), "total_ms": round((time.perf_counter() - t0) * 1000, 3)}
     return [understand, retrieve, rules, filt, final]
 
 
