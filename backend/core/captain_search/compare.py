@@ -108,8 +108,17 @@ def query(ctx: Context, run_ref: str, qid: str, a: str | None = None, b: str | N
     ra, rb = _rankings(ctx, run, a), _rankings(ctx, run, b)
     if qid not in ra or qid not in rb:
         raise ValueError(f"query {qid} is not in both arms' rankings")
-    pm, _ = ctx.registry.resolve("pipeline", b)
-    prods = {p["id"]: p for p in (products_of(ctx, pm.catalog) if pm.catalog else [])}
+    prods = {}
+    for arm in (b, a):  # titles from the first arm that's a Captain pipeline with a catalog
+        try:
+            pm, _ = ctx.registry.resolve("pipeline", arm)
+        except Exception:  # noqa: BLE001  an imported arm (a team's own system) has no pipeline or catalog here
+            continue
+        if pm.catalog:
+            prods = {p["id"]: p for p in products_of(ctx, pm.catalog)}
+            break
+    if not prods and (bt.tags or {}).get("catalog"):  # imported rankings can name a catalog for titles
+        prods = {str(p["id"]): p for p in products_of(ctx, bt.tags["catalog"])}
     grades = jmap.get(qid, {})
     k = max(1, min(int(k), 100))
     la, lb = ra[qid][:k], rb[qid][:k]
