@@ -6,6 +6,8 @@
 //   {type: "display", cell_id, mime, data}
 //   {type: "error", cell_id, ename, evalue, traceback: [...]}
 //   {type: "done", cell_id, ms}
+//   {type: "page", cell_id: req, columns, rows, offset, limit, has_more, total?, ms, filtered}: a page of a result,
+//   asked for with page() (the notebook grid). Pages never reach onMsg.
 // Executes are serialized: execute() resolves {ok, ms} on the cell's "done", so Run all can stop at a failure.
 import { WebSocket } from "websocket";
 import { api, services } from "./cst.js";
@@ -19,6 +21,8 @@ export class Kernel {
     this.session = null;
     this.opening = null;
     this.waiters = new Map();
+    this.pages = new Map(); // req -> {resolve, data, error}
+    this.reqs = 0;
   }
 
   set(state) {
@@ -62,6 +66,15 @@ export class Kernel {
       }
       let m;
       try { m = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)); } catch { continue; }
+      // A page the grid asked for: kept until its done, never shown as a cell's output.
+      const pg = this.pages.get(m.cell_id);
+      if (pg) {
+        if (m.type === "page") pg.data = m;
+        else if (m.type === "error") pg.error = m.evalue || m.ename;
+        else if (m.type === "done") { this.pages.delete(m.cell_id); pg.resolve(pg.data ? { ok: true, status: 200, data: pg.data, error: null } : { ok: false, status: 400, data: null, error: pg.error ?? "Couldn't read that page." }); }
+        cx.notify();
+        continue;
+      }
       if (m.type === "status") this.set(m.state);
       if (m.type === "error") { const w = this.waiters.get(m.cell_id); if (w) w.failed = true; }
       this.onMsg?.(m, cx);
@@ -77,6 +90,8 @@ export class Kernel {
       this.set("lost");
       for (const [, w] of this.waiters) w.resolve({ ok: false, ms: 0, lost: true });
       this.waiters.clear();
+      for (const [, p] of this.pages) p.resolve({ ok: false, status: 0, data: null, error: "Python stopped. Run the cell again to see its rows." });
+      this.pages.clear();
       cx.notify();
     }
   }
@@ -89,6 +104,20 @@ export class Kernel {
       sock.write(JSON.stringify({ type: "execute", ...cell })).catch(() => {
         this.waiters.delete(cell.cell_id);
         resolve({ ok: false, ms: 0, lost: true });
+      });
+    });
+  }
+
+  /** A page of a result held in Python ({var, offset, limit, order?, desc?, where?, count?}). Resolves like api():
+   *  {ok, data: one row shape} or {ok: false, error}, so the kit grid can page it like any rows route. */
+  async page(cx, q) {
+    if (!this.sock) return { ok: false, status: 0, data: null, error: "Python isn't running. Run the cell again to see its rows." };
+    const req = `page-${++this.reqs}`;
+    return new Promise((resolve) => {
+      this.pages.set(req, { resolve, data: null, error: null });
+      this.sock.write(JSON.stringify({ type: "page", req, ...q, desc: q.desc === "true" || q.desc === true, count: q.count === "true" || q.count === true })).catch(() => {
+        this.pages.delete(req);
+        resolve({ ok: false, status: 0, data: null, error: "Python stopped. Run the cell again to see its rows." });
       });
     });
   }
