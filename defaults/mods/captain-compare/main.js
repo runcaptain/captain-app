@@ -28,6 +28,7 @@ const GRADE_TONE = { 0: "grey", 1: "partial", 2: "relevant", 3: "exact" };
 /** A failed call in words for people: the backend's own sentence when it answered, else a plain one. Transport
  *  details (hosts, ports, tool output) never show: they go behind Copy details. */
 function say(r, fallback) {
+  if (r?.timedOut) return "This took too long.";
   // The services went away or never came up: the kit's own plain sentence ("Captain's services stopped.").
   // Belt and braces: anything that reads like a tool's or transport's output never shows.
   if (r?.failed && r.error && !/curl|127\.0|localhost|\bport\b|https?:|error sending|traceback|engine|daemon/i.test(r.error)) return String(r.error);

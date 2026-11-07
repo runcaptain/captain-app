@@ -81,8 +81,23 @@ assert.ok(globalThis.__asked.some((p) => p === '/api/kernels'), 'kernel session 
 assert.ok(globalThis.__sockets?.[0]?.url.startsWith('ws://127.0.0.1:9/api/kernels/abc123?token='), 'socket to the session');
 assert.ok(/Done, 420 ms, 2,500 rows/.test(text), `cell status: ${text.slice(0, 400)}`);
 assert.ok(text.includes('2,500 rows, 2 columns') && text.includes('showing the first 1,000'), 'grid footer');
+assert.ok(text.includes('Download CSV') && text.includes('Copy TSV'), 'grid exports');
 assert.ok(text.includes('sofas'), 'grid rows');
 assert.ok(text.includes('Python ready'), 'kernel ready');
+
+// The result grid's column menu: filter conv > 20, stats, then sort.
+await h.click('gm-sql1-0-1');
+text = h.text();
+assert.ok(text.includes('sum') && text.includes('median') && text.includes('unique'), 'column stats');
+await h.click('gop-sql1-0-1-gt');
+h.mod.nb.grids.get('sql1-0').inputs.get('1:a').set_value('20');
+await h.click('gapply-sql1-0-1');
+assert.ok(/500 of 1,000 rows match/.test(h.text()), `filter applied: ${h.text().match(/\d[\d,]* of [\d,]* rows match/)?.[0]}`);
+await h.click('gclose-sql1-0');
+assert.ok(!h.text().includes('median'), 'menu closed');
+assert.ok((h.mod.nb.cells[1].meta.limit ?? 1000) === 1000, 'default row limit');
+await h.click('lim-sql1-10000');
+assert.equal(h.mod.nb.cells[1].meta.limit, 10000, 'row limit picked');
 
 // Shift-Enter on the Python cell runs it: stdout shows.
 await h.key('cell-py1', 'shift-enter');

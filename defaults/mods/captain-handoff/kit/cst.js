@@ -57,10 +57,28 @@ export function watchWorkspace(cx, fn) {
  *  starting: still coming up (show a skeleton). failed: give up and show ServiceError. */
 export async function api(path, opts) {
   INFLIGHT++;
+  // A request that never answers would hold its screen forever: each one gets a deadline (opts.timeout seconds,
+  // default 20), and keepAwake's timer ends it with "This took too long." when it passes.
+  let expire;
+  const deadline = new Promise((resolve) => { expire = resolve; });
+  const waiter = { at: Date.now() + (opts?.timeout ?? 20) * 1000, expire };
+  WAITING.add(waiter);
   try {
-    return await call(path, opts);
+    return await Promise.race([call(path, opts), deadline]);
   } finally {
+    WAITING.delete(waiter);
     INFLIGHT--;
+  }
+}
+
+// Requests with a deadline (see api).
+const WAITING = new Set();
+function expireLate() {
+  const now = Date.now();
+  for (const w of WAITING) if (now > w.at) {
+    WAITING.delete(w);
+    LAST_DETAIL = "a request got no answer before its deadline";
+    w.expire({ ok: false, timedOut: true, error: "This took too long." });
   }
 }
 
@@ -71,7 +89,7 @@ let INFLIGHT = 0;
  *  arrives inside cx.spawn may not reach the screen until something else redraws it, so a screen with nothing else
  *  going on sat on its skeleton for good (Comparisons, "Loading the run", 2026-11-06). Costs nothing when idle. */
 export function keepAwake(cx) {
-  cx.timer.every(250, (cx) => { if (INFLIGHT > 0) cx.notify(); });
+  cx.timer.every(250, (cx) => { if (INFLIGHT > 0) { expireLate(); cx.notify(); } });
 }
 
 async function call(path, { method = "GET", body, timeout = 20 } = {}) {

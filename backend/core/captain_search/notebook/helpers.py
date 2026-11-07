@@ -49,6 +49,9 @@ def sql(conn_name: str, text: str, var: str | None = None, limit: int | None = N
     df = r.table.to_pandas()
     b = table_bundle(df, var)
     b["ms"] = r.elapsed_ms
+    # The query stopped at its row limit (the cell's picker, or the laptop cap): more rows exist than came back.
+    b["limited"] = bool(r.truncated)
+    b["limit"] = limit
     display({TABLE_MIME: b, "text/plain": f"{var}: {len(df)} rows"}, raw=True)
     return df
 

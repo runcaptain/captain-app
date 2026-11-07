@@ -914,7 +914,8 @@ async def kernel_ws(ws: WebSocket, sid: str):
                 n = int(msg.get("n") or 0)
                 cell = {"cell_type": "code", "source": msg["code"],
                         "metadata": {"captain": {"kind": msg.get("kind", "python"), "conn": msg.get("conn"),
-                                                 "var": msg.get("var"), "chart": msg.get("chart")}}}
+                                                 "var": msg.get("var"), "chart": msg.get("chart"),
+                                                 "limit": msg.get("limit")}}}
                 code = NB.cell_code(cell, n or 1)
                 for ev in k.execute(msg["cell_id"], code):
                     loop.call_soon_threadsafe(q.put_nowait, ev)

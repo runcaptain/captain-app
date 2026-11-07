@@ -16,11 +16,14 @@ import { icon } from "./kit/icons.js";
 import { Kernel } from "./kit/kernel.js";
 import { fromNotebook, toNotebook, newCell, tablesByVar, errorSentence } from "./kit/notebook.js";
 import { Chart, series } from "./kit/chart.js";
+import { ResultGrid } from "./kit/grid.js";
 import { askAgent, copyPrompt } from "./kit/agent.js";
 
 const KINDS = { sql: ["SQL", "database"], python: ["Python", "terminal"], markdown: ["Text", "file-text"], chart: ["Chart", "bar-chart-3"] };
 const LANG = { sql: "sql", python: "python", markdown: "markdown" };
 const ROW = 26;
+const LIMIT = 1000; // Querybook's default row limit for a query cell
+const LIMITS = [100, 1000, 10000, 100000];
 const COL = 150;
 const enc = (name) => String(name).split("/").map(encodeURIComponent).join("/");
 const fmtInt = (n) => Number(n ?? 0).toLocaleString("en-US");
@@ -39,6 +42,7 @@ export class Notebooks {
     this.state = new Map(); // cell id -> {status: "running" | "done" | "failed" | "stopped", started, ms}
     this.editors = new Map(); // cell id -> EditorState
     this.inputs = new Map(); // cell id -> InputState (SQL result name)
+    this.grids = new Map(); // output key -> ResultGrid
     this.editing = new Set(); // markdown cells shown as source
     this.kernel = null;
     this.kstate = "off";
@@ -77,6 +81,7 @@ export class Notebooks {
     this.open = { name, version: null, base: null, loading: true };
     this.cells = [];
     this.state.clear();
+    this.grids.clear();
     this.releaseEditors();
     this.note = null;
     this.exporting = false;
@@ -216,7 +221,7 @@ export class Notebooks {
       if (last?.kind === "stream" && last.name === m.name) last.text += m.text;
       else cell.outputs.push({ kind: "stream", name: m.name, text: m.text });
     } else if (m.type === "table") {
-      cell.outputs.push({ kind: "table", table: { var: m.var, columns: m.columns, rows: m.rows, row_count: m.row_count, truncated: m.truncated } });
+      cell.outputs.push({ kind: "table", table: { var: m.var, columns: m.columns, rows: m.rows, row_count: m.row_count, truncated: m.truncated, limited: !!m.limited, limit: m.limit ?? cell.meta.limit ?? LIMIT } });
     } else if (m.type === "display") {
       cell.outputs.push({ kind: "display", mime: m.mime, data: m.data });
     } else if (m.type === "error") {
@@ -236,11 +241,12 @@ export class Notebooks {
     }
     cell.source = this.editors.get(cell.id)?.value() ?? cell.source;
     cell.outputs = [];
+    for (const k of [...this.grids.keys()]) if (k.startsWith(`${cell.id}-`)) this.grids.delete(k);
     this.state.set(cell.id, { status: "running", started: Date.now() });
     cx.notify();
     let r;
     try {
-      r = await this.ensureKernel().execute(cx, { cell_id: cell.id, kind: cell.kind, code: cell.source, n: ++this.execCount, conn: cell.meta.conn ?? undefined, var: cell.meta.var ?? undefined });
+      r = await this.ensureKernel().execute(cx, { cell_id: cell.id, kind: cell.kind, code: cell.source, n: ++this.execCount, conn: cell.meta.conn ?? undefined, var: cell.meta.var ?? undefined, limit: cell.kind === "sql" ? cell.meta.limit ?? LIMIT : undefined });
     } catch (e) {
       r = { ok: false, ms: 0, lost: true };
       cell.outputs.push({ kind: "error", ename: "", evalue: String(e?.message ?? "Couldn't start Python for this notebook."), traceback: [] });
@@ -469,7 +475,11 @@ export class Notebooks {
       .when(cell.kind === "sql", (e) => e.child(h_flex().flex_none().h(28).px(10).gap(6).items_center().border_b(1).border_color(c.rule).text_size(11.5).text_color(c.grey500)
         .child(div().flex_none().child("On"))
         .child(div().flex_1().min_w(0).child(this.connPicker(c, cell)))
-        .child(div().flex_none().child("result in Python as"))
+        .child(div().flex_none().child("rows"))
+        .children(LIMITS.map((n) => div().id(`lim-${cell.id}-${n}`).h(20).px(5).flex().flex_none().items_center().cursor_pointer()
+          .border_1().border_color((cell.meta.limit ?? LIMIT) === n ? c.blue : c.grey300).text_color((cell.meta.limit ?? LIMIT) === n ? c.blue : c.grey900)
+          .tooltip(`Return at most ${fmtInt(n)} rows`).on_click((_e, cx) => { cell.meta.limit = n; this.edited(); cx.notify(); }).child(n >= 1000 ? `${n / 1000}k` : String(n))))
+        .child(div().flex_none().child("as"))
         .child(div().w(120).h(22).px(6).flex().items_center().border_1().border_color(c.grey300).when(this.inputs.has(cell.id), (e) => e.child(Input.new(this.inputs.get(cell.id)).w_full().text_size(11.5).font_family(MONO).text_color(c.navy))))))
       .when(showSource && this.editors.has(cell.id), (e) => e.child(div().flex_none().w_full().h(lines * 19 + 14).child(Editor.new(this.editors.get(cell.id)).size_full())))
       .when(cell.kind === "markdown" && !this.editing.has(cell.id), (e) => e.child(this.markdown(c, cell)))
@@ -543,7 +553,12 @@ export class Notebooks {
     if (o.kind === "stream") return div().id(`out-${key}`).px(12).py(8).border_t(1).border_color(c.rule).text_size(12).font_family(MONO)
       .text_color(o.name === "stderr" ? c.warn : c.navy).child(o.text.length > 20000 ? `${o.text.slice(0, 20000)}\n(cut at 20,000 characters)` : o.text);
     if (o.kind === "error") return this.error(c, cell, o, key);
-    if (o.kind === "table") return this.table(c, o.table, key, w);
+    if (o.kind === "table") {
+      let g = this.grids.get(key);
+      if (!g) { g = new ResultGrid({ id: key, table: o.table, name: `${this.open?.name ?? "notebook"}-${o.table.var ?? cell.meta.var ?? "result"}` }); this.grids.set(key, g); }
+      else if (g.table !== o.table) g.set(o.table);
+      return div().id(`out-${key}`).border_t(1).border_color(c.rule).child(g.render(c, { height: 270 }));
+    }
     if (o.kind === "display") {
       if (o.mime.startsWith("text/")) return div().id(`out-${key}`).px(12).py(8).border_t(1).border_color(c.rule).text_size(12).font_family(MONO).child(String(o.data).slice(0, 20000));
       return div().id(`out-${key}`).px(12).py(8).border_t(1).border_color(c.rule).text_size(12).text_color(c.grey500)
@@ -561,33 +576,5 @@ export class Notebooks {
         .when(!!details, (e) => e.child(Button(c, `copy-${key}`, "Copy details", (_e, cx) => cx.write_to_clipboard(details), { small: true })))
         .child(Button(c, `fix-${key}`, "Ask an agent to fix it", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, prompt)), { small: true }))
         .child(Button(c, `prompt-${key}`, "Copy prompt", (_e, cx) => copyPrompt(cx, prompt), { kind: "quiet", small: true }))));
-  }
-
-  table(c, t, key, w) {
-    const cols = t.columns ?? [];
-    const rows = t.rows ?? [];
-    const width = 52 + cols.length * COL;
-    const h = Math.min(rows.length, 10) * ROW + ROW + 2;
-    const list = v_virtual_list(`grid-${key}`, rows.length, ROW, (i) => `${key}:${i}`, (range) => {
-      const out = [];
-      for (let i = range.start; i < range.end; i++) {
-        const r = rows[i];
-        out.push(h_flex().h(ROW).border_b(1).border_color(c.rule).text_size(12).whitespace_nowrap()
-          .child(div().w(52).flex_none().px(6).text_right().font_family(MONO).text_color(c.grey500).child(String(i + 1)))
-          .children(cols.map((_, j) => div().w(COL).flex_none().px(8).truncate().font_family(MONO).child(cellText(r[j])))));
-      }
-      return out;
-    });
-    return v_flex().id(`out-${key}`).border_t(1).border_color(c.rule)
-      .child(div().id(`tx-${key}`).w_full().overflow_x_scrollbar().child(v_flex().w(width)
-        .child(h_flex().h(ROW).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().whitespace_nowrap()
-          .child(div().w(52).flex_none().px(6).text_right().text_color(c.grey500).child("#"))
-          .children(cols.map((col) => div().w(COL).flex_none().px(8).truncate().tooltip(`${col.name}: ${col.type}`).child(col.name))))
-        .child(div().h(h - ROW).relative().child(list.size_full()).child(Scrollbar.vertical(`grid-${key}`).viewport_from_layout().absolute().inset_0()))))
-      .child(h_flex().h(26).px(10).gap(10).items_center().text_size(11.5).text_color(c.grey500)
-        .when(!!t.var, (e) => e.child(div().font_family(MONO).text_color(c.navy).child(t.var)))
-        .child(div().child(`${fmtInt(t.row_count)} row${t.row_count === 1 ? "" : "s"}, ${cols.length} column${cols.length === 1 ? "" : "s"}`))
-        .when(rows.length < t.row_count, (e) => e.child(div().child(`showing the first ${fmtInt(rows.length)}: all of them are in ${t.var ?? "the result"}`)))
-        .when(!!t.truncated, (e) => e.child(div().text_color(c.warn).child("the query hit its row limit"))));
   }
 }

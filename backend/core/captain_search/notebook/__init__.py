@@ -123,7 +123,9 @@ def cell_code(cell: dict, n: int) -> str:
         var = meta.get("var") or f"df_{n}"
         if not var.isidentifier():
             raise ValueError(f"result name {var!r} is not a Python identifier")
-        return f"{var} = __cst.sql({meta.get('conn')!r}, {src!r}, var={var!r})"
+        limit = meta.get("limit")
+        lim = f", limit={int(limit)}" if isinstance(limit, (int, float)) and int(limit) > 0 else ""
+        return f"{var} = __cst.sql({meta.get('conn')!r}, {src!r}, var={var!r}{lim})"
     if kind == "chart":
         return f"__cst.chart({src.strip() or 'None'}, {json.dumps(meta.get('chart') or {})!r})"
     return src
@@ -205,7 +207,7 @@ def to_outputs(events: list[dict]) -> list[dict]:
         if e["type"] == "stream":
             outs.append({"output_type": "stream", "name": e["name"], "text": e["text"]})
         elif e["type"] == "table":
-            body = {k: e[k] for k in ("var", "columns", "rows", "row_count", "truncated")}
+            body = {k: e[k] for k in ("var", "columns", "rows", "row_count", "truncated", "limited", "limit") if k in e}
             outs.append({"output_type": "display_data", "metadata": {}, "data": {TABLE_MIME: body,
                          "text/plain": f"{e['var']}: {e['row_count']} rows"}})
         elif e["type"] == "display":

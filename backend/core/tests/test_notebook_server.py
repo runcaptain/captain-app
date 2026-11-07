@@ -79,6 +79,16 @@ def test_kernel_websocket(ctx):
                 if e["type"] == "done":
                     break
             assert any(e["type"] == "stream" and e["text"].strip() == "5" for e in evs)
+            # A cell's row limit (the app's picker) caps the result and says it was cut.
+            ws.send_json({"type": "execute", "cell_id": "c", "kind": "sql", "conn": "demo-store", "var": "q", "limit": 3, "code": "select * from products"})
+            evs = []
+            while True:
+                e = ws.receive_json()
+                evs.append(e)
+                if e["type"] == "done":
+                    break
+            t = next(e for e in evs if e["type"] == "table")
+            assert t["row_count"] == 3 and t["limited"] is True and t["limit"] == 3, t
     finally:
         c.delete(f"/api/kernels/{sid}", headers=h)
 
@@ -98,3 +108,10 @@ def test_import_plain_jupyter_notebook(ctx, tmp_path):
     bad.write_text(json.dumps({"nbformat": 3, "worksheets": []}))
     with pytest.raises(ValueError, match="nbformat 4"):
         NB.import_file(ctx, str(bad))
+
+
+def test_sql_cell_code_carries_the_row_limit():
+    cell = {"cell_type": "code", "source": "select 1", "metadata": {"captain": {"kind": "sql", "conn": "w", "var": "df_1", "limit": 1000}}}
+    assert NB.cell_code(cell, 1).endswith("var='df_1', limit=1000)")
+    cell["metadata"]["captain"].pop("limit")
+    assert NB.cell_code(cell, 1).endswith("var='df_1')")
