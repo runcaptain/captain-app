@@ -62,6 +62,11 @@ assert.ok(t.includes('demo-catalog'), `its dataset: ${t.slice(0, 400)}`);
 const others = all.map((d) => d.name).filter((n) => n !== 'demo-catalog');
 for (const n of others) assert.ok(!t.includes(n), `${n} isn't this engine's, so it doesn't show`);
 
+// Runs: every run of its experiments, from GET /api/runs filtered to it (demo-historic-replay has demo-bm25 as an arm).
+await h.click('eng-tabs-runs');
+assert.ok(h.text().includes('demo-historic-replay, run 1'), `its runs: ${h.text().slice(0, 400)}`);
+assert.ok(!h.text().includes("Signals aren't linked"), 'no whole-workspace note any more');
+
 await h.click('eng-tabs-versions');
 assert.ok(h.text().includes('demo-bm25@v1'), 'Versions lists its pipeline version');
 

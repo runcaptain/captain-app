@@ -473,6 +473,15 @@ def table_detail(conn: str, schema: str, table: str):
     return MS.table(ctx(), conn, schema, table)
 
 
+@app.get("/api/tables/{conn}/{schema}/{table}/rows", dependencies=A)
+def table_rows(conn: str, schema: str, table: str, offset: int = 0, limit: int = 100, order: str | None = None,
+               desc: bool = False, where: str | None = None, count: bool = False):
+    """Page through a whole warehouse table, every column, with the same shape as a dataset's rows."""
+    from . import metastore as MS
+
+    return MS.table_rows(ctx(), conn, schema, table, offset, limit, order, desc, where, count)
+
+
 @app.get("/api/tables/{conn}/{schema}/{table}/sample", dependencies=A)
 def table_sample(conn: str, schema: str, table: str, n: int = 20, where: str | None = None,
                  order: str | None = None, desc: bool = False):
@@ -557,7 +566,9 @@ def sql(body: dict):
         record_query(c, body["conn"], body["sql"], source="app", ok=False)  # query history shows failures too
         raise
     record_query(c, body["conn"], body["sql"], rows=r.table.num_rows, ms=r.elapsed_ms, source="app")
-    out = {"columns": [{"name": f.name, "type": str(f.type)} for f in r.table.schema],
+    from .data.cells import columns_from_arrow
+
+    out = {"columns": columns_from_arrow(r.table.schema),
            "rows": [list(map(_jsonable, row.values())) for row in r.table.slice(0, 1000).to_pylist()],
            "row_count": r.table.num_rows, "truncated": r.truncated, "ms": r.elapsed_ms}
     if body.get("save"):
@@ -573,9 +584,9 @@ def sql(body: dict):
 
 
 def _jsonable(v):
-    if v is None or isinstance(v, (int, float, str, bool)):
-        return v
-    return str(v)
+    from .data.cells import cell
+
+    return cell(v)
 
 
 @app.get("/api/datasets", dependencies=A)

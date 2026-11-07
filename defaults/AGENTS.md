@@ -993,7 +993,7 @@ All of it is in `herdr.d.ts`. In short:
   `timeout` is milliseconds, defaults to 30,000 and is capped at 600,000 (10 minutes),
   locally and remotely. It rejects on timeout, if the program cannot start or the machine cannot be reached.
   `hc(args)` (`hc read <t>` gives a terminal's text),
-  `home()`, `appHome()`, `playSound("done" | "blocked" | file)`.
+  `home()`, `appHome()`, `appBinary()` (this app's own binary, to run `check`), `playSound("done" | "blocked" | file)`.
   `knownAgents({ on })`: the agents people can start (programs.json's
   `run`), most picked first, each `installed` or not there (asked of the
   shell agents start in; a remote Unix machine's login/interactive shell when supported);

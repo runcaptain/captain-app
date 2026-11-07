@@ -12,8 +12,10 @@ from .main import S, app, emit, fail
 ext_app = typer.Typer(no_args_is_help=True, help="Engines, simulators, judges and metrics: built in, from packages, "
                                                   "or from your captain/ folder")
 project_app = typer.Typer(no_args_is_help=True, help="Your organization's captain/ folder: search code versioned in your repo")
+view_app = typer.Typer(no_args_is_help=True, help="Your team's own Captain screens, kept as code in captain/views/")
 app.add_typer(ext_app, name="ext")
 app.add_typer(project_app, name="project")
+app.add_typer(view_app, name="view")
 
 
 def _ws() -> str | None:
@@ -94,3 +96,37 @@ def project_show():
     p = reg.project
     emit(p, f"{p['path']}\ncommit {p.get('commit') or 'not in git'}{' (uncommitted changes)' if p.get('dirty') else ''}\n"
             f"{p['files']} files, sha256 {p['sha256'][:16]}")
+
+
+VIEW_NAME = __import__("re").compile(r"^[a-z][a-z0-9-]{0,40}$")
+
+
+@view_app.command("new")
+def view_new(name: str = typer.Argument(..., help="folder name: lowercase letters, digits and dashes"),
+             title: Optional[str] = typer.Option(None, "--title", help="what the Explorer shows. Default: from the name"),
+             icon: str = typer.Option("table", "--icon", help="an icon name from Captain's set, e.g. table, chart, search")):
+    """Start a team view: captain/views/<name>/ with a screen that reads real Captain data. Captain loads it
+    beside its own screens and reloads it when the files change. Check it with `captain-app check`."""
+    import importlib.resources as R
+    import json
+
+    if not VIEW_NAME.match(name):
+        fail(f"{name!r} can't be a view name: lowercase letters, digits and dashes, starting with a letter")
+    proj = X.find_project(_ws())
+    if proj is None:
+        fail("no captain/ folder here. Create one with `cst project init <your repo>`, or bind one with `cst project use`.")
+    dest = proj / "views" / name
+    if dest.exists():
+        fail(f"{dest} already exists. Pick another name, or edit that view.")
+    title = title or name.replace("-", " ").capitalize()
+    src = R.files("captain_search") / "view_template"
+    dest.mkdir(parents=True)
+    for f in ("mod.json", "main.js", "README.md", ".gitignore"):
+        text = (src / f).read_text().replace("{{name}}", name).replace("{{title}}", title)
+        if f == "mod.json":
+            doc = json.loads(text)
+            doc["icon"] = icon
+            text = json.dumps(doc, indent=2) + "\n"
+        (dest / f).write_text(text)
+    emit({"path": str(dest), "title": title, "icon": icon},
+         f"created {dest}\nCaptain picks it up under Views. Check it with: captain-app check {dest}")

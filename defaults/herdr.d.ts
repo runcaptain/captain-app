@@ -20,6 +20,8 @@ export function hc(args: string[]): Promise<ExecResult>;
 export function home(): string;
 /** The app's folder (`~/.config/captain-app`, or `$CAPTAIN_APP_HOME`): settings.json, keys.json, layouts/. */
 export function appHome(): string;
+/** CAPTAIN: the path of this app's own binary (to run `captain-app check <mod folder>`). */
+export function appBinary(): string;
 
 /** Reads UTF-8 text (up to 1 MiB), or null if absent. Runs off the UI thread.
  *  `on`: from that machine (a space's `machine`). */

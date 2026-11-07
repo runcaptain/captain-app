@@ -239,38 +239,62 @@ def search(ctx: Context, q: str, conn_name: str | None = None, limit: int = 50) 
     return hits[:limit]
 
 
-def sample(ctx: Context, conn_name: str, schema: str, name: str, n: int = 20, where: str | None = None,
-           order: str | None = None, desc: bool = False) -> dict:
-    """A few rows, through the read-only guard. `where` and `order` are optional SQL fragments."""
+def table_rows(ctx: Context, conn_name: str, schema: str, name: str, offset: int = 0, limit: int = 100,
+               order: str | None = None, desc: bool = False, where: str | None = None, count: bool = False) -> dict:
+    """One page of a whole warehouse table: every column, through the read-only guard, in the same shape as a
+    dataset's rows (data/cells.py), so a table looks the same before and after it's imported.
+
+    The page query is written once and translated by SQLGlot for the database (LIMIT/OFFSET, OFFSET ... FETCH on SQL
+    Server, OFFSET before LIMIT on Trino). One extra row is fetched to know whether there's more. count=true adds the
+    table's total, filtered by `where`."""
+    import sqlglot
     from sqlalchemy.engine import make_url
 
+    from .connectors.guard import DIALECTS
     from .connectors.sql import run_sql
+    from .data.cells import page_from_arrow
     from .workspace import render_secrets
 
     conn = ctx.load_connection(conn_name)
     if conn.engine == "ga4":
-        raise ValueError("Google Analytics has no rows to sample. Run one of the suggested reports instead.")
+        raise ValueError("Google Analytics has no rows to browse. Run one of the suggested reports instead.")
+    limit = max(1, min(int(limit), 1000))
+    offset = max(0, int(offset))
     if conn.engine == "posthog":
         qual, prep = name, None
     else:
         prep = make_url(render_secrets(conn.url)).get_dialect()().identifier_preparer
         qual = ".".join(prep.quote(x) for x in [*_parts(schema), name] if x)
-    sql = f"SELECT * FROM {qual}"
-    if where:
-        sql += f" WHERE {where}"
-    if order:
-        sql += f" ORDER BY {prep.quote(order) if prep else order}{' DESC' if desc else ''}"
-    sql += f" LIMIT {max(1, min(int(n), 1000))}"
+    q = lambda c: prep.quote(c) if prep else c
+    base = f"FROM {qual}" + (f" WHERE {where}" if where else "")
+    sql = f"SELECT * {base}" + (f" ORDER BY {q(order)}{' DESC' if desc else ''}" if order else "")
+    dialect = DIALECTS.get(conn.engine)
+    page_sql = f"{sql} LIMIT {limit + 1}" + (f" OFFSET {offset}" if offset else "")
+    if dialect in ("tsql", "trino", "athena") and conn.engine != "posthog":
+        try:
+            tree = sqlglot.parse_one(page_sql, read="duckdb")
+            if dialect == "tsql" and not order:
+                tree = tree.order_by(sqlglot.parse_one("(SELECT NULL)"))
+            page_sql = tree.sql(dialect=dialect)
+        except Exception:  # noqa: BLE001  keep the plain form; the database will say if it can't
+            pass
     try:
-        r = run_sql(conn, sql, limit=n)
-    except Exception as e:  # noqa: BLE001  the database's own error, as the first line of a sentence (a 400, not a 500)
+        r = run_sql(conn, page_sql, limit=limit + 1)
+        total = None
+        if count:
+            total = int(run_sql(conn, f"SELECT COUNT(*) AS n {base}", limit=1).table.column(0)[0].as_py())
+    except Exception as e:  # noqa: BLE001  the database's own error, as a sentence (a 400, not a 500)
         if type(e).__name__ in ("WriteRefused", "TooLarge"):
             raise
-        raise ValueError(f"Couldn't read sample rows of {name}: {str(e).splitlines()[0][:300]}") from None
-    from .server import _jsonable
+        raise ValueError(f"Couldn't read rows of {name}: {str(e).splitlines()[0][:300]}") from None
+    return page_from_arrow(r.table, offset=offset, limit=limit, ms=r.elapsed_ms, filtered=bool(where), total=total,
+                           sql=sql)
 
-    return {"sql": sql, "columns": [{"name": f.name, "type": str(f.type)} for f in r.table.schema],
-            "rows": [list(map(_jsonable, row.values())) for row in r.table.to_pylist()], "ms": r.elapsed_ms}
+
+def sample(ctx: Context, conn_name: str, schema: str, name: str, n: int = 20, where: str | None = None,
+           order: str | None = None, desc: bool = False) -> dict:
+    """The first rows of a table: the first page of table_rows."""
+    return table_rows(ctx, conn_name, schema, name, 0, n, order, desc, where)
 
 
 # ---- query log and insights ---------------------------------------------------------------

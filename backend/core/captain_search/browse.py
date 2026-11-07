@@ -146,7 +146,7 @@ def rows(ctx: Context, m: DatasetVersion, file: str | None = None, offset: int =
     has_more = len(res) > limit
     res = res[:limit]
     out = {"file": t["file"], "files": [{k: x[k] for k in ("file", "bytes", "format")} for x in ts],
-           "columns": [{"name": c[0], "type": str(c[1])} for c in cols],
+           "columns": [{"name": c[0], "type": str(c[1]), "kind": kind_of(str(c[1]))} for c in cols],
            "rows": [[_cell(v) for v in r] for r in res], "offset": int(offset), "limit": limit, "has_more": has_more,
            "ms": int((time.time() - t0) * 1000), "filtered": bool(conds)}
     if count:
@@ -156,11 +156,4 @@ def rows(ctx: Context, m: DatasetVersion, file: str | None = None, offset: int =
     return out
 
 
-def _cell(v):
-    if v is None or isinstance(v, (bool, int, float, str)):
-        return v
-    if isinstance(v, (list, dict)):
-        import json
-
-        return json.dumps(v, default=str)[:2000]
-    return str(v)
+from .data.cells import cell as _cell, kind_of  # noqa: E402  one cell format for every route (data/cells.py)

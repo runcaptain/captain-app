@@ -50,6 +50,7 @@ test:
 # Needs a logged-in Mac session, so it isn't part of `test`. Run it before pushing a change to a mod.
 screens: build
     tests/mod-render/forms-check.sh target/debug/captain-app
+    tests/mod-render/team-views-check.sh target/debug/captain-app
     tests/mod-render/shot-check.sh target/debug/captain-app
 
 docs-generate: build

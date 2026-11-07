@@ -2,8 +2,8 @@
 // the services' lists filtered to it (the kit sends X-CST-Scope "engine:<id>", backend 4d6a983d):
 //   Overview        the engine: what it serves, where it belongs, its pipelines, and a count for every tab
 //   Investigations  /api/investigations          Experiments  /api/backtests
-//   Runs            each experiment's runs        Evaluations  grading queues over the engine's pipelines
-//   Datasets        /api/datasets                 Signals      /api/signals (the whole workspace: not per engine yet)
+//   Runs            /api/runs (every run)         Evaluations  /api/grading
+//   Datasets        /api/datasets                 Signals      /api/signals
 //   Versions        its pipelines' versions (/api/pipelines) and models (/api/models)
 // A row opens the record in its section (shared "captain.open"). Rename, Move and Archive open captain-scope.
 import { View, div, svg } from "gpui-kit";
@@ -19,7 +19,6 @@ const TABS = [["overview", "Overview"], ["investigations", "Investigations"], ["
   ["evaluations", "Evaluations"], ["datasets", "Datasets"], ["signals", "Signals"], ["versions", "Versions"]];
 const SERVES = { search: "Search", recommendation: "Recommendations" };
 const list = (r) => (r?.ok ? (Array.isArray(r.data) ? r.data : r.data?.items ?? []) : null);
-const base = (ref) => String(ref ?? "").split("@")[0];
 const when = (iso) => (iso ? String(iso).slice(0, 10) : "");
 
 export default class Engine extends View {
@@ -43,20 +42,16 @@ export default class Engine extends View {
     const seq = (this.seq = (this.seq ?? 0) + 1);
     cx.spawn(async (cx) => {
       // The engine itself and where it belongs, unfiltered; its records, filtered to it.
-      const [engines, tree, inv, bt, ds, pl, md, sg, gr] = await Promise.all([
+      const [engines, tree, inv, bt, rn, ds, pl, md, sg, gr] = await Promise.all([
         api("/api/engines", { scoped: false }), api("/api/explorer", { scoped: false }),
-        api("/api/investigations"), api("/api/backtests"), api("/api/datasets"), api("/api/pipelines"), api("/api/models"),
+        api("/api/investigations"), api("/api/backtests"), api("/api/runs"), api("/api/datasets"), api("/api/pipelines"), api("/api/models"),
         api("/api/signals"), api("/api/grading"),
       ]);
       if (seq !== this.seq) return;
       this.engine = (list(engines) ?? []).find((e) => e.id === pick.id) ?? { id: pick.id, name: pick.label, missing: true };
       this.where = this.scopesOf(tree.ok ? tree.data?.tree ?? [] : [], this.engine.scopes ?? []);
-      const mine = new Set((this.engine.pipelines ?? []).map(base));
-      const grading = list(gr);
-      this.data = {
-        investigations: inv, experiments: bt, datasets: ds, versions: pl, models: md, signals: sg,
-        evaluations: grading === null ? gr : { ok: true, data: grading.filter((g) => (g.pipelines ?? []).some((p) => mine.has(base(p)))) },
-      };
+      // Every list here is the services', filtered to the engine (X-CST-Scope).
+      this.data = { investigations: inv, experiments: bt, runs: rn, datasets: ds, versions: pl, models: md, signals: sg, evaluations: gr };
       cx.notify();
     });
     cx.notify();
@@ -84,7 +79,6 @@ export default class Engine extends View {
   }
 
   count(key) {
-    if (key === "runs") { const b = list(this.data.experiments); return b ? b.reduce((n, x) => n + (x.runs ?? 0), 0) : null; }
     if (key === "versions") { const p = list(this.data.versions), m = list(this.data.models); return p && m ? p.length + m.length : p?.length ?? null; }
     const l = list(this.data[key]);
     return l ? l.length : null;
@@ -137,17 +131,15 @@ export default class Engine extends View {
       (x, i) => this.row(c, `eng-inv-${i}`, x.title ?? x.id, x.question ?? x.hypothesis ?? "", [x.status], () => this.open("investigations", { investigation: x.id })));
     if (t === "experiments") return this.listTab(c, "experiments", { title: "No experiments here yet", body: "Backtests comparing this engine's pipelines show here." },
       (x, i) => this.row(c, `eng-exp-${i}`, x.name, (x.arms ?? []).join(" vs "), [x.primary_metric, `${x.runs ?? 0} runs`], () => this.open("comparisons", { backtest: x.name, version: x.latest })));
-    if (t === "runs") return this.listTab(c, "experiments", { title: "No runs here yet", body: "Each experiment's runs show here." },
-      (x, i) => this.row(c, `eng-run-${i}`, `${x.name}, run ${x.latest ?? 1}`, `${x.runs ?? 0} run${x.runs === 1 ? "" : "s"} in all`, [x.primary_metric], () => this.open("runs", { backtest: x.name })),
-      "The latest run of each experiment. Runs has every run, with logs and manifests.");
+    if (t === "runs") return this.listTab(c, "runs", { title: "No runs here yet", body: "Every run of this engine's experiments shows here, newest first." },
+      (x, i) => this.row(c, `eng-run-${i}`, `${x.name}, run ${x.version}`, [(x.arms ?? []).join(" vs "), when(x.created), x.by].filter(Boolean).join(", "),
+        [x.complete === false ? "incomplete" : null, x.mode, x.wall_s != null ? `${Math.round(x.wall_s)} s` : null], () => this.open("runs", { backtest: x.name, version: x.version })));
     if (t === "evaluations") return this.listTab(c, "evaluations", { title: "No evaluations here yet", body: "Grading over this engine's pipelines shows here." },
-      (x, i) => this.row(c, `eng-eval-${i}`, x.name, `${x.graded ?? 0} of ${x.pairs ?? 0} graded, depth ${x.depth ?? "?"}`, [x.queries], () => this.open("runs", { grading: x.name })),
-      "Grading queues that include one of this engine's pipelines.");
+      (x, i) => this.row(c, `eng-eval-${i}`, x.name, `${x.graded ?? 0} of ${x.pairs ?? 0} graded, depth ${x.depth ?? "?"}`, [x.queries], () => this.open("runs", { grading: x.name })));
     if (t === "datasets") return this.listTab(c, "datasets", { title: "No datasets here yet", body: "Datasets linked to this engine show here." },
       (x, i) => this.row(c, `eng-ds-${i}`, x.name, x.description ?? "", [x.kind, x.rows != null ? `${Number(x.rows).toLocaleString("en-US")} rows` : null, `v${x.latest ?? 1}`], () => this.open("data", { dataset: x.name })));
-    if (t === "signals") return this.listTab(c, "signals", { title: "No signals yet", body: "Signals you rank with show here." },
-      (x, i) => this.row(c, `eng-sig-${i}`, x.name ?? x.id, x.description ?? "", [x.status]),
-      "Signals aren't linked to engines yet, so this is every signal in the workspace.");
+    if (t === "signals") return this.listTab(c, "signals", { title: "No signals here yet", body: "Signals this engine ranks with show here." },
+      (x, i) => this.row(c, `eng-sig-${i}`, x.name ?? x.id, x.description ?? x.source ?? "", [x.status]));
     // Versions: its pipelines' versions, then its models.
     const p = this.data.versions, m = this.data.models;
     if (!p || !m) return Skeleton(c, 5);

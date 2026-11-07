@@ -1,0 +1,7 @@
+{
+  "title": "{{title}}",
+  "place": "none",
+  "icon": "table",
+  "overlay": { "width": 0.8, "height": 0.85 },
+  "captain": { "view_api": 1 }
+}
