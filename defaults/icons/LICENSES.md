@@ -10,8 +10,8 @@ The release's THIRD-PARTY-NOTICES includes these notices and the full CC0 text. 
 
 From Simple Icons 16.36.0 (CC0 1.0), copied unaltered, shown in each brand's own color (or the text color in dark
 mode when that color is too dark to see). Each mark is its owner's trademark and is used only to name the product
-it connects to, under the owner's guidelines below. Kinds without a mark here (AWS, Amazon S3, Azure, Redshift,
-Athena, SQL Server, Oracle, Typesense: their owners had them removed from Simple Icons) show a neutral glyph.
+it connects to, under the owner's guidelines below. Kinds without a mark here (Redshift, Athena, SQL Server, Oracle, Typesense: their owners had them removed from
+Simple Icons) show a neutral glyph. AWS, Google Cloud and Azure use the vendor marks below.
 
 | File | Brand | Source | Guidelines |
 |---|---|---|---|
@@ -30,3 +30,15 @@ Athena, SQL Server, Oracle, Typesense: their owners had them removed from Simple
 | brand-opensearch.svg | OpenSearch | https://opensearch.org/trademark-brand-policy.html | https://opensearch.org/trademark-brand-policy.html |
 | brand-algolia.svg | Algolia | https://algolia.frontify.com/d/1AZwVNcFZiu7/style-guide | https://algolia.frontify.com/d/1AZwVNcFZiu7/style-guide |
 | brand-modal.svg | Modal | https://modal.com | |
+
+## Cloud provider marks (brand-aws.svg, brand-gcp.png, brand-azure.png)
+
+Vendor marks, used only to name the provider a login or a place to run work belongs to, per each owner's brand
+guidelines. Edgar chose them from Captain's docs guide "Connect cloud storage"
+(https://docs.captain.dev, fern/docs/pages/connect-cloud-storage.mdx), shown unaltered and in full color.
+
+| File | Mark | Source |
+|---|---|---|
+| brand-aws.svg | Amazon S3 | The Amazon S3 mark from that guide (it shows https://y2i6auvwuaxlu05f.public.blob.vercel-storage.com/Amazon_S3.png; this file is the same mark as an SVG). AWS trademark guidelines: https://aws.amazon.com/trademark-guidelines/ |
+| brand-gcp.png | Google Cloud Storage | https://y2i6auvwuaxlu05f.public.blob.vercel-storage.com/Google_Cloud_Storage.png. Google brand guidelines: https://about.google/brand-resource-center/ |
+| brand-azure.png | Microsoft Azure | https://docs.earthmover.io/assets/images/azure-logo-d7f7b24574e117ba905dd8baca0bd980.png. Microsoft trademark guidelines: https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks |

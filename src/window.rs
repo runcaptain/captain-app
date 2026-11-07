@@ -4347,13 +4347,17 @@ impl AppWindow {
                 .when(o.layout.is_none() && o.kind.modal_keys(), |d| d.key_context("Overlay"))
                 .when(sized(o.size.width), |d| d.w(w))
                 .when(sized(o.size.height), |d| if o.fit { d.max_h(h) } else { d.h(h) })
-                .when(!o.bare, |d| d.bg(c("popover")).border_1().border_color(c("border")).rounded(settings::z(8.0)).shadow_lg())
+                // CAPTAIN: decidedly round (kit/tokens.js RADIUS is the same 10). GPUI clips children to a rectangle, so
+                // the border is drawn last, over the content: a mod's square fill can't cover it at the corners.
+                .when(!o.bare, |d| d.bg(c("popover")).rounded(settings::z(10.0)).shadow_lg())
+                .relative()
                 .overflow_hidden()
                 .flex()
                 // Scroll, hover and cursor stop here, not on the pane behind.
                 .occlude()
                 .when(o.kind != OverlayKind::Window, |d| d.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()))
-                .child(content);
+                .child(content)
+                .when(!o.bare, |d| d.child(div().absolute().inset_0().rounded(settings::z(10.0)).border_1().border_color(c("border"))));
             match o.kind {
                 OverlayKind::Window => out.push(self.render_window(o, body, viewport, cx)),
                 OverlayKind::Dialog => out.push(

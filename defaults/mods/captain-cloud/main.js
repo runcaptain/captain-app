@@ -6,7 +6,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay } from "herdr";
 import { api, watchWorkspace } from "./kit/cst.js";
-import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
+import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
 import { Card, Badge, Button, Empty, Problem } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
@@ -23,7 +23,8 @@ function ago(t) {
   return `${Math.floor(s / 86400)} days ago`;
 }
 
-const form = (path) => () => openOverlay({ mod: "captain-commands", kind: "dialog", width: 560, props: { path } });
+// The designed forms (captain-forms), never the generic command form.
+const task = (id) => () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: id } });
 
 export default class CaptainCloud extends View {
   init(_props, cx) {
@@ -85,10 +86,10 @@ export default class CaptainCloud extends View {
           h_flex().gap(10).items_center().child(Badge(c, s.storage_provider_label ?? SHORT[s.storage_provider] ?? s.storage_provider ?? "local", "neutral"))
             .child(div().flex_1().min_w(0).truncate().font_family(MONO).text_size(12).text_color(c.navy).child(String(s.storage ?? "")))
             .when(Boolean(s.storage_profile), (e) => e.child(div().text_size(12).text_color(c.grey500).child(`through ${s.storage_profile}`)))))
-        .child(Card(c, { title: `Logins (${profiles.length})`, actions: [Button(c, "cloud-add", "Add a login", form(["cloud", "add"]), { small: true, kind: "primary" })] },
+        .child(Card(c, { title: `Logins (${profiles.length})`, actions: [Button(c, "cloud-add", "Add a login", task("cloud"), { small: true, kind: "primary" })] },
           ...(profiles.length ? profiles.map((p) => this.login(c, p, p.name === s.active?.name))
             : [Empty(c, "No cloud connected", "Add a login for AWS, Google Cloud or Azure. Secrets stay in your keychain.")])))
-        .child(Card(c, { title: `Compute targets (${compute.length})`, actions: [Button(c, "compute-add", "Add target", form(["compute", "add"]), { small: true })] },
+        .child(Card(c, { title: `Compute targets (${compute.length})`, actions: [Button(c, "compute-add", "Add a place to run work", task("compute"), { small: true })] },
           ...(compute.length ? compute.map((t) => h_flex().gap(8).items_center().pb(8).border_b(1).border_color(c.rule)
             .child(t.provider && t.provider !== "local" ? Brand(c, t.provider, 14) : svg(icon("server")).size(14).text_color(c.navy))
             .child(div().text_size(13).font_semibold().text_color(c.navy).child(t.name))
@@ -99,7 +100,7 @@ export default class CaptainCloud extends View {
           ...(s.can_run_in_cloud ? [] : [div().text_size(12.5).text_color(c.grey900).child(`Backtests run on this computer. Add a compute target to run them in ${SHORT[s.active?.provider] ?? "the cloud"}.`)])))
         .children((s.notes ?? []).map((n) => div().text_size(12.5).line_height("18px").text_color(c.grey900).child(String(n))));
     }
-    return v_flex().size_full().bg(c.canvas).font_family(FONT).text_color(c.navy)
+    return v_flex().size_full().bg(c.canvas).rounded(RADIUS).font_family(FONT).text_color(c.navy)
       .child(head)
       .child(div().id("cloud-body").flex_1().min_h(0).overflow_y_scroll().p(20).child(body));
   }

@@ -1,7 +1,7 @@
 // captain-ui: data platform and cloud marks (Simple Icons, CC0; each its owner's trademark, see
 // defaults/icons/LICENSES.md). Installed as icons/brand-<slug>.svg. A kind without a mark gets a neutral glyph.
 //   import { Brand } from "./kit/brands.js";   Brand(c, "snowflake", 18)
-import { svg } from "gpui-kit";
+import { svg, image } from "gpui-kit";
 import { icon } from "./icons.js";
 
 export const BRANDS = {
@@ -27,8 +27,12 @@ const ALIAS = {
   postgres: "postgresql", bigquery: "googlebigquery", gcp: "googlecloud", gcs: "googlecloud", google: "googlecloud",
   elastic: "elasticsearch", "modal-function": "modal",
 };
-// No mark available (removed from Simple Icons at the owner's request): a neutral glyph.
-const CLOUDS = new Set(["aws", "azure", "s3", "amazons3", "amazonwebservices", "microsoftazure"]);
+// The cloud providers' own marks, in full color (Edgar's pick, from Captain's docs: defaults/icons/LICENSES.md).
+const VENDOR = { aws: "icons/brand-aws.svg", s3: "icons/brand-aws.svg", amazons3: "icons/brand-aws.svg", amazonwebservices: "icons/brand-aws.svg",
+  gcp: "icons/brand-gcp.png", gcs: "icons/brand-gcp.png", google: "icons/brand-gcp.png", googlecloud: "icons/brand-gcp.png",
+  azure: "icons/brand-azure.png", microsoftazure: "icons/brand-azure.png" };
+// This computer gets a glyph; anything else without a mark, a neutral one.
+const GLYPH = { local: "monitor" };
 
 export function brandSlug(kind) {
   const k = String(kind ?? "").toLowerCase();
@@ -43,11 +47,10 @@ const luma = (hex) => {
 
 /** The mark for an engine, cloud or connection kind, `size` px square; a neutral glyph when there is none. */
 export function Brand(c, kind, size = 16) {
+  const k = String(kind ?? "").toLowerCase();
+  if (VENDOR[k]) return image(VENDOR[k]).size(size).flex_none();
   const slug = brandSlug(kind);
-  if (!slug) {
-    const k = String(kind ?? "").toLowerCase();
-    return svg(icon(CLOUDS.has(k) ? "cloud" : "database")).size(size).flex_none().text_color(c.grey500);
-  }
+  if (!slug) return svg(icon(GLYPH[k] ?? "database")).size(size).flex_none().text_color(c.grey500);
   const hex = BRANDS[slug].hex;
   // The brand's color, unless it would vanish on this background: then the text color.
   const unreadable = c.dark ? luma(hex) < 70 : luma(hex) > 190;

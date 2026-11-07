@@ -20,6 +20,7 @@ if (!cst) { console.log(`scopes-live render test: skipped (${why})`); process.ex
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cst-scopes-'));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'scopes', '--storage', path.join(work, 'store')], { env });
+spawnSync(cst, ['demo', 'seed'], { env });
 const serve = spawn(cst, ['serve'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
 const stop = () => { try { serve.kill('SIGTERM'); } catch {} };
 process.on('exit', stop);
@@ -100,13 +101,39 @@ t = ex.text();
 for (const name of ['Brands', 'Acme Outdoors', 'Sites', 'US storefront', 'Engines', 'Product search']) assert.ok(t.includes(name), `${name} in the Explorer: ${t}`);
 assert.ok(t.indexOf('Acme Outdoors') < t.indexOf('US storefront') && t.indexOf('US storefront') < t.indexOf('Product search'), 'nested in order');
 
-// 4. Picking the engine sets the scope the views filter to.
+// 4. A click in the Explorer's first moments is ignored (the click that brings the window forward lands on whatever
+//    is under the pointer): Scope model doesn't open by itself. A click after that does.
+globalThis.__overlays = [];
+await ex.click('ex-scope-model');
+assert.equal(globalThis.__overlays.length, 0, 'an early click opened nothing');
+await new Promise((r) => setTimeout(r, 1300));
+await ex.click('ex-scope-model');
+assert.equal(globalThis.__overlays.at(-1)?.mod, 'captain-scope-model', 'a later click opens Scope model');
+
+// 5. Picking the engine sets the scope the views filter to.
 tree = (await get('/api/explorer')).tree;
 const engine = findScope(tree, 'Product search');
 await ex.click(`ex-${engine.id}`);
 assert.deepEqual(globalThis.__shared['captain.scope'], { kind: 'engine', id: engine.id, label: 'Product search' });
 
-// 5. Move the site to the top level (the first target), rename the engine, archive the brand.
+// 5b. Picking a brand narrows Data and Runs on screen: one dataset and one experiment linked to it show, the rest
+//     of the demo workspace doesn't (the kit sends X-CST-Scope; the services filter, 4d6a983d).
+const post = async (p, body) => (await fetch(base + p, { method: 'POST', headers: { Authorization: `Bearer ${j.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+await post('/api/scopes/link', { items: [{ kind: 'dataset', name: 'demo-catalog' }, { kind: 'backtest', name: 'demo-historic-replay' }], scope: brand.id });
+globalThis.__shared['captain.scope'] = { kind: 'scope', id: brand.id, label: 'Acme Outdoors' };
+const { default: DataMod } = await import(path.join(await copy('captain-data'), 'main.js'));
+const data = harness(DataMod);
+await data.start();
+await until(data, () => data.text().includes('demo-catalog'), 'Data shows the brand\'s dataset');
+for (const other of ['demo-queries', 'demo-judgments']) assert.ok(!data.text().includes(other), `Data hides ${other}, which isn't the brand's`);
+const { default: RunsMod } = await import(path.join(await copy('captain-runs'), 'main.js'));
+const runs = harness(RunsMod);
+await runs.start();
+await until(runs, () => runs.text().includes('demo-historic-replay'), 'Runs shows the brand\'s experiment');
+assert.ok(!runs.text().includes('demo-tuned-vs-bm25'), 'Runs hides the experiment that isn\'t the brand\'s');
+globalThis.__shared['captain.scope'] = null;
+
+// 6. Move the site to the top level (the first target), rename the engine, archive the brand.
 h = await act({ action: 'move', node: { kind: 'scope', id: site.id, type: 'site', name: site.name } }, async (h) => { await h.click('scope-t-0'); });
 assert.ok(!h.mod.error, `move: ${h.mod.error}`);
 h = await act({ action: 'rename', node: { kind: 'engine', id: engine.id, type: 'search', name: engine.name } }, (h) => h.mod.name.set_value('Site search'));
@@ -118,7 +145,7 @@ assert.equal(findScope(tree, 'Acme Outdoors'), null, 'the archived brand left th
 assert.ok(findScope(tree, 'US storefront'), 'the moved site is still there');
 assert.ok(findScope(tree, 'Site search'), 'the engine has its new name');
 
-// 6. The scope model: a loop is refused on screen, before anything is sent.
+// 7. The scope model: a loop is refused on screen, before anything is sent.
 let m = harness(ModelMod);
 await m.start();
 await until(m, () => Boolean(m.mod.model) && m.mod.live, 'the scope model loaded');
@@ -126,14 +153,14 @@ await m.click('sm-tabs-hierarchy');
 await m.click('h-brand-site');
 assert.match(String(m.mod.error), /would make a loop/, `loop refused: ${m.mod.error}`);
 
-// 7. A change the services refuse shows their reason as it is: removing Site while US storefront is one.
+// 8. A change the services refuse shows their reason as it is: removing Site while US storefront is one.
 await m.click('sm-tabs-types');
 await m.click('type-rm-site');
 await m.click('sm-save');
 await until(m, () => !m.mod.busy, 'the save finished');
 assert.match(String(m.mod.error), /US storefront/, `the services' reason: ${m.mod.error}`);
 
-// 8. A new type saves, and the model's revision moves.
+// 9. A new type saves, and the model's revision moves.
 m = harness(ModelMod);
 await m.start();
 await until(m, () => Boolean(m.mod.model) && m.mod.live, 'the scope model loaded again');

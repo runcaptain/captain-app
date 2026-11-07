@@ -5,7 +5,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay, notify, shared, setShared } from "herdr";
-import { palette, isDark, FONT } from "./kit/tokens.js";
+import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
 import { Button, Badge, ServiceError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
@@ -15,12 +15,17 @@ const IMPORT = { mod: "captain-import", kind: "dialog", width: 900, height: 640,
 
 export default class CaptainForms extends View {
   init(_props, cx) {
+    // The New menu; the test hook's entry "menu" opens it too.
+    const previewMenu = !props()?.task && !props()?.menu && (() => { const p = shared("captain.forms.preview"); return Array.isArray(p) && p[(shared("captain.forms.preview.i") ?? 0) % p.length] === "menu"; })();
+    if (previewMenu) setShared("captain.forms.preview.i", (shared("captain.forms.preview.i") ?? 0) + 1);
+    this.isMenu = Boolean(props()?.menu) || previewMenu;
+    if (this.isMenu) { this.sel = 0; this.menuFocus = cx.focus_handle(); this.menuFocus.focus(); }
     this.values = {};
     // Test hook: opened bare (`captain-app do mod.open`), shared "captain.forms.preview" picks a form,
     // so a test copy can show any form on screen. People never set it.
     // A list steps through its entries, one per open; an entry may preset values.
     let want = props()?.task ?? null;
-    if (!want && !props()?.menu) {
+    if (!want && !this.isMenu) {
       let p = shared("captain.forms.preview");
       if (Array.isArray(p)) {
         const i = shared("captain.forms.preview.i") ?? 0;
@@ -89,7 +94,7 @@ export default class CaptainForms extends View {
   shown() {
     const out = [];
     for (const f of this.task.fields) {
-      if (f.when && !f.when(this.values)) continue;
+      if (f.when && !f.when(this.values, this.ctx)) continue;
       if (f.kind === "dynamic") {
         for (const d of f.fields(this.ctx, this.values)) {
           const type = d.secret ? "secret" : d.type === "secret" ? "secret" : d.type === "choice" ? "choice" : "text";
@@ -116,10 +121,11 @@ export default class CaptainForms extends View {
       }));
   }
 
-  // A picker of products (database engines): a grid of tiles, each with its mark, three to a row.
+  // A picker of products (databases, places to run work): a grid of tiles, each with its mark, `columns` to a row.
   gridChoice(c, f, opts) {
+    const n = f.columns ?? 3;
     const rows = [];
-    for (let i = 0; i < opts.length; i += 3) rows.push(opts.slice(i, i + 3));
+    for (let i = 0; i < opts.length; i += n) rows.push(opts.slice(i, i + n));
     return v_flex().gap(6).children(rows.map((row, r) => h_flex().gap(6).children([...row.map((o) => {
       const on = this.values[f.key] === o.value;
       return h_flex().id(`f-${f.key}-${o.value}`).flex_1().min_w(0).h(40).px(10).gap(8).items_center().cursor_pointer().border_1()
@@ -129,7 +135,7 @@ export default class CaptainForms extends View {
         .child(Brand(c, o.brand ?? o.value, 18))
         .child(div().flex_1().min_w(0).truncate().child(o.label))
         .when(Boolean(o.chip), (e) => e.child(div().text_size(10.5).text_color(c.grey500).child(o.chip)));
-    }), ...Array(3 - row.length).fill(0).map((_, k) => div().id(`f-${f.key}-pad-${r}-${k}`).flex_1())])));
+    }), ...Array(n - row.length).fill(0).map((_, k) => div().id(`f-${f.key}-pad-${r}-${k}`).flex_1())])));
   }
 
   field(c, f) {
@@ -195,24 +201,50 @@ export default class CaptainForms extends View {
     });
   }
 
-  menu(c) {
-    return v_flex().size_full().bg(c.surface).font_family(FONT).py(6)
-      .child(div().px(14).pt(4).pb(6).text_size(11).font_medium().text_color(c.grey500).child("NEW"))
-      .children(TASKS.filter((t) => !t.hidden).map((t) => h_flex().id(`new-${t.id}`).px(14).py(8).gap(12).items_start().cursor_pointer().hover((s) => s.bg(c.surface2))
-        // Import a dataset is desktop-app's wizard (sources, tables, a preview); the form stays for agents.
-        .on_click(() => { this.close(); openOverlay(t.id === "dataset" ? IMPORT : { mod: "captain-forms", kind: "dialog", width: 560, props: { task: t.id } }); })
-        .child(div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon(t.icon)).size(15)))
-        .child(v_flex().flex_1().min_w(0).gap(2)
-          .child(div().text_size(13.5).font_medium().text_color(c.navy).child(t.label))
-          .child(div().text_size(12).line_height("16px").text_color(c.grey500).child(t.about)))));
+  // The New menu: every task with its icon, keyboard up and down and Enter, scrolling inside its popup with a fade
+  // at the bottom so nothing is cut off.
+  menuItems() { return TASKS.filter((t) => !t.hidden); }
+
+  openTask(t) {
+    this.close();
+    // Import a dataset is desktop-app's wizard (sources, tables, a preview); the form stays for agents.
+    openOverlay(t.id === "dataset" ? IMPORT : { mod: "captain-forms", kind: "dialog", width: 560, props: { task: t.id } });
   }
+
+  menu(c) {
+    const items = this.menuItems();
+    const sel = Math.min(this.sel ?? 0, items.length - 1);
+    return div().id("new-menu").size_full().relative().bg(c.surface).rounded(RADIUS).font_family(FONT).when(Boolean(this.menuFocus), (e) => e.track_focus(this.menuFocus))
+      .on_key_down((e, cx) => {
+        if (e.key === "down") { this.sel = (sel + 1) % items.length; cx.notify(); }
+        else if (e.key === "up") { this.sel = (sel - 1 + items.length) % items.length; cx.notify(); }
+        else if (e.key === "enter") this.openTask(items[sel]);
+        else if (e.key === "escape") this.close();
+      })
+      .child(div().id("new-menu-list").size_full().overflow_y_scroll().child(v_flex().py(4).pb(18)
+        .children(items.map((t, i) => {
+          const on = i === sel;
+          return h_flex().id(`new-${t.id}`).mx(4).px(10).py(6).gap(10).items_center().cursor_pointer()
+            .bg(on ? c.blueLight : c.surface)
+            .on_hover((hovered, cx) => { if (hovered && this.sel !== i) { this.sel = i; cx.notify(); } })
+            .on_click(() => this.openTask(t))
+            .child(div().size(26).flex_none().flex().items_center().justify_center().bg(on ? c.blue : c.blueLight).text_color(on ? c.onBlue : c.blue)
+              .child(svg(icon(t.icon)).size(14)))
+            .child(v_flex().flex_1().min_w(0).gap(1)
+              .child(div().truncate().text_size(13).font_medium().text_color(on ? c.blue : c.navy).child(t.label))
+              .child(div().truncate().text_size(11.5).text_color(c.grey500).child(t.about)));
+        }))))
+      // The fade: the list scrolls under it, so a row past the bottom shows it continues.
+      .child(v_flex().absolute().bottom(0).left(0).right(0).children([0.35, 0.65, 0.9].map((o, i) => div().id(`new-fade-${i}`).h(6).w_full().bg(c.surface).opacity(o))));
+  }
+
 
   render() {
     const c = palette(isDark(theme()));
-    if (!this.task) return this.menu(c);
+    if (!this.task || this.isMenu) return this.menu(c);
     const t = this.task;
     const failed = this.result && !this.result.ok ? this.result.error : null;
-    return v_flex().size_full().bg(c.surface).font_family(FONT).text_color(c.navy)
+    return v_flex().size_full().bg(c.surface).rounded(RADIUS).font_family(FONT).text_color(c.navy)
       .child(h_flex().h(56).flex_none().px(20).gap(12).items_center().border_b(1).border_color(c.rule)
         .child(div().size(30).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon(t.icon)).size(16)))
         .child(div().flex_1().text_size(16).font_semibold().child(t.label))

@@ -11,7 +11,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, props, closeOverlay, notify, shared } from "herdr";
 import { api } from "./kit/cst.js";
 import { Skeleton } from "./kit/ui.js";
-import { isDark, palette } from "./kit/tokens.js";
+import { isDark, palette, RADIUS } from "./kit/tokens.js";
 
 const title = (path) => `cst ${path.join(" ")}`;
 
@@ -143,7 +143,7 @@ export default class CaptainCommands extends View {
       if (!groups.has(g)) groups.set(g, []);
       groups.get(g).push(cmd);
     }
-    return v_flex().size_full().bg(c.surface).text_color(c.navy).font_family("Inter")
+    return v_flex().size_full().bg(c.surface).rounded(RADIUS).text_color(c.navy).font_family("Inter")
       .child(h_flex().h(48).flex_none().px(16).items_center().border_b(1).border_color(c.rule)
         .child(div().flex_1().text_size(14).font_semibold().child("Run a cst command"))
         .child(div().id("cmd-close").cursor_pointer().text_color(c.grey500).hover((s) => s.text_color(c.navy)).on_click(() => this.close()).child("Close")))
@@ -161,7 +161,7 @@ export default class CaptainCommands extends View {
     const c = palette(isDark(theme()));
     if (!this.path && props()?.menu) return this.menu(c);
     const cmd = this.command;
-    return v_flex().size_full().bg(c.surface).text_color(c.navy).font_family("Inter")
+    return v_flex().size_full().bg(c.surface).rounded(RADIUS).text_color(c.navy).font_family("Inter")
       .child(h_flex().h(48).flex_none().px(16).gap(10).items_center().border_b(1).border_color(c.rule)
         .child(div().text_size(14).font_semibold().font_family("JetBrains Mono").child(title(this.path ?? [])))
         .child(div().flex_1()).child(div().id("cmd-close").cursor_pointer().text_color(c.grey500).hover((s) => s.text_color(c.navy)).on_click(() => this.close()).child("Close")))

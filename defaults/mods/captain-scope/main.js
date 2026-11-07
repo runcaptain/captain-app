@@ -11,7 +11,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, props, closeOverlay, setShared, shared } from "herdr";
-import { palette, isDark, FONT } from "./kit/tokens.js";
+import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
 import { Button, plainError } from "./kit/ui.js";
 import { loadExplorer, words, scopeAction, moveTargets } from "./kit/scopes.js";
 
@@ -125,7 +125,7 @@ export default class Scope extends View {
   render() {
     const c = palette(isDark(theme()));
     const verb = { add: "Add", rename: "Rename", move: "Move", archive: "Archive" }[this.p.action] ?? "Save";
-    return v_flex().id("scope").size_full().bg(c.surface).text_color(c.navy).font_family(FONT)
+    return v_flex().id("scope").size_full().bg(c.surface).rounded(RADIUS).text_color(c.navy).font_family(FONT)
       .child(h_flex().h(52).flex_none().px(20).items_center().border_b(1).border_color(c.rule)
         .child(div().flex_1().min_w(0).truncate().text_size(15).font_semibold().child(this.title()))
         .child(div().id("scope-cancel").text_size(12.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))

@@ -9,7 +9,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, EditorState, Editor } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay, pickFolder, home, shared } from "herdr";
 import { api } from "./kit/cst.js";
-import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
+import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
@@ -238,7 +238,7 @@ export default class CaptainImport extends View {
   render() {
     const c = palette(isDark(theme()));
     const steps = [[1, "Where from"], [2, "What to bring in"], [3, "Preview and import"]];
-    return v_flex().id("import").size_full().bg(c.surface).font_family(FONT).text_color(c.navy)
+    return v_flex().id("import").size_full().bg(c.surface).rounded(RADIUS).font_family(FONT).text_color(c.navy)
       .child(h_flex().h(56).flex_none().px(20).gap(14).items_center().border_b(1).border_color(c.rule)
         .child(this.icon("database", 18, c.navy))
         .child(div().text_size(16).font_semibold().child("Import a dataset"))
