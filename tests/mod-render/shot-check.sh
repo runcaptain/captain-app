@@ -21,7 +21,7 @@ for m in "${MODS[@]}"; do
   case "$m" in
     captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:import" "captain-data:import-table" "captain-data:sample" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage") ;;
     captain-runs) EXTRA+=("captain-runs:jobs") ;;
-    captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries") ;;
+    captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
 done
 
@@ -153,6 +153,7 @@ props_of() {
     captain-data:tablerows) echo '{"tab": "tables", "tablesTab": "rows"}' ;;
     captain-data:bignotebook) echo '{"tab": "notebooks", "notebook": "shot-big", "runAll": true}' ;;
     captain-data:sqltools) echo '{"tab": "notebooks", "notebook": "shot-sql-tools", "sqlTools": {"panel": "filled"}}' ;;
+    captain-compare:profile) echo '{"backtest": "demo-tuned-vs-bm25", "version": 1, "tab": "profile", "autoProfile": true}' ;;
     captain-compare:imported) echo '{"backtest": "demos/shot/imported-readout", "version": 1}' ;;
     captain-compare:imported-queries) echo '{"backtest": "demos/shot/imported-readout", "version": 1, "tab": "queries"}' ;;
     *) echo '{}' ;;
@@ -197,7 +198,7 @@ EOF
   ok=0
   # The notebook view runs every cell on a fresh Python first: give it time to finish before judging.
   [[ "$view" == captain-data:notebook || "$view" == captain-data:chart || "$view" == captain-data:bignotebook ]] && sleep 25
-  [[ "$view" == captain-data:import* ]] && sleep 8
+  [[ "$view" == captain-data:import* || "$view" == captain-compare:profile ]] && sleep 8
   for i in $(seq 1 12); do
     sleep 1.5
     # A window in the background may not draw a new frame after its data arrives, and shot saves the last frame

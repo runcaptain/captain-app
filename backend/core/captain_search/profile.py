@@ -113,16 +113,24 @@ def profile_run(ctx, run_ref: str, max_queries: int = 200, memory: bool = True, 
     from . import compare as CP
 
     run = CP._run(ctx, run_ref)
-    bt, qs, _ = CP._context(ctx, run)
-    queries = list(qs.values())[: max(1, int(max_queries))]
     arms, skipped = [], []
     replayable = []
+    imported = getattr(run, "mode", None) == "imported"  # its rankings came from outside, whatever its arms are named
     for a in (r.arm for r in run.arms):
         try:
+            if imported:
+                raise ValueError("imported")
             ctx.registry.resolve("pipeline", a)
             replayable.append(a)
         except Exception:  # noqa: BLE001
             skipped.append({"arm": a, "reason": "from imported rankings, so it can't be replayed to time it"})
+    if not replayable:
+        # Nothing to replay (an imported run): say why for each arm, before looking for a query set it may not have.
+        progress(1.0)
+        return {"run": f"{run.name}@v{run.version}", "queries": 0, "arms": [], "skipped": skipped, "summary": [],
+                "measured_on": measured_on()}
+    bt, qs, _ = CP._context(ctx, run)
+    queries = list(qs.values())[: max(1, int(max_queries))]
     for i, a in enumerate(replayable):
         arms.append(profile_pipeline(ctx, a, queries, memory=memory,
                                      progress=lambda f, i=i: progress((i + f) / max(1, len(replayable)))))

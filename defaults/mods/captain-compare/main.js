@@ -1,6 +1,7 @@
 // CAPTAIN: Comparisons, native. One backtest run, read in depth: what can be trusted (compatibility warnings, shown
 // above any winner), the arms with their cost, every comparison, the per-query delta distribution, the queries
-// themselves (paged and sorted by the backend) with any query side by side, the segments and the surfaces.
+// themselves (paged and sorted by the backend) with any query side by side, the segments, the surfaces, and the
+// profile: where each arm's time goes (profile.js).
 // Runs hands a run over through shared "captain.compare" = {backtest, version}.
 //
 // Per-query rows come in pages of 200 from GET /api/runs/{run}/queries; the histogram comes pre-binned. The mod never
@@ -15,6 +16,7 @@ import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
 import { metricWords, warningIcon } from "./kit/words.js";
 import { icon as kitIcon } from "./kit/icons.js";
 import { int } from "./kit/num.js";
+import { Profiler } from "./profile.js";
 
 const PAGE = 200;
 const ROW = 28;
@@ -94,6 +96,7 @@ export default class CaptainCompare extends View {
     // Props: {backtest, version, tab, query} open that run on that tab, with that query side by side.
     this.wantProps = props ?? {};
     this.tab = props?.tab ?? "overview";
+    this.autoProfile = !!props?.autoProfile; // start a profile as soon as the run opens
     this.width = 1000;
     this.backtests = null;
     this.sel = null; // {backtest, version}
@@ -105,6 +108,7 @@ export default class CaptainCompare extends View {
     this.qSearch = InputState.new({ placeholder: "Search queries" });
     this.qSearch.on("submit", (_e, cx) => this.queries(cx, { q: this.qSearch.value().trim() }));
     this.handed = null;
+    this.profiler = new Profiler(this);
     this.loadBacktests(cx);
     cx.timer.every(150, (cx) => this.pump(cx));
     // Until the backend answers, ask again every 3 s.
@@ -115,6 +119,7 @@ export default class CaptainCompare extends View {
       else if (this.sel && this.run?.error && !this.runR?.status) this.open(cx, this.sel.backtest, this.sel.version);
     });
     // Opened by name (palette): shared "captain.open" {section: "comparisons", backtest, version, at}.
+    cx.timer.every(500, (cx) => this.profiler.tick(cx));
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
       if (o?.section === "comparisons" && o.backtest && o.at !== this.opened) {
@@ -262,7 +267,8 @@ export default class CaptainCompare extends View {
   // ---- pieces -------------------------------------------------------------------------------------------------
 
   icon(n, size = 14, color) {
-    return svg(ICON(n)).size(size).flex_none().when(!!color, (e) => e.text_color(color));
+    // "kit:activity": the shared icon set; anything else ships with this mod.
+    return svg(String(n).startsWith("kit:") ? kitIcon(n.slice(4)) : ICON(n)).size(size).flex_none().when(!!color, (e) => e.text_color(color));
   }
 
   badge(c, text, tone) {
@@ -280,7 +286,7 @@ export default class CaptainCompare extends View {
   }
 
   header(c) {
-    const tabs = [["overview", "Overview", "overview"], ["queries", "Queries", "queries"], ["segments", "Segments", "segments"], ["surfaces", "Surfaces", "surfaces"]];
+    const tabs = [["overview", "Overview", "overview"], ["queries", "Queries", "queries"], ["segments", "Segments", "segments"], ["surfaces", "Surfaces", "surfaces"], ["profile", "Profile", "kit:activity"]];
     return h_flex().h(52).flex_none().px(20).gap(14).items_center().border_b(1).border_color(c.rule)
       .child(div().flex_none().text_size(18).font_semibold().child("Comparisons"))
       .child(h_flex().flex_none().border_1().border_color(c.grey300).children(tabs.map(([id, label, icon]) =>
@@ -616,6 +622,7 @@ export default class CaptainCompare extends View {
             .child(Button(c, "run-retry", "Retry", (_e, cx) => this.open(cx, this.sel.backtest, this.sel.version), { kind: "primary", small: true }))
             .child(Button(c, "run-copy", "Copy details", (_e, cx) => cx.write_to_clipboard(details(this.runR?.error ?? null)), { small: true }))))
       : this.tab === "overview" ? this.overview(c, w - pw)
+      : this.tab === "profile" ? this.profiler.render(c, w - pw)
       : r.mode === "imported" ? this.importedEmpty(c, this.tab === "queries" ? "per-query results" : this.tab === "segments" ? "segment results" : "surface results")
       : this.tab === "queries" ? this.queryPane(c, w - pw - 40)
       : this.tab === "segments" ? this.segments(c)

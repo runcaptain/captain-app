@@ -46,3 +46,22 @@ def test_run_profile_compares_arms(ctx):
     assert [a["pipeline"].split("@")[0] for a in r["arms"]] == ["demo-bm25", "demo-tuned"]
     assert r["summary"] and "at p99 against demo-bm25" in r["summary"][0]
     assert r["arms"][0]["memory"] is None
+
+
+def test_an_imported_run_skips_every_arm_with_its_reason(ctx, monkeypatch):
+    import contextlib
+    import io
+    import pathlib
+    import runpy
+
+    seed = pathlib.Path(__file__).resolve().parents[3] / "tests" / "mod-render" / "seed-imported.py"
+    import captain_search.workspace as W
+
+    monkeypatch.setattr(W, "open_context", lambda: ctx)  # the seed script's workspace is this one
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        runpy.run_path(str(seed), run_name="__main__")
+    name = out.getvalue().strip().splitlines()[-1]
+    r = PF.profile_run(ctx, f"{name}@v1")
+    assert r["arms"] == [] and r["queries"] == 0 and r["summary"] == []
+    assert len(r["skipped"]) == 2 and all("imported rankings" in s["reason"] for s in r["skipped"])
