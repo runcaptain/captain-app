@@ -876,3 +876,13 @@ its line, simulated shoppers side by side, and the log. Captain's backtests stre
 Events: `stage {name, index, of}`, `progress {fraction, done, total, unit}`, `metric {name, value, arm, step}`,
 `shopper {arm, shopper, query, results, steps, clicked, bought, revenue}`, `log {text}`, `result {ref, summary}`.
 Routes: `GET /api/live?active=&limit=` and `GET /api/live/{id}?since=n` (events from position n, and `next`).
+
+Training streams the same way. `cst pipeline retrain` (or Retrain on an engine's pipeline, `POST
+/api/pipelines/{name}/retrain`) runs the pipeline's `spec.train.command` and streams its output: a printed
+`{"type": "metric", "name": "loss", "value": 0.31, "step": 200}` is a point on the run's chart, any other line a log
+line, and the `metrics` it writes to `CST_TRAIN_OUT` show as the run's final numbers.
+
+On a compute target (AWS, Google Cloud, Azure), the app makes the run in the workspace bucket before it submits the
+job and passes its id as `CST_LIVE_ID`; the job's container writes events there in batches every 2 s
+(`live/<id>/<seq>.jsonl`, header `live-heads/<id>.json`), and Runs reads only the new batches. Inside a job
+(`CST_JOB_ID` set) a backtest or retrain always runs in place, never submitting itself again.

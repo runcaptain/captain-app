@@ -198,6 +198,31 @@ def listing(limit: int = 30, active: bool = False) -> list[dict]:
     return sorted(rows, key=lambda r: r.get("started", ""), reverse=True)[:limit]
 
 
+def feed(run: "Run", line: str) -> None:
+    """One line of a program's output: a JSON object with a "type" is an event, anything else a log line."""
+    line = line.rstrip("\n")
+    ev = None
+    if line.startswith("{"):
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            ev = None
+    if isinstance(ev, dict) and isinstance(ev.get("type"), str):
+        t = ev.pop("type")
+        ev.pop("at", None), ev.pop("n", None)
+        run.emit(t, **ev)
+    elif line.strip():
+        run.log(line)
+
+
+def for_job(ctx, kind: str, title: str, *, of: str | None = None, arms: list[str] | None = None, source: str = "captain") -> "Run":
+    """The live run for work starting here: in a submitted job's container, the run the app made for it (through the
+    bucket); otherwise a new run on this computer."""
+    if os.environ.get("CST_LIVE_ID") and os.environ.get("CST_JOB_ID"):
+        return attach_store(ctx, os.environ["CST_LIVE_ID"])
+    return start(kind, title, of=of, arms=arms, source=source)
+
+
 def pipe(argv: list[str], kind: str, title: str, of: str | None = None) -> dict:
     """Run a command and stream it: JSON lines with a "type" are events, other lines are log lines."""
     import subprocess
@@ -207,19 +232,7 @@ def pipe(argv: list[str], kind: str, title: str, of: str | None = None) -> dict:
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     assert proc.stdout is not None
     for line in proc.stdout:
-        line = line.rstrip("\n")
-        ev = None
-        if line.startswith("{"):
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                ev = None
-        if isinstance(ev, dict) and isinstance(ev.get("type"), str):
-            t = ev.pop("type")
-            ev.pop("at", None), ev.pop("n", None)
-            r.emit(t, **ev)
-        else:
-            r.log(line)
+        feed(r, line)
     code = proc.wait()
     r.end("done" if code == 0 else "failed", error=None if code == 0 else f"the command ended with exit code {code}")
     return {"id": r.id, "exit_code": code}

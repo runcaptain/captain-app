@@ -8,7 +8,7 @@
 // A row opens the record in its section (shared "captain.open"). Rename, Move and Archive open captain-scope.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, shared, setShared, run, openOverlay } from "herdr";
+import { theme, shared, setShared, run, openOverlay, notify } from "herdr";
 import { palette, isDark, FONT } from "./kit/tokens.js";
 import { api, watchScope, watchWorkspace } from "./kit/cst.js";
 import { Button, Badge, Tabs, Empty, Skeleton, Problem } from "./kit/ui.js";
@@ -53,6 +53,22 @@ export default class Engine extends View {
       this.where = this.scopesOf(tree.ok ? tree.data?.tree ?? [] : [], this.engine.scopes ?? []);
       // Every list here is the services', filtered to the engine (X-CST-Scope).
       this.data = { investigations: inv, experiments: bt, runs: rn, datasets: ds, versions: pl, models: md, signals: sg, evaluations: gr };
+      cx.notify();
+    });
+    cx.notify();
+  }
+
+  /** Retrain a pipeline from its declared training command, then watch it in Runs, live. */
+  retrain(cx, x) {
+    if (this.retraining) return;
+    this.retraining = x.name;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/pipelines/${x.name.split("/").map(encodeURIComponent).join("/")}/retrain`, { body: {} });
+      this.retraining = null;
+      if (r.ok && r.data?.live) {
+        setShared("captain.open", { section: "runs", live: r.data.live, at: Date.now() });
+        run("layout.select", { stack: "sections", child: "runs" });
+      } else notify({ title: `Couldn't start retraining ${x.name}`, body: String(r.data?.detail ?? r.error ?? ""), level: "error" });
       cx.notify();
     });
     cx.notify();
@@ -149,6 +165,9 @@ export default class Engine extends View {
     return v_flex().w_full()
       .child(div().px(14).py(8).text_size(12).font_semibold().text_color(c.grey500).child("PIPELINES"))
       .child(pipes.length ? v_flex().border_t(1).border_color(c.rule).children(pipes.map((x, i) => h_flex().child(div().flex_1().min_w(0).child(this.row(c, `eng-pl-${i}`, `${x.name}@v${x.latest ?? 1}`, x.description ?? "", [x.engine, x.repro_status && x.repro_status.replace(/-/g, " ")])))
+        // A pipeline that declares its training command can retrain from here; Runs opens on it, live.
+        .when(!!x.trains, (e) => e.child(div().id(`eng-retrain-${i}`).px(10).text_size(12).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
+          .on_click((_e, cx) => this.retrain(cx, x)).child(this.retraining === x.name ? "Starting..." : "Retrain")))
         .child(div().id(`eng-whatif-${i}`).px(14).text_size(12).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
           .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: x.name } })).child("Backtest settings"))))
         : div().px(14).pb(8).text_size(12.5).text_color(c.grey500).child("No pipeline versions here yet."))

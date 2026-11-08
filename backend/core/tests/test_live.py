@@ -118,3 +118,53 @@ def test_a_quiet_remote_run_says_so(seeded):
     h["updated"] = "2020-01-01T00:00:00+00:00"
     seeded.store.put_if(f"live-heads/{rid}.json", _json.dumps(h).encode(), tag)
     assert "No word from the job" in live.read_remote(seeded, rid)["run"]["note"]
+
+
+TRAINER = r'''python3 -c '
+import json, os
+print("loading data")
+for step in range(4):
+    print(json.dumps({"type": "metric", "name": "loss", "value": round(1 / (step + 1), 3), "step": step}))
+open(os.environ["CST_TRAIN_OUT"], "w").write(json.dumps({"training_commit": "abc", "metrics": {"ndcg@10": 0.81}}))
+print("saved")
+'
+'''
+
+
+def _trainable(ctx, command):
+    pm = ctx.registry.load("pipeline", "demo-tuned")
+    return ops.pipeline_publish(ctx, {"name": "demo-tuned", "engine": pm.engine, "catalog": pm.catalog,
+                                      "spec": {**pm.spec, "train": {"command": command}}})
+
+
+def test_retrain_streams_its_training(seeded):
+    from captain_search import retrain as RT
+
+    _trainable(seeded, TRAINER)
+    r = RT.retrain(seeded, "demo-tuned", local_exec=True)
+    run = next(x for x in live.listing() if x["kind"] == "training" and x.get("ref") == r["pipeline"])
+    ev = live.read(run["id"])["events"]
+    assert run["status"] == "done" and run["stages"] == ["Train demo-tuned", "Publish the new version"]
+    assert [e["text"] for e in ev if e["type"] == "log"] == ["loading data", "saved"]
+    assert [e["value"] for e in ev if e["type"] == "metric" and e["name"] == "loss"] == [1.0, 0.5, 0.333, 0.25]
+    assert any(e["type"] == "metric" and e["name"] == "ndcg@10" and e["value"] == 0.81 for e in ev)  # the trainer's own result
+    assert ev[-1]["type"] == "result" and ev[-1]["ref"] == r["pipeline"]
+
+    _trainable(seeded, "echo nearly; exit 3")
+    with pytest.raises(ValueError, match="exit code 3"):
+        RT.retrain(seeded, "demo-tuned", local_exec=True)
+    failed = live.listing()[0]
+    assert failed["status"] == "failed" and "exit code 3" in failed["error"]
+
+
+def test_retrain_in_a_job_streams_through_the_bucket(seeded, monkeypatch):
+    from captain_search import retrain as RT
+
+    _trainable(seeded, TRAINER)
+    rid = live.start_remote(seeded, "training", "Retrain demo-tuned", where="aws-test")
+    monkeypatch.setenv("CST_JOB_ID", "job-9")
+    monkeypatch.setenv("CST_LIVE_ID", rid)
+    RT.retrain(seeded, "demo-tuned", compute="no-such-target", local_exec=True)  # in the job: trains here
+    got = live.read_remote(seeded, rid)
+    assert got["run"]["status"] == "done"
+    assert [e["value"] for e in got["events"] if e["type"] == "metric" and e["name"] == "loss"] == [1.0, 0.5, 0.333, 0.25]

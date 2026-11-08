@@ -44,8 +44,13 @@ def _merge(a: dict, b: dict) -> dict:
     return out
 
 
-def retrain(ctx: Context, name: str, compute: str | None = None, local_exec: bool = False, dry_run: bool = False) -> dict:
+def retrain(ctx: Context, name: str, compute: str | None = None, local_exec: bool = False, dry_run: bool = False,
+            live=None, live_id: str | None = None) -> dict:
+    """Retrain, streaming to Runs: `live` is a run to write to here; without one, a run is made (in a job's container,
+    the one the app made for it). On a compute target the job streams through the bucket to `live_id`, made here
+    when not given."""
     from . import compute as C
+    from . import live as LV
     from .ops import ref
 
     pm = ctx.registry.load("pipeline", name)
@@ -53,13 +58,22 @@ def retrain(ctx: Context, name: str, compute: str | None = None, local_exec: boo
     if not isinstance(train, dict) or not train.get("command"):
         raise ValueError(f"{ref(pm)} declares no training command. Add spec.train.command (and publish a new version) "
                          "so a retrain knows what to run.")
-    target = C.get(ctx, compute or train.get("compute") or "local")
+    in_job = bool(os.environ.get("CST_JOB_ID"))  # inside a submitted job: train here, never submit again
+    target = C.get(ctx, "local" if in_job else compute or train.get("compute") or "local")
     if target["kind"] != "local":
         plan, job = C.plan_and_job(ctx, target, ["pipeline", "retrain", name, "--local-exec"], label=f"retrain-{name}")
         if dry_run:
             return {"pipeline": ref(pm), "compute": target["name"], "plan": plan}
-        rec = C.submit_job(ctx, target, job.argv, label=job.label, kind="retrain", job=job)
-        return {"pipeline": ref(pm), "compute": target["name"], "plan": plan, "job": rec["id"],
+        live_id = live_id or LV.start_remote(ctx, "training", f"Retrain {pm.name}", of=ref(pm), where=target["name"])
+        job.env["CST_LIVE_ID"] = live_id
+        plan = C.P.get(target, ctx).plan(job)
+        try:
+            rec = C.submit_job(ctx, target, job.argv, label=job.label, kind="retrain", job=job)
+        except Exception as e:
+            LV.note_remote(ctx, live_id, status="failed", error=f"Couldn't submit the job: {e}")
+            raise
+        LV.note_remote(ctx, live_id, job=rec["id"])
+        return {"pipeline": ref(pm), "compute": target["name"], "plan": plan, "job": rec["id"], "live": live_id,
                 "submitted": {"provider_job": C.provider_job(rec["handle"]), "job": rec["id"]},
                 "detail": f"the new version lands in the workspace bucket when the job finishes. Follow it with `cst job show {rec['id']}`."}
     if dry_run:
@@ -67,19 +81,52 @@ def retrain(ctx: Context, name: str, compute: str | None = None, local_exec: boo
     if not local_exec:
         raise ValueError("retraining runs the pipeline's own shell command on this machine. Pass --local-exec to allow it, "
                          "or retrain on a compute target with --compute.")
+    own = live is None
+    if own:
+        live = LV.for_job(ctx, "training", f"Retrain {pm.name}", of=ref(pm))
+    try:
+        return _train_here(ctx, pm, train, live, own)
+    except BaseException as e:
+        if own:
+            live.end("failed", error=str(e) or "stopped")
+        raise
+
+
+def _train_here(ctx: Context, pm, train: dict, live, own: bool) -> dict:
+    """Run the training command on this machine, its output streaming to the live run, and publish the result."""
+    import threading
+
+    from . import live as LV
+    from .ops import ref
+
+    timeout = int(train.get("timeout_s") or 10800)
+    live.stage(f"Train {pm.name}", 1, 2)
     with tempfile.TemporaryDirectory(prefix="cst-train-") as tmp:
         out_path = os.path.join(tmp, "train-out.yaml")
-        env = {**os.environ, "CST_PIPELINE": ref(pm), "CST_WORKSPACE": ctx.workspace.name, "CST_TRAIN_OUT": out_path}
+        env = {**os.environ, "CST_PIPELINE": ref(pm), "CST_WORKSPACE": ctx.workspace.name, "CST_TRAIN_OUT": out_path,
+               "PYTHONUNBUFFERED": "1"}  # so a Python trainer's lines arrive as it prints them
         t0 = time.time()
+        p = subprocess.Popen(["sh", "-c", str(train["command"])], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, bufsize=1, cwd=tmp)
+        timed_out = threading.Event()
+        killer = threading.Timer(timeout, lambda: (timed_out.set(), p.kill()))
+        killer.start()
+        lines: list[str] = []
         try:
-            p = subprocess.run(["sh", "-c", str(train["command"])], env=env, capture_output=True, text=True,
-                               timeout=int(train.get("timeout_s") or 10800), cwd=tmp)
-        except subprocess.TimeoutExpired:
-            raise ValueError(f"the training command ran past its {train.get('timeout_s') or 10800} s timeout and was stopped") from None
+            assert p.stdout is not None
+            for line in p.stdout:
+                lines.append(line)
+                del lines[:-200]
+                LV.feed(live, line)
+            code = p.wait()
+        finally:
+            killer.cancel()
+        if timed_out.is_set():
+            raise ValueError(f"the training command ran past its {timeout} s timeout and was stopped")
         wall = round(time.time() - t0, 2)
-        tail = (p.stdout[-1500:] + ("\n" if p.stdout and p.stderr else "") + p.stderr[-1500:]).strip()
-        if p.returncode != 0:
-            raise ValueError(f"the training command failed with exit code {p.returncode}: {tail[-600:]}")
+        tail = "".join(lines).strip()[-3000:]
+        if code != 0:
+            raise ValueError(f"the training command failed with exit code {code}: {tail[-600:]}")
         result = {}
         if os.path.exists(out_path):
             with open(out_path) as f:
@@ -91,6 +138,10 @@ def retrain(ctx: Context, name: str, compute: str | None = None, local_exec: boo
             unknown = set(result) - ALLOWED_OUT
             if unknown:
                 raise ValueError(f"CST_TRAIN_OUT has unknown keys {sorted(unknown)}: use {', '.join(sorted(ALLOWED_OUT))}")
+    live.stage("Publish the new version", 2, 2)
+    for k, v in (result.get("metrics") or {}).items():
+        if isinstance(v, (int, float)):
+            live.metric(str(k), v)
     new = pm.model_copy(update={
         "id": new_id(), "created_by": whoami(), "created_at": utcnow(), "version": 0, "parent": pm.version,
         "spec": _merge(pm.spec, result.get("spec") or {}),
@@ -108,5 +159,7 @@ def retrain(ctx: Context, name: str, compute: str | None = None, local_exec: boo
     if carry.get("serve_usd_per_1k") is not None and "serve_usd_per_1k" not in cost:
         cost["serve_usd_per_1k"] = carry["serve_usd_per_1k"]  # serving price carries over unless training says otherwise
     COST.set_cost(ctx, ref(new), cost)
+    if own:
+        live.end("done", ref=ref(new), summary=f"Published {ref(new)} from {ref(pm)} in {wall:.0f} s")
     return {"pipeline": ref(new), "name": new.name, "version": new.version, "parent": ref(pm), "compute": "local",
             "wall_s": wall, "metrics": result.get("metrics"), "log_tail": tail[-800:]}

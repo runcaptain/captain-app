@@ -1080,9 +1080,46 @@ def pipelines(project: str | None = None):
         if not inp(n):
             continue
         m = c.registry.load("pipeline", n)
+        train = (m.spec or {}).get("train")
         out.append({"name": n, "latest": m.version, "engine": m.engine, "repro_status": m.repro_status.value,
-                    "by": m.created_by, "created": m.created_at.isoformat(), "description": m.description})
+                    "by": m.created_by, "created": m.created_at.isoformat(), "description": m.description,
+                    "trains": isinstance(train, dict) and bool(train.get("command"))})
     return out
+
+
+@app.post("/api/pipelines/{name:path}/retrain", dependencies=A)
+def pipeline_retrain(name: str, body: dict | None = None):
+    """Retrain from the pipeline's declared training command, here or on a compute target, streaming to Runs.
+    Starting it from the app is the person's go-ahead to run the command here (the CLI's --local-exec)."""
+    from . import compute as CMP
+    from . import live as LV
+    from . import retrain as RT
+
+    c = ctx()
+    pm = c.registry.load("pipeline", name)
+    train = (pm.spec or {}).get("train") or {}
+    if not isinstance(train, dict) or not train.get("command"):
+        raise ValueError(f"{pm.name} declares no training command (spec.train.command), so there's nothing to run.")
+    compute = (body or {}).get("compute") or train.get("compute") or "local"
+    local = CMP.get(c, compute)["kind"] == "local"
+    lv = LV.start("training", f"Retrain {pm.name}", of=f"{pm.name}@v{pm.version}") if local else None
+    live_id = None if local else LV.start_remote(c, "training", f"Retrain {pm.name}", of=f"{pm.name}@v{pm.version}", where=compute)
+
+    def go(p):
+        try:
+            r = RT.retrain(c, name, compute, local_exec=True, live=lv, live_id=live_id)
+        except Exception as e:
+            if lv:
+                lv.end("failed", error=str(e))
+            raise
+        if lv:
+            lv.end("done", ref=r.get("pipeline"), summary=f"Published {r['pipeline']} from {r['parent']} in {r['wall_s']:.0f} s")
+        return r
+
+    jid = _job(go, f"retraining {pm.name} on {compute}")
+    rid = lv.id if lv else live_id
+    JOBS[jid]["live"] = rid
+    return {"job": jid, "live": rid}
 
 
 @app.get("/api/pipelines/{name:path}/v/{version}/cost", dependencies=A)
