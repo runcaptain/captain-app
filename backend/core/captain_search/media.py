@@ -158,10 +158,16 @@ def guess(file_uri: str | None, columns: list[str], row: dict, value: str, profi
 
 # ---- thumbnails ------------------------------------------------------------------------------------
 
+_clients: dict = {}
+
+
 def _s3(profile: str | None):
+    """One S3 client per login, reused: making one costs more than the lookup it's for."""
     from .cloud import aws_session
 
-    return aws_session(profile, "us-west-1").client("s3")
+    if profile not in _clients:
+        _clients[profile] = aws_session(profile, "us-west-1").client("s3")
+    return _clients[profile]
 
 
 def _fetch(src: str, profile: str | None) -> bytes:
@@ -243,3 +249,160 @@ def thumbs(srcs: list[str], dest_dir: str, size: int = 160, profile: str | None 
         for s, r in pool.map(one, list(dict.fromkeys(x for x in srcs if x))[:400]):
             out[s] = r
     return out
+
+
+# ---- finding where relative images live, without being told ---------------------------------------
+#
+# 1. Learn from addresses already saved for other datasets: a catalog's images usually sit where its siblings' do,
+#    with the sibling's name swapped for this one's (.../makro/images/{pid}/{value} -> .../generika/images/...).
+# 2. Next to the dataset's own file (guesses above).
+# 3. Search the buckets the login can see: buckets and folders whose names match the dataset first, then any whose
+#    names say images or media, three levels deep at most, trying <folder>/{id}/{value} and <folder>/{value} for each
+#    id-like column. A fixed budget of listings and lookups keeps it to seconds.
+# A find counts only when a second row's image is there too.
+
+IMAGE_WORDS = ("image", "img", "media", "photo", "picture", "asset", "thumb", "cdn", "product")
+MAX_LISTS = 120
+MAX_LOOKS = 400
+
+
+def _tokens(*texts: str) -> list[str]:
+    out = []
+    for t in texts:
+        for w in re.split(r"[^a-z0-9]+", (t or "").lower()):
+            if len(w) >= 3 and w not in ("catalog", "catalogs", "items", "jsonl", "json", "parquet", "csv", "inputs",
+                                         "data", "dataset", "datasets", "s3", "gs", "v1", "v2", "v3") and not w.isdigit():
+                out.append(w)
+    return list(dict.fromkeys(out))
+
+
+def _id_cols(columns: list[str]) -> list[str]:
+    ids = [c for c in columns if c.lower() in ID_HINTS]
+    return ids + [c for c in columns if c.lower().endswith(("_id", "id")) and c not in ids][:3]
+
+
+def _confirmed(template: str, value_col: str, rows: list[dict], profile, budget) -> bool:
+    """The first two rows with an image both resolve to files that exist."""
+    seen = 0
+    for r in rows:
+        items = _items(r.get(value_col))
+        if not items:
+            continue
+        budget["looks"] += 1
+        if not _exists(fill(template, items[0], r), profile):
+            return False
+        seen += 1
+        if seen >= 2:
+            return True
+    return seen >= 1
+
+
+def locate(ctx, dataset: str, file_uri: str | None, columns: list[str], rows: list[dict], column: str,
+           profile: str | None = None, progress=lambda f: None) -> dict:
+    """Find where a column's bare image names live. Returns {template, how} or {template: None, searched}."""
+    budget = {"lists": 0, "looks": 0}
+    names = _tokens(dataset, file_uri or "")
+    ids = _id_cols(columns)
+
+    def ok(t):
+        return _confirmed(t, column, rows, profile, budget)
+
+    # 1. Siblings' saved addresses, with their name swapped for ours.
+    progress(0.05)
+    doc, _ = _read(ctx)
+    for other, cols in (doc.get("datasets") or {}).items():
+        theirs = [w for w in _tokens(other) if w not in names]
+        for tpl in (cols or {}).values():
+            for w in theirs:
+                if w in tpl.lower():
+                    for mine in names[:3]:
+                        t = re.sub(re.escape(w), mine, tpl, flags=re.I)
+                        if t != tpl and ok(t):
+                            return {"template": t, "how": f"like {other}'s images"}
+            if ok(tpl):
+                return {"template": tpl, "how": f"where {other}'s images are"}
+    # 2. Next to the file.
+    progress(0.15)
+    first = next((r for r in rows if _items(r.get(column))), None)
+    if first is None:
+        return {"template": None, "searched": "no row has an image name"}
+    for t in guesses(file_uri, columns):
+        budget["looks"] += 1
+        if _exists(fill(t, _items(first[column])[0], first), profile) and ok(t):
+            return {"template": t, "how": "next to the dataset's file"}
+    # 3. The login's buckets: every bucket's top level at once, then into folders named like the dataset, then into
+    #    folders named for images under those (or at the top), trying <folder>/{id}/{value}.
+    try:
+        s3 = _s3(profile)
+        buckets = [b["Name"] for b in s3.list_buckets().get("Buckets", [])][:300]
+    except Exception:  # noqa: BLE001  no bucket listing: nothing more to search
+        return {"template": None, "searched": "the dataset's own folder (this login can't list buckets)"}
+    value = _items(first[column])[0]
+
+    def children(bucket: str, prefix: str) -> list[str]:
+        budget["lists"] += 1
+        try:
+            out = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/", MaxKeys=500)
+        except Exception:  # noqa: BLE001  a bucket we can't read is skipped
+            return []
+        return [p["Prefix"] for p in out.get("CommonPrefixes", [])]
+
+    def try_at(bucket: str, prefix: str) -> dict | None:
+        for c in ids:
+            t = f"s3://{bucket}/{prefix}{{{c}}}/{{value}}"
+            budget["looks"] += 1
+            if _exists(fill(t, value, first), profile) and ok(t):
+                return {"template": t, "how": f"found in s3://{bucket}/{prefix}"}
+        return None
+
+    def named(p: str, base: str = "") -> bool:
+        return any(w == x for w in names for x in _tokens(p[len(base):]))
+
+    def imagey(p: str, base: str = "") -> bool:
+        return any(w in p[len(base):].lower() for w in IMAGE_WORDS)
+
+    progress(0.25)
+    with cf.ThreadPoolExecutor(16) as pool:
+        tops = dict(zip(buckets, pool.map(lambda b: children(b, ""), buckets)))
+    # Folders to try, best first: image folders inside a folder named like the dataset (or inside a bucket named like
+    # it), then image folders at a bucket's top.
+    roots = [(b, k) for b, kids in tops.items() for k in kids if named(k)]
+    roots += [(b, "") for b in buckets if any(w in b.lower() for w in names)]
+    with cf.ThreadPoolExecutor(16) as pool:
+        under = list(pool.map(lambda bk: (bk, children(bk[0], bk[1])), roots[:40]))
+    folders = [(0, b, k) for (b, root), kids in under for k in kids if imagey(k, root)]
+    folders += [(1, b, k) for b, kids in tops.items() for k in kids if imagey(k)]
+    progress(0.5)
+    tries = [(rank, b, f, c) for rank, b, f in folders[:80] for c in ids]
+
+    def check(t):
+        rank, b, f, c = t
+        tpl = f"s3://{b}/{f}{{{c}}}/{{value}}"
+        return t, tpl, _exists(fill(tpl, value, first), profile)
+
+    with cf.ThreadPoolExecutor(16) as pool:
+        found = [(t, tpl) for t, tpl, hit in pool.map(check, tries) if hit]
+    budget["looks"] += len(tries)
+    for (rank, b, f, c), tpl in sorted(found, key=lambda x: x[0][0]):
+        if ok(tpl):
+            return {"template": tpl, "how": f"found in s3://{b}/{f}"}
+    # Not found: the folders most likely to hold them, for the person to pick (like the registry picker).
+    seen, suggest = set(), []
+    for rank, b, f in folders + [(2, b, k) for (b, k) in roots]:
+        key = f"s3://{b}/{f}"
+        if key not in seen:
+            seen.add(key)
+            suggest.append({"uri": key, "why": "named like this dataset, holds images" if rank == 0 else
+                            "a folder of images" if rank == 1 else "named like this dataset"})
+    return {"template": None, "searched": f"{len(buckets)} buckets, {budget['lists']} folders",
+            "suggestions": suggest[:12], "ids": ids}
+
+
+def from_folder(folder: str, columns: list[str], rows: list[dict], column: str, profile: str | None = None) -> str | None:
+    """A folder the person picked: the layout inside it that holds the rows' images, or None."""
+    f = folder.rstrip("/") + "/"
+    budget = {"lists": 0, "looks": 0}
+    for t in [f"{f}{{{c}}}/{{value}}" for c in _id_cols(columns)] + [f"{f}{{value}}"]:
+        if _confirmed(t, column, rows, profile, budget):
+            return t
+    return None

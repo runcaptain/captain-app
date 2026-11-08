@@ -1030,20 +1030,37 @@ def dataset_media(name: str, v: int | None = None, file: str | None = None):
     cols = [x["name"] if isinstance(x, dict) else x for x in page.get("columns", [])]
     rows = page.get("rows", [])
     saved = MD.templates(c, m.name)
-    t = next((x for x in browse.tables(c, m) if not file or x["file"] == file), None)
     out = []
     for d in MD.detect(cols, rows):
         d["template"] = saved.get(d["column"])
         d["guessed"] = False
-        if d["relative"] and not d["template"] and rows:
-            j = cols.index(d["column"])
-            first = next((r for r in rows if MD._items(r[j])), None)
-            if first is not None:
-                g = MD.guess(t["uri"] if t else None, cols, dict(zip(cols, first)), MD._items(first[j])[0], prof)
-                if g:
-                    d["template"], d["guessed"] = g, True
         out.append(d)
     return {"columns": out}
+
+
+@app.post("/api/datasets/{name:path}/media/locate", dependencies=A)
+def dataset_media_locate(name: str, body: dict):
+    """Find where a column's bare image names live (siblings' addresses, next to the file, the login's buckets), and
+    save it when found. Runs as a job; the result says where, or what was searched."""
+    from . import browse
+    from . import media as MD
+
+    c = ctx()
+    m = c.registry.load("dataset", name, body.get("v"))
+    col, file = str(body.get("column") or ""), body.get("file")
+    prof = _ws_profile(c)
+
+    def go(p):
+        page = browse.rows(c, m, file, 0, 20, None, False, None, None, False, prof)
+        cols = [x["name"] if isinstance(x, dict) else x for x in page.get("columns", [])]
+        rows = [dict(zip(cols, r)) for r in page.get("rows", [])]
+        t = next((x for x in browse.tables(c, m) if not file or x["file"] == file), None)
+        r = MD.locate(c, m.name, t["uri"] if t else None, cols, rows, col, prof, p)
+        if r.get("template"):
+            MD.set_template(c, m.name, col, r["template"])
+        return r
+
+    return {"job": _job(go, f"looking for {m.name}'s pictures")}
 
 
 @app.put("/api/datasets/{name:path}/media", dependencies=A)
@@ -1055,6 +1072,14 @@ def dataset_media_set(name: str, body: dict):
     c = ctx()
     m = c.registry.load("dataset", name, body.get("v"))
     col, template = str(body.get("column") or ""), (body.get("template") or "").strip() or None
+    if body.get("folder") and not template:
+        # A folder picked from the suggestions: find the layout inside it.
+        prof = _ws_profile(c)
+        page = browse.rows(c, m, body.get("file"), 0, 20, None, False, None, None, False, prof)
+        cols = [x["name"] if isinstance(x, dict) else x for x in page.get("columns", [])]
+        template = MD.from_folder(str(body["folder"]), cols, [dict(zip(cols, r)) for r in page.get("rows", [])], col, prof)
+        if not template:
+            raise ValueError(f"No image for the first rows under {body['folder']}, as <folder>/<id>/<name> or <folder>/<name>.")
     if template:
         prof = _ws_profile(c)
         page = browse.rows(c, m, body.get("file"), 0, 20, None, False, None, None, False, prof)

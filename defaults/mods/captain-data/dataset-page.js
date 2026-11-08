@@ -9,7 +9,7 @@
 //   with it, and recent activity (insights.js, GET /api/datasets/{name}/insights).
 // - Quality: per column, the share of empty values, distinct count, min and max, plus freshness (GET /api/profile).
 //   Hidden while the backend has no profile route.
-import { div } from "gpui-kit";
+import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { api, query } from "./kit/cst.js";
 import { ResultGrid } from "./kit/grid.js";
@@ -17,6 +17,7 @@ import { MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { LineageGraph } from "./kit/lineage.js";
 import { int, num } from "./kit/num.js";
+import { icon } from "./kit/icons.js";
 // The Health tab (a queries or judgments set): app-shell's, self-contained in the kit.
 import { EvalHealth } from "./kit/evals.js";
 import { DatasetInsights } from "./insights.js";
@@ -55,6 +56,7 @@ export class DatasetPage {
     this.where = InputState.new({ placeholder: "s3://bucket/images/{pid}/{value}" });
     this.where.on("submit", (_e, cx) => this.saveWhere(cx));
     this.whereNote = null;
+    this.locate = null; // {state: "looking" | "found" | "missing" | "manual", progress, how, suggestions}
     this.health = new EvalHealth(); // the Health tab (kit/evals.js)
     this.insights = new DatasetInsights(host); // the Insights tab (insights.js)
   }
@@ -69,6 +71,7 @@ export class DatasetPage {
     this.file = null;
     this.media = null;
     this.whereNote = null;
+    this.locate = null;
     this.insights?.reset();
   }
 
@@ -158,8 +161,59 @@ export class DatasetPage {
       this.rows?.setMedia(cx, cols);
       const open = (r.data?.columns ?? []).find((m) => m.relative);
       if (open?.template && !this.where.value()) this.where.set_value(open.template);
+      // Bare names with nowhere saved: go and find them.
+      if (open && !open.template) this.startLocate(cx, open, key);
       cx.notify();
     });
+  }
+
+  /** Look for where a column's bare image names live (POST .../media/locate, a job), and use what's found. */
+  startLocate(cx, m, key) {
+    const d = this.host.detail;
+    this.locate = { state: "looking", progress: 0, column: m.column };
+    const sleep = (ms) => new Promise((res) => cx.timer.after(ms, () => res()));
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/datasets/${enc(d.name)}/media/locate`, { body: { column: m.column, v: d.version, file: this.file ?? undefined }, timeout: 30 });
+      if (!r.ok || !r.data?.job) { this.locate = { state: "missing", suggestions: [], column: m.column }; cx.notify(); return; }
+      for (let i = 0; i < 600 && this.rowsFor === key; i++) {
+        const j = await api(`/api/jobs/${encodeURIComponent(r.data.job)}`);
+        if (this.rowsFor !== key) return;
+        if (j.ok && j.data?.status === "done") {
+          const res = j.data.result ?? {};
+          if (res.template) {
+            m.template = res.template;
+            this.where.set_value(res.template);
+            this.locate = { state: "found", how: res.how, column: m.column };
+            this.rows?.setMedia(cx, (this.media.columns ?? []).filter((x) => !x.relative || x.template));
+          } else this.locate = { state: "missing", searched: res.searched, suggestions: res.suggestions ?? [], column: m.column };
+          cx.notify();
+          return;
+        }
+        if (j.ok && j.data?.status === "failed") { this.locate = { state: "missing", suggestions: [], column: m.column }; cx.notify(); return; }
+        if (j.ok) { this.locate.progress = j.data?.progress ?? 0; cx.notify(); }
+        await sleep(600);
+      }
+    });
+  }
+
+  /** A suggested folder picked: the services find the layout inside it and save it. */
+  pickFolder(cx, uri) {
+    const d = this.host.detail;
+    const m = (this.media?.columns ?? []).find((x) => x.relative);
+    if (!m) return;
+    this.whereNote = { text: `Looking in ${uri}...`, tone: "muted" };
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/datasets/${enc(d.name)}/media`, { method: "PUT", body: { column: m.column, folder: uri, v: d.version, file: this.file ?? undefined }, timeout: 60 });
+      if (r.ok) {
+        m.template = r.data.template;
+        this.where.set_value(r.data.template);
+        this.whereNote = null;
+        this.locate = { state: "found", how: `in ${uri}`, column: m.column };
+        this.rows?.setMedia(cx, (this.media.columns ?? []).filter((x) => !x.relative || x.template));
+      } else this.whereNote = { text: String(r.data?.detail ?? r.error ?? "Nothing there."), tone: "fail" };
+      cx.notify();
+    });
+    cx.notify();
   }
 
   /** Save where a column's relative image names live; the services check the first row's image first. */
@@ -173,7 +227,8 @@ export class DatasetPage {
       const r = await api(`/api/datasets/${enc(d.name)}/media`, { method: "PUT", body: { column: m.column, template, v: d.version, file: this.file ?? undefined }, timeout: 60 });
       if (r.ok) {
         m.template = template; m.guessed = false;
-        this.whereNote = { text: "Saved. Pictures show in the grid.", tone: "good" };
+        this.whereNote = null;
+        this.locate = { state: "found", how: "the address you gave", column: m.column };
         this.rows?.setMedia(cx, (this.media.columns ?? []).filter((x) => !x.relative || x.template));
       } else this.whereNote = { text: String(r.data?.detail ?? r.error ?? "Couldn't save it."), tone: "fail" };
       cx.notify();
@@ -181,20 +236,35 @@ export class DatasetPage {
     cx.notify();
   }
 
-  /** A column of bare image names: one line to say where they live, with Captain's guess filled in. */
+  /** Bare image names: Captain looks for them itself, says where it found them, or offers the likeliest folders. */
   whereBar(c) {
-    const m = (this.media?.columns ?? []).find((x) => x.relative && (!x.template || x.guessed));
-    if (!m) return null;
+    const m = (this.media?.columns ?? []).find((x) => x.relative);
+    const L = this.locate;
+    if (!m || !L) return null;
     const tone = { good: c.good, fail: c.fail }[this.whereNote?.tone] ?? c.grey500;
-    return v_flex().id("ds-media-where").flex_none().gap(6).p(10).border_1().border_color(c.blue).bg(c.blueLight)
-      .child(div().text_size(12.5).text_color(c.navy).child(m.guessed
-        ? `${m.column} holds image file names. Captain found them at this address. Keep it to show them as pictures.`
-        : `${m.column} holds image file names like ${m.sample}, without where they live. Say where, and the grid shows them as pictures.`))
+    if (L.state === "looking") return h_flex().id("ds-media-where").flex_none().gap(8).px(10).py(8).items_center().border_1().border_color(c.rule).bg(c.surface2)
+      .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child(`${m.column} holds image file names. Looking for where the pictures are...`))
+      .child(div().text_size(12).font_family(MONO).text_color(c.grey500).child(`${Math.round((L.progress ?? 0) * 100)}%`));
+    if (L.state === "found") return h_flex().id("ds-media-where").flex_none().gap(8).px(10).py(6).items_center().text_size(12)
+      .child(div().flex_1().min_w(0).truncate().text_color(c.grey900).child(`Pictures for ${m.column} from ${m.template} (${L.how}).`))
+      .child(div().id("ds-media-change").flex_none().cursor_pointer().text_color(c.blue).on_click((_e, cx) => { this.locate = { ...L, state: "manual" }; cx.notify(); }).child("Change"));
+    const sug = L.suggestions ?? [];
+    return v_flex().id("ds-media-where").flex_none().gap(8).p(10).border_1().border_color(c.blue).bg(c.blueLight)
+      .child(div().text_size(12.5).text_color(c.navy).child(L.state === "manual"
+        ? `Where ${m.column}'s pictures live.`
+        : `${m.column} holds image file names like ${m.sample}. Captain didn't find the pictures${L.searched ? ` (it looked through ${L.searched})` : ""}.${sug.length ? " These folders might hold them:" : ""}`))
+      .when(sug.length > 0 && L.state !== "manual", (e) => e.child(v_flex().gap(4).children(sug.slice(0, 8).map((x, i) =>
+        h_flex().id(`ds-media-sug-${i}`).gap(8).px(8).py(6).items_center().cursor_pointer().bg(c.surface).border_1().border_color(c.rule)
+          .hover((st) => st.border_color(c.blue))
+          .on_click((_e, cx) => this.pickFolder(cx, x.uri))
+          .child(svg(icon("folder")).size(14).flex_none().text_color(c.grey500))
+          .child(div().flex_1().min_w(0).truncate().text_size(12).font_family(MONO).text_color(c.navy).child(x.uri))
+          .child(div().flex_none().text_size(11.5).text_color(c.grey500).child(x.why))))))
       .child(h_flex().gap(8).items_center()
         .child(div().id("ds-media-input").flex_1().min_w(0).h(28).px(8).flex().items_center().border_1().border_color(c.grey300).bg(c.surface)
           .child(Input.new(this.where).w_full().text_size(12).font_family(MONO).text_color(c.navy)))
-        .child(Button(c, "ds-media-save", m.guessed ? "Keep" : "Show pictures", (_e, cx) => this.saveWhere(cx), { kind: "primary", small: true })))
-      .child(div().text_size(11.5).text_color(tone).child(this.whereNote?.text ?? "{value} is the file name. Any column of the row works too, like {pid}."));
+        .child(Button(c, "ds-media-save", "Show pictures", (_e, cx) => this.saveWhere(cx), { kind: "primary", small: true })))
+      .child(div().text_size(11.5).text_color(tone).child(this.whereNote?.text ?? "Or type the address: {value} is the file name, and any column of the row works too, like {pid}."));
   }
 
   loadProfile(cx) {
