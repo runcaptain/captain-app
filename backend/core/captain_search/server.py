@@ -1148,9 +1148,22 @@ def proposal_review(pid: str, body: dict):
 def proposal_run(pid: str):
     from . import proposals as PR
 
+    from . import live as LV
+
     c = ctx()
-    PR.get(c, pid)
-    return {"job": _job(lambda p: f"ran {PR.run(c, pid, progress=p)['run']}", f"running proposal {pid}")}
+    doc = PR.get(c, pid)
+    lv = LV.start("backtest", doc.get("title") or pid, of=f"proposals/{pid[:10]}", arms=list(doc.get("arms") or []))
+
+    def go(p):
+        try:
+            out = PR.run(c, pid, progress=p, live=lv)
+        except Exception as e:
+            lv.end("failed", error=str(e))
+            raise
+        lv.end("done", ref=out.get("run"), summary=f"Ran the recommendation: {doc.get('title') or pid}")
+        return f"ran {out['run']}"
+
+    return {"job": _job(go, f"running proposal {pid}"), "live": lv.id}
 
 
 @app.get("/api/grading", dependencies=A)
@@ -1490,14 +1503,43 @@ def backtest_run(name: str, body: dict | None = None):
     from . import settings as ST
 
     compute = (body or {}).get("compute") or bt.compute or ST.default_compute(c, "backtest") or "local"
+    from . import live as LV
+
+    # A run here streams to Runs as it goes. One on a compute target reports through its job.
+    lv = LV.start("backtest", name, of=name, arms=list(bt.arms)) if compute == "local" else None
 
     def go(p):
-        r = ops.backtest_launch(c, name, compute, progress=p)
-        return r.get("run") or r
+        try:
+            r = ops.backtest_launch(c, name, compute, progress=p, live=lv)
+        except Exception as e:
+            if lv:
+                lv.end("failed", error=str(e))
+            raise
+        out = r.get("run") or r
+        if lv:
+            lv.end("done", ref=out if isinstance(out, str) else None, summary=f"Finished {name}")
+        return out
 
     jid = _job(go, f"running {name} on {compute}")
     JOBS[jid]["compute"] = compute
-    return {"job": jid}
+    if lv:
+        JOBS[jid]["live"] = lv.id
+    return {"job": jid, "live": lv.id if lv else None}
+
+
+@app.get("/api/live", dependencies=A)
+def live_list(active: bool = False, limit: int = 30):
+    """Live runs on this computer, newest first: backtests, training and anything a team's tools stream."""
+    from . import live as LV
+
+    return LV.listing(limit=min(limit, 200), active=active)
+
+
+@app.get("/api/live/{rid}", dependencies=A)
+def live_read(rid: str, since: int = 0):
+    from . import live as LV
+
+    return LV.read(rid, since=max(0, since))
 
 
 @app.get("/api/jobs/{jid}", dependencies=A)

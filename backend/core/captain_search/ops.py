@@ -21,7 +21,7 @@ from .model.entities import (
     ArmResult, Backtest, BacktestRun, DatasetKind, DatasetVersion, Deployment, Environment, Evidence,
     FileEntry, Guardrail, PipelineVersion, Preregistration, Provenance, ShopperPopulation, Surface, Tier, new_id, utcnow,
 )
-from .sim import SIMULATORS, get_simulator, logs_from_bytes, logs_to_bytes, per_shopper, personas
+from .sim import SIMULATORS, get_simulator, logs_from_bytes, logs_to_bytes, per_shopper, personas, run_cascade
 from .sim import summarize as sim_summary
 from .storage.backend import AlreadyExists, Conflict, NotFound
 from .storage.registry import check_name, dump_yaml, sha256
@@ -421,7 +421,16 @@ def _pin_surface(ctx, sf: dict) -> Surface:
                    guardrails=guards)
 
 
-def backtest_run(ctx, name: str, progress=None) -> BacktestRun:
+SIM_BATCH = 100  # shoppers per batch: arms alternate by batch, so a live run shows the same shopper on each arm
+LIVE_SESSIONS = 2  # shopper sessions per arm and batch sent to the live view
+
+
+def _live_steps(ev: list[dict]) -> list[dict]:
+    return [{k: v for k, v in e.items() if k in ("t", "query", "results", "rank", "product_id", "grade", "price")} for e in ev]
+
+
+def backtest_run(ctx, name: str, progress=None, live=None) -> BacktestRun:
+    """Run a backtest here. `live` (a live.Run) gets its stages, progress, running metrics and sample shoppers."""
     import time as _time
 
     from . import costs as COST
@@ -442,10 +451,28 @@ def backtest_run(ctx, name: str, progress=None) -> BacktestRun:
     pop = ctx.registry.resolve("population", bt.population)[0] if bt.population else None
     people = json.loads(ctx.registry.get_blob(pop.files[0])) if pop else []
     click_map = judgments_map(ctx, pop.click_model_judgments)[1] if pop and pop.click_model_judgments else None
-    arms: list[ArmResult] = []
     perq, pershop = {}, {}
-    steps = len(bt.arms)
+    n_arms = len(bt.arms)
+    sim = get_simulator(pop.simulator, ctx.workspace.name) if pop else None
+    # Captain's simulator draws each shopper from their own seed, so batches change nothing. A team's own simulator
+    # may carry state from one shopper to the next: it gets everyone in one go.
+    size = SIM_BATCH if sim is run_cascade else max(1, len(people))
+    batches = [people[i:i + size] for i in range(0, len(people), size)] if pop else []
+    total_steps = n_arms + len(batches) * n_arms or 1
+    done_steps = 0
+
+    def step(frac_of_step: float = 1.0):
+        f = (done_steps - 1 + frac_of_step) / total_steps if frac_of_step < 1 else done_steps / total_steps
+        if progress:
+            progress(f)
+        if live:
+            live.progress(f, done=done_steps, total=total_steps, unit="steps")
+
+    # 1. Rank every query with every arm, and score the rankings against the judgments.
+    staged = []
     for n, a in enumerate(bt.arms):
+        if live:
+            live.stage(f"Rank {len(qs):,} queries with {a}", n + 1, n_arms + (2 if pop else 1))
         pm, eng, prods, ranks, ms = _rankings(ctx, a, qs)
         pq = M.per_query(ranks, jmap, _custom_metrics(ctx)) if jm else {}
         offline = M.summarize(pq) if jm else {}
@@ -454,14 +481,29 @@ def backtest_run(ctx, name: str, progress=None) -> BacktestRun:
             if weights:
                 tot = sum(weights.get(q, 0.0) for q in pq) or 1.0
                 offline["ndcg@10_tw"] = round(sum(r["ndcg10"] * weights.get(q, 0.0) for q, r in pq.items()) / tot, 4)
+            if live:
+                for k in ("ndcg@10", "p@10", "judged@10"):
+                    if k in offline:
+                        live.metric(k, offline[k], arm=a)
         rank_bytes = ("\n".join(json.dumps({"query_id": k, "ids": v, "ms": round(ms[k], 3)}) for k, v in sorted(ranks.items())) + "\n").encode()
         logs_entries = [ctx.registry.put_blob(rank_bytes, f"rankings/{pm.name}.jsonl")]
-        simulated = {}
-        if pop:
-            pmap = {p["id"]: p for p in (prods or [])}
-            qtext = {q["query_id"]: q["query"] for q in qs}
-            cache: dict = {}
+        staged.append({"arm": a, "pm": pm, "eng": eng, "prods": prods, "ms": ms, "offline": offline, "logs": logs_entries})
+        perq[a] = pq
+        done_steps += 1
+        step()
 
+    # 2. Simulated shoppers: each arm in turn, a batch at a time. A shopper's choices come from their own seed, so
+    #    the logs are the same as simulating each arm in one go.
+    if pop:
+        if live:
+            live.stage(f"Simulate {len(people):,} shoppers on {n_arms} arms", n_arms + 1, n_arms + 2)
+        qtext = {q["query_id"]: q["query"] for q in qs}
+        cache: dict = {}
+        for st in staged:
+            st["pmap"] = {p["id"]: p for p in (st["prods"] or [])}
+            pershop[st["arm"]] = []
+
+        def relevance_for(pmap):
             def relevance(qid, pid):
                 if click_map is not None:
                     return click_map.get(qid, {}).get(pid, 0)
@@ -469,21 +511,40 @@ def backtest_run(ctx, name: str, progress=None) -> BacktestRun:
                 if k not in cache:
                     cache[k] = J.heuristic_grade(qtext[qid], pmap.get(pid, {}))
                 return cache[k]
+            return relevance
 
-            sim = get_simulator(pop.simulator, ctx.workspace.name)
-            logs = sim(people, qs, lambda text: timed_search(eng, text, 50), relevance, pmap,
-                       zipf_s=float(pop.traffic.get("s", 2.0)),
-                       progress=(lambda f, n=n: progress((n + f) / steps)) if progress else None,
-                       weights=weights, exam=pop.personas.get("exam"))
-            simulated = sim_summary(logs)
-            logs_entries.append(ctx.registry.put_blob(logs_to_bytes(logs), f"logs/{pm.name}.jsonl"))
-            pershop[a] = logs
-        perq[a] = pq
-        arms.append(ArmResult(arm=a, offline=offline, simulated=simulated,
-                              judged_at_10=offline.get("judged@10") if jm else None, evidence=offline_ev, logs=logs_entries,
-                              cost=COST.arm_cost(ctx, a, ms, bt.compute or "local")))
-        if progress:
-            progress((n + 1) / steps)
+        for b, batch in enumerate(batches):
+            for st in staged:
+                a = st["arm"]
+                logs = sim(batch, qs, lambda text, eng=st["eng"]: timed_search(eng, text, 50), relevance_for(st["pmap"]), st["pmap"],
+                           zipf_s=float(pop.traffic.get("s", 2.0)), progress=None, weights=weights, exam=pop.personas.get("exam"))
+                pershop[a] += logs
+                done_steps += 1
+                step()
+                if live:
+                    so_far = pershop[a]
+                    seen = len(so_far) or 1
+                    live.metric("conversion", round(sum(1 for x in so_far if x["bought"]) / seen, 4), arm=a, step=len(so_far))
+                    live.metric("ctr", round(sum(1 for x in so_far if x["clicked"]) / seen, 4), arm=a, step=len(so_far))
+                    live.metric("revenue per shopper", round(sum(x["revenue"] for x in so_far) / seen, 3), arm=a, step=len(so_far))
+                    for x in logs[:LIVE_SESSIONS]:
+                        first = next((e for e in x["events"] if e.get("t") == "search"), {})
+                        live.emit("shopper", arm=a, shopper=x["shopper"], device=x.get("device"), query=first.get("query") or qtext.get(x["query_id"]),
+                                  results=first.get("results"), steps=_live_steps(x["events"]), clicked=x["clicked"],
+                                  bought=x["bought"], revenue=x["revenue"])
+
+    arms: list[ArmResult] = []
+    for st in staged:
+        a = st["arm"]
+        simulated = {}
+        if pop:
+            simulated = sim_summary(pershop[a])
+            st["logs"].append(ctx.registry.put_blob(logs_to_bytes(pershop[a]), f"logs/{st['pm'].name}.jsonl"))
+        arms.append(ArmResult(arm=a, offline=st["offline"], simulated=simulated,
+                              judged_at_10=st["offline"].get("judged@10") if jm else None, evidence=offline_ev, logs=st["logs"],
+                              cost=COST.arm_cost(ctx, a, st["ms"], bt.compute or "local")))
+    if live:
+        live.stage("Compare the arms", n_arms + (2 if pop else 1), n_arms + (2 if pop else 1))
     base = bt.arms[0]
     comps = []
     for a in bt.arms[1:]:
@@ -529,7 +590,7 @@ def backtest_run(ctx, name: str, progress=None) -> BacktestRun:
     return ctx.registry.publish(run)
 
 
-def backtest_launch(ctx, name: str, compute: str | None = None, progress=None, dry_run: bool = False) -> dict:
+def backtest_launch(ctx, name: str, compute: str | None = None, progress=None, dry_run: bool = False, live=None) -> dict:
     """Run locally, or submit to the backtest's (or the given) compute target."""
     from . import compute as C
 
@@ -540,7 +601,7 @@ def backtest_launch(ctx, name: str, compute: str | None = None, progress=None, d
     if target["kind"] == "local":
         if dry_run:
             return {"compute": target["name"], "plan": C.plan_backtest(ctx, target, name)}
-        r = backtest_run(ctx, name, progress=progress)
+        r = backtest_run(ctx, name, progress=progress, live=live)
         return {"compute": "local", "run": ref(r)}
     plan, job = C.plan_and_job(ctx, target, ["backtest", "run", name], label=name, backtest=name)
     if dry_run:

@@ -125,7 +125,7 @@ def review(ctx: Context, pid: str, decision: str, note: str = "", agent: str | N
     return _save(ctx, doc, tag)
 
 
-def run(ctx: Context, pid: str, progress=None) -> dict:
+def run(ctx: Context, pid: str, progress=None, live=None) -> dict:
     from . import ops
 
     doc, tag = _load(ctx, pid)
@@ -135,7 +135,7 @@ def run(ctx: Context, pid: str, progress=None) -> dict:
     hyp = f"{doc['hypothesis']} (proposal {pid}{', written by agent ' + doc['agent'] if doc['agent'] else ''})"
     bt = ops.backtest_plan(ctx, name, doc["arms"], doc["queries"], doc["judgments"], doc["population"], hyp,
                            doc["primary"], doc["mde"])
-    r = ops.backtest_run(ctx, name, progress=progress)
+    r = ops.backtest_run(ctx, name, progress=progress, live=live)
     doc, tag = _load(ctx, pid)
     doc["status"], doc["backtest"], doc["run"] = "ran", f"{bt.name}@v{bt.version}", f"{r.name}@v{r.version}"
     prim = next((c for c in r.comparisons if c.get("primary")), None)

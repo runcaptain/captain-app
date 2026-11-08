@@ -2,7 +2,7 @@
 // the palette and onboarding all open these. The CLI is for agents; nothing here shows
 // a command name or a flag.
 import { api, connectionsChanged } from "./kit/cst.js";
-import { exec, home, setShared, openOverlay } from "herdr";
+import { exec, home, setShared, openOverlay, run as runCommand } from "herdr";
 
 const list = async (path, map) => {
   const r = await api(path);
@@ -291,7 +291,13 @@ export const TASKS = [
       } });
       const planned = ok(plan, "");
       if (!planned.ok) return planned;
-      return ok(await api(`/api/backtests/${v.name.trim().split("/").map(encodeURIComponent).join("/")}/run`, { body: {} }), "Started. Follow it in Runs.");
+      const started = await api(`/api/backtests/${v.name.trim().split("/").map(encodeURIComponent).join("/")}/run`, { body: {} });
+      // Watch it as it goes: Runs opens on its live view.
+      if (started.ok && started.data?.live) {
+        setShared("captain.open", { section: "runs", live: started.data.live, at: Date.now() });
+        runCommand("layout.select", { stack: "sections", child: "runs" });
+      }
+      return ok(started, started.data?.live ? "Started. It's open in Runs, live." : "Started. Follow it in Runs.");
     },
   },
   {

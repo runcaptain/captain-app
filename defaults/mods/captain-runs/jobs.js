@@ -73,6 +73,7 @@ export class Jobs {
     cx.spawn(async (cx) => {
       const r = await api(`/api/jobs?refresh=${refresh}&limit=200`, { timeout: 60 });
       if (r.ok) {
+        this.host.starting = false; // the services answered: Runs stops waiting for them
         this.list = Array.isArray(r.data) ? r.data : [];
         this.error = null;
         if (!this.sel && this.list[0]) this.pick(cx, this.list[0].id);

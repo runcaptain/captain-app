@@ -256,7 +256,18 @@ def bt_run(name: str, compute: Optional[str] = typer.Option(None, "--compute")):
         if not S.json:
             typer.echo(f"\r  running {f:.0%}", nl=False, err=True)
     c = ctx()
-    r = _do(ops.backtest_launch, c, name, compute, progress=prog, dry_run=S.dry_run)
+    from .. import live as LV
+
+    bt = c.registry.load("backtest", name)
+    lv = None if S.dry_run or (compute and compute != "local") else LV.start("backtest", name, of=name, arms=list(bt.arms), source="cli")
+    try:
+        r = _do(ops.backtest_launch, c, name, compute, progress=prog, dry_run=S.dry_run, live=lv)
+    except BaseException as e:
+        if lv:
+            lv.end("failed", error=str(e) or "stopped")
+        raise
+    if lv:
+        lv.end("done" if "run" in r else "failed", ref=r.get("run"), summary=f"Finished {name}")
     if "run" in r:
         run = c.registry.load("backtest-run", name)
         return _out(run, "\n" + ops.backtest_report(run, c.registry.load("backtest", name)))
@@ -929,3 +940,4 @@ from . import library  # noqa: E402,F401  data import, folders, model registries
 from . import tables  # noqa: E402,F401  the table browser
 from . import rankings  # noqa: E402,F401  bring your own rankings
 from . import jobs  # noqa: E402,F401  cst job and cst compute setup
+from . import live  # noqa: E402,F401  cst live: runs as they happen

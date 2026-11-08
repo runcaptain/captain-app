@@ -11,6 +11,7 @@ import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
 import { Jobs } from "./jobs.js";
+import { Live } from "./live.js";
 import { metricWords } from "./kit/words.js";
 import { int } from "./kit/num.js";
 
@@ -128,9 +129,16 @@ export default class CaptainRuns extends View {
     cx.timer.every(1000, (cx) => this.pollJob(cx));
     // Compute jobs: their list, and a running one's state and log lines.
     this.jobs = new Jobs(this);
-    // Layout props (a layout, or the real-window check): {tab: "jobs" | "grading" | ...} opens on that tab.
+    // Live runs: what's running now, drawn as it goes (live.js). The tab shows how many are running wherever Runs is.
+    this.live = new Live(this);
+    this.live.count(cx);
+    cx.timer.every(1000, (cx) => { if (this.tab === "live") this.live.tick(cx); });
+    cx.timer.every(4000, (cx) => { if (this.tab === "live") this.live.load(cx); else this.live.count(cx); });
+    cx.timer.every(1000, (cx) => { if (this.tab === "live" && this.live.list === null) this.live.load(cx); }); // until the backend answers
+    // Layout props (a layout, or the real-window check): {tab: "jobs" | "grading" | "live", live?: id} opens on that tab.
     const startTab = layoutProps?.()?.tab;
-    if (startTab === "jobs") { this.tab = "jobs"; this.jobs.load(cx); }
+    if (startTab === "live") { this.tab = "live"; this.live.load(cx, layoutProps?.()?.live ?? null); }
+    else if (startTab === "jobs") { this.tab = "jobs"; this.jobs.load(cx); }
     else if (["workflows", "grading", "replays"].includes(startTab)) { this.tab = startTab; this.load(cx, startTab); }
     cx.timer.every(2000, (cx) => { if (this.tab === "jobs") this.jobs.tick(cx); });
     // Until the backend answers, ask again every 3 s.
@@ -140,6 +148,13 @@ export default class CaptainRuns extends View {
     // Opened by name (palette): shared "captain.open" {section: "runs", backtest | replay, at}.
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
+      if (o?.section === "runs" && o.live && o.at !== this.opened) {
+        this.opened = o.at;
+        this.tab = "live"; this.grader = null;
+        this.live.load(cx, o.live);
+        cx.notify();
+        return;
+      }
       if (o?.section === "runs" && (o.backtest || o.replay) && o.at !== this.opened) {
         this.opened = o.at;
         const [tab, name] = o.replay ? ["replays", o.replay] : ["backtests", o.backtest];
@@ -155,6 +170,7 @@ export default class CaptainRuns extends View {
     watchWorkspace(cx, (cx) => {
       this.data = {}; this.sel = {}; this.detail = {}; this.open = {}; this.grader = null; this.error = null;
       this.jobs = new Jobs(this);
+      this.live = new Live(this);
       this.load(cx, this.tab);
       cx.notify();
     });
@@ -164,6 +180,7 @@ export default class CaptainRuns extends View {
 
   load(cx, tab) {
     if (tab === "jobs") { this.jobs.load(cx); return; }
+    if (tab === "live") { this.live.load(cx); return; }
     const path = { backtests: "/api/backtests", workflows: "/api/workflows", grading: "/api/grading", replays: "/api/replays" }[tab];
     cx.spawn(async (cx) => {
       const r = await api(path);
@@ -223,7 +240,11 @@ export default class CaptainRuns extends View {
     cx.spawn(async (cx) => {
       const r = await api(path, { method: "POST", body: {} });
       if (!r.ok) this.job = { label, status: "failed", message: say(r, "Couldn't start it.") };
-      else this.job.id = r.data?.job;
+      else {
+        this.job.id = r.data?.job;
+        // A run that streams: watch it in Live.
+        if (r.data?.live) { this.tab = "live"; this.grader = null; this.live.load(cx, r.data.live); }
+      }
       cx.notify();
     });
     cx.notify();
@@ -243,6 +264,19 @@ export default class CaptainRuns extends View {
       }
       cx.notify();
     });
+  }
+
+  /** From a finished live run to its result. */
+  openBacktest(cx, name) {
+    this.tab = "backtests";
+    this.load(cx, "backtests");
+    this.pick(cx, "backtests", name);
+    cx.notify();
+  }
+
+  /** A live run ended: what it made shows in its list without a refresh. */
+  onLiveEnded(cx, head) {
+    if (head.kind === "backtest") delete this.data.backtests;
   }
 
   openGrader(cx, name) {
@@ -338,14 +372,16 @@ export default class CaptainRuns extends View {
   }
 
   header(c) {
-    const tabs = [["backtests", "Backtests", "backtest"], ["workflows", "Workflows", "workflow"], ["grading", "Grading", "grade"], ["replays", "Replays", "replay"], ["jobs", "Jobs", "compute"]];
+    const tabs = [["live", "Live", "running"], ["backtests", "Backtests", "backtest"], ["workflows", "Workflows", "workflow"], ["grading", "Grading", "grade"], ["replays", "Replays", "replay"], ["jobs", "Jobs", "compute"]];
     return h_flex().h(52).flex_none().px(20).gap(14).items_center().border_b(1).border_color(c.rule)
       .child(div().flex_none().text_size(18).font_semibold().child("Runs"))
       .child(h_flex().flex_none().border_1().border_color(c.grey300).children(tabs.map(([id, label, icon]) =>
         h_flex().id(`tab-${id}`).h(28).px(12).gap(6).items_center().cursor_pointer().border_r(1).border_color(c.grey300).text_size(12.5)
           .bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
-          .on_click((_e, cx) => { this.tab = id; this.grader = null; if (id === "jobs") { if (this.jobs.list === null) this.jobs.load(cx); } else if (!this.data[id]) this.load(cx, id); cx.notify(); })
-          .child(this.icon(icon, 13)).child(div().child(label)))))
+          .on_click((_e, cx) => { this.tab = id; this.grader = null; if (id === "jobs") { if (this.jobs.list === null) this.jobs.load(cx); } else if (id === "live") this.live.load(cx); else if (!this.data[id]) this.load(cx, id); cx.notify(); })
+          .child(this.icon(icon, 13)).child(div().child(label))
+          .when(id === "live" && this.live.active > 0, (e) => e.child(div().px(5).h(16).flex().items_center().text_size(10.5).font_family(MONO)
+            .bg(this.tab === id ? c.surface : c.blue).text_color(this.tab === id ? c.navy : c.surface).child(String(this.live.active)))))))
       .child(div().flex_1())
       .when(this.tab === "backtests", (e) => e.child(Button(c, "new-backtest", "Run a backtest", () => openForm("backtest"), { kind: "primary", small: true })))
       .when(this.tab === "grading", (e) => e.child(Button(c, "new-grading", "Start grading", () => openForm("grading"), { kind: "primary", small: true })))
@@ -419,6 +455,8 @@ export default class CaptainRuns extends View {
         .child(div().min_w(0).truncate().text_size(15).font_medium().font_family(MONO).child(name))
         .when(!!b.mode, (e) => e.child(this.badge(c, b.mode === "historic" ? "historic replay" : b.mode)))
         .child(div().flex_1())
+        .when(!!this.live.running.find((x) => x.of === name), (e) => e.child(Button(c, "bt-watch", "Watch it live", (_e, cx) => {
+          this.tab = "live"; this.live.load(cx, this.live.running.find((x) => x.of === name).id); cx.notify(); }, { small: true })))
         .when(b.mode !== "imported", (e) => e.child(this.button(c, "run-backtest", running ? "Running" : "Run backtest", "run", (_e, cx) => this.start(cx, "Backtest", `/api/backtests/${enc(name)}/run`, (cx) => this.pick(cx, "backtests", name)), true, !!running))))
       .child(div().text_size(13).font_medium().child(b.preregistration?.hypothesis ?? ""))
       .child(h_flex().gap(8)
@@ -675,7 +713,7 @@ export default class CaptainRuns extends View {
     const c = palette(isDark(theme()));
     const w = this.width;
     // Never blank: the header always shows, and the body says what is happening.
-    const body = this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true)) : this.tab === "backtests" ? this.backtests(c, w) : this.tab === "workflows" ? this.workflows(c, w) : this.tab === "grading" ? this.grading(c) : this.tab === "jobs" ? this.jobs.render(c, w) : this.replays(c, w);
+    const body = this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true)) : this.tab === "backtests" ? this.backtests(c, w) : this.tab === "workflows" ? this.workflows(c, w) : this.tab === "grading" ? this.grading(c) : this.tab === "jobs" ? this.jobs.render(c, w) : this.tab === "live" ? this.live.render(c, w) : this.replays(c, w);
     return v_flex().id("root").size_full().bg(c.surface).font_family(FONT).text_color(c.navy)
       .on_size_change((size, cx) => { this.width = size.width; cx.notify(); })
       .child(this.header(c))

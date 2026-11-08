@@ -859,3 +859,20 @@ CLI: `cst mlflow use --uri URL | --databricks CONN`, `cst mlflow experiments|run
   - The login needs `cloudformation:CreateStack` and the S3 bucket-configuration permissions.
 
 A registry with an `INDEX.md` and no models yet attaches without error. Before this change it was refused.
+
+## Live runs (Runs, Live tab)
+
+A run streams events while it goes, and Runs draws them: stages, progress and time left, each metric per arm with
+its line, simulated shoppers side by side, and the log. Captain's backtests stream (from the app, from
+`cst backtest run`, and when a recommendation runs). Any tool can too:
+
+- `cst live pipe --title "ranker v7" --kind training -- python train.py`: a printed JSON object with a `"type"` is
+  an event, every other line is a log line;
+- `cst live start --title ... --kind ...` prints an id, then `cst live emit <id> metric -d '{"name": "loss", "value": 0.3, "step": 100}'`
+  and `cst live end <id>`;
+- from Python, `captain_search.live.start(kind, title)` returns a run with `stage`, `progress`, `metric`, `log`,
+  `emit` and `end`.
+
+Events: `stage {name, index, of}`, `progress {fraction, done, total, unit}`, `metric {name, value, arm, step}`,
+`shopper {arm, shopper, query, results, steps, clicked, bought, revenue}`, `log {text}`, `result {ref, summary}`.
+Routes: `GET /api/live?active=&limit=` and `GET /api/live/{id}?since=n` (events from position n, and `next`).

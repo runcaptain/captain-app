@@ -20,7 +20,7 @@ EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
     captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:samplefiles" "captain-data:samplerow" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
-    captain-runs) EXTRA+=("captain-runs:jobs") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
+    captain-runs) EXTRA+=("captain-runs:jobs" "captain-runs:live") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
 done
@@ -99,6 +99,8 @@ CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-multifile.py >/dev/null
 # there: lineage draws from the link alone.
 CST_HOME=$WORK/cst "$CSTCMD" mlflow use --uri http://127.0.0.1:9 >/dev/null 2>&1 || true
 CST_HOME=$WORK/cst "$CSTCMD" mlflow link ranker 3 demo-tuned >/dev/null 2>&1 || true
+# A backtest run from the CLI, so Live has a finished run to draw (stages, both arms, shoppers, lines).
+[[ " ${MODS[*]} " == *" captain-runs "* ]] && { env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" backtest run demo-tuned-vs-bm25 >/dev/null 2>&1 || true; }
 # hello-world from another query, so the import view shows the name clash.
 CST_HOME=$WORK/cst "$CSTCMD" sql demo-store -e "select 1 as a" --save hello-world >/dev/null 2>&1 || true
 # The demo store's tables, read, and one finished local job, for the Tables and Jobs views.
@@ -184,6 +186,7 @@ props_of() {
     captain-data:flat) echo '{"flatAll": true}' ;;
     captain-runs:grading) echo '{"tab": "grading"}' ;;
     captain-runs:jobs) echo '{"tab": "jobs"}' ;;
+    captain-runs:live) echo '{"tab": "live"}' ;;
     captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;
     captain-data:import) echo '{"importWith": {"conn": "demo-store", "sql": "select * from products limit 1000", "name": "Hello World"}}' ;;
     captain-data:import-table) echo '{"importWith": {"conn": "demo-store", "table": "products", "name": "Products"}}' ;;
