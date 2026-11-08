@@ -13,13 +13,14 @@ from .. import replay as RP
 from .main import S, app, ctx, emit
 from .more import _do, _out
 
-propose_app = typer.Typer(no_args_is_help=True, help="Experiment proposals: an agent or a person proposes, a person approves")
+propose_app = typer.Typer(no_args_is_help=True, help="Recommended experiments: an agent or a person recommends, a person approves")
 grade_app = typer.Typer(no_args_is_help=True, help="Human grading queues that publish HUMAN_GRADED judgments")
 label_app = typer.Typer(no_args_is_help=True, help="Labels defined as versioned SQL over event logs")
 replay_app = typer.Typer(no_args_is_help=True, help="Replay a policy over randomized-holdout logs")
 bench_app = typer.Typer(no_args_is_help=True, help="Measured scale benchmarks")
-for n, t in [("propose", propose_app), ("grade", grade_app), ("label", label_app), ("replay", replay_app), ("bench", bench_app)]:
+for n, t in [("recommend", propose_app), ("grade", grade_app), ("label", label_app), ("replay", replay_app), ("bench", bench_app)]:
     app.add_typer(t, name=n)
+app.add_typer(propose_app, name="propose", hidden=True)  # the older name, kept for scripts
 
 
 # ---- proposals ----------------------------------------------------------------------------
@@ -33,10 +34,10 @@ def prop_new(title: str = typer.Option(..., "--title"), hypothesis: str = typer.
              primary: str = typer.Option("ndcg@10", "--primary"), mde: float = typer.Option(0.003, "--mde"),
              rationale: str = typer.Option("", "--rationale", help="why this is worth running"),
              agent: Optional[str] = typer.Option(None, "--agent", help="the agent writing this (default: $CST_AGENT)")):
-    """Propose an experiment. It waits for a person to approve it before anything runs."""
+    """Recommend an experiment. It shows in the app as a recommendation and waits for a person to approve it."""
     d = _do(PR.create, ctx(), title, hypothesis, arms.split(","), queries, judgments, population, primary, mde, rationale, agent,
             dry_run=S.dry_run)
-    emit(d, f"{'would propose' if S.dry_run else 'proposed'} {d['id']}: {d['title']}" + (f" (agent {d['agent']})" if d["agent"] else ""))
+    emit(d, f"{'would recommend' if S.dry_run else 'recommended'} {d['id']}: {d['title']}" + (f" (agent {d['agent']})" if d["agent"] else ""))
 
 
 @propose_app.command("list")

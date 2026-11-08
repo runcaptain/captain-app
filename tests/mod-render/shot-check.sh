@@ -14,7 +14,7 @@ MODS=("$@")
 if [[ ${#MODS[@]} -eq 0 ]]; then
   for m in captain-data captain-runs captain-compare; do [[ -d defaults/mods/$m ]] && MODS+=("$m"); done
 fi
-block_of() { case "$1" in captain-project) echo project ;; captain-data) echo data ;; captain-runs) echo runs ;; captain-compare) echo comparisons ;; *) echo "" ;; esac; }
+block_of() { case "$1" in captain-project) echo project ;; captain-data) echo data ;; captain-runs) echo runs ;; captain-compare) echo comparisons ;; captain-investigations) echo investigations ;; *) echo "" ;; esac; }
 # Extra views after the plain ones (the two that open the import wizard last, so it covers nothing after them): a query side by side (props the mods read at init).
 EXTRA=()
 for m in "${MODS[@]}"; do

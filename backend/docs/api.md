@@ -424,7 +424,7 @@ An agent or a person proposes, and a person approves before anything runs. Agent
 | POST | `/api/proposals/{id}/run` | `{job}`. Plans and runs the backtest. Approved only |
 
 Status: proposed, then approved or rejected, then ran. A live promote of a pipeline introduced by an agent
-proposal adds the gate `human_approval`. CLI: `cst propose new|list|show|approve|reject|run`.
+proposal adds the gate `human_approval`. CLI: `cst recommend new|list|show|approve|reject|run` (`cst propose` still works). The app lists them as recommendations, with the agent's icon. Without `--agent` or `CST_AGENT`, the CLI recognises Claude Code, Codex and Cursor from the shell they run it in. `cst serve` never does: requests from the app are a person's.
 
 ## Human grading
 

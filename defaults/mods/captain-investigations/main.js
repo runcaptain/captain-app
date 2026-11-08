@@ -5,13 +5,14 @@
 // decision, and Copy prompt (GET /prompt, then the clipboard).
 // Agent turn, job and investigation are separate states: each shows from its
 // own field, never inferred from another.
-import { div } from "gpui-kit";
+import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, openOverlay, notify, run, spaces, focused, shared, setShared, exec, knownAgents } from "herdr";
 import { api, query, watchWorkspace, watchScope, watchRecords } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
 import { View } from "gpui-kit";
+import { icon } from "./kit/icons.js";
 
 const STATES = [["", "All"], ["draft", "Draft"], ["running", "Running"], ["ready_for_review", "Ready for review"], ["decided", "Decided"]];
 const TABS = [["overview", "Hypothesis"], ["evidence", "Evidence"], ["signals", "Signals"], ["runs", "Runs"], ["decision", "Decision"]];
@@ -29,6 +30,20 @@ function when(t) {
   return d.toISOString().slice(0, 10);
 }
 const outcome = (d) => (d ? words(d.outcome ?? d.decision ?? "decided") : null);
+
+// The coding agents Captain recognises, by the name `cst` records (proposals.agent_name), with their marks.
+// One-color glyphs: Claude in its orange, Codex (its mark without the tile) and Cursor in the text color.
+const AGENTS = { claude: ["Claude Code", "icons/claude.svg", "#D97757"], "claude-code": ["Claude Code", "icons/claude.svg", "#D97757"],
+  codex: ["Codex", "icons/captain-agent-codex.svg"], cursor: ["Cursor", "icons/cursor.svg"], "cursor-agent": ["Cursor", "icons/cursor.svg"] };
+const agentKey = (name) => String(name ?? "").toLowerCase().replace(/^the agent /, "");
+const agentLabel = (name) => AGENTS[agentKey(name)]?.[0] ?? `the agent ${name}`;
+/** The agent's icon beside a recommendation: its logo when known, a bot glyph for other agents, a person otherwise. */
+function agentMark(c, name) {
+  const known = AGENTS[agentKey(name)];
+  const box = div().size(28).flex_none().flex().items_center().justify_center().border_1().border_color(c.rule).bg(c.surface2);
+  if (known) return box.child(svg(known[1]).size(18).text_color(known[2] ?? c.navy));
+  return box.child(svg(icon(name ? "bot" : "user")).size(15).text_color(c.grey500));
+}
 
 export default class CaptainInvestigations extends View {
   init(_props, cx) {
@@ -138,18 +153,20 @@ export default class CaptainInvestigations extends View {
     });
   }
 
-  /** Proposed experiments, each with what it tests and who proposed it, and Approve or Reject. */
+  /** Recommended experiments (`cst recommend` from an agent or a person), each with what it tests, who recommended
+   *  it with their agent's icon, and Approve or Reject. */
   toReview(c) {
     const ps = this.proposals ?? [];
     if (!ps.length) return null;
     return v_flex().id("inv-proposals").gap(8).p(14).border_1().border_color(c.blue).bg(c.blueLight)
-      .child(div().text_size(13).font_semibold().text_color(c.navy).child(`${ps.length} proposed ${ps.length === 1 ? "experiment" : "experiments"} to review`))
-      .child(div().text_size(12).text_color(c.grey900).child("Nothing runs until a person approves it. Agents can propose, but only a person can approve."))
+      .child(div().text_size(13).font_semibold().text_color(c.navy).child(`${ps.length} ${ps.length === 1 ? "recommendation" : "recommendations"} to review`))
+      .child(div().text_size(12).text_color(c.grey900).child("Agents recommend experiments from the cst CLI. Nothing runs until a person approves it."))
       .children(ps.slice(0, 5).map((p) => h_flex().id(`inv-prop-${p.id}`).gap(10).items_center().p(10).bg(c.surface).border_1().border_color(c.rule)
+        .child(agentMark(c, p.agent))
         .child(v_flex().flex_1().min_w(0).gap(2)
           .child(div().text_size(13).font_medium().text_color(c.navy).child(p.title ?? p.id))
           .child(div().text_size(12).text_color(c.grey900).child(p.hypothesis ?? ""))
-          .child(div().text_size(11.5).text_color(c.grey500).child(`Proposed by ${p.agent ? `the agent ${p.agent}` : p.author ?? "someone"}${(p.arms ?? []).length ? `: ${[].concat(p.arms).map((a) => a.pipeline ?? a).join(" vs ")}` : ""}`)))
+          .child(div().text_size(11.5).text_color(c.grey500).child(`Recommended by ${p.agent ? agentLabel(p.agent) : p.author ?? "someone"}${(p.arms ?? []).length ? `: ${[].concat(p.arms).map((a) => a.pipeline ?? a).join(" vs ")}` : ""}`)))
         .child(Button(c, `inv-approve-${p.id}`, "Approve", (_e, cx) => this.review(cx, p, "approved"), { kind: "primary", small: true, disabled: this.reviewing === p.id }))
         .child(Button(c, `inv-reject-${p.id}`, "Reject", (_e, cx) => this.review(cx, p, "rejected"), { small: true, disabled: this.reviewing === p.id }))));
   }

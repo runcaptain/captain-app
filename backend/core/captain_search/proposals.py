@@ -5,7 +5,9 @@ keeping validation. A proposal records the hypothesis, the arms to compare and t
 who wrote it, and whether an agent wrote it. Nothing runs until a person approves it.
 
 Status: proposed, then approved or rejected, then ran (a backtest plan and run exist for it).
-Agent sessions mark themselves with CST_AGENT=<name> (or --agent). An agent can propose, but it cannot
+Agent sessions mark themselves with CST_AGENT=<name> (or --agent). Without either, the CLI recognises the coding
+agent it runs under: Claude Code ("claude"), Codex ("codex") or Cursor ("cursor"). The app calls these
+recommendations and shows the agent's icon beside each. An agent can propose, but it cannot
 approve or reject, and it cannot approve its own work under a person's name: approving needs a session
 without CST_AGENT. A live promote of a pipeline that came from an agent proposal needs that approval.
 
@@ -34,8 +36,22 @@ def _key(pid: str) -> str:
     return f"proposals/{pid}.yaml"
 
 
+# The server turns this off: the app's own requests come from a person, even if the app was started from an
+# agent's terminal.
+DETECT_AGENT = True
+# Environment variables each coding agent sets in the shells it runs commands in.
+_AGENT_ENV = (("claude", ("CLAUDECODE",)), ("codex", ("CODEX_SANDBOX", "CODEX_THREAD_ID", "CODEX_SANDBOX_NETWORK_DISABLED")),
+              ("cursor", ("CURSOR_AGENT",)))
+
+
 def agent_name(explicit: str | None = None) -> str | None:
-    return explicit or os.environ.get("CST_AGENT") or None
+    if explicit or os.environ.get("CST_AGENT"):
+        return explicit or os.environ["CST_AGENT"]
+    if DETECT_AGENT:
+        for name, keys in _AGENT_ENV:
+            if any(os.environ.get(k) for k in keys):
+                return name
+    return None
 
 
 def _load(ctx: Context, pid: str):

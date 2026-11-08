@@ -423,7 +423,8 @@ def prompt(ctx: Context, iid: str, ask: str = "investigate", base_url: str | Non
         "Record your work on the investigation: `cst investigate evidence`, `cst signal new`, `cst investigate revise`, "
         "`cst investigate run`. Save definitions as code (labels: `cst label define`).",
         f"Limits: agent runs {'allowed' if pol['agent_runs'] else 'NOT allowed'}, up to {pol['max_queries']:,} queries, "
-        f"{pol['max_runs_per_day']} runs a day, compute {', '.join(pol['compute'])}. Set CST_AGENT=<your name> so your work is labelled.",
+        f"{pol['max_runs_per_day']} runs a day, compute {', '.join(pol['compute'])}. Captain labels your work as yours (Claude Code, Codex and Cursor are recognised; anything else, set CST_AGENT=<your name>). "
+        "Recommend an experiment for a person to approve with `cst recommend new --title ... --hypothesis ... --arms baseline@v1,candidate@v1 --queries ...`.",
         "Credentials: use the workspace's configured profiles and keychain secrets by name. Never print or copy secret values.",
         "Report limitations and the next experiment. Keep offline evidence separate from online or business impact. "
         "A person records the decision.",

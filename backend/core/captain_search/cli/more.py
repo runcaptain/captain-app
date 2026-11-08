@@ -583,8 +583,10 @@ def serve(host: str = typer.Option("127.0.0.1", "--host"), port: int = typer.Opt
           token: Optional[str] = typer.Option(None, "--token"),
           ui: Optional[str] = typer.Option(None, "--ui", help="folder of the built app screens to serve at / (default: app/dist or $CST_UI_DIR)")):
     """Run the daemon the desktop app talks to. Prints {port, token, pid, ui} on the first line."""
+    from .. import proposals
     from ..server import serve as run
 
+    proposals.DETECT_AGENT = False  # the app's requests come from a person, even if the app started in an agent's terminal
     run(host, port, token, ui)
 
 
