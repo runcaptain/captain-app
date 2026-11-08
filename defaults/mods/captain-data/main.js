@@ -329,7 +329,7 @@ export default class CaptainData extends View {
         .child("Experiments read four kinds of data: your catalog, the queries people search, judgments of what is relevant, and logs of what shoppers did. Import a file, save a SQL query, or start from the demo store."))
       .child(h_flex().gap(8)
         .child(Button(c, "first-import", "Import a dataset", () => openImport(), { kind: "primary" }))
-        .child(Button(c, "first-demo", "Try the demo store", () => openForm("demo"))));
+        .child(Button(c, "first-demo", "Load Sample North Pole", () => openForm("demo"))));
   }
 
   /** The plain failure panel (sentence, Retry, Copy details), for the library to show. */

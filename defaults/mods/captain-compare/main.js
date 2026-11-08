@@ -615,7 +615,7 @@ export default class CaptainCompare extends View {
           .child("A comparison shows whether one version of your search really beats another: the difference, how sure Captain is, and query by query why. Run a backtest to get one."))
         .child(h_flex().gap(8)
           .child(Button(c, "first-backtest", "Run a backtest", () => openForm("backtest"), { kind: "primary" }))
-          .child(Button(c, "first-demo", "Try the demo store", () => openForm("demo"))))
+          .child(Button(c, "first-demo", "Load Sample North Pole", () => openForm("demo"))))
         : v_flex().flex_1().child(Skeleton(c, 8)))
       : !r ? v_flex().flex_1().child(Skeleton(c, 8))
       : r.error ? v_flex().flex_1().p(24).child(v_flex().gap(10).p(14).bg(c.failLight).border_1().border_color(c.fail)

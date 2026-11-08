@@ -1,0 +1,4298 @@
+{
+  "schema_version": 1,
+  "name": "Sample North Pole",
+  "notice": "Synthetic demo data. Original sample names and descriptions; prices, stock and specifications are invented, not verified commercial offers. Judgments are manually curated illustrations, not measured search results. Unlisted products are unjudged. No clicks, conversions, or experiment performance are supplied.",
+  "catalogs": {
+    "gift": [
+      {
+        "id": "np-gift-blocks",
+        "catalog": "Gift Catalog",
+        "name": "Harbor Wooden Building Blocks",
+        "title": "Harbor Wooden Building Blocks",
+        "description": "Sixty plain wooden blocks for towers, bridges, and the occasional structurally optimistic loading dock.",
+        "category": "Toys",
+        "price": 24.0,
+        "currency": "USD",
+        "stock_quantity": 36,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 3,
+          "pieces": 60,
+          "material": "beech",
+          "weight_g": 850
+        },
+        "tags": [
+          "building blocks",
+          "construction toy",
+          "screen free"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-magnetic-tiles",
+        "catalog": "Gift Catalog",
+        "name": "Windowbox Magnetic Tiles",
+        "title": "Windowbox Magnetic Tiles",
+        "description": "Translucent squares and triangles connect along enclosed magnetic edges for flat patterns or small buildings.",
+        "category": "Toys",
+        "price": 49.0,
+        "currency": "USD",
+        "stock_quantity": 18,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 3,
+          "pieces": 48,
+          "material": "ABS plastic",
+          "weight_g": 1100
+        },
+        "tags": [
+          "magnetic building tiles",
+          "construction toy",
+          "creative play"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-railway",
+        "catalog": "Gift Catalog",
+        "name": "Branch Line Wooden Railway",
+        "title": "Branch Line Wooden Railway",
+        "description": "An oval track with a siding, freight engine, and three wagons; compatible with common 40 mm wooden railway track.",
+        "category": "Toys",
+        "price": 64.0,
+        "currency": "USD",
+        "stock_quantity": 12,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 3,
+          "pieces": 36,
+          "track_gauge_mm": 40,
+          "material": "wood"
+        },
+        "tags": [
+          "train set",
+          "railroad",
+          "freight"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-marbles",
+        "catalog": "Gift Catalog",
+        "name": "Switchyard Marble Run",
+        "title": "Switchyard Marble Run",
+        "description": "Gravity-fed chutes and supports let builders experiment with slopes and junctions; includes a tray to contain the evidence.",
+        "category": "Toys",
+        "price": 38.0,
+        "currency": "USD",
+        "stock_quantity": 0,
+        "in_stock": false,
+        "attributes": {
+          "age_min_years": 6,
+          "pieces": 72,
+          "material": "plastic"
+        },
+        "tags": [
+          "marble track",
+          "STEM",
+          "construction"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-kite",
+        "catalog": "Gift Catalog",
+        "name": "Crosswind Delta Kite",
+        "title": "Crosswind Delta Kite",
+        "description": "A compact delta kite with a removable fiberglass frame and a simple line winder for open-field afternoons.",
+        "category": "Toys",
+        "price": 19.0,
+        "currency": "USD",
+        "stock_quantity": 27,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 8,
+          "wingspan_cm": 110,
+          "material": "ripstop polyester",
+          "weight_g": 180
+        },
+        "tags": [
+          "kite",
+          "outdoor toy",
+          "wind"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-puzzle",
+        "catalog": "Gift Catalog",
+        "name": "Harbor Crane Floor Puzzle",
+        "title": "Harbor Crane Floor Puzzle",
+        "description": "Large cardboard pieces form a busy working harbor with cranes, cargo bikes, and a tug waiting patiently.",
+        "category": "Toys",
+        "price": 16.0,
+        "currency": "USD",
+        "stock_quantity": 42,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 4,
+          "pieces": 48,
+          "finished_cm": [
+            60,
+            40
+          ]
+        },
+        "tags": [
+          "jigsaw",
+          "puzzle",
+          "large pieces"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-microscope",
+        "catalog": "Gift Catalog",
+        "name": "Backyard Pocket Microscope",
+        "title": "Backyard Pocket Microscope",
+        "description": "A small illuminated microscope for examining leaves, fabric, and whatever was stuck to a mitten.",
+        "category": "Toys",
+        "price": 29.0,
+        "currency": "USD",
+        "stock_quantity": 14,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 8,
+          "magnification": "60–120x",
+          "battery_type": "1 AA",
+          "batteries_included": false,
+          "weight_g": 90
+        },
+        "tags": [
+          "science kit",
+          "magnifier",
+          "STEM"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-field-book",
+        "catalog": "Gift Catalog",
+        "name": "A Field Guide to Small Adventures",
+        "title": "A Field Guide to Small Adventures",
+        "description": "Original sample nonfiction title with short walks, observation prompts, and space for notes about ordinary outdoor discoveries.",
+        "category": "Books",
+        "price": 18.0,
+        "currency": "USD",
+        "stock_quantity": 33,
+        "in_stock": true,
+        "attributes": {
+          "format": "paperback",
+          "pages": 144,
+          "age_min_years": 8
+        },
+        "tags": [
+          "nature book",
+          "field guide",
+          "outdoors"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-cookbook",
+        "catalog": "Gift Catalog",
+        "name": "One Pan After the Shift",
+        "title": "One Pan After the Shift",
+        "description": "An original sample cookbook covering practical tray dinners, small-batch bread, and meals that tolerate an interrupted evening.",
+        "category": "Books",
+        "price": 23.0,
+        "currency": "USD",
+        "stock_quantity": 21,
+        "in_stock": true,
+        "attributes": {
+          "format": "hardback",
+          "pages": 192
+        },
+        "tags": [
+          "cookbook",
+          "cooking",
+          "weeknight meals"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-bike-book",
+        "catalog": "Gift Catalog",
+        "name": "The Everyday Bicycle Bench",
+        "title": "The Everyday Bicycle Bench",
+        "description": "An original sample repair handbook explaining tire changes, cable adjustment, and routine checks on conventional bicycles.",
+        "category": "Books",
+        "price": 22.0,
+        "currency": "USD",
+        "stock_quantity": 19,
+        "in_stock": true,
+        "attributes": {
+          "format": "paperback",
+          "pages": 176
+        },
+        "tags": [
+          "cycling",
+          "bike repair",
+          "manual"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-novel",
+        "catalog": "Gift Catalog",
+        "name": "The Last Parcel on Harbor Street",
+        "title": "The Last Parcel on Harbor Street",
+        "description": "An original sample mystery about a misplaced delivery ledger and a night dispatcher with excellent filing habits.",
+        "category": "Books",
+        "price": 17.0,
+        "currency": "USD",
+        "stock_quantity": 26,
+        "in_stock": true,
+        "attributes": {
+          "format": "paperback",
+          "pages": 288,
+          "genre": "mystery"
+        },
+        "tags": [
+          "fiction",
+          "mystery",
+          "novel"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-sketch-book",
+        "catalog": "Gift Catalog",
+        "name": "Learning to See the Everyday",
+        "title": "Learning to See the Everyday",
+        "description": "An original sample drawing guide with exercises in proportion, light, and sketching objects already on the kitchen table.",
+        "category": "Books",
+        "price": 21.0,
+        "currency": "USD",
+        "stock_quantity": 15,
+        "in_stock": true,
+        "attributes": {
+          "format": "paperback",
+          "pages": 160
+        },
+        "tags": [
+          "drawing",
+          "art instruction",
+          "sketching"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-atlas",
+        "catalog": "Gift Catalog",
+        "name": "Quiet Places Night Sky Atlas",
+        "title": "Quiet Places Night Sky Atlas",
+        "description": "An original sample spiral-bound guide to seasonal constellations with plain-language observing notes and red-light-friendly charts.",
+        "category": "Books",
+        "price": 34.0,
+        "currency": "USD",
+        "stock_quantity": 9,
+        "in_stock": true,
+        "attributes": {
+          "format": "spiral-bound",
+          "pages": 96
+        },
+        "tags": [
+          "astronomy",
+          "star charts",
+          "reference"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-poetry",
+        "catalog": "Gift Catalog",
+        "name": "Short Poems for Long Evenings",
+        "title": "Short Poems for Long Evenings",
+        "description": "An original sample collection of brief poems about work, weather, and the kettle taking its time.",
+        "category": "Books",
+        "price": 14.0,
+        "currency": "USD",
+        "stock_quantity": 40,
+        "in_stock": true,
+        "attributes": {
+          "format": "paperback",
+          "pages": 112
+        },
+        "tags": [
+          "poetry",
+          "reading",
+          "small gift"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-route-game",
+        "catalog": "Gift Catalog",
+        "name": "Route Planner Board Game",
+        "title": "Route Planner Board Game",
+        "description": "Players build delivery routes across a shared city map while balancing limited vans and awkwardly timed orders.",
+        "category": "Board games",
+        "price": 35.0,
+        "currency": "USD",
+        "stock_quantity": 24,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 10,
+          "players_min": 2,
+          "players_max": 4,
+          "play_minutes": 45
+        },
+        "tags": [
+          "strategy game",
+          "logistics",
+          "boardgame"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-cards",
+        "catalog": "Gift Catalog",
+        "name": "After Supper Card Deck",
+        "title": "After Supper Card Deck",
+        "description": "A standard deck with clear indices and a matte finish, suitable for familiar card games without a rules tutorial.",
+        "category": "Board games",
+        "price": 9.0,
+        "currency": "USD",
+        "stock_quantity": 73,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 6,
+          "cards": 54,
+          "material": "coated paper"
+        },
+        "tags": [
+          "playing cards",
+          "pocket game",
+          "stocking stuffer"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-chess",
+        "catalog": "Gift Catalog",
+        "name": "Foldaway Travel Chess",
+        "title": "Foldaway Travel Chess",
+        "description": "Magnetic pieces stay put on a folding board small enough for a train table; the queen still requires supervision.",
+        "category": "Board games",
+        "price": 24.0,
+        "currency": "USD",
+        "stock_quantity": 18,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 7,
+          "players_min": 2,
+          "players_max": 2,
+          "board_cm": [
+            20,
+            20
+          ],
+          "weight_g": 310
+        },
+        "tags": [
+          "chess",
+          "travel game",
+          "magnetic"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-co-op",
+        "catalog": "Gift Catalog",
+        "name": "Common Ground Cooperative Game",
+        "title": "Common Ground Cooperative Game",
+        "description": "A cooperative tile game about restoring a community garden before the season ends, with no player elimination.",
+        "category": "Board games",
+        "price": 42.0,
+        "currency": "USD",
+        "stock_quantity": 16,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 8,
+          "players_min": 1,
+          "players_max": 4,
+          "play_minutes": 35
+        },
+        "tags": [
+          "cooperative game",
+          "family game",
+          "tiles"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-word-game",
+        "catalog": "Gift Catalog",
+        "name": "Word Ledger Tile Game",
+        "title": "Word Ledger Tile Game",
+        "description": "Arrange letter tiles into intersecting words in a compact game that rewards vocabulary and economical use of space.",
+        "category": "Board games",
+        "price": 28.0,
+        "currency": "USD",
+        "stock_quantity": 22,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 10,
+          "players_min": 2,
+          "players_max": 5,
+          "play_minutes": 30
+        },
+        "tags": [
+          "word game",
+          "letter tiles",
+          "tabletop"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-solo-game",
+        "catalog": "Gift Catalog",
+        "name": "Switchback Solo Puzzle",
+        "title": "Switchback Solo Puzzle",
+        "description": "A pocket route puzzle with reusable challenge cards and physical path pieces for a quiet break away from a screen.",
+        "category": "Board games",
+        "price": 15.0,
+        "currency": "USD",
+        "stock_quantity": 31,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 8,
+          "players_min": 1,
+          "players_max": 1,
+          "challenges": 60
+        },
+        "tags": [
+          "logic puzzle",
+          "solo game",
+          "travel"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-large-game",
+        "catalog": "Gift Catalog",
+        "name": "Freight Exchange Strategy Game",
+        "title": "Freight Exchange Strategy Game",
+        "description": "A longer economic board game about warehouse space, shipping contracts, and discovering that storage is never free.",
+        "category": "Board games",
+        "price": 68.0,
+        "currency": "USD",
+        "stock_quantity": 0,
+        "in_stock": false,
+        "attributes": {
+          "age_min_years": 14,
+          "players_min": 2,
+          "players_max": 4,
+          "play_minutes": 120
+        },
+        "tags": [
+          "economic game",
+          "heavy strategy",
+          "shipping"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-wired-headphones",
+        "catalog": "Gift Catalog",
+        "name": "Deskline Wired Headphones",
+        "title": "Deskline Wired Headphones",
+        "description": "Light over-ear headphones with a detachable analog cable and no battery to charge before a long listening session.",
+        "category": "Headphones",
+        "price": 32.0,
+        "currency": "USD",
+        "stock_quantity": 34,
+        "in_stock": true,
+        "attributes": {
+          "connection": "3.5 mm",
+          "weight_g": 185,
+          "microphone": false
+        },
+        "tags": [
+          "headphones",
+          "over ear",
+          "wired"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-wireless-headphones",
+        "catalog": "Gift Catalog",
+        "name": "Quiet Car Wireless Headphones",
+        "title": "Quiet Car Wireless Headphones",
+        "description": "Over-ear Bluetooth headphones with active noise cancellation and a folding frame for commutes or shared rooms.",
+        "category": "Headphones",
+        "price": 89.0,
+        "currency": "USD",
+        "stock_quantity": 17,
+        "in_stock": true,
+        "attributes": {
+          "connection": "Bluetooth 5.3",
+          "battery_type": "integrated lithium-ion",
+          "battery_hours": 32,
+          "charging": "USB-C",
+          "weight_g": 245
+        },
+        "tags": [
+          "ANC",
+          "noise cancelling",
+          "wireless"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-kids-headphones",
+        "catalog": "Gift Catalog",
+        "name": "Small Hours Listening Headphones",
+        "title": "Small Hours Listening Headphones",
+        "description": "Adjustable on-ear wired headphones with a volume-limiting mode for supervised listening and schoolwork.",
+        "category": "Headphones",
+        "price": 26.0,
+        "currency": "USD",
+        "stock_quantity": 25,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 6,
+          "connection": "3.5 mm",
+          "volume_limit_db": 85,
+          "weight_g": 125
+        },
+        "tags": [
+          "children headphones",
+          "on ear",
+          "volume limited"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-sport-earbuds",
+        "catalog": "Gift Catalog",
+        "name": "Cadence Open-Ear Sport Headphones",
+        "title": "Cadence Open-Ear Sport Headphones",
+        "description": "Open-ear headphones leave the ear canal uncovered for exercise; awareness still depends on listening volume and surroundings.",
+        "category": "Headphones",
+        "price": 69.0,
+        "currency": "USD",
+        "stock_quantity": 13,
+        "in_stock": true,
+        "attributes": {
+          "connection": "Bluetooth 5.2",
+          "battery_type": "integrated lithium-ion",
+          "battery_hours": 8,
+          "charging": "USB-C",
+          "weight_g": 29
+        },
+        "tags": [
+          "cycling",
+          "running",
+          "open ear"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-studio-headphones",
+        "catalog": "Gift Catalog",
+        "name": "Mix Room Monitor Headphones",
+        "title": "Mix Room Monitor Headphones",
+        "description": "Closed-back studio headphones with replaceable pads and a long coiled cable for a stationary recording desk.",
+        "category": "Headphones",
+        "price": 119.0,
+        "currency": "USD",
+        "stock_quantity": 8,
+        "in_stock": true,
+        "attributes": {
+          "connection": "3.5 mm with 6.35 mm adapter",
+          "impedance_ohm": 80,
+          "weight_g": 290
+        },
+        "tags": [
+          "studio",
+          "monitoring",
+          "closed back"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-sleep-headphones",
+        "catalog": "Gift Catalog",
+        "name": "Softband Bedside Headphones",
+        "title": "Softband Bedside Headphones",
+        "description": "Flat speakers sit inside a washable fabric band for spoken audio at bedtime; remove the electronics before washing.",
+        "category": "Headphones",
+        "price": 39.0,
+        "currency": "USD",
+        "stock_quantity": 20,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "adjustable adult"
+          ],
+          "material": "polyester",
+          "battery_type": "integrated lithium-ion",
+          "battery_hours": 10,
+          "charging": "USB-C"
+        },
+        "tags": [
+          "sleep headband",
+          "audiobooks",
+          "soft headphones"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-usb-headset",
+        "catalog": "Gift Catalog",
+        "name": "Clear Desk USB Headset",
+        "title": "Clear Desk USB Headset",
+        "description": "A wired stereo headset with a boom microphone and physical mute switch for calls at a computer.",
+        "category": "Headphones",
+        "price": 45.0,
+        "currency": "USD",
+        "stock_quantity": 11,
+        "in_stock": true,
+        "attributes": {
+          "connection": "USB-A",
+          "microphone": true,
+          "weight_g": 160
+        },
+        "tags": [
+          "headset",
+          "computer calls",
+          "microphone"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-scale",
+        "catalog": "Gift Catalog",
+        "name": "Counterweight Kitchen Scale",
+        "title": "Counterweight Kitchen Scale",
+        "description": "A flat digital kitchen scale measures flour, coffee, or small parcels using a removable stainless weighing platform.",
+        "category": "Kitchen equipment",
+        "price": 22.0,
+        "currency": "USD",
+        "stock_quantity": 37,
+        "in_stock": true,
+        "attributes": {
+          "capacity_g": 5000,
+          "resolution_g": 1,
+          "battery_type": "2 AAA",
+          "batteries_included": false
+        },
+        "tags": [
+          "food scale",
+          "baking",
+          "coffee"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-kettle",
+        "catalog": "Gift Catalog",
+        "name": "Morning Shift Electric Kettle",
+        "title": "Morning Shift Electric Kettle",
+        "description": "A conventional electric kettle with a visible water gauge, automatic shutoff, and room for a modest tea round.",
+        "category": "Kitchen equipment",
+        "price": 54.0,
+        "currency": "USD",
+        "stock_quantity": 14,
+        "in_stock": true,
+        "attributes": {
+          "capacity_ml": 1500,
+          "power_w": 1500,
+          "voltage_v": 120,
+          "material": "stainless steel"
+        },
+        "tags": [
+          "kettle",
+          "tea",
+          "water boiler"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-grinder",
+        "catalog": "Gift Catalog",
+        "name": "Hand Mill Coffee Grinder",
+        "title": "Hand Mill Coffee Grinder",
+        "description": "A manual burr grinder with a small bean hopper and an adjustable grind for filter coffee away from an outlet.",
+        "category": "Kitchen equipment",
+        "price": 48.0,
+        "currency": "USD",
+        "stock_quantity": 19,
+        "in_stock": true,
+        "attributes": {
+          "capacity_g": 25,
+          "material": "stainless steel",
+          "weight_g": 420
+        },
+        "tags": [
+          "coffee grinder",
+          "manual",
+          "burr"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-pan",
+        "catalog": "Gift Catalog",
+        "name": "Everyday Carbon Steel Skillet",
+        "title": "Everyday Carbon Steel Skillet",
+        "description": "A pre-seasoned carbon steel frying pan with a plain riveted handle; suitable for induction and conventional cooktops.",
+        "category": "Kitchen equipment",
+        "price": 58.0,
+        "currency": "USD",
+        "stock_quantity": 12,
+        "in_stock": true,
+        "attributes": {
+          "diameter_cm": 26,
+          "material": "carbon steel",
+          "weight_g": 1450,
+          "induction_compatible": true
+        },
+        "tags": [
+          "frying pan",
+          "skillet",
+          "cookware"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-spatula",
+        "catalog": "Gift Catalog",
+        "name": "Bench Scrape Silicone Spatula",
+        "title": "Bench Scrape Silicone Spatula",
+        "description": "A flexible heat-resistant scraper with a stainless core for batter, saucepans, and retrieving the last useful spoonful.",
+        "category": "Kitchen equipment",
+        "price": 11.0,
+        "currency": "USD",
+        "stock_quantity": 66,
+        "in_stock": true,
+        "attributes": {
+          "length_cm": 28,
+          "material": "silicone and stainless steel"
+        },
+        "tags": [
+          "spatula",
+          "scraper",
+          "baking"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-thermos",
+        "catalog": "Gift Catalog",
+        "name": "Lunch Break Vacuum Flask",
+        "title": "Lunch Break Vacuum Flask",
+        "description": "A wide-mouth insulated food jar for soup at a desk or lunch bench; its short body fits a lunch bag rather than a bottle cage.",
+        "category": "Kitchen equipment",
+        "price": 24.0,
+        "currency": "USD",
+        "stock_quantity": 28,
+        "in_stock": true,
+        "attributes": {
+          "capacity_ml": 450,
+          "dimensions_cm": [
+            10,
+            10,
+            15
+          ],
+          "weight_g": 330,
+          "material": "stainless steel"
+        },
+        "tags": [
+          "thermos",
+          "food flask",
+          "soup jar"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-apron",
+        "catalog": "Gift Catalog",
+        "name": "Weeknight Canvas Apron",
+        "title": "Weeknight Canvas Apron",
+        "description": "A washable cotton apron with adjustable neck strap and two pockets deep enough for a folded recipe.",
+        "category": "Kitchen equipment",
+        "price": 29.0,
+        "currency": "USD",
+        "stock_quantity": 18,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "adult adjustable"
+          ],
+          "material": "cotton canvas",
+          "length_cm": 85
+        },
+        "tags": [
+          "apron",
+          "kitchen",
+          "textile"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-pencils",
+        "catalog": "Gift Catalog",
+        "name": "Field Notes Drawing Pencils",
+        "title": "Field Notes Drawing Pencils",
+        "description": "A compact selection of graphite grades for quick sketches, with a metal sharpener and a plain storage tin.",
+        "category": "Art supplies",
+        "price": 12.0,
+        "currency": "USD",
+        "stock_quantity": 52,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 8,
+          "pieces": 12,
+          "grades": [
+            "2H",
+            "HB",
+            "2B",
+            "4B",
+            "6B"
+          ]
+        },
+        "tags": [
+          "drawing pencils",
+          "graphite",
+          "sketching"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-watercolors",
+        "catalog": "Gift Catalog",
+        "name": "Tabletop Watercolor Tin",
+        "title": "Tabletop Watercolor Tin",
+        "description": "Twelve water-based paint pans and a mixing lid for supervised painting on paper; the brush is included, inspiration is not.",
+        "category": "Art supplies",
+        "price": 19.0,
+        "currency": "USD",
+        "stock_quantity": 41,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 8,
+          "colors": 12,
+          "medium": "watercolor",
+          "brush_included": true
+        },
+        "tags": [
+          "paint set",
+          "craft supplies",
+          "watercolour"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-markers",
+        "catalog": "Gift Catalog",
+        "name": "Broadline Washable Markers",
+        "title": "Broadline Washable Markers",
+        "description": "Water-based broad-tip markers for posters and drawing, with caps shaped to stay on a crowded table.",
+        "category": "Art supplies",
+        "price": 14.0,
+        "currency": "USD",
+        "stock_quantity": 38,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 5,
+          "colors": 24,
+          "washable": true,
+          "tip": "broad"
+        },
+        "tags": [
+          "felt tips",
+          "markers",
+          "craft supplies"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-paper",
+        "catalog": "Gift Catalog",
+        "name": "Studio Mixed Media Pad",
+        "title": "Studio Mixed Media Pad",
+        "description": "Heavy uncoated paper accepts pencil, ink, and light watercolor washes without requiring a dedicated studio table.",
+        "category": "Art supplies",
+        "price": 16.0,
+        "currency": "USD",
+        "stock_quantity": 30,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 8,
+          "dimensions_cm": [
+            21,
+            29.7
+          ],
+          "sheets": 40,
+          "paper_gsm": 200
+        },
+        "tags": [
+          "sketchpad",
+          "drawing paper",
+          "A4"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-clay",
+        "catalog": "Gift Catalog",
+        "name": "Worktable Air-Dry Clay",
+        "title": "Worktable Air-Dry Clay",
+        "description": "A resealable bag of water-based modeling clay for small sculptures; dries at room temperature and needs no kiln.",
+        "category": "Art supplies",
+        "price": 13.0,
+        "currency": "USD",
+        "stock_quantity": 24,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 8,
+          "weight_g": 1000,
+          "material": "mineral clay",
+          "color": "white"
+        },
+        "tags": [
+          "modelling clay",
+          "craft supplies",
+          "air dry"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-brushes",
+        "catalog": "Gift Catalog",
+        "name": "Fine Line Brush Roll",
+        "title": "Fine Line Brush Roll",
+        "description": "Synthetic round and flat brushes in a washable cotton roll for watercolor or acrylic work.",
+        "category": "Art supplies",
+        "price": 27.0,
+        "currency": "USD",
+        "stock_quantity": 17,
+        "in_stock": true,
+        "attributes": {
+          "pieces": 8,
+          "bristle_material": "synthetic",
+          "handle_material": "wood"
+        },
+        "tags": [
+          "paintbrushes",
+          "art tools",
+          "brush set"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-scissors",
+        "catalog": "Gift Catalog",
+        "name": "Rounded Tip Craft Scissors",
+        "title": "Rounded Tip Craft Scissors",
+        "description": "Short craft scissors with rounded ends and a comfortable grip for supervised paper and card projects.",
+        "category": "Art supplies",
+        "price": 8.0,
+        "currency": "USD",
+        "stock_quantity": 61,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 6,
+          "length_cm": 13,
+          "handedness": "right",
+          "blade_material": "stainless steel"
+        },
+        "tags": [
+          "children scissors",
+          "craft supplies",
+          "cutting"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-origami",
+        "catalog": "Gift Catalog",
+        "name": "Folded Paper Color Pack",
+        "title": "Folded Paper Color Pack",
+        "description": "Square colored paper with a simple fold guide for cranes, boxes, and prototypes of uncertain aerodynamic merit.",
+        "category": "Art supplies",
+        "price": 10.0,
+        "currency": "USD",
+        "stock_quantity": 44,
+        "in_stock": true,
+        "attributes": {
+          "age_min_years": 8,
+          "sheets": 120,
+          "dimensions_cm": [
+            15,
+            15
+          ],
+          "material": "paper"
+        },
+        "tags": [
+          "origami",
+          "paper craft",
+          "folding"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-bike-tool",
+        "catalog": "Gift Catalog",
+        "name": "Roadside Bicycle Multitool",
+        "title": "Roadside Bicycle Multitool",
+        "description": "A pocket bicycle tool combines hex keys, common screwdrivers, and a chain breaker for conventional roadside adjustments.",
+        "category": "Sporting goods",
+        "price": 28.0,
+        "currency": "USD",
+        "stock_quantity": 29,
+        "in_stock": true,
+        "attributes": {
+          "hex_sizes_mm": [
+            2,
+            2.5,
+            3,
+            4,
+            5,
+            6,
+            8
+          ],
+          "chain_compatibility": "8–12 speed",
+          "weight_g": 155
+        },
+        "tags": [
+          "cycling",
+          "bike tool",
+          "hex keys"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-bike-light",
+        "catalog": "Gift Catalog",
+        "name": "Homeward USB Bicycle Light Set",
+        "title": "Homeward USB Bicycle Light Set",
+        "description": "Front white and rear red lights with tool-free straps for commuting after dark; charging cables are included.",
+        "category": "Sporting goods",
+        "price": 39.0,
+        "currency": "USD",
+        "stock_quantity": 23,
+        "in_stock": true,
+        "attributes": {
+          "battery_type": "integrated lithium-ion",
+          "charging": "USB-C",
+          "front_lumens": 300,
+          "weight_g": 105
+        },
+        "tags": [
+          "cycling",
+          "bike lights",
+          "rechargeable"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-pump",
+        "catalog": "Gift Catalog",
+        "name": "Pocket Frame Bicycle Pump",
+        "title": "Pocket Frame Bicycle Pump",
+        "description": "A compact manual pump switches between Presta and Schrader valves and mounts beside a standard bottle cage.",
+        "category": "Sporting goods",
+        "price": 23.0,
+        "currency": "USD",
+        "stock_quantity": 34,
+        "in_stock": true,
+        "attributes": {
+          "valves": [
+            "Presta",
+            "Schrader"
+          ],
+          "length_cm": 21,
+          "weight_g": 118
+        },
+        "tags": [
+          "cycling",
+          "tire pump",
+          "mini pump"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-yoga",
+        "catalog": "Gift Catalog",
+        "name": "Cork Grip Exercise Mat",
+        "title": "Cork Grip Exercise Mat",
+        "description": "A cork-faced exercise mat with natural-rubber backing provides a firm surface for stretching and floor exercise.",
+        "category": "Sporting goods",
+        "price": 46.0,
+        "currency": "USD",
+        "stock_quantity": 15,
+        "in_stock": true,
+        "attributes": {
+          "dimensions_cm": [
+            183,
+            61
+          ],
+          "thickness_mm": 4,
+          "material": "cork and natural rubber",
+          "weight_g": 2100
+        },
+        "tags": [
+          "yoga mat",
+          "exercise mat",
+          "stretching"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-ball",
+        "catalog": "Gift Catalog",
+        "name": "Courtyard Basketball",
+        "title": "Courtyard Basketball",
+        "description": "A textured rubber basketball intended for outdoor courts and ordinary driveway practice.",
+        "category": "Sporting goods",
+        "price": 25.0,
+        "currency": "USD",
+        "stock_quantity": 22,
+        "in_stock": true,
+        "attributes": {
+          "size": "7",
+          "material": "rubber",
+          "circumference_cm": 75
+        },
+        "tags": [
+          "basketball",
+          "outdoor ball",
+          "sport"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-rope",
+        "catalog": "Gift Catalog",
+        "name": "Cable Jump Rope",
+        "title": "Cable Jump Rope",
+        "description": "An adjustable coated cable rope with rotating handles for adult fitness sessions on a suitable clear surface.",
+        "category": "Sporting goods",
+        "price": 18.0,
+        "currency": "USD",
+        "stock_quantity": 35,
+        "in_stock": true,
+        "attributes": {
+          "length_cm": 300,
+          "material": "coated steel cable",
+          "weight_g": 160
+        },
+        "tags": [
+          "skipping rope",
+          "jump rope",
+          "fitness"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-gift-binoculars",
+        "catalog": "Gift Catalog",
+        "name": "Footpath Compact Binoculars",
+        "title": "Footpath Compact Binoculars",
+        "description": "Small roof-prism binoculars for birdwatching, walking, and checking whether the far loading bay is occupied.",
+        "category": "Sporting goods",
+        "price": 72.0,
+        "currency": "USD",
+        "stock_quantity": 10,
+        "in_stock": true,
+        "attributes": {
+          "magnification": "8x",
+          "objective_mm": 25,
+          "weight_g": 290
+        },
+        "tags": [
+          "binoculars",
+          "birding",
+          "outdoors"
+        ],
+        "demo_data": true
+      }
+    ],
+    "workshop": [
+      {
+        "id": "np-workshop-precision-driver",
+        "catalog": "Workshop Supply",
+        "name": "Detail Bench Precision Driver",
+        "title": "Detail Bench Precision Driver",
+        "description": "A slim rotating-cap screwdriver with small interchangeable bits for electronics housings and spectacle screws.",
+        "category": "Hand tools",
+        "price": 18.0,
+        "currency": "USD",
+        "stock_quantity": 48,
+        "in_stock": true,
+        "attributes": {
+          "bits": [
+            "PH00",
+            "PH0",
+            "T5",
+            "T6",
+            "SL2"
+          ],
+          "length_cm": 12,
+          "weight_g": 75
+        },
+        "tags": [
+          "precision screwdriver",
+          "small screws",
+          "electronics repair"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-ratchet-driver",
+        "catalog": "Workshop Supply",
+        "name": "Shift Ratcheting Screwdriver",
+        "title": "Shift Ratcheting Screwdriver",
+        "description": "A reversible ratchet driver holds standard quarter-inch bits and keeps a spare set inside the handle.",
+        "category": "Hand tools",
+        "price": 27.0,
+        "currency": "USD",
+        "stock_quantity": 31,
+        "in_stock": true,
+        "attributes": {
+          "bit_drive_in": 0.25,
+          "weight_g": 210,
+          "bit_count": 12
+        },
+        "tags": [
+          "screwdriver",
+          "bit driver",
+          "repairs"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-pliers",
+        "catalog": "Workshop Supply",
+        "name": "Long Reach Needle-Nose Pliers",
+        "title": "Long Reach Needle-Nose Pliers",
+        "description": "Long tapered jaws reach small clips and wire behind fixtures where an ordinary pair feels improbably large.",
+        "category": "Hand tools",
+        "price": 21.0,
+        "currency": "USD",
+        "stock_quantity": 26,
+        "in_stock": true,
+        "attributes": {
+          "length_cm": 16,
+          "material": "steel",
+          "weight_g": 145
+        },
+        "tags": [
+          "needle nose",
+          "long nose",
+          "small parts"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-cutters",
+        "catalog": "Workshop Supply",
+        "name": "Flush Cut Electronics Snips",
+        "title": "Flush Cut Electronics Snips",
+        "description": "Small flush cutters trim soft copper leads and cable ties; unsuitable for hardened wire.",
+        "category": "Hand tools",
+        "price": 16.0,
+        "currency": "USD",
+        "stock_quantity": 37,
+        "in_stock": true,
+        "attributes": {
+          "length_cm": 12,
+          "max_copper_wire_mm": 1.3,
+          "weight_g": 65
+        },
+        "tags": [
+          "flush cutters",
+          "side cutters",
+          "electronics"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-hammer",
+        "catalog": "Workshop Supply",
+        "name": "Assembly Bench Claw Hammer",
+        "title": "Assembly Bench Claw Hammer",
+        "description": "A conventional claw hammer with a fiberglass handle for crate assembly and general repairs.",
+        "category": "Hand tools",
+        "price": 24.0,
+        "currency": "USD",
+        "stock_quantity": 20,
+        "in_stock": true,
+        "attributes": {
+          "head_weight_g": 450,
+          "handle_material": "fiberglass",
+          "length_cm": 33
+        },
+        "tags": [
+          "hammer",
+          "claw",
+          "carpentry"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-hex-keys",
+        "catalog": "Workshop Supply",
+        "name": "Metric Foldout Hex Keys",
+        "title": "Metric Foldout Hex Keys",
+        "description": "A folding set of common metric Allen keys that stays together when the bench is less organized than the schedule.",
+        "category": "Hand tools",
+        "price": 14.0,
+        "currency": "USD",
+        "stock_quantity": 57,
+        "in_stock": true,
+        "attributes": {
+          "sizes_mm": [
+            2,
+            2.5,
+            3,
+            4,
+            5,
+            6,
+            8
+          ],
+          "weight_g": 165
+        },
+        "tags": [
+          "Allen keys",
+          "hex wrench",
+          "metric"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-wrench",
+        "catalog": "Workshop Supply",
+        "name": "Slim Jaw Adjustable Wrench",
+        "title": "Slim Jaw Adjustable Wrench",
+        "description": "A short adjustable spanner with a narrow head for nuts beside brackets and tubing.",
+        "category": "Hand tools",
+        "price": 23.0,
+        "currency": "USD",
+        "stock_quantity": 28,
+        "in_stock": true,
+        "attributes": {
+          "length_cm": 15,
+          "jaw_capacity_mm": 24,
+          "weight_g": 190
+        },
+        "tags": [
+          "adjustable spanner",
+          "wrench",
+          "repairs"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-clamps",
+        "catalog": "Workshop Supply",
+        "name": "Small Assembly Spring Clamps",
+        "title": "Small Assembly Spring Clamps",
+        "description": "Four padded spring clamps hold card, fabric, or light timber while adhesive sets.",
+        "category": "Hand tools",
+        "price": 12.0,
+        "currency": "USD",
+        "stock_quantity": 63,
+        "in_stock": true,
+        "attributes": {
+          "pieces": 4,
+          "jaw_opening_mm": 50,
+          "material": "nylon"
+        },
+        "tags": [
+          "clamps",
+          "gluing",
+          "assembly"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-soldering-iron",
+        "catalog": "Workshop Supply",
+        "name": "Repair Desk Soldering Iron",
+        "title": "Repair Desk Soldering Iron",
+        "description": "A temperature-adjustable mains soldering iron with a stand for routine through-hole repairs on a ventilated bench.",
+        "category": "Electronics",
+        "price": 45.0,
+        "currency": "USD",
+        "stock_quantity": 13,
+        "in_stock": true,
+        "attributes": {
+          "power_w": 60,
+          "voltage_v": 120,
+          "temperature_range_c": [
+            200,
+            450
+          ],
+          "tip_type": "900M"
+        },
+        "tags": [
+          "soldering",
+          "electronics repair",
+          "bench tool"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-multimeter",
+        "catalog": "Workshop Supply",
+        "name": "Service Bench Digital Multimeter",
+        "title": "Service Bench Digital Multimeter",
+        "description": "A compact meter for low-voltage troubleshooting with continuity buzzer and removable test leads.",
+        "category": "Electronics",
+        "price": 38.0,
+        "currency": "USD",
+        "stock_quantity": 18,
+        "in_stock": true,
+        "attributes": {
+          "battery_type": "2 AAA",
+          "batteries_included": false,
+          "measurements": [
+            "DC voltage",
+            "resistance",
+            "continuity"
+          ],
+          "weight_g": 220
+        },
+        "tags": [
+          "multimeter",
+          "test meter",
+          "voltage"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-cable-c",
+        "catalog": "Workshop Supply",
+        "name": "Braided USB-C Bench Cable",
+        "title": "Braided USB-C Bench Cable",
+        "description": "A one-meter USB-C to USB-C cable for charging compatible phones, lamps, and other bench equipment.",
+        "category": "Electronics",
+        "price": 12.0,
+        "currency": "USD",
+        "stock_quantity": 90,
+        "in_stock": true,
+        "attributes": {
+          "length_cm": 100,
+          "connectors": [
+            "USB-C",
+            "USB-C"
+          ],
+          "max_power_w": 60
+        },
+        "tags": [
+          "USB cable",
+          "type C",
+          "charging"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-cable-a",
+        "catalog": "Workshop Supply",
+        "name": "Short USB-A Charging Lead",
+        "title": "Short USB-A Charging Lead",
+        "description": "A short USB-A to USB-C lead keeps a charging station tidy without a coil of spare cable.",
+        "category": "Electronics",
+        "price": 7.0,
+        "currency": "USD",
+        "stock_quantity": 110,
+        "in_stock": true,
+        "attributes": {
+          "length_cm": 30,
+          "connectors": [
+            "USB-A",
+            "USB-C"
+          ],
+          "max_current_a": 3
+        },
+        "tags": [
+          "USB cable",
+          "charging lead",
+          "type C"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-charger",
+        "catalog": "Workshop Supply",
+        "name": "Four Port Bench USB Charger",
+        "title": "Four Port Bench USB Charger",
+        "description": "A mains charger supplies a shared bank of USB ports for small devices; total power is shared across ports.",
+        "category": "Electronics",
+        "price": 36.0,
+        "currency": "USD",
+        "stock_quantity": 22,
+        "in_stock": true,
+        "attributes": {
+          "voltage_v": 120,
+          "ports_usb_c": 2,
+          "ports_usb_a": 2,
+          "total_power_w": 65
+        },
+        "tags": [
+          "USB charger",
+          "charging station",
+          "power supply"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-caliper",
+        "catalog": "Workshop Supply",
+        "name": "Pocket Digital Caliper",
+        "title": "Pocket Digital Caliper",
+        "description": "A digital sliding caliper measures outside dimensions, inside widths, and depths in millimeters or inches.",
+        "category": "Electronics",
+        "price": 32.0,
+        "currency": "USD",
+        "stock_quantity": 16,
+        "in_stock": true,
+        "attributes": {
+          "range_mm": [
+            0,
+            150
+          ],
+          "battery_type": "LR44",
+          "resolution_mm": 0.01,
+          "material": "stainless steel"
+        },
+        "tags": [
+          "calipers",
+          "measurement",
+          "precision"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-battery-aa",
+        "catalog": "Workshop Supply",
+        "name": "Shift Reserve AA Alkalines",
+        "title": "Shift Reserve AA Alkalines",
+        "description": "A pack of disposable AA cells for clocks, meters, and ordinary low-drain devices; not rechargeable.",
+        "category": "Batteries",
+        "price": 9.0,
+        "currency": "USD",
+        "stock_quantity": 160,
+        "in_stock": true,
+        "attributes": {
+          "battery_type": "AA alkaline",
+          "voltage_v": 1.5,
+          "pieces": 12,
+          "rechargeable": false
+        },
+        "tags": [
+          "AA batteries",
+          "alkaline",
+          "spares"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-battery-aaa",
+        "catalog": "Workshop Supply",
+        "name": "Small Device AAA Alkalines",
+        "title": "Small Device AAA Alkalines",
+        "description": "Disposable AAA cells for remotes, compact lamps, and meters that specify the smaller cylindrical size.",
+        "category": "Batteries",
+        "price": 8.0,
+        "currency": "USD",
+        "stock_quantity": 140,
+        "in_stock": true,
+        "attributes": {
+          "battery_type": "AAA alkaline",
+          "voltage_v": 1.5,
+          "pieces": 12,
+          "rechargeable": false
+        },
+        "tags": [
+          "AAA batteries",
+          "alkaline",
+          "spares"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-battery-nimh",
+        "catalog": "Workshop Supply",
+        "name": "Reusable AA NiMH Cells",
+        "title": "Reusable AA NiMH Cells",
+        "description": "Four rechargeable AA cells for devices compatible with 1.2 V NiMH batteries; charger sold separately.",
+        "category": "Batteries",
+        "price": 19.0,
+        "currency": "USD",
+        "stock_quantity": 72,
+        "in_stock": true,
+        "attributes": {
+          "battery_type": "AA NiMH",
+          "voltage_v": 1.2,
+          "capacity_mah": 2100,
+          "pieces": 4,
+          "rechargeable": true
+        },
+        "tags": [
+          "AA batteries",
+          "rechargeable",
+          "NiMH"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-battery-cr2032",
+        "catalog": "Workshop Supply",
+        "name": "Drawer Label Coin Cells",
+        "title": "Drawer Label Coin Cells",
+        "description": "A securely packaged pair of CR2032 lithium coin cells for compatible scales and small electronics; keep away from children.",
+        "category": "Batteries",
+        "price": 6.0,
+        "currency": "USD",
+        "stock_quantity": 86,
+        "in_stock": true,
+        "attributes": {
+          "battery_type": "CR2032 lithium",
+          "voltage_v": 3,
+          "pieces": 2,
+          "rechargeable": false
+        },
+        "tags": [
+          "coin cell",
+          "button battery",
+          "CR2032"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-battery-9v",
+        "catalog": "Workshop Supply",
+        "name": "Meter Reserve 9V Battery",
+        "title": "Meter Reserve 9V Battery",
+        "description": "One disposable rectangular 9 V alkaline battery for compatible meters and test equipment.",
+        "category": "Batteries",
+        "price": 5.0,
+        "currency": "USD",
+        "stock_quantity": 0,
+        "in_stock": false,
+        "attributes": {
+          "battery_type": "9V alkaline",
+          "voltage_v": 9,
+          "pieces": 1,
+          "rechargeable": false
+        },
+        "tags": [
+          "9 volt",
+          "PP3",
+          "meter battery"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-battery-charger",
+        "catalog": "Workshop Supply",
+        "name": "AA and AAA NiMH Charger",
+        "title": "AA and AAA NiMH Charger",
+        "description": "Four independent slots charge AA or AAA NiMH cells; it does not charge alkaline or lithium-ion batteries.",
+        "category": "Batteries",
+        "price": 25.0,
+        "currency": "USD",
+        "stock_quantity": 27,
+        "in_stock": true,
+        "attributes": {
+          "compatible_batteries": [
+            "AA NiMH",
+            "AAA NiMH"
+          ],
+          "slots": 4,
+          "input": "USB-C"
+        },
+        "tags": [
+          "battery charger",
+          "NiMH",
+          "AA AAA"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-bin-small",
+        "catalog": "Workshop Supply",
+        "name": "Clear Parts Bin 2 L",
+        "title": "Clear Parts Bin 2 L",
+        "description": "A transparent lidded bin keeps small consumables visible on a shallow shelf without opening every container.",
+        "category": "Storage bins",
+        "price": 7.0,
+        "currency": "USD",
+        "stock_quantity": 85,
+        "in_stock": true,
+        "attributes": {
+          "capacity_l": 2,
+          "dimensions_cm": [
+            22,
+            15,
+            10
+          ],
+          "material": "polypropylene",
+          "lid": "clip"
+        },
+        "tags": [
+          "storage box",
+          "parts bin",
+          "clear tote"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-bin-medium",
+        "catalog": "Workshop Supply",
+        "name": "Stacking Supply Tote 12 L",
+        "title": "Stacking Supply Tote 12 L",
+        "description": "A medium lidded tote sized for mixed workshop supplies with straight sides that make better use of shelf space.",
+        "category": "Storage bins",
+        "price": 16.0,
+        "currency": "USD",
+        "stock_quantity": 47,
+        "in_stock": true,
+        "attributes": {
+          "capacity_l": 12,
+          "dimensions_cm": [
+            40,
+            28,
+            18
+          ],
+          "material": "polypropylene",
+          "lid": "clip"
+        },
+        "tags": [
+          "storage bin",
+          "tote",
+          "stackable"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-bin-large",
+        "catalog": "Workshop Supply",
+        "name": "Heavy Stock Tote 45 L",
+        "title": "Heavy Stock Tote 45 L",
+        "description": "A large opaque storage tote with side handles for bulky packing stock; contents labels are strongly recommended.",
+        "category": "Storage bins",
+        "price": 35.0,
+        "currency": "USD",
+        "stock_quantity": 21,
+        "in_stock": true,
+        "attributes": {
+          "capacity_l": 45,
+          "dimensions_cm": [
+            60,
+            40,
+            32
+          ],
+          "material": "polypropylene",
+          "weight_g": 2400
+        },
+        "tags": [
+          "storage bin",
+          "crate",
+          "large tote"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-organizer",
+        "catalog": "Workshop Supply",
+        "name": "Shallow Fastener Organizer",
+        "title": "Shallow Fastener Organizer",
+        "description": "Twelve removable compartments separate screws, washers, and fittings without a deep box swallowing the smallest pieces.",
+        "category": "Storage bins",
+        "price": 19.0,
+        "currency": "USD",
+        "stock_quantity": 38,
+        "in_stock": true,
+        "attributes": {
+          "dimensions_cm": [
+            32,
+            24,
+            5
+          ],
+          "compartments": 12,
+          "material": "polypropylene"
+        },
+        "tags": [
+          "screw organizer",
+          "small parts",
+          "storage case"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-drawer",
+        "catalog": "Workshop Supply",
+        "name": "Open Front Picking Bin",
+        "title": "Open Front Picking Bin",
+        "description": "An open-front shelf bin gives quick access to frequently used fittings; the rear lip can hang on a compatible rail.",
+        "category": "Storage bins",
+        "price": 6.0,
+        "currency": "USD",
+        "stock_quantity": 99,
+        "in_stock": true,
+        "attributes": {
+          "dimensions_cm": [
+            24,
+            15,
+            12
+          ],
+          "material": "polypropylene",
+          "capacity_l": 3
+        },
+        "tags": [
+          "picking bin",
+          "hopper bin",
+          "parts storage"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-esd-bin",
+        "catalog": "Workshop Supply",
+        "name": "Conductive Circuit Tray",
+        "title": "Conductive Circuit Tray",
+        "description": "A shallow conductive tray separates small circuit boards on an ESD-managed bench; use within an appropriate grounding setup.",
+        "category": "Storage bins",
+        "price": 26.0,
+        "currency": "USD",
+        "stock_quantity": 12,
+        "in_stock": true,
+        "attributes": {
+          "dimensions_cm": [
+            35,
+            25,
+            6
+          ],
+          "material": "conductive polypropylene"
+        },
+        "tags": [
+          "ESD",
+          "antistatic",
+          "circuit storage"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-bench-light",
+        "catalog": "Workshop Supply",
+        "name": "Corner Bench Rechargeable Light",
+        "title": "Corner Bench Rechargeable Light",
+        "description": "A slim work light with a magnetic base and folding hook fits behind a cramped assembly bench.",
+        "category": "Work lights",
+        "price": 34.0,
+        "currency": "USD",
+        "stock_quantity": 32,
+        "in_stock": true,
+        "attributes": {
+          "battery_type": "integrated lithium-ion",
+          "charging": "USB-C",
+          "lumens": 400,
+          "weight_g": 180,
+          "length_cm": 17,
+          "runtime_hours": 4
+        },
+        "tags": [
+          "worklight",
+          "inspection lamp",
+          "rechargeable",
+          "compact"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-bar-light",
+        "catalog": "Workshop Supply",
+        "name": "Long Reach Rechargeable Inspection Bar",
+        "title": "Long Reach Rechargeable Inspection Bar",
+        "description": "A long folding LED bar lights the back of a machine cabinet; the hinged body trades pocket size for reach.",
+        "category": "Work lights",
+        "price": 49.0,
+        "currency": "USD",
+        "stock_quantity": 18,
+        "in_stock": true,
+        "attributes": {
+          "battery_type": "integrated lithium-ion",
+          "charging": "USB-C",
+          "lumens": 800,
+          "length_cm": 42,
+          "weight_g": 420,
+          "runtime_hours": 3
+        },
+        "tags": [
+          "inspection light",
+          "work lamp",
+          "magnetic"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-mains-light",
+        "catalog": "Workshop Supply",
+        "name": "Clamp-On Mains Task Lamp",
+        "title": "Clamp-On Mains Task Lamp",
+        "description": "An articulated clamp lamp stays on all shift at a fixed bench with a nearby outlet.",
+        "category": "Work lights",
+        "price": 29.0,
+        "currency": "USD",
+        "stock_quantity": 24,
+        "in_stock": true,
+        "attributes": {
+          "power_w": 8,
+          "voltage_v": 120,
+          "lumens": 600,
+          "cable_length_cm": 180,
+          "weight_g": 700
+        },
+        "tags": [
+          "desk lamp",
+          "task light",
+          "clamp lamp"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-headlamp",
+        "catalog": "Workshop Supply",
+        "name": "Night Shift Battery Headlamp",
+        "title": "Night Shift Battery Headlamp",
+        "description": "A lightweight head torch uses replaceable AAA batteries and a wide beam for indoor picking and repairs.",
+        "category": "Work lights",
+        "price": 22.0,
+        "currency": "USD",
+        "stock_quantity": 39,
+        "in_stock": true,
+        "attributes": {
+          "battery_type": "3 AAA",
+          "batteries_included": false,
+          "lumens": 250,
+          "weight_g": 85
+        },
+        "tags": [
+          "head torch",
+          "headlamp",
+          "hands free"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-flood-light",
+        "catalog": "Workshop Supply",
+        "name": "Portable Floor Floodlight",
+        "title": "Portable Floor Floodlight",
+        "description": "A plug-in LED floodlight on a low stand lights a packing bay rather than a small tabletop.",
+        "category": "Work lights",
+        "price": 59.0,
+        "currency": "USD",
+        "stock_quantity": 0,
+        "in_stock": false,
+        "attributes": {
+          "power_w": 30,
+          "voltage_v": 120,
+          "lumens": 2500,
+          "weight_g": 1600
+        },
+        "tags": [
+          "flood lamp",
+          "worklight",
+          "mains"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-safety-glasses",
+        "catalog": "Workshop Supply",
+        "name": "Clear Bench Safety Glasses",
+        "title": "Clear Bench Safety Glasses",
+        "description": "Wraparound clear eye protection with adjustable arms for routine workshop tasks; sample specifications are illustrative.",
+        "category": "Safety equipment",
+        "price": 12.0,
+        "currency": "USD",
+        "stock_quantity": 80,
+        "in_stock": true,
+        "attributes": {
+          "lens": "clear polycarbonate",
+          "weight_g": 28,
+          "fit": "adult adjustable"
+        },
+        "tags": [
+          "safety spectacles",
+          "eye protection",
+          "clear glasses"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-ear-defenders",
+        "catalog": "Workshop Supply",
+        "name": "Packing Bay Ear Defenders",
+        "title": "Packing Bay Ear Defenders",
+        "description": "Over-ear passive hearing protectors with replaceable cushions for noisy work areas; choose protection after a real noise assessment.",
+        "category": "Safety equipment",
+        "price": 27.0,
+        "currency": "USD",
+        "stock_quantity": 26,
+        "in_stock": true,
+        "attributes": {
+          "type": "passive over-ear",
+          "weight_g": 235,
+          "adjustable": true
+        },
+        "tags": [
+          "earmuffs",
+          "hearing protection",
+          "ear defenders"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-gloves-fine",
+        "catalog": "Workshop Supply",
+        "name": "Small Parts Grip Gloves",
+        "title": "Small Parts Grip Gloves",
+        "description": "Thin palm-coated work gloves prioritize handling small screws and cartons; these are indoor gloves, not thermal protection.",
+        "category": "Safety equipment",
+        "price": 15.0,
+        "currency": "USD",
+        "stock_quantity": 55,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "nylon with nitrile palm",
+          "insulated": false,
+          "weight_g": 42
+        },
+        "tags": [
+          "dexterity gloves",
+          "grip gloves",
+          "small screws"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-gloves-leather",
+        "catalog": "Workshop Supply",
+        "name": "Crate Handling Leather Gloves",
+        "title": "Crate Handling Leather Gloves",
+        "description": "Reinforced leather palms protect against ordinary abrasion when moving timber and crates; not designed for fine electronics work.",
+        "category": "Safety equipment",
+        "price": 20.0,
+        "currency": "USD",
+        "stock_quantity": 34,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "cowhide and cotton",
+          "weight_g": 140
+        },
+        "tags": [
+          "work gloves",
+          "leather gloves",
+          "handling"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-mask",
+        "catalog": "Workshop Supply",
+        "name": "Reusable Dust Mask Body",
+        "title": "Reusable Dust Mask Body",
+        "description": "An elastomeric half-mask body accepts its specified matching filters, sold separately; fit and task suitability require checking.",
+        "category": "Safety equipment",
+        "price": 31.0,
+        "currency": "USD",
+        "stock_quantity": 17,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "M",
+            "L"
+          ],
+          "material": "silicone",
+          "filter_mount": "sample bayonet B"
+        },
+        "tags": [
+          "respirator",
+          "mask body",
+          "dust"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-first-aid",
+        "catalog": "Workshop Supply",
+        "name": "Small Workshop First Aid Pouch",
+        "title": "Small Workshop First Aid Pouch",
+        "description": "A zip pouch of basic dressings and bandages for a bench area, with a printed inventory to support restocking.",
+        "category": "Safety equipment",
+        "price": 24.0,
+        "currency": "USD",
+        "stock_quantity": 29,
+        "in_stock": true,
+        "attributes": {
+          "pieces": 40,
+          "dimensions_cm": [
+            18,
+            12,
+            6
+          ],
+          "weight_g": 250
+        },
+        "tags": [
+          "first aid",
+          "bandages",
+          "workshop kit"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-tape-clear",
+        "catalog": "Workshop Supply",
+        "name": "Clear Carton Sealing Tape",
+        "title": "Clear Carton Sealing Tape",
+        "description": "A clear pressure-sensitive tape roll for ordinary cartons stored in dry indoor conditions.",
+        "category": "Packaging materials",
+        "price": 7.0,
+        "currency": "USD",
+        "stock_quantity": 130,
+        "in_stock": true,
+        "attributes": {
+          "width_mm": 48,
+          "length_m": 66,
+          "core_mm": 76,
+          "material": "polypropylene"
+        },
+        "tags": [
+          "packing tape",
+          "box tape",
+          "clear tape"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-tape-paper",
+        "catalog": "Workshop Supply",
+        "name": "Paper Parcel Tape",
+        "title": "Paper Parcel Tape",
+        "description": "A writable paper-backed parcel tape for clean cardboard, with a conventional pressure-sensitive adhesive.",
+        "category": "Packaging materials",
+        "price": 8.0,
+        "currency": "USD",
+        "stock_quantity": 88,
+        "in_stock": true,
+        "attributes": {
+          "width_mm": 50,
+          "length_m": 50,
+          "core_mm": 76,
+          "material": "kraft paper"
+        },
+        "tags": [
+          "paper tape",
+          "packing tape",
+          "kraft"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-boxes",
+        "catalog": "Workshop Supply",
+        "name": "Flat-Pack Parcel Boxes",
+        "title": "Flat-Pack Parcel Boxes",
+        "description": "Ten plain corrugated boxes arrive flat and fold into a practical size for books, mugs, and small tools.",
+        "category": "Packaging materials",
+        "price": 19.0,
+        "currency": "USD",
+        "stock_quantity": 56,
+        "in_stock": true,
+        "attributes": {
+          "pieces": 10,
+          "inside_dimensions_cm": [
+            30,
+            20,
+            15
+          ],
+          "material": "corrugated cardboard"
+        },
+        "tags": [
+          "shipping boxes",
+          "cartons",
+          "packaging"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-wrap",
+        "catalog": "Workshop Supply",
+        "name": "Honeycomb Paper Wrap",
+        "title": "Honeycomb Paper Wrap",
+        "description": "Expandable kraft paper cushioning wraps irregular shapes without needing a powered dispenser.",
+        "category": "Packaging materials",
+        "price": 18.0,
+        "currency": "USD",
+        "stock_quantity": 38,
+        "in_stock": true,
+        "attributes": {
+          "width_cm": 38,
+          "expanded_length_m": 50,
+          "material": "kraft paper"
+        },
+        "tags": [
+          "protective wrap",
+          "paper cushioning",
+          "packing"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-labels",
+        "catalog": "Workshop Supply",
+        "name": "Write-On Shipping Labels",
+        "title": "Write-On Shipping Labels",
+        "description": "Plain adhesive labels accept handwriting or compatible inkjet printing for boxes and shelf identification.",
+        "category": "Packaging materials",
+        "price": 9.0,
+        "currency": "USD",
+        "stock_quantity": 95,
+        "in_stock": true,
+        "attributes": {
+          "pieces": 100,
+          "dimensions_cm": [
+            10,
+            15
+          ],
+          "material": "paper"
+        },
+        "tags": [
+          "parcel labels",
+          "stickers",
+          "shipping"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-bubble-mailers",
+        "catalog": "Workshop Supply",
+        "name": "Padded Paper Mailers",
+        "title": "Padded Paper Mailers",
+        "description": "Ten paper mailers with a padded interior protect flat, non-fragile items from ordinary scuffs in transit.",
+        "category": "Packaging materials",
+        "price": 14.0,
+        "currency": "USD",
+        "stock_quantity": 70,
+        "in_stock": true,
+        "attributes": {
+          "pieces": 10,
+          "inside_dimensions_cm": [
+            22,
+            32
+          ],
+          "material": "paper"
+        },
+        "tags": [
+          "padded envelopes",
+          "mailers",
+          "packing"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-cable-ties",
+        "catalog": "Workshop Supply",
+        "name": "Reusable Hook-and-Loop Ties",
+        "title": "Reusable Hook-and-Loop Ties",
+        "description": "Short reusable fabric ties organize cables and temporary bundles without leaving clipped plastic tails on the floor.",
+        "category": "Packaging materials",
+        "price": 10.0,
+        "currency": "USD",
+        "stock_quantity": 84,
+        "in_stock": true,
+        "attributes": {
+          "pieces": 20,
+          "length_cm": 15,
+          "material": "nylon"
+        },
+        "tags": [
+          "hook-and-loop ties",
+          "cable straps",
+          "reusable"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-zip-ties",
+        "catalog": "Workshop Supply",
+        "name": "Outdoor Nylon Cable Ties",
+        "title": "Outdoor Nylon Cable Ties",
+        "description": "Black single-use cable ties secure tags and light bundles; trim cut ends carefully.",
+        "category": "Packaging materials",
+        "price": 6.0,
+        "currency": "USD",
+        "stock_quantity": 120,
+        "in_stock": true,
+        "attributes": {
+          "pieces": 100,
+          "length_cm": 20,
+          "material": "UV-stabilized nylon"
+        },
+        "tags": [
+          "zip ties",
+          "cable ties",
+          "fasteners"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-repair-tape",
+        "catalog": "Workshop Supply",
+        "name": "Cloth Repair Tape",
+        "title": "Cloth Repair Tape",
+        "description": "A hand-tearable cloth tape roll for temporary indoor repairs and labeling; not a structural fastener.",
+        "category": "Packaging materials",
+        "price": 11.0,
+        "currency": "USD",
+        "stock_quantity": 67,
+        "in_stock": true,
+        "attributes": {
+          "width_mm": 50,
+          "length_m": 25,
+          "material": "cloth-backed polyethylene"
+        },
+        "tags": [
+          "duct tape",
+          "gaffer-style tape",
+          "temporary repair"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-work-flask",
+        "catalog": "Workshop Supply",
+        "name": "Long Shift Insulated Bottle",
+        "title": "Long Shift Insulated Bottle",
+        "description": "A one-liter vacuum bottle with a cup lid stays at the packing station; its broad base is meant for a bench, not a small pack.",
+        "category": "Workshop essentials",
+        "price": 28.0,
+        "currency": "USD",
+        "stock_quantity": 23,
+        "in_stock": true,
+        "attributes": {
+          "capacity_ml": 1000,
+          "dimensions_cm": [
+            10,
+            10,
+            31
+          ],
+          "material": "stainless steel",
+          "weight_g": 620
+        },
+        "tags": [
+          "thermos",
+          "vacuum flask",
+          "hot drink"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-utility-knife",
+        "catalog": "Workshop Supply",
+        "name": "Retracting Carton Knife",
+        "title": "Retracting Carton Knife",
+        "description": "A retracting utility knife with a metal body opens cartons and trims sheet material on a suitable cutting surface.",
+        "category": "Hand tools",
+        "price": 13.0,
+        "currency": "USD",
+        "stock_quantity": 45,
+        "in_stock": true,
+        "attributes": {
+          "blade_type": "18 mm snap-off",
+          "length_cm": 15,
+          "material": "aluminum"
+        },
+        "tags": [
+          "box cutter",
+          "utility knife",
+          "carton opener"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-measuring-tape",
+        "catalog": "Workshop Supply",
+        "name": "Pocket Steel Tape Measure",
+        "title": "Pocket Steel Tape Measure",
+        "description": "A locking steel tape with metric markings and a belt clip for checking cartons, shelves, and cut lengths.",
+        "category": "Hand tools",
+        "price": 12.0,
+        "currency": "USD",
+        "stock_quantity": 48,
+        "in_stock": true,
+        "attributes": {
+          "length_m": 5,
+          "blade_width_mm": 19,
+          "weight_g": 190
+        },
+        "tags": [
+          "measuring tape",
+          "tape measure",
+          "metric"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-workshop-screw-kit",
+        "catalog": "Workshop Supply",
+        "name": "Mixed Metric Machine Screws",
+        "title": "Mixed Metric Machine Screws",
+        "description": "A compartment box holds small machine screws and matching nuts for routine fixture repairs; confirm thread size before use.",
+        "category": "Hand tools",
+        "price": 17.0,
+        "currency": "USD",
+        "stock_quantity": 34,
+        "in_stock": true,
+        "attributes": {
+          "thread_sizes": [
+            "M2",
+            "M3",
+            "M4"
+          ],
+          "material": "zinc-plated steel",
+          "pieces": 180
+        },
+        "tags": [
+          "machine screws",
+          "fasteners",
+          "repair kit"
+        ],
+        "demo_data": true
+      }
+    ],
+    "polar": [
+      {
+        "id": "np-polar-parka-heavy",
+        "catalog": "Polar Outfitter",
+        "name": "Depot Winter Parka",
+        "title": "Depot Winter Parka",
+        "description": "A long insulated parka for low-activity work around an exposed depot, with a roomy hood and covered front zipper.",
+        "category": "Parkas",
+        "price": 219.0,
+        "currency": "USD",
+        "stock_quantity": 16,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "nylon shell, synthetic insulation",
+          "weight_g": 1450,
+          "waterproof": true
+        },
+        "tags": [
+          "winter coat",
+          "parka",
+          "station work"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-parka-light",
+        "catalog": "Polar Outfitter",
+        "name": "Traverse Short Insulated Jacket",
+        "title": "Traverse Short Insulated Jacket",
+        "description": "A shorter synthetic-insulated jacket trades length for easier movement while hauling gear or walking between stops.",
+        "category": "Parkas",
+        "price": 149.0,
+        "currency": "USD",
+        "stock_quantity": 22,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "XS",
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "polyester shell, synthetic insulation",
+          "weight_g": 680,
+          "water_resistant": true
+        },
+        "tags": [
+          "puffer jacket",
+          "active insulation",
+          "winter coat"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-parka-down",
+        "catalog": "Polar Outfitter",
+        "name": "Stillwatch Down Parka",
+        "title": "Stillwatch Down Parka",
+        "description": "A down-filled parka with a high collar suits dry, cold waiting periods; protect the insulation from prolonged wet conditions.",
+        "category": "Parkas",
+        "price": 329.0,
+        "currency": "USD",
+        "stock_quantity": 8,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "nylon shell, down insulation",
+          "fill_power": 700,
+          "weight_g": 1200
+        },
+        "tags": [
+          "down coat",
+          "parka",
+          "static warmth"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-shell",
+        "catalog": "Polar Outfitter",
+        "name": "Coastal Weather Shell",
+        "title": "Coastal Weather Shell",
+        "description": "An uninsulated waterproof shell layers over fleece or an insulated jacket when wind-driven wet weather arrives.",
+        "category": "Parkas",
+        "price": 179.0,
+        "currency": "USD",
+        "stock_quantity": 13,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "laminated nylon",
+          "weight_g": 410,
+          "insulated": false,
+          "waterproof": true
+        },
+        "tags": [
+          "rain shell",
+          "outer layer",
+          "windproof"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-fleece",
+        "catalog": "Polar Outfitter",
+        "name": "Layer Room Grid Fleece",
+        "title": "Layer Room Grid Fleece",
+        "description": "A breathable grid fleece fits beneath a shell for active outdoor work without the bulk of a heavy coat.",
+        "category": "Parkas",
+        "price": 64.0,
+        "currency": "USD",
+        "stock_quantity": 31,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "XS",
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "polyester fleece",
+          "weight_g": 320
+        },
+        "tags": [
+          "midlayer",
+          "fleece jacket",
+          "layering"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-vest",
+        "catalog": "Polar Outfitter",
+        "name": "Loading Bay Insulated Vest",
+        "title": "Loading Bay Insulated Vest",
+        "description": "A sleeveless synthetic layer adds torso warmth while leaving arms free for handling equipment.",
+        "category": "Parkas",
+        "price": 79.0,
+        "currency": "USD",
+        "stock_quantity": 25,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "polyester shell, synthetic insulation",
+          "weight_g": 360
+        },
+        "tags": [
+          "gilet",
+          "vest",
+          "layering"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-overtrousers",
+        "catalog": "Polar Outfitter",
+        "name": "Driftline Insulated Overtrousers",
+        "title": "Driftline Insulated Overtrousers",
+        "description": "Side-zipped insulated trousers pull over work pants for slow outdoor tasks and come off without removing boots.",
+        "category": "Parkas",
+        "price": 119.0,
+        "currency": "USD",
+        "stock_quantity": 12,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "nylon shell, synthetic insulation",
+          "weight_g": 750
+        },
+        "tags": [
+          "snow pants",
+          "overpants",
+          "insulated trousers"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-boots-heavy",
+        "catalog": "Polar Outfitter",
+        "name": "Station Felt-Liner Boots",
+        "title": "Station Felt-Liner Boots",
+        "description": "Roomy winter boots with removable felt liners suit standing work and accept thick socks; dry liners between shifts.",
+        "category": "Insulated boots",
+        "price": 159.0,
+        "currency": "USD",
+        "stock_quantity": 18,
+        "in_stock": true,
+        "attributes": {
+          "sizes_eu": [
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46
+          ],
+          "material": "rubber lower, nylon upper, felt liner",
+          "pair_weight_g": 1900,
+          "waterproof": true
+        },
+        "tags": [
+          "winter boots",
+          "pac boots",
+          "removable liners"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-boots-hike",
+        "catalog": "Polar Outfitter",
+        "name": "Ridge Walk Insulated Boots",
+        "title": "Ridge Walk Insulated Boots",
+        "description": "Lace-up insulated walking boots provide a closer fit and lower weight for steady movement on maintained trails.",
+        "category": "Insulated boots",
+        "price": 139.0,
+        "currency": "USD",
+        "stock_quantity": 21,
+        "in_stock": true,
+        "attributes": {
+          "sizes_eu": [
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45
+          ],
+          "material": "leather and nylon",
+          "pair_weight_g": 1180,
+          "waterproof": true
+        },
+        "tags": [
+          "hiking boots",
+          "winter footwear",
+          "walking"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-boots-rubber",
+        "catalog": "Polar Outfitter",
+        "name": "Wet Dock Lined Rubber Boots",
+        "title": "Wet Dock Lined Rubber Boots",
+        "description": "Tall rubber boots with a light removable liner suit slush and wet loading areas rather than long-distance walking.",
+        "category": "Insulated boots",
+        "price": 94.0,
+        "currency": "USD",
+        "stock_quantity": 14,
+        "in_stock": true,
+        "attributes": {
+          "sizes_eu": [
+            38,
+            40,
+            42,
+            44,
+            46
+          ],
+          "material": "rubber, polyester liner",
+          "pair_weight_g": 1650,
+          "shaft_height_cm": 34
+        },
+        "tags": [
+          "wellies",
+          "rubber boots",
+          "slush"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-boots-low",
+        "catalog": "Polar Outfitter",
+        "name": "Cabin Approach Winter Shoes",
+        "title": "Cabin Approach Winter Shoes",
+        "description": "Low-cut insulated shoes with grippy rubber soles suit short walks between cleared buildings and indoor breaks.",
+        "category": "Insulated boots",
+        "price": 89.0,
+        "currency": "USD",
+        "stock_quantity": 27,
+        "in_stock": true,
+        "attributes": {
+          "sizes_eu": [
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44
+          ],
+          "material": "suede and synthetic textile",
+          "pair_weight_g": 820
+        },
+        "tags": [
+          "winter shoes",
+          "low boots",
+          "cabin"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-boot-liners",
+        "catalog": "Polar Outfitter",
+        "name": "Spare Felt Boot Liners",
+        "title": "Spare Felt Boot Liners",
+        "description": "A replacement pair of felt liners for Station Felt-Liner Boots, giving damp liners a full drying rotation.",
+        "category": "Insulated boots",
+        "price": 34.0,
+        "currency": "USD",
+        "stock_quantity": 32,
+        "in_stock": true,
+        "attributes": {
+          "sizes_eu": [
+            38,
+            40,
+            42,
+            44,
+            46
+          ],
+          "material": "wool-blend felt",
+          "compatibility": "Station Felt-Liner Boots"
+        },
+        "tags": [
+          "boot liners",
+          "replacement liners",
+          "spares"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-traction",
+        "catalog": "Polar Outfitter",
+        "name": "Walkway Chain Traction Aids",
+        "title": "Walkway Chain Traction Aids",
+        "description": "Stretch-over traction aids with small steel chains improve grip on icy maintained paths; not climbing equipment.",
+        "category": "Insulated boots",
+        "price": 29.0,
+        "currency": "USD",
+        "stock_quantity": 35,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "S",
+            "M",
+            "L"
+          ],
+          "material": "rubber and steel",
+          "pair_weight_g": 310
+        },
+        "tags": [
+          "ice grips",
+          "boot chains",
+          "traction"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-gaiters",
+        "catalog": "Polar Outfitter",
+        "name": "Snowline Tall Gaiters",
+        "title": "Snowline Tall Gaiters",
+        "description": "Calf-height gaiters cover the top of a boot to help keep loose snow out during short field walks.",
+        "category": "Insulated boots",
+        "price": 39.0,
+        "currency": "USD",
+        "stock_quantity": 28,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "S/M",
+            "L/XL"
+          ],
+          "material": "coated nylon",
+          "pair_weight_g": 220
+        },
+        "tags": [
+          "gaiters",
+          "snow covers",
+          "boot protection"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-liner-gloves",
+        "catalog": "Polar Outfitter",
+        "name": "Fine Work Merino Liner Gloves",
+        "title": "Fine Work Merino Liner Gloves",
+        "description": "Thin merino-blend gloves preserve finger movement for small fasteners during brief cool-weather tasks; add an outer mitt in colder conditions.",
+        "category": "Gloves",
+        "price": 23.0,
+        "currency": "USD",
+        "stock_quantity": 46,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "XS",
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "merino wool and nylon",
+          "weight_g": 48,
+          "touchscreen": true,
+          "dexterity": "high",
+          "insulation": "light"
+        },
+        "tags": [
+          "warm gloves",
+          "small screws",
+          "liner gloves",
+          "dexterity"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-softshell-gloves",
+        "catalog": "Polar Outfitter",
+        "name": "Trail Grip Softshell Gloves",
+        "title": "Trail Grip Softshell Gloves",
+        "description": "Close-fitting softshell gloves combine light fleece insulation with a textured palm for handling straps and equipment outdoors.",
+        "category": "Gloves",
+        "price": 42.0,
+        "currency": "USD",
+        "stock_quantity": 30,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "polyester softshell, synthetic palm",
+          "weight_g": 95,
+          "touchscreen": true,
+          "dexterity": "medium",
+          "windproof": true
+        },
+        "tags": [
+          "work gloves",
+          "warm gloves",
+          "softshell"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-mittens",
+        "catalog": "Polar Outfitter",
+        "name": "Deep Shift Insulated Mittens",
+        "title": "Deep Shift Insulated Mittens",
+        "description": "Thick synthetic-insulated mittens prioritize warmth over finger dexterity for standing and slow transport work.",
+        "category": "Gloves",
+        "price": 69.0,
+        "currency": "USD",
+        "stock_quantity": 18,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "nylon shell, synthetic insulation",
+          "weight_g": 230,
+          "dexterity": "low",
+          "waterproof": true
+        },
+        "tags": [
+          "mitts",
+          "winter mittens",
+          "static warmth"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-leather-gloves",
+        "catalog": "Polar Outfitter",
+        "name": "Haul Rope Leather Gloves",
+        "title": "Haul Rope Leather Gloves",
+        "description": "A leather palm and lightly insulated back suit rope handling and hauling; allow wet gloves time to dry.",
+        "category": "Gloves",
+        "price": 49.0,
+        "currency": "USD",
+        "stock_quantity": 26,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "M",
+            "L",
+            "XL"
+          ],
+          "material": "goatskin and polyester",
+          "weight_g": 160,
+          "dexterity": "medium"
+        },
+        "tags": [
+          "hauling gloves",
+          "leather gloves",
+          "rope work"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-shell-mitts",
+        "catalog": "Polar Outfitter",
+        "name": "Pack Flat Waterproof Overmitts",
+        "title": "Pack Flat Waterproof Overmitts",
+        "description": "Uninsulated shell mitts pull over liner gloves when wind or wet snow exceeds what the liners can handle.",
+        "category": "Gloves",
+        "price": 35.0,
+        "currency": "USD",
+        "stock_quantity": 24,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "S/M",
+            "L/XL"
+          ],
+          "material": "laminated nylon",
+          "weight_g": 75,
+          "insulated": false,
+          "waterproof": true
+        },
+        "tags": [
+          "overmitts",
+          "shell mittens",
+          "waterproof"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-fingerless",
+        "catalog": "Polar Outfitter",
+        "name": "Ledger Fingerless Wool Gloves",
+        "title": "Ledger Fingerless Wool Gloves",
+        "description": "Fingerless wool-blend gloves keep palms covered while leaving fingertips free for indoor paperwork and cool-store tasks.",
+        "category": "Gloves",
+        "price": 19.0,
+        "currency": "USD",
+        "stock_quantity": 39,
+        "in_stock": true,
+        "attributes": {
+          "sizes": [
+            "S/M",
+            "L/XL"
+          ],
+          "material": "wool and acrylic",
+          "weight_g": 60,
+          "dexterity": "high"
+        },
+        "tags": [
+          "fingerless gloves",
+          "wrist warmth",
+          "desk work"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-glove-leashes",
+        "catalog": "Polar Outfitter",
+        "name": "Simple Glove Leashes",
+        "title": "Simple Glove Leashes",
+        "description": "A pair of adjustable wrist loops keeps compatible gloves attached while checking a map or opening a flask.",
+        "category": "Gloves",
+        "price": 8.0,
+        "currency": "USD",
+        "stock_quantity": 60,
+        "in_stock": true,
+        "attributes": {
+          "pieces": 2,
+          "material": "elastic and nylon",
+          "weight_g": 18
+        },
+        "tags": [
+          "mitten keepers",
+          "glove straps",
+          "accessories"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-goggles-clear",
+        "catalog": "Polar Outfitter",
+        "name": "Flat Light Clear Goggles",
+        "title": "Flat Light Clear Goggles",
+        "description": "Clear dual-lens goggles protect eyes from wind and blowing snow when daylight is limited; check fit with your headwear.",
+        "category": "Goggles",
+        "price": 39.0,
+        "currency": "USD",
+        "stock_quantity": 23,
+        "in_stock": true,
+        "attributes": {
+          "lens": "clear polycarbonate",
+          "visible_light_transmission_percent": 85,
+          "weight_g": 110,
+          "fit": "adult"
+        },
+        "tags": [
+          "clear goggles",
+          "low light",
+          "wind protection"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-goggles-amber",
+        "catalog": "Polar Outfitter",
+        "name": "Contrast Lens Snow Goggles",
+        "title": "Contrast Lens Snow Goggles",
+        "description": "An amber dual lens adds contrast in overcast daylight with a wide elastic strap that fits over a plain winter hat.",
+        "category": "Goggles",
+        "price": 54.0,
+        "currency": "USD",
+        "stock_quantity": 19,
+        "in_stock": true,
+        "attributes": {
+          "lens": "amber polycarbonate",
+          "visible_light_transmission_percent": 48,
+          "weight_g": 125,
+          "fit": "adult"
+        },
+        "tags": [
+          "snow goggles",
+          "amber lens",
+          "overcast"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-sunglasses",
+        "catalog": "Polar Outfitter",
+        "name": "Glare Cut Wraparound Sunglasses",
+        "title": "Glare Cut Wraparound Sunglasses",
+        "description": "Wraparound dark lenses reduce glare on bright snow; they are intended for daylight rather than night-shift driving.",
+        "category": "Goggles",
+        "price": 45.0,
+        "currency": "USD",
+        "stock_quantity": 32,
+        "in_stock": true,
+        "attributes": {
+          "lens": "gray polycarbonate",
+          "visible_light_transmission_percent": 12,
+          "weight_g": 30,
+          "fit": "adult"
+        },
+        "tags": [
+          "snow glasses",
+          "sunglasses",
+          "bright light"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-fitover",
+        "catalog": "Polar Outfitter",
+        "name": "Over-Glasses Snow Goggles",
+        "title": "Over-Glasses Snow Goggles",
+        "description": "A deeper frame leaves space for many prescription glasses and uses a clear dual lens for low-light work.",
+        "category": "Goggles",
+        "price": 62.0,
+        "currency": "USD",
+        "stock_quantity": 14,
+        "in_stock": true,
+        "attributes": {
+          "lens": "clear polycarbonate",
+          "prescription_glasses_compatible": true,
+          "weight_g": 145,
+          "fit": "adult wide"
+        },
+        "tags": [
+          "OTG goggles",
+          "over glasses",
+          "low light"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-lens-spare",
+        "catalog": "Polar Outfitter",
+        "name": "Clear Replacement Goggle Lens",
+        "title": "Clear Replacement Goggle Lens",
+        "description": "A spare clear lens for Flat Light Clear Goggles; the mounting tabs are specific to that sample frame.",
+        "category": "Goggles",
+        "price": 18.0,
+        "currency": "USD",
+        "stock_quantity": 0,
+        "in_stock": false,
+        "attributes": {
+          "lens": "clear polycarbonate",
+          "compatibility": "Flat Light Clear Goggles",
+          "weight_g": 32
+        },
+        "tags": [
+          "goggle lens",
+          "spare lens",
+          "replacement"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-thermos-small",
+        "catalog": "Polar Outfitter",
+        "name": "Daypack Slim Vacuum Flask",
+        "title": "Daypack Slim Vacuum Flask",
+        "description": "A narrow half-liter insulated flask slides into a small daypack side pocket and pours through a screw stopper.",
+        "category": "Thermoses",
+        "price": 29.0,
+        "currency": "USD",
+        "stock_quantity": 36,
+        "in_stock": true,
+        "attributes": {
+          "capacity_ml": 500,
+          "dimensions_cm": [
+            7,
+            7,
+            24
+          ],
+          "weight_g": 310,
+          "material": "stainless steel"
+        },
+        "tags": [
+          "thermos",
+          "small backpack",
+          "vacuum bottle"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-thermos-large",
+        "catalog": "Polar Outfitter",
+        "name": "Overnight One-Liter Flask",
+        "title": "Overnight One-Liter Flask",
+        "description": "A full-size vacuum flask with an insulated cup lid carries a longer hot-drink supply at the cost of more pack space.",
+        "category": "Thermoses",
+        "price": 39.0,
+        "currency": "USD",
+        "stock_quantity": 24,
+        "in_stock": true,
+        "attributes": {
+          "capacity_ml": 1000,
+          "dimensions_cm": [
+            9,
+            9,
+            32
+          ],
+          "weight_g": 560,
+          "material": "stainless steel"
+        },
+        "tags": [
+          "thermos",
+          "large flask",
+          "hot drinks"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-thermos-food",
+        "catalog": "Polar Outfitter",
+        "name": "Field Lunch Food Jar",
+        "title": "Field Lunch Food Jar",
+        "description": "A wide-mouth insulated food jar makes thick soup easier to eat during a stop; it is too broad for most bottle sleeves.",
+        "category": "Thermoses",
+        "price": 32.0,
+        "currency": "USD",
+        "stock_quantity": 29,
+        "in_stock": true,
+        "attributes": {
+          "capacity_ml": 650,
+          "dimensions_cm": [
+            11,
+            11,
+            17
+          ],
+          "weight_g": 440,
+          "material": "stainless steel"
+        },
+        "tags": [
+          "thermos",
+          "food flask",
+          "soup jar"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-mug",
+        "catalog": "Polar Outfitter",
+        "name": "Short Stop Insulated Mug",
+        "title": "Short Stop Insulated Mug",
+        "description": "A small double-wall mug has a simple sliding lid for sheltered breaks; carry it upright because the lid is not leakproof.",
+        "category": "Thermoses",
+        "price": 21.0,
+        "currency": "USD",
+        "stock_quantity": 42,
+        "in_stock": true,
+        "attributes": {
+          "capacity_ml": 350,
+          "dimensions_cm": [
+            8,
+            8,
+            12
+          ],
+          "weight_g": 180,
+          "material": "stainless steel",
+          "leakproof": false
+        },
+        "tags": [
+          "travel mug",
+          "cup",
+          "insulated"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-thermos-ultralight",
+        "catalog": "Polar Outfitter",
+        "name": "Light Pack Vacuum Bottle",
+        "title": "Light Pack Vacuum Bottle",
+        "description": "A thin-wall vacuum bottle reduces carried weight for a half-liter drink and uses a plain screw cap rather than a cup lid.",
+        "category": "Thermoses",
+        "price": 44.0,
+        "currency": "USD",
+        "stock_quantity": 18,
+        "in_stock": true,
+        "attributes": {
+          "capacity_ml": 500,
+          "dimensions_cm": [
+            6.8,
+            6.8,
+            23
+          ],
+          "weight_g": 225,
+          "material": "stainless steel"
+        },
+        "tags": [
+          "lightweight thermos",
+          "small backpack",
+          "insulated bottle"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-winter-tent",
+        "catalog": "Polar Outfitter",
+        "name": "Ridge Camp Four-Season Tent",
+        "title": "Ridge Camp Four-Season Tent",
+        "description": "A two-person double-wall tent with reinforced poles and a small vestibule for experienced winter campers; site choice still matters.",
+        "category": "Tents",
+        "price": 389.0,
+        "currency": "USD",
+        "stock_quantity": 9,
+        "in_stock": true,
+        "attributes": {
+          "capacity_people": 2,
+          "season": "four-season",
+          "packed_cm": [
+            52,
+            18,
+            18
+          ],
+          "weight_g": 3400,
+          "pole_material": "aluminum"
+        },
+        "tags": [
+          "winter tent",
+          "two person",
+          "shelter"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-shelter",
+        "catalog": "Polar Outfitter",
+        "name": "Break Point Group Shelter",
+        "title": "Break Point Group Shelter",
+        "description": "A compact emergency group shelter provides a temporary windbreak for a short stop and needs occupants to hold its shape.",
+        "category": "Tents",
+        "price": 89.0,
+        "currency": "USD",
+        "stock_quantity": 21,
+        "in_stock": true,
+        "attributes": {
+          "capacity_people": 4,
+          "packed_cm": [
+            22,
+            14,
+            14
+          ],
+          "weight_g": 620,
+          "material": "coated polyester"
+        },
+        "tags": [
+          "bothy bag",
+          "group shelter",
+          "windbreak"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-summer-tent",
+        "catalog": "Polar Outfitter",
+        "name": "Trail Rest Three-Season Tent",
+        "title": "Trail Rest Three-Season Tent",
+        "description": "A lighter two-person tent suits ordinary spring-to-autumn trips; its mesh panels and pole structure are not intended for snow loads.",
+        "category": "Tents",
+        "price": 179.0,
+        "currency": "USD",
+        "stock_quantity": 15,
+        "in_stock": true,
+        "attributes": {
+          "capacity_people": 2,
+          "season": "three-season",
+          "packed_cm": [
+            44,
+            15,
+            15
+          ],
+          "weight_g": 2100,
+          "pole_material": "aluminum"
+        },
+        "tags": [
+          "camping tent",
+          "two person",
+          "lightweight"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-bivy",
+        "catalog": "Polar Outfitter",
+        "name": "Pack Flat Emergency Bivy",
+        "title": "Pack Flat Emergency Bivy",
+        "description": "A compact reflective bivy bag is an emergency weather barrier, not a substitute for a sleeping bag or planned shelter.",
+        "category": "Tents",
+        "price": 24.0,
+        "currency": "USD",
+        "stock_quantity": 40,
+        "in_stock": true,
+        "attributes": {
+          "capacity_people": 1,
+          "packed_cm": [
+            10,
+            7,
+            7
+          ],
+          "weight_g": 115,
+          "material": "reflective polyethylene"
+        },
+        "tags": [
+          "bivouac bag",
+          "emergency shelter",
+          "bivy sack"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-tarp",
+        "catalog": "Polar Outfitter",
+        "name": "Depot Pitch Utility Tarp",
+        "title": "Depot Pitch Utility Tarp",
+        "description": "A rectangular coated tarp provides a flexible overhead cover when properly supported and anchored; poles are sold separately.",
+        "category": "Tents",
+        "price": 69.0,
+        "currency": "USD",
+        "stock_quantity": 17,
+        "in_stock": true,
+        "attributes": {
+          "dimensions_cm": [
+            300,
+            300
+          ],
+          "material": "coated polyester",
+          "weight_g": 820
+        },
+        "tags": [
+          "tarp",
+          "tarpaulin",
+          "utility shelter"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-sled-cargo",
+        "catalog": "Polar Outfitter",
+        "name": "Haul Track Cargo Sled",
+        "title": "Haul Track Cargo Sled",
+        "description": "A deep utility sled carries packed equipment on established snow routes, with a tow rope and molded tie-down holes.",
+        "category": "Sleds",
+        "price": 129.0,
+        "currency": "USD",
+        "stock_quantity": 12,
+        "in_stock": true,
+        "attributes": {
+          "dimensions_cm": [
+            120,
+            60,
+            25
+          ],
+          "material": "HDPE",
+          "weight_g": 5200,
+          "rated_load_kg": 60
+        },
+        "tags": [
+          "pulk",
+          "cargo sled",
+          "freight"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-sled-folding",
+        "catalog": "Polar Outfitter",
+        "name": "Foldaway Gear Sledge",
+        "title": "Foldaway Gear Sledge",
+        "description": "A collapsible fabric-sided gear sledge packs down for transport and suits lighter loads on reasonably even snow.",
+        "category": "Sleds",
+        "price": 169.0,
+        "currency": "USD",
+        "stock_quantity": 8,
+        "in_stock": true,
+        "attributes": {
+          "dimensions_cm": [
+            100,
+            50,
+            20
+          ],
+          "packed_cm": [
+            55,
+            25,
+            15
+          ],
+          "weight_g": 3100,
+          "rated_load_kg": 35
+        },
+        "tags": [
+          "sledge",
+          "folding sled",
+          "gear hauling"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-sled-small",
+        "catalog": "Polar Outfitter",
+        "name": "Short Run Utility Sled",
+        "title": "Short Run Utility Sled",
+        "description": "A short molded sled moves small bags between nearby buildings without the footprint of a full freight pulk.",
+        "category": "Sleds",
+        "price": 59.0,
+        "currency": "USD",
+        "stock_quantity": 26,
+        "in_stock": true,
+        "attributes": {
+          "dimensions_cm": [
+            80,
+            45,
+            16
+          ],
+          "material": "HDPE",
+          "weight_g": 2100,
+          "rated_load_kg": 25
+        },
+        "tags": [
+          "small sled",
+          "sledge",
+          "utility"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-sled-harness",
+        "catalog": "Polar Outfitter",
+        "name": "Padded Pulk Tow Belt",
+        "title": "Padded Pulk Tow Belt",
+        "description": "A broad padded waist belt connects to compatible cargo-sled traces; the belt alone does not include rigid tow poles.",
+        "category": "Sleds",
+        "price": 39.0,
+        "currency": "USD",
+        "stock_quantity": 22,
+        "in_stock": true,
+        "attributes": {
+          "waist_cm": [
+            70,
+            120
+          ],
+          "material": "nylon",
+          "weight_g": 280,
+          "compatibility": "25 mm tow straps"
+        },
+        "tags": [
+          "sled harness",
+          "pulk belt",
+          "hauling"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-sled-straps",
+        "catalog": "Polar Outfitter",
+        "name": "Cold Camp Cargo Straps",
+        "title": "Cold Camp Cargo Straps",
+        "description": "Two cam-buckle webbing straps secure bags inside a sled or to a rack; not intended for lifting people or loads.",
+        "category": "Sleds",
+        "price": 18.0,
+        "currency": "USD",
+        "stock_quantity": 53,
+        "in_stock": true,
+        "attributes": {
+          "pieces": 2,
+          "length_cm": 250,
+          "width_mm": 25,
+          "material": "polyester",
+          "weight_g": 180
+        },
+        "tags": [
+          "tie down",
+          "lashing straps",
+          "sled straps"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-headlamp",
+        "catalog": "Polar Outfitter",
+        "name": "Field Route Rechargeable Headlamp",
+        "title": "Field Route Rechargeable Headlamp",
+        "description": "A weather-resistant head torch with a red mode and adjustable beam for field stops; keep the rechargeable cell warm before use.",
+        "category": "Cold-weather equipment",
+        "price": 49.0,
+        "currency": "USD",
+        "stock_quantity": 30,
+        "in_stock": true,
+        "attributes": {
+          "battery_type": "integrated lithium-ion",
+          "charging": "USB-C",
+          "lumens": 450,
+          "weight_g": 105,
+          "red_mode": true
+        },
+        "tags": [
+          "head torch",
+          "headlamp",
+          "rechargeable"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-headlamp-aa",
+        "catalog": "Polar Outfitter",
+        "name": "Trail Spare AA Headlamp",
+        "title": "Trail Spare AA Headlamp",
+        "description": "A simple headlamp accepts one replaceable AA cell for trips where carrying spare cells is easier than finding a charger.",
+        "category": "Cold-weather equipment",
+        "price": 34.0,
+        "currency": "USD",
+        "stock_quantity": 28,
+        "in_stock": true,
+        "attributes": {
+          "battery_type": "1 AA",
+          "lumens": 180,
+          "weight_g": 78,
+          "red_mode": false
+        },
+        "tags": [
+          "head torch",
+          "headlamp",
+          "replaceable battery"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-sleeping-bag",
+        "catalog": "Polar Outfitter",
+        "name": "Winter Stop Synthetic Sleeping Bag",
+        "title": "Winter Stop Synthetic Sleeping Bag",
+        "description": "A roomy synthetic sleeping bag for planned cold-weather camps; use with an appropriate insulated mat and shelter.",
+        "category": "Cold-weather equipment",
+        "price": 189.0,
+        "currency": "USD",
+        "stock_quantity": 12,
+        "in_stock": true,
+        "attributes": {
+          "length_cm": 215,
+          "shoulder_width_cm": 82,
+          "material": "polyester, synthetic fill",
+          "weight_g": 2100,
+          "packed_cm": [
+            42,
+            25,
+            25
+          ]
+        },
+        "tags": [
+          "winter sleeping bag",
+          "camping",
+          "sleep system"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-sleeping-mat",
+        "catalog": "Polar Outfitter",
+        "name": "Fold Ridge Foam Sleeping Mat",
+        "title": "Fold Ridge Foam Sleeping Mat",
+        "description": "A folding closed-cell foam mat provides a durable ground layer that can also become a dry seat during a break.",
+        "category": "Cold-weather equipment",
+        "price": 38.0,
+        "currency": "USD",
+        "stock_quantity": 34,
+        "in_stock": true,
+        "attributes": {
+          "dimensions_cm": [
+            183,
+            56
+          ],
+          "thickness_mm": 18,
+          "material": "closed-cell foam",
+          "weight_g": 410
+        },
+        "tags": [
+          "sleeping pad",
+          "foam mat",
+          "ground insulation"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-shovel",
+        "catalog": "Polar Outfitter",
+        "name": "Compact Snow Shovel",
+        "title": "Compact Snow Shovel",
+        "description": "A telescoping-handled aluminum shovel clears camp spaces and light accumulations around equipment.",
+        "category": "Cold-weather equipment",
+        "price": 45.0,
+        "currency": "USD",
+        "stock_quantity": 24,
+        "in_stock": true,
+        "attributes": {
+          "blade_material": "aluminum",
+          "weight_g": 620,
+          "collapsed_length_cm": 47,
+          "extended_length_cm": 66
+        },
+        "tags": [
+          "snow shovel",
+          "camp shovel",
+          "telescoping"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-drybag",
+        "catalog": "Polar Outfitter",
+        "name": "Rolltop Dry Bag 10 L",
+        "title": "Rolltop Dry Bag 10 L",
+        "description": "A coated rolltop bag keeps spare layers separate from loose snow and splashes; it is not designed for prolonged submersion.",
+        "category": "Cold-weather equipment",
+        "price": 19.0,
+        "currency": "USD",
+        "stock_quantity": 47,
+        "in_stock": true,
+        "attributes": {
+          "capacity_l": 10,
+          "material": "coated nylon",
+          "weight_g": 95
+        },
+        "tags": [
+          "dry sack",
+          "drybag",
+          "water resistant"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-handwarmers",
+        "catalog": "Polar Outfitter",
+        "name": "Pocket Chemical Hand Warmers",
+        "title": "Pocket Chemical Hand Warmers",
+        "description": "Two pairs of disposable air-activated warmers add a small heat source inside suitable pockets; follow skin-contact instructions.",
+        "category": "Cold-weather equipment",
+        "price": 7.0,
+        "currency": "USD",
+        "stock_quantity": 88,
+        "in_stock": true,
+        "attributes": {
+          "pairs": 2,
+          "type": "air-activated disposable",
+          "weight_g": 110
+        },
+        "tags": [
+          "hand warmers",
+          "pocket warmers",
+          "disposable"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-compass",
+        "catalog": "Polar Outfitter",
+        "name": "Map Room Baseplate Compass",
+        "title": "Map Room Baseplate Compass",
+        "description": "A plain baseplate compass with a rotating bezel supports map navigation practice away from nearby metal interference.",
+        "category": "Cold-weather equipment",
+        "price": 28.0,
+        "currency": "USD",
+        "stock_quantity": 19,
+        "in_stock": true,
+        "attributes": {
+          "dimensions_cm": [
+            10,
+            6,
+            1.5
+          ],
+          "weight_g": 48
+        },
+        "tags": [
+          "compass",
+          "navigation",
+          "map reading"
+        ],
+        "demo_data": true
+      },
+      {
+        "id": "np-polar-repair-patches",
+        "catalog": "Polar Outfitter",
+        "name": "Field Fabric Repair Patches",
+        "title": "Field Fabric Repair Patches",
+        "description": "Peel-and-stick fabric patches cover small tears in compatible tent and jacket fabrics; clean and dry the area before applying.",
+        "category": "Cold-weather equipment",
+        "price": 12.0,
+        "currency": "USD",
+        "stock_quantity": 41,
+        "in_stock": true,
+        "attributes": {
+          "pieces": 6,
+          "patch_cm": [
+            7.5,
+            7.5
+          ],
+          "material": "adhesive-backed nylon"
+        },
+        "tags": [
+          "tent repair",
+          "jacket patch",
+          "repair kit"
+        ],
+        "demo_data": true
+      }
+    ]
+  },
+  "lists": [
+    {
+      "id": "np-list-stocking-stuffers-under-25",
+      "name": "Sample Stocking Stuffers Under $25",
+      "product_ids": [
+        "np-gift-cards",
+        "np-gift-pencils",
+        "np-gift-origami",
+        "np-gift-poetry",
+        "np-gift-rope",
+        "np-gift-spatula"
+      ]
+    },
+    {
+      "id": "np-list-gifts-for-someone-who-already-has-everything",
+      "name": "Sample Gifts for Someone Who Already Has Everything",
+      "product_ids": [
+        "np-gift-atlas",
+        "np-gift-grinder",
+        "np-gift-solo-game",
+        "np-gift-binoculars",
+        "np-gift-sketch-book"
+      ]
+    },
+    {
+      "id": "np-list-workshop-night-shift",
+      "name": "Sample Workshop Night Shift",
+      "product_ids": [
+        "np-workshop-bench-light",
+        "np-workshop-headlamp",
+        "np-workshop-battery-aaa",
+        "np-workshop-safety-glasses",
+        "np-workshop-work-flask",
+        "np-workshop-gloves-fine"
+      ]
+    },
+    {
+      "id": "np-list-last-minute-repairs",
+      "name": "Sample Last-Minute Repairs",
+      "product_ids": [
+        "np-workshop-ratchet-driver",
+        "np-workshop-pliers",
+        "np-workshop-hex-keys",
+        "np-workshop-repair-tape",
+        "np-workshop-screw-kit",
+        "np-workshop-zip-ties"
+      ]
+    },
+    {
+      "id": "np-list-overnight-sleigh-kit",
+      "name": "Sample Overnight Sleigh Kit",
+      "product_ids": [
+        "np-polar-thermos-large",
+        "np-polar-headlamp-aa",
+        "np-polar-sled-straps",
+        "np-polar-drybag",
+        "np-polar-bivy",
+        "np-polar-compass"
+      ]
+    },
+    {
+      "id": "np-list-cold-weather-field-kit",
+      "name": "Sample Cold-Weather Field Kit",
+      "product_ids": [
+        "np-polar-parka-light",
+        "np-polar-boots-hike",
+        "np-polar-liner-gloves",
+        "np-polar-shell-mitts",
+        "np-polar-goggles-clear",
+        "np-polar-thermos-small",
+        "np-polar-shovel"
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "query_id": "np-q01",
+      "query": "Harbor Wooden Building Blocks",
+      "intent": "exact",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q02",
+      "query": "Station Felt-Liner Boots",
+      "intent": "exact",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q03",
+      "query": "Corner Bench Rechargeable Light",
+      "intent": "exact",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q04",
+      "query": "Daypack Slim Vacuum Flask",
+      "intent": "exact",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q05",
+      "query": "Detail Bench Precision Driver",
+      "intent": "exact",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q06",
+      "query": "Foldaway Travel Chess",
+      "intent": "exact",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q07",
+      "query": "AA and AAA NiMH Charger",
+      "intent": "exact",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q08",
+      "query": "Ridge Camp Four-Season Tent",
+      "intent": "exact",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q09",
+      "query": "gifts for someone who already has everything",
+      "intent": "discovery",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q10",
+      "query": "things to read on a long evening",
+      "intent": "discovery",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q11",
+      "query": "a board game we can play together",
+      "intent": "discovery",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q12",
+      "query": "organize the small parts drawer",
+      "intent": "discovery",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q13",
+      "query": "a thermos for the workshop",
+      "intent": "discovery",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q14",
+      "query": "lights for a night shift",
+      "intent": "discovery",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q15",
+      "query": "something for birdwatching",
+      "intent": "discovery",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q16",
+      "query": "a light shell",
+      "intent": "discovery",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q17",
+      "query": "spare cells",
+      "intent": "discovery",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q18",
+      "query": "a driver for the bench",
+      "intent": "discovery",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q19",
+      "query": "warm gloves that let me handle small screws",
+      "intent": "constraints",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q20",
+      "query": "a gift for a cyclist under $75",
+      "intent": "constraints",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q21",
+      "query": "rechargeable work light for a cramped bench",
+      "intent": "constraints",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q22",
+      "query": "a thermos that fits in a small backpack",
+      "intent": "constraints",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q23",
+      "query": "craft supplies for an eight-year-old",
+      "intent": "constraints",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q24",
+      "query": "a clear storage box less than 25 cm long",
+      "intent": "constraints",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q25",
+      "query": "a four-season tent for two people under $400",
+      "intent": "constraints",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q26",
+      "query": "headphones with a microphone and USB-A",
+      "intent": "constraints",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q27",
+      "query": "AA rechargeable batteries compatible with a NiMH charger",
+      "intent": "constraints",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q28",
+      "query": "a small sled for loads up to 25 kg",
+      "intent": "constraints",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q29",
+      "query": "an in-stock work light under $30 with replaceable batteries",
+      "intent": "constraints",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q30",
+      "query": "clear goggles that fit over prescription glasses",
+      "intent": "constraints",
+      "demo_data": true
+    }
+  ],
+  "judgments": [
+    {
+      "query_id": "np-q01",
+      "product_id": "np-gift-blocks",
+      "grade": 3,
+      "explanation": "Exact product name; sixty wooden blocks for ages three and up.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q19",
+      "product_id": "np-polar-liner-gloves",
+      "grade": 3,
+      "explanation": "Light wool-blend warmth and high dexterity for brief cool-weather fastener work.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q19",
+      "product_id": "np-polar-softshell-gloves",
+      "grade": 2,
+      "explanation": "Wind protection and light insulation, with less dexterity than the liners.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q20",
+      "product_id": "np-gift-bike-tool",
+      "grade": 3,
+      "explanation": "Bicycle repair multitool at $28, within the $75 limit.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q20",
+      "product_id": "np-gift-bike-light",
+      "grade": 3,
+      "explanation": "USB-C bicycle lighting set at $39.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q20",
+      "product_id": "np-gift-pump",
+      "grade": 3,
+      "explanation": "Presta and Schrader bicycle pump at $23.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q20",
+      "product_id": "np-gift-sport-earbuds",
+      "grade": 2,
+      "explanation": "Open-ear sport headphones at $69; potentially useful for cycling but fit is personal.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q21",
+      "product_id": "np-workshop-bench-light",
+      "grade": 3,
+      "explanation": "17 cm, 180 g, magnetic, USB-C rechargeable; designed for cramped benches.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q22",
+      "product_id": "np-polar-thermos-small",
+      "grade": 3,
+      "explanation": "500 ml flask with a 7 cm-wide body and 24 cm height.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q22",
+      "product_id": "np-polar-thermos-ultralight",
+      "grade": 3,
+      "explanation": "500 ml bottle is narrower and lighter at 6.8 cm wide and 225 g.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q23",
+      "product_id": "np-gift-watercolors",
+      "grade": 3,
+      "explanation": "Watercolor kit with brush and eight-year minimum age.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q23",
+      "product_id": "np-gift-clay",
+      "grade": 3,
+      "explanation": "Air-dry modeling clay for ages eight and up.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q23",
+      "product_id": "np-gift-origami",
+      "grade": 3,
+      "explanation": "Paper folding pack with guide for ages eight and up.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q23",
+      "product_id": "np-gift-markers",
+      "grade": 2,
+      "explanation": "Washable markers appropriate from age five, including an eight-year-old.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q24",
+      "product_id": "np-workshop-bin-small",
+      "grade": 3,
+      "explanation": "Transparent lidded bin measures 22 cm long, below the 25 cm limit.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q25",
+      "product_id": "np-polar-winter-tent",
+      "grade": 3,
+      "explanation": "Two-person four-season tent at $389, below $400.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q26",
+      "product_id": "np-gift-usb-headset",
+      "grade": 3,
+      "explanation": "USB-A stereo headset explicitly includes a boom microphone.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    },
+    {
+      "query_id": "np-q27",
+      "product_id": "np-workshop-battery-nimh",
+      "grade": 3,
+      "explanation": "Four 1.2 V AA NiMH rechargeable cells, matching the specified charger chemistry.",
+      "source": "human",
+      "evidence": "ILLUSTRATIVE",
+      "demo_data": true
+    }
+  ]
+}

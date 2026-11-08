@@ -1038,3 +1038,19 @@ including a small hc skill you can install with the user's permission.
 - One mod per idea. Don't edit `AGENTS.md` or the `.d.ts` files (the app
   rewrites them). Don't touch other mods unless the request
   needs it.
+
+## Sample North Pole
+
+`cst demo seed` loads the separate `sample-north-pole` workspace: Sample Gift Catalog,
+Sample Workshop Supply, Sample Polar Outfitter (50 products each), six Sample lists,
+30 search queries and illustrative manual judgments for 10 queries. Prices, stock,
+and specifications are synthetic demo data, not verified commercial offers. Unlisted
+query/product pairs are unjudged. No clicks, conversions or experiment results are
+supplied. The app's “Load Sample North Pole” task selects this workspace.
+
+Use “Remove Sample North Pole” in the New menu/palette, or `cst demo remove-sample`,
+to remove it. Removal refuses added or modified files: move your work out first.
+Sample-only read history is removed too. Other workspaces are preserved. `cst --dry-run demo seed` and
+`cst --dry-run demo remove-sample` preview without changing sample data.
+The older generated experiment demo remains available with `cst demo seed --legacy`;
+it writes simulated experiments into the selected workspace.

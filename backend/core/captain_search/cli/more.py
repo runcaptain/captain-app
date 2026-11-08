@@ -639,12 +639,27 @@ def demo_import():
 
 
 @demo_app.command("seed")
-def demo_seed():
-    """Fill the current workspace with a synthetic store, queries, pipelines, a backtest and a notebook."""
-    from .. import demo
+def demo_seed(legacy: bool = typer.Option(False, "--legacy", help="Use the older simulated experiment demo in the current workspace")):
+    """Load the isolated Sample North Pole workspace. Safe to rerun; no clicks or performance are invented."""
+    if legacy:
+        from .. import demo
+        if S.dry_run:
+            emit({"dry_run": True, "legacy": True}, "Would load the legacy simulated demo.")
+            return
+        r = _do(demo.seed, ctx(), progress=(lambda s: None) if S.json else (lambda s: typer.echo(f"  {s}", err=True)))
+        emit(r, "Legacy demo ready. Every number is SIMULATED.")
+        return
+    from .. import sample_data
+    r = _do(sample_data.seed, dry_run=S.dry_run)
+    emit(r, "Sample North Pole ready. Select sample-north-pole in the workspace switcher. Remove with cst demo remove-sample.")
 
-    r = _do(demo.seed, ctx(), progress=(lambda s: None) if S.json else (lambda s: typer.echo(f"  {s}", err=True)))
-    emit(r, "demo ready. Every number in it is SIMULATED: the store, queries and grades are generated.")
+
+@demo_app.command("remove-sample")
+def demo_remove_sample():
+    """Remove only the unchanged, owned Sample North Pole workspace. Refuses added or edited files."""
+    from .. import sample_data
+    r = _do(sample_data.remove, dry_run=S.dry_run)
+    emit(r, "Sample removal checked (dry run)." if S.dry_run else "Sample North Pole removed, or already absent. Other workspaces are unchanged.")
 
 
 # ---- v2: cloud, compute, models, lineage, serving, coding agent ---------------------------

@@ -43,7 +43,7 @@ build:
     cargo build --locked
 
 test:
-    bun test scripts/files.test.ts scripts/picker.test.ts scripts/palette.test.ts scripts/agents.test.ts scripts/spaces.test.ts scripts/worktree.test.ts
+    bun test scripts/files.test.ts scripts/picker.test.ts scripts/palette.test.ts scripts/agents.test.ts scripts/spaces.test.ts scripts/worktree.test.ts scripts/sample.test.ts
     cargo test --locked
 
 # CAPTAIN: opens throwaway "Captain (test)" windows and fails if any form or section draws blank or an error.

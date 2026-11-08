@@ -2,7 +2,7 @@
 // the palette and onboarding all open these. The CLI is for agents; nothing here shows
 // a command name or a flag.
 import { api, connectionsChanged } from "./kit/cst.js";
-import { exec, home, setShared, openOverlay, run as runCommand } from "herdr";
+import { exec, home, shared, setShared, openOverlay, run as runCommand } from "herdr";
 
 const list = async (path, map) => {
   const r = await api(path);
@@ -397,9 +397,39 @@ export const TASKS = [
     },
   },
   {
-    id: "demo", label: "Try the demo store", icon: "sparkles",
-    about: "Fill this workspace with a small synthetic store: a catalog, queries, judgments and a baseline. Every number in it is simulated.",
+    id: "demo", label: "Load Sample North Pole", icon: "sparkles",
+    about: "Open a separate sample workspace with three catalogs, six lists, search queries and illustrative manual judgments. Prices, stock and specifications are synthetic. Your current data stays separate.",
     fields: [],
-    submit: async () => ok(await run(["demo", "seed"], {}), "The demo store is ready."),
+    submit: async () => {
+      const r = await run(["demo", "seed"], {});
+      const result = ok(r, "Sample North Pole is ready.");
+      const name = r.data?.output?.workspace;
+      if (result.ok && name) {
+        const selected = await api(`/api/workspaces/${encodeURIComponent(name)}/use`, { method: "POST" });
+        if (!selected.ok) return { ok: false, error: "Sample data loaded, but the workspace could not be selected. Choose sample-north-pole in the workspace switcher." };
+        setShared("captain.workspace", name);
+        connectionsChanged();
+      }
+      return result;
+    },
+  },
+  {
+    id: "remove-sample", label: "Remove Sample North Pole", icon: "trash-2",
+    about: "Delete the Sample North Pole workspace. Added or edited files prevent removal so your work is preserved. You can load a fresh sample later.",
+    fields: [],
+    submit: async () => {
+      const r = await run(["demo", "remove-sample"], {});
+      const result = ok(r, "Sample North Pole removed.");
+      if (result.ok && shared("captain.workspace") === "sample-north-pole") {
+        const current = r.data?.output?.current;
+        if (current) {
+          const selected = await api(`/api/workspaces/${encodeURIComponent(current)}/use`, { method: "POST" });
+          if (!selected.ok) return { ok: false, error: "Sample removed. Select another workspace in the workspace switcher." };
+        }
+        setShared("captain.workspace", current ?? null);
+        connectionsChanged();
+      }
+      return result;
+    },
   },
 ];

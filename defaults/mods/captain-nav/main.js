@@ -63,7 +63,8 @@ const TASK_ENTRIES = [
   ["dataset-class", "New dataset class", "class type role catalog queries judgments", "tag"],
   ["rankings", "Compare your own rankings", "bring import rankings results system offline compare evaluate", "git-compare"],
   ["explain", "Explain a query", "debug why ranking stage score trace query debugger", "layers"],
-  ["demo", "Try the demo store", "sample example data", "sparkles"],
+  ["demo", "Load Sample North Pole", "sample example data santa workshop catalogs", "sparkles"],
+  ["remove-sample", "Remove Sample North Pole", "delete sample example data", "trash-2"],
 ];
 // New workspace: where it keeps its work, then a drop zone, then an optional model registry (captain-setup).
 const SETUP = { mod: "captain-setup", kind: "dialog", width: 600, height: 640 };

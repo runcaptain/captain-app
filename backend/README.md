@@ -22,3 +22,11 @@ uv venv && uv pip install -e '.[dev,warehouses]'
 
 Organization-specific data, such as store demos or a model registry, is never part of this code. `cst demo import`
 reads it from a private file (`$CST_DEMOS`), and `cst demo seed` makes a synthetic store instead.
+
+## Default sample workspace
+
+`cst demo seed` loads **Sample North Pole**, a separate, synthetic workspace with
+three 50-product catalogs, six lists, 30 queries and illustrative relevance labels.
+Use the app's “Load Sample North Pole” task to load and select it. Remove it with
+“Remove Sample North Pole” or `cst demo remove-sample`; added or edited work is
+protected. See [sample-data.md](docs/sample-data.md) for schemas and safety rules.

@@ -53,7 +53,7 @@ cst = "captain_search.cli.main:app"
 include = ["captain_search*"]
 
 [tool.setuptools.package-data]
-captain_search = ["skills_builtin/*/SKILL.md", "view_template/*", "view_template/.gitignore"]
+captain_search = ["skills_builtin/*/SKILL.md", "view_template/*", "view_template/.gitignore", "samples/*.json"]
 
 [tool.pytest.ini_options]
 markers = ["docker: needs a running Docker daemon (real databases in containers)"]

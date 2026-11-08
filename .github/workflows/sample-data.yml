@@ -1,0 +1,41 @@
+name: sample-data
+on:
+  pull_request:
+    paths:
+      - 'backend/core/**'
+      - 'defaults/mods/captain-forms/tasks.js'
+      - 'scripts/sample.test.ts'
+      - '.github/workflows/sample-data.yml'
+  push:
+    branches: [captain]
+    paths:
+      - 'backend/core/**'
+      - 'defaults/mods/captain-forms/tasks.js'
+      - 'scripts/sample.test.ts'
+      - '.github/workflows/sample-data.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install './backend/core[dev]'
+      - run: python -m pytest tests/test_sample_data.py -q
+        working-directory: backend/core
+      - name: Verify sample fixture is in the wheel
+        run: |
+          python -m pip wheel --no-deps ./backend/core --wheel-dir /tmp/sample-wheels
+          python - <<'PY'
+          import glob, json, zipfile
+          with zipfile.ZipFile(glob.glob('/tmp/sample-wheels/*.whl')[0]) as wheel:
+              sample = json.loads(wheel.read('captain_search/samples/north_pole.json'))
+              assert sum(map(len, sample['catalogs'].values())) == 150
+          PY
+      - name: Install Bun
+        run: curl -fsSL https://bun.sh/install | bash -s 'bun-v1.4.4'
+      - run: ~/.bun/bin/bun test scripts/sample.test.ts
