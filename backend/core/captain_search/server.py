@@ -1011,6 +1011,74 @@ def dataset_insights(name: str):
     return IN.dataset_insights(ctx(), name)
 
 
+def _ws_profile(c):
+    from .workspace import load_config
+
+    return (load_config().get("workspaces", {}).get(c.workspace.name) or {}).get("profile")
+
+
+@app.get("/api/datasets/{name:path}/media", dependencies=A)
+def dataset_media(name: str, v: int | None = None, file: str | None = None):
+    """The dataset's image columns, and where relative ones live (saved, else a guess Captain checked)."""
+    from . import browse
+    from . import media as MD
+
+    c = ctx()
+    m = c.registry.load("dataset", name, v)
+    prof = _ws_profile(c)
+    page = browse.rows(c, m, file, 0, 20, None, False, None, None, False, prof)
+    cols = [x["name"] if isinstance(x, dict) else x for x in page.get("columns", [])]
+    rows = page.get("rows", [])
+    saved = MD.templates(c, m.name)
+    t = next((x for x in browse.tables(c, m) if not file or x["file"] == file), None)
+    out = []
+    for d in MD.detect(cols, rows):
+        d["template"] = saved.get(d["column"])
+        d["guessed"] = False
+        if d["relative"] and not d["template"] and rows:
+            j = cols.index(d["column"])
+            first = next((r for r in rows if MD._items(r[j])), None)
+            if first is not None:
+                g = MD.guess(t["uri"] if t else None, cols, dict(zip(cols, first)), MD._items(first[j])[0], prof)
+                if g:
+                    d["template"], d["guessed"] = g, True
+        out.append(d)
+    return {"columns": out}
+
+
+@app.put("/api/datasets/{name:path}/media", dependencies=A)
+def dataset_media_set(name: str, body: dict):
+    """Say where a column's relative images live. Checked on the first row's image before it's kept."""
+    from . import browse
+    from . import media as MD
+
+    c = ctx()
+    m = c.registry.load("dataset", name, body.get("v"))
+    col, template = str(body.get("column") or ""), (body.get("template") or "").strip() or None
+    if template:
+        prof = _ws_profile(c)
+        page = browse.rows(c, m, body.get("file"), 0, 20, None, False, None, None, False, prof)
+        cols = [x["name"] if isinstance(x, dict) else x for x in page.get("columns", [])]
+        if col not in cols:
+            raise ValueError(f"no column {col!r} in {m.name}")
+        j = cols.index(col)
+        first = next((r for r in page.get("rows", []) if MD._items(r[j])), None)
+        if first is not None:
+            src = MD.fill(template, MD._items(first[j])[0], dict(zip(cols, first)))
+            if not MD._exists(src, prof):
+                raise ValueError(f"There's no image at {src}. Check the address.")
+    return {"column": col, "template": template, "saved": MD.set_template(c, m.name, col, template)}
+
+
+@app.post("/api/media/thumbs", dependencies=A)
+def media_thumbs(body: dict):
+    """Thumbnails for a page of image addresses, saved in the app's cache/thumbs folder."""
+    from . import media as MD
+
+    return MD.thumbs([str(x) for x in body.get("srcs") or []], str(body.get("dest") or ""), int(body.get("size") or 160),
+                     _ws_profile(ctx()))
+
+
 @app.get("/api/datasets/{name:path}/rows", dependencies=A)
 def dataset_rows(name: str, v: int | None = None, file: str | None = None, offset: int = 0, limit: int = 100,
                  order: str | None = None, desc: bool = False, search: str | None = None, where: str | None = None,

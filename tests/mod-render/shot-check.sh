@@ -19,7 +19,7 @@ block_of() { case "$1" in captain-project) echo project ;; captain-data) echo da
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:samplefiles" "captain-data:samplerow" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
+    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:samplefiles" "captain-data:samplerow" "captain-data:pictures" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
     captain-runs) EXTRA+=("captain-runs:jobs" "captain-runs:live") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
@@ -95,6 +95,7 @@ CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-notebook.py >/dev/null
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-wide.py >/dev/null
 # A dataset of three files, for the Sample data file picker.
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-multifile.py >/dev/null
+CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-images.py >/dev/null
 # An MLflow model version linked to demo-tuned, so lineage draws MLflow upstream of it. The tracking server isn't
 # there: lineage draws from the link alone.
 CST_HOME=$WORK/cst "$CSTCMD" mlflow use --uri http://127.0.0.1:9 >/dev/null 2>&1 || true
@@ -174,6 +175,7 @@ props_of() {
     captain-data:notebook) echo '{"tab": "notebooks", "notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:models) echo '{"tab": "models"}' ;;
     captain-data:samplerow) echo '{"pageTab":"sample","dataset":"shot-multifile","openRow":2}' ;;
+    captain-data:pictures) echo '{"pageTab":"sample","dataset":"shot-pictures","openRow":1}' ;;
     captain-project:choose) echo '{"chooseModels": true}' ;;
     captain-data:models-attach) echo '{"tab": "models", "registryAttach": true}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;
@@ -245,6 +247,7 @@ EOF
   [[ "$view" == captain-data:import* || "$view" == captain-compare:profile || "$view" == captain-data:quality ]] && sleep 8
   [[ "$view" == captain-data:import-run ]] && sleep 14
   [[ "$view" == captain-data:models-attach ]] && sleep 25  # it lists every bucket of the login first
+  [[ "$view" == captain-data:pictures ]] && sleep 20  # the rows, then their thumbnails
   for i in $(seq 1 12); do
     sleep 1.5
     # A window in the background may not draw a new frame after its data arrives, and shot saves the last frame

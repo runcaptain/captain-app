@@ -10,7 +10,7 @@
 // - Quality: per column, the share of empty values, distinct count, min and max, plus freshness (GET /api/profile).
 //   Hidden while the backend has no profile route.
 import { div } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { api, query } from "./kit/cst.js";
 import { ResultGrid } from "./kit/grid.js";
 import { MONO } from "./kit/tokens.js";
@@ -50,6 +50,11 @@ export class DatasetPage {
     this.rows = null; // Sample data: the kit grid, paged
     this.rowsFor = null;
     this.file = null; // a dataset with several files: the one shown
+    // Image columns (GET /api/datasets/{name}/media): thumbnails in the grid, and where relative names live.
+    this.media = null; // {columns: [{column, relative, sample, template, guessed}]} | null
+    this.where = InputState.new({ placeholder: "s3://bucket/images/{pid}/{value}" });
+    this.where.on("submit", (_e, cx) => this.saveWhere(cx));
+    this.whereNote = null;
     this.health = new EvalHealth(); // the Health tab (kit/evals.js)
     this.insights = new DatasetInsights(host); // the Insights tab (insights.js)
   }
@@ -62,6 +67,8 @@ export class DatasetPage {
     this.rows = null;
     this.rowsFor = null;
     this.file = null;
+    this.media = null;
+    this.whereNote = null;
     this.insights?.reset();
   }
 
@@ -133,8 +140,61 @@ export class DatasetPage {
     this.rowsFor = key;
     const path = `/api/datasets/${enc(d.name)}/rows`;
     const extra = { v: d.version, file: this.file ?? undefined };
-    this.rows = new ResultGrid({ id: "ds-rows", name: d.name, searchable: true, openRow: this.openRow ?? null, load: (q) => api(`${path}${query({ ...q, ...extra })}`, { timeout: 60 }) });
+    this.rows = new ResultGrid({ id: "ds-rows", name: d.name, searchable: true, openRow: this.openRow ?? null, load: (q) => api(`${path}${query({ ...q, ...extra })}`, { timeout: 60 }),
+      thumbs: async (srcs, size, dest) => { const r = await api("/api/media/thumbs", { body: { srcs, size, dest }, timeout: 120 }); return r.ok ? r.data : {}; } });
     this.rows.fetch(cx);
+    this.loadMedia(cx, key);
+  }
+
+  /** The dataset's image columns, so the grid shows them as pictures. Asked once per dataset and file. */
+  loadMedia(cx, key) {
+    const d = this.host.detail;
+    this.media = null;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/datasets/${enc(d.name)}/media${query({ v: d.version, file: this.file ?? undefined })}`, { timeout: 60 });
+      if (this.rowsFor !== key || !r.ok) return;
+      this.media = r.data;
+      const cols = (r.data?.columns ?? []).filter((m) => !m.relative || m.template);
+      this.rows?.setMedia(cx, cols);
+      const open = (r.data?.columns ?? []).find((m) => m.relative);
+      if (open?.template && !this.where.value()) this.where.set_value(open.template);
+      cx.notify();
+    });
+  }
+
+  /** Save where a column's relative image names live; the services check the first row's image first. */
+  saveWhere(cx) {
+    const d = this.host.detail;
+    const m = (this.media?.columns ?? []).find((x) => x.relative);
+    if (!m) return;
+    const template = this.where.value().trim();
+    this.whereNote = { text: "Checking the first row's image...", tone: "muted" };
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/datasets/${enc(d.name)}/media`, { method: "PUT", body: { column: m.column, template, v: d.version, file: this.file ?? undefined }, timeout: 60 });
+      if (r.ok) {
+        m.template = template; m.guessed = false;
+        this.whereNote = { text: "Saved. Pictures show in the grid.", tone: "good" };
+        this.rows?.setMedia(cx, (this.media.columns ?? []).filter((x) => !x.relative || x.template));
+      } else this.whereNote = { text: String(r.data?.detail ?? r.error ?? "Couldn't save it."), tone: "fail" };
+      cx.notify();
+    });
+    cx.notify();
+  }
+
+  /** A column of bare image names: one line to say where they live, with Captain's guess filled in. */
+  whereBar(c) {
+    const m = (this.media?.columns ?? []).find((x) => x.relative && (!x.template || x.guessed));
+    if (!m) return null;
+    const tone = { good: c.good, fail: c.fail }[this.whereNote?.tone] ?? c.grey500;
+    return v_flex().id("ds-media-where").flex_none().gap(6).p(10).border_1().border_color(c.blue).bg(c.blueLight)
+      .child(div().text_size(12.5).text_color(c.navy).child(m.guessed
+        ? `${m.column} holds image file names. Captain found them at this address. Keep it to show them as pictures.`
+        : `${m.column} holds image file names like ${m.sample}, without where they live. Say where, and the grid shows them as pictures.`))
+      .child(h_flex().gap(8).items_center()
+        .child(div().id("ds-media-input").flex_1().min_w(0).h(28).px(8).flex().items_center().border_1().border_color(c.grey300).bg(c.surface)
+          .child(Input.new(this.where).w_full().text_size(12).font_family(MONO).text_color(c.navy)))
+        .child(Button(c, "ds-media-save", m.guessed ? "Keep" : "Show pictures", (_e, cx) => this.saveWhere(cx), { kind: "primary", small: true })))
+      .child(div().text_size(11.5).text_color(tone).child(this.whereNote?.text ?? "{value} is the file name. Any column of the row works too, like {pid}."));
   }
 
   loadProfile(cx) {
@@ -187,6 +247,7 @@ export class DatasetPage {
             .border_1().border_color(on ? c.blue : c.grey300).text_color(on ? c.blue : c.grey900)
             .on_click((_e, cx) => { this.file = f.file; this.loadRows(cx); }).child(String(f.file).split("/").pop());
         }))))
+      .when(!!this.whereBar(c), (e) => e.child(this.whereBar(c)))
       .when(!g, (e) => e.child(Skeleton(c, 8)))
       .when(!!g, (e) => e.child(v_flex().flex_1().min_h(240).border_1().border_color(c.rule).child(g.render(c, { fill: true }))));
   }

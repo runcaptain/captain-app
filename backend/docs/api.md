@@ -886,3 +886,14 @@ On a compute target (AWS, Google Cloud, Azure), the app makes the run in the wor
 job and passes its id as `CST_LIVE_ID`; the job's container writes events there in batches every 2 s
 (`live/<id>/<seq>.jsonl`, header `live-heads/<id>.json`), and Runs reads only the new batches. Inside a job
 (`CST_JOB_ID` set) a backtest or retrain always runs in place, never submitting itself again.
+
+## Images in data
+
+`GET /api/datasets/{name}/media` finds a dataset's image columns: full addresses (https://, s3://, gs://, a file
+path) and bare file names ("main.jpg"). For bare names it says where they live: the address saved for the column,
+else one Captain found next to the dataset's file (`.../images/{pid}/{value}` and similar), checked on the first row.
+`PUT` the same route with `{column, template}` saves one, after checking the first row's image exists. In a template,
+`{value}` is the cell (each item of a list) and `{<column>}` any column of the row.
+`POST /api/media/thumbs {srcs, size, dest}` makes JPEG thumbnails (64, 160 or 480 px) into the app's `cache/thumbs`
+folder, through the workspace's login for buckets, 8 at a time and cached by address. The grid shows the first image
+of each cell and an opened row shows all of them.

@@ -28,6 +28,7 @@ dependencies = [
   "jupyter_client>=8",
   "ipykernel>=6.29",
   "boto3>=1.35",
+  "pillow>=10",
 ]
 
 [project.optional-dependencies]
