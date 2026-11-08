@@ -258,16 +258,33 @@ def bt_run(name: str, compute: Optional[str] = typer.Option(None, "--compute")):
     c = ctx()
     from .. import live as LV
 
+    import os
+
+    from .. import compute as C
+    from .. import settings as ST
+
     bt = c.registry.load("backtest", name)
-    lv = None if S.dry_run or (compute and compute != "local") else LV.start("backtest", name, of=name, arms=list(bt.arms), source="cli")
+    lv, live_id = None, None
+    if os.environ.get("CST_LIVE_ID") and os.environ.get("CST_JOB_ID"):
+        lv = LV.attach_store(c, os.environ["CST_LIVE_ID"])  # in a job's container: stream through the bucket
+    elif not S.dry_run:
+        where = compute or bt.compute or ST.default_compute(c, "backtest") or "local"
+        if os.environ.get("CST_JOB_ID") or C.get(c, where)["kind"] == "local":
+            lv = LV.start("backtest", name, of=name, arms=list(bt.arms), source="cli")
+        else:
+            live_id = LV.start_remote(c, "backtest", name, of=name, arms=list(bt.arms), where=where)
     try:
-        r = _do(ops.backtest_launch, c, name, compute, progress=prog, dry_run=S.dry_run, live=lv)
+        r = _do(ops.backtest_launch, c, name, compute, progress=prog, dry_run=S.dry_run, live=lv, live_id=live_id)
     except BaseException as e:
         if lv:
             lv.end("failed", error=str(e) or "stopped")
+        if live_id:
+            LV.note_remote(c, live_id, status="failed", error=str(e) or "stopped")
         raise
     if lv:
         lv.end("done" if "run" in r else "failed", ref=r.get("run"), summary=f"Finished {name}")
+    if live_id and r.get("job"):
+        LV.note_remote(c, live_id, job=r["job"])
     if "run" in r:
         run = c.registry.load("backtest-run", name)
         return _out(run, "\n" + ops.backtest_report(run, c.registry.load("backtest", name)))

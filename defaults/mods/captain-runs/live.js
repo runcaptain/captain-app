@@ -13,10 +13,12 @@ import { int } from "./kit/num.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
 const KIND = { backtest: ["backtest", "Backtest"], training: ["pipeline", "Training"], sweep: ["sim", "Settings sweep"], custom: ["run", "Run"] };
-const STATUS = { running: ["running", "Running"], done: ["done", "Finished"], failed: ["failed", "Failed"], stopped: ["x", "Stopped"] };
+const STATUS = { queued: ["queued", "Waiting to start"], running: ["running", "Running"], done: ["done", "Finished"], failed: ["failed", "Failed"], stopped: ["x", "Stopped"] };
 const KEEP = { shoppers: 240, logs: 400, points: 600 };
 const PCT = new Set(["conversion", "ctr", "zero_result_rate", "judged@10", "coverage"]);
 
+// Still going: running here, or waiting for a compute target to start it.
+const going = (s) => s === "running" || s === "queued";
 const bare = (ref) => String(ref ?? "").split("@")[0];
 const secs = (s) => (s == null || !Number.isFinite(s) ? "" : s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
 const fmt = (name, v) => (v == null ? "" : PCT.has(name) ? `${(v * 100).toFixed(1)}%` : /revenue|rpv|usd|\$/.test(name) ? `$${Number(v).toFixed(2)}` : Math.abs(v) >= 1000 ? int(v) : Number(v).toFixed(Math.abs(v) < 1 ? 4 : 2));
@@ -73,12 +75,12 @@ export class Live {
       if (r.ok) {
         this.host.starting = false; // the services answered: Runs stops waiting for them
         this.list = r.data ?? [];
-        this.running = this.list.filter((x) => x.status === "running");
+        this.running = this.list.filter((x) => going(x.status));
         this.active = this.running.length;
         this.error = null;
         const want = pick ?? this.sel;
         if (want && this.list.some((x) => x.id === want)) this.select(cx, want);
-        else if (!this.sel && this.list.length) this.select(cx, (this.list.find((x) => x.status === "running") ?? this.list[0]).id);
+        else if (!this.sel && this.list.length) this.select(cx, (this.list.find((x) => going(x.status)) ?? this.list[0]).id);
       } else if (r.status) this.error = r; // the backend answered with a problem; otherwise it's still starting: ask again
       cx.notify();
     });
@@ -107,7 +109,7 @@ export class Live {
   /** New events since the last ask. Called every second while the open run is going. */
   tick(cx) {
     if (!this.sel || this.busy) return;
-    if (this.run && this.run.head.status !== "running") return;
+    if (this.run && !going(this.run.head.status)) return;
     this.fetch(cx);
   }
 
@@ -129,8 +131,8 @@ export class Live {
       // The list row follows the open run; a run that just ended shows its final state there too.
       const row = (this.list ?? []).find((x) => x.id === id);
       if (row) Object.assign(row, run.head);
-      if (was === "running" && run.head.status !== "running") this.host.onLiveEnded?.(cx, run.head);
-      this.active = (this.list ?? []).filter((x) => x.status === "running").length;
+      if (going(was) && !going(run.head.status)) this.host.onLiveEnded?.(cx, run.head);
+      this.active = (this.list ?? []).filter((x) => going(x.status)).length;
       cx.notify();
     });
   }
@@ -178,9 +180,9 @@ export class Live {
           .child(h_flex().gap(8).items_center()
             .child(icon(ic, 15, on ? c.blue : c.grey500))
             .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(on ? c.blue : c.navy).child(x.title))
-            .child(icon(sic, 13, x.status === "failed" ? c.fail : x.status === "running" ? c.blue : c.grey500)))
+            .child(icon(sic, 13, x.status === "failed" ? c.fail : going(x.status) ? c.blue : c.grey500)))
           .child(h_flex().gap(6).items_center().text_size(11).text_color(c.grey500)
-            .child(div().flex_1().min_w(0).truncate().child(x.status === "running" ? (x.stage ?? "Starting") : `${sword} ${ago(x.ended ?? x.updated)}`))
+            .child(div().flex_1().min_w(0).truncate().child(x.status === "queued" ? `Waiting to start${x.where ? ` on ${x.where}` : ""}` : x.status === "running" ? (x.stage ?? "Starting") + (x.where ? `, on ${x.where}` : "") : `${sword} ${ago(x.ended ?? x.updated)}`))
             .when(x.status === "running" && pct !== null, (e) => e.child(div().font_family(MONO).child(`${pct}%`))))
           .when(x.status === "running" && pct !== null, (e) => e.child(div().h(3).w_full().bg(c.surface2).child(div().h_full().w(`${Math.max(2, pct)}%`).bg(c.blue))));
       }));
@@ -204,11 +206,11 @@ export class Live {
         .child(icon(ic, 16, c.navy))
         .child(div().min_w(0).truncate().text_size(15).font_medium().font_family(MONO).child(h.title))
         .child(this.host.badge(c, kindWord))
-        .child(h_flex().gap(4).items_center().text_size(12).text_color(h.status === "failed" ? c.fail : h.status === "running" ? c.blue : c.grey900)
-          .child(icon(sic, 13)).child(div().child(sword)))
+        .child(h_flex().gap(4).items_center().text_size(12).text_color(h.status === "failed" ? c.fail : going(h.status) ? c.blue : c.grey900)
+          .child(icon(sic, 13)).child(div().child(h.where && h.where !== "local" ? `${sword}, on ${h.where}` : sword)))
         .child(div().flex_1())
         .child(div().text_size(12).text_color(c.grey500).child([run.last ? `${secs(run.last)} in` : null, left != null ? `about ${secs(left)} left` : null].filter(Boolean).join(", ")))
-        .when(h.status !== "running" && h.kind === "backtest" && !!h.of, (e) => e.child(Button(c, "live-open-result", "Open the result", (_e, cx) => this.host.openBacktest(cx, h.of), { kind: "primary", small: true }))))
+        .when(!going(h.status) && h.kind === "backtest" && !!h.of, (e) => e.child(Button(c, "live-open-result", "Open the result", (_e, cx) => this.host.openBacktest(cx, h.of), { kind: "primary", small: true }))))
       .when(arms.length > 0, (e) => e.child(h_flex().flex_wrap().gap(14).text_size(12).text_color(c.grey900)
         .children(arms.map((a, i) => h_flex().gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(div().font_family(MONO).text_color(c.navy).child(a))))))
       .child(this.progress(c, h, pct))

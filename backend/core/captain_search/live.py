@@ -223,3 +223,191 @@ def pipe(argv: list[str], kind: str, title: str, of: str | None = None) -> dict:
     code = proc.wait()
     r.end("done" if code == 0 else "failed", error=None if code == 0 else f"the command ended with exit code {code}")
     return {"id": r.id, "exit_code": code}
+
+
+# ---- runs on a compute target: streamed through the workspace's bucket ---------------------------------------
+#
+# A backtest on AWS, Google Cloud or Azure runs `cst` in a container, so it can't write to this computer. The app makes
+# the run's header in the workspace store before it submits the job (live-heads/<id>.json, status "queued") and
+# passes the id as CST_LIVE_ID. The container attaches to it and writes its events in batches, each a write-once
+# object (live/<id>/<seq>.jsonl), every couple of seconds, plus the header by compare-and-swap. The app lists the
+# headers and reads only the batches it hasn't seen.
+
+FLUSH_S = 2.0
+FLUSH_EVENTS = 300
+QUIET_S = 600  # a remote run this long without word reads as quiet, and the app asks its job how it is
+
+
+def _head_key(rid: str) -> str:
+    _paths(rid)  # checks the id
+    return f"live-heads/{rid}.json"
+
+
+def _chunk_prefix(rid: str) -> str:
+    return f"live/{rid}/"
+
+
+class StoreRun(Run):
+    """A live run written to the workspace store: events go in batches, the header by compare-and-swap."""
+
+    def __init__(self, ctx, rid: str, head: dict, tag: str | None, seq: int = 0):
+        self.ctx, self.tag, self.seq = ctx, tag, seq
+        self._buf: list[dict] = []
+        self._last_flush = time.time()
+        super().__init__(rid, head)
+
+    def emit(self, type_: str, **data) -> None:
+        with _lock:
+            ev = {"type": type_, "at": round(time.time() - self.t0, 3), "n": self._n, **data}
+            self._n += 1
+            self._buf.append(json.loads(json.dumps(ev, default=str)))
+            self.head["events"] = self._n
+            if type_ == "stage":
+                self.head["stage"] = data.get("name")
+                if data.get("name") not in self.head.setdefault("stages", []):
+                    self.head["stages"].append(data.get("name"))
+            if type_ == "progress":
+                self.head["progress"] = data.get("fraction")
+            due = type_ in ("stage", "result") or len(self._buf) >= FLUSH_EVENTS or time.time() - self._last_flush >= FLUSH_S
+        if due:
+            self.flush()
+
+    def flush(self) -> None:
+        with _lock:
+            buf, self._buf = self._buf, []
+            if buf:
+                body = "".join(json.dumps(e) + "\n" for e in buf).encode()
+                self.ctx.store.put_new(f"{_chunk_prefix(self.id)}{self.seq:06d}.jsonl", body)
+                self.seq += 1
+            self.head["updated"] = _now()
+            self.head["chunks"] = self.seq
+            self._put_head()
+            self._last_flush = time.time()
+
+    def _put_head(self) -> None:
+        from .storage.backend import Conflict
+
+        body = json.dumps(self.head).encode()
+        for _ in range(5):
+            try:
+                self.tag = self.ctx.store.put_if(_head_key(self.id), body, self.tag)
+                return
+            except Conflict:
+                # Someone else wrote the header (the app noting the job id): keep their fields, ours win the rest.
+                theirs, self.tag = self.ctx.store.get_with_tag(_head_key(self.id))
+                other = json.loads(theirs)
+                for k in ("job", "where"):
+                    if other.get(k) and not self.head.get(k):
+                        self.head[k] = other[k]
+                body = json.dumps(self.head).encode()
+
+    def end(self, status: str = "done", ref: str | None = None, summary: str | None = None, error: str | None = None) -> None:
+        if ref or summary:
+            self.emit("result", ref=ref, summary=summary)
+        if error:
+            self.emit("log", text=error[:2000], level="error")
+        self.head.update(status=status, ended=_now(), error=error, ref=ref or self.head.get("ref"))
+        if status == "done":
+            self.head["progress"] = 1.0
+        self.flush()
+
+
+def start_remote(ctx, kind: str, title: str, *, of: str | None = None, arms: list[str] | None = None,
+                 where: str | None = None) -> str:
+    """Make a queued run in the workspace store for a job about to be submitted. Returns its id."""
+    if kind not in KINDS:
+        raise ValueError(f"kind is one of {', '.join(KINDS)}")
+    rid = str(ULID()).lower()
+    head = {"id": rid, "kind": kind, "title": title, "of": of, "arms": arms or [], "source": "compute", "where": where,
+            "by": whoami(), "started": _now(), "updated": _now(), "status": "queued", "progress": None, "stage": None,
+            "stages": [], "events": 0, "chunks": 0, "remote": True}
+    ctx.store.put_new(_head_key(rid), json.dumps(head).encode())
+    return rid
+
+
+def note_remote(ctx, rid: str, **fields) -> None:
+    """Add fields to a remote run's header (the job id once submitted, or a failure to submit)."""
+    from .storage.backend import Conflict
+
+    for _ in range(5):
+        body, tag = ctx.store.get_with_tag(_head_key(rid))
+        h = json.loads(body)
+        h.update(fields)
+        h["updated"] = _now()
+        try:
+            ctx.store.put_if(_head_key(rid), json.dumps(h).encode(), tag)
+            return
+        except Conflict:
+            continue
+
+
+def attach_store(ctx, rid: str) -> StoreRun:
+    """In the job's container: write to the run the app made for it."""
+    body, tag = ctx.store.get_with_tag(_head_key(rid))
+    h = json.loads(body)
+    seq = len([k for k in ctx.store.list(_chunk_prefix(rid)) if k.endswith(".jsonl")])
+    h.update(status="running", pid=None, running_since=_now())
+    r = StoreRun(ctx, rid, h, tag, seq)
+    r._n = h.get("events", 0)
+    r.flush()
+    return r
+
+
+_remote_cache: dict[str, dict] = {}
+_remote_lock = threading.Lock()
+
+
+def _remote_header(ctx, rid: str) -> dict:
+    h = json.loads(ctx.store.get(_head_key(rid)))
+    if h.get("status") in ("queued", "running"):
+        try:
+            age = time.time() - dt.datetime.fromisoformat(h["updated"]).timestamp()
+        except (KeyError, ValueError):
+            age = 0
+        if age > QUIET_S:
+            h["note"] = f"No word from the job for {int(age // 60)} min."
+            if h.get("job"):
+                try:
+                    from . import jobs as J
+
+                    j = J.get(ctx, h["job"])
+                    if j.get("state") in ("failed", "stopped", "succeeded"):
+                        h["status"] = "done" if j["state"] == "succeeded" else "failed" if j["state"] == "failed" else "stopped"
+                        h["note"] = j.get("reason") or h["note"]
+                except Exception:  # noqa: BLE001  the job's state is a bonus here, not required
+                    pass
+    return h
+
+
+def read_remote(ctx, rid: str, since: int = 0, limit: int = 2000) -> dict:
+    """A remote run's header and events from `since`. Batches already read stay in memory, so each ask costs one
+    listing plus the new batches."""
+    h = _remote_header(ctx, rid)
+    with _remote_lock:
+        c = _remote_cache.setdefault(rid, {"chunks": set(), "events": []})
+        keys = sorted(k for k in ctx.store.list(_chunk_prefix(rid)) if k.endswith(".jsonl"))
+        for k in keys:
+            if k in c["chunks"]:
+                continue
+            for line in ctx.store.get(k).decode().splitlines():
+                if line.strip():
+                    c["events"].append(json.loads(line))
+            c["chunks"].add(k)
+        c["events"].sort(key=lambda e: e.get("n", 0))
+        out = c["events"][since:since + limit]
+    return {"run": h, "events": out, "next": since + len(out)}
+
+
+def listing_remote(ctx, limit: int = 30) -> list[dict]:
+    rows = []
+    for k in ctx.store.list("live-heads/"):
+        if k.endswith(".json"):
+            try:
+                rows.append(_remote_header(ctx, k.rsplit("/", 1)[-1][:-5]))
+            except Exception:  # noqa: BLE001
+                continue
+    return sorted(rows, key=lambda r: r.get("started", ""), reverse=True)[:limit]
+
+
+def is_remote(ctx, rid: str) -> bool:
+    return not os.path.exists(_paths(rid)[0]) and ctx is not None and ctx.store.exists(_head_key(rid))

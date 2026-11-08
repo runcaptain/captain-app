@@ -1505,16 +1505,25 @@ def backtest_run(name: str, body: dict | None = None):
     compute = (body or {}).get("compute") or bt.compute or ST.default_compute(c, "backtest") or "local"
     from . import live as LV
 
-    # A run here streams to Runs as it goes. One on a compute target reports through its job.
-    lv = LV.start("backtest", name, of=name, arms=list(bt.arms)) if compute == "local" else None
+    from . import compute as CMP
+
+    # A run here streams to Runs from this process. One on a compute target streams through the workspace bucket:
+    # its run is made now, queued, and the job's container writes to it.
+    local = CMP.get(c, compute)["kind"] == "local"
+    lv = LV.start("backtest", name, of=name, arms=list(bt.arms)) if local else None
+    live_id = None if local else LV.start_remote(c, "backtest", name, of=name, arms=list(bt.arms), where=compute)
 
     def go(p):
         try:
-            r = ops.backtest_launch(c, name, compute, progress=p, live=lv)
+            r = ops.backtest_launch(c, name, compute, progress=p, live=lv, live_id=live_id)
         except Exception as e:
             if lv:
                 lv.end("failed", error=str(e))
+            if live_id:
+                LV.note_remote(c, live_id, status="failed", error=f"Couldn't submit the job: {e}")
             raise
+        if live_id and r.get("job"):
+            LV.note_remote(c, live_id, job=r["job"])
         out = r.get("run") or r
         if lv:
             lv.end("done", ref=out if isinstance(out, str) else None, summary=f"Finished {name}")
@@ -1522,24 +1531,33 @@ def backtest_run(name: str, body: dict | None = None):
 
     jid = _job(go, f"running {name} on {compute}")
     JOBS[jid]["compute"] = compute
-    if lv:
-        JOBS[jid]["live"] = lv.id
-    return {"job": jid, "live": lv.id if lv else None}
+    rid = lv.id if lv else live_id
+    JOBS[jid]["live"] = rid
+    return {"job": jid, "live": rid}
 
 
 @app.get("/api/live", dependencies=A)
 def live_list(active: bool = False, limit: int = 30):
-    """Live runs on this computer, newest first: backtests, training and anything a team's tools stream."""
+    """Live runs, newest first: on this computer, and on compute targets (through the workspace bucket)."""
     from . import live as LV
 
-    return LV.listing(limit=min(limit, 200), active=active)
+    limit = min(limit, 200)
+    rows = LV.listing(limit=limit)
+    try:
+        rows += LV.listing_remote(ctx(), limit=limit)
+    except Exception:  # noqa: BLE001  a bucket that can't be listed leaves this computer's runs
+        pass
+    if active:
+        rows = [r for r in rows if r.get("status") in ("running", "queued")]
+    return sorted(rows, key=lambda r: r.get("started", ""), reverse=True)[:limit]
 
 
 @app.get("/api/live/{rid}", dependencies=A)
 def live_read(rid: str, since: int = 0):
     from . import live as LV
 
-    return LV.read(rid, since=max(0, since))
+    c = ctx()
+    return LV.read_remote(c, rid, since=max(0, since)) if LV.is_remote(c, rid) else LV.read(rid, since=max(0, since))
 
 
 @app.get("/api/jobs/{jid}", dependencies=A)

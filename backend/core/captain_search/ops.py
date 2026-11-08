@@ -590,14 +590,18 @@ def backtest_run(ctx, name: str, progress=None, live=None) -> BacktestRun:
     return ctx.registry.publish(run)
 
 
-def backtest_launch(ctx, name: str, compute: str | None = None, progress=None, dry_run: bool = False, live=None) -> dict:
-    """Run locally, or submit to the backtest's (or the given) compute target."""
+def backtest_launch(ctx, name: str, compute: str | None = None, progress=None, dry_run: bool = False, live=None,
+                    live_id: str | None = None) -> dict:
+    """Run locally, or submit to the backtest's (or the given) compute target. `live` streams a run here; `live_id`
+    is the remote live run (live.start_remote) a submitted job streams to."""
     from . import compute as C
 
     from . import settings as ST
 
     bt = ctx.registry.load("backtest", name)
-    target = C.get(ctx, compute or bt.compute or ST.default_compute(ctx, "backtest") or "local")
+    # Inside a submitted job, run here: never submit the job again.
+    in_job = bool(os.environ.get("CST_JOB_ID"))
+    target = C.get(ctx, "local" if in_job else compute or bt.compute or ST.default_compute(ctx, "backtest") or "local")
     if target["kind"] == "local":
         if dry_run:
             return {"compute": target["name"], "plan": C.plan_backtest(ctx, target, name)}
@@ -606,8 +610,11 @@ def backtest_launch(ctx, name: str, compute: str | None = None, progress=None, d
     plan, job = C.plan_and_job(ctx, target, ["backtest", "run", name], label=name, backtest=name)
     if dry_run:
         return {"compute": target["name"], "plan": plan}
+    if live_id:
+        job.env["CST_LIVE_ID"] = live_id  # the container streams its events to this run, through the bucket
+        plan = C.P.get(target, ctx).plan(job)
     rec = C.submit_job(ctx, target, job.argv, label=name, kind="backtest", job=job)
-    return {"compute": target["name"], "plan": plan, "job": rec["id"],
+    return {"compute": target["name"], "plan": plan, "job": rec["id"], "live": live_id,
             "submitted": {"provider_job": C.provider_job(rec["handle"]), "job": rec["id"]},
             "detail": f"the run lands in the workspace bucket when the job finishes. Follow it with `cst job show {rec['id']}`."}
 
