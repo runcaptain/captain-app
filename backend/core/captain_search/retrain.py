@@ -72,9 +72,19 @@ def resolve_inputs(ctx: Context, items, as_of: str | None = None) -> list[dict]:
     """Pin each input to an exact version and say where its parts are, so the trainer reads exactly what was asked."""
     from .model.entities import DatasetKind
 
+    from .project_state import dataset_fingerprint
+
     root = ctx.store.uri.rstrip("/")
     out = []
     for it in items or []:
+        if isinstance(it, dict) and not it.get("ref") and it.get("source"):
+            # A live query (project_inputs.run_inputs): no dataset version, the trainer reads the source itself.
+            lab = it.get("label_source")
+            out.append({"ref": None, "kind": it.get("kind") or "generic", "role": it.get("role") or "custom",
+                        "uri": None, "files": [], "label_source": lab if lab in LABEL_SOURCE_VALUES else None,
+                        "as_of": it.get("as_of") or as_of, "source": it["source"],
+                        **{k: it.get(k) for k in ("slot", "mode", "rows", "fingerprint", "changed_since_pin", "read_at")}})
+            continue
         d = _parse_input(it)
         dv, split = ctx.registry.resolve("dataset", d["ref"])
         exact = f"{dv.name}@v{dv.version}" + (f":{split}" if split else "")
@@ -87,7 +97,12 @@ def resolve_inputs(ctx: Context, items, as_of: str | None = None) -> list[dict]:
             raise ValueError(f"label_source for {exact} is {label!r}: use {', '.join(LABEL_SOURCE_VALUES)}")
         out.append({"ref": exact, "kind": dv.dataset_kind.value, "role": d.get("role") or dv.dataset_kind.value,
                     "uri": f"{root}/{ctx.registry.version_dir('dataset', dv.name, dv.version)}", "files": files,
-                    "label_source": label, "as_of": str(d.get("as_of") or dv.tags.get("as_of") or as_of or "") or None})
+                    "label_source": label, "as_of": str(d.get("as_of") or dv.tags.get("as_of") or as_of or "") or None,
+                    # what was read: always the version's own rows and fingerprint, plus the slot when a project chose it
+                    "rows": dv.row_count or None, "fingerprint": dataset_fingerprint(dv),
+                    "mode": d.get("mode") or "snapshot", "slot": d.get("slot"),
+                    "changed_since_pin": bool(d.get("changed_since_pin")),
+                    "read_at": d.get("read_at") or utcnow().isoformat()})
     return out
 
 
@@ -123,7 +138,10 @@ def retrain(ctx: Context, name: str, compute: str | None = None, local_exec: boo
         # The job trains the same version on the same exact inputs this call resolved, even if newer ones land meanwhile.
         args = ["pipeline", "retrain", ref(pm), "--local-exec"]
         for r in resolved:
-            args += ["--input", f"{r['role']}={r['ref']}"]
+            if r["ref"] is None or r.get("slot"):  # a live query, or a project input: send the whole record
+                args += ["--input-json", json.dumps({k: v for k, v in r.items() if k not in ("files", "uri")})]
+            else:
+                args += ["--input", f"{r['role']}={r['ref']}"]
         for k, v in (params or {}).items():
             args += ["--param", f"{k}={json.dumps(v)}"]
         if as_of:
