@@ -172,7 +172,8 @@ def experiment_add(ctx: Context, pid: str, pipeline: str, training_set: str | No
     lb = ref(ctx.registry.resolve("dataset", labels)[0]) if labels else None
     exp = {"id": "exp-" + new_id().lower()[-10:], "pipeline": ref(pm), "training_set": ts, "labels": lb,
            "trainer": trainer or (pm.tags or {}).get("trainer") or None, "backtest": None, "run": None, "job": None,
-           "status": "trained", "note": note, "created_at": _now(), "created_by": whoami()}
+           "status": "trained", "note": note, "error": None, "created_at": _now(), "created_by": whoami(),
+           "updated_at": None}
 
     def ch(doc):
         if any(e["pipeline"] == exp["pipeline"] for e in doc["experiments"]):
