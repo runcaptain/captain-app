@@ -83,31 +83,31 @@ def test_retrains_record_their_parent(tmp_path):
     assert ("pipeline:base@v1", "pipeline:retrained@v1", "retrained_from") in _shape(ops.lineage(c))[1]
 
 
-def test_trained_on_and_parents_from_the_trainer_contract():
-    from types import SimpleNamespace
-
-    m = SimpleNamespace(train_inputs=[{"ref": "cat@v1", "kind": "catalog"}, {"kind": "judgments"}], parents=["a@v1"])
-    assert LI._training_refs(m) == ["cat@v1"]
-    assert LI._training_refs(SimpleNamespace()) == []
-
-
-def test_outside_parents_are_unknown_nodes_without_a_lookup(tmp_path):
-    from types import SimpleNamespace
-
+def test_trainer_contract_fields_become_edges(tmp_path):
     c = init_workspace("t", str(tmp_path / "b"))
+    cat = snapshot(c, "cat", pa.Table.from_pylist([{"id": "1", "title": "Tent"}]), kind=DatasetKind.catalog,
+                   provenance=Provenance(source="generated"))
     a = ops.pipeline_publish(c, {"name": "base", "engine": "http", "spec": {"url": "https://x/rank"}})
-    m = ops.pipeline_publish(c, {"name": "imported", "engine": "http", "spec": {"url": "https://x/rank"}}, dry_run=True)
-    m = m.model_copy(update={"version": 1})
+    draft = ops.pipeline_publish(c, {"name": "trained", "engine": "http", "spec": {"url": "https://x/rank"}}, dry_run=True)
     calls = []
     real = c.registry.versions
     c.registry.versions = lambda *x: (calls.append(x), real(*x))[1]
-    fake = SimpleNamespace(**{k: getattr(m, k) for k in ("kind", "name", "version", "id", "catalog", "tags", "registry_ref")},
-                           parents=["mlflow-run:abc123", "registry:outdoor@v1", ops.ref(a)], train_inputs=[])
-    edges, labels = LI.derive(c.registry, fake)
+    retrained = c.registry.publish(draft.model_copy(update={
+        "parents": [ops.ref(a)], "source": {"kind": "retrain"}, "tags": {"retrained_from": ops.ref(a)},
+        "train_inputs": [{"ref": ops.ref(cat), "kind": "catalog", "role": "catalog"}]}))
+    imported = c.registry.publish(draft.model_copy(update={
+        "parents": ["mlflow-model:ranker@3", "mlflow-run:abc123", "registry:outdoor@v1", "other:thing", ops.ref(a)],
+        "source": {"kind": "mlflow"}}))
     c.registry.versions = real
-    srcs = {e["src"] for e in edges if e["relation"] == "parent"}
-    assert srcs == {"unknown:mlflow-run:abc123", "unknown:registry:outdoor@v1", "pipeline:base@v1"}
-    assert labels["unknown:mlflow-run:abc123"] == "unknown source: mlflow-run:abc123"
-    assert calls == []  # exact refs are a direct get, outside ids aren't looked up at all
-    g = LI.graph_from([{"from": e["src"], "to": e["dst"], "relation": e["relation"], "labels": labels} for e in edges])
-    assert {n["kind"] for n in g["nodes"] if n["id"].startswith("unknown:")} == {"unknown"}
+    assert not [x for x in calls if x[1] in ("mlflow-model", "mlflow-run", "registry", "other")]  # no lookups
+    edges = _shape(ops.lineage(c))[1]
+    me, im = f"pipeline:{ops.ref(retrained)}", f"pipeline:{ops.ref(imported)}"
+    assert ("pipeline:base@v1", me, "retrained_from") in edges
+    assert sum(1 for e in edges if e[1] == me and e[2] == "retrained_from") == 1  # tag and parents[0] are one edge
+    assert ("dataset:cat@v1", me, "trained_on") in edges
+    for src in ("mlflow-model:ranker@3", "mlflow-run:abc123", "model:outdoor@v1", "unknown:other:thing"):
+        assert (src, im, "imported_from") in edges
+    assert ("pipeline:base@v1", im, "parent") in edges
+    nodes = {n["id"]: n for n in ops.lineage(c)["nodes"]}
+    assert nodes["unknown:other:thing"]["label"] == "unknown source: other:thing"
+    assert nodes["mlflow-model:ranker@3"]["kind"] == "mlflow-model"

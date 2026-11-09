@@ -120,16 +120,22 @@ def derive(reg, m) -> tuple[list[dict], dict[str, str]]:
             if nid.startswith("unknown:"):
                 nid = f"model-unregistered:{par}"
             edges.append({"src": nid, "dst": me, "relation": "parent"})
-        if tags.get("retrained_from"):
-            src("pipeline", tags["retrained_from"], "retrained_from")
-        for par in getattr(m, "parents", None) or []:  # full refs, from the trainer contract
-            if not isinstance(par, str) or not par or par == tags.get("retrained_from"):
+        source = getattr(m, "source", None) or {}
+        kind_src = source.get("kind") if isinstance(source, dict) else None
+        retrained = tags.get("retrained_from") or ""
+        if retrained:
+            src("pipeline", retrained, "retrained_from")
+        for par in getattr(m, "parents", None) or []:  # full refs or outside ids, from the trainer contract
+            if not isinstance(par, str) or not par or par == retrained:
                 continue
-            if ":" in par:  # an outside id (mlflow-run:<id>, registry:<brand>@v1): never looked up in the workspace
-                labels[f"unknown:{par}"] = f"unknown source: {par}"
-                edges.append({"src": f"unknown:{par}", "dst": me, "relation": "parent"})
+            if ":" in par:  # an outside id: never looked up in the workspace
+                nid = _outside(par)
+                if nid.startswith("unknown:"):
+                    labels[nid] = f"unknown source: {par}"
+                edges.append({"src": nid, "dst": me,
+                              "relation": "imported_from" if kind_src in ("mlflow", "registry") else "parent"})
             else:
-                src("pipeline", par, "parent")
+                src("pipeline", par, "retrained_from" if kind_src == "retrain" else "parent")
         if m.registry_ref:
             edges.append({"src": f"registry:{m.registry_ref}", "dst": me, "relation": "produced_by"})
         for r in _training_refs(m):
@@ -155,6 +161,16 @@ def derive(reg, m) -> tuple[list[dict], dict[str, str]]:
             if bt.logs:
                 src("dataset", bt.logs, "evaluated_on")
     return edges, labels
+
+
+# Outside ids in `parents` that other lineage views already draw keep a matching node id, so the graphs join:
+# MLflow's view uses mlflow-model:<name>@<ver> and mlflow-run:<id>, the models view uses model:<brand>@<ver>.
+_OUTSIDE = {"mlflow-model": "mlflow-model", "mlflow-run": "mlflow-run", "registry": "model"}
+
+
+def _outside(par: str) -> str:
+    prefix, _, rest = par.partition(":")
+    return f"{_OUTSIDE[prefix]}:{rest}" if prefix in _OUTSIDE and rest else f"unknown:{par}"
 
 
 def _training_refs(m) -> list[str]:

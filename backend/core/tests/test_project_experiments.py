@@ -190,3 +190,18 @@ def test_labels_come_from_the_trainer_contracts_train_inputs(tmp_path):
     assert PS.label_independence(c, "clicks", "clicks-holdout@v1")["status"] == "shared"
     assert PS.label_independence(c, "simulated", "sim-holdout@v1")["status"] == "shared"
     assert PS.label_independence(c, "human", "sim-holdout@v1")["status"] == "independent"
+
+
+def test_training_labels_come_from_a_retrained_versions_inputs(tmp_path):
+    c = init_workspace("t", str(tmp_path / "b"))
+    PR.create(c, "Acme")
+    j = _judgments(c, "llm-grades", "llm", "judge-a")
+    d = ops.pipeline_publish(c, {"name": "trained", "engine": "http", "spec": {"url": "https://x/rank"}}, dry_run=True)
+    pm = c.registry.publish(d.model_copy(update={"train_inputs": [{"ref": ops.ref(j), "kind": "judgments",
+                                                                    "role": "labels", "label_source": "llm"}]}))
+    imp = c.registry.publish(d.model_copy(update={"source": {"kind": "mlflow"}, "train_inputs": []}))
+    e = PS.experiment_add(c, "acme", ops.ref(pm))
+    assert PS.training_labels(c, e) == "llm-grades@v1"
+    assert PS.label_independence(c, PS.training_labels(c, e), "llm-grades@v1")["status"] == "shared"
+    e2 = PS.experiment_add(c, "acme", ops.ref(imp))
+    assert PS.label_independence(c, PS.training_labels(c, e2), "llm-grades@v1")["status"] == "unknown"
