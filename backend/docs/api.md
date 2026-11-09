@@ -311,7 +311,23 @@ A promote to a cloud target returns `gate_results.target.plan` (the exact API ca
 | POST | `/api/registry/import` | `{uri?:"s3://<bucket>", profile?}` (default: $CST_MODEL_REGISTRY or the demos file) | `{job}` (read-only on the registry) |
 | GET | `/api/models` | | `[{id, brand, architecture, version, status_kind, status, repro_status, parent_label, parent_id, training_commit, dvc_alias, attached_to_demo, results:[{label,text}], known_issues:[...], path}]` |
 | GET | `/api/models/{id}` | | the same plus `manifest` (raw) and `files:[{path, bytes}]` |
+| POST | `/api/models/pull` | `{model, dest?, parts?, profile?}` | `{job}`: downloads a version, checked against its SHA256SUMS |
+| POST | `/api/models/publish` | `{pipeline:"name@vN", arch, brand, registry?, profile?, status?:"candidate"}` | `{job}`, whose result is `{model:"brand@vN", architecture, brand, version, pipeline, path, files, bytes, repro_status:"not-tested", snapshot, warnings}` |
+| POST | `/api/models/import-version` | `{pipeline, mlflow?:"name@version", mlflow_run?, registry_path?:"arch/brand/version", from?, description?}` | `{job}`, whose result is `{pipeline:"name@vN", source, metrics, parents}` |
 | GET | `/api/lineage` | `?view=artifacts|models` | `{nodes:[{id, kind, label, status?, group?}], edges:[{src, dst, relation}]}` |
+
+Publishing (`cst models publish NAME@vN --arch A --brand B [--registry URI]`) writes a new write-once
+`<arch>/<brand>/vN/`. It claims the number with a create-only `.claim`, uploads the parts (`weights/` from the
+version's `artifact/` files, `code/`, `env/`, `inputs/` as refs only, `results/`, `REPRODUCE.md`, `reproduce.sh`), then
+`SHA256SUMS`, then `MANIFEST.yaml` last and create-only. Readers only list versions that have a manifest, so a publish
+that stops partway leaves nothing visible, and its number stays used. Concurrent publishes get different numbers.
+Files of 64 MB or more go up as a multipart upload that completes create-only. `repro_status` is `not-tested`.
+A line is added to `INDEX.md` and the registry is imported again.
+
+Importing a version (`cst models import-version PIPELINE --mlflow NAME@VER | --mlflow-run ID | --registry-path
+A/B/V [--from REF]`) records a model trained elsewhere as a new pipeline version. Engine and spec come from `--from`
+or the pipeline's latest version. It carries the metrics (`train_metrics`), params, `registry_ref` (the artifact
+location), `parents` (`mlflow-model:NAME@VER`, `mlflow-run:ID` or `registry:BRAND@VER`) and `source`.
 
 `status_kind`: `current`, `candidate`, `rolled-back`, `unattached`, `other`. In the `models` view, node kinds are
 `architecture`, `model`, `model-unregistered` (a parent the registry does not hold) and `demo`. Relations:
@@ -389,10 +405,15 @@ lives and appends a snapshot for the deployed pipeline: searches, impressions, c
 clicks_at_3 (LOGGED_CLICKS). `GET /api/monitor/{env}` returns `{env, snapshots}`. `cst monitor check` compares the
 latest snapshot with the pipeline's first, best or previous one and returns `degraded`.
 
-`cst pipeline retrain NAME` runs the command the pipeline declares in `spec.train.command` and publishes a new
-version whose parent is the old one. The command can write YAML to `$CST_TRAIN_OUT` (spec, registry_ref,
-training_commit, known_issues, description, cost, metrics). Running it locally needs `--local-exec`. On a compute
-target it runs as a job in the runner image.
+`cst pipeline retrain NAME[@vN]` runs the command the pipeline declares in `spec.train.command` and publishes a new
+version whose parent is the old one. The command gets `CST_TRAIN_INPUTS`, `CST_PARAMS` and `CST_OUT`, and writes
+`CST_OUT/result.yaml` (see [trainer-contract.md](trainer-contract.md)). The older `$CST_TRAIN_OUT` file still works.
+Running it locally needs `--local-exec`. On a compute target it runs as a job in the runner image and returns
+`{pending:true, job, live_id, parent}` with no `pipeline` ref. `--wait` returns the new version once the job records it.
+`POST /api/pipelines/{name}/retrain` takes `{compute?, inputs?, params?, as_of?}`.
+
+`PipelineVersion` carries `train_inputs:[{ref, kind, role, uri, label_source, as_of}]`, `train_metrics`,
+`train_params`, `parents:[ref]` and `source:{kind: retrain|mlflow|registry, ...}`. They are empty on older versions.
 
 Workflow steps take an optional `when`. A step whose `when` resolves to "", false, 0, none, null or no is skipped
 with `reason: "condition false"`, and so is every step that needs it. Skipped results have no `command`. The

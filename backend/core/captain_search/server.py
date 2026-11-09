@@ -2244,6 +2244,39 @@ def models_pull(body: dict):
                         f"Download {ref}")}
 
 
+@app.post("/api/models/publish", dependencies=A)
+def models_publish(body: dict):
+    """Publish a pipeline version to a model registry as a write-once <arch>/<brand>/vN. Runs as a job.
+    Body: {pipeline: name@vN, arch, brand, registry?, profile?, status?}."""
+    from . import model_versions as MV
+
+    c, pipe = ctx(), str(body.get("pipeline") or "")
+    for k in ("arch", "brand"):
+        if not body.get(k):
+            raise ValueError(f"{k} is required")
+    pm, _ = c.registry.resolve("pipeline", pipe)  # fail now on an unknown pipeline, not inside the job
+    pin = f"{pm.name}@v{pm.version}"
+    return {"job": _job(lambda p: MV.publish(c, pin, body["arch"], body["brand"], body.get("registry") or None,
+                                             body.get("profile") or None, body.get("status") or "candidate", p),
+                        f"Publish {pin} to the registry")}
+
+
+@app.post("/api/models/import-version", dependencies=A)
+def models_import_version(body: dict):
+    """Register a model trained elsewhere as a new pipeline version. Runs as a job (it may call MLflow).
+    Body: {pipeline, mlflow?: name@version, mlflow_run?, registry_path?: arch/brand/version, from?, description?}."""
+    from . import model_versions as MV
+
+    c = ctx()
+
+    def go(p):
+        v = MV.import_version(c, str(body.get("pipeline") or ""), body.get("mlflow") or None, body.get("mlflow_run") or None,
+                              body.get("registry_path") or None, body.get("from") or None, body.get("description") or None)
+        return {"pipeline": f"{v.name}@v{v.version}", "source": v.source, "metrics": v.train_metrics, "parents": v.parents}
+
+    return {"job": _job(go, f"Import a model version into {body.get('pipeline')}")}
+
+
 @app.get("/api/models/{mid:path}", dependencies=A)
 def model_detail(mid: str):
     from . import models as MD
