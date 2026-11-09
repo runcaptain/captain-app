@@ -399,7 +399,7 @@ def explorer(ctx: Context) -> dict:
     if unscoped:
         tree.append({"kind": "group", "type": "engine", "label": "Engines", "children": unscoped})
     tree.append({"kind": "group", "type": "project", "label": "Projects",
-                 "children": [{"kind": "project", "id": p["id"], "name": p["name"]} for p in PR.listing(ctx)
+                 "children": [{"kind": "project", "id": p["id"], "name": p["name"], "icon": p.get("icon")} for p in PR.listing(ctx)
                               if not p.get("archived")]})
     tree.append({"kind": "settings", "id": "scope-model", "label": "Scope model"})
     return {"workspace": ctx.workspace.name, "model_revision": m.get("revision", 1), "tree": tree,

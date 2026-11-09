@@ -512,7 +512,7 @@ def projects_list():
 
 @app.post("/api/projects", dependencies=A)
 def project_create(body: dict):
-    """{name, description?, brands?, kind?}. With kind (a recipe id, GET /api/recipes) the project starts with that
+    """{name, description?, brands?, kind?, icon?}. With kind (a recipe id, GET /api/recipes) the project starts with that
     recipe's input slots."""
     from . import project_state as PS
     from . import projects as PR
@@ -522,7 +522,7 @@ def project_create(body: dict):
     kind = body.get("kind") or None
     if kind:
         RC.get(c, kind)  # an unknown kind fails before the project exists
-    p = PR.create(c, str(body.get("name", "")), body.get("description", ""), body.get("brands"))
+    p = PR.create(c, str(body.get("name", "")), body.get("description", ""), body.get("brands"), body.get("icon"))
     if kind:
         PS.set_kind(c, p["id"], kind)
     return {**p, "kind": kind}
@@ -597,6 +597,31 @@ def scope_model_suggested():
     from . import scopes as SC
 
     return {"types": SC.SUGGESTED}
+
+
+@app.put("/api/projects/{pid}/icon", dependencies=A)
+def project_icon(pid: str, body: dict):
+    """{icon: {kind: glyph, name, color} | {kind: brand, slug} | {kind: logo, sha, ext} | null}. null clears it."""
+    from . import projects as PR
+
+    return PR.set_icon(ctx(), pid, body.get("icon"))
+
+
+@app.post("/api/projects/{pid}/logo", dependencies=A)
+def project_logo(pid: str, body: dict):
+    """{path}: a PNG, JPEG or SVG on this computer, put in the workspace store (so teammates see it) and made the
+    project's icon."""
+    from . import projects as PR
+
+    return PR.upload_logo(ctx(), pid, str(body.get("path") or ""))
+
+
+@app.post("/api/projects/{pid}/logo/file", dependencies=A)
+def project_logo_file(pid: str, body: dict):
+    """{dest}: write the logo, small, into <app home>/cache/project-logos for a screen to draw. Returns {file}."""
+    from . import projects as PR
+
+    return PR.logo_file(ctx(), pid, str(body.get("dest") or ""))
 
 
 @app.get("/api/projects/{pid}", dependencies=A)

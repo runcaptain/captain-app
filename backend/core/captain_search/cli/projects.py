@@ -370,3 +370,29 @@ def experiment_backtest(name: str, experiment: str,
     head = f"{'Would compare' if S.dry_run else 'Compared'} {r['arms'][1]} with the champion {r['arms'][0]} on {r['queries']}."
     tail = r.get("run") and f" Run {r['run']}." or (r.get("job") and f" Submitted job {r['job']}." or "")
     emit(r, head + tail + f"\nLabels: {ind['status']}. {ind['text']}")
+
+
+@projects_app.command("set-icon")
+def set_icon(name: str,
+             glyph: Optional[str] = typer.Option(None, "--glyph", help="an icon from the app's set, like workflow or package"),
+             color: Optional[str] = typer.Option(None, "--color", help="one of the palette's colors, like #0043CA"),
+             brand: Optional[str] = typer.Option(None, "--brand", help="a brand mark the app ships, like snowflake"),
+             logo: Optional[str] = typer.Option(None, "--logo", help="a PNG, JPEG or SVG file: stored in the workspace"),
+             clear: bool = typer.Option(False, "--clear", help="back to the default icon")):
+    """Set a project's icon: a glyph and color, a brand mark, or your organization's logo."""
+    from .. import projects as PR
+
+    picked = [x for x in (glyph, brand, logo) if x] + (["clear"] if clear else [])
+    if len(picked) != 1:
+        fail("pick one of --glyph, --brand, --logo or --clear")
+    c = ctx()
+    if S.dry_run:
+        emit({"project": name, "dry_run": True}, f"Would set {name}'s icon.")
+        return
+    if logo:
+        p = _do(PR.upload_logo, c, name, logo)
+    else:
+        icon = None if clear else {"kind": "glyph", "name": glyph, "color": color or PR.ICON_COLORS[0]} if glyph else {"kind": "brand", "slug": brand}
+        p = _do(PR.set_icon, c, name, icon)
+    ic = p.get("icon")
+    emit(p, f"{p['name']}'s icon: " + ("the default" if not ic else ic.get("name") or ic.get("slug") or "your logo"))

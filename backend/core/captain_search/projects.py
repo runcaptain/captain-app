@@ -68,14 +68,16 @@ def _get(doc: dict, pid: str) -> dict:
     return p
 
 
-def create(ctx: Context, name: str, description: str = "", brands: list[str] | None = None) -> dict:
+def create(ctx: Context, name: str, description: str = "", brands: list[str] | None = None, icon: dict | None = None) -> dict:
     pid = slug(name)
+    checked = _check_icon(icon) if icon and icon.get("kind") != "logo" else None  # a logo is uploaded once it exists
 
     def ch(doc):
         if any(p["id"] == pid for p in doc["projects"]):
             raise ValueError(f"{name} already exists. Pick another name.")
         p = {"id": pid, "name": name.strip(), "description": description, "created_by": whoami(),
-             "created_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"), "archived": False}
+             "created_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"), "archived": False,
+             **({"icon": checked} if checked else {})}
         doc["projects"].append(p)
         for b in brands or [pid]:
             doc["brands"].setdefault(b.lower(), pid)
@@ -101,6 +103,146 @@ def update(ctx: Context, pid: str, name: str | None = None, description: str | N
         return p
 
     return _update(ctx, ch)
+
+
+# ---- icons ------------------------------------------------------------------------------------
+# A project's mark, shown wherever the project is (Edgar, 2026-11-09: "make it so I can change the icons of the
+# projects"). One of:
+#   {kind: "glyph", name, color}   an icon from the app's set, in one of the palette's colors
+#   {kind: "brand", slug}          a vendor mark the app ships (Snowflake, AWS ...)
+#   {kind: "logo", sha, ext}       an organization's own logo, uploaded into the workspace store, so teammates see it
+# Uploaded logos are the user's: nothing is shipped in the app.
+ICON_COLORS = ("#0043CA", "#7C3AED", "#059669", "#D97706", "#DC2626", "#0891B2", "#DB2777", "#64748B")
+LOGO_TYPES = {".png": "png", ".jpg": "jpg", ".jpeg": "jpg", ".svg": "svg"}
+LOGO_MAX = 2 * 1024 * 1024
+_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+
+
+def logo_key(sha: str, ext: str) -> str:
+    return f"projects/logos/{sha}.{ext}"
+
+
+def _check_icon(icon: dict | None) -> dict | None:
+    if icon is None:
+        return None
+    if not isinstance(icon, dict):
+        raise ValueError("an icon is a glyph, a brand mark or a logo")
+    kind = icon.get("kind")
+    if kind == "glyph":
+        name, color = str(icon.get("name") or ""), str(icon.get("color") or ICON_COLORS[0]).upper()
+        if not _NAME.match(name):
+            raise ValueError(f"{name!r} isn't an icon name")
+        if color not in ICON_COLORS:
+            raise ValueError(f"pick one of the palette's colors: {', '.join(ICON_COLORS)}")
+        return {"kind": "glyph", "name": name, "color": color}
+    if kind == "brand":
+        slug_ = str(icon.get("slug") or "")
+        if not _NAME.match(slug_):
+            raise ValueError(f"{slug_!r} isn't a brand mark")
+        return {"kind": "brand", "slug": slug_}
+    if kind == "logo":
+        sha, ext = str(icon.get("sha") or ""), str(icon.get("ext") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", sha) or ext not in LOGO_TYPES.values():
+            raise ValueError("upload the logo first")
+        return {"kind": "logo", "sha": sha, "ext": ext}
+    raise ValueError("an icon is a glyph, a brand mark or a logo")
+
+
+def set_icon(ctx: Context, pid: str, icon: dict | None) -> dict:
+    """Set (or with None, clear) a project's icon."""
+    checked = _check_icon(icon)
+    if checked and checked["kind"] == "logo" and not ctx.store.exists(logo_key(checked["sha"], checked["ext"])):
+        raise NotFound("that logo isn't in the workspace. Upload it again.")
+
+    def ch(doc):
+        p = _get(doc, pid)
+        if checked is None:
+            p.pop("icon", None)
+        else:
+            p["icon"] = checked
+        return p
+
+    return _update(ctx, ch)
+
+
+def upload_logo(ctx: Context, pid: str, path: str) -> dict:
+    """Put an image file (png, jpg or svg, 2 MB at most) in the workspace store and make it the project's icon."""
+    import hashlib
+    import os
+
+    from .storage.backend import AlreadyExists
+
+    path = os.path.expanduser(path)
+    ext = LOGO_TYPES.get(os.path.splitext(path)[1].lower())
+    if not ext:
+        raise ValueError("a logo is a PNG, JPEG or SVG file")
+    if not os.path.isfile(path):
+        raise NotFound(f"there's no file at {path}")
+    if os.path.getsize(path) > LOGO_MAX:
+        raise ValueError("the logo is over 2 MB. Use a smaller file.")
+    with open(path, "rb") as f:
+        data = f.read()
+    if ext == "svg":
+        if b"<svg" not in data[:4096].lower():
+            raise ValueError("that file isn't an SVG image")
+    else:
+        from PIL import Image
+        import io
+
+        try:
+            Image.open(io.BytesIO(data)).verify()
+        except Exception:  # noqa: BLE001
+            raise ValueError("that file isn't an image Captain can read") from None
+    sha = hashlib.sha256(data).hexdigest()
+    try:
+        ctx.store.put_new(logo_key(sha, ext), data)
+    except AlreadyExists:
+        pass  # the same logo, already there
+    return set_icon(ctx, pid, {"kind": "logo", "sha": sha, "ext": ext})
+
+
+LOGO_PX = 48  # cached size: crisp at 14 to 24 px on a 2x screen
+
+
+def logo_file(ctx: Context, pid: str, dest_dir: str) -> dict:
+    """Write the project's logo, small, into the app's cache folder, so a screen can draw it. Returns {file} (its name
+    in dest_dir) or {file: None} when the project has no logo. A raster is resized with a good filter to LOGO_PX; an SVG
+    is kept as vector, sized so it is drawn at that resolution."""
+    import io
+    import os
+
+    d = os.path.realpath(os.path.expanduser(dest_dir))
+    if not os.path.isabs(dest_dir) or not d.replace("\\", "/").endswith("/cache/project-logos"):
+        raise ValueError("logos are cached only in an app's cache/project-logos folder")
+    doc, _ = _read(ctx)
+    icon = (_get(doc, pid).get("icon") or {})
+    if icon.get("kind") != "logo":
+        return {"file": None}
+    sha, ext = icon["sha"], icon["ext"]
+    name = f"{sha[:24]}-{LOGO_PX}.{'svg' if ext == 'svg' else 'png'}"
+    out = os.path.join(d, name)
+    if not os.path.exists(out):
+        os.makedirs(d, exist_ok=True)
+        data = ctx.store.get(logo_key(sha, ext))
+        tmp = f"{out}.{os.getpid()}.tmp"
+        if ext == "svg":
+            # image() rasterizes an SVG at its own width and height (times 2): give it the drawn size.
+            text = data.decode("utf-8", "replace")
+            half = LOGO_PX // 2
+            text = re.sub(r"<svg\b([^>]*)>", lambda m: "<svg" + re.sub(r'\s(width|height)="[^"]*"', "", m.group(1))
+                          + f' width="{half}" height="{half}">', text, count=1)
+            with open(tmp, "w") as f:
+                f.write(text)
+        else:
+            from PIL import Image
+
+            im = Image.open(io.BytesIO(data)).convert("RGBA")
+            im.thumbnail((LOGO_PX, LOGO_PX), Image.LANCZOS)
+            canvas = Image.new("RGBA", (LOGO_PX, LOGO_PX), (0, 0, 0, 0))
+            canvas.paste(im, ((LOGO_PX - im.width) // 2, (LOGO_PX - im.height) // 2))
+            canvas.save(tmp, "PNG")
+        os.replace(tmp, out)
+    return {"file": name}
 
 
 def pending_handoffs(ctx: Context, pid: str) -> list[dict]:
