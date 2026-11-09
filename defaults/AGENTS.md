@@ -1054,3 +1054,18 @@ Sample-only read history is removed too. Other workspaces are preserved. `cst --
 `cst --dry-run demo remove-sample` preview without changing sample data.
 The older generated experiment demo remains available with `cst demo seed --legacy`;
 it writes simulated experiments into the selected workspace.
+
+## Captain team collaboration
+
+The Captain palette's **Team collaboration** entry opens the `captain-team` mod.
+The editor keeps the selected revision when you pull newer records, so stale drafts
+conflict instead of overwriting them. A restored server history clears the editor;
+reload and review before saving or resolving a draft.
+Connect with a server URL, workspace and masked access token using the protected
+local `/api/team/connect` route. The daemon validates access and stores credentials
+in the OS keychain; the mod clears the token field after each attempt. Company SSO
+is optional when configured. The mod provides cached records, explicit pull/push,
+local drafts and reviewed conflict resolution. The team workspace is independent
+of bucket workspace selection.
+New records are private; saving a draft does not publish it. See
+`docs/captain/TEAM-SYNC.md` in the source tree for configuration and verification limits.

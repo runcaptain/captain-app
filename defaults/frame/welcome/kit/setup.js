@@ -13,6 +13,7 @@ import { pickFolder, openOverlay, run, spaces, shared, setShared } from "herdr";
 import { api } from "./cst.js";
 import { Button, plainError } from "./ui.js";
 import { icon } from "./icons.js";
+import { MONO } from "./tokens.js";
 
 const CLOUDS = [
   { id: "aws", label: "Amazon S3", scheme: "s3://" },
@@ -210,17 +211,16 @@ export class StorageSetup {
     const at = steps.findIndex(([id]) => id === this.step);
     return h_flex().gap(16).pb(16).children(steps.map(([id, name], i) => h_flex().gap(6).items_center()
       .child(div().size(18).flex().items_center().justify_center().text_size(11).font_semibold()
-        .bg(i <= at ? c.blue : c.surface2).text_color(i <= at ? c.onBlue : c.grey500).child(String(i + 1)))
+        .bg(i <= at ? c.solid : c.surface2).text_color(i <= at ? c.onBlue : c.grey500).child(String(i + 1)))
       .child(div().text_size(12.5).text_color(i === at ? c.navy : c.grey500).child(name))));
   }
 
   storageStep(c) {
     const mine = (this.profiles ?? []).filter((p) => p.provider === this.cloud);
     const ch = this.check;
-    const canCreate = ch?.ok && ch.can_write && !ch.existing_workspace;
     return v_flex().gap(14)
-      .child(div().text_size(18).font_semibold().text_color(c.navy).child(this.first ? "Where should Captain keep your work?" : "A new workspace"))
-      .child(this.note(c, "A workspace keeps its datasets, runs and decisions in one place you own. Captain reads and writes only there."))
+      .child(div().text_size(22).font_semibold().text_color(c.navy).child(this.first ? "Where should Captain keep your work?" : "A new workspace"))
+      .child(this.note(c, "Keep your datasets, runs and decisions in a folder you own."))
       .child(v_flex().gap(6).child(this.label(c, "Name")).child(this.input(c, "setup-name", this.name)))
       .child(v_flex().gap(6).child(this.label(c, "Keep it in"))
         .child(this.choice(c, "setup-where", [{ id: "local", label: "A folder on this Mac", icon: "hard-drive" }, { id: "cloud", label: "Cloud storage", icon: "cloud" }],
@@ -233,7 +233,7 @@ export class StorageSetup {
             cx.notify();
           });
         }))
-        .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_family("JetBrains Mono").text_color(this.folder ? c.navy : c.grey500)
+        .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(this.folder ? c.navy : c.grey500)
           .child(this.folder ? this.folder.replace(/^\/Users\/[^/]+/, "~") : "No folder chosen"))))
       .when(this.where === "cloud", (e) => e
         .child(this.choice(c, "setup-cloud", CLOUDS.map((x) => ({ id: x.id, label: x.label })), this.cloud,
@@ -254,9 +254,7 @@ export class StorageSetup {
           .child(div().flex_1().min_w(0).child(this.note(c, `This already holds the workspace ${ch.existing_workspace}.`)))
           .child(Button(c, "setup-open-existing", `Open ${ch.existing_workspace}`, (_e, cx) => this.create(cx, ch.existing_workspace), { kind: "primary", small: true }))))))
       .when(Boolean(this.error), (e) => e.child(this.note(c, this.error, "fail")))
-      .child(h_flex().gap(8).pt(4)
-        .child(Button(c, "setup-check", this.busy === "check" ? "Checking..." : "Check access", (_e, cx) => this.runCheck(cx), { disabled: Boolean(this.busy) }))
-        .child(Button(c, "setup-create", this.busy === "create" ? "Creating..." : "Create workspace", (_e, cx) => this.create(cx), { kind: "primary", disabled: !canCreate || Boolean(this.busy) })));
+      ;
   }
 
   dropStep(c) {
@@ -300,7 +298,11 @@ export class StorageSetup {
     const reg = this.registry;
     return v_flex().gap(14)
       .child(div().text_size(18).font_semibold().text_color(c.navy).child("Attach your model registry"))
-      .child(this.note(c, "Optional. Point Captain at where your trained models live, and it reads their versions and lineage. The layout it reads is <architecture>/<brand>/<version>/MANIFEST.yaml under any prefix."))
+      .child(this.note(c, "Optional. Connect your trained models to see their versions and lineage."))
+      .child(div().id("setup-registry-details").text_size(12).text_color(c.blue).cursor_pointer()
+        .on_click((_e, cx) => { this.registryDetails = !this.registryDetails; cx.notify(); })
+        .child(this.registryDetails ? "Hide folder layout" : "Show folder layout"))
+      .when(Boolean(this.registryDetails), (e) => e.child(this.note(c, "Use <architecture>/<brand>/<version>/MANIFEST.yaml under your registry folder.")))
       .child(v_flex().gap(6).child(this.label(c, "Address")).child(this.input(c, "setup-registry", this.regUri)))
       .when(Boolean(reg), (e) => e.child(this.note(c, `Attached. ${reg.models != null ? `${plural(reg.models, "model")} found.` : ""}`.trim(), "good")))
       .when(Boolean(this.error), (e) => e.child(this.note(c, this.error, "fail")))
@@ -309,13 +311,21 @@ export class StorageSetup {
 
   /** The step's own body. The host draws the frame; footer() gives the buttons. */
   body(c) {
-    return v_flex().child(this.stepper(c))
+    return v_flex().when(!this.first || this.step !== "storage", (e) => e.child(this.stepper(c)))
       .child(this.step === "storage" ? this.storageStep(c) : this.step === "drop" ? this.dropStep(c) : this.registryStep(c));
   }
 
   /** Footer buttons for the step: Back/Next in the later steps. Step 1 advances by creating the workspace. */
   footer(c) {
-    if (this.step === "storage") return h_flex();
+    if (this.step === "storage") {
+      const ch = this.check;
+      if (ch?.existing_workspace) return h_flex();
+      const ready = ch?.ok && ch.can_write;
+      return Button(c, ready ? "setup-create" : "setup-check",
+        this.busy === "check" ? "Checking..." : this.busy === "create" ? "Creating..." : ready ? "Create workspace" : "Check access",
+        (_e, cx) => ready ? this.create(cx) : this.runCheck(cx),
+        { kind: "primary", disabled: Boolean(this.busy) || !this.uri() });
+    }
     const busy = this.imports.some((x) => x.state === "running") || this.busy === "registry";
     return h_flex().gap(8)
       .when(this.step === "registry", (e) => e.child(Button(c, "setup-back", "Back", (_e, cx) => { this.step = "drop"; this.error = null; cx.notify(); })))

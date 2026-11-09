@@ -20,7 +20,7 @@ const TONES = { neutral: ["surface2", "grey900"], blue: ["blueLight", "blue"], g
 /** A small square label. tone: neutral, blue, good, warn or bad. */
 export function Badge(c, text, tone = "neutral") {
   const [bg, fg] = TONES[tone] ?? TONES.neutral;
-  return div().flex_none().px(6).h(20).flex().items_center().bg(c[bg]).text_color(c[fg]).text_size(11).font_medium().child(String(text));
+  return div().flex_none().px(6).h(20).flex().items_center().bg(c[bg]).text_color(c[fg]).text_size(10.5).font_family(MONO).font_medium().child(String(text));
 }
 
 /** The tone a state word gets, the same everywhere. */
@@ -47,7 +47,7 @@ export function Button(c, id, label, onClick, { kind = "secondary", disabled = f
   const h = small ? 26 : 32;
   return div().id(id).h(h).px(small ? 10 : 14).flex().flex_none().items_center().justify_center().gap(6).text_size(small ? 12 : 13).font_medium()
     .when(disabled, (e) => e.bg(c.surface2).text_color(c.grey500).border_1().border_color(c.rule))
-    .when(!disabled && kind === "primary", (e) => e.bg(c.blue).text_color(c.onBlue).cursor_pointer())
+    .when(!disabled && kind === "primary", (e) => e.bg(c.solid).text_color(c.onBlue).cursor_pointer())
     .when(!disabled && kind === "secondary", (e) => e.bg(c.surface).border_1().border_color(c.grey300).text_color(c.navy).cursor_pointer().hover((s) => s.border_color(c.blue).text_color(c.blue)))
     .when(!disabled && kind === "quiet", (e) => e.text_color(c.blue).cursor_pointer().hover((s) => s.bg(c.blueLight)))
     .when(!disabled, (e) => e.on_click(onClick))
@@ -218,10 +218,10 @@ export class Table {
 
   header(c) {
     return h_flex().h(32).flex_none().px(12).gap(12).items_center().bg(c.surface2).border_b(1).border_color(c.rule)
-      .text_size(11.5).font_medium().text_color(c.grey500)
+      .text_size(10.5).font_family(MONO).font_medium().text_color(c.grey500)
       .children(this.shown().map((col) => {
         const cell = this.cell(col).id(`${this.id}-h-${col.key}`)
-          .truncate().child(col.label + (this.sort === col.key ? (this.desc ? "  (desc)" : "  (asc)") : ""));
+          .truncate().child(String(col.label).toUpperCase() + (this.sort === col.key ? (this.desc ? "  (desc)" : "  (asc)") : ""));
         return col.sortable && this.fetch ? cell.cursor_pointer().hover((s) => s.text_color(c.navy)).on_click((_e, cx) => this.toggleSort(col.key, cx)) : cell;
       }));
   }

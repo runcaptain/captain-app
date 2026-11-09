@@ -1,0 +1,28 @@
+# Optional dedicated database. Invoke with --env-file server.env and both -f files.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: captain
+      POSTGRES_DB: captain_team
+      POSTGRES_PASSWORD: ${CST_TEAM_POSTGRES_PASSWORD:?Set a dedicated database password in server.env}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U captain -d captain_team']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  migrate:
+    depends_on:
+      postgres:
+        condition: service_healthy
+  api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+volumes:
+  database:

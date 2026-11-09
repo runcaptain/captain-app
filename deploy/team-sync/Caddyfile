@@ -1,0 +1,13 @@
+{
+	admin off
+}
+
+import /etc/caddy/Caddyfile.common
+
+https://{$CST_TEAM_HOSTNAME} {
+	# Explicit public issuer. Never fall back to the internal test CA.
+	tls {
+		issuer acme
+	}
+	import team_proxy
+}
