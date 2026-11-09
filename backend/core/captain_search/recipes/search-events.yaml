@@ -1,0 +1,19 @@
+id: search-events
+label: Search ranking from events
+description: Rank search results using what shoppers clicked and bought. Grades come from your logged searches.
+slots:
+  - {id: catalog, label: Catalog, role: catalog, accepts: [catalog], required: true,
+     why: "The products to rank. Their text and attributes are what a ranker reads."}
+  - {id: events, label: Search events, role: events, accepts: [events, logs], required: true,
+     why: "One row per result shown: query, product_id, position, clicked. Clicks become grades."}
+  - {id: queries, label: Queries, role: queries, accepts: [queries], required: false,
+     why: "Optional. A fixed query list. Without one, the logged queries are used."}
+trainers:
+  - {id: your-command, label: Your training command, command: "python train.py",
+     why: "Your script reads CST_TRAIN_INPUTS and writes CST_OUT/result.yaml (docs/trainer-contract.md)."}
+evaluation:
+  method: logged-clicks
+  holdout: false
+  text: >-
+    Replays logged searches graded from clicks (LOGGED_CLICKS). With an as_of cutoff it replays only searches after
+    the cutoff. Grades only exist for products the old ranker showed.

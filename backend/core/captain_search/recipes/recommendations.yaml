@@ -1,0 +1,19 @@
+id: recommendations
+label: Recommendations
+description: Recommend items to users from their past interactions.
+slots:
+  - {id: interactions, label: Interactions, role: interactions, accepts: [events, logs, generic], required: true,
+     why: "One row per user and item interaction (view, click, purchase), with a timestamp."}
+  - {id: items, label: Items, role: items, accepts: [catalog, generic], required: false,
+     why: "Optional. Item attributes, for cold-start items."}
+  - {id: users, label: Users, role: users, accepts: [generic], required: false,
+     why: "Optional. User attributes."}
+trainers:
+  - {id: your-command, label: Your training command, command: "python train.py",
+     why: "Hold out a set of users (or the last interactions by time), and report the metrics in result.yaml."}
+evaluation:
+  method: trainer-reported
+  holdout: false
+  text: >-
+    Captain has no recommendation backtest yet. The verdict uses the metrics your trainer reports on its own held-out
+    users, labelled as reported by the trainer and not checked by Captain.
