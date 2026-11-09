@@ -103,6 +103,60 @@ def update(ctx: Context, pid: str, name: str | None = None, description: str | N
     return _update(ctx, ch)
 
 
+def pending_handoffs(ctx: Context, pid: str) -> list[dict]:
+    """Live handoffs of this project's champion or experiments that no deployment has been linked to yet."""
+    from . import handoff as HO
+    from . import project_state as PS
+
+    doc, _ = PS.read(ctx, pid)
+    mine = {e["pipeline"] for e in doc.get("experiments") or []} | ({doc["champion"]} if doc.get("champion") else set())
+    if not mine:
+        return []
+    out = []
+    for b in HO.listing(ctx):
+        if b.get("pipeline") in mine and not any(e.get("kind") == "deployment" for e in b.get("links") or []):
+            out.append({"id": b["id"], "pipeline": b["pipeline"], "environment": b.get("environment")})
+    return out
+
+
+def delete(ctx: Context, pid: str, force: bool = False) -> dict:
+    """Remove a project: its entry, its membership and brand claims, and its state. Never a dataset, pipeline, model or
+    run: those stay in the workspace, unclaimed. Refused while a live handoff waits for its deployment, unless forced."""
+    from . import project_state as PS
+
+    c = contents(ctx, pid)
+    waiting = pending_handoffs(ctx, pid)
+    if waiting and not force:
+        err = ValueError(f"{pid} has {len(waiting)} live handoff(s) waiting for a deployment "
+                         f"({', '.join(h['pipeline'] for h in waiting)}). Link or close them first, or delete with force.")
+        err.handoffs = waiting
+        raise err
+
+    def ch(doc):
+        _get(doc, pid)
+        doc["projects"] = [p for p in doc["projects"] if p["id"] != pid]
+        doc["members"] = {k: v for k, v in doc["members"].items() if v != pid}
+        doc["brands"] = {b: q for b, q in doc["brands"].items() if q != pid}
+        return None
+
+    _update(ctx, ch)
+    # Stores never delete, so the state becomes a tombstone that reads as empty (a new project of this name starts clean).
+    for _ in range(10):
+        try:
+            _, tag = ctx.store.get_with_tag(PS.key(pid))
+        except NotFound:
+            tag = None
+        try:
+            ctx.store.put_if(PS.key(pid), yaml.safe_dump({"deleted": True, "deleted_by": whoami(),
+                                                          "deleted_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds")}).encode(), tag)
+            break
+        except Conflict:
+            continue
+    kept = {"datasets": len(c["dataset"]), "pipelines": len(c["pipeline"]), "backtests": len(c["backtest"]),
+            "models": len(c["models"]), "notebooks": len(c["notebook"]), "connections": len(c["connection"])}
+    return {"deleted": pid, "kept": kept, "forced_past": waiting if force else []}
+
+
 def assign(ctx: Context, pid: str | None, items: list[dict], clear: bool = False) -> dict:
     """Put items ({kind, name}) in a project, or take them out with pid None. clear=True forgets the choice instead,
     so the rules decide again (a model's brand, a name that starts with the project's id)."""

@@ -36,6 +36,8 @@ read results. Storage: `{uri}`. Never write to the bucket any other way.
 - `cst backtest plan/run/report/verify`, `cst deploy promote <ref> --env <e>`
 - `cst notebook import <file>` (ipynb, jupytext, Databricks, marimo, Quarto, R Markdown, MyST, Zeppelin)
 - `cst models list --json` (the model registry), `cst lineage --view models`
+- `cst projects kinds`, `cst projects state <p> --json`, `cst projects sources --json`. To help set up a project,
+  propose with `cst projects propose <p> --file proposal.yaml`. A person accepts it in the app: never apply it yourself
 - `cst skill list`; skills are also in .claude/skills/
 
 Connections: {conns}

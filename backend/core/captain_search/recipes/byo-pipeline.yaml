@@ -1,0 +1,13 @@
+id: byo-pipeline
+label: Bring your own pipeline
+description: You already train and evaluate elsewhere. Add the inputs you use, record versions, and publish them.
+slots: []
+trainers:
+  - {id: your-command, label: Your training command, command: "python train.py",
+     why: "Any command. Or import versions trained elsewhere with Import a model version."}
+evaluation:
+  method: auto
+  holdout: false
+  text: >-
+    Uses a sealed holdout with judgments if you add them, else logged clicks from an events input, else the metrics your
+    trainer reports. With none of those, there is no evaluation set yet.

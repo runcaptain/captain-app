@@ -110,7 +110,9 @@ def pipeline_retrain(name: str = typer.Argument(..., help="pipeline name (its la
                      input: list[str] = typer.Option([], "--input", help="role=name@vN or name@vN, the trainer's inputs. Repeat for more. Replaces spec.train.inputs"),
                      param: list[str] = typer.Option([], "--param", help="name=value, added to spec.train.params. Values are read as JSON when they parse"),
                      as_of: Optional[str] = typer.Option(None, "--as-of", help="cutoff date for inputs that don't set their own as_of"),
-                     wait: bool = typer.Option(False, "--wait", help="on a compute target, wait for the job and return the new version")):
+                     wait: bool = typer.Option(False, "--wait", help="on a compute target, wait for the job and return the new version"),
+                     input_json: list[str] = typer.Option([], "--input-json", help="one input as JSON, e.g. a live query: {role, kind, source, rows, fingerprint}"),
+                     project: Optional[str] = typer.Option(None, "--project", help="train on this project's inputs (when no --input is given) and record the new version as its experiment")):
     """Run the pipeline's declared training command and publish the result as a new version."""
     import json as _json
 
@@ -124,8 +126,23 @@ def pipeline_retrain(name: str = typer.Argument(..., help="pipeline name (its la
     if bad:
         fail(f"--param takes name=value, got {bad[0]!r}")
     params = {k: val(v) for k, v in (p.split("=", 1) for p in param)}
-    r = _do(RT.retrain, ctx(), name, compute, local_exec, dry_run=S.dry_run, inputs=input or None, params=params or None,
+    c = ctx()
+    items = list(input)
+    for j in input_json:
+        try:
+            items.append(_json.loads(j))
+        except ValueError:
+            fail(f"--input-json isn't JSON: {j[:80]}")
+    if project and not items:
+        from .. import project_inputs as PI
+
+        items = _do(PI.run_inputs, c, project)
+    r = _do(RT.retrain, c, name, compute, local_exec, dry_run=S.dry_run, inputs=items or None, params=params or None,
             as_of=as_of, wait=wait)
+    if project and r.get("pipeline") and not S.dry_run:
+        from .. import project_state as PS
+
+        r["experiment"] = _do(PS.experiment_add, c, project, r["pipeline"], trainer=None)["id"]
     if "wall_s" in r:
         msg = f"published {r['pipeline']} from {r['parent']} in {r['wall_s']:.0f} s"
     elif r.get("pending"):

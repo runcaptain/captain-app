@@ -1,19 +1,30 @@
-"""A project's working state: the inputs it is pinned to, its experiments, and its champion.
+"""A project's working state: what it is building, its inputs, its experiments, and its champion.
 
 `projects/<id>/state.yaml`, written by compare-and-swap (Store.put_if), the same pattern as projects.yaml:
 
-  pins:         {catalog, events, queries, labels, holdout}: exact refs, name@vN (holdout: name@vN:holdout)
-  experiments:  [{id, pipeline, training_set, labels, trainer, backtest, run, job, status, ...}]
+  kind:         the recipe it started from (recipes.py), or null for a project made before kinds
+  slots:        its own input slots, copied from the recipe and then editable: [{id, label, role, accepts, required,
+                why, origin}]. Missing on older projects, which read as the five original slots (LEGACY_SLOTS).
+  inputs:       {slot: {mode: snapshot|live, from: connection|local|dataset, source, ref, rows, fingerprint, as_of}}
+                (project_inputs.py writes these)
+  pins:         {slot: name@vN or null}: the dataset ref each slot points at now (holdout: name@vN:holdout)
+  evaluation:   {method: auto|holdout|logged-clicks|trainer-reported|none}
+  experiments:  [{id, pipeline, training_set, labels, trainer, backtest, run, job, status, inputs_read, ...}]
   champion:     the pipeline ref the project ships, or null
   registry:     {arch, brand, uri}: where a published version goes (models publish reads it)
+
+Nothing here names a particular slot: stages, evaluation and label independence read slot roles (catalog, events,
+queries, labels, holdout, users, items, interactions, custom), so any slot set works.
 
 Stages (`stages`) come from this doc plus the lineage index only. They never list the registry, so a project page
 stays one listing (the edge prefix) however big the bucket is. A newer version of a pinned input is information
 for the person, never an error: pins are exact on purpose.
 
-Experiments are judged against the champion on the project's sealed holdout and pinned labels
-(`experiment_backtest`). When the training labels and the holdout grades come from the same labeler, a win only
-shows the model learned that labeler, so the verdict reads "agrees with its own labeler" (`label_independence`).
+Experiments are judged against the champion by the project's evaluation method (`evaluation_plan`): a sealed holdout
+with judgments, a replay of logged searches graded from clicks, or the trainer's own reported metrics, each labelled
+for what it is. With none of them there is no evaluation set yet, and nothing claims a winner. When the training
+labels and the grades come from the same labeler, a win only shows the model learned that labeler, so the verdict
+reads "agrees with its own labeler" (`label_independence`).
 """
 from __future__ import annotations
 
@@ -28,13 +39,16 @@ from .model.entities import new_id
 from .storage.backend import Conflict, NotFound
 from .workspace import Context, whoami
 
-SLOTS = {  # pin slot -> (group on the page, dataset kinds it accepts)
+SLOTS = {  # the five slots of projects made before kinds: slot -> (group on the page, dataset kinds it accepts)
     "catalog": ("data", ("catalog",)),
     "events": ("data", ("events", "logs")),
     "queries": ("data", ("queries",)),
     "labels": ("labels", ("judgments",)),
     "holdout": ("holdout", ("queries",)),
 }
+LEGACY_SLOTS = [{"id": s, "label": s.capitalize() if s != "holdout" else "Sealed holdout", "role": s,
+                 "accepts": list(k), "required": False, "why": "", "origin": "recipe"} for s, (_, k) in SLOTS.items()]
+GROUP = {"labels": "labels", "holdout": "holdout"}  # role -> group on the page; everything else is data
 VERDICTS = {"win": "beats the champion", "loss": "loses to the champion", "noise": "no clear difference from the champion"}
 OWN_LABELER = "agrees with its own labeler"
 NOT_ONLINE = "not yet confirmed online"
@@ -50,8 +64,29 @@ def _now() -> str:
 
 
 def _empty(pid: str) -> dict:
-    return {"project": pid, "pins": {s: None for s in SLOTS}, "experiments": [], "champion": None,
-            "champion_history": [], "registry": {}}
+    return {"project": pid, "kind": None, "recipe": None, "slots": None, "inputs": {}, "pins": {},
+            "evaluation": {"method": "auto"}, "experiments": [], "champion": None, "champion_history": [],
+            "registry": {}, "trainer_suggestion": None}
+
+
+def slots_of(doc: dict) -> list[dict]:
+    return doc["slots"] if doc.get("slots") is not None else [dict(s) for s in LEGACY_SLOTS]
+
+
+def slot(doc: dict, sid: str) -> dict:
+    s = next((s for s in slots_of(doc) if s["id"] == sid), None)
+    if s is None:
+        raise NotFound(f"{doc['project']} has no input slot {sid!r}. Slots: {', '.join(x['id'] for x in slots_of(doc)) or 'none'}")
+    return s
+
+
+def by_role(doc: dict, role: str) -> list[dict]:
+    return [s for s in slots_of(doc) if s["role"] == role]
+
+
+def pinned(doc: dict, role: str) -> str | None:
+    """The first pinned dataset ref among the slots with this role."""
+    return next((doc["pins"].get(s["id"]) for s in by_role(doc, role) if doc["pins"].get(s["id"])), None)
 
 
 def _check_project(ctx: Context, pid: str) -> None:
@@ -67,17 +102,20 @@ def read(ctx: Context, pid: str) -> tuple[dict, str | None]:
         doc = yaml.safe_load(body) or {}
     except NotFound:
         doc, tag = {}, None
+    if doc.get("deleted"):  # a deleted project's state (stores never delete): a new project of that name starts clean
+        doc = {}
     base = _empty(pid)
     for k, v in base.items():
         doc.setdefault(k, v)
-    for s in SLOTS:
-        doc["pins"].setdefault(s, None)
+    for s in slots_of(doc):
+        doc["pins"].setdefault(s["id"], None)
     return doc, tag
 
 
 def get(ctx: Context, pid: str) -> dict:
     _check_project(ctx, pid)
-    return read(ctx, pid)[0]
+    doc = read(ctx, pid)[0]
+    return {**doc, "slots": slots_of(doc)}
 
 
 def _update(ctx: Context, pid: str, change, dry_run: bool = False):
@@ -99,18 +137,19 @@ def _update(ctx: Context, pid: str, change, dry_run: bool = False):
 # ---- pins ---------------------------------------------------------------------------------------
 
 
-def _exact(ctx: Context, slot: str, raw: str) -> str:
+def _exact(ctx: Context, sl: dict, raw: str) -> str:
+    """The exact ref a slot pins for `raw`, checked against what the slot accepts."""
     from .ops import check_seal, ref
 
     m, split = ctx.registry.resolve("dataset", raw)
     kind = getattr(m.dataset_kind, "value", m.dataset_kind)
-    ok = SLOTS[slot][1]
-    if kind not in ok:
+    ok = tuple(sl["accepts"])
+    if "any" not in ok and kind not in ok:
         from . import classes as CL
 
         if CL.role_of(ctx, m.name) not in ok:
-            raise ValueError(f"{ref(m)} holds {kind} rows, and the {slot} pin takes {' or '.join(ok)}")
-    if slot == "holdout":
+            raise ValueError(f"{ref(m)} holds {kind} rows, and the {sl['label']} input takes {' or '.join(ok)}")
+    if sl["role"] == "holdout":
         if not m.holdout_seal:
             raise ValueError(f"{ref(m)} isn't sealed, so it has no holdout yet. Seal it first: that keeps part of its queries back for judging.")
         s = check_seal(ctx, ref(m))
@@ -118,26 +157,197 @@ def _exact(ctx: Context, slot: str, raw: str) -> str:
             raise ValueError(f"{ref(m)} failed its seal check: {s['detail']}")
         return f"{ref(m)}:holdout"
     if split:
-        raise ValueError(f"the {slot} pin takes a whole dataset, not the {split} split")
+        raise ValueError(f"the {sl['label']} input takes a whole dataset, not the {split} split")
     return ref(m)
+
+
+def dataset_fingerprint(m) -> str:
+    """What a pinned dataset version is, as one hash: its files' checksums (or, by reference, their uris, sizes and
+    etags). The same version always gives the same fingerprint."""
+    import hashlib
+
+    h = hashlib.sha256()
+    for f in sorted(m.files, key=lambda f: f.path):
+        h.update(f"{f.path}:{f.sha256}\n".encode())
+    for e in sorted(m.external, key=lambda e: e.uri):
+        h.update(f"{e.uri}:{e.bytes}:{e.etag or ''}:{e.sha256 or ''}\n".encode())
+    return "sha256:" + h.hexdigest()
+
+
+def _dataset_input(ctx: Context, exact: str) -> dict:
+    m, _ = ctx.registry.resolve("dataset", exact)
+    return {"mode": "snapshot", "from": "dataset", "source": {"from": "dataset", "ref": exact}, "ref": exact,
+            "rows": m.row_count or None, "fingerprint": dataset_fingerprint(m), "as_of": (m.tags or {}).get("as_of"),
+            "pinned_at": _now(), "pinned_by": whoami()}
 
 
 def pin(ctx: Context, pid: str, refs: dict[str, str | None], dry_run: bool = False) -> dict:
     """Pin inputs to exact versions. A value of None or "" unpins that slot."""
-    bad = [s for s in refs if s not in SLOTS]
+    doc0, _ = read(ctx, pid)
+    known = {s["id"]: s for s in slots_of(doc0)}
+    bad = [s for s in refs if s not in known]
     if bad:
-        raise ValueError(f"pins are {', '.join(SLOTS)}, not {', '.join(bad)}")
-    exact = {s: (_exact(ctx, s, r) if r else None) for s, r in refs.items()}
+        raise ValueError(f"{pid}'s inputs are {', '.join(known) or 'none yet'}, not {', '.join(bad)}. Add a slot first.")
+    exact = {s: (_exact(ctx, known[s], r) if r else None) for s, r in refs.items()}
+    recs = {s: (_dataset_input(ctx, e) if e else None) for s, e in exact.items()}
 
     def ch(doc):
         before = dict(doc["pins"])
         doc["pins"].update(exact)
+        for s, r in recs.items():
+            if r is None:
+                doc["inputs"].pop(s, None)
+            else:
+                doc["inputs"][s] = r
         doc["pins_updated"] = {"at": _now(), "by": whoami()}
         return {"project": pid, "pins": doc["pins"], "changed": {s: {"from": before.get(s), "to": v}
                                                                 for s, v in exact.items() if before.get(s) != v},
                 "dry_run": dry_run}
 
     return _update(ctx, pid, ch, dry_run)
+
+
+def set_input(ctx: Context, pid: str, sid: str, rec: dict | None, pin_ref: str | None) -> dict:
+    """Record what a slot reads (project_inputs builds `rec`), and the dataset ref it pins, if any."""
+    def ch(doc):
+        slot(doc, sid)
+        if rec is None:
+            doc["inputs"].pop(sid, None)
+        else:
+            doc["inputs"][sid] = rec
+        doc["pins"][sid] = pin_ref
+        doc["pins_updated"] = {"at": _now(), "by": whoami()}
+        return {"project": pid, "slot": sid, "input": rec, "pins": doc["pins"]}
+
+    return _update(ctx, pid, ch)
+
+
+def note_read(ctx: Context, pid: str, items: list[dict]) -> None:
+    """Remember, on each input, when a run last read it and what it found (shown as "last read")."""
+    items = [i for i in items if i.get("slot")]
+    if not items:
+        return
+
+    def ch(doc):
+        for i in items:
+            rec = doc["inputs"].get(i["slot"])
+            if rec is not None:
+                rec["last_read"] = {"at": i.get("read_at") or _now(), "rows": i.get("rows"),
+                                    "fingerprint": i.get("fingerprint")}
+        return None
+
+    try:
+        _update(ctx, pid, ch)
+    except (Conflict, NotFound):  # a note, never a reason to fail the run
+        pass
+
+
+# ---- kind, slots and evaluation -----------------------------------------------------------------
+
+
+def set_kind(ctx: Context, pid: str, kind: str) -> dict:
+    """Start from a recipe: copy its slots and evaluation. Inputs whose slot id is still there are kept."""
+    from . import recipes as RC
+
+    r = RC.get(ctx, kind)
+
+    def ch(doc):
+        doc["kind"] = r["id"]
+        doc["recipe"] = {"id": r["id"], "label": r["label"], "source": r["source"]}
+        doc["slots"] = [dict(s) for s in r["slots"]]
+        ids = {s["id"] for s in doc["slots"]}
+        doc["pins"] = {k: v for k, v in doc["pins"].items() if k in ids}
+        doc["inputs"] = {k: v for k, v in doc["inputs"].items() if k in ids}
+        for i in ids:
+            doc["pins"].setdefault(i, None)
+        doc["evaluation"] = {"method": r["evaluation"]["method"]}
+        doc["trainer_suggestion"] = (r["trainers"] or [None])[0]
+        return None
+
+    _update(ctx, pid, ch)
+    return get(ctx, pid)
+
+
+def _own_slots(doc: dict) -> list[dict]:
+    if doc.get("slots") is None:  # an older project: its five slots become its own, editable list
+        doc["slots"] = [dict(s) for s in LEGACY_SLOTS]
+    return doc["slots"]
+
+
+def slot_add(ctx: Context, pid: str, spec: dict) -> dict:
+    from . import recipes as RC
+
+    new = RC.check_slot({"role": "custom", "accepts": ["any"], "required": False, **spec}, origin="custom")
+
+    def ch(doc):
+        sl = _own_slots(doc)
+        if any(s["id"] == new["id"] for s in sl):
+            raise ValueError(f"{pid} already has an input {new['id']!r}. Pick another name.")
+        sl.append(new)
+        doc["pins"].setdefault(new["id"], None)
+        return None
+
+    _update(ctx, pid, ch)
+    return get(ctx, pid)
+
+
+def slot_update(ctx: Context, pid: str, sid: str, changes: dict) -> dict:
+    from . import recipes as RC
+
+    allowed = {"label", "role", "accepts", "required", "why"}
+    if set(changes) - allowed:
+        raise ValueError(f"a slot's {', '.join(sorted(allowed))} can change, not {', '.join(sorted(set(changes) - allowed))}")
+
+    def ch(doc):
+        sl = _own_slots(doc)
+        i = next((i for i, s in enumerate(sl) if s["id"] == sid), None)
+        if i is None:
+            raise NotFound(f"{pid} has no input slot {sid!r}")
+        sl[i] = RC.check_slot({**sl[i], **changes}, origin=sl[i].get("origin", "custom"))
+        return None
+
+    _update(ctx, pid, ch)
+    return get(ctx, pid)
+
+
+def slot_remove(ctx: Context, pid: str, sid: str) -> dict:
+    """Remove an optional slot (and what it pointed at). A required one must be made optional first."""
+    def ch(doc):
+        sl = _own_slots(doc)
+        s = next((s for s in sl if s["id"] == sid), None)
+        if s is None:
+            raise NotFound(f"{pid} has no input slot {sid!r}")
+        if s["required"]:
+            raise ValueError(f"{s['label']} is required for this kind of project. Make it optional first, then remove it.")
+        doc["slots"] = [x for x in sl if x["id"] != sid]
+        doc["pins"].pop(sid, None)
+        doc["inputs"].pop(sid, None)
+        return None
+
+    _update(ctx, pid, ch)
+    return get(ctx, pid)
+
+
+def set_evaluation(ctx: Context, pid: str, method: str) -> dict:
+    from . import recipes as RC
+
+    if method not in RC.METHODS:
+        raise ValueError(f"the evaluation method is one of {', '.join(RC.METHODS)}")
+
+    def ch(doc):
+        doc["evaluation"] = {**(doc.get("evaluation") or {}), "method": method}
+        return None
+
+    _update(ctx, pid, ch)
+    return get(ctx, pid)
+
+
+def set_trainer_suggestion(ctx: Context, pid: str, trainer: dict | None) -> None:
+    def ch(doc):
+        doc["trainer_suggestion"] = trainer
+        return None
+
+    _update(ctx, pid, ch)
 
 
 def set_registry(ctx: Context, pid: str, arch: str | None = None, brand: str | None = None, uri: str | None = None,
@@ -162,7 +372,8 @@ def set_registry(ctx: Context, pid: str, arch: str | None = None, brand: str | N
 
 
 def experiment_add(ctx: Context, pid: str, pipeline: str, training_set: str | None = None, labels: str | None = None,
-                   trainer: str | None = None, note: str = "", dry_run: bool = False) -> dict:
+                   trainer: str | None = None, note: str = "", dry_run: bool = False,
+                   inputs_read: list[dict] | None = None) -> dict:
     """Record a trained pipeline version as an experiment. training_set and labels are what it trained on, when
     known: label independence reads them."""
     from .ops import ref
@@ -173,7 +384,8 @@ def experiment_add(ctx: Context, pid: str, pipeline: str, training_set: str | No
     exp = {"id": "exp-" + new_id().lower()[-10:], "pipeline": ref(pm), "training_set": ts, "labels": lb,
            "trainer": trainer or (pm.tags or {}).get("trainer") or None, "backtest": None, "run": None, "job": None,
            "status": "trained", "note": note, "error": None, "created_at": _now(), "created_by": whoami(),
-           "updated_at": None}
+           "updated_at": None, "inputs_read": inputs_read if inputs_read is not None else _read_from(pm),
+           "eval_inputs": None, "reported": None}
 
     def ch(doc):
         if any(e["pipeline"] == exp["pipeline"] for e in doc["experiments"]):
@@ -184,6 +396,15 @@ def experiment_add(ctx: Context, pid: str, pipeline: str, training_set: str | No
     return _update(ctx, pid, ch, dry_run)
 
 
+def _read_from(pm) -> list[dict]:
+    """What a trained version says it read (the trainer contract's train_inputs), in the experiment's shape."""
+    out = []
+    for i in getattr(pm, "train_inputs", None) or []:
+        out.append({k: i.get(k) for k in ("slot", "role", "ref", "mode", "rows", "fingerprint", "as_of",
+                                          "changed_since_pin", "read_at")})
+    return out
+
+
 def _exp(doc: dict, eid: str) -> dict:
     e = next((e for e in doc["experiments"] if e["id"] == eid or e["pipeline"] == eid), None)
     if e is None:
@@ -192,7 +413,7 @@ def _exp(doc: dict, eid: str) -> dict:
 
 
 def experiment_record(ctx: Context, pid: str, eid: str, **fields) -> dict:
-    allowed = {"backtest", "run", "job", "status", "note", "error"}
+    allowed = {"backtest", "run", "job", "status", "note", "error", "eval_inputs", "inputs_read", "reported"}
     if set(fields) - allowed:
         raise ValueError(f"an experiment records {', '.join(sorted(allowed))}")
 
@@ -339,39 +560,240 @@ def verdict(comparison_verdict: str | None, independence: dict) -> str | None:
 # ---- experiments against the champion ------------------------------------------------------------
 
 
+EVAL_LABELS = {"holdout": "Sealed holdout, graded by judgments",
+               "judged-queries": "Judged queries, not sealed",
+               "logged-clicks": "Replay of logged searches, graded from clicks",
+               "trainer-reported": "Reported by the trainer, not checked by Captain",
+               "none": "No evaluation set yet"}
+_EVIDENCE = {"human": "HUMAN_GRADED", "llm": "LLM_GRADED", "click": "LOGGED_CLICKS", "heuristic": "SIMULATED"}
+
+
+def _has_columns(ctx: Context, ref_: str, cols: set[str]) -> bool:
+    try:
+        m, _ = ctx.registry.resolve("dataset", ref_.split(":")[0])
+    except Exception:  # noqa: BLE001
+        return False
+    have = {f["name"] for f in m.schema_fields}
+    return not have or cols <= have  # by-reference data has no schema recorded: let the replay say what's missing
+
+
+def evaluation_plan(ctx: Context, doc: dict) -> dict:
+    """How this project's experiments are judged, given the slots it has filled. Never pretends: a method that can't
+    run says what it is missing, and with nothing to judge on the answer is "no evaluation set yet"."""
+    from .historic import REQUIRED
+
+    chosen = (doc.get("evaluation") or {}).get("method") or "auto"
+    hold, queries, labels = pinned(doc, "holdout"), pinned(doc, "queries"), pinned(doc, "labels")
+    logs = pinned(doc, "events")
+    live_events = [s["id"] for s in by_role(doc, "events") if (doc["inputs"].get(s["id"]) or {}).get("from") == "connection"
+                   and not doc["pins"].get(s["id"])]
+    reported = any((e.get("reported") or _pipeline_metrics(ctx, e["pipeline"])) for e in doc["experiments"])
+
+    def judged():
+        if labels and (hold or queries):
+            src = None
+            try:
+                src = ctx.registry.resolve("dataset", labels)[0].judgment_source
+            except Exception:  # noqa: BLE001
+                pass
+            m = "holdout" if hold else "judged-queries"
+            text = (f"Scores both rankers on {hold or queries} with {labels}." if hold else
+                    f"Scores both rankers on {queries} with {labels}. These queries aren't sealed, so the model may "
+                    "have trained on them: seal a holdout for a fair score.")
+            return {"method": m, "ready": True, "evidence": _EVIDENCE.get(src or ""), "text": text,
+                    "uses": {"queries": hold or queries, "judgments": labels}, "missing": []}
+        miss = [s["id"] for s in by_role(doc, "labels")][:1] if not labels else []
+        if not (hold or queries):
+            miss += [s["id"] for s in (by_role(doc, "holdout") or by_role(doc, "queries"))][:1]
+        return {"method": "holdout", "ready": False, "evidence": None, "missing": miss,
+                "text": "Scoring on judgments needs a judgments input and a queries or sealed holdout input."}
+
+    def clicks():
+        if logs and _has_columns(ctx, logs, REQUIRED):
+            return {"method": "logged-clicks", "ready": True, "evidence": "LOGGED_CLICKS", "missing": [],
+                    "uses": {"logs": logs},
+                    "text": f"Replays the searches logged in {logs}, graded from clicks. Grades only exist for products "
+                            "the old ranker showed. With an as_of cutoff on training, only later searches are replayed."}
+        if live_events:
+            return {"method": "logged-clicks", "ready": False, "evidence": None, "missing": live_events,
+                    "text": "The events input is a live query. A replay reads rows Captain holds: take a snapshot of it."}
+        miss = [s["id"] for s in by_role(doc, "events")][:1]
+        return {"method": "logged-clicks", "ready": False, "evidence": None, "missing": miss,
+                "text": "A replay needs an events input with query, product_id, position and clicked columns."}
+
+    def trainer():
+        return {"method": "trainer-reported", "ready": reported, "evidence": "TRAINER_REPORTED" if reported else None,
+                "missing": [], "text": "Compares the metrics each trainer reported on its own held-out data. Captain "
+                                       "didn't compute them and can't check them, and they carry no interval."
+                if reported else "No experiment reported metrics yet (result.yaml metrics)."}
+
+    none = {"method": "none", "ready": False, "evidence": None, "missing": [],
+            "text": "No evaluation set yet: add judgments with queries or a sealed holdout, or an events input with "
+                    "clicks, or have your trainer report metrics."}
+    if chosen == "none":
+        out = none
+    elif chosen in ("holdout", "judged-queries"):
+        out = judged()
+    elif chosen == "logged-clicks":
+        out = clicks()
+    elif chosen == "trainer-reported":
+        out = trainer()
+    else:
+        out = next((x for x in (judged(), clicks(), trainer()) if x["ready"]), none)
+    return {"chosen": chosen, "label": EVAL_LABELS[out["method"]], "uses": {}, **out}
+
+
+def _pipeline_metrics(ctx: Context, ref_: str) -> dict:
+    try:
+        return dict(getattr(ctx.registry.resolve("pipeline", ref_)[0], "train_metrics", None) or {})
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _as_of(ctx: Context, exp: dict, role: str) -> str | None:
+    for i in exp.get("inputs_read") or []:
+        if i.get("role") == role and i.get("as_of"):
+            return str(i["as_of"])
+    try:
+        pm, _ = ctx.registry.resolve("pipeline", exp["pipeline"])
+    except Exception:  # noqa: BLE001
+        return None
+    return next((str(i["as_of"]) for i in getattr(pm, "train_inputs", None) or []
+                 if i.get("as_of") and i.get("kind") in ("events", "logs")), None)
+
+
+def _after(ctx: Context, logs: str, as_of: str, into: str) -> str | None:
+    """The logged rows after the cutoff, as their own dataset, so the replay never grades on what training saw.
+    None when the logs have no timestamp to cut on."""
+    from .data.datasets import snapshot
+    from .model.entities import Provenance
+    from .ops import ref, rows_of
+    import pyarrow as pa
+
+    m, rows, _ = rows_of(ctx, logs)
+    col = next((c for c in ("ts", "timestamp", "event_time", "time") if rows and c in rows[0]), None)
+    if col is None:
+        return None
+    keep = [r for r in rows if str(r.get(col) or "") > as_of]
+    if not keep:
+        raise ValueError(f"{logs} has no searches after {as_of}, so there is nothing later to replay")
+    out = snapshot(ctx, into, pa.Table.from_pylist(keep), kind=m.dataset_kind,
+                   provenance=Provenance(source="generated", params={"from": ref(m), "after": as_of, "column": col}),
+                   description=f"{len(keep)} of {len(rows)} logged rows after {as_of}, from {ref(m)}")
+    return ref(out)
+
+
+def _used(ctx: Context, doc: dict, refs: dict) -> list[dict]:
+    """What an evaluation read: each dataset with its rows and fingerprint."""
+    out = []
+    for what, r in refs.items():
+        if not r:
+            continue
+        try:
+            m, _ = ctx.registry.resolve("dataset", r.split(":")[0])
+        except Exception:  # noqa: BLE001
+            continue
+        sl = next((s for s in slots_of(doc) if (doc["pins"].get(s["id"]) or "").split(":")[0] == r.split(":")[0]), None)
+        out.append({"slot": sl["id"] if sl else None, "role": sl["role"] if sl else what, "ref": r, "mode": "snapshot",
+                    "rows": m.row_count or None, "fingerprint": dataset_fingerprint(m),
+                    "as_of": (m.provenance.params or {}).get("after"), "changed_since_pin": False, "read_at": _now()})
+    return out
+
+
+def _reported(ctx: Context, exp: dict, champ: str) -> dict:
+    mine, theirs = _pipeline_metrics(ctx, exp["pipeline"]), _pipeline_metrics(ctx, champ)
+    common = [k for k in mine if k in theirs and isinstance(mine[k], (int, float)) and isinstance(theirs[k], (int, float))]
+    metric = next((k for k in ("ndcg@10", "ndcg_at_10", "map@10", "recall@10", "hit_rate@10") if k in common),
+                  common[0] if common else None)
+    base = {"method": "trainer-reported", "evidence": "TRAINER_REPORTED", "against": champ,
+            "text": "Reported by the trainers on their own held-out data, not checked by Captain. No interval, so this "
+                    "can't say which is better, only which number is higher."}
+    if metric is None:
+        return {**base, "metric": None, "value": None, "champion_value": None, "delta": None,
+                "verdict": "no shared metric reported",
+                "text": "The two trainers reported no metric in common, so there is nothing to compare."}
+    d = round(mine[metric] - theirs[metric], 6)
+    return {**base, "metric": metric, "value": mine[metric], "champion_value": theirs[metric], "delta": d,
+            "verdict": "reports a higher number" if d > 0 else "reports a lower number" if d < 0 else "reports the same number"}
+
+
 def experiment_backtest(ctx: Context, pid: str, eid: str, compute: str | None = None, progress=None, live=None,
                         live_id: str | None = None, dry_run: bool = False) -> dict:
-    """Backtest an experiment against the champion on the project's sealed holdout and pinned labels, and record
-    the run (or the submitted job) on the experiment."""
+    """Judge an experiment against the champion by the project's evaluation method, and record what it read and the
+    run (or the submitted job) on the experiment."""
     from . import ops
 
     doc = get(ctx, pid)
     exp = _exp(doc, eid)
-    champ, pins = doc.get("champion"), doc["pins"]
+    champ = doc.get("champion")
     if not champ:
         raise ValueError(f"{pid} has no champion yet. Make one first: the first experiment or today's ranker.")
     if champ == exp["pipeline"]:
         raise ValueError(f"{exp['pipeline']} is the champion. Pick another experiment to compare with it.")
-    if not pins.get("holdout"):
-        raise ValueError(f"{pid} has no sealed holdout pinned. Choose one in Inputs first.")
-    if not pins.get("labels"):
-        raise ValueError(f"{pid} has no labels pinned, so the holdout can't be scored. Choose labels in Inputs first.")
-    train = training_labels(ctx, exp)
-    ind = label_independence(ctx, train, pins["labels"])
+    ep = evaluation_plan(ctx, doc)
+    if not ep["ready"]:
+        raise ValueError(ep["text"])
+    base = {"project": pid, "experiment": exp["id"], "method": ep["method"], "evaluation": ep}
+    if ep["method"] == "trainer-reported":
+        rep = _reported(ctx, exp, champ)
+        if not dry_run:
+            experiment_record(ctx, pid, exp["id"], reported=rep, status="evaluated", eval_inputs=[], error=None)
+        return {**base, "arms": [champ, exp["pipeline"]], "reported": rep, "label_independence": None,
+                "backtest": None, "queries": None, "judgments": None, "dry_run": dry_run}
     name = f"{pid}/{exp['id']}"
-    bt = ops.backtest_plan(ctx, name, [champ, exp["pipeline"]], pins["holdout"], pins["labels"], None,
-                           hypothesis=f"{exp['pipeline']} ranks the sealed holdout better than the champion {champ}",
-                           dry_run=True)
-    bt = bt.model_copy(update={"tags": {**(bt.tags or {}), "project": pid, "experiment": exp["id"],
-                                        "train_labels": ind.get("train") or "", "label_independence": ind["status"]}})
-    plan = {"project": pid, "experiment": exp["id"], "backtest": name, "arms": bt.arms, "queries": bt.queries,
-            "judgments": bt.judgments, "label_independence": ind}
-    if dry_run:
-        return {**plan, "dry_run": True}
-    bt = ctx.registry.publish(type(bt).model_validate(bt.model_dump(mode="json")))
-    experiment_record(ctx, pid, exp["id"], backtest=ops.ref(bt), status="backtesting", run=None, job=None, error=None)
+    train = training_labels(ctx, exp)
+    if ep["method"] == "logged-clicks":
+        logs = ep["uses"]["logs"]
+        cut = _as_of(ctx, exp, "events")
+        note = None
+        if dry_run:
+            ind = {"status": "unknown", "train": train, "holdout": None,
+                   "text": "Grades come from the logged clicks when the replay is built."}
+            return {**base, "backtest": name, "arms": [champ, exp["pipeline"]], "queries": None, "judgments": None,
+                    "logs": logs, "as_of": cut, "label_independence": ind, "dry_run": True}
+        if cut:
+            later = _after(ctx, logs, cut, f"{name}/logs-after")
+            if later:
+                logs = later
+            else:
+                note = f"The logs have no timestamp column, so the replay can't skip searches before {cut}."
+        # The same parts a historic plan builds (queries, click grades, shoppers), so the plan can carry its tags
+        # when it is published once.
+        from . import historic as H
+
+        lpin = ops.ref(ctx.registry.resolve("dataset", logs)[0])
+        q = ops.ref(H.queries_from_logs(ctx, lpin, f"{name}/queries")) + ":holdout"
+        j = ops.ref(H.judgments_from_logs(ctx, lpin, f"{name}/judgments"))
+        pop = ops.ref(ops.population_create(ctx, f"{name}/shoppers", "cascade-v1", 4000, 1, from_logs=lpin))
+        ind = label_independence(ctx, train, j)
+        bt = ops.backtest_plan(ctx, name, [champ, exp["pipeline"]], q, j, pop, primary="ndcg@10_tw", dry_run=True,
+                               hypothesis=f"{exp['pipeline']} ranks logged searches better than the champion {champ}")
+        bt = bt.model_copy(update={"mode": "historic", "logs": lpin, "tags": {
+            **(bt.tags or {}), "project": pid, "experiment": exp["id"], "train_labels": ind.get("train") or "",
+            "label_independence": ind["status"], "evaluation": ep["method"], **({"note": note} if note else {})}})
+        bt = ctx.registry.publish(type(bt).model_validate(bt.model_dump(mode="json")))
+        used = _used(ctx, doc, {"logs": logs})
+    else:
+        q, j = ep["uses"]["queries"], ep["uses"]["judgments"]
+        ind = label_independence(ctx, train, j)
+        bt = ops.backtest_plan(ctx, name, [champ, exp["pipeline"]], q, j, None,
+                               hypothesis=f"{exp['pipeline']} ranks {q} better than the champion {champ}", dry_run=True)
+        bt = bt.model_copy(update={"tags": {**(bt.tags or {}), "project": pid, "experiment": exp["id"],
+                                            "train_labels": ind.get("train") or "", "label_independence": ind["status"],
+                                            "evaluation": ep["method"]}})
+        plan = {**base, "backtest": name, "arms": bt.arms, "queries": bt.queries, "judgments": bt.judgments,
+                "label_independence": ind}
+        if dry_run:
+            return {**plan, "dry_run": True}
+        bt = ctx.registry.publish(type(bt).model_validate(bt.model_dump(mode="json")))
+        used = _used(ctx, doc, {"queries": q, "judgments": j})
+    plan = {**base, "backtest": ops.ref(bt), "arms": bt.arms, "queries": bt.queries, "judgments": bt.judgments,
+            "label_independence": ind, "eval_inputs": used}
+    experiment_record(ctx, pid, exp["id"], backtest=ops.ref(bt), status="backtesting", run=None, job=None, error=None,
+                      eval_inputs=used)
+    note_read(ctx, pid, used)
     try:
-        r = ops.backtest_launch(ctx, name, compute, progress=progress, live=live, live_id=live_id)
+        r = ops.backtest_launch(ctx, bt.name, compute, progress=progress, live=live, live_id=live_id)
     except Exception as e:
         experiment_record(ctx, pid, exp["id"], status="failed", error=str(e)[:500])
         raise
@@ -379,7 +801,7 @@ def experiment_backtest(ctx: Context, pid: str, eid: str, compute: str | None = 
         experiment_record(ctx, pid, exp["id"], run=r["run"], status="evaluated")
     else:
         experiment_record(ctx, pid, exp["id"], job=r.get("job"), status="backtesting")
-    return {**plan, "backtest": ops.ref(bt), **{k: r.get(k) for k in ("run", "job", "compute", "live", "detail")}}
+    return {**plan, **{k: r.get(k) for k in ("run", "job", "compute", "live", "detail")}}
 
 
 def _evaluation(ctx: Context, exp: dict, champion: str | None, index=None) -> dict | None:
@@ -432,9 +854,10 @@ def experiments(ctx: Context, pid: str) -> dict:
     index = LI.Index(ctx.store)
     rows = []
     for e in doc["experiments"]:
-        ev = _evaluation(ctx, e, doc.get("champion"), index)
+        ev = e.get("reported") or _evaluation(ctx, e, doc.get("champion"), index)
         rows.append({**e, "is_champion": e["pipeline"] == doc.get("champion"), "evaluation": ev})
-    return {"project": pid, "champion": doc.get("champion"), "pins": doc["pins"], "experiments": rows}
+    return {"project": pid, "champion": doc.get("champion"), "pins": doc["pins"], "experiments": rows,
+            "evaluation": evaluation_plan(ctx, doc)}
 
 
 # ---- stages -------------------------------------------------------------------------------------
@@ -453,12 +876,20 @@ def stages(ctx: Context, pid: str) -> dict:
             n, _, v = r.split(":")[0].partition("@v")
             pinned_names.setdefault(n, []).append((s, int(v)))
     inputs = []
-    for slot, (group, kinds) in SLOTS.items():
+    for sl in slots_of(doc):
+        slot = sl["id"]
         r = pins.get(slot)
-        row = {"slot": slot, "group": group, "accepts": list(kinds), "pinned": r, "status": "pinned" if r else "missing",
+        rec = doc["inputs"].get(slot) or {}
+        live = rec.get("mode") == "live"
+        row = {"slot": slot, "label": sl["label"], "role": sl["role"], "group": GROUP.get(sl["role"], "data"),
+               "accepts": list(sl["accepts"]), "required": sl["required"], "why": sl["why"], "origin": sl.get("origin"),
+               "pinned": r, "mode": rec.get("mode"), "from": rec.get("from"), "rows": rec.get("rows"),
+               "fingerprint": rec.get("fingerprint"), "as_of": rec.get("as_of"), "last_read": rec.get("last_read"),
+               "status": "live" if live else "pinned" if r else ("missing" if sl["required"] else "empty"),
                "newest": None, "info": [], "next": None}
         if not r:
-            row["next"] = {"action": "pin", "slot": slot}
+            if not live:
+                row["next"] = {"action": "pin", "slot": slot}
             inputs.append(row)
             continue
         name, _, v = r.split(":")[0].partition("@v")
@@ -468,7 +899,11 @@ def stages(ctx: Context, pid: str) -> dict:
         if newest and newest > v:
             row["info"].append({"code": "newer-version", "ref": f"{name}@v{newest}",
                                 "text": f"Newer version available: {name}@v{newest}."})
-            row["next"] = {"action": "pin", "slot": slot, "ref": f"{name}@v{newest}" + (":holdout" if slot == "holdout" else "")}
+            if live:  # a live dataset input follows the newest version by itself
+                row["info"][-1]["text"] += " Runs read it."
+            else:
+                row["next"] = {"action": "pin", "slot": slot,
+                               "ref": f"{name}@v{newest}" + (":holdout" if sl["role"] == "holdout" else "")}
         for rec in idx.upstream(f"dataset:{name}@v{v}"):
             m = re.match(r"^dataset:(.+)@v(\d+)$", rec["from"] or "")
             if not m or m.group(1) == name:
@@ -504,9 +939,23 @@ def stages(ctx: Context, pid: str) -> dict:
     notes = [] if idx.complete else [{"code": "index-incomplete",
                                       "text": "Lineage for older versions isn't indexed yet, so newer versions may be "
                                               "missing here. Run `cst lineage reindex` once."}]
+    ev = evaluation_plan(ctx, doc)
+    missing = [r["slot"] for r in inputs if r["status"] == "missing"]
+    if missing:
+        notes.append({"code": "inputs-missing", "slots": missing,
+                      "text": "Required inputs aren't set yet: " + ", ".join(r["label"] for r in inputs if r["status"] == "missing") + "."})
+    first_missing = next((r for r in inputs if r["status"] == "missing"), None)
+    if first_missing:
+        top = {"action": "set-input", "slot": first_missing["slot"], "text": f"Set the {first_missing['label']} input."}
+    elif exps and not ev["ready"]:
+        top = {"action": "add-evaluation", "text": ev["text"]}
+    else:
+        words = {"new-experiment": "Train a new experiment.", "make-champion": "Make an experiment the champion.",
+                 "backtest": "Compare the newest experiment with the champion."}
+        top = {**nxt, "text": words.get(nxt["action"], "")}
     return {
-        "project": pid, "index_complete": idx.complete, "notes": notes,
-        "inputs": inputs,
+        "project": pid, "kind": doc.get("kind"), "recipe": doc.get("recipe"), "index_complete": idx.complete,
+        "next": top, "notes": notes, "inputs": inputs, "evaluation": ev,
         "experiments": {"count": len(exps), "by_status": by_status, "next": nxt},
         "champion": {"pinned": champ, "experiment": champ_exp["id"] if champ_exp else None,
                      "info": [{"code": "newer-version", "ref": newest_champ,

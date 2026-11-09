@@ -11,7 +11,7 @@ from .. import project_state as PS
 from ..storage.backend import Conflict, NotFound
 from .main import S, app, ctx, emit, fail
 
-projects_app = typer.Typer(no_args_is_help=True, help="A project's pinned inputs, experiments and champion")
+projects_app = typer.Typer(no_args_is_help=True, help="Projects: what you're building, its inputs, experiments and champion")
 app.add_typer(projects_app, name="projects")
 
 
@@ -24,10 +24,253 @@ def _do(fn, *a, **kw):
 
 @projects_app.command("state")
 def state(name: str):
-    """The project's state doc: pins, experiments, champion and registry."""
+    """The project's state doc: its kind, slots and inputs, experiments, champion and registry."""
     d = _do(PS.get, ctx(), name)
-    emit(d, "\n".join([f"{s:8} {d['pins'].get(s) or '-'}" for s in PS.SLOTS]
-                      + [f"champion {d.get('champion') or '-'}", f"{len(d['experiments'])} experiment(s)"]))
+    w = max([len(s["id"]) for s in d["slots"]] + [8])
+    lines = [f"kind     {d.get('kind') or '-'}"]
+    for s in d["slots"]:
+        rec = d["inputs"].get(s["id"]) or {}
+        what = rec.get("ref") or d["pins"].get(s["id"]) or (f"live query on {rec['source'].get('connection')}"
+                                                              if rec.get("from") == "connection" else "-")
+        lines.append(f"{s['id']:{w}} {what}" + (f" ({rec['mode']})" if rec.get("mode") else ""))
+    emit(d, "\n".join(lines + [f"champion {d.get('champion') or '-'}", f"{len(d['experiments'])} experiment(s)"]))
+
+
+@projects_app.command("kinds")
+def kinds():
+    """What a project can build: the recipes, built in and your own (workspace recipes/ or the repo's captain/recipes/)."""
+    from .. import recipes as RC
+
+    rows = RC.listing(ctx())
+    emit(rows, "\n".join(f"{r['id']:18} {r['label']} ({r['source']}): "
+                         + (", ".join(s['id'] + ("" if s['required'] else "?") for s in r['slots']) or "no fixed inputs")
+                         for r in rows))
+
+
+@projects_app.command("list")
+def list_projects():
+    """Every project, with what each holds."""
+    from .. import projects as PR
+
+    rows = _do(PR.listing, ctx())
+    emit(rows, "\n".join(f"{p['id']:24} {p['name']}" for p in rows) or "No projects yet.")
+
+
+@projects_app.command("new")
+def new(name: str, kind: Optional[str] = typer.Option(None, "--kind", help="what you're building: see `cst projects kinds`"),
+        description: str = typer.Option("", "--description")):
+    """Make a project. With --kind it starts with that recipe's inputs, which you can then change."""
+    from .. import projects as PR
+    from .. import recipes as RC
+
+    c = ctx()
+    if kind:
+        _do(RC.get, c, kind)  # an unknown kind fails before the project exists
+    p = _do(PR.create, c, name, description)
+    st = _do(PS.set_kind, c, p["id"], kind) if kind else None
+    emit({**p, "kind": kind, "slots": st["slots"] if st else None},
+         f"Made project {p['id']}" + (f" ({st['recipe']['label']}): inputs {', '.join(s['id'] for s in st['slots']) or 'none yet'}" if st else ""))
+
+
+@projects_app.command("kind")
+def set_kind(name: str, kind: str):
+    """Switch a project to another kind. Inputs whose slot is still there are kept."""
+    d = _do(PS.set_kind, ctx(), name, kind)
+    emit(d, f"{name} is now {d['recipe']['label']}: inputs {', '.join(s['id'] for s in d['slots']) or 'none'}")
+
+
+@projects_app.command("slot-add")
+def slot_add(name: str, label: str,
+             id: Optional[str] = typer.Option(None, "--id", help="default: from the label"),
+             role: str = typer.Option("custom", "--role", help="catalog, events, queries, labels, holdout, users, items, interactions or custom"),
+             accepts: list[str] = typer.Option([], "--accepts", help="dataset kinds it takes. Repeat for more. Default: any"),
+             required: bool = typer.Option(False, "--required"), why: str = typer.Option("", "--why")):
+    """Add an input slot of your own."""
+    spec = {"label": label, "role": role, "required": required, "why": why, **({"id": id} if id else {}),
+            **({"accepts": accepts} if accepts else {})}
+    d = _do(PS.slot_add, ctx(), name, spec)
+    emit(d, f"Added {d['slots'][-1]['id']} to {name}")
+
+
+@projects_app.command("slot-edit")
+def slot_edit(name: str, slot: str, label: Optional[str] = typer.Option(None, "--label"),
+              role: Optional[str] = typer.Option(None, "--role"),
+              accepts: list[str] = typer.Option([], "--accepts"),
+              required: Optional[bool] = typer.Option(None, "--required/--optional"),
+              why: Optional[str] = typer.Option(None, "--why")):
+    """Rename a slot, or change what it takes and whether it's required."""
+    ch = {k: v for k, v in (("label", label), ("role", role), ("required", required), ("why", why)) if v is not None}
+    if accepts:
+        ch["accepts"] = accepts
+    if not ch:
+        fail("change at least one of --label, --role, --accepts, --required/--optional, --why")
+    _do(PS.slot_update, ctx(), name, slot, ch)
+    emit({"project": name, "slot": slot, "changed": ch}, f"Changed {slot}: {', '.join(ch)}")
+
+
+@projects_app.command("slot-rm")
+def slot_rm(name: str, slot: str):
+    """Remove an optional slot, and what it pointed at. The datasets themselves stay."""
+    _do(PS.slot_remove, ctx(), name, slot)
+    emit({"project": name, "removed": slot}, f"Removed {slot} from {name}")
+
+
+@projects_app.command("evaluation")
+def evaluation(name: str, method: Optional[str] = typer.Argument(None, help="auto, holdout, logged-clicks, trainer-reported or none")):
+    """Show how experiments are judged, or choose the method."""
+    c = ctx()
+    if method:
+        _do(PS.set_evaluation, c, name, method)
+    ev = PS.evaluation_plan(c, _do(PS.get, c, name))
+    emit(ev, f"{ev['label']} ({'ready' if ev['ready'] else 'not ready'}). {ev['text']}")
+
+
+@projects_app.command("sources")
+def sources():
+    """What inputs can come from: connections, datasets, and local folders with table files."""
+    from .. import project_inputs as PI
+
+    d = PI.sources(ctx())
+    lines = [f"connection {c['name']:20} {c['label']}: {', '.join(c['offers'])}" for c in d["connections"]]
+    lines += [f"folder     {f['path']} ({f['files']} table files)" for f in d["folders"]]
+    lines.append(f"{len(d['datasets'])} dataset(s): `cst data list`")
+    emit(d, "\n".join(lines))
+
+
+@projects_app.command("input")
+def input_set(name: str, slot: str,
+              mode: Optional[str] = typer.Option(None, "--mode", help="snapshot (copy the rows now) or live (read the source at each run). Required"),
+              connection: Optional[str] = typer.Option(None, "--connection"),
+              table: Optional[str] = typer.Option(None, "--table", help="schema.table on the connection, or a table in a .duckdb file"),
+              sql: Optional[str] = typer.Option(None, "--sql"),
+              event: Optional[str] = typer.Option(None, "--event", help="a PostHog event name"),
+              days: int = typer.Option(30, "--days", help="with --event: how far back"),
+              report: Optional[str] = typer.Option(None, "--report", help="a Google Analytics report, as JSON"),
+              path: Optional[str] = typer.Option(None, "--path", help="a local file or folder"),
+              dataset: Optional[str] = typer.Option(None, "--dataset", help="a dataset ref already in the workspace"),
+              as_of: Optional[str] = typer.Option(None, "--as-of", help="the cutoff date this input stands for"),
+              kind: Optional[str] = typer.Option(None, "--kind", help="dataset kind for a snapshot, when it can't be guessed")):
+    """Point a slot at a connection, a local file or folder, or a dataset, as a snapshot or a live reference."""
+    import json as _json
+
+    from .. import project_inputs as PI
+
+    if mode not in ("snapshot", "live"):
+        fail("say --mode snapshot (copy the rows now) or --mode live (read the source at each run)")
+    if connection:
+        src = {"from": "connection", "connection": connection}
+        if event:
+            src["event"] = {"name": event, "days": days}
+        elif report:
+            try:
+                src["report"] = _json.loads(report)
+            except ValueError:
+                fail("--report is JSON")
+        elif sql:
+            src["sql"] = sql
+        elif table:
+            src["table"] = table
+    elif path:
+        src = {"from": "local", "path": path, **({"table": table} if table else {})}
+    elif dataset:
+        src = {"from": "dataset", "ref": dataset}
+    else:
+        fail("name a source: --connection (with --table, --sql, --event or --report), --path or --dataset")
+    r = _do(PI.set_input, ctx(), name, slot, src, mode, as_of, kind)
+    i = r["input"]
+    emit(r, f"{slot}: {i.get('ref') or 'live query'} ({mode}), {i.get('rows') if i.get('rows') is not None else 'unknown'} rows")
+
+
+@projects_app.command("input-clear")
+def input_clear(name: str, slot: str):
+    """Point a slot at nothing again. What it pointed at stays in the workspace."""
+    from .. import project_inputs as PI
+
+    _do(PI.clear_input, ctx(), name, slot)
+    emit({"project": name, "slot": slot, "cleared": True}, f"Cleared {slot}")
+
+
+@projects_app.command("delete")
+def delete(name: str, yes: bool = typer.Option(False, "--yes", "-y", help="don't ask"),
+           force: bool = typer.Option(False, "--force", help="delete even with a live handoff waiting for its deployment")):
+    """Delete a project. Its datasets, pipelines, models and runs stay in the workspace."""
+    from .. import projects as PR
+
+    c = ctx()
+    if S.dry_run:
+        emit({"project": name, "dry_run": True, "pending_handoffs": PR.pending_handoffs(c, name)}, f"Would delete {name}.")
+        return
+    if not yes and not S.json:
+        if not typer.confirm(f"Delete project {name}? Its datasets, models and runs stay.", default=False):
+            fail("Not deleted.")
+    elif not yes:
+        fail("pass --yes to delete without asking")
+    try:
+        r = PR.delete(c, name, force=force)
+    except (ValueError, NotFound, Conflict) as e:
+        fail(str(e))
+    k = r["kept"]
+    emit(r, f"Deleted {name}. Kept {k['datasets']} dataset(s), {k['pipelines']} pipeline(s), {k['models']} model(s) "
+            f"and {k['backtests']} backtest(s).")
+
+
+@projects_app.command("assist")
+def assist(name: str, ask: str = typer.Option("", "--ask", help="what you want help with")):
+    """Print a prompt for a coding agent to propose this project's inputs and trainer. Nothing is changed."""
+    from .. import project_assist as PA
+
+    r = _do(PA.assist, ctx(), name, ask)
+    emit(r, r["prompt"])
+
+
+@projects_app.command("propose")
+def propose(name: str, file: str = typer.Option(..., "--file", help="proposal.yaml (see `cst projects assist`)"),
+            assist: Optional[str] = typer.Option(None, "--assist", help="the assist request this answers"),
+            agent: Optional[str] = typer.Option(None, "--agent", help="your agent name. Default: detected")):
+    """File a proposal for a project's inputs and trainer. It waits for a person to accept it in the app."""
+    import os
+
+    import yaml as _yaml
+
+    from .. import project_assist as PA
+
+    try:
+        with open(file) as f:
+            doc = _yaml.safe_load(f) or {}
+    except (OSError, _yaml.YAMLError) as e:
+        fail(f"can't read {file}: {e}")
+    r = _do(PA.propose, ctx(), name, doc, assist, os.path.dirname(os.path.abspath(file)), agent)
+    emit(r, f"Proposed {r['id']} for {name}: {len(r['slots'])} slot(s)" + (", a trainer" if r["trainer"] else "")
+         + ". It shows in the app for a person to accept.")
+
+
+@projects_app.command("proposals")
+def proposals(name: str):
+    from .. import project_assist as PA
+
+    rows = _do(PA.listing, ctx(), name)
+    emit(rows, "\n".join(f"{p['id']}  {p['status']:9} {p.get('agent') or p['by']}: {p['note'][:80]}" for p in rows)
+         or "No proposals yet.")
+
+
+@projects_app.command("accept")
+def accept(name: str, proposal: str, only: list[str] = typer.Option([], "--only", help="apply only these slots (or trainer, evaluation). Repeat")):
+    """Apply a proposal. Connection and local sources are listed for you to set with `cst projects input`."""
+    from .. import project_assist as PA
+
+    r = _do(PA.accept, ctx(), name, proposal, only or None)
+    a = r["applied"]
+    lines = [f"Accepted {proposal}: added {len(a['added'])}, changed {len(a['changed'])}, removed {len(a['removed'])}, pinned {len(a['pinned'])}."]
+    lines += [f"Set {t['slot']} next: cst projects input {name} {t['slot']} --mode snapshot|live ..." for t in r["to_connect"]]
+    emit(r, "\n".join(lines))
+
+
+@projects_app.command("reject")
+def reject(name: str, proposal: str, note: str = typer.Option("", "--note")):
+    from .. import project_assist as PA
+
+    r = _do(PA.reject, ctx(), name, proposal, note)
+    emit(r, f"Rejected {proposal}")
 
 
 @projects_app.command("stages")
@@ -54,12 +297,18 @@ def pin(name: str,
         holdout: Optional[str] = typer.Option(None, "--holdout", help="a sealed queries dataset"),
         arch: Optional[str] = typer.Option(None, "--arch", help="registry architecture for published versions"),
         brand: Optional[str] = typer.Option(None, "--brand", help="registry brand for published versions"),
-        registry: Optional[str] = typer.Option(None, "--registry", help="model registry URI")):
-    """Pin inputs to exact versions (a name alone pins its newest version). Pass "" to unpin one."""
+        registry: Optional[str] = typer.Option(None, "--registry", help="model registry URI"),
+        slot: list[str] = typer.Option([], "--slot", help="slot=name@vN for any slot, including your own. Repeat")):
+    """Pin datasets to exact versions (a name alone pins its newest version). Pass "" to unpin one."""
     refs = {k: v for k, v in (("catalog", catalog), ("events", events), ("queries", queries), ("labels", labels),
                               ("holdout", holdout)) if v is not None}
+    for p in slot:
+        k, sep, v = p.partition("=")
+        if not sep:
+            fail(f"--slot takes slot=name@vN, got {p!r}")
+        refs[k] = v
     if not refs and arch is None and brand is None and registry is None:
-        fail("pin at least one of --catalog, --events, --queries, --labels, --holdout, --arch, --brand, --registry")
+        fail("pin at least one of --slot, --catalog, --events, --queries, --labels, --holdout, --arch, --brand, --registry")
     c = ctx()
     out = {}
     if refs:
