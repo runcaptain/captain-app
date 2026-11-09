@@ -35,7 +35,7 @@ const ex = new Explorer();
 ex.start(cx);
 await flush();
 let t = texts(ex.render(c)).join(' | ');
-assert.ok(/Projects \|.*Acme \| MLflow \| Scope model/.test(t), `after Projects, before Scope model: ${t}`);
+assert.ok(/Projects \|.*Acme \| (\.\.\. \| )?MLflow \| Scope model/.test(t), `after Projects, before Scope model: ${t}`);
 assert.ok(!t.includes('/rankers'), 'closed at first');
 assert.ok(!asked().some((p) => p.startsWith('/api/mlflow')), 'MLflow not read while closed');
 // A click right after launch is ignored.

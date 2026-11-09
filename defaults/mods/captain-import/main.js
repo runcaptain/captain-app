@@ -1,6 +1,8 @@
 // CAPTAIN: Import a dataset, in three steps, as an overlay (openOverlay({mod: "captain-import", kind: "dialog"})).
 // Props: {folder?} starts in that folder; {start: {conn, sql | table, name}} opens on that query's preview, or that
-// table whole.
+// table whole. {input: {project, slot, label, kinds, role?}} picks a project's input instead of importing: three tabs
+// (a connection, this computer, already in Captain), and for a connection or a local source the person chooses to
+// take a snapshot now or keep it live. It ends with POST /api/projects/{project}/inputs.
 // 1. Where from: a grid of sources. A file or folder from this computer, every connected database with its mark, and
 //    "Connect a new source" (the typed database form). Product analytics sources show as coming.
 // 2. A database's tables (read once through the table browser) and suggested queries: the backend's own
@@ -88,6 +90,11 @@ export function localSuggestions(tree) {
 export default class CaptainImport extends View {
   init(_props, cx) {
     this.step = 1;
+    this.input = props()?.input ?? null; // a project's input being chosen, not a plain import
+    this.inTab = "connection";
+    this.mode = "snapshot";
+    this.picked = null; // "Already in Captain": the dataset picked
+    this.datasets = null;
     this.conns = null;
     this.source = null; // {kind: "file"} | {kind: "db", conn}
     this.tree = null;
@@ -133,7 +140,15 @@ export default class CaptainImport extends View {
     cx.spawn(async (cx) => {
       // Every source and folder, whatever the Explorer has picked: the pick is where the import goes, not what it reads.
       const [k, t, ex, ds] = await Promise.all([api("/api/connections", { scoped: false }), api("/api/datasets/tree", { scoped: false }), api("/api/explorer", { scoped: false }), api("/api/datasets", { scoped: false })]);
-      if (ds.ok && Array.isArray(ds.data)) this.names = new Set(ds.data.map((d) => d.name));
+      if (ds.ok && Array.isArray(ds.data)) { this.names = new Set(ds.data.map((d) => d.name)); this.datasets = ds.data; }
+      if (this.input) {
+        // What can feed an input: connections (and what each offers: tables, SQL, events, a report), datasets, and
+        // folders on this computer that hold data files.
+        const src = await api("/api/sources", { scoped: false });
+        this.sourceInfo = src.ok ? src.data : null;
+        this.suggestedFolders = src.ok && Array.isArray(src.data?.folders) ? src.data.folders.map((f) => f.path ?? f) : ["~/Downloads", "~/Documents", "~/data"];
+        if (src.ok && Array.isArray(src.data?.datasets)) this.datasets = src.data.datasets.map((d) => ({ ...d, latest: d.version ?? d.latest }));
+      }
       // Not answered yet (the services are starting, or a request failed): keep the placeholder and ask again shortly,
       // never an empty list that stays empty.
       if (!(k.ok && Array.isArray(k.data))) {
@@ -233,7 +248,7 @@ export default class CaptainImport extends View {
   pick(cx, source) {
     this.source = source;
     this.note = null;
-    if (source.kind === "db") { this.step = 2; this.loadTables(cx); }
+    if (source.kind === "db") { this.step = 2; this.eventPick = null; this.loadTables(cx); if (this.input) this.loadEvents(cx); }
     cx.notify();
   }
 
@@ -473,6 +488,154 @@ export default class CaptainImport extends View {
     cx.notify();
   }
 
+  // ---- a project's input ------------------------------------------------------------------------------------------
+
+  /** Save the chosen source as the project's input (POST /api/projects/{project}/inputs/{slot}), then close. A
+   *  snapshot from a connection or a folder is taken by the services as a job: wait for it here. */
+  async useAsInput(cx, source, mode) {
+    const inp = this.input;
+    this.busy = true; this.note = null;
+    cx.notify();
+    const r = await api(`/api/projects/${enc(inp.project)}/inputs/${enc(inp.slot)}`, { body: { source, mode }, scoped: false, timeout: 60 });
+    if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't use that.", tone: "fail" }; cx.notify(); return; }
+    if (r.data?.job) {
+      this.note = { text: "Taking the snapshot. This can take a minute for a big table.", tone: "muted" };
+      cx.notify();
+      for (let i = 0; i < 600; i++) {
+        const j = await api(`/api/jobs/${enc(r.data.job)}`, { scoped: false });
+        if (j.ok && j.data?.status === "done") break;
+        if (j.ok && j.data?.status === "failed") { this.busy = false; this.note = { text: sentence(j.data.message ?? j.data.error) || "The snapshot stopped.", tone: "fail" }; cx.notify(); return; }
+        await new Promise((res) => cx.timer.after(500, () => res()));
+      }
+    }
+    this.busy = false;
+    setShared("captain.explorer.rev", Date.now()); // the project page reads its inputs again
+    notify({ title: `${inp.label} set`, body: mode === "live" ? "It's read again on every run, and each run records what it read." : "Every run uses exactly this snapshot until you take another.", level: "success", timeout: 8000 });
+    this.close();
+  }
+
+  /** What the connection step chose, as the services' source: a table, a query, a PostHog event, or a GA4 report. */
+  connSource() {
+    const p = this.prep;
+    const conn = p?.source?.conn ?? this.source?.conn;
+    const k = (this.conns ?? []).find((x) => x.name === conn);
+    if (this.eventPick) return { from: "connection", connection: conn, event: { name: this.eventPick, days: 30 } };
+    if (!p?.source) return null;
+    // The table browser names a table with its database in front ("shop".main.products); the input wants schema.table.
+    if (p.source.table) return { from: "connection", connection: conn, table: p.source.table.split(".").slice(-2).map((x) => x.replace(/"/g, "")).join(".") };
+    if ((k?.kind ?? k?.engine) === "ga4") {
+      try { return { from: "connection", connection: conn, report: JSON.parse(p.source.sql) }; } catch { return null; }
+    }
+    return { from: "connection", connection: conn, sql: p.source.sql };
+  }
+
+  useConn(cx) {
+    const src = this.connSource();
+    if (!src) { this.note = { text: "Pick a table, write a query, or pick an event first.", tone: "fail" }; cx.notify(); return; }
+    cx.spawn(async (cx) => this.useAsInput(cx, src, this.mode));
+  }
+
+  /** PostHog and GA4: the events of the last 30 days, to pick one as the input. */
+  loadEvents(cx) {
+    const conn = this.source?.conn;
+    const info = (this.sourceInfo?.connections ?? []).find((x) => x.name === conn);
+    this.events = null;
+    if (!info?.events_route) return;
+    cx.spawn(async (cx) => {
+      const r = await api(info.events_route, { scoped: false });
+      if (this.source?.conn !== conn) return;
+      this.events = r.ok && Array.isArray(r.data) ? r.data : [];
+      cx.notify();
+    });
+  }
+
+  eventsView(c) {
+    const ev = this.events;
+    return v_flex().id("input-events").gap(6)
+      .child(div().text_size(13).font_medium().child("Events from the last 30 days"))
+      .child(div().text_size(12).text_color(c.grey900).child("Pick the event that holds your searches or interactions, or write your own query below."))
+      .when(ev === null, (e) => e.child(Skeleton(c, 3)))
+      .when(Array.isArray(ev) && !ev.length, (e) => e.child(div().text_size(12).text_color(c.grey500).child("No events in the last 30 days.")))
+      .child(v_flex().max_h(200).overflow_y_scrollbar().border_1().border_color(c.rule).children((ev ?? []).slice(0, 200).map((x, i) => {
+        const on = this.eventPick === x.event;
+        return h_flex().id(`input-event-${i}`).h(28).px(10).gap(8).items_center().cursor_pointer().border_b(1).border_color(c.rule)
+          .bg(on ? c.blueLight : c.surface).on_click((_e, cx) => { this.eventPick = on ? null : x.event; cx.notify(); })
+          .child(this.icon(on ? "circle-check" : "activity", 12, on ? c.blue : c.grey500))
+          .child(div().flex_1().min_w(0).truncate().font_family(MONO).text_size(12).child(x.event))
+          .child(div().flex_none().text_size(11.5).text_color(c.grey500).child(fmtInt(x.count)));
+      })))
+      .when(Boolean(this.eventPick), (e) => e.child(this.modeChoice(c)).child(h_flex().child(Button(c, "input-use-event", this.busy ? "Saving" : `Use as ${this.input.label.toLowerCase()}`, (_e, cx) => this.useConn(cx), { kind: "primary", small: true, disabled: this.busy }))));
+  }
+
+  /** Snapshot or live, each with what it means. */
+  modeChoice(c) {
+    const card = (id, title, line, on) => v_flex().id(`mode-${id}`).flex_1().min_w(0).p(10).gap(4).cursor_pointer().border_1()
+      .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).on_click((_e, cx) => { this.mode = id; cx.notify(); })
+      .child(h_flex().gap(6).items_center().child(this.icon(on ? "circle-check" : "square", 13, on ? c.blue : c.grey500)).child(div().text_size(12.5).font_medium().text_color(on ? c.blue : c.navy).child(title)))
+      .child(div().text_size(11.5).line_height("16px").text_color(c.grey900).child(line));
+    return h_flex().id("input-mode").gap(8).items_start()
+      .child(card("snapshot", "Take a snapshot now", "Saved once as a dataset. Every run uses exactly these rows until you take another.", this.mode === "snapshot"))
+      .child(card("live", "Keep it live", "Each run reads it again and records what it read, so results can move as the data does.", this.mode === "live"))
+      // The live record is the query and its row count, so a change that keeps the count slips by (flow-trainer).
+      .when(this.mode === "live" && this.inTab === "connection", (e) => e.child(div().w(240).flex_none().text_size(11.5).line_height("16px").text_color(c.grey500)
+        .child("Captain notices a change by the query and its row count. If rows can change without the count changing, take a snapshot.")));
+  }
+
+  /** The three places an input can come from. */
+  inputTabs(c) {
+    const tabs = [["connection", "From a connection", "server"], ["computer", "From this computer", "folder"], ["captain", "Already in Captain", "database"]];
+    return h_flex().id("input-tabs").flex_none().h(38).px(20).gap(18).border_b(1).border_color(c.rule).children(tabs.map(([id, label, ic]) => {
+      const on = this.inTab === id;
+      return h_flex().id(`input-tab-${id}`).h_full().gap(6).items_center().cursor_pointer().border_b(on ? 2 : 0).border_color(c.blue)
+        .text_color(on ? c.blue : c.grey900).on_click((_e, cx) => { this.inTab = id; this.note = null; cx.notify(); })
+        .child(this.icon(ic, 13)).child(div().text_size(12.5).font_medium().child(label));
+    }));
+  }
+
+  /** Datasets already in Captain that fit this input. */
+  captainTab(c) {
+    const kinds = this.input.kinds ?? [];
+    const list = (this.datasets ?? []).filter((d) => !kinds.length || kinds.includes(d.kind));
+    const sel = this.picked;
+    return v_flex().id("input-captain").flex_1().min_h(0).p(20).gap(10)
+      .child(div().text_size(12.5).text_color(c.grey900).child(kinds.length ? `Datasets that can be ${this.input.label.toLowerCase()}. The newest version is used; the project keeps that exact one.` : "Any dataset. The project keeps the exact version you pick."))
+      .when(this.datasets === null, (e) => e.child(Skeleton(c, 4)))
+      .when(Array.isArray(this.datasets) && !list.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("None yet. Bring one in from a connection or this computer.")))
+      .child(v_flex().id("input-ds-list").flex_1().min_h(0).overflow_y_scrollbar().border_1().border_color(c.rule)
+        .children(list.map((d, i) => h_flex().id(`input-ds-${i}`).h(34).px(12).gap(8).items_center().cursor_pointer().border_b(1).border_color(c.rule)
+          .bg(sel === d.name ? c.blueLight : c.surface).hover((s) => (sel === d.name ? s : s.bg(c.surface2)))
+          .on_click((_e, cx) => { this.picked = d.name; cx.notify(); })
+          .child(this.icon("table", 13, c.grey500))
+          .child(div().flex_1().min_w(0).truncate().font_family(MONO).text_size(12.5).child(d.name))
+          .child(div().flex_none().text_size(11.5).text_color(c.grey500).child(`${d.kind}, ${fmtInt(d.rows)} rows`))
+          .child(div().flex_none().text_size(11).font_family(MONO).text_color(c.grey500).child(`v${d.latest}`)))))
+      .child(h_flex().gap(8).items_center()
+        .child(Button(c, "input-use-dataset", this.busy ? "Saving" : `Use as ${this.input.label.toLowerCase()}`, (_e, cx) => {
+          const d = list.find((x) => x.name === sel);
+          if (d) cx.spawn(async (cx) => this.useAsInput(cx, { from: "dataset", ref: `${d.name}@v${d.latest}` }, "snapshot"));
+        }, { kind: "primary", small: true, disabled: !sel || this.busy })));
+  }
+
+  /** A file or folder on this computer, read once or every run. */
+  computerTab(c) {
+    const path = expand(this.path.value());
+    const go = (cx) => {
+      if (!path) { this.note = { text: "Pick a file or folder first.", tone: "fail" }; cx.notify(); return; }
+      cx.spawn(async (cx) => this.useAsInput(cx, { from: "local", path }, this.mode));
+    };
+    return v_flex().id("input-computer").flex_1().min_h(0).overflow_y_scrollbar().p(20).gap(12)
+      .child(div().text_size(12.5).text_color(c.grey900).child("A CSV, Parquet or JSON file, or a folder of them."))
+      .child(h_flex().gap(8).items_center()
+        .child(h_flex().flex_1().min_w(0).h(28).px(8).items_center().border_1().border_color(c.grey300).child(Input.new(this.path).w_full().text_size(12).text_color(c.navy)))
+        .child(Button(c, "input-pick-folder", "Choose a folder", (_e, cx) => cx.spawn(async (cx) => { const p = await pickFolder({ prompt: `Choose ${this.input.label.toLowerCase()}` }); if (p) { this.path.set_value(p); cx.notify(); } }), { small: true })))
+      .child(h_flex().flex_wrap().gap(6).items_center()
+        .child(div().text_size(11.5).text_color(c.grey500).child("Suggested"))
+        .children((this.suggestedFolders ?? []).map((f, i) => div().id(`input-sug-${i}`).h(22).px(6).flex().items_center().cursor_pointer().border_1().border_color(c.grey300)
+          .text_size(11.5).font_family(MONO).text_color(c.grey900).hover((s) => s.border_color(c.blue)).on_click((_e, cx) => { this.path.set_value(f); cx.notify(); }).child(f))))
+      .child(this.modeChoice(c))
+      .child(h_flex().child(Button(c, "input-use-local", this.busy ? "Saving" : `Use as ${this.input.label.toLowerCase()}`, (_e, cx) => go(cx), { kind: "primary", small: true, disabled: this.busy })));
+  }
+
   // ---- drawing ---------------------------------------------------------------------------------------------------
 
   icon(name, size, color) {
@@ -494,8 +657,8 @@ export default class CaptainImport extends View {
     return v_flex().id("import").size_full().bg(c.surface).rounded(RADIUS).font_family(FONT).text_color(c.navy)
       .child(h_flex().h(56).flex_none().px(20).gap(14).items_center().border_b(1).border_color(c.rule)
         .child(this.icon("database", 18, c.navy))
-        .child(div().text_size(16).font_semibold().child("Import a dataset"))
-        .child(h_flex().gap(6).items_center().children(steps.flatMap(([n, label], i) => [
+        .child(div().text_size(16).font_semibold().child(this.input ? `Choose ${this.input.label.toLowerCase()}` : "Import a dataset"))
+        .child(h_flex().gap(6).items_center().when(this.input && this.step === 1, (e) => e.opacity(0)).children(steps.flatMap(([n, label], i) => [
           ...(i ? [this.icon("chevron-right", 11, c.grey300)] : []),
           div().id(`step-${n}`).text_size(12).text_color(this.step === n ? c.blue : n < this.step ? c.navy : c.grey500)
             .when(n < this.step, (e) => e.cursor_pointer().on_click((_e, cx) => { this.step = n; cx.notify(); })).child(label),
@@ -504,15 +667,16 @@ export default class CaptainImport extends View {
         .child(div().id("import-close").cursor_pointer().text_color(c.grey500).on_click(() => this.close()).child(this.icon("x", 14))))
       .when(!!this.note, (e) => e.child(div().flex_none().px(20).py(8).text_size(12.5)
         .text_color(this.note.tone === "fail" ? c.fail : this.note.tone === "good" ? c.good : c.grey900).child(this.note.text)))
-      .child(this.step === 1 ? this.sources(c) : this.step === 2 ? this.choose(c) : this.previewStep(c));
+      .when(this.input && this.step === 1, (e) => e.child(this.inputTabs(c)))
+      .child(this.step === 1 ? (this.input && this.inTab === "captain" ? this.captainTab(c) : this.input && this.inTab === "computer" ? this.computerTab(c) : this.sources(c)) : this.step === 2 ? this.choose(c) : this.previewStep(c));
   }
 
   sources(c) {
     const file = this.source?.kind === "file";
     return v_flex().id("import-sources").flex_1().min_h(0).overflow_y_scrollbar().p(20).gap(14)
-      .child(div().text_size(12.5).text_color(c.grey900).child("Pick where the data lives. Nothing is copied until you import."))
+      .child(div().text_size(12.5).text_color(c.grey900).child(this.input ? "Pick the connection. Then a table, your own query, or for product analytics the events you want." : "Pick where the data lives. Nothing is copied until you import."))
       .child(h_flex().flex_wrap().gap(10)
-        .child(this.tile(c, "src-file", this.icon("upload", 18, c.navy), "A file or folder", "CSV, Parquet, JSON on this computer", (_e, cx) => this.pick(cx, { kind: "file" }), { on: file }))
+        .when(!this.input, (e) => e.child(this.tile(c, "src-file", this.icon("upload", 18, c.navy), "A file or folder", "CSV, Parquet, JSON on this computer", (_e, cx) => this.pick(cx, { kind: "file" }), { on: file })))
         .children((this.conns ?? []).map((k) => this.tile(c, `src-${k.name}`, Brand(c, k.kind ?? k.engine, 18), k.name, `${engineTitle(k.engine ?? k.kind)}${k.read_only === false ? ", writes allowed" : ""}`,
           (_e, cx) => this.pick(cx, { kind: "db", conn: k.name }))))
         .children(ANALYTICS.filter(([kind]) => !(this.conns ?? []).some((k) => (k.kind ?? k.engine) === kind)).map(([kind, label, sub]) =>
@@ -597,6 +761,7 @@ export default class CaptainImport extends View {
             .child(this.icon("table", 12, c.grey500)).child(div().flex_1().min_w(0).truncate().text_size(12).font_family(MONO).child(x.name))),
         ])))
       .child(v_flex().id("import-suggest").flex_1().min_w(0).h_full().overflow_y_scrollbar().p(16).gap(10)
+        .when(Boolean(this.input) && (this.sourceInfo?.connections ?? []).some((x) => x.name === conn && x.events_route), (e) => e.child(this.eventsView(c)))
         .child(div().text_size(13).font_medium().child("Suggested queries"))
         .child(div().text_size(12).text_color(c.grey900).child("Start from one of these, or write your own on the next step."))
         .when(this.suggestions === null, (e) => e.child(Skeleton(c, 4)))
@@ -647,7 +812,12 @@ export default class CaptainImport extends View {
           .child(div().id("prep-report").flex_1().min_w(0).text_size(12).text_color(c.navy).child(reportLine(r)))
           .when(!!p.loading, (e) => e.child(div().flex_none().text_size(11.5).text_color(c.grey500).child(`Updating, ${secs} s`))))
         .when(!!p.grid, (e) => e.child(div().flex_none().border_1().border_color(c.rule).child(p.grid.render(c, { height: 200 })))))
-      .child(v_flex().flex_none().gap(8).pt(4).border_t(1).border_color(c.rule)
+      .when(!!this.input, (e) => e.child(v_flex().flex_none().gap(8).pt(8).border_t(1).border_color(c.rule)
+        .child(this.modeChoice(c))
+        .child(h_flex().gap(8).items_center()
+          .child(Button(c, "input-use-conn", this.busy ? "Saving" : `Use as ${this.input?.label?.toLowerCase() ?? "input"}`, (_e, cx) => this.useConn(cx), { kind: "primary", small: true, disabled: this.busy || !p?.source }))
+          .child(div().text_size(11.5).text_color(c.grey500).child(this.mode === "live" ? "Nothing is copied now. Each run reads it and keeps a record." : "Saved once as a dataset, then pinned.")))))
+      .when(!this.input, (e) => e.child(v_flex().flex_none().gap(8).pt(4).border_t(1).border_color(c.rule)
         .child(h_flex().gap(8).items_center()
           .child(div().w(60).flex_none().text_size(12).text_color(c.grey900).child("Name"))
           .child(h_flex().flex_1().min_w(0).h(28).px(8).items_center().border_1().border_color(c.grey300).child(Input.new(this.name).w_full().text_size(12).text_color(c.navy))))
@@ -658,7 +828,7 @@ export default class CaptainImport extends View {
         .child(h_flex().gap(8).items_center()
           .child(Button(c, "import-go", this.busy ? "Importing" : this.clash && this.allowNewVersion ? `Import as version ${this.clash.version + 1}` : "Import for training", (_e, cx) => this.importQuery(cx),
             { kind: "primary", small: true, disabled: this.busy || !!stop }))
-          .child(div().text_size(11.5).text_color(stop && r ? c.fail : c.grey500).child(stop && r ? stop : "Cleans the whole source the same way and saves it as a write-once dataset."))));
+          .child(div().text_size(11.5).text_color(stop && r ? c.fail : c.grey500).child(stop && r ? stop : "Cleans the whole source the same way and saves it as a write-once dataset.")))));
   }
 
   /** One needed column: its name (required ones marked) and a list of the source's columns to pick from. */

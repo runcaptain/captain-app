@@ -37,7 +37,7 @@ await post('/api/projects/outdoor/experiments', { pipeline: 'demo-bm25' });
 const tuned = await post('/api/projects/outdoor/experiments', { pipeline: 'demo-tuned', labels: 'demo-judgments' });
 await post('/api/projects/outdoor/champion', { pipeline: 'demo-bm25' });
 assert.equal(spawnSync(cst, ['projects', 'experiment-backtest', 'outdoor', tuned.id], { env }).status, 0);
-await post('/api/projects', { name: 'Gifts' });
+await post('/api/projects', { name: 'Gifts', kind: 'search-judgments' });
 
 // The services aren't up yet when Home first asks: no captain.daemon, nothing picked.
 globalThis.__shared = {};
@@ -58,14 +58,14 @@ const t = h.text();
 assert.ok(!t.includes('Start with a project'), 'no empty state when projects exist');
 assert.ok(t.includes('demo-bm25') && t.includes('demo-tuned: agrees with its own labeler'), 'champion and the verdict worth showing');
 assert.ok(t.includes('No champion yet') && t.includes('0 experiments') && t.includes('Nothing judged yet'), 'a new project reads as new');
-assert.ok(t.includes('Choose a catalog') && t.includes('New experiment'), 'each card has its next action');
+assert.ok(t.includes('Choose a catalog') && t.includes('New experiment'), `each card has its next action: ${t}`);
 assert.equal(h.byIdPrefix('ph-new').length, 1, 'New project stays, as a secondary button');
 
 // Clicking a card picks it, as the Explorer does, and the page opens on it.
 const i = h.mod.projects.findIndex((p) => p.id === 'outdoor');
 await h.click(`ph-p-${i}`);
 assert.deepEqual(globalThis.__shared['captain.scope'], { kind: 'project', id: 'outdoor', label: 'Outdoor' });
-await until((x) => x.includes('Inputs') && x.includes('Experiments') && x.includes('Ship'), 'the project page opens');
+await until((x) => x.includes('Inputs') && x.includes('Train and compare') && x.includes('Ship'), 'the project page opens');
 
 // The next action on the new project picks it and opens the pin form for its catalog.
 globalThis.__shared['captain.scope'] = null;
@@ -75,7 +75,8 @@ globalThis.__overlays = [];
 const g = h.mod.projects.findIndex((p) => p.id === 'gifts');
 await h.click(`ph-p-${g}-next`);
 assert.equal(globalThis.__shared['captain.scope']?.id, 'gifts');
-assert.equal(globalThis.__overlays.at(-1)?.props?.task, 'pin');
-assert.equal(globalThis.__overlays.at(-1)?.props?.values?.slot, 'catalog');
+const o = globalThis.__overlays.at(-1);
+assert.equal(o?.mod, 'captain-import', 'the input picker opens');
+assert.equal(o?.props?.input?.slot, 'catalog');
 console.log('project home list render test: ok');
 process.exit(0);
