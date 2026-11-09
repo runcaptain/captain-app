@@ -990,3 +990,4 @@ from . import tables  # noqa: E402,F401  the table browser
 from . import rankings  # noqa: E402,F401  bring your own rankings
 from . import jobs  # noqa: E402,F401  cst job and cst compute setup
 from . import live  # noqa: E402,F401  cst live: runs as they happen
+from . import projects  # noqa: E402,F401  cst projects: pins, experiments and the champion

@@ -270,7 +270,7 @@ TagResource`, `iam:PassRole` on the two roles, and `logs:GetLogEvents`.
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | POST | `/api/pipelines` | `{name, engine, catalog?, spec, description?}` | PipelineVersion |
-| GET | `/api/engines` | | `[{engine, label, template:{...spec}}]` |
+| GET | `/api/engine-templates` | | `[{engine, label, template:{...spec}, needs_catalog}]` |
 | POST | `/api/queries/generate` | `{catalog, name, classes?, n, seed}` | DatasetVersion |
 | POST | `/api/queries/seal` | `{ref, holdout}` | DatasetVersion |
 | POST | `/api/judgments/run` | `{queries, pipelines:[...], judge:"heuristic"|"llm"|"llm:<model>", into, depth}` | `{job}` |
@@ -312,6 +312,14 @@ A promote to a cloud target returns `gate_results.target.plan` (the exact API ca
 | GET | `/api/models` | | `[{id, brand, architecture, version, status_kind, status, repro_status, parent_label, parent_id, training_commit, dvc_alias, attached_to_demo, results:[{label,text}], known_issues:[...], path}]` |
 | GET | `/api/models/{id}` | | the same plus `manifest` (raw) and `files:[{path, bytes}]` |
 | GET | `/api/lineage` | `?view=artifacts|models` | `{nodes:[{id, kind, label, status?, group?}], edges:[{src, dst, relation}]}` |
+
+In the `artifacts` view, lineage comes from an index written when each version is published
+(`lineage/edges/<ulid>.json`, write-once: `{from, to, relation, at, labels?}`). A workspace made before the index
+has no `lineage/index.yaml`, so lineage is rebuilt by reading every manifest until `cst lineage reindex` backfills
+it. A source that can't be found (deleted, or from another workspace) is a node of kind `unknown` labelled
+"unknown source: <ref>". Relations: `produced_by`, `derived_from`, `candidates_from` (judgments from a pipeline's
+results), `graded_in` (human grades from a grading queue), `parent`, `retrained_from`, `trained_on`,
+`evaluated_on`, `deployed_from`.
 
 `status_kind`: `current`, `candidate`, `rolled-back`, `unattached`, `other`. In the `models` view, node kinds are
 `architecture`, `model`, `model-unregistered` (a parent the registry does not hold) and `demo`. Relations:
@@ -610,6 +618,46 @@ Routes:
 - `GET /api/projects/{id}` lists everything in it, by kind, including registry models.
 - `GET /api/projects/{id}/lineage` returns the project's models, their parents and architectures, the pipelines
   serving them, and the backtests that compared those pipelines.
+- `GET /api/projects/{id}/state` returns the state doc (`projects/<id>/state.yaml`, compare-and-swap):
+  `{project, pins:{catalog, events, queries, labels, holdout}, experiments:[...], champion, champion_history,
+  registry:{arch?, brand?, uri?}}`. Pins are exact refs (`name@vN`, the holdout `name@vN:holdout`).
+- `POST /api/projects/{id}/pin {catalog?, events?, queries?, labels?, holdout?, arch?, brand?, registry?, dry_run?}`
+  pins inputs (a name alone pins its newest version; `""` or null unpins) and sets where published versions go.
+  Returns `{project, pins, changed:{slot:{from, to}}, registry?}`. A dataset of the wrong kind, or a holdout that
+  isn't sealed, is a 400.
+- `GET /api/projects/{id}/stages`: where the project stands, from the state doc and the lineage index only (it
+  never lists the registry). A newer version of a pinned input is `info`, not an error:
+  ```
+  {project, index_complete, notes:[{code, text}],
+   inputs:[{slot, group: data|labels|holdout, accepts:[kinds], pinned, status: pinned|missing, newest,
+            info:[{code: newer-version|made-from-other-version, ref, text}],
+            next: null | {action: "pin", slot, ref?}}],
+   experiments:{count, by_status:{trained?, backtesting?, evaluated?, failed?},
+                next:{action: new-experiment|make-champion|backtest, experiment?}},
+   champion:{pinned, experiment, info:[{code, ref, text}]},
+   ship:{registry:{arch, brand, uri}, ready, online: "not yet confirmed online"}}
+  ```
+- `GET /api/projects/{id}/experiments`: `{project, champion, pins, experiments:[row]}`. A row is the experiment
+  `{id, pipeline, training_set, labels, trainer, backtest, run, job, status, note, created_at, created_by,
+  is_champion}` plus `evaluation` (null until a run lands):
+  ```
+  {run, against, against_is_champion, metric, value, champion_value, delta, ci_low, ci_high, p,
+   comparison: win|loss|noise, verdict, recall:{metric, value, champion_value}, judged_at_10, evidence,
+   label_independence:{status: independent|shared|unknown, text, train, train_source, holdout, holdout_source},
+   online: "not yet confirmed online", click_grades}
+  ```
+  `verdict` is "beats the champion", "loses to the champion" or "no clear difference from the champion". When the
+  training labels and the holdout grades share a labeler (`label_independence.status` shared), it is "agrees with
+  its own labeler" whatever the comparison says, and `GET /api/runs/{run}/compatibility` adds an `own-labeler` warning.
+- `POST /api/projects/{id}/experiments {pipeline, training_set?, labels?, trainer?, note?, dry_run?}` records a
+  trained version as an experiment. `labels` (or the version's training inputs, or the training set's provenance)
+  is what label independence reads.
+- `GET /api/projects/{id}/champion` returns `{project, champion, history}`. `POST /api/projects/{id}/champion
+  {experiment | pipeline, expect?, dry_run?}` makes one the champion. With `expect` (the champion the page showed),
+  a champion that changed since is a 409 and nothing is written.
+- `POST /api/projects/{id}/experiments/{eid}/backtest {compute?, dry_run?}` backtests the experiment against the
+  champion on the pinned holdout and labels, as a job: `{job, live, experiment, backtest}`. The run (or the
+  compute job) is recorded on the experiment. With `dry_run`, returns the plan with its label independence.
 - `?project=<id>`, or `?project=none` for unclaimed items, filters `/api/datasets`, `/api/datasets/tree`,
   `/api/pipelines`, `/api/backtests`, `/api/investigations`, `/api/models` and `/api/connections`.
 - `POST /api/datasets/import` and `POST /api/sql` with `save` accept `project`, which puts the result in that project.

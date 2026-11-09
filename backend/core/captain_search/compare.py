@@ -148,6 +148,11 @@ def compatibility(ctx: Context, run_ref: str) -> dict:
     warnings = []
     if not run.independent:
         warnings.append({"code": "not-independent", "text": "the simulated shoppers clicked by the same judgments that score nDCG, so the two are one signal counted twice"})
+    if (bt.tags or {}).get("label_independence") == "shared":
+        from .project_state import OWN_LABELER
+
+        warnings.append({"code": "own-labeler", "text": f"the trained arm learned from the same labeler that grades the holdout "
+                         f"({bt.tags.get('train_labels') or 'its training labels'}), so a higher score {OWN_LABELER} rather than beating the other arm"})
     if not run.complete:
         warnings.append({"code": "incomplete", "text": "an arm has judged@10 under 90%, so its nDCG is understated"})
     jud = [x.judged_at_10 for x in run.arms if x.judged_at_10 is not None]
@@ -163,7 +168,7 @@ def compatibility(ctx: Context, run_ref: str) -> dict:
     small = [s for s in run.segments if s.get("verdict") == "too few"]
     if small:
         warnings.append({"code": "small-slices", "text": (f"{len(small)} slice results rest on fewer than 5 queries each" if len(small) != 1 else "1 slice result rests on fewer than 5 queries")})
-    return {"run": f"{run.name}@v{run.version}", "trustworthy": not any(w["code"] in ("not-independent", "incomplete") for w in warnings),
+    return {"run": f"{run.name}@v{run.version}", "trustworthy": not any(w["code"] in ("not-independent", "incomplete", "own-labeler") for w in warnings),
             "warnings": warnings, "queries": bt.queries, "judgments": bt.judgments, "mode": run.mode}
 
 

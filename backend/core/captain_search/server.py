@@ -588,6 +588,116 @@ def project_lineage(pid: str):
     return PR.lineage(ctx(), pid)
 
 
+@app.get("/api/projects/{pid}/state", dependencies=A)
+def project_state(pid: str):
+    """The project's state doc: pinned inputs, experiments, champion and registry place."""
+    from . import project_state as PS
+
+    return PS.get(ctx(), pid)
+
+
+@app.get("/api/projects/{pid}/stages", dependencies=A)
+def project_stages(pid: str):
+    """Each pinned input with "newer version available" info, the experiments' counts and the champion, with the
+    next action for each. Read from the state doc and the lineage index only, never a registry listing."""
+    from . import project_state as PS
+
+    return PS.stages(ctx(), pid)
+
+
+@app.post("/api/projects/{pid}/pin", dependencies=A)
+def project_pin(pid: str, body: dict):
+    """{catalog?, events?, queries?, labels?, holdout?, arch?, brand?, registry?, dry_run?}. A dataset name alone pins
+    its newest version; "" or null unpins."""
+    from . import project_state as PS
+
+    c, dry = ctx(), bool(body.get("dry_run"))
+    refs = {k: body[k] for k in PS.SLOTS if k in body}
+    out = PS.pin(c, pid, refs, dry_run=dry) if refs else {"project": pid, "changed": {}}
+    if any(k in body for k in ("arch", "brand", "registry")):
+        out["registry"] = PS.set_registry(c, pid, body.get("arch"), body.get("brand"), body.get("registry"), dry_run=dry)["registry"]
+    return out
+
+
+@app.get("/api/projects/{pid}/experiments", dependencies=A)
+def project_experiments(pid: str):
+    """Each experiment with its evaluation against the champion, label independence and verdict."""
+    from . import project_state as PS
+
+    return PS.experiments(ctx(), pid)
+
+
+@app.post("/api/projects/{pid}/experiments", dependencies=A)
+def project_experiment_add(pid: str, body: dict):
+    """{pipeline, training_set?, labels?, trainer?, note?, dry_run?}: record a trained version as an experiment."""
+    from . import project_state as PS
+
+    if not body.get("pipeline"):
+        raise HTTPException(400, "name the trained pipeline version")
+    return PS.experiment_add(ctx(), pid, body["pipeline"], body.get("training_set"), body.get("labels"),
+                             body.get("trainer"), body.get("note", ""), dry_run=bool(body.get("dry_run")))
+
+
+@app.get("/api/projects/{pid}/champion", dependencies=A)
+def project_champion(pid: str):
+    from . import project_state as PS
+
+    d = PS.get(ctx(), pid)
+    return {"project": pid, "champion": d.get("champion"), "history": d.get("champion_history") or []}
+
+
+@app.post("/api/projects/{pid}/champion", dependencies=A)
+def project_champion_set(pid: str, body: dict):
+    """{experiment | pipeline, expect?, dry_run?}. expect is the champion the page showed: if it changed since,
+    nothing is written (409). experiment and pipeline both null clears it."""
+    from . import project_state as PS
+
+    which = body.get("experiment") or body.get("pipeline")
+    return PS.set_champion(ctx(), pid, which, body["expect"] if "expect" in body else "", dry_run=bool(body.get("dry_run")))
+
+
+@app.post("/api/projects/{pid}/experiments/{eid}/backtest", dependencies=A)
+def project_experiment_backtest(pid: str, eid: str, body: dict | None = None):
+    """{compute?, dry_run?}: backtest the experiment against the champion on the sealed holdout, as a job. Returns
+    {job, live}; the run lands on the experiment when it finishes."""
+    from . import live as LV
+    from . import project_state as PS
+    from . import settings as ST
+    from . import compute as CMP
+
+    body = body or {}
+    c = ctx()
+    if body.get("dry_run"):
+        return PS.experiment_backtest(c, pid, eid, body.get("compute"), dry_run=True)
+    plan = PS.experiment_backtest(c, pid, eid, body.get("compute"), dry_run=True)  # fail fast, before a job starts
+    compute = body.get("compute") or ST.default_compute(c, "backtest") or "local"
+    local = CMP.get(c, compute)["kind"] == "local"
+    lv = LV.start("backtest", plan["backtest"], of=plan["backtest"], arms=list(plan["arms"])) if local else None
+    live_id = None if local else LV.start_remote(c, "backtest", plan["backtest"], of=plan["backtest"],
+                                                 arms=list(plan["arms"]), where=compute)
+
+    def go(p):
+        try:
+            r = PS.experiment_backtest(c, pid, eid, compute, progress=p, live=lv, live_id=live_id)
+        except Exception as e:
+            if lv:
+                lv.end("failed", error=str(e))
+            if live_id:
+                LV.note_remote(c, live_id, status="failed", error=f"Couldn't submit the job: {e}")
+            raise
+        if live_id and r.get("job"):
+            LV.note_remote(c, live_id, job=r["job"])
+        if lv:
+            lv.end("done", ref=r.get("run"), summary=f"Compared {plan['arms'][1]} with the champion")
+        return r
+
+    jid = _job(go, f"comparing {plan['arms'][1]} with the champion on {compute}")
+    JOBS[jid]["compute"] = compute
+    rid = lv.id if lv else live_id
+    JOBS[jid]["live"] = rid
+    return {"job": jid, "live": rid, "experiment": plan["experiment"], "backtest": plan["backtest"]}
+
+
 @app.get("/api/connections/kinds", dependencies=A)
 def connection_kinds():
     """Every database Captain can connect to, with the fields its form needs and whether its driver is installed."""
@@ -2142,8 +2252,10 @@ def jobs_cancel(job_id: str):
     return J.cancel(ctx(), job_id)
 
 
-@app.get("/api/engines", dependencies=A)
-def engines():
+@app.get("/api/engine-templates", dependencies=A)
+def engine_templates():
+    """What a new pipeline can rank with, and a starting spec for each. (It was GET /api/engines, which the
+    persistent engines route above already answered, so this one was never reached.)"""
     labels = {"local-bm25": "Local BM25 (in process)", "http": "Any HTTP search service", "elastic": "Elasticsearch / OpenSearch",
               "typesense": "Typesense", "algolia": "Algolia", "captain": "Captain /v1/rank"}
     return [{"engine": e, "label": labels[e], "template": t, "needs_catalog": e == "local-bm25"} for e, t in ops.TEMPLATE.items()]
