@@ -841,7 +841,10 @@ def gates_for(ctx, env: Environment, pipeline_ref: str) -> list[dict]:
     arm = next(a for a in run.arms if a.arm == pipeline_ref)
     need = Evidence(g.get("min_evidence", "HUMAN_GRADED"))
     ev = arm.evidence if primary in M.NAMES else arm.simulated_evidence
-    res.append({"gate": "evidence", "ok": ev.rank >= need.rank, "detail": f"{ev.value}, needs {need.value} or stronger"})
+    shared = (bt.tags or {}).get("label_independence") == "shared"  # trained on the labeler that grades this holdout
+    res.append({"gate": "evidence", "ok": ev.rank >= need.rank and not shared,
+                "detail": (f"{ev.value}, but the training labels come from the labeler that grades this holdout, so the "
+                           "win only shows it agrees with its own labeler") if shared else f"{ev.value}, needs {need.value} or stronger"})
     res.append({"gate": "complete", "ok": run.complete and run.independent,
                 "detail": "complete and independent" if run.complete and run.independent else
                 ("not independent" if not run.independent else "judged@10 under 90%")})

@@ -205,3 +205,27 @@ def test_training_labels_come_from_a_retrained_versions_inputs(tmp_path):
     assert PS.label_independence(c, PS.training_labels(c, e), "llm-grades@v1")["status"] == "shared"
     e2 = PS.experiment_add(c, "acme", ops.ref(imp))
     assert PS.label_independence(c, PS.training_labels(c, e2), "llm-grades@v1")["status"] == "unknown"
+
+
+def test_a_live_promote_needs_an_override_when_labels_are_shared(tmp_path):
+    c = _seeded(tmp_path)
+    PR.create(c, "Outdoor")
+    _, jrows, _ = ops.rows_of(c, "demo-judgments")
+    _judgments(c, "human-grades", "human", rows=[{k: r[k] for k in ("query_id", "product_id", "grade")} for r in jrows])
+    PS.pin(c, "outdoor", {"holdout": "demo-queries", "labels": "human-grades"})
+    e = PS.experiment_add(c, "outdoor", "demo-tuned", labels="human-grades")  # trained on the holdout's own grades
+    PS.set_champion(c, "outdoor", "demo-bm25@v1")
+    PS.experiment_backtest(c, "outdoor", e["id"])
+
+    gate = next(g for g in ops.gates_for(c, ops.env_load(c, "prod"), "demo-tuned@v1") if g["gate"] == "evidence")
+    assert not gate["ok"] and "agrees with its own labeler" in gate["detail"]
+    with pytest.raises(ops.GateFailed, match="evidence"):
+        ops.promote(c, "demo-tuned@v1", "prod", confirm=True)
+    d = ops.promote(c, "demo-tuned@v1", "prod", confirm=True, override_reason="graders checked by hand")
+    assert d.action == "handoff" and "evidence" in d.gate_results["overridden"]
+
+    # the same human grades, but the model trained on other labels: the evidence gate passes
+    PS._update(c, "outdoor", lambda doc: PS._exp(doc, e["id"]).update(labels="demo-judgments@v1"))
+    PS.experiment_backtest(c, "outdoor", e["id"])
+    gate = next(g for g in ops.gates_for(c, ops.env_load(c, "prod"), "demo-tuned@v1") if g["gate"] == "evidence")
+    assert gate["ok"]
