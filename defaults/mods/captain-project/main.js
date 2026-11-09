@@ -16,6 +16,7 @@ import { api, watchScope, watchWorkspace, watchRecords } from "./kit/cst.js";
 import { Badge, Button, Empty, Skeleton, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand, engineTitle } from "./kit/brands.js";
+import { askAgent } from "./kit/agent.js";
 import { int } from "./kit/num.js";
 
 const day = (iso) => (iso ? String(iso).slice(0, 10) : "");
@@ -24,10 +25,10 @@ const form = (task, values = {}, args) => openOverlay({ mod: "captain-forms", ki
 const enc = encodeURIComponent;
 // The input picker: a project's input from a connection, this computer, or a dataset already in Captain.
 const pickInput = (project, inp) => openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640,
-  props: { input: { project, slot: inp.slot, label: inp.label, kinds: inp.accepts ?? inp.kinds ?? [], role: (inp.accepts ?? inp.kinds ?? [])[0] ?? null, custom: Boolean(inp.custom) } } });
+  props: { input: { project, slot: inp.slot, label: inp.label, kinds: (inp.accepts ?? inp.kinds ?? []).filter((k) => k !== "any") } } });
 // The agent that proposes a setup, with its mark (as Investigations shows agents).
 const AGENTS = { claude: ["Claude Code", "icons/claude.svg"], "claude-code": ["Claude Code", "icons/claude.svg"], codex: ["Codex", "icons/captain-agent-codex.svg"] };
-const RECIPE_ICONS = { "search-events": "activity", "search-judgments": "tag", recommendations: "sparkles", "bring-your-own": "layers" };
+const RECIPE_ICONS = { "search-events": "activity", "search-judgments": "tag", recommendations: "sparkles", "byo-pipeline": "layers" };
 
 export const SLOTS = {
   catalog: { title: "Catalog", icon: "table", about: "The products your search ranks.", noun: "a catalog" },
@@ -122,17 +123,32 @@ export default class ProjectHome extends View {
       return;
     }
     if (pid !== this.shown) {
-      this.shown = pid;
+      this.shown = pid; this.state = null; this.assist = null;
       try { localStorage.setItem("project", pid); } catch {}
       this.last = pid;
       this.stages = null; this.exps = null; this.home = null; this.open = null; this.note = null;
     }
     cx.spawn(async (cx) => {
-      const [st, ex, ps] = await Promise.all([
+      const [st, ex, ps, sd, rc, cn, pr] = await Promise.all([
         api(`/api/projects/${enc(pid)}/stages`, { scoped: false }),
         api(`/api/projects/${enc(pid)}/experiments`, { scoped: false }),
         api("/api/projects", { scoped: false }),
+        api(`/api/projects/${enc(pid)}/state`, { scoped: false }),
+        this.recipes ? Promise.resolve(null) : api("/api/recipes", { scoped: false }),
+        this.sources ? Promise.resolve(null) : api("/api/connections", { scoped: false }),
+        api(`/api/projects/${enc(pid)}/proposals`, { scoped: false }),
       ]);
+      if (seq !== this.seq) return;
+      if (sd?.ok) this.state = sd.data;
+      if (rc?.ok && Array.isArray(rc.data)) this.recipes = rc.data;
+      // Each connection's kind, for its mark on an input's card.
+      if (cn?.ok && Array.isArray(cn.data)) this.sources = Object.fromEntries(cn.data.map((k) => [k.name, k.kind ?? k.engine]));
+      // The newest proposal still waiting, from the agent this page started (or any agent): shown until it's handled.
+      if (pr?.ok && Array.isArray(pr.data)) {
+        const open = pr.data.filter((x) => x.status === "proposed").sort((a, b) => String(b.at).localeCompare(String(a.at)))[0] ?? null;
+        if (open && (!this.assist || this.assist.proposal?.id !== open.id)) this.assist = { status: "proposed", proposal: open, agent: open.agent, skipped: [], done: [] };
+        else if (!open && this.assist?.proposal) this.assist = null;
+      }
       if (seq !== this.seq) return;
       if (ps.ok) this.projects = Array.isArray(ps.data) ? ps.data : ps.data?.projects ?? [];
       if (!st.ok && st.status === 404 && shared("captain.scope")?.kind !== "project") {
@@ -198,17 +214,21 @@ export default class ProjectHome extends View {
 
   /** An input row from the stages, in one shape whatever the services send (older ones have no label or source). */
   slotOf(inp) {
-    const meta = SLOTS[inp.slot] ?? {};
+    const meta = SLOTS[inp.role ?? inp.slot] ?? SLOTS[inp.slot] ?? {};
+    const held = this.state?.inputs?.[inp.slot];
+    if (held && !inp.source) inp = { ...inp, source: held.source, mode: inp.mode ?? held.mode, from: inp.from ?? held.from, as_of: inp.as_of ?? held.as_of ?? held.pinned_at };
     // Projects from before recipes send no "required": the catalog is the one input every ranker needs.
-    return { ...inp, label: inp.label ?? meta.title ?? inp.slot, required: inp.required ?? inp.slot === "catalog", about: inp.about ?? meta.about ?? "",
+    return { ...inp, label: inp.label ?? meta.title ?? inp.slot, required: inp.required ?? inp.slot === "catalog", about: inp.why ?? inp.about ?? meta.about ?? "",
+      empty: inp.status === "missing" || inp.status === "empty",
       noun: meta.noun ?? (inp.label ?? inp.slot).toLowerCase(), icon: meta.icon ?? "database" };
   }
 
   /** Where an input's data comes from: a connection (its mark, and the table or query), a folder here, or a dataset. */
   sourceLine(c, inp) {
-    const src = inp.source ?? (inp.pinned ? { kind: "dataset", dataset: inp.pinned } : null);
+    const raw = inp.source ?? (inp.pinned ? { from: "dataset", ref: inp.pinned } : null);
+    const src = raw ? { ...raw, kind: raw.from ?? raw.kind, dataset: raw.ref ?? raw.dataset, events: raw.event ? [raw.event] : raw.events, engine: raw.engine ?? (this.sources?.[raw.connection]) } : null;
     if (!src) return div().text_size(12).line_height("16px").text_color(c.grey500).child(inp.about || "Not chosen yet.");
-    const what = src.kind === "connection" ? (src.table ? String(src.table).split(".").pop() : src.events?.length ? `${src.events.length} event type${src.events.length === 1 ? "" : "s"}` : "your query")
+    const what = src.kind === "connection" ? (src.table ? String(src.table).split(".").pop() : src.event ? `${src.event.name} events` : src.report ? "a report" : "your query")
       : src.kind === "local" ? String(src.path ?? "").replace(/^\/Users\/[^/]+/, "~")
       : parseRef(src.dataset ?? inp.pinned).name;
     const mark = src.kind === "connection" ? Brand(c, src.engine ?? src.connection, 14)
@@ -223,7 +243,7 @@ export default class ProjectHome extends View {
     const inp = this.slotOf(raw);
     const r = parseRef(inp.pinned);
     const newer = inp.next?.action === "pin" && inp.next.ref ? parseRef(inp.next.ref) : null;
-    const missing = inp.status === "missing";
+    const missing = inp.empty;
     const live = inp.mode === "live";
     const id = `in-${inp.slot}`;
     const action = missing
@@ -244,7 +264,7 @@ export default class ProjectHome extends View {
       .child(this.sourceLine(c, inp))
       .when(!missing, (e) => e.child(h_flex().gap(6).items_center().min_w(0)
         .child(Badge(c, live ? "live" : "snapshot", live ? "blue" : "neutral"))
-        .child(div().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(inp.last_read_at ? `read ${day(inp.last_read_at)}` : live ? "not read yet" : ""))
+        .child(div().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(inp.as_of ? `${live ? "last read" : "taken"} ${day(inp.as_of)}${inp.rows != null ? `, ${int(inp.rows)} rows` : ""}` : live ? "read on the next run" : ""))
         .when(r.version != null && !live, (x) => x.child(div().flex_none().text_size(10.5).font_family(MONO).text_color(c.grey500).child(`v${r.version}`)))))
       .children((inp.info ?? []).slice(0, 2).map((i, k) => h_flex().id(`${id}-info-${k}`).gap(6).items_start()
         .child(svg(icon(i.code === "newer-version" ? "sparkles" : "triangle-alert")).size(12).mt(2).flex_none().text_color(i.code === "newer-version" ? c.blue : c.warn))
@@ -266,7 +286,7 @@ export default class ProjectHome extends View {
     if (this.busy) return;
     this.busy = true;
     cx.spawn(async (cx) => {
-      const r = await api(`/api/projects/${enc(this.pid())}/inputs/${enc(inp.slot)}`, { method: "DELETE", scoped: false });
+      const r = await api(`/api/projects/${enc(this.pid())}/slots/${enc(inp.slot)}`, { method: "DELETE", scoped: false });
       this.busy = false;
       this.note = r.ok ? { tone: "good", text: `${inp.label} removed from this project. Its data is kept.` } : { tone: "fail", text: plainError(r.data?.error ?? r.error, "Couldn't remove it.") };
       setShared("captain.explorer.rev", Date.now());
@@ -278,7 +298,7 @@ export default class ProjectHome extends View {
   inputs(c) {
     const st = this.stages;
     const rows = (st.inputs ?? []).map((i) => this.slotOf(i)).sort((a, b) => Number(b.required) - Number(a.required));
-    const none = rows.every((i) => i.status === "missing");
+    const none = rows.every((i) => i.empty);
     return v_flex().gap(10)
       .when(none && !this.assist, (e) => e.child(h_flex().id("in-empty").p(12).gap(10).items_center().bg(c.surface).border_1().border_color(c.rule)
         .child(svg(icon("sparkles")).size(16).flex_none().text_color(c.blue))
@@ -292,84 +312,106 @@ export default class ProjectHome extends View {
 
   // ---- set up with an agent ---------------------------------------------------------------------------------------
 
+  /** Ask an agent to propose the inputs and a training script: it gets a prompt in a new tab, looks around, and
+   *  files a proposal. Nothing is applied until the person accepts it here. */
   startAssist(cx) {
     if (this.busy) return;
     this.busy = true; this.note = null;
-    this.assist = { status: "running" };
     cx.notify();
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(this.pid())}/assist`, { body: {}, scoped: false });
       this.busy = false;
-      if (!r.ok) { this.assist = null; this.note = { tone: "fail", text: plainError(r.data?.error ?? r.error, "The agent couldn't start.") }; cx.notify(); return; }
-      this.assist = { status: "running", ...(r.data ?? {}) };
-      this.pollAssist(cx);
+      if (!r.ok) { this.note = { tone: "fail", text: plainError(r.data?.error ?? r.error, "The agent couldn't start.") }; cx.notify(); return; }
+      this.assist = { status: "running", id: r.data?.assist, skipped: [], done: [] };
+      await askAgent(cx, r.data?.prompt ?? "");
       cx.notify();
     });
   }
 
-  pollAssist(cx) {
-    const pid = this.pid();
+  pollAssist(cx) { this.load(cx); }
+
+  /** Accept some of a proposal (or all). Datasets are pinned at once; a connection or a folder comes back to be asked
+   *  snapshot or live, like any input. */
+  accept(cx, only) {
+    const a = this.assist, prop = a.proposal;
+    if (this.busy) return;
+    this.busy = true;
     cx.spawn(async (cx) => {
-      const r = await api(`/api/projects/${enc(pid)}/assist`, { scoped: false });
-      if (this.pid() !== pid || !this.assist) return;
-      if (r.ok && r.data) this.assist = { ...this.assist, ...r.data, skipped: this.assist.skipped ?? [], done: this.assist.done ?? [] };
-      cx.notify();
+      const r = await api(`/api/projects/${enc(this.pid())}/proposals/${enc(prop.id)}/accept`, { body: only ? { only } : {}, scoped: false });
+      this.busy = false;
+      if (!r.ok) { this.note = { tone: "fail", text: plainError(r.data?.error ?? r.error, "Couldn't apply that.") }; cx.notify(); return; }
+      a.done = [...(a.done ?? []), ...(only ?? (prop.slots ?? []).map((x) => x.slot))];
+      a.toConnect = [...(a.toConnect ?? []).filter((t) => !(r.data?.to_connect ?? []).some((n) => n.slot === t.slot)), ...(r.data?.to_connect ?? [])];
+      if (!only) a.status = "accepted";
+      setShared("captain.explorer.rev", Date.now());
+      this.note = { tone: "good", text: (r.data?.to_connect ?? []).length ? "Accepted. For each source below, take a snapshot now or keep it live." : "Accepted. Change any input from its card." };
+      this.load(cx);
     });
+    cx.notify();
   }
 
-  acceptSlot(cx, s) {
-    this.act(cx, `/api/projects/${enc(this.pid())}/inputs`, { slot: s.slot, source: s.source, mode: s.mode ?? "snapshot", ...(s.label ? { label: s.label } : {}), ...(s.kinds ? { kinds: s.kinds } : {}) },
-      `${s.label ?? s.slot} set as the agent proposed.`, () => { this.assist.done = [...(this.assist.done ?? []), s.slot]; });
+  reject(cx) {
+    const prop = this.assist.proposal;
+    this.act(cx, `/api/projects/${enc(this.pid())}/proposals/${enc(prop.id)}/reject`, {}, "Proposal set aside. Nothing changed.", () => { this.assist = null; });
   }
 
-  acceptAll(cx) {
-    const a = this.assist;
-    const slots = (a.proposal?.slots ?? []).map((s) => s.slot).filter((x) => !(a.skipped ?? []).includes(x) && !(a.done ?? []).includes(x));
-    this.act(cx, `/api/projects/${enc(this.pid())}/assist/accept`, { slots, script: Boolean(a.proposal?.training_script) && !a.scriptSkipped },
-      "The agent's setup is in. Change any input from its card.", () => { this.assist = null; });
+  /** A source the proposal named on a connection or a folder: saved now, as a snapshot or live. */
+  connect(cx, t, mode) {
+    this.act(cx, `/api/projects/${enc(this.pid())}/inputs/${enc(t.slot)}`, { source: t.source, mode },
+      mode === "live" ? "Kept live: each run reads it and records what it read." : "Taking the snapshot. The card shows it when it's in.",
+      () => { this.assist.toConnect = (this.assist.toConnect ?? []).filter((x) => x.slot !== t.slot); if (!this.assist.toConnect.length && this.assist.status === "accepted") this.assist = null; });
   }
 
   assistPanel(c) {
     const a = this.assist;
-    const [name, mark] = AGENTS[a.agent] ?? AGENTS.claude;
     const prop = a.proposal;
-    const running = !prop && a.status !== "failed";
+    const [name, mark] = AGENTS[String(prop?.agent ?? a.agent ?? "claude").toLowerCase()] ?? [prop?.agent ?? "The agent", AGENTS.claude[1]];
+    const waiting = !prop;
     const head = h_flex().gap(8).items_center()
       .child(svg(mark).size(16).flex_none())
-      .child(div().flex_1().min_w(0).text_size(13).font_semibold().child(running ? `${name} is looking at your connections and folders` : a.status === "failed" ? `${name} couldn't finish` : `${name} proposes`))
-      .when(!running && Boolean(prop), (e) => e.child(Button(c, "assist-accept-all", "Accept the rest", (_e, cx) => this.acceptAll(cx), { kind: "primary", small: true, disabled: this.busy })))
-      .child(div().id("assist-close").cursor_pointer().text_color(c.grey500).on_click((_e, cx) => { this.assist = null; cx.notify(); }).child(svg(icon("x")).size(12)));
+      .child(div().flex_1().min_w(0).text_size(13).font_semibold().child(waiting ? "The agent is looking at your connections and folders in a new tab" : a.status === "accepted" ? `${name}'s proposal is in` : `${name} proposes`))
+      .when(!waiting && a.status !== "accepted", (e) => e.child(Button(c, "assist-accept-all", "Accept all", (_e, cx) => this.accept(cx, null), { kind: "primary", small: true, disabled: this.busy }))
+        .child(Button(c, "assist-reject", "Set aside", (_e, cx) => this.reject(cx), { small: true, kind: "quiet", disabled: this.busy })))
+      .child(div().id("assist-close").cursor_pointer().text_color(c.grey500).tooltip("Hide").on_click((_e, cx) => { this.assist = null; cx.notify(); }).child(svg(icon("x")).size(12)));
     const slots = (prop?.slots ?? []).filter((s) => !(a.skipped ?? []).includes(s.slot));
+    const label = (s) => s.label ?? this.slotOf((this.stages?.inputs ?? []).find((x) => x.slot === s.slot) ?? { slot: s.slot }).label;
     return v_flex().id("assist").p(12).gap(8).bg(c.surface).border_1().border_color(c.blue)
       .child(head)
-      .when(running, (e) => e.child(Skeleton(c, 3)))
-      .when(a.status === "failed", (e) => e.child(div().text_size(12).text_color(c.fail).child(plainError(a.error, "Try again, or choose the inputs yourself."))))
+      .when(waiting, (e) => e.child(div().text_size(12).text_color(c.grey900).child("When it has a proposal, it shows here to accept, change or skip, one input at a time. Nothing changes until you accept.")))
+      .when(Boolean(prop?.note), (e) => e.child(div().text_size(12).text_color(c.grey900).child(prop.note)))
       .children(slots.map((s, i) => {
         const done = (a.done ?? []).includes(s.slot);
         return h_flex().id(`assist-${i}`).gap(10).items_center().py(6).border_t(1).border_color(c.rule)
-          .child(svg(icon(done ? "circle-check" : SLOTS[s.slot]?.icon ?? "database")).size(14).flex_none().text_color(done ? c.good : c.grey500))
+          .child(svg(icon(done ? "circle-check" : s.add ? "plus" : SLOTS[s.role ?? s.slot]?.icon ?? "database")).size(14).flex_none().text_color(done ? c.good : c.grey500))
           .child(v_flex().flex_1().min_w(0).gap(2)
             .child(h_flex().gap(8).items_center().min_w(0)
-              .child(div().flex_none().text_size(12.5).font_medium().child(s.label ?? SLOTS[s.slot]?.title ?? s.slot))
-              .child(this.sourceLine(c, { ...s, about: "" }))
+              .child(div().flex_none().text_size(12.5).font_medium().child(`${s.add ? "Add " : ""}${label(s)}`))
+              .when(Boolean(s.source), (x) => x.child(this.sourceLine(c, { ...s, about: "" })))
               .when(Boolean(s.mode), (x) => x.child(Badge(c, s.mode, s.mode === "live" ? "blue" : "neutral"))))
             .when(Boolean(s.why), (x) => x.child(div().text_size(11.5).text_color(c.grey500).child(s.why))))
-          .when(!done, (x) => x
-            .child(Button(c, `assist-${i}-accept`, "Accept", (_e, cx) => this.acceptSlot(cx, s), { small: true, kind: "primary", disabled: this.busy }))
-            .child(Button(c, `assist-${i}-edit`, "Change", () => pickInput(this.pid(), { ...this.slotOf(s), accepts: s.kinds }), { small: true }))
+          .when(!done && a.status !== "accepted", (x) => x
+            .child(Button(c, `assist-${i}-accept`, "Accept", (_e, cx) => this.accept(cx, [s.slot]), { small: true, kind: "primary", disabled: this.busy }))
+            .child(Button(c, `assist-${i}-edit`, "Change", () => pickInput(this.pid(), { slot: s.slot, label: label(s), accepts: s.accepts }), { small: true }))
             .child(Button(c, `assist-${i}-skip`, "Skip", (_e, cx) => { a.skipped = [...(a.skipped ?? []), s.slot]; cx.notify(); }, { small: true, kind: "quiet" })));
       }))
-      .when(Boolean(prop?.training_script) && !a.scriptSkipped, (e) => {
-        const sc = prop.training_script;
-        return e.child(v_flex().id("assist-script").gap(6).pt(6).border_t(1).border_color(c.rule)
+      .when((prop?.remove_slots ?? []).length > 0, (e) => e.child(div().text_size(12).text_color(c.grey900)
+        .child(`It would also remove ${prop.remove_slots.map((x) => label({ slot: x })).join(", ")}, which this setup doesn't use.`)))
+      .when(Boolean(prop?.trainer), (e) => {
+        const tr = prop.trainer;
+        return e.child(v_flex().id("assist-script").gap(4).pt(6).border_t(1).border_color(c.rule)
           .child(h_flex().gap(8).items_center()
             .child(svg(icon("file-text")).size(14).flex_none().text_color(c.grey500))
-            .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().child(`Training script${sc.path ? `: ${sc.path}` : ""}`))
-            .child(Button(c, "assist-script-skip", "Skip", (_e, cx) => { a.scriptSkipped = true; cx.notify(); }, { small: true, kind: "quiet" })))
-          .when(Boolean(sc.why), (x) => x.child(div().text_size(11.5).text_color(c.grey500).child(sc.why)))
-          .when(Boolean(sc.text), (x) => x.child(div().p(8).bg(c.surface2).font_family(MONO).text_size(11.5).line_height("16px").text_color(c.grey900)
-            .child(String(sc.text).split("\n").slice(0, 8).join("\n") + (String(sc.text).split("\n").length > 8 ? "\n..." : "")))));
-      });
+            .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().child(tr.script?.path ? `Training script: ${tr.script.path}` : "Training command")))
+          .when(Boolean(tr.command), (x) => x.child(div().px(8).py(4).bg(c.surface2).font_family(MONO).text_size(11.5).text_color(c.grey900).truncate().child(tr.command)))
+          .when(Boolean(tr.why), (x) => x.child(div().text_size(11.5).text_color(c.grey500).child(tr.why))));
+      })
+      .children((a.toConnect ?? []).map((t, i) => h_flex().id(`assist-connect-${i}`).gap(8).items_center().py(6).border_t(1).border_color(c.rule)
+        .child(svg(icon("server")).size(14).flex_none().text_color(c.blue))
+        .child(v_flex().flex_1().min_w(0).gap(2)
+          .child(h_flex().gap(8).items_center().min_w(0).child(div().flex_none().text_size(12.5).font_medium().child(label(t))).child(this.sourceLine(c, { ...t, about: "" })))
+          .when(Boolean(t.why), (x) => x.child(div().text_size(11.5).text_color(c.grey500).child(t.why))))
+        .child(Button(c, `assist-connect-${i}-snapshot`, "Take a snapshot now", (_e, cx) => this.connect(cx, t, "snapshot"), { small: true, kind: t.suggested_mode === "live" ? "secondary" : "primary", disabled: this.busy }))
+        .child(Button(c, `assist-connect-${i}-live`, "Keep it live", (_e, cx) => this.connect(cx, t, "live"), { small: true, kind: t.suggested_mode === "live" ? "primary" : "secondary", disabled: this.busy }))));
   }
 
   // ---- experiments ----------------------------------------------------------------------------------------------
@@ -432,6 +474,7 @@ export default class ProjectHome extends View {
       ind?.text ?? null,
       ind?.status === "shared" ? "So the higher score shows the model learned that labeler, not that it ranks better. Judge it on labels from another source to know." : null,
       ev?.evaluated_on ? `Judged on ${ev.evaluated_on}.` : null,
+      ...[...(e.inputs_read ?? []), ...(e.eval_inputs ?? [])].filter((x) => x.changed_since_pin).map((x) => `${x.slot} was read live and has changed since it was chosen${x.as_of ? ` (read ${day(x.as_of)})` : ""}, so a rerun may differ.`),
       ev?.click_grades ? "Click grades only exist for products the old ranker showed, which favors the old ranker." : null,
       ev ? "Not yet confirmed online: an offline result until your team's own A/B or shadow readout agrees." : e.is_champion ? null : "Not judged against the champion yet.",
     ].filter(Boolean);
@@ -458,14 +501,19 @@ export default class ProjectHome extends View {
     const body = !xs.length
       ? v_flex().w_full().border_1().border_color(c.rule).bg(c.surface).child(Empty(c, "No experiments yet", "An experiment is one trained version of your ranker. Train one from the pinned inputs, or bring a version trained in MLflow or your own registry."))
       : v_flex().w_full().border_1().border_color(c.rule).bg(c.surface).children(xs.map((e, i) => this.expRow(c, e, i)));
-    const evalSet = (this.stages?.inputs ?? []).find((i) => i.slot === "holdout");
-    const noEval = !evalSet || evalSet.status === "missing";
+    const ev0 = this.stages?.evaluation;
+    const evalSet = (this.stages?.inputs ?? []).find((i) => (i.role ?? i.slot) === "holdout");
+    const noEval = ev0 ? !ev0.ready : !evalSet || evalSet.status === "missing" || evalSet.status === "empty";
+    const missingEval = ev0?.missing?.length ? (this.stages.inputs ?? []).find((i) => i.slot === ev0.missing[0]) : null;
+    const how = ev0?.label ? ` by ${String(ev0.label).replace(/^./, (x) => x.toLowerCase())}` : " on the evaluation set";
     const hint = noEval ? "Experiments train without one, but nothing judges them until there's an evaluation set."
-      : !champ && xs.length ? "Make one experiment the champion. Every other one is judged against it." : "Each one is judged against the champion on the evaluation set.";
+      : !champ && xs.length ? `Make one experiment the champion. Every other one is judged against it${how}.` : `Each one is judged against the champion${how}.`;
     const banner = noEval ? h_flex().id("exp-no-eval").p(10).gap(10).items_center().bg(c.surface).border_1().border_color(c.rule)
       .child(svg(icon("square-check")).size(14).flex_none().text_color(c.grey500))
-      .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child("No evaluation set yet. Add queries kept back from training, with labels that grade them."))
-      .child(Button(c, "exp-add-eval", "Add an evaluation set", () => pickInput(this.pid(), { slot: "holdout", label: "Evaluation set", accepts: ["queries"], custom: !evalSet }), { small: true })) : null;
+      .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child(ev0?.text ?? "No evaluation set yet. Add queries kept back from training, with labels that grade them."))
+      .child(Button(c, "exp-add-eval", "Add an evaluation set", () => (missingEval ?? evalSet
+        ? pickInput(this.pid(), this.slotOf(missingEval ?? evalSet))
+        : form("add-input", { project: this.pid(), label: "Evaluation set", kind: "queries", why: "Queries kept back from training, to judge experiments" })), { small: true })) : null;
     return this.part(c, "experiments", "Train and compare", hint, actions, v_flex().gap(8).when(Boolean(banner), (e) => e.child(banner)).child(body));
   }
 
@@ -715,23 +763,28 @@ export default class ProjectHome extends View {
 
   /** 1. What you're building: the recipe that decided the inputs. */
   recipe(c) {
-    const r = this.stages?.recipe;
-    const title = r?.title ?? "Search ranking";
-    return this.part(c, "recipe", "What you're building", "It decided which inputs the project asks for. Add or remove inputs as you need.", [],
+    const st = this.state;
+    const r = st?.recipe ? (this.recipes ?? []).find((x) => x.id === st.recipe.id) ?? st.recipe : null;
+    const title = r?.label ?? r?.title ?? (st && !st.kind ? "Search ranking" : "Not chosen");
+    const about = r?.description ?? (st && !st.kind ? "Made before projects had recipes: it asks for the original five inputs." : "");
+    return this.part(c, "recipe", "What you're building", "It decided which inputs the project asks for. Add or remove inputs as you need.",
+      [Button(c, "recipe-change", "Change", () => form("project-kind", { project: this.pid(), recipe: st?.kind ?? undefined }), { small: true, kind: "quiet" })],
       h_flex().id("recipe-card").p(12).gap(10).items_center().bg(c.surface).border_1().border_color(c.rule)
         .child(div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon(RECIPE_ICONS[r?.id] ?? "workflow")).size(14)))
         .child(v_flex().flex_1().min_w(0).gap(1)
-          .child(div().text_size(13).font_semibold().child(title))
-          .child(div().truncate().text_size(12).text_color(c.grey500).child(r?.about ?? (r ? "" : "Made before projects had recipes: its inputs are the original five.")))));
+          .child(h_flex().gap(6).items_center().child(div().text_size(13).font_semibold().child(title))
+            .when(Boolean(r?.source) && r.source !== "builtin", (e) => e.child(Badge(c, "your team's", "blue"))))
+          .when(Boolean(about), (e) => e.child(div().truncate().text_size(12).text_color(c.grey500).child(about)))));
   }
 
-  /** What to do next, in one line with its button: the services' own next step, else worked out from the stages. */
+    /** What to do next, in one line with its button: the services' own next step, else worked out from the stages. */
   nextStep() {
     const st = this.stages, ex = this.exps;
     if (st?.next?.text) return { text: st.next.text, action: st.next };
-    const req = (st?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.required && i.status === "missing");
+    const req = (st?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.required && i.empty);
     if (req) return { text: `Choose ${req.noun}: the project can't train without it.`, label: `Choose ${req.noun}`, run: () => pickInput(this.pid(), req) };
     const xs = ex?.experiments ?? [];
+    if (st?.evaluation && !st.evaluation.ready && !(ex?.experiments ?? []).length) return { text: "Train a first experiment. Add an evaluation set too, so experiments can be judged.", label: "New experiment", run: () => form("experiment", { ...this.values() }) };
     if (!xs.length) return { text: "Train a first experiment on these inputs, or import one you trained elsewhere.", label: "New experiment", run: () => form("experiment", { ...this.values() }) };
     if (!ex.champion) return { text: "Make one experiment the champion, so the others are judged against it.", label: null };
     const pending = xs.find((e) => !e.is_champion && !e.evaluation && e.status !== "backtesting");

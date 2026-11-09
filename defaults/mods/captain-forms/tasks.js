@@ -56,19 +56,28 @@ async function byRole(role) {
     .map((d) => ({ value: `${d.name}@v${d.latest}`, label: d.name, chip: `v${d.latest}` }));
 }
 const pipelines = () => list("/api/pipelines", (p) => ({ value: `${p.name}@v${p.latest}`, label: p.name, chip: `v${p.latest}` }));
-// What a project can be built for, when the services don't list recipes yet: each decides the inputs it asks for.
-const RECIPE_ICONS = { "search-events": "activity", "search-judgments": "tag", recommendations: "sparkles", "bring-your-own": "layers" };
+// What a project can be built for: each recipe decides the inputs it asks for (GET /api/recipes). The four built in
+// show while the services don't answer yet.
+const RECIPE_ICONS = { "search-events": "activity", "search-judgments": "tag", recommendations: "sparkles", "byo-pipeline": "layers" };
 export const FALLBACK_RECIPES = [
-  { id: "search-events", title: "Search ranking from events", about: "Learn ranking from what shoppers searched, clicked and bought.", needs: "a catalog and search events." },
-  { id: "search-judgments", title: "Search ranking with judgments", about: "Learn ranking from graded query and product pairs.", needs: "a catalog and relevance labels." },
-  { id: "recommendations", title: "Recommendations", about: "Suggest products from what people viewed and bought.", needs: "a catalog and interaction events." },
-  { id: "bring-your-own", title: "Bring your own pipeline", about: "Your own inputs and training script. Captain judges and ships what it makes.", needs: "whatever your script reads. Add inputs as you go." },
+  { id: "search-events", label: "Search ranking from events", description: "Learn ranking from what shoppers searched, clicked and bought.", slots: [{ label: "Catalog", required: true }, { label: "Search events", required: true }] },
+  { id: "search-judgments", label: "Search ranking with judgments", description: "Learn ranking from graded query and product pairs.", slots: [{ label: "Catalog", required: true }, { label: "Relevance labels", required: true }] },
+  { id: "recommendations", label: "Recommendations", description: "Suggest products from what people viewed and bought.", slots: [{ label: "Catalog", required: true }, { label: "Interactions", required: true }] },
+  { id: "byo-pipeline", label: "Bring your own pipeline", description: "Your own inputs and training script. Captain judges and ships what it makes.", slots: [] },
 ];
-export async function recipes() {
-  const r = await api("/api/project-recipes", { scoped: false });
-  const list = r.ok ? (Array.isArray(r.data) ? r.data : r.data?.recipes) : null;
-  return Array.isArray(list) && list.length ? list : FALLBACK_RECIPES;
+/** "a catalog and search events": what a recipe's required inputs are, in a line. */
+export function needsOf(r) {
+  const req = (r.slots ?? []).filter((x) => x.required).map((x) => String(x.label ?? x.id).toLowerCase());
+  if (!req.length) return "whatever your script reads. Add inputs as you go.";
+  return `${req.length > 1 ? `${req.slice(0, -1).join(", ")} and ${req.at(-1)}` : req[0]}.`;
 }
+export async function recipes() {
+  const r = await api("/api/recipes", { scoped: false });
+  const list = r.ok ? (Array.isArray(r.data) ? r.data : r.data?.recipes) : null;
+  return (Array.isArray(list) && list.length ? list : FALLBACK_RECIPES).map((x) => ({ ...x, title: x.label ?? x.title, about: x.description ?? x.about, needs: needsOf(x),
+    icon: RECIPE_ICONS[x.id] ?? (x.source && x.source !== "builtin" ? "users" : "workflow"), team: Boolean(x.source && x.source !== "builtin") }));
+}
+const recipeOptions = (ctx) => (ctx.recipes ?? []).map((r) => ({ value: r.id, label: r.title, about: r.about, needs: r.needs, icon: r.icon, chip: r.team ? "your team's" : null }));
 // A project's inputs: each slot's title and the dataset kinds it takes (project_state.SLOTS).
 const SLOT_WORDS = { catalog: ["Catalog", ["catalog"]], events: ["Events", ["events", "logs"]], queries: ["Queries", ["queries"]],
   labels: ["Labels", ["judgments"]], holdout: ["Sealed holdout", ["queries"]] };
@@ -110,13 +119,12 @@ export const TASKS = [
     about: "Start with what you're building. It decides which inputs the project asks for, and you can add or remove inputs later.",
     load: async () => ({ recipes: await recipes() }),
     fields: [
-      { key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true,
-        options: (ctx) => (ctx.recipes ?? []).map((r) => ({ value: r.id, label: r.title, about: r.about, needs: r.needs, icon: r.icon ?? RECIPE_ICONS[r.id] ?? (r.team ? "users" : "workflow"), chip: r.team ? "your team's" : null })) },
+      { key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true, options: recipeOptions },
       { key: "name", label: "Name", placeholder: "Outdoor store search", required: true },
       { key: "description", label: "What it's for", optional: true, placeholder: "Product search for the outdoor storefront" },
     ],
     submit: async (v) => {
-      const r = await api("/api/projects", { body: { name: v.name.trim(), recipe: v.recipe, ...(v.description ? { description: v.description.trim() } : {}) } });
+      const r = await api("/api/projects", { body: { name: v.name.trim(), kind: v.recipe, ...(v.description ? { description: v.description.trim() } : {}) } });
       const made = ok(r, "");
       if (!made.ok) return made;
       setShared("captain.explorer.rev", Date.now()); // the Explorer lists it now
@@ -127,19 +135,35 @@ export const TASKS = [
   },
   // ---- a project's own tasks: opened from its page with its values preset (project, pins, champion, registry) ----
   {
+    id: "project-kind", label: "Change what you're building", icon: "workflow", hidden: true,
+    about: "The project then asks for that recipe's inputs. Inputs you already chose stay where the new recipe has the same one.",
+    load: async () => ({ recipes: await recipes() }),
+    fields: [{ key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true, options: recipeOptions }],
+    submit: async (v) => {
+      const r = await api(`/api/projects/${encodeURIComponent(v.project)}/kind`, { body: { kind: v.recipe }, scoped: false });
+      if (r.ok) setShared("captain.explorer.rev", Date.now());
+      return ok(r, "The project's inputs follow the new recipe.");
+    },
+  },
+  {
     id: "add-input", label: "Add an input", icon: "plus", hidden: true,
     about: "Anything your training reads that the project doesn't ask for yet. It's optional, so the project can still train without it.",
     fields: [
       { key: "label", label: "Name", placeholder: "Product embeddings", required: true },
-      { key: "kind", label: "What it is", kind: "choice", required: true, default: "generic",
-        options: [{ value: "catalog", label: "Products" }, { value: "events", label: "Events" }, { value: "queries", label: "Queries" }, { value: "judgments", label: "Labels" }, { value: "generic", label: "Something else" }] },
+      { key: "kind", label: "What it is", kind: "choice", required: true, default: "any",
+        options: [{ value: "catalog", label: "Products" }, { value: "events", label: "Events" }, { value: "queries", label: "Queries" }, { value: "judgments", label: "Labels" }, { value: "any", label: "Something else" }] },
+      { key: "why", label: "What training does with it", optional: true, placeholder: "Item vectors for the second-stage ranker" },
     ],
     submit: async (v) => {
       const label = v.label.trim();
-      const slot = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "input";
-      // Choosing its source makes it: the picker saves the new input with its data.
-      openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { input: { project: v.project, slot, label, kinds: v.kind === "generic" ? [] : [v.kind], role: v.kind, custom: true } } });
-      return { ok: true, message: `Choose where ${label.toLowerCase()} comes from.` };
+      const r = await api(`/api/projects/${encodeURIComponent(v.project)}/slots`, { body: { label, accepts: [v.kind], required: false, ...(v.why ? { why: v.why.trim() } : {}) }, scoped: false });
+      const made = ok(r, "");
+      if (!made.ok) return made;
+      const slot = (r.data?.slots ?? []).find((x) => x.label === label) ?? (r.data?.slots ?? []).at(-1);
+      setShared("captain.explorer.rev", Date.now());
+      // Then where it comes from.
+      if (slot) openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { input: { project: v.project, slot: slot.id, label, kinds: v.kind === "any" ? [] : [v.kind] } } });
+      return { ok: true, message: `${label} added. Choose where it comes from.` };
     },
   },
   {
@@ -147,11 +171,20 @@ export const TASKS = [
     about: "The project goes: its inputs, experiments and champion. Its datasets, models and runs are kept, and so is everything else in the workspace.",
     fields: [
       { key: "confirm", label: "Type the project's name to delete it", required: true, help: (_ctx, v) => `It's called ${v.name}.` },
+      { key: "force", label: "Delete it even with a handoff waiting", kind: "toggle", optional: true, when: (v) => Boolean(v.waiting),
+        help: "A live handoff from this project has no deployment recorded yet. Its bundle is kept either way." },
     ],
     submit: async (v) => {
       if (v.confirm.trim() !== String(v.name).trim()) return { ok: false, error: `That isn't the project's name. It's called ${v.name}.` };
-      const r = await api(`/api/projects/${encodeURIComponent(v.project)}`, { method: "DELETE", scoped: false });
-      const done = ok(r, `Deleted ${v.name}. Its datasets, models and runs are still in the workspace.`);
+      const r = await api(`/api/projects/${encodeURIComponent(v.project)}?force=${v.force ? "true" : "false"}`, { method: "DELETE", scoped: false });
+      if (r.status === 409) {
+        const hs = r.data?.handoffs ?? [];
+        v.waiting = true;
+        return { ok: false, error: `${hs.length === 1 ? `${hs[0].pipeline} was handed off to ${hs[0].environment}` : `${hs.length} handoffs were made`} and no deployment is recorded yet. Record it in Handoff first, or turn on Delete it even with a handoff waiting.` };
+      }
+      const k = r.data?.kept ?? {};
+      const kept = [["datasets", k.datasets], ["pipelines", k.pipelines], ["backtests", k.backtests], ["models", k.models]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`).join(", ");
+      const done = ok(r, `Deleted ${v.name}. Kept ${kept || "its datasets, models and runs"}.`);
       if (done.ok) {
         if (shared("captain.scope")?.kind === "project" && shared("captain.scope")?.id === v.project) setShared("captain.scope", null);
         setShared("captain.explorer.rev", Date.now());

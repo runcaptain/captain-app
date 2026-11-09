@@ -35,7 +35,8 @@ await h.start();
 for (let i = 0; i < 30 && !h.text().includes('Recommendations'); i++) await h.idle(100);
 let t = h.text();
 // What are you building: four cards, each with what you'll need.
-for (const r of ['Search ranking from events', 'Search ranking with judgments', 'Recommendations', 'Bring your own pipeline']) assert.ok(t.includes(r), `recipe card ${r}`);
+for (const r of ['Search ranking', 'Recommendations']) assert.ok(t.includes(r), `recipe card ${r}`);
+assert.ok(h.byIdPrefix('f-recipe-').length >= 4, 'four recipes or more');
 assert.ok((t.match(/You'll need/g) ?? []).length >= 4, 'each card says what you will need');
 assert.ok(t.indexOf('What are you building?') < t.indexOf('Name'), 'what you are building comes before the name');
 // Pick one, name it, make it: the project page opens on it.
