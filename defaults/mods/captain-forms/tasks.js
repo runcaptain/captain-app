@@ -4,8 +4,8 @@
 import { api, connectionsChanged } from "./kit/cst.js";
 import { exec, home, shared, setShared, openOverlay, run as runCommand } from "herdr";
 
-const list = async (path, map) => {
-  const r = await api(path);
+const list = async (path, map, scoped = true) => {
+  const r = await api(path, { scoped });
   return r.ok && Array.isArray(r.data) ? r.data.map(map) : [];
 };
 // Errors in plain words: no CLI advice ("Pass --replace to change it"), no SHOUTED_CONSTANTS.
@@ -23,6 +23,17 @@ const ok = (r, done) => {
   if (r.status >= 500) return { ok: false, error: `Captain's services hit a problem (error ${r.status}). Try again; if it keeps happening, tell us.` };
   return { ok: false, error: plain(r.data?.error ?? r.error) };
 };
+// A failed readiness check's fixing action: the task that makes the missing evidence, pre-filled.
+export function fixFor(gates, pipeline) {
+  const names = new Set(gates.map((g) => g.gate));
+  const sharedLabels = gates.some((g) => g.gate === "evidence" && /own labeler/.test(String(g.detail ?? "")));
+  if (names.has("backtest")) return { label: "Run a backtest", task: "backtest", values: { kind: "versions", b: pipeline } };
+  if (names.has("evidence") || names.has("complete"))
+    return { label: sharedLabels ? "Grade the holdout by hand" : "Start grading", task: "grading", values: { a: pipeline } };
+  if (names.has("primary_metric")) return { label: "Run a backtest", task: "backtest", values: { kind: "versions", b: pipeline } };
+  if (names.has("human_approval")) return { label: "Open Investigations", section: "investigations" };
+  return null;
+}
 // Through the services' command runner, for the few tasks without their own route.
 const run = (path, args) => api("/api/commands/run", { body: { path, args }, timeout: 590 });
 
@@ -45,6 +56,29 @@ async function byRole(role) {
     .map((d) => ({ value: `${d.name}@v${d.latest}`, label: d.name, chip: `v${d.latest}` }));
 }
 const pipelines = () => list("/api/pipelines", (p) => ({ value: `${p.name}@v${p.latest}`, label: p.name, chip: `v${p.latest}` }));
+// A project's inputs: each slot's title and the dataset kinds it takes (project_state.SLOTS).
+const SLOT_WORDS = { catalog: ["Catalog", ["catalog"]], events: ["Events", ["events", "logs"]], queries: ["Queries", ["queries"]],
+  labels: ["Labels", ["judgments"]], holdout: ["Sealed holdout", ["queries"]] };
+const IMPORT_NOW = "__import__";
+/** Datasets of these kinds, by kind or by their class's role, across the workspace (not the Explorer's pick). */
+async function datasetsOf(kinds) {
+  const [cl, ds] = await Promise.all([api("/api/dataset-classes", { scoped: false }), api("/api/datasets", { scoped: false })]);
+  const roles = new Map((cl.ok ? cl.data?.classes ?? [] : []).map((c) => [c.name, c.role]));
+  return (ds.ok && Array.isArray(ds.data) ? ds.data : [])
+    .filter((d) => kinds.includes(d.kind) || (d.classes ?? []).some((c) => kinds.includes(roles.get(c))))
+    .map((d) => ({ value: `${d.name}@v${d.latest}`, label: d.name, chip: `v${d.latest}` }));
+}
+/** Wait for a job the services started (an import, a publish), up to two minutes. */
+async function waitJob(id) {
+  if (!id) return { ok: false, error: "It didn't start." };
+  for (let i = 0; i < 240; i++) {
+    const r = await api(`/api/jobs/${encodeURIComponent(id)}`, { scoped: false });
+    if (r.ok && r.data?.status === "done") return { ok: true, result: r.data.result };
+    if (r.ok && r.data?.status === "failed") return { ok: false, error: plain(r.data.message) };
+    try { await exec("sleep", ["0.5"]); } catch { break; }
+  }
+  return { ok: false, error: "It's still running. Check Runs, Jobs, in a minute." };
+}
 const COLORS = [["#0043CA", "Blue"], ["#7C3AED", "Violet"], ["#059669", "Green"], ["#D97706", "Amber"], ["#DC2626", "Red"], ["#64748B", "Slate"]];
 
 export const TASKS = [
@@ -61,15 +95,157 @@ export const TASKS = [
   },
   {
     id: "project", label: "New project", icon: "workflow",
-    about: "A project groups one company's datasets, pipelines, models, notebooks and runs, so you can see them together. Nothing moves or is copied.",
+    about: "A project holds one search you're improving: its catalog, the labels that grade it, the experiments you train and the champion you ship. Nothing moves or is copied.",
     fields: [
-      { key: "name", label: "Name", placeholder: "Acme search", required: true },
-      { key: "description", label: "What it's for", optional: true, placeholder: "Product search for the Acme storefronts" },
+      { key: "name", label: "Name", placeholder: "Outdoor store search", required: true },
+      { key: "description", label: "What it's for", optional: true, placeholder: "Product search for the outdoor storefront" },
+      { key: "catalog", label: "Catalog", kind: "choice", optional: true, options: async () => [...await datasetsOf(["catalog"]), { value: IMPORT_NOW, label: "Import one now" }],
+        help: "The products this search ranks. It's pinned to its exact version, and you can change it later." },
     ],
     submit: async (v) => {
       const r = await api("/api/projects", { body: { name: v.name.trim(), ...(v.description ? { description: v.description.trim() } : {}) } });
-      if (r.ok) setShared("captain.explorer.rev", Date.now()); // the Explorer lists it now
-      return ok(r, `Project ${v.name.trim()} made. Datasets, pipelines and runs whose names start with ${r.data?.id ?? "its id"} join it.`);
+      const made = ok(r, "");
+      if (!made.ok) return made;
+      const id = r.data?.id;
+      setShared("captain.explorer.rev", Date.now()); // the Explorer lists it now
+      setShared("captain.scope", { kind: "project", id, label: r.data?.name ?? v.name.trim() });
+      runCommand("layout.select", { stack: "sections", child: "project" });
+      if (v.catalog === IMPORT_NOW) {
+        openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { project: id } });
+        return { ok: true, message: `Project ${v.name.trim()} made. Import its catalog, then choose it in Inputs.` };
+      }
+      if (v.catalog) {
+        const p = await api(`/api/projects/${encodeURIComponent(id)}/pin`, { body: { catalog: v.catalog }, scoped: false });
+        if (!p.ok) return { ok: true, message: `Project ${v.name.trim()} made, but its catalog wasn't pinned: ${plain(p.data?.error ?? p.error)}` };
+      }
+      return { ok: true, message: `Project ${v.name.trim()} made.` };
+    },
+  },
+  // ---- a project's own tasks: opened from its page with its values preset (project, pins, champion, registry) ----
+  {
+    id: "pin", label: "Choose an input", icon: "tag", hidden: true,
+    about: "Pin the project to an exact version. Every experiment trains and is judged on what's pinned, so results stay comparable.",
+    fields: [
+      { key: "project", label: "Project", kind: "choice", required: true, when: (_v, ctx) => Boolean(ctx.args?.pickProject),
+        options: () => list("/api/projects", (p) => ({ value: p.id, label: p.name }), false), empty: "No projects yet. Make one with New project." },
+      { key: "slot", label: "Input", kind: "choice", required: true, options: Object.entries(SLOT_WORDS).map(([value, [label]]) => ({ value, label })) },
+      { key: "ref", label: "Version", kind: "choice", required: true, options: (_ctx, v) => datasetsOf(SLOT_WORDS[v.slot]?.[1] ?? []), empty: "Nothing of this kind yet. Import one first.",
+        help: (_ctx, v) => (v.slot === "holdout" ? "A query set that isn't sealed yet gets sealed now: half its queries are kept back for judging, and no model trains on them." : v.slot === "labels" ? "These grade the sealed holdout. A model trained on the same labels can only show it agrees with them." : null) },
+    ],
+    submit: async (v) => {
+      const pin = (ref) => api(`/api/projects/${encodeURIComponent(v.project)}/pin`, { body: { [v.slot]: ref }, scoped: false });
+      let r = await pin(v.ref);
+      if (!r.ok && v.slot === "holdout" && /isn't sealed/.test(String(r.data?.error ?? ""))) {
+        const sealed = await api("/api/queries/seal", { body: { ref: v.ref, holdout: 0.5 }, scoped: false });
+        if (!sealed.ok) return ok(sealed, "");
+        r = await pin(`${sealed.data.name}@v${sealed.data.version}`);
+      }
+      return ok(r, `${SLOT_WORDS[v.slot]?.[0] ?? "Input"} pinned.`);
+    },
+  },
+  {
+    id: "experiment", label: "New experiment", icon: "flask-conical", hidden: true,
+    about: "Train a new version of a ranker on the project's pinned inputs. It's judged against the champion once it lands.",
+    load: async (v) => {
+      if (!v?.base) return {};
+      const r = await api(`/api/pipelines/${(v.base).split("/").map(encodeURIComponent).join("/")}`, { scoped: false });
+      return r.ok ? { pipeline: r.data, defaults: { command: r.data?.spec?.train?.command ?? "" } } : {};
+    },
+    fields: [
+      { key: "base", label: "Ranker", kind: "choice", required: true, options: () => list("/api/pipelines", (p) => ({ value: p.name, label: p.name, chip: `v${p.latest}` })),
+        help: "The new version keeps its search setup and changes only what training changes." },
+      { key: "command", label: "Training command", required: true, placeholder: "python train.py",
+        help: "Runs on this computer, in a fresh folder. It gets the exact inputs, the params and a folder to write the trained model into." },
+      { key: "labels", label: "Training labels", kind: "choice", required: true, options: () => datasetsOf(["judgments"]),
+        help: (_ctx, v) => (v.labels && v.labels === v.pins?.labels ? "These are the labels that grade the holdout too, so the result can only say it agrees with its own labeler. Pick labels from another source to get a real verdict." : "Labels from another source than the holdout's give a verdict you can trust.") },
+      { key: "params", label: "Params", kind: "long", optional: true, placeholder: "learning_rate = 0.05", help: "One per line, name = value." },
+      { key: "as_of", label: "Train on data before", optional: true, placeholder: "2026-10-01", help: "A date. Leave empty to use everything pinned." },
+    ],
+    submit: async (v, ctx) => {
+      if (!v.project) return { ok: false, error: "Open this from a project." };
+      const name = v.base;
+      const cur = ctx.pipeline && ctx.pipeline.name === name ? ctx.pipeline : (await api(`/api/pipelines/${name.split("/").map(encodeURIComponent).join("/")}`, { scoped: false })).data;
+      if (!cur?.spec) return { ok: false, error: `Couldn't read ${name}.` };
+      const train = cur.spec.train ?? {};
+      if (String(train.command ?? "") !== v.command.trim()) {
+        // A new training command is a new version of the ranker's setup, so the old one stays reproducible.
+        const draft = { name, engine: cur.engine, catalog: cur.catalog ?? undefined, description: `training command set from the project page`,
+          spec: { ...cur.spec, train: { ...train, command: v.command.trim() } }, registry_ref: cur.registry_ref ?? undefined };
+        const pub = await api("/api/pipelines", { body: draft, scoped: false });
+        if (!pub.ok) return ok(pub, "");
+      }
+      const pins = v.pins ?? {};
+      const holdout = pins.holdout ? pins.holdout.replace(/:holdout$/, ":train") : null;
+      const inputs = [pins.catalog && `catalog=${pins.catalog}`, pins.events && `events=${pins.events}`,
+        holdout ? `queries=${holdout}` : pins.queries && `queries=${pins.queries}`, `labels=${v.labels}`].filter(Boolean);
+      const params = {};
+      for (const line of String(v.params ?? "").split("\n")) {
+        const m = line.match(/^\s*([^=\s]+)\s*=\s*(.*?)\s*$/);
+        if (m) params[m[1]] = /^-?\d+(\.\d+)?$/.test(m[2]) ? Number(m[2]) : m[2];
+      }
+      const started = await api(`/api/pipelines/${name.split("/").map(encodeURIComponent).join("/")}/retrain`, { body: { inputs, params, as_of: v.as_of || undefined, project: v.project }, scoped: false });
+      if (started.ok && started.data?.live) {
+        setShared("captain.open", { section: "runs", live: started.data.live, at: Date.now() });
+        runCommand("layout.select", { stack: "sections", child: "runs" });
+      }
+      return ok(started, started.data?.live ? "Training. It's open in Runs, live, and joins the project's experiments when it lands." : "Training. It joins the project's experiments when it lands.");
+    },
+  },
+  {
+    id: "import-version", label: "Import a model version", icon: "upload", hidden: true,
+    about: "Bring a model trained in MLflow or your own registry into the project as an experiment, with its metrics and where it came from.",
+    fields: [
+      { key: "pipeline", label: "Ranker it becomes a version of", kind: "choice", required: true, options: () => list("/api/pipelines", (p) => ({ value: p.name, label: p.name, chip: `v${p.latest}` })),
+        help: "Its search setup is copied from that ranker's newest version." },
+      { key: "from", label: "Where it was trained", kind: "choice", required: true, default: "mlflow",
+        options: [{ value: "mlflow", label: "An MLflow model version" }, { value: "mlflow_run", label: "An MLflow run" }, { value: "registry_path", label: "A model registry folder" }] },
+      { key: "source", label: "Which one", required: true, placeholder: "ranker@4",
+        help: (_ctx, v) => (v.from === "mlflow_run" ? "The run's id." : v.from === "registry_path" ? "Architecture, brand and version, like arch-v2/outdoor/v3." : "The registered model's name and version, like ranker@4.") },
+      { key: "labels", label: "Labels it was trained on", kind: "choice", optional: true, options: () => datasetsOf(["judgments"]),
+        help: "Optional. Without it, the experiment's label independence reads unknown." },
+    ],
+    submit: async (v) => {
+      const r = await api("/api/models/import-version", { body: { pipeline: v.pipeline, [v.from]: v.source.trim() }, scoped: false });
+      if (!r.ok) return ok(r, "");
+      const job = await waitJob(r.data?.job);
+      if (!job.ok) return job;
+      const ref = job.result?.pipeline;
+      if (v.project && ref) {
+        const e = await api(`/api/projects/${encodeURIComponent(v.project)}/experiments`, { body: { pipeline: ref, labels: v.labels || undefined, trainer: `imported from ${v.from === "registry_path" ? "a registry" : "MLflow"}` }, scoped: false });
+        if (!e.ok) return { ok: true, message: `Imported ${ref}, but it wasn't added to the project: ${plain(e.data?.error ?? e.error)}` };
+      }
+      return { ok: true, message: `Imported ${ref ?? "the version"}${v.project ? " as an experiment" : ""}.` };
+    },
+  },
+  {
+    id: "publish", label: "Publish to the registry", icon: "package", hidden: true,
+    about: "Write this version to your model registry as a new write-once version, with its weights, code, inputs and results. Nothing already there changes.",
+    fields: [
+      { key: "pipeline", label: "Version", kind: "choice", required: true, options: (_ctx, v) => [{ value: v.pipeline, label: v.pipeline }].filter((o) => o.value) },
+      { key: "arch", label: "Architecture", required: true, placeholder: "arch-v2", help: "The registry folder for this kind of model. Asked once, then kept on the project." },
+      { key: "brand", label: "Brand", required: true, placeholder: "outdoor" },
+      { key: "registry", label: "Registry", optional: true, placeholder: "s3://your-models-bucket", help: "Leave empty to use the registry this workspace already has." },
+    ],
+    submit: async (v) => {
+      if (v.project) {
+        const saved = await api(`/api/projects/${encodeURIComponent(v.project)}/pin`, { body: { arch: v.arch.trim(), brand: v.brand.trim(), ...(v.registry ? { registry: v.registry.trim() } : {}) }, scoped: false });
+        if (!saved.ok) return ok(saved, "");
+      }
+      const r = await api("/api/models/publish", { body: { pipeline: v.pipeline, arch: v.arch.trim(), brand: v.brand.trim(), registry: v.registry?.trim() || undefined }, scoped: false });
+      return ok(r, `Publishing ${v.pipeline}. It shows in Data and signals, Models, when it's done.`);
+    },
+  },
+  {
+    id: "champion", label: "Make champion", icon: "trophy", hidden: true,
+    about: "The champion is the version a project ships. Every experiment is judged against it on the project's sealed holdout.",
+    fields: [
+      { key: "pipeline", label: "Version", kind: "choice", required: true, options: (_ctx, v) => [{ value: v.pipeline, label: v.pipeline, chip: v.evidence }].filter((o) => o.value) },
+      { key: "project", label: "Project", kind: "choice", required: true, options: () => list("/api/projects", (p) => ({ value: p.id, label: p.name }), false) },
+    ],
+    submit: async (v) => {
+      const r = await api(`/api/projects/${encodeURIComponent(v.project)}/champion`, { body: { pipeline: v.pipeline }, scoped: false });
+      if (r.ok) setShared("captain.explorer.rev", Date.now());
+      return ok(r, `${v.pipeline} is the champion now.`);
     },
   },
   {
@@ -333,8 +509,9 @@ export const TASKS = [
     submit: async (v) => {
       const r = await api("/api/deploy/promote", { body: { pipeline: v.pipeline, env: v.env, confirm: true, override_reason: v.reason || undefined } });
       if (r.status === 409) {
-        const failed = (r.data?.gate_results ?? []).filter((g) => !g.ok).map((g) => `${String(g.gate).replace(/_/g, " ")}: ${plain(g.detail ?? "failed")}`);
-        return { ok: false, error: `Not ready. ${failed.join(". ")}` };
+        const gates = (r.data?.gate_results ?? []).filter((g) => !g.ok);
+        const failed = gates.map((g) => `${String(g.gate).replace(/_/g, " ")}: ${plain(g.detail ?? "failed")}`);
+        return { ok: false, error: `Not ready. ${failed.join(". ")}`, next: fixFor(gates, v.pipeline) };
       }
       return ok(r, "Handed off. Record the deployment once your process has run it.");
     },
@@ -344,6 +521,10 @@ export const TASKS = [
     id: "decision", label: "Record a decision", icon: "circle-check", hidden: true,
     about: "Only a person records the decision. Offline evidence gets the limitation \"not proof of online or profit lift\" added for you.",
     fields: [
+      { key: "investigation", label: "Investigation", kind: "choice", required: true, when: (_v, ctx) => !ctx.args?.id,
+        options: () => list("/api/investigations", (i) => ({ value: i.id, label: i.title ?? i.id, chip: i.state })),
+        empty: "No investigations yet. Open one first: a decision answers its question.",
+        help: (_ctx, v) => (v.run ? `The decision is about ${v.run}.` : null) },
       { key: "outcome", label: "Decision", kind: "choice", required: true,
         options: [{ value: "continue", label: "Continue" }, { value: "online-test", label: "Run an online test" }, { value: "reject", label: "Reject" }, { value: "inconclusive", label: "Inconclusive" }] },
       { key: "claim", label: "What the evidence shows", kind: "choice", required: true,
@@ -352,9 +533,17 @@ export const TASKS = [
         help: "Better online needs results from real traffic attached to the runs." },
       { key: "interpretation", label: "What it means", kind: "long", required: true },
       { key: "limitations", label: "What it doesn't show", kind: "long", optional: true },
-      { key: "next_step", label: "Next step", optional: true },
+      { key: "next_step", label: "Next step", required: true, placeholder: "Hand it off to staging", help: "Needed, so someone else can act on the decision." },
     ],
-    submit: async (v, ctx, args) => ok(await api(`/api/investigations/${encodeURIComponent(args.id)}/decide`, { body: { outcome: v.outcome, claim: v.claim, interpretation: v.interpretation || undefined, limitations: v.limitations || undefined, next_step: v.next_step || undefined } }), "Decision recorded."),
+    submit: async (v, ctx, args) => {
+      const id = args.id ?? v.investigation;
+      if (v.run && !args.id) await api(`/api/investigations/${encodeURIComponent(id)}/evidence`, { body: { kind: "run", ref: v.run }, scoped: false });
+      const r = await api(`/api/investigations/${encodeURIComponent(id)}/decide`, { body: { outcome: v.outcome, claim: v.claim, interpretation: v.interpretation || undefined, limitations: v.limitations || undefined, next_step: v.next_step || undefined, ...(v.run ? { runs: [v.run] } : {}) } });
+      const done = ok(r, "Decision recorded.");
+      // A decision to go on is followed by its handoff.
+      if (done.ok && ["continue", "online-test"].includes(v.outcome)) done.next = { label: "Hand off a candidate", task: "handoff", values: v.candidate ? { pipeline: v.candidate } : {} };
+      return done;
+    },
   },
   {
     id: "evidence", label: "Attach evidence", icon: "link", hidden: true,

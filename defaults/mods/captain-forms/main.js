@@ -4,7 +4,7 @@
 //   props {menu: true}        the New menu: every task, icon and one line each
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
-import { theme, props, closeOverlay, openOverlay, notify, shared, setShared } from "herdr";
+import { theme, props, closeOverlay, openOverlay, notify, shared, setShared, run as runCommand } from "herdr";
 import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
 import { Button, Badge, ServiceError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -41,7 +41,7 @@ export default class CaptainForms extends View {
     this.task = TASKS.find((t) => t.id === want) ?? null;
     this.states = {};
     this.options = {};
-    this.ctx = {};
+    this.ctx = { args: props()?.args ?? {} };
     this.errors = {};
     if (this.task) this.start(cx);
   }
@@ -53,7 +53,14 @@ export default class CaptainForms extends View {
     // Text inputs keep state, which gpui-kit only lets a view create outside render.
     this.ensureStates();
     cx.spawn(async (cx) => {
-      if (this.task.load) this.ctx = await this.task.load();
+      // A task's load reads what the caller preset (a project page's pins); ctx.args is what it was opened on.
+      this.ctx = { args: props()?.args ?? {}, ...(this.task.load ? await this.task.load(this.values) : {}) };
+      // What load found fills fields nobody has filled yet (a ranker's current training command).
+      for (const [k, v] of Object.entries(this.ctx.defaults ?? {})) {
+        if (v === undefined || v === null || v === "" || (this.values[k] !== undefined && this.values[k] !== "")) continue;
+        this.values[k] = v;
+        this.states[k]?.set_value(String(v));
+      }
       await this.loadOptions(cx);
     });
   }
@@ -206,11 +213,24 @@ export default class CaptainForms extends View {
       this.result = r;
       if (r.ok) {
         recordsChanged(this.task.id); // Handoff, Investigations... reload now
+        if (r.next) { this.done = r; cx.notify(); return; } // stay open to offer the next step
         notify({ title: r.message ?? "Done", level: "info" });
         this.close();
       }
       cx.notify();
     });
+  }
+
+  /** What to do next after this form: a failed check's fix, or the step after a decision. Opens that task pre-filled. */
+  nextStep(c, n) {
+    return h_flex().gap(8).items_center()
+      .child(svg(icon("chevron-right")).size(13).text_color(c.blue))
+      .child(div().flex_1().text_size(12.5).text_color(c.grey900).child(this.done ? "Next:" : "To fix it:"))
+      .child(Button(c, "form-next", n.label, () => {
+        this.close();
+        if (n.section) { setShared("captain.open", { section: n.section, at: Date.now() }); runCommand("layout.select", { stack: "sections", child: n.section }); return; }
+        openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: n.task, values: n.values ?? {} } });
+      }, { kind: "primary", small: true }));
   }
 
   // The New menu: every task with its icon, keyboard up and down and Enter, scrolling inside its popup with a fade
@@ -264,9 +284,11 @@ export default class CaptainForms extends View {
       .child(v_flex().id("form-body").flex_1().min_h(0).overflow_y_scroll().p(20).gap(16)
         .child(div().text_size(13).line_height("19px").text_color(c.grey900).child(t.about))
         .children(this.shown().map((f) => this.field(c, f)))
-        .when(Boolean(failed), (e) => e.child(/couldn't start its services/.test(failed) ? ServiceError(c, failed) : div().p(10).bg(c.failLight).border_1().border_color(c.fail).text_size(12.5).line_height("18px").text_color(c.fail).child(failed))))
+        .when(Boolean(failed), (e) => e.child(/couldn't start its services/.test(failed) ? ServiceError(c, failed) : div().p(10).bg(c.failLight).border_1().border_color(c.fail).text_size(12.5).line_height("18px").text_color(c.fail).child(failed)))
+        .when(Boolean(this.done), (e) => e.child(div().p(10).bg(c.goodLight).border_1().border_color(c.good).text_size(12.5).line_height("18px").text_color(c.good).child(this.done.message ?? "Done.")))
+        .when(Boolean(this.result?.next ?? this.done?.next), (e) => e.child(this.nextStep(c, this.result?.next ?? this.done?.next))))
       .child(h_flex().h(60).flex_none().px(20).gap(8).items_center().justify_end().border_t(1).border_color(c.rule)
         .child(Button(c, "form-cancel", "Cancel", () => this.close()))
-        .child(Button(c, "form-go", this.busy ? "Working..." : t.label, (_e, cx) => this.submit(cx), { kind: "primary", disabled: Boolean(this.busy) })));
+        .child(this.done ? Button(c, "form-done", "Close", () => this.close()) : Button(c, "form-go", this.busy ? "Working..." : t.label, (_e, cx) => this.submit(cx), { kind: "primary", disabled: Boolean(this.busy) })));
   }
 }
