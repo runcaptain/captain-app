@@ -112,7 +112,7 @@ def _exact(ctx: Context, slot: str, raw: str) -> str:
             raise ValueError(f"{ref(m)} holds {kind} rows, and the {slot} pin takes {' or '.join(ok)}")
     if slot == "holdout":
         if not m.holdout_seal:
-            raise ValueError(f"{ref(m)} isn't sealed, so it has no holdout. Seal it with `cst queries seal` first.")
+            raise ValueError(f"{ref(m)} isn't sealed, so it has no holdout yet. Seal it first: that keeps part of its queries back for judging.")
         s = check_seal(ctx, ref(m))
         if not s["ok"]:
             raise ValueError(f"{ref(m)} failed its seal check: {s['detail']}")
@@ -353,9 +353,9 @@ def experiment_backtest(ctx: Context, pid: str, eid: str, compute: str | None = 
     if champ == exp["pipeline"]:
         raise ValueError(f"{exp['pipeline']} is the champion. Pick another experiment to compare with it.")
     if not pins.get("holdout"):
-        raise ValueError(f"{pid} has no sealed holdout pinned. Pin one with `cst projects pin {pid} --holdout <queries>@vN`.")
+        raise ValueError(f"{pid} has no sealed holdout pinned. Choose one in Inputs first.")
     if not pins.get("labels"):
-        raise ValueError(f"{pid} has no labels pinned, so the holdout can't be scored. Pin judgments with --labels.")
+        raise ValueError(f"{pid} has no labels pinned, so the holdout can't be scored. Choose labels in Inputs first.")
     train = training_labels(ctx, exp)
     ind = label_independence(ctx, train, pins["labels"])
     name = f"{pid}/{exp['id']}"

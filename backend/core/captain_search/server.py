@@ -1287,7 +1287,8 @@ def pipelines(project: str | None = None):
 def pipeline_retrain(name: str, body: dict | None = None):
     """Retrain from the pipeline's declared training command, here or on a compute target, streaming to Runs.
     Starting it from the app is the person's go-ahead to run the command here (the CLI's --local-exec).
-    Body: {compute?, inputs?: [ref or role=ref], params?: {}, as_of?}. On a compute target the job's result is
+    Body: {compute?, inputs?: [ref or role=ref], params?: {}, as_of?, project?}. With project, the new version is
+    recorded as that project's experiment when it lands here. On a compute target the job's result is
     {pending: true, job, live_id}: the new version appears when that job finishes."""
     from . import compute as CMP
     from . import live as LV
@@ -1314,6 +1315,15 @@ def pipeline_retrain(name: str, body: dict | None = None):
             raise
         if lv:
             lv.end("done", ref=r.get("pipeline"), summary=f"Published {r['pipeline']} from {r['parent']} in {r['wall_s']:.0f} s")
+        project = (body or {}).get("project")
+        if project and r.get("pipeline") and not r.get("pending"):
+            # Started from a project page: the new version is that project's experiment, so its row appears there.
+            from . import project_state as PS
+
+            try:
+                r["experiment"] = PS.experiment_add(c, project, r["pipeline"], trainer=str(train.get("command"))[:200])["id"]
+            except Exception as e:  # noqa: BLE001  the version stands; the person can add it to the project by hand
+                r["experiment_error"] = str(e)
         return r
 
     jid = _job(go, f"retraining {pm.name} on {compute}")

@@ -180,3 +180,29 @@ def test_retrain_workflow_waits_for_the_cloud_job(fake_target, monkeypatch):
     assert run.status == "done", out.get("error") or out.get("output")
     assert out["output"]["pipeline"] == "ltr@v2" and out["output"]["pending"] is False
     assert yaml.safe_load(ws.store.get(f"jobs/{out['output']['job']}.result.yaml"))["pipeline"] == "ltr@v2"
+
+
+def test_a_retrain_from_a_project_page_becomes_its_experiment(ws, monkeypatch):
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from captain_search import project_state as PS
+    from captain_search import projects as PR
+    from captain_search import server
+
+    PR.create(ws, "Shop")
+    monkeypatch.setattr(server, "_ctx", None)
+    cl = TestClient(server.app)
+    h = {"Authorization": f"Bearer {server.TOKEN}"}
+    r = cl.post("/api/pipelines/ltr/retrain", headers=h, json={"project": "shop", "inputs": ["labels=shop-judgments@v2"]}).json()
+    for _ in range(200):
+        job = cl.get(f"/api/jobs/{r['job']}", headers=h).json()
+        if job["status"] in ("done", "failed"):
+            break
+        time.sleep(0.05)
+    assert job["status"] == "done", job
+    exp = PS.get(ws, "shop")["experiments"]
+    assert [e["pipeline"] for e in exp] == ["ltr@v2"] and job["result"]["experiment"] == exp[0]["id"]
+    # its training labels come from the version itself, so independence can be checked
+    assert PS.training_labels(ws, exp[0]) == "shop-judgments@v2"

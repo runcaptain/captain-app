@@ -670,6 +670,8 @@ Routes:
   `verdict` is "beats the champion", "loses to the champion" or "no clear difference from the champion". When the
   training labels and the holdout grades share a labeler (`label_independence.status` shared), it is "agrees with
   its own labeler" whatever the comparison says, and `GET /api/runs/{run}/compatibility` adds an `own-labeler` warning.
+- `POST /api/pipelines/{name}/retrain` takes `project`: the version it trains is recorded as that project's
+  experiment when it lands on this computer (`result.experiment`, or `result.experiment_error`).
 - `POST /api/projects/{id}/experiments {pipeline, training_set?, labels?, trainer?, note?, dry_run?}` records a
   trained version as an experiment. `labels` (or the version's training inputs, or the training set's provenance)
   is what label independence reads.
