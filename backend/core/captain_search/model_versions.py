@@ -285,7 +285,7 @@ def import_version(ctx: Context, pipeline: str, mlflow_model: str | None = None,
     elif ctx.registry.versions("pipeline", pipeline):
         bm = ctx.registry.load("pipeline", pipeline)
     else:
-        raise ValueError(f"there is no pipeline {pipeline!r} yet. Name one to copy the engine and spec from with --from, "
+        raise ValueError(f"there is no pipeline {pipeline!r} yet. Name one to copy its search setup from with --from, "
                          "so Captain knows how to query the imported model.")
     got = _from_registry(ctx, registry_path) if registry_path else _from_mlflow(ctx, mlflow_model, mlflow_run)
     same = bm.name == pipeline

@@ -816,7 +816,7 @@ def models_import_version(pipeline: str = typer.Argument(..., help="the pipeline
                           mlflow: Optional[str] = typer.Option(None, "--mlflow", help="an MLflow model version, name@version"),
                           mlflow_run: Optional[str] = typer.Option(None, "--mlflow-run", help="an MLflow run id"),
                           registry_path: Optional[str] = typer.Option(None, "--registry-path", help="<architecture>/<brand>/<version> in an imported registry"),
-                          from_: Optional[str] = typer.Option(None, "--from", help="pipeline version to copy the engine and spec from. Default: the pipeline's latest"),
+                          from_: Optional[str] = typer.Option(None, "--from", help="pipeline version to copy the search setup (backend and spec) from. Default: the pipeline's latest"),
                           description: Optional[str] = typer.Option(None, "--description")):
     """Register a model trained outside Captain as a new pipeline version, with its metrics and where it came from."""
     from .. import model_versions as MV
