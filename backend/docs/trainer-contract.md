@@ -1,0 +1,87 @@
+# The trainer contract
+
+Captain doesn't train your model. It runs your training command with the exact inputs you asked for, then
+records what the command reports as a new pipeline version. Any language works: the contract is environment
+variables in and one YAML file out.
+
+## Declare the trainer
+
+```yaml
+spec:
+  train:
+    command: python train.py          # any shell command, run in an empty folder
+    inputs:                           # optional; --input on the command line replaces this list
+      - shop-catalog@v3
+      - {ref: shop-judgments@v2, role: labels, as_of: "2026-10-01"}
+    params: {learning_rate: 0.05}     # optional; --param name=value adds to it
+    timeout_s: 7200                   # optional, default 3 hours
+    compute: my-batch                 # optional compute target, default this machine
+```
+
+Run it with `cst pipeline retrain <name>[@vN] --local-exec [--input role=name@vN ...] [--param k=v ...] [--as-of DATE]`.
+On a compute target add `--compute <target>`, and `--wait` to block until the job records the new version.
+
+## What the command gets
+
+| Variable | What it holds |
+|---|---|
+| `CST_TRAIN_INPUTS` | JSON list. Each item: `ref` (exact, `name@vN`), `kind` (catalog, events, queries, judgments, logs), `role` (yours, defaults to the kind), `uri` (the version's folder in the workspace store), `files` (each part's `path`, `uri` and `bytes`), `label_source` (`human`, `llm`, `clicks`, `simulated` or null), `as_of` (a cutoff date or null) |
+| `CST_PARAMS` | JSON object: `spec.train.params`, then `--param` values on top |
+| `CST_OUT` | An empty folder for your outputs |
+| `CST_PIPELINE`, `CST_WORKSPACE` | The version being retrained and the workspace |
+| `CST_TRAIN_OUT` | Older trainers: a file path for the same result. Still read. If both are written, `result.yaml` wins key by key |
+
+`label_source` comes from the dataset: a judgments dataset's own judge (`click` reads as `clicks`, `heuristic` as
+`simulated`), or a `label_source` tag, or the input's own `label_source`. `as_of` comes from the input, then the
+dataset's `as_of` tag, then `--as-of`. Captain passes it on and records it. Honoring the cutoff is the trainer's job.
+
+## What the command writes
+
+`CST_OUT/result.yaml`, every key optional:
+
+```yaml
+metrics: {ndcg@10: 0.412, recall@100: 0.88}   # numbers stream to Runs and are stored on the version
+params: {trees: 400}                          # merged over CST_PARAMS on the version
+artifact_dir: model                           # relative to CST_OUT. Its files are stored with the version under artifact/
+registry_ref: s3://models/arch-v2/shop/v7     # where the weights live, if not in artifact_dir
+spec: {rerank: {model: lgbm}}                 # merged into the new version's spec
+training_commit: 3f2a9c1
+known_issues: ["cold-start queries untested"]
+description: "lambdarank, 400 trees"
+cost: {train_usd: 3.5, train_gpu_hours: 0.5, gpu_type: A10G}
+```
+
+Unknown keys fail the retrain, so a typo doesn't vanish. A non-zero exit fails it too, with the last lines of output.
+`artifact_dir` is capped at 2 GB. Larger weights belong in your own storage, named by `registry_ref`.
+
+The new version stores `train_inputs` (the refs, without the file lists), `train_params`, `train_metrics`,
+`parents` (`[name@vN]`) and `source: {kind: retrain, command, job}`. Versions written before this contract read
+those fields as empty.
+
+## Example trainer
+
+```python
+import json, os, pathlib
+
+out = pathlib.Path(os.environ["CST_OUT"])
+inputs = {i["role"]: i for i in json.loads(os.environ["CST_TRAIN_INPUTS"])}
+params = json.loads(os.environ["CST_PARAMS"])
+labels = inputs["labels"]
+print(f"training on {labels['ref']} ({labels['label_source']} labels, cutoff {labels['as_of']})", flush=True)
+# ... read labels["files"][i]["uri"], train with params["learning_rate"] ...
+(out / "model").mkdir()
+(out / "model" / "weights.txt").write_text("trained weights")
+score = 0.412
+print(f"ndcg@10={score}", flush=True)
+(out / "result.yaml").write_text(
+    f"metrics:\n  ndcg@10: {score}\nartifact_dir: model\nparams:\n  trees: 400\n")
+```
+
+## On a compute target
+
+The retrain returns at once with `{pending: true, job, live_id}` and no `pipeline` field, because the new version
+doesn't exist until the job finishes. The job retrains the same version on the same exact input refs that were
+resolved when it was submitted, publishes the new version to the workspace store, and writes
+`jobs/<job>.result.yaml` with its ref. `cst job show <job>` then includes `result`. `--wait` (and the
+`retrain-and-review` workflow, which sets it) polls the job and returns the new version, or fails if the job failed
+or recorded nothing.

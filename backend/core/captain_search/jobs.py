@@ -98,12 +98,32 @@ def refresh(ctx: Context, rec: dict) -> dict:
     return new
 
 
+def _result_key(job_id: str) -> str:
+    return f"jobs/{job_id}.result.yaml"
+
+
+def save_result(ctx: Context, job_id: str, result: dict) -> None:
+    """What a job produced, written once by the job itself as it finishes (a retrain's new version, say), so the
+    caller that submitted it can read the outcome rather than guess it."""
+    ctx.store.put_new(_result_key(job_id), dump_yaml(result))
+
+
+def result(ctx: Context, job_id: str) -> dict | None:
+    try:
+        return yaml.safe_load(ctx.store.get(_result_key(job_id)))
+    except NotFound:
+        return None
+
+
 def show(ctx: Context, job_id: str) -> dict:
-    return _with_duration(refresh(ctx, load(ctx, job_id)))
+    rec = _with_duration(refresh(ctx, load(ctx, job_id)))
+    res = result(ctx, job_id)
+    return {**rec, "result": res} if res is not None else rec
 
 
 def listing(ctx: Context, refresh_active: bool = False, limit: int = 200) -> list[dict]:
-    keys = sorted((k for k in ctx.store.list("jobs/") if k.endswith(".yaml")), reverse=True)[:limit]
+    keys = sorted((k for k in ctx.store.list("jobs/") if k.endswith(".yaml") and not k.endswith(".result.yaml")),
+                  reverse=True)[:limit]
     out = []
     for k in keys:
         rec = yaml.safe_load(ctx.store.get(k))

@@ -1176,7 +1176,9 @@ def pipelines(project: str | None = None):
 @app.post("/api/pipelines/{name:path}/retrain", dependencies=A)
 def pipeline_retrain(name: str, body: dict | None = None):
     """Retrain from the pipeline's declared training command, here or on a compute target, streaming to Runs.
-    Starting it from the app is the person's go-ahead to run the command here (the CLI's --local-exec)."""
+    Starting it from the app is the person's go-ahead to run the command here (the CLI's --local-exec).
+    Body: {compute?, inputs?: [ref or role=ref], params?: {}, as_of?}. On a compute target the job's result is
+    {pending: true, job, live_id}: the new version appears when that job finishes."""
     from . import compute as CMP
     from . import live as LV
     from . import retrain as RT
@@ -1193,7 +1195,9 @@ def pipeline_retrain(name: str, body: dict | None = None):
 
     def go(p):
         try:
-            r = RT.retrain(c, name, compute, local_exec=True, live=lv, live_id=live_id)
+            b = body or {}
+            r = RT.retrain(c, name, compute, local_exec=True, live=lv, live_id=live_id, inputs=b.get("inputs") or None,
+                           params=b.get("params") or None, as_of=b.get("as_of") or None)
         except Exception as e:
             if lv:
                 lv.end("failed", error=str(e))

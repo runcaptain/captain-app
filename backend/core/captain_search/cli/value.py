@@ -8,7 +8,7 @@ import typer
 from .. import costs as COST
 from .. import monitor as MON
 from .. import retrain as RT
-from .main import S, app, ctx, emit
+from .main import S, app, ctx, emit, fail
 from .more import _do, pipeline_app
 
 cost_app = typer.Typer(no_args_is_help=True, help="What each pipeline version costs, next to what it gains")
@@ -104,9 +104,37 @@ def mon_show(env: str = typer.Option(..., "--env")):
 
 
 @pipeline_app.command("retrain")
-def pipeline_retrain(name: str, compute: Optional[str] = typer.Option(None, "--compute", help="compute target (default: spec.train.compute or local)"),
-                     local_exec: bool = typer.Option(False, "--local-exec", help="allow running the pipeline's training command on this machine")):
+def pipeline_retrain(name: str = typer.Argument(..., help="pipeline name (its latest version) or name@vN"),
+                     compute: Optional[str] = typer.Option(None, "--compute", help="compute target (default: spec.train.compute or local)"),
+                     local_exec: bool = typer.Option(False, "--local-exec", help="allow running the pipeline's training command on this machine"),
+                     input: list[str] = typer.Option([], "--input", help="role=name@vN or name@vN, the trainer's inputs. Repeat for more. Replaces spec.train.inputs"),
+                     param: list[str] = typer.Option([], "--param", help="name=value, added to spec.train.params. Values are read as JSON when they parse"),
+                     as_of: Optional[str] = typer.Option(None, "--as-of", help="cutoff date for inputs that don't set their own as_of"),
+                     wait: bool = typer.Option(False, "--wait", help="on a compute target, wait for the job and return the new version")):
     """Run the pipeline's declared training command and publish the result as a new version."""
-    r = _do(RT.retrain, ctx(), name, compute, local_exec, dry_run=S.dry_run)
-    emit(r, f"published {r['pipeline']} from {r['parent']} in {r['wall_s']:.0f} s" if "wall_s" in r
-         else (f"would run: {r['would_run']}" if "would_run" in r else f"submitted retrain of {r['pipeline']} to {r['compute']}"))
+    import json as _json
+
+    def val(v):
+        try:
+            return _json.loads(v)
+        except ValueError:
+            return v
+
+    bad = [p for p in param if "=" not in p]
+    if bad:
+        fail(f"--param takes name=value, got {bad[0]!r}")
+    params = {k: val(v) for k, v in (p.split("=", 1) for p in param)}
+    r = _do(RT.retrain, ctx(), name, compute, local_exec, dry_run=S.dry_run, inputs=input or None, params=params or None,
+            as_of=as_of, wait=wait)
+    if "wall_s" in r:
+        msg = f"published {r['pipeline']} from {r['parent']} in {r['wall_s']:.0f} s"
+    elif r.get("pending"):
+        msg = f"submitted the retrain of {r['parent']} to {r['compute']} as job {r['job']}. No new version yet: " \
+              f"`cst job show {r['job']} --wait` follows it, or rerun with --wait."
+    elif "would_run" in r:
+        msg = f"would run: {r['would_run']}"
+    elif r.get("pipeline"):
+        msg = f"job {r['job']} published {r['pipeline']} from {r['parent']}"
+    else:
+        msg = f"would submit the retrain of {r['parent']} to {r['compute']}"
+    emit(r, msg)

@@ -67,7 +67,9 @@ TEMPLATES = {
             {"id": "record", "command": ["monitor", "record"], "args": {"env": "${params.env}", "logs": "${params.logs}"}},
             {"id": "check", "command": ["monitor", "check"], "args": {"env": "${params.env}", "metric": "${params.metric}",
                                                                      "drop": "${params.drop}"}, "needs": ["record"]},
-            {"id": "retrain", "command": ["pipeline", "retrain"], "args": {"name": "${params.pipeline}", "local_exec": True},
+            # wait: on a compute target the step blocks until the job records the new version, so `plan` below
+            # compares against the retrained version, never the one it was retrained from.
+            {"id": "retrain", "command": ["pipeline", "retrain"], "args": {"name": "${params.pipeline}", "local_exec": True, "wait": True},
              "needs": ["check"], "when": "${steps.check.degraded}"},
             {"id": "plan", "command": ["backtest", "plan"], "args": {
                 "name": "${params.name}", "arms": "${steps.live.pipeline},${steps.retrain.pipeline}",
