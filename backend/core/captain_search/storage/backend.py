@@ -52,6 +52,13 @@ class Store(ABC):
     def get(self, key: str) -> bytes:
         return self.get_with_tag(key)[0]
 
+    def put_new_chunks(self, key: str, chunks) -> int:
+        """Create-only, like put_new, for data too large for one request. `chunks` is an iterable of bytes.
+        Returns the bytes written. Stores without a multipart path join the chunks and call put_new."""
+        data = b"".join(chunks)
+        self.put_new(key, data)
+        return len(data)
+
     def exists(self, key: str) -> bool:
         try:
             self.get_with_tag(key)
@@ -89,6 +96,24 @@ class LocalStore(Store):
                 raise AlreadyExists(key) from None
         finally:
             os.unlink(tmp)
+
+    def put_new_chunks(self, key: str, chunks) -> int:
+        dest = self._p(key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dest), prefix=".tmp-")
+        n = 0
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                for c in chunks:
+                    fh.write(c)
+                    n += len(c)
+            try:
+                os.link(tmp, dest)
+            except FileExistsError:
+                raise AlreadyExists(key) from None
+        finally:
+            os.unlink(tmp)
+        return n
 
     def get_with_tag(self, key: str) -> tuple[bytes, str]:
         try:
@@ -159,6 +184,44 @@ class S3Store(Store):
             if self._code(e) in ("PreconditionFailed", "ConditionalRequestConflict", "412"):
                 raise AlreadyExists(key) from None
             raise
+
+    PART = 16 << 20  # S3 parts must be at least 5 MiB, except the last
+
+    def put_new_chunks(self, key: str, chunks) -> int:
+        """A multipart upload whose completion is create-only (If-None-Match on CompleteMultipartUpload), so
+        a second writer fails the same way put_new does. A failed upload is aborted, leaving nothing behind."""
+        from botocore.exceptions import ClientError
+
+        k = self._k(key)
+        up = self.s3.create_multipart_upload(Bucket=self.bucket, Key=k)["UploadId"]
+        parts, buf, n = [], bytearray(), 0
+        try:
+            def send(data: bytes):
+                r = self.s3.upload_part(Bucket=self.bucket, Key=k, UploadId=up, PartNumber=len(parts) + 1, Body=data)
+                parts.append({"PartNumber": len(parts) + 1, "ETag": r["ETag"]})
+
+            for c in chunks:
+                buf += c
+                n += len(c)
+                while len(buf) >= self.PART:
+                    send(bytes(buf[:self.PART]))
+                    del buf[:self.PART]
+            if buf or not parts:
+                send(bytes(buf))
+            try:
+                self.s3.complete_multipart_upload(Bucket=self.bucket, Key=k, UploadId=up,
+                                                  MultipartUpload={"Parts": parts}, IfNoneMatch="*")
+            except ClientError as e:
+                if self._code(e) in ("PreconditionFailed", "ConditionalRequestConflict", "412"):
+                    raise AlreadyExists(key) from None
+                raise
+        except BaseException:
+            try:
+                self.s3.abort_multipart_upload(Bucket=self.bucket, Key=k, UploadId=up)
+            except Exception:  # noqa: BLE001  the upload may already be gone
+                pass
+            raise
+        return n
 
     def get_with_tag(self, key: str) -> tuple[bytes, str]:
         from botocore.exceptions import ClientError

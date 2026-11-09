@@ -666,7 +666,7 @@ def demo_remove_sample():
 
 cloud_app = typer.Typer(no_args_is_help=True, help="Cloud profiles (credentials in the OS keychain)")
 compute_app = typer.Typer(no_args_is_help=True, help="Compute targets for backtests and serving")
-models_app = typer.Typer(no_args_is_help=True, help="The model registry (read-only import)")
+models_app = typer.Typer(no_args_is_help=True, help="The model registry: import it, pull versions, publish pipeline versions to it, import outside models")
 app.add_typer(cloud_app, name="cloud")
 app.add_typer(compute_app, name="compute")
 app.add_typer(models_app, name="models")
@@ -794,6 +794,36 @@ def models_pull(model_id: str = typer.Argument(..., help="brand@version, or a br
     note = f"\n{len(r['unchecked'])} file(s) aren't listed in SHA256SUMS, so they weren't checked." if r["unchecked"] else ""
     emit(r, f"pulled {r['model']} ({r['files']} files{size}) into {r['to']}. "
             f"{r['downloaded']} downloaded, {r['already_there']} already there, {r['checked']} checked against SHA256SUMS." + note)
+
+
+@models_app.command("publish")
+def models_publish(pipeline: str = typer.Argument(..., help="the pipeline version to publish, name@vN"),
+                   arch: str = typer.Option(..., "--arch", help="architecture folder, e.g. arch-v2"),
+                   brand: str = typer.Option(..., "--brand", help="brand folder"),
+                   registry: Optional[str] = typer.Option(None, "--registry", help="s3://<bucket>[/prefix] or a folder. Default: $CST_MODEL_REGISTRY"),
+                   profile: Optional[str] = typer.Option(None, "--profile"),
+                   status: str = typer.Option("candidate", "--status", help="the status written in MANIFEST.yaml")):
+    """Write a pipeline version to the registry as a new write-once <arch>/<brand>/vN, then import the registry again."""
+    from .. import model_versions as MV
+
+    r = _do(MV.publish, ctx(), pipeline, arch, brand, registry, profile, status)
+    emit(r, f"published {r['pipeline']} as {r['model']} at {r['path']} ({r['files']} files, repro not-tested)"
+         + "".join(f"\n{w}" for w in r["warnings"]))
+
+
+@models_app.command("import-version")
+def models_import_version(pipeline: str = typer.Argument(..., help="the pipeline that gets the new version"),
+                          mlflow: Optional[str] = typer.Option(None, "--mlflow", help="an MLflow model version, name@version"),
+                          mlflow_run: Optional[str] = typer.Option(None, "--mlflow-run", help="an MLflow run id"),
+                          registry_path: Optional[str] = typer.Option(None, "--registry-path", help="<architecture>/<brand>/<version> in an imported registry"),
+                          from_: Optional[str] = typer.Option(None, "--from", help="pipeline version to copy the search setup (backend and spec) from. Default: the pipeline's latest"),
+                          description: Optional[str] = typer.Option(None, "--description")):
+    """Register a model trained outside Captain as a new pipeline version, with its metrics and where it came from."""
+    from .. import model_versions as MV
+
+    v = _do(MV.import_version, ctx(), pipeline, mlflow, mlflow_run, registry_path, from_, description)
+    emit({"pipeline": f"{v.name}@v{v.version}", "source": v.source, "metrics": v.train_metrics, "parents": v.parents},
+         f"recorded {v.name}@v{v.version}: {v.description}. {len(v.train_metrics)} metric(s) carried over.")
 
 
 lineage_app = typer.Typer(help="Print the lineage graph as edges. `cst lineage reindex` backfills its index.")

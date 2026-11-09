@@ -1286,7 +1286,9 @@ def pipelines(project: str | None = None):
 @app.post("/api/pipelines/{name:path}/retrain", dependencies=A)
 def pipeline_retrain(name: str, body: dict | None = None):
     """Retrain from the pipeline's declared training command, here or on a compute target, streaming to Runs.
-    Starting it from the app is the person's go-ahead to run the command here (the CLI's --local-exec)."""
+    Starting it from the app is the person's go-ahead to run the command here (the CLI's --local-exec).
+    Body: {compute?, inputs?: [ref or role=ref], params?: {}, as_of?}. On a compute target the job's result is
+    {pending: true, job, live_id}: the new version appears when that job finishes."""
     from . import compute as CMP
     from . import live as LV
     from . import retrain as RT
@@ -1303,7 +1305,9 @@ def pipeline_retrain(name: str, body: dict | None = None):
 
     def go(p):
         try:
-            r = RT.retrain(c, name, compute, local_exec=True, live=lv, live_id=live_id)
+            b = body or {}
+            r = RT.retrain(c, name, compute, local_exec=True, live=lv, live_id=live_id, inputs=b.get("inputs") or None,
+                           params=b.get("params") or None, as_of=b.get("as_of") or None)
         except Exception as e:
             if lv:
                 lv.end("failed", error=str(e))
@@ -2350,6 +2354,39 @@ def models_pull(body: dict):
     dest = body.get("dest") or os.path.expanduser(f"~/Downloads/{m['brand']}-{m['version']}")
     return {"job": _job(lambda p: MD.pull(c, m["id"], dest, body.get("parts"), body.get("profile"), p),
                         f"Download {ref}")}
+
+
+@app.post("/api/models/publish", dependencies=A)
+def models_publish(body: dict):
+    """Publish a pipeline version to a model registry as a write-once <arch>/<brand>/vN. Runs as a job.
+    Body: {pipeline: name@vN, arch, brand, registry?, profile?, status?}."""
+    from . import model_versions as MV
+
+    c, pipe = ctx(), str(body.get("pipeline") or "")
+    for k in ("arch", "brand"):
+        if not body.get(k):
+            raise ValueError(f"{k} is required")
+    pm, _ = c.registry.resolve("pipeline", pipe)  # fail now on an unknown pipeline, not inside the job
+    pin = f"{pm.name}@v{pm.version}"
+    return {"job": _job(lambda p: MV.publish(c, pin, body["arch"], body["brand"], body.get("registry") or None,
+                                             body.get("profile") or None, body.get("status") or "candidate", p),
+                        f"Publish {pin} to the registry")}
+
+
+@app.post("/api/models/import-version", dependencies=A)
+def models_import_version(body: dict):
+    """Register a model trained elsewhere as a new pipeline version. Runs as a job (it may call MLflow).
+    Body: {pipeline, mlflow?: name@version, mlflow_run?, registry_path?: arch/brand/version, from?, description?}."""
+    from . import model_versions as MV
+
+    c = ctx()
+
+    def go(p):
+        v = MV.import_version(c, str(body.get("pipeline") or ""), body.get("mlflow") or None, body.get("mlflow_run") or None,
+                              body.get("registry_path") or None, body.get("from") or None, body.get("description") or None)
+        return {"pipeline": f"{v.name}@v{v.version}", "source": v.source, "metrics": v.train_metrics, "parents": v.parents}
+
+    return {"job": _job(go, f"Import a model version into {body.get('pipeline')}")}
 
 
 @app.get("/api/models/{mid:path}", dependencies=A)
