@@ -9,18 +9,25 @@
 // Below them, everything in the project (GET /api/projects/{id}/home): datasets, runs, pipelines, models, notebooks.
 // The project is the Explorer's pick (shared "captain.scope" {kind: "project"}), else the last one opened here.
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { h_flex, v_flex, Popup } from "gpui-base";
 import { theme, shared, setShared, run, openOverlay, props as layoutProps } from "herdr";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { api, watchScope, watchWorkspace, watchRecords } from "./kit/cst.js";
 import { Badge, Button, Empty, Skeleton, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
+import { Brand, engineTitle } from "./kit/brands.js";
 import { int } from "./kit/num.js";
 
 const day = (iso) => (iso ? String(iso).slice(0, 10) : "");
 const go = (section, extra) => { setShared("captain.open", { section, ...extra, at: Date.now() }); run("layout.select", { stack: "sections", child: section }); };
 const form = (task, values = {}, args) => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, values, ...(args ? { args } : {}) } });
 const enc = encodeURIComponent;
+// The input picker: a project's input from a connection, this computer, or a dataset already in Captain.
+const pickInput = (project, inp) => openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640,
+  props: { input: { project, slot: inp.slot, label: inp.label, kinds: inp.accepts ?? inp.kinds ?? [], role: (inp.accepts ?? inp.kinds ?? [])[0] ?? null, custom: Boolean(inp.custom) } } });
+// The agent that proposes a setup, with its mark (as Investigations shows agents).
+const AGENTS = { claude: ["Claude Code", "icons/claude.svg"], "claude-code": ["Claude Code", "icons/claude.svg"], codex: ["Codex", "icons/captain-agent-codex.svg"] };
+const RECIPE_ICONS = { "search-events": "activity", "search-judgments": "tag", recommendations: "sparkles", "bring-your-own": "layers" };
 
 export const SLOTS = {
   catalog: { title: "Catalog", icon: "table", about: "The products your search ranks.", noun: "a catalog" },
@@ -189,42 +196,180 @@ export default class ProjectHome extends View {
 
   // ---- inputs ---------------------------------------------------------------------------------------------------
 
-  inputCard(c, inp) {
-    const meta = SLOTS[inp.slot] ?? { title: inp.slot, icon: "database", about: "", noun: inp.slot };
+  /** An input row from the stages, in one shape whatever the services send (older ones have no label or source). */
+  slotOf(inp) {
+    const meta = SLOTS[inp.slot] ?? {};
+    // Projects from before recipes send no "required": the catalog is the one input every ranker needs.
+    return { ...inp, label: inp.label ?? meta.title ?? inp.slot, required: inp.required ?? inp.slot === "catalog", about: inp.about ?? meta.about ?? "",
+      noun: meta.noun ?? (inp.label ?? inp.slot).toLowerCase(), icon: meta.icon ?? "database" };
+  }
+
+  /** Where an input's data comes from: a connection (its mark, and the table or query), a folder here, or a dataset. */
+  sourceLine(c, inp) {
+    const src = inp.source ?? (inp.pinned ? { kind: "dataset", dataset: inp.pinned } : null);
+    if (!src) return div().text_size(12).line_height("16px").text_color(c.grey500).child(inp.about || "Not chosen yet.");
+    const what = src.kind === "connection" ? (src.table ? String(src.table).split(".").pop() : src.events?.length ? `${src.events.length} event type${src.events.length === 1 ? "" : "s"}` : "your query")
+      : src.kind === "local" ? String(src.path ?? "").replace(/^\/Users\/[^/]+/, "~")
+      : parseRef(src.dataset ?? inp.pinned).name;
+    const mark = src.kind === "connection" ? Brand(c, src.engine ?? src.connection, 14)
+      : svg(icon(src.kind === "local" ? "folder" : "table")).size(13).flex_none().text_color(c.grey500);
+    return h_flex().gap(6).items_center().min_w(0)
+      .child(mark)
+      .when(src.kind === "connection", (e) => e.child(div().flex_none().text_size(12).text_color(c.grey900).child(src.connection ?? engineTitle(src.engine))))
+      .child(div().min_w(0).truncate().font_family(MONO).text_size(12).child(what));
+  }
+
+  inputCard(c, raw) {
+    const inp = this.slotOf(raw);
     const r = parseRef(inp.pinned);
     const newer = inp.next?.action === "pin" && inp.next.ref ? parseRef(inp.next.ref) : null;
     const missing = inp.status === "missing";
+    const live = inp.mode === "live";
+    const id = `in-${inp.slot}`;
     const action = missing
-      ? Button(c, `in-${inp.slot}-pick`, `Choose ${meta.noun}`, () => form("pin", { ...this.values(), slot: inp.slot }), { kind: "primary", small: true })
+      ? Button(c, `${id}-pick`, `Choose ${inp.noun}`, () => pickInput(this.pid(), inp), { kind: inp.required ? "primary" : "secondary", small: true })
       : newer
-        ? Button(c, `in-${inp.slot}-newer`, `Use version ${newer.version}`, (_e, cx) => this.usePin(cx, inp.slot, inp.next.ref), { kind: "primary", small: true, disabled: this.busy })
-        : Button(c, `in-${inp.slot}-change`, "Change", () => form("pin", { ...this.values(), slot: inp.slot }), { small: true });
-    return v_flex().id(`in-${inp.slot}`).w(212).min_h(150).flex_none().p(12).gap(8).bg(c.surface).border_1().border_color(missing ? c.grey300 : c.rule)
+        ? Button(c, `${id}-newer`, `Use version ${newer.version}`, (_e, cx) => this.usePin(cx, inp.slot, inp.next.ref), { kind: "primary", small: true, disabled: this.busy })
+        : Button(c, `${id}-change`, "Change", () => pickInput(this.pid(), inp), { small: true });
+    const older = !missing && !live && r.version > 1
+      ? div().id(`${id}-older`).text_size(11.5).text_color(c.blue).cursor_pointer().hover((s) => s.underline()).on_click(() => form("pin", { ...this.values(), slot: inp.slot })).child("Use an older version") : null;
+    return v_flex().id(id).w(232).min_h(168).flex_none().p(12).gap(7).bg(c.surface).border_1().border_color(missing && inp.required ? c.grey300 : c.rule)
       .child(h_flex().gap(8).items_center()
-        .child(div().size(26).flex_none().flex().items_center().justify_center().bg(missing ? c.surface2 : c.blueLight).text_color(missing ? c.grey500 : c.blue)
-          .child(svg(icon(meta.icon)).size(14)))
-        .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(meta.title))
-        .child(Badge(c, missing ? "missing" : "pinned", missing ? "warn" : "good")))
-      .child(missing
-        ? div().text_size(12).line_height("16px").text_color(c.grey500).child(meta.about)
-        : h_flex().h(20).gap(6).items_center().min_w(0)
-          .child(div().min_w(0).truncate().font_family(MONO).text_size(12).child(r.name))
-          .when(r.version != null, (e) => e.child(Badge(c, `v${r.version}`)))
-          .when(Boolean(r.split), (e) => e.child(Badge(c, r.split, "blue"))))
-      .children((inp.info ?? []).slice(0, 2).map((i, k) => h_flex().id(`in-${inp.slot}-info-${k}`).gap(6).items_start()
+        .child(div().size(26).flex_none().flex().items_center().justify_center().bg(missing ? c.surface2 : c.blueLight).text_color(missing ? c.grey500 : c.blue).child(svg(icon(inp.icon)).size(14)))
+        .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(inp.label))
+        .child(Badge(c, inp.required ? "required" : "optional", missing && inp.required ? "warn" : "neutral"))
+        .when(!inp.required, (e) => e.child(div().id(`${id}-remove`).size(18).flex_none().flex().items_center().justify_center().cursor_pointer().text_color(c.grey500)
+          .hover((s) => s.text_color(c.fail)).tooltip(`Remove ${inp.label.toLowerCase()} from this project`)
+          .on_click((_e, cx) => this.removeInput(cx, inp)).child(svg(icon("x")).size(12)))))
+      .child(this.sourceLine(c, inp))
+      .when(!missing, (e) => e.child(h_flex().gap(6).items_center().min_w(0)
+        .child(Badge(c, live ? "live" : "snapshot", live ? "blue" : "neutral"))
+        .child(div().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(inp.last_read_at ? `read ${day(inp.last_read_at)}` : live ? "not read yet" : ""))
+        .when(r.version != null && !live, (x) => x.child(div().flex_none().text_size(10.5).font_family(MONO).text_color(c.grey500).child(`v${r.version}`)))))
+      .children((inp.info ?? []).slice(0, 2).map((i, k) => h_flex().id(`${id}-info-${k}`).gap(6).items_start()
         .child(svg(icon(i.code === "newer-version" ? "sparkles" : "triangle-alert")).size(12).mt(2).flex_none().text_color(i.code === "newer-version" ? c.blue : c.warn))
         .child(div().flex_1().min_w(0).text_size(11.5).line_height("16px").text_color(c.grey900).child(i.text))))
       .child(div().flex_1())
-      .child(h_flex().child(action));
+      .child(h_flex().gap(10).items_center().child(action).when(Boolean(older), (e) => e.child(older)));
+  }
+
+  addCard(c) {
+    return v_flex().id("in-add").w(232).min_h(168).flex_none().p(12).gap(8).items_center().justify_center().cursor_pointer()
+      .border_1().border_dashed().border_color(c.grey300).text_color(c.grey900).hover((s) => s.border_color(c.blue).text_color(c.blue))
+      .on_click(() => form("add-input", { project: this.pid() }))
+      .child(svg(icon("plus")).size(16))
+      .child(div().text_size(13).font_medium().child("Add an input"))
+      .child(div().text_size(11.5).text_color(c.grey500).child("Anything your training reads"));
+  }
+
+  removeInput(cx, inp) {
+    if (this.busy) return;
+    this.busy = true;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/inputs/${enc(inp.slot)}`, { method: "DELETE", scoped: false });
+      this.busy = false;
+      this.note = r.ok ? { tone: "good", text: `${inp.label} removed from this project. Its data is kept.` } : { tone: "fail", text: plainError(r.data?.error ?? r.error, "Couldn't remove it.") };
+      setShared("captain.explorer.rev", Date.now());
+      this.load(cx);
+    });
+    cx.notify();
   }
 
   inputs(c) {
     const st = this.stages;
-    return this.part(c, "inputs", "Inputs", "Each pinned to an exact version, so every experiment trains and is judged on the same data.", [],
-      v_flex().gap(8)
-        .child(h_flex().flex_wrap().items_start().gap(10).children(st.inputs.map((i) => this.inputCard(c, i))))
-        .children((st.notes ?? []).map((n, k) => div().id(`note-${k}`).text_size(12).text_color(c.grey500)
-          .child(n.code === "index-incomplete" ? "Lineage for versions made before this release isn't indexed yet, so a newer version may not show here." : n.text))));
+    const rows = (st.inputs ?? []).map((i) => this.slotOf(i)).sort((a, b) => Number(b.required) - Number(a.required));
+    const none = rows.every((i) => i.status === "missing");
+    return v_flex().gap(10)
+      .when(none && !this.assist, (e) => e.child(h_flex().id("in-empty").p(12).gap(10).items_center().bg(c.surface).border_1().border_color(c.rule)
+        .child(svg(icon("sparkles")).size(16).flex_none().text_color(c.blue))
+        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey900).child("Not sure where your data lives? An agent can look at your connections and folders and propose each input and a training script. You accept, change or skip each one."))
+        .child(Button(c, "in-assist", "Set up with an agent", (_e, cx) => this.startAssist(cx), { kind: "primary", small: true, disabled: this.busy }))))
+      .when(Boolean(this.assist), (e) => e.child(this.assistPanel(c)))
+      .child(h_flex().flex_wrap().items_start().gap(10).children([...rows.map((i) => this.inputCard(c, i)), this.addCard(c)]))
+      .children((st.notes ?? []).map((n, k) => div().id(`note-${k}`).text_size(12).text_color(c.grey500)
+        .child(n.code === "index-incomplete" ? "Lineage for versions made before this release isn't indexed yet, so a newer version may not show here." : n.text)));
+  }
+
+  // ---- set up with an agent ---------------------------------------------------------------------------------------
+
+  startAssist(cx) {
+    if (this.busy) return;
+    this.busy = true; this.note = null;
+    this.assist = { status: "running" };
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/assist`, { body: {}, scoped: false });
+      this.busy = false;
+      if (!r.ok) { this.assist = null; this.note = { tone: "fail", text: plainError(r.data?.error ?? r.error, "The agent couldn't start.") }; cx.notify(); return; }
+      this.assist = { status: "running", ...(r.data ?? {}) };
+      this.pollAssist(cx);
+      cx.notify();
+    });
+  }
+
+  pollAssist(cx) {
+    const pid = this.pid();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(pid)}/assist`, { scoped: false });
+      if (this.pid() !== pid || !this.assist) return;
+      if (r.ok && r.data) this.assist = { ...this.assist, ...r.data, skipped: this.assist.skipped ?? [], done: this.assist.done ?? [] };
+      cx.notify();
+    });
+  }
+
+  acceptSlot(cx, s) {
+    this.act(cx, `/api/projects/${enc(this.pid())}/inputs`, { slot: s.slot, source: s.source, mode: s.mode ?? "snapshot", ...(s.label ? { label: s.label } : {}), ...(s.kinds ? { kinds: s.kinds } : {}) },
+      `${s.label ?? s.slot} set as the agent proposed.`, () => { this.assist.done = [...(this.assist.done ?? []), s.slot]; });
+  }
+
+  acceptAll(cx) {
+    const a = this.assist;
+    const slots = (a.proposal?.slots ?? []).map((s) => s.slot).filter((x) => !(a.skipped ?? []).includes(x) && !(a.done ?? []).includes(x));
+    this.act(cx, `/api/projects/${enc(this.pid())}/assist/accept`, { slots, script: Boolean(a.proposal?.training_script) && !a.scriptSkipped },
+      "The agent's setup is in. Change any input from its card.", () => { this.assist = null; });
+  }
+
+  assistPanel(c) {
+    const a = this.assist;
+    const [name, mark] = AGENTS[a.agent] ?? AGENTS.claude;
+    const prop = a.proposal;
+    const running = !prop && a.status !== "failed";
+    const head = h_flex().gap(8).items_center()
+      .child(svg(mark).size(16).flex_none())
+      .child(div().flex_1().min_w(0).text_size(13).font_semibold().child(running ? `${name} is looking at your connections and folders` : a.status === "failed" ? `${name} couldn't finish` : `${name} proposes`))
+      .when(!running && Boolean(prop), (e) => e.child(Button(c, "assist-accept-all", "Accept the rest", (_e, cx) => this.acceptAll(cx), { kind: "primary", small: true, disabled: this.busy })))
+      .child(div().id("assist-close").cursor_pointer().text_color(c.grey500).on_click((_e, cx) => { this.assist = null; cx.notify(); }).child(svg(icon("x")).size(12)));
+    const slots = (prop?.slots ?? []).filter((s) => !(a.skipped ?? []).includes(s.slot));
+    return v_flex().id("assist").p(12).gap(8).bg(c.surface).border_1().border_color(c.blue)
+      .child(head)
+      .when(running, (e) => e.child(Skeleton(c, 3)))
+      .when(a.status === "failed", (e) => e.child(div().text_size(12).text_color(c.fail).child(plainError(a.error, "Try again, or choose the inputs yourself."))))
+      .children(slots.map((s, i) => {
+        const done = (a.done ?? []).includes(s.slot);
+        return h_flex().id(`assist-${i}`).gap(10).items_center().py(6).border_t(1).border_color(c.rule)
+          .child(svg(icon(done ? "circle-check" : SLOTS[s.slot]?.icon ?? "database")).size(14).flex_none().text_color(done ? c.good : c.grey500))
+          .child(v_flex().flex_1().min_w(0).gap(2)
+            .child(h_flex().gap(8).items_center().min_w(0)
+              .child(div().flex_none().text_size(12.5).font_medium().child(s.label ?? SLOTS[s.slot]?.title ?? s.slot))
+              .child(this.sourceLine(c, { ...s, about: "" }))
+              .when(Boolean(s.mode), (x) => x.child(Badge(c, s.mode, s.mode === "live" ? "blue" : "neutral"))))
+            .when(Boolean(s.why), (x) => x.child(div().text_size(11.5).text_color(c.grey500).child(s.why))))
+          .when(!done, (x) => x
+            .child(Button(c, `assist-${i}-accept`, "Accept", (_e, cx) => this.acceptSlot(cx, s), { small: true, kind: "primary", disabled: this.busy }))
+            .child(Button(c, `assist-${i}-edit`, "Change", () => pickInput(this.pid(), { ...this.slotOf(s), accepts: s.kinds }), { small: true }))
+            .child(Button(c, `assist-${i}-skip`, "Skip", (_e, cx) => { a.skipped = [...(a.skipped ?? []), s.slot]; cx.notify(); }, { small: true, kind: "quiet" })));
+      }))
+      .when(Boolean(prop?.training_script) && !a.scriptSkipped, (e) => {
+        const sc = prop.training_script;
+        return e.child(v_flex().id("assist-script").gap(6).pt(6).border_t(1).border_color(c.rule)
+          .child(h_flex().gap(8).items_center()
+            .child(svg(icon("file-text")).size(14).flex_none().text_color(c.grey500))
+            .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().child(`Training script${sc.path ? `: ${sc.path}` : ""}`))
+            .child(Button(c, "assist-script-skip", "Skip", (_e, cx) => { a.scriptSkipped = true; cx.notify(); }, { small: true, kind: "quiet" })))
+          .when(Boolean(sc.why), (x) => x.child(div().text_size(11.5).text_color(c.grey500).child(sc.why)))
+          .when(Boolean(sc.text), (x) => x.child(div().p(8).bg(c.surface2).font_family(MONO).text_size(11.5).line_height("16px").text_color(c.grey900)
+            .child(String(sc.text).split("\n").slice(0, 8).join("\n") + (String(sc.text).split("\n").length > 8 ? "\n..." : "")))));
+      });
   }
 
   // ---- experiments ----------------------------------------------------------------------------------------------
@@ -286,6 +431,7 @@ export default class ProjectHome extends View {
       ev?.against && !ev.against_is_champion ? `Judged against ${ev.against}, which is no longer the champion. Judge it again to compare with today's.` : null,
       ind?.text ?? null,
       ind?.status === "shared" ? "So the higher score shows the model learned that labeler, not that it ranks better. Judge it on labels from another source to know." : null,
+      ev?.evaluated_on ? `Judged on ${ev.evaluated_on}.` : null,
       ev?.click_grades ? "Click grades only exist for products the old ranker showed, which favors the old ranker." : null,
       ev ? "Not yet confirmed online: an offline result until your team's own A/B or shadow readout agrees." : e.is_champion ? null : "Not judged against the champion yet.",
     ].filter(Boolean);
@@ -312,8 +458,15 @@ export default class ProjectHome extends View {
     const body = !xs.length
       ? v_flex().w_full().border_1().border_color(c.rule).bg(c.surface).child(Empty(c, "No experiments yet", "An experiment is one trained version of your ranker. Train one from the pinned inputs, or bring a version trained in MLflow or your own registry."))
       : v_flex().w_full().border_1().border_color(c.rule).bg(c.surface).children(xs.map((e, i) => this.expRow(c, e, i)));
-    const hint = !champ && xs.length ? "Make one experiment the champion. Every other one is judged against it on the sealed holdout." : "Each one is judged against the champion on the sealed holdout and the pinned labels.";
-    return this.part(c, "experiments", "Experiments", hint, actions, body);
+    const evalSet = (this.stages?.inputs ?? []).find((i) => i.slot === "holdout");
+    const noEval = !evalSet || evalSet.status === "missing";
+    const hint = noEval ? "Experiments train without one, but nothing judges them until there's an evaluation set."
+      : !champ && xs.length ? "Make one experiment the champion. Every other one is judged against it." : "Each one is judged against the champion on the evaluation set.";
+    const banner = noEval ? h_flex().id("exp-no-eval").p(10).gap(10).items_center().bg(c.surface).border_1().border_color(c.rule)
+      .child(svg(icon("square-check")).size(14).flex_none().text_color(c.grey500))
+      .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child("No evaluation set yet. Add queries kept back from training, with labels that grade them."))
+      .child(Button(c, "exp-add-eval", "Add an evaluation set", () => pickInput(this.pid(), { slot: "holdout", label: "Evaluation set", accepts: ["queries"], custom: !evalSet }), { small: true })) : null;
+    return this.part(c, "experiments", "Train and compare", hint, actions, v_flex().gap(8).when(Boolean(banner), (e) => e.child(banner)).child(body));
   }
 
   // ---- ship -----------------------------------------------------------------------------------------------------
@@ -484,8 +637,10 @@ export default class ProjectHome extends View {
   // ---- frame ----------------------------------------------------------------------------------------------------
 
   part(c, key, title, sub, actions, body) {
+    const n = { recipe: 1, inputs: 2, experiments: 3, ship: 4 }[key];
     return v_flex().id(`part-${key}`).w_full().gap(10)
       .child(h_flex().gap(10).items_center()
+        .when(Boolean(n), (e) => e.child(div().size(22).flex_none().flex().items_center().justify_center().rounded_full().bg(c.navy).text_color(c.surface).text_size(11.5).font_semibold().child(String(n))))
         .child(v_flex().flex_1().min_w(0).gap(1)
           .child(div().text_size(15).font_semibold().child(title))
           .child(div().truncate().text_size(12).text_color(c.grey500).child(sub)))
@@ -558,6 +713,64 @@ export default class ProjectHome extends View {
       }, { small: true, kind: "primary" }))));
   }
 
+  /** 1. What you're building: the recipe that decided the inputs. */
+  recipe(c) {
+    const r = this.stages?.recipe;
+    const title = r?.title ?? "Search ranking";
+    return this.part(c, "recipe", "What you're building", "It decided which inputs the project asks for. Add or remove inputs as you need.", [],
+      h_flex().id("recipe-card").p(12).gap(10).items_center().bg(c.surface).border_1().border_color(c.rule)
+        .child(div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon(RECIPE_ICONS[r?.id] ?? "workflow")).size(14)))
+        .child(v_flex().flex_1().min_w(0).gap(1)
+          .child(div().text_size(13).font_semibold().child(title))
+          .child(div().truncate().text_size(12).text_color(c.grey500).child(r?.about ?? (r ? "" : "Made before projects had recipes: its inputs are the original five.")))));
+  }
+
+  /** What to do next, in one line with its button: the services' own next step, else worked out from the stages. */
+  nextStep() {
+    const st = this.stages, ex = this.exps;
+    if (st?.next?.text) return { text: st.next.text, action: st.next };
+    const req = (st?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.required && i.status === "missing");
+    if (req) return { text: `Choose ${req.noun}: the project can't train without it.`, label: `Choose ${req.noun}`, run: () => pickInput(this.pid(), req) };
+    const xs = ex?.experiments ?? [];
+    if (!xs.length) return { text: "Train a first experiment on these inputs, or import one you trained elsewhere.", label: "New experiment", run: () => form("experiment", { ...this.values() }) };
+    if (!ex.champion) return { text: "Make one experiment the champion, so the others are judged against it.", label: null };
+    const pending = xs.find((e) => !e.is_champion && !e.evaluation && e.status !== "backtesting");
+    if (pending) return { text: `Judge ${parseRef(pending.pipeline).name} against the champion.`, label: "Judge it", run: (cx) => this.backtest(cx, pending) };
+    return { text: "Publish the champion, or train another experiment to beat it.", label: null };
+  }
+
+  nextLine(c) {
+    const n = this.nextStep();
+    const runIt = n.run ?? (n.action ? (cx) => this.runAction(cx, n.action) : null);
+    return h_flex().id("ph-next").px(12).py(8).gap(10).items_center().bg(c.blueLight)
+      .child(svg(icon("chevron-right")).size(14).flex_none().text_color(c.blue))
+      .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.navy).child(`Next: ${n.text}`))
+      .when(Boolean(n.label ?? n.action?.label) && Boolean(runIt), (e) => e.child(Button(c, "ph-next-go", n.label ?? n.action.label, (_e, cx) => runIt(cx), { kind: "primary", small: true })));
+  }
+
+  /** A next step the services named: {action, slot?}. */
+  runAction(cx, a) {
+    const inp = (this.stages?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === a.slot);
+    if ((a.action === "pin" || a.action === "choose-input") && inp) return pickInput(this.pid(), inp);
+    if (a.action === "add-evaluation") return pickInput(this.pid(), { slot: "holdout", label: "Evaluation set", accepts: ["queries"], custom: !inp });
+    if (a.action === "new-experiment") return form("experiment", { ...this.values() });
+    if (a.action === "assist") return this.startAssist(cx);
+    const e = (this.exps?.experiments ?? []).find((x) => x.id === a.experiment);
+    if (a.action === "backtest" && e) return this.backtest(cx, e);
+    if (a.action === "make-champion" && e) { this.open = e.id; cx.notify(); }
+  }
+
+  /** The header's menu: what's rarely needed. */
+  moreMenu(c) {
+    const trigger = div().id("ph-more").h(26).px(8).flex().items_center().cursor_pointer().text_color(c.grey900).border_1().border_color(c.grey300)
+      .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => { this.menuOpen = !this.menuOpen; cx.notify(); }).child("More");
+    return Popup.new("ph-more-pop", trigger).anchor("bottom_right")
+      .when(Boolean(this.menuOpen), (e) => e.content(v_flex().id("ph-more-list").w(200).py(4).bg(c.surface).border_1().border_color(c.grey300)
+        .child(h_flex().id("ph-delete").h(30).px(10).gap(8).items_center().cursor_pointer().text_size(12.5).text_color(c.fail).hover((s) => s.bg(c.surface2))
+          .on_click((_e, cx) => { this.menuOpen = false; cx.notify(); const p = this.project(); form("delete-project", { project: this.pid(), name: p?.name ?? this.pid() }); })
+          .child(svg(icon("trash-2")).size(13)).child("Delete project"))));
+  }
+
   list(c) {
     const ps = this.projects;
     if (this.listProblem) return Problem(c, this.listProblem, (cx) => { this.listProblem = null; this.load(cx); });
@@ -582,7 +795,9 @@ export default class ProjectHome extends View {
         .child(div().text_size(12).text_color(c.grey500).truncate().child(p?.description || (pid ? "Pinned inputs, experiments against the champion, and where it ships." : this.projects && !this.projects.length ? "Start with a project." : "Pick a project to work on."))))
       .child(Button(c, "ph-workflows", "Workflows", () => go("runs", { tab: "workflows" }), { small: true, kind: "quiet" }))
       .when(Boolean(pid), (e) => e.child(Button(c, "ph-all", "All projects", (_e, cx) => this.allProjects(cx), { small: true, kind: "quiet" })))
-      .child(Button(c, "ph-new", "New project", () => form("project"), { small: true }));
+      .when(Boolean(pid) && Boolean(this.stages), (e) => e.child(Button(c, "ph-assist", "Set up with an agent", (_e, cx) => this.startAssist(cx), { small: true, disabled: this.busy || Boolean(this.assist) })))
+      .child(Button(c, "ph-new", "New project", () => form("project"), { small: true }))
+      .when(Boolean(pid), (e) => e.child(this.moreMenu(c)));
     let body;
     if (!pid) body = this.list(c);
     else if (this.problem) body = Problem(c, this.problem, (cx) => this.load(cx));
@@ -590,7 +805,9 @@ export default class ProjectHome extends View {
     else body = v_flex().gap(22)
       .when(Boolean(this.note), (e) => e.child(div().id("ph-note").px(12).py(8).text_size(12.5).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)
         .text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
-      .child(this.inputs(c))
+      .child(this.nextLine(c))
+      .child(this.recipe(c))
+      .child(this.part(c, "inputs", "Inputs", "Where the training data comes from: a connection, a folder here, or a dataset already in Captain.", [], this.inputs(c)))
       .child(this.experiments(c))
       .child(this.ship(c))
       .child(this.everythingPart(c));

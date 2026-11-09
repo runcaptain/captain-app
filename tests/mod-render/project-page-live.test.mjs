@@ -52,7 +52,7 @@ const until = async (ok, what, n = 80) => {
   assert.ok(ok(h.text()), `${what}: ${h.text().slice(0, 1500)}`);
 };
 
-await until((t) => t.includes('Experiments') && t.includes('demo-tuned'), 'page loads');
+await until((t) => t.includes('Train and compare') && t.includes('demo-tuned'), 'page loads');
 let t = h.text();
 // Inputs: each pinned version, one action each.
 for (const s of ['Catalog', 'Events', 'Queries', 'Labels', 'Sealed holdout']) assert.ok(t.includes(s), `input card ${s}`);
