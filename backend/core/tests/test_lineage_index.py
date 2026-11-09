@@ -89,3 +89,25 @@ def test_trained_on_and_parents_from_the_trainer_contract():
     m = SimpleNamespace(train_inputs=[{"ref": "cat@v1", "kind": "catalog"}, {"kind": "judgments"}], parents=["a@v1"])
     assert LI._training_refs(m) == ["cat@v1"]
     assert LI._training_refs(SimpleNamespace()) == []
+
+
+def test_outside_parents_are_unknown_nodes_without_a_lookup(tmp_path):
+    from types import SimpleNamespace
+
+    c = init_workspace("t", str(tmp_path / "b"))
+    a = ops.pipeline_publish(c, {"name": "base", "engine": "http", "spec": {"url": "https://x/rank"}})
+    m = ops.pipeline_publish(c, {"name": "imported", "engine": "http", "spec": {"url": "https://x/rank"}}, dry_run=True)
+    m = m.model_copy(update={"version": 1})
+    calls = []
+    real = c.registry.versions
+    c.registry.versions = lambda *x: (calls.append(x), real(*x))[1]
+    fake = SimpleNamespace(**{k: getattr(m, k) for k in ("kind", "name", "version", "id", "catalog", "tags", "registry_ref")},
+                           parents=["mlflow-run:abc123", "registry:outdoor@v1", ops.ref(a)], train_inputs=[])
+    edges, labels = LI.derive(c.registry, fake)
+    c.registry.versions = real
+    srcs = {e["src"] for e in edges if e["relation"] == "parent"}
+    assert srcs == {"unknown:mlflow-run:abc123", "unknown:registry:outdoor@v1", "pipeline:base@v1"}
+    assert labels["unknown:mlflow-run:abc123"] == "unknown source: mlflow-run:abc123"
+    assert calls == []  # exact refs are a direct get, outside ids aren't looked up at all
+    g = LI.graph_from([{"from": e["src"], "to": e["dst"], "relation": e["relation"], "labels": labels} for e in edges])
+    assert {n["kind"] for n in g["nodes"] if n["id"].startswith("unknown:")} == {"unknown"}

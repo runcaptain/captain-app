@@ -123,7 +123,12 @@ def derive(reg, m) -> tuple[list[dict], dict[str, str]]:
         if tags.get("retrained_from"):
             src("pipeline", tags["retrained_from"], "retrained_from")
         for par in getattr(m, "parents", None) or []:  # full refs, from the trainer contract
-            if isinstance(par, str) and par and par != tags.get("retrained_from"):
+            if not isinstance(par, str) or not par or par == tags.get("retrained_from"):
+                continue
+            if ":" in par:  # an outside id (mlflow-run:<id>, registry:<brand>@v1): never looked up in the workspace
+                labels[f"unknown:{par}"] = f"unknown source: {par}"
+                edges.append({"src": f"unknown:{par}", "dst": me, "relation": "parent"})
+            else:
                 src("pipeline", par, "parent")
         if m.registry_ref:
             edges.append({"src": f"registry:{m.registry_ref}", "dst": me, "relation": "produced_by"})
