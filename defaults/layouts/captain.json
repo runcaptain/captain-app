@@ -54,9 +54,16 @@
     {
       "id": "sections",
       "type": "stack",
-      "active": "investigations",
+      "active": "project",
       "min": 520,
       "children": [
+        {
+          "id": "project",
+          "type": "block",
+          "content": {
+            "mod": "captain-project"
+          }
+        },
         {
           "id": "investigations",
           "type": "block",
@@ -99,7 +106,13 @@
             "mod": "captain-engine"
           }
         },
-        { "id": "project", "type": "block", "content": { "mod": "captain-project" } }
+        {
+          "id": "team",
+          "type": "block",
+          "content": {
+            "mod": "captain-team"
+          }
+        }
       ]
     },
     {

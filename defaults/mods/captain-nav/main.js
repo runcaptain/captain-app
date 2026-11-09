@@ -27,11 +27,15 @@ import { Explorer } from "./explorer.js";
 import { TeamViews } from "./teamviews.js";
 
 const ITEMS = [
+  // Home: the current project's page (captain-project), or New project when there is none.
+  { id: "project", label: "Home", icon: icon("house") },
   { id: "investigations", label: "Investigations", icon: "search", badge: "/api/proposals?status=proposed", badgeLabel: "proposals to review" },
   { id: "data", label: "Data and signals", icon: "database" },
   { id: "runs", label: "Runs", icon: "play" },
   { id: "comparisons", label: "Comparisons", icon: "git-compare" },
   { id: "handoff", label: "Handoff", icon: "send" },
+  // Team collaboration was only in the palette, so people who built it couldn't find it (Edgar, 2026-11-09).
+  { id: "team", label: "Team", icon: icon("users") },
 ];
 const WIDE = 216, RAIL = 52;
 const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
@@ -83,6 +87,7 @@ export function staticEntries(sections) {
     { name: "captain-nav.theme-system", args: {}, group: "Captain", icon: icon("monitor"), title: "Match the system appearance", words: "appearance theme system auto" },
     { group: "Captain", icon: icon("folder-open"), title: "New workspace...", words: "workspace storage folder bucket s3 gcs azure create start import drop", overlay: SETUP },
     { name: "app.welcome", args: {}, group: "Captain", icon: icon("compass"), title: "Show the Captain tour", words: "onboarding welcome checklist start setup" },
+    { group: "Captain", icon: icon("workflow"), title: "Open workflows", words: "workflow schedule nightly steps chain automate", overlay: go("runs", { tab: "workflows" }) },
     { group: "Captain", icon: icon("users"), title: "Team collaboration", words: "company sync login shared records drafts", overlay: { mod: "captain-team", kind: "dialog", width: 960, height: 680 } },
     { group: "Captain", icon: icon("cloud"), title: "Cloud and compute", words: "aws gcp azure login profile region compute", overlay: { mod: "captain-cloud", kind: "dialog", width: 760, height: 640 } },
     { group: "Captain", icon: icon("terminal"), title: "Run a cst command...", words: "cli advanced power command", overlay: { mod: "captain-commands", kind: "dialog", width: 560, height: 560, props: { menu: "all" } } },

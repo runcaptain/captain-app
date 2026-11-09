@@ -150,6 +150,9 @@ assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections'
 const { default: ProjectMod } = await import(path.join(await copy('captain-project'), 'main.js'));
 const home = harness(ProjectMod);
 await home.start();
+// The project page leads with Inputs, Experiments and Ship; what's in the project is one click below.
+await until(home, () => home.text().includes('Everything in this project'), 'the project page loads');
+await home.click('ph-everything');
 await until(home, () => home.text().includes('demo-catalog'), 'the home lists its dataset');
 for (const thing of ['demo-tuned@v1', 'demo-tuned-vs-bm25', 'DATASETS', 'RECENT RUNS', 'PIPELINES', 'MODELS', 'NOTEBOOKS']) assert.ok(home.text().includes(thing), `the home shows ${thing}: ${home.text().slice(0, 500)}`);
 await home.click('ph-ds-0');
