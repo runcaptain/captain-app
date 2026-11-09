@@ -574,7 +574,10 @@ export default class CaptainImport extends View {
       .child(div().text_size(11.5).line_height("16px").text_color(c.grey900).child(line));
     return h_flex().id("input-mode").gap(8).items_start()
       .child(card("snapshot", "Take a snapshot now", "Saved once as a dataset. Every run uses exactly these rows until you take another.", this.mode === "snapshot"))
-      .child(card("live", "Keep it live", "Each run reads it again and records what it read, so results can move as the data does.", this.mode === "live"));
+      .child(card("live", "Keep it live", "Each run reads it again and records what it read, so results can move as the data does.", this.mode === "live"))
+      // The live record is the query and its row count, so a change that keeps the count slips by (flow-trainer).
+      .when(this.mode === "live" && this.inTab === "connection", (e) => e.child(div().w(240).flex_none().text_size(11.5).line_height("16px").text_color(c.grey500)
+        .child("Captain notices a change by the query and its row count. If rows can change without the count changing, take a snapshot.")));
   }
 
   /** The three places an input can come from. */

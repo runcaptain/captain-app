@@ -146,7 +146,10 @@ export default class ProjectHome extends View {
       // The newest proposal still waiting, from the agent this page started (or any agent): shown until it's handled.
       if (pr?.ok && Array.isArray(pr.data)) {
         const open = pr.data.filter((x) => x.status === "proposed").sort((a, b) => String(b.at).localeCompare(String(a.at)))[0] ?? null;
-        if (open && (!this.assist || this.assist.proposal?.id !== open.id)) this.assist = { status: "proposed", proposal: open, agent: open.agent, skipped: [], done: [] };
+        if (open && (!this.assist || this.assist.proposal?.id !== open.id)) {
+          this.assist = { status: "proposed", proposal: open, agent: open.agent, skipped: [], done: [] };
+          if (open.trainer?.script) this.loadScript(cx, open);
+        }
         else if (!open && this.assist?.proposal) this.assist = null;
       }
       if (seq !== this.seq) return;
@@ -217,6 +220,8 @@ export default class ProjectHome extends View {
     const meta = SLOTS[inp.role ?? inp.slot] ?? SLOTS[inp.slot] ?? {};
     const held = this.state?.inputs?.[inp.slot];
     if (held && !inp.source) inp = { ...inp, source: held.source, mode: inp.mode ?? held.mode, from: inp.from ?? held.from, as_of: inp.as_of ?? held.as_of ?? held.pinned_at };
+    const lr = inp.last_read ?? held?.last_read;
+    if (lr?.at) inp = { ...inp, last_read_at: lr.at, rows: lr.rows ?? inp.rows };
     // Projects from before recipes send no "required": the catalog is the one input every ranker needs.
     return { ...inp, label: inp.label ?? meta.title ?? inp.slot, required: inp.required ?? inp.slot === "catalog", about: inp.why ?? inp.about ?? meta.about ?? "",
       empty: inp.status === "missing" || inp.status === "empty",
@@ -264,7 +269,8 @@ export default class ProjectHome extends View {
       .child(this.sourceLine(c, inp))
       .when(!missing, (e) => e.child(h_flex().gap(6).items_center().min_w(0)
         .child(Badge(c, live ? "live" : "snapshot", live ? "blue" : "neutral"))
-        .child(div().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(inp.as_of ? `${live ? "last read" : "taken"} ${day(inp.as_of)}${inp.rows != null ? `, ${int(inp.rows)} rows` : ""}` : live ? "read on the next run" : ""))
+        .child(div().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(inp.last_read_at ? `last read ${day(inp.last_read_at)}${inp.rows != null ? `, ${int(inp.rows)} rows` : ""}`
+          : inp.as_of ? `${live ? "chosen" : "taken"} ${day(inp.as_of)}${inp.rows != null ? `, ${int(inp.rows)} rows` : ""}` : live ? "read on the next run" : ""))
         .when(r.version != null && !live, (x) => x.child(div().flex_none().text_size(10.5).font_family(MONO).text_color(c.grey500).child(`v${r.version}`)))))
       .children((inp.info ?? []).slice(0, 2).map((i, k) => h_flex().id(`${id}-info-${k}`).gap(6).items_start()
         .child(svg(icon(i.code === "newer-version" ? "sparkles" : "triangle-alert")).size(12).mt(2).flex_none().text_color(i.code === "newer-version" ? c.blue : c.warn))
@@ -329,6 +335,14 @@ export default class ProjectHome extends View {
   }
 
   pollAssist(cx) { this.load(cx); }
+
+  /** The proposed training script's text, to read before accepting. */
+  loadScript(cx, prop) {
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/proposals/${enc(prop.id)}/script`, { scoped: false });
+      if (r.ok && this.assist?.proposal?.id === prop.id) { this.assist.script = r.data; cx.notify(); }
+    });
+  }
 
   /** Accept some of a proposal (or all). Datasets are pinned at once; a connection or a folder comes back to be asked
    *  snapshot or live, like any input. */
@@ -403,7 +417,9 @@ export default class ProjectHome extends View {
             .child(svg(icon("file-text")).size(14).flex_none().text_color(c.grey500))
             .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().child(tr.script?.path ? `Training script: ${tr.script.path}` : "Training command")))
           .when(Boolean(tr.command), (x) => x.child(div().px(8).py(4).bg(c.surface2).font_family(MONO).text_size(11.5).text_color(c.grey900).truncate().child(tr.command)))
-          .when(Boolean(tr.why), (x) => x.child(div().text_size(11.5).text_color(c.grey500).child(tr.why))));
+          .when(Boolean(tr.why), (x) => x.child(div().text_size(11.5).text_color(c.grey500).child(tr.why)))
+          .when(Boolean(a.script?.text), (x) => x.child(div().id("assist-script-text").p(8).max_h(160).overflow_y_scrollbar().bg(c.surface2).font_family(MONO).text_size(11.5).line_height("16px").text_color(c.grey900)
+            .child(String(a.script.text).split("\n").slice(0, 40).join("\n")))));
       })
       .children((a.toConnect ?? []).map((t, i) => h_flex().id(`assist-connect-${i}`).gap(8).items_center().py(6).border_t(1).border_color(c.rule)
         .child(svg(icon("server")).size(14).flex_none().text_color(c.blue))
@@ -780,7 +796,11 @@ export default class ProjectHome extends View {
     /** What to do next, in one line with its button: the services' own next step, else worked out from the stages. */
   nextStep() {
     const st = this.stages, ex = this.exps;
-    if (st?.next?.text) return { text: st.next.text, action: st.next };
+    if (st?.next?.text) {
+      const slot = (st.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === st.next.slot);
+      const label = { "set-input": slot ? `Choose ${slot.noun}` : "Choose an input", "add-evaluation": "Add an evaluation set", "new-experiment": "New experiment", backtest: "Judge it" }[st.next.action] ?? null;
+      return { text: st.next.text, label, action: st.next };
+    }
     const req = (st?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.required && i.empty);
     if (req) return { text: `Choose ${req.noun}: the project can't train without it.`, label: `Choose ${req.noun}`, run: () => pickInput(this.pid(), req) };
     const xs = ex?.experiments ?? [];
@@ -804,8 +824,11 @@ export default class ProjectHome extends View {
   /** A next step the services named: {action, slot?}. */
   runAction(cx, a) {
     const inp = (this.stages?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === a.slot);
-    if ((a.action === "pin" || a.action === "choose-input") && inp) return pickInput(this.pid(), inp);
-    if (a.action === "add-evaluation") return pickInput(this.pid(), { slot: "holdout", label: "Evaluation set", accepts: ["queries"], custom: !inp });
+    if ((a.action === "pin" || a.action === "set-input") && inp) return pickInput(this.pid(), inp);
+    if (a.action === "add-evaluation") {
+      const ev = this.stages?.evaluation, miss = (this.stages?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === ev?.missing?.[0]);
+      return miss ? pickInput(this.pid(), miss) : form("add-input", { project: this.pid(), label: "Evaluation set", kind: "queries", why: "Queries kept back from training, to judge experiments" });
+    }
     if (a.action === "new-experiment") return form("experiment", { ...this.values() });
     if (a.action === "assist") return this.startAssist(cx);
     const e = (this.exps?.experiments ?? []).find((x) => x.id === a.experiment);

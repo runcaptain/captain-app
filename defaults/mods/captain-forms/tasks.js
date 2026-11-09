@@ -183,7 +183,7 @@ export const TASKS = [
         return { ok: false, error: `${hs.length === 1 ? `${hs[0].pipeline} was handed off to ${hs[0].environment}` : `${hs.length} handoffs were made`} and no deployment is recorded yet. Record it in Handoff first, or turn on Delete it even with a handoff waiting.` };
       }
       const k = r.data?.kept ?? {};
-      const kept = [["datasets", k.datasets], ["pipelines", k.pipelines], ["backtests", k.backtests], ["models", k.models]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`).join(", ");
+      const kept = [["datasets", k.datasets], ["pipelines", k.pipelines], ["runs", k.backtests], ["models", k.models], ["notebooks", k.notebooks]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`).join(", ");
       const done = ok(r, `Deleted ${v.name}. Kept ${kept || "its datasets, models and runs"}.`);
       if (done.ok) {
         if (shared("captain.scope")?.kind === "project" && shared("captain.scope")?.id === v.project) setShared("captain.scope", null);
