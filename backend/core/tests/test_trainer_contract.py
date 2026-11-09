@@ -67,8 +67,12 @@ def test_byo_trainer_gets_exact_refs_and_as_of_and_metrics_are_stored(ws):
 def test_explicit_inputs_replace_the_spec_and_as_of_fills_gaps(ws):
     r = RT.retrain(ws, "ltr", local_exec=True, inputs=["labels=shop-judgments@v1"], as_of="2026-09-30")
     new = ws.registry.load("pipeline", "ltr", r["version"])
-    assert new.train_inputs == [{"ref": "shop-judgments@v1", "kind": "judgments", "role": "labels",
-                                 "uri": new.train_inputs[0]["uri"], "label_source": None, "as_of": "2026-09-30"}]
+    assert len(new.train_inputs) == 1
+    got = new.train_inputs[0]
+    assert {k: got[k] for k in ("ref", "kind", "role", "label_source", "as_of", "rows", "mode")} == {
+        "ref": "shop-judgments@v1", "kind": "judgments", "role": "labels", "label_source": None, "as_of": "2026-09-30",
+        "rows": 1, "mode": "snapshot"}
+    assert got["fingerprint"].startswith("sha256:") and got["read_at"]  # what was read, and when
     with pytest.raises(Exception, match="no-such"):
         RT.retrain(ws, "ltr", local_exec=True, inputs=["no-such@v1"])
 

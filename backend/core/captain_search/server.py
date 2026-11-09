@@ -512,9 +512,43 @@ def projects_list():
 
 @app.post("/api/projects", dependencies=A)
 def project_create(body: dict):
+    """{name, description?, brands?, kind?}. With kind (a recipe id, GET /api/recipes) the project starts with that
+    recipe's input slots."""
+    from . import project_state as PS
+    from . import projects as PR
+    from . import recipes as RC
+
+    c = ctx()
+    kind = body.get("kind") or None
+    if kind:
+        RC.get(c, kind)  # an unknown kind fails before the project exists
+    p = PR.create(c, str(body.get("name", "")), body.get("description", ""), body.get("brands"))
+    if kind:
+        PS.set_kind(c, p["id"], kind)
+    return {**p, "kind": kind}
+
+
+@app.get("/api/recipes", dependencies=A)
+def recipes_list():
+    """What a project can build: built-in recipes, the workspace's recipes/ and the repo's captain/recipes/."""
+    from . import recipes as RC
+
+    rs, errors = RC.load(ctx())
+    return {"recipes": RC.listing(ctx()), "errors": errors}
+
+
+@app.delete("/api/projects/{pid}", dependencies=A)
+def project_delete(pid: str, force: bool = False):
+    """Delete a project and its state. Datasets, pipelines, models and runs stay. 409 with the handoffs when a live
+    handoff of its champion or experiments waits for a deployment, unless force=true."""
     from . import projects as PR
 
-    return PR.create(ctx(), str(body.get("name", "")), body.get("description", ""), body.get("brands"))
+    try:
+        return PR.delete(ctx(), pid, force=force)
+    except ValueError as e:
+        if getattr(e, "handoffs", None):
+            return JSONResponse({"error": str(e), "handoffs": e.handoffs}, status_code=409)
+        raise
 
 
 @app.post("/api/projects/assign", dependencies=A)
@@ -607,12 +641,13 @@ def project_stages(pid: str):
 
 @app.post("/api/projects/{pid}/pin", dependencies=A)
 def project_pin(pid: str, body: dict):
-    """{catalog?, events?, queries?, labels?, holdout?, arch?, brand?, registry?, dry_run?}. A dataset name alone pins
-    its newest version; "" or null unpins."""
+    """{slots?: {slot: ref}, catalog?, events?, queries?, labels?, holdout?, arch?, brand?, registry?, dry_run?}. A
+    dataset name alone pins its newest version; "" or null unpins."""
     from . import project_state as PS
 
     c, dry = ctx(), bool(body.get("dry_run"))
     refs = {k: body[k] for k in PS.SLOTS if k in body}
+    refs.update(body.get("slots") or {})  # {slot: ref} for any slot, including the project's own
     out = PS.pin(c, pid, refs, dry_run=dry) if refs else {"project": pid, "changed": {}}
     if any(k in body for k in ("arch", "brand", "registry")):
         out["registry"] = PS.set_registry(c, pid, body.get("arch"), body.get("brand"), body.get("registry"), dry_run=dry)["registry"]
@@ -696,6 +731,128 @@ def project_experiment_backtest(pid: str, eid: str, body: dict | None = None):
     rid = lv.id if lv else live_id
     JOBS[jid]["live"] = rid
     return {"job": jid, "live": rid, "experiment": plan["experiment"], "backtest": plan["backtest"]}
+
+
+@app.post("/api/projects/{pid}/kind", dependencies=A)
+def project_kind(pid: str, body: dict):
+    """{kind}: start from a recipe's slots and evaluation. Inputs whose slot id is still there are kept."""
+    from . import project_state as PS
+
+    return PS.set_kind(ctx(), pid, str(body.get("kind") or ""))
+
+
+@app.post("/api/projects/{pid}/slots", dependencies=A)
+def project_slot_add(pid: str, body: dict):
+    """{id?, label, role?, accepts?, required?, why?}: an input slot of the project's own."""
+    from . import project_state as PS
+
+    return PS.slot_add(ctx(), pid, body)
+
+
+@app.put("/api/projects/{pid}/slots/{slot}", dependencies=A)
+def project_slot_update(pid: str, slot: str, body: dict):
+    from . import project_state as PS
+
+    return PS.slot_update(ctx(), pid, slot, body)
+
+
+@app.delete("/api/projects/{pid}/slots/{slot}", dependencies=A)
+def project_slot_remove(pid: str, slot: str):
+    """Remove an optional slot. A required one is refused: make it optional first."""
+    from . import project_state as PS
+
+    return PS.slot_remove(ctx(), pid, slot)
+
+
+@app.put("/api/projects/{pid}/evaluation", dependencies=A)
+def project_evaluation(pid: str, body: dict):
+    """{method: auto | holdout | logged-clicks | trainer-reported | none}."""
+    from . import project_state as PS
+
+    return PS.set_evaluation(ctx(), pid, str(body.get("method") or ""))
+
+
+@app.get("/api/sources", dependencies=A)
+def sources_list():
+    """What a project input can come from: connections and what each offers, datasets, and local folders that hold
+    table files. Reads cached facts only."""
+    from . import project_inputs as PI
+
+    return PI.sources(ctx())
+
+
+@app.get("/api/sources/{conn}/events", dependencies=A)
+def source_events(conn: str, days: int = 30):
+    """PostHog or Google Analytics event names with their counts over the last `days` days."""
+    from . import project_inputs as PI
+
+    return PI.event_types(ctx(), conn, days)
+
+
+@app.post("/api/projects/{pid}/inputs/{slot}", dependencies=A)
+def project_input_set(pid: str, slot: str, body: dict):
+    """{source: {from: connection|local|dataset, ...}, mode: snapshot|live, as_of?, kind?}. A snapshot from a connection
+    or a local path runs as a job (its result is {slot, input}). Everything else answers now."""
+    from . import project_inputs as PI
+    from . import project_state as PS
+
+    c = ctx()
+    src, mode = body.get("source") or {}, body.get("mode")
+    if mode not in PI.MODES:
+        raise HTTPException(400, "choose snapshot (copy the rows now) or live (read the source at each run)")
+    PS.slot(PS.get(c, pid), slot)  # an unknown project or slot fails now, not inside the job
+    if PI.needs_job(src, mode):
+        jid = _job(lambda p: PI.set_input(c, pid, slot, src, mode, body.get("as_of"), body.get("kind"), p),
+                   f"Take a snapshot for {pid}'s {slot} input")
+        return {"slot": slot, "mode": mode, "job": jid, "input": None}
+    r = PI.set_input(c, pid, slot, src, mode, body.get("as_of"), body.get("kind"))
+    return {"slot": slot, "mode": mode, "job": None, "input": r["input"]}
+
+
+@app.delete("/api/projects/{pid}/inputs/{slot}", dependencies=A)
+def project_input_clear(pid: str, slot: str):
+    from . import project_inputs as PI
+
+    return PI.clear_input(ctx(), pid, slot)
+
+
+@app.post("/api/projects/{pid}/assist", dependencies=A)
+def project_assist(pid: str, body: dict | None = None):
+    """{ask?}: a prompt for a coding agent to propose inputs and a trainer. The app opens the agent with it. Nothing
+    is changed until a person accepts the proposal."""
+    from . import project_assist as PA
+
+    return PA.assist(ctx(), pid, str((body or {}).get("ask") or ""))
+
+
+@app.get("/api/projects/{pid}/proposals", dependencies=A)
+def project_proposals(pid: str):
+    from . import project_assist as PA
+
+    return PA.listing(ctx(), pid)
+
+
+@app.get("/api/projects/{pid}/proposals/{prop}/script", dependencies=A)
+def project_proposal_script(pid: str, prop: str):
+    """The proposal's training script as text: {path, key, text}."""
+    from . import project_assist as PA
+
+    return PA.script(ctx(), pid, prop)
+
+
+@app.post("/api/projects/{pid}/proposals/{prop}/accept", dependencies=A)
+def project_proposal_accept(pid: str, prop: str, body: dict | None = None):
+    """{only?: [slot ids, "trainer", "evaluation"]}. Returns {proposal, state, applied, to_connect, trainer}."""
+    from . import project_assist as PA
+
+    return PA.accept(ctx(), pid, prop, (body or {}).get("only") or None)
+
+
+@app.post("/api/projects/{pid}/proposals/{prop}/reject", dependencies=A)
+def project_proposal_reject(pid: str, prop: str, body: dict | None = None):
+    from . import project_assist as PA
+
+    return PA.reject(ctx(), pid, prop, str((body or {}).get("note") or ""))
 
 
 @app.get("/api/connections/kinds", dependencies=A)
@@ -1307,7 +1464,13 @@ def pipeline_retrain(name: str, body: dict | None = None):
     def go(p):
         try:
             b = body or {}
-            r = RT.retrain(c, name, compute, local_exec=True, live=lv, live_id=live_id, inputs=b.get("inputs") or None,
+            inputs = b.get("inputs") or None
+            if inputs is None and b.get("project"):
+                # From a project page: train on the project's own inputs, live ones read again now.
+                from . import project_inputs as PI
+
+                inputs = PI.run_inputs(c, b["project"]) or None
+            r = RT.retrain(c, name, compute, local_exec=True, live=lv, live_id=live_id, inputs=inputs,
                            params=b.get("params") or None, as_of=b.get("as_of") or None)
         except Exception as e:
             if lv:

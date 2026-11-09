@@ -634,23 +634,31 @@ inside a workspace. Membership is organization only, and nothing moves or is cop
 - or a dataset's folder, or a dataset, pipeline or backtest name, starts with the project's id.
 
 Routes:
-- `GET /api/projects` lists projects with counts per kind. `POST /api/projects {name, description?, brands?}` makes
-  one. `PUT /api/projects/{id} {name?, description?, archived?, brands?}` changes one.
+- `GET /api/projects` lists projects with counts per kind. `POST /api/projects {name, description?, brands?, kind?}`
+  makes one. With `kind` (a recipe, below) it starts with that recipe's input slots. `PUT /api/projects/{id} {name?,
+  description?, archived?, brands?}` changes one. `DELETE /api/projects/{id}?force=false` deletes one (below).
 - `GET /api/projects/{id}` lists everything in it, by kind, including registry models.
 - `GET /api/projects/{id}/lineage` returns the project's models, their parents and architectures, the pipelines
   serving them, and the backtests that compared those pipelines.
 - `GET /api/projects/{id}/state` returns the state doc (`projects/<id>/state.yaml`, compare-and-swap):
-  `{project, pins:{catalog, events, queries, labels, holdout}, experiments:[...], champion, champion_history,
-  registry:{arch?, brand?, uri?}}`. Pins are exact refs (`name@vN`, the holdout `name@vN:holdout`).
-- `POST /api/projects/{id}/pin {catalog?, events?, queries?, labels?, holdout?, arch?, brand?, registry?, dry_run?}`
+  `{project, kind, recipe:{id, label, source}, slots:[slot], inputs:{slot: input}, pins:{slot: ref|null},
+  evaluation:{method}, experiments:[...], champion, champion_history, registry:{arch?, brand?, uri?},
+  trainer_suggestion}`. Pins are exact refs (`name@vN`, a holdout `name@vN:holdout`). Projects made before kinds have
+  `kind: null` and the five slots catalog, events, queries, labels and holdout.
+- `POST /api/projects/{id}/pin {slots?:{slot: ref}, catalog?, events?, queries?, labels?, holdout?, arch?, brand?,
+  registry?, dry_run?}`
   pins inputs (a name alone pins its newest version; `""` or null unpins) and sets where published versions go.
   Returns `{project, pins, changed:{slot:{from, to}}, registry?}`. A dataset of the wrong kind, or a holdout that
   isn't sealed, is a 400.
 - `GET /api/projects/{id}/stages`: where the project stands, from the state doc and the lineage index only (it
   never lists the registry). A newer version of a pinned input is `info`, not an error:
   ```
-  {project, index_complete, notes:[{code, text}],
-   inputs:[{slot, group: data|labels|holdout, accepts:[kinds], pinned, status: pinned|missing, newest,
+  {project, kind, recipe, index_complete, notes:[{code, text}],
+   next:{action: set-input|add-evaluation|new-experiment|make-champion|backtest, slot?, experiment?, text},
+   evaluation:{method, chosen, ready, label, evidence, text, missing:[slot ids]},
+   inputs:[{slot, label, role, group: data|labels|holdout, accepts:[kinds], required, why, origin, pinned,
+            mode, from, rows, fingerprint, as_of, last_read:{at, rows, fingerprint}|null,
+            status: pinned|live|missing|empty, newest,
             info:[{code: newer-version|made-from-other-version, ref, text}],
             next: null | {action: "pin", slot, ref?}}],
    experiments:{count, by_status:{trained?, backtesting?, evaluated?, failed?},
@@ -678,9 +686,67 @@ Routes:
 - `GET /api/projects/{id}/champion` returns `{project, champion, history}`. `POST /api/projects/{id}/champion
   {experiment | pipeline, expect?, dry_run?}` makes one the champion. With `expect` (the champion the page showed),
   a champion that changed since is a 409 and nothing is written.
-- `POST /api/projects/{id}/experiments/{eid}/backtest {compute?, dry_run?}` backtests the experiment against the
-  champion on the pinned holdout and labels, as a job: `{job, live, experiment, backtest}`. The run (or the
-  compute job) is recorded on the experiment. With `dry_run`, returns the plan with its label independence.
+- `POST /api/projects/{id}/experiments/{eid}/backtest {compute?, dry_run?}` judges the experiment against the
+  champion by the project's evaluation method (below), as a job: `{job, live, experiment, backtest}`. The run (or the
+  compute job) and what it read (`eval_inputs`) are recorded on the experiment. With `dry_run`, returns the plan with
+  its label independence.
+
+### What a project builds, and where its inputs come from
+
+- **Recipes.** `GET /api/recipes` returns `{recipes:[{id, label, description, source: builtin|workspace|repo,
+  slots:[slot], trainers:[{id, label, command, why}], evaluation:{method, holdout, text}}], errors:[{file, source,
+  error}]}`. Built in: `search-events`, `search-judgments`, `recommendations`, `byo-pipeline`. A team adds its own as
+  YAML in the workspace (`recipes/<id>.yaml`) or its repo (`captain/recipes/<id>.yaml`). `cst projects kinds` lists
+  them. A slot is `{id, label, role, accepts:[dataset kinds or any], required, why, origin: recipe|custom}`. `role`
+  (catalog, events, queries, labels, holdout, users, items, interactions, custom) is what evaluation reads.
+- **Slots belong to the project.** `POST /api/projects/{id}/kind {kind}` copies a recipe's slots and evaluation (inputs
+  whose slot id remains are kept). `POST /api/projects/{id}/slots {id?, label, role?, accepts?, required?, why?}`
+  adds one, `PUT /api/projects/{id}/slots/{slot}` changes one, `DELETE /api/projects/{id}/slots/{slot}` removes an
+  optional one (a required one is a 400: make it optional first). Each returns the state.
+- **Sources.** `GET /api/sources` returns `{connections:[{name, engine, label, offers, tables_cached, tables_route,
+  events_route, suggestions_route}], datasets:[{name, version, kind, rows, created_at, by_reference}],
+  folders:[{path, label, files}]}`, from cached facts only. `offers` is `[table, sql]`, `[event, sql]` (PostHog) or
+  `[report]` (Google Analytics). `GET /api/sources/{conn}/events?days=30` returns `[{event, count}]`.
+- **Inputs.** `POST /api/projects/{id}/inputs/{slot} {source, mode: snapshot|live, as_of?, kind?}`. `mode` is
+  required: there is no default. `source` is `{from: connection, connection, table | sql | event:{name, days?} |
+  report:{...}}`, `{from: local, path, table?}` (a file or folder of parquet, csv, jsonl or json, or a .duckdb file
+  with `table`) or `{from: dataset, ref}`.
+  - A snapshot copies the rows into a new dataset `<project>/inputs/<slot>` and pins it. From a connection or a path
+    it runs as a job: `{slot, mode, job, input: null}`, whose result is `{slot, input}`.
+  - Live stores a reference. A connection keeps its query, with the row count and a fingerprint of the query and
+    count. A path is registered by reference (sizes and modified times). A dataset follows its newest version.
+    These answer at once: `{slot, mode, job: null, input}`.
+  - `input` is `{mode, from, source, ref, rows, fingerprint, as_of, pinned_at, pinned_by}`. `ref` is null for a live
+    query. `DELETE /api/projects/{id}/inputs/{slot}` clears one.
+- **What runs read.** A retrain started with `project` and no `inputs` trains on the project's inputs, live ones read
+  again at that moment (a folder that changed is registered as a new by-reference version). Each trainer input, and
+  the experiment's `inputs_read`, is `{slot, role, ref, mode, rows, fingerprint, as_of, changed_since_pin, read_at}`,
+  and the input's `last_read` is updated. A live
+  query reaches the trainer as `{ref: null, source:{connection, query}, rows, fingerprint}`, and the trainer reads it
+  itself. A backtest records `eval_inputs` the same way. A query's fingerprint covers its text and row count only.
+- **Evaluation.** `PUT /api/projects/{id}/evaluation {method}` with `auto`, `holdout`, `logged-clicks`,
+  `trainer-reported` or `none`. `auto` takes the first that can run:
+  1. judgments with a sealed holdout (`holdout`), or with unsealed queries (`judged-queries`, labelled as such);
+  2. a replay of an events input graded from clicks (`logged-clicks`, LOGGED_CLICKS). When the experiment's training
+     inputs carry `as_of` and the logs have a timestamp, only later searches are replayed;
+  3. metrics the trainers reported (`trainer-reported`). It has no interval, so the verdict only says which number
+     is higher.
+  With none of them, `stages.evaluation` says "No evaluation set yet" and a backtest is refused with that sentence.
+- **Delete.** `DELETE /api/projects/{id}?force=false` removes the project's entry, its membership and brand claims, and
+  its state. Datasets, pipelines, models, runs and connections stay, unclaimed. Returns `{deleted, kept:{datasets,
+  pipelines, backtests, models, notebooks, connections}, forced_past}`. While a live handoff of its champion or an
+  experiment has no deployment linked, it is a 409 `{error, handoffs:[{id, pipeline, environment}]}` unless `force`.
+  `cst projects delete <id>` asks first (`--yes` skips the question).
+- **Assisted setup.** `POST /api/projects/{id}/assist {ask?}` returns `{assist, project, prompt, folder}`. The app
+  opens a coding agent with `prompt`. The agent files `cst projects propose <id> --file proposal.yaml --assist <assist>`,
+  which changes nothing. `GET /api/projects/{id}/proposals` lists `[{id, assist, agent, by, at, status:
+  proposed|accepted|rejected, note, slots:[{slot, add, label?, role?, accepts?, required?, source?, mode?, why}],
+  remove_slots, trainer:{command, script:{path, key, bytes}, why}, evaluation:{method}}]`.
+  `POST /api/projects/{id}/proposals/{prop}/accept {only?}` applies it and returns `{proposal, state, applied:{added,
+  changed, removed, pinned:[{slot, ref}], skipped}, to_connect:[{slot, source, suggested_mode, why}], trainer}`.
+  `GET /api/projects/{id}/proposals/{prop}/script` returns the proposed training script `{path, key, text}`.
+  Dataset sources are pinned on accept. Connection and local sources come back in `to_connect`, for the person to
+  choose snapshot or live. `POST .../reject {note?}`. An agent session can propose, but can't accept or reject.
 - `?project=<id>`, or `?project=none` for unclaimed items, filters `/api/datasets`, `/api/datasets/tree`,
   `/api/pipelines`, `/api/backtests`, `/api/investigations`, `/api/models` and `/api/connections`.
 - `POST /api/datasets/import` and `POST /api/sql` with `save` accept `project`, which puts the result in that project.
