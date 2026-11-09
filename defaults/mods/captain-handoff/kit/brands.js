@@ -1,11 +1,13 @@
 // captain-ui: data platform and cloud marks (Simple Icons, CC0; each its owner's trademark, see
 // defaults/icons/LICENSES.md). Installed as icons/brand-<slug>.svg. A kind without a mark gets a neutral glyph.
 //   import { Brand } from "./kit/brands.js";   Brand(c, "snowflake", 18)
-import { svg, image } from "gpui-kit";
+import { svg } from "gpui-kit";
 import { icon } from "./icons.js";
 
 export const BRANDS = {
+  amazonaws: { title: "AWS", hex: "#232F3E" },
   googlecloud: { title: "Google Cloud", hex: "#4285F4" },
+  microsoftazure: { title: "Azure", hex: "#0078D4" },
   snowflake: { title: "Snowflake", hex: "#29B5E8" },
   databricks: { title: "Databricks", hex: "#FF3621" },
   googlebigquery: { title: "Google BigQuery", hex: "#669DF6" },
@@ -27,11 +29,11 @@ export const BRANDS = {
 const ALIAS = {
   postgres: "postgresql", bigquery: "googlebigquery", gcp: "googlecloud", gcs: "googlecloud", google: "googlecloud",
   elastic: "elasticsearch", "modal-function": "modal",
+  aws: "amazonaws", s3: "amazonaws", amazons3: "amazonaws", amazonwebservices: "amazonaws", azure: "microsoftazure",
 };
-// The cloud providers' own marks, in full color (Edgar's pick, from Captain's docs: defaults/icons/LICENSES.md).
-const VENDOR = { aws: "icons/brand-aws.svg", s3: "icons/brand-aws.svg", amazons3: "icons/brand-aws.svg", amazonwebservices: "icons/brand-aws.svg",
-  gcp: "icons/brand-gcp.png", gcs: "icons/brand-gcp.png", google: "icons/brand-gcp.png", googlecloud: "icons/brand-gcp.png",
-  azure: "icons/brand-azure.png", microsoftazure: "icons/brand-azure.png" };
+// The clouds are vector marks like every other brand, drawn by svg() at the exact size they show. They were full-color
+// images (a 2500 px SVG, 512 px and 1200 px PNGs): image() rasterizes a file at its own size and the GPU shrinks it to
+// 14 px in one step, which drew them soft or not at all (Edgar, 2026-11-09: "make the icons higher resolution").
 // This computer gets a glyph; anything else without a mark, a neutral one.
 const GLYPH = { local: "monitor" };
 
@@ -58,7 +60,6 @@ export function engineTitle(kind) {
 /** The mark for an engine, cloud or connection kind, `size` px square; a neutral glyph when there is none. */
 export function Brand(c, kind, size = 16) {
   const k = String(kind ?? "").toLowerCase();
-  if (VENDOR[k]) return image(VENDOR[k]).size(size).flex_none();
   const slug = brandSlug(kind);
   if (!slug) return svg(icon(GLYPH[k] ?? "database")).size(size).flex_none().text_color(c.grey500);
   const hex = BRANDS[slug].hex;

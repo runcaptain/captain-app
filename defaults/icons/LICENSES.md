@@ -32,14 +32,13 @@ Simple Icons) show a neutral glyph. AWS, Google Cloud and Azure use the vendor m
 | brand-algolia.svg | Algolia | https://algolia.frontify.com/d/1AZwVNcFZiu7/style-guide | https://algolia.frontify.com/d/1AZwVNcFZiu7/style-guide |
 | brand-modal.svg | Modal | https://modal.com | |
 
-## Cloud provider marks (brand-aws.svg, brand-gcp.png, brand-azure.png)
+## Cloud provider marks (brand-amazonaws.svg, brand-microsoftazure.svg, brand-googlecloud.svg)
 
-Vendor marks, used only to name the provider a login or a place to run work belongs to, per each owner's brand
-guidelines. Edgar chose them from Captain's docs guide "Connect cloud storage"
-(https://docs.captain.dev, fern/docs/pages/connect-cloud-storage.mdx), shown unaltered and in full color.
+From Simple Icons 11.15.0 (CC0 1.0, https://github.com/simple-icons/simple-icons), the last release that ships the
+AWS and Azure marks, drawn in each brand's color like the other marks above. Used only to name the cloud a login or
+a place to run work belongs to. Each is its owner's trademark: AWS https://aws.amazon.com/trademark-guidelines/,
+Google https://about.google/brand-resource-center/, Microsoft
+https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks.
 
-| File | Mark | Source |
-|---|---|---|
-| brand-aws.svg | Amazon S3 | The Amazon S3 mark from that guide (it shows https://y2i6auvwuaxlu05f.public.blob.vercel-storage.com/Amazon_S3.png; this file is the same mark as an SVG). AWS trademark guidelines: https://aws.amazon.com/trademark-guidelines/ |
-| brand-gcp.png | Google Cloud Storage | https://y2i6auvwuaxlu05f.public.blob.vercel-storage.com/Google_Cloud_Storage.png. Google brand guidelines: https://about.google/brand-resource-center/ |
-| brand-azure.png | Microsoft Azure | https://docs.earthmover.io/assets/images/azure-logo-d7f7b24574e117ba905dd8baca0bd980.png. Microsoft trademark guidelines: https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks |
+They replace full-color images (brand-aws.svg, brand-gcp.png, brand-azure.png) that drew soft at 14 px, because an
+image is rasterized at its own size and shrunk on the GPU in one step.

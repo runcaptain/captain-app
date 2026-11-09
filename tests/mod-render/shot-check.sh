@@ -126,6 +126,17 @@ if [[ -n "${SHOT_PROJECT:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
   printf '{"frame.welcomed":"skipped","captain.scope":{"kind":"project","id":"%s","label":"Shot Project"}}\n' "$PID" > "$HOME_DIR/shared.json"
   echo "Explorer pick: $PID"
 fi
+# SHOT_FORMS_PREVIEW=cloud: the audit's forms dialog opens on that form (captain-forms' test hook), e.g. to compare the
+# cloud marks before and after a change.
+if [[ -n "${SHOT_FORMS_PREVIEW:-}" ]]; then
+  python3 - "$HOME_DIR/shared.json" "$SHOT_FORMS_PREVIEW" <<'PY'
+import json, sys
+p, form = sys.argv[1:]
+d = json.load(open(p))
+d["captain.forms.preview"] = form
+json.dump(d, open(p, "w"))
+PY
+fi
 # SHOT_WINDOW=1100x750: the window at that size (logical pixels). SHOT_WINDOW=max: maximized after it starts.
 if [[ "${SHOT_WINDOW:-}" =~ ^([0-9]+)x([0-9]+)$ ]]; then
   printf '{"state":"windowed","bounds":[80.0,60.0,%s.0,%s.0]}\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" > "$HOME_DIR/window.json"
@@ -291,7 +302,7 @@ if [[ -n "${SHOT_AUDIT:-}" ]]; then
   app do app.palette >/dev/null || true; shoot palette 2; app do app.palette >/dev/null || true
   app do app.settings >/dev/null || true; shoot settings 3; app do app.settings >/dev/null || true
   app do mod.open '{"name":"folds-open"}' >/dev/null || true; shoot explorer-mlflow 6
-  for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup captain-services captain-scope-model captain-cloud; do
+  for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup captain-services captain-scope-model captain-cloud captain-project-icon; do
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; shoot "dialog-$m" 4
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; sleep 1
   done
