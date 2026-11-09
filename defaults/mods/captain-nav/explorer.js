@@ -14,6 +14,7 @@ import { api, workspace } from "./kit/cst.js";
 import { loadExplorer, words, childKinds, nodeIcon, nodeName, nodeKey, currentScope } from "./kit/scopes.js";
 import { MlflowList } from "./kit/mlflow.js";
 import { Brand } from "./kit/brands.js";
+import { ProjectIcon } from "./kit/projecticon.js";
 
 const INDENT = 12;
 // A click this soon after the tree appears, or after its rows moved, is ignored (see meant()).
@@ -177,7 +178,8 @@ export class Explorer {
     }
     if (n.kind === "project") {
       const name = n.name ?? n.label ?? n.id;
-      return [{ label: "Delete project", danger: true, overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "delete-project", values: { project: n.id, name } } } }];
+      return [{ label: "Change icon", overlay: { mod: "captain-project-icon", kind: "dialog", width: 560, height: 560, props: { project: { id: n.id, name, icon: n.icon ?? null } } } },
+        { label: "Delete project", danger: true, overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "delete-project", values: { project: n.id, name } } } }];
     }
     if (n.kind !== "scope" && n.kind !== "engine") return [];
     const me = { kind: n.kind, id: n.id, type: n.type, name: n.name };
@@ -256,6 +258,7 @@ export class Explorer {
           .child(svg(icon(open ? "chevron-down" : "chevron-right")).size(11))))
       .child(n.kind === "experiment" ? div().size(13).flex_none().flex().items_center().justify_center().child(this.marker(c, n))
         : hint ? div().size(13).flex_none()
+        : n.kind === "project" && n.icon ? ProjectIcon(c, n, 13)
         : svg(icon(n.kind === "all" ? "boxes" : n.kind === "list" ? (n.id === "all-experiments" ? "flask-conical" : "boxes") : nodeIcon(n))).size(13).flex_none().text_color(on ? c.blue : c.grey500))
       .child(div().flex_1().min_w(0).truncate().child(nodeName(n)))
       .when(count > 0, (e) => e.child(div().min_w(20).px(6).text_size(10.5).line_height("18px").font_family("JetBrains Mono")
@@ -288,4 +291,12 @@ export class Explorer {
       }))
       .when(!this.shown().some((n) => n.kind === "group" && n.type === "project"), (e) => e.child(this.mlflowRow(c)));
   }
+}
+
+/** A project in the Explorer's tree, by id, for its name and icon elsewhere (the sidebar's "in <project>"). */
+export function projectNode(tree, id) {
+  let hit = null;
+  const walk = (n) => { if (!hit && n.kind === "project" && n.id === id) hit = n; (n.children ?? []).forEach(walk); };
+  (tree ?? []).forEach(walk);
+  return hit;
 }

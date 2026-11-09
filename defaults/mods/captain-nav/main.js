@@ -23,7 +23,8 @@ import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { isDark, palette } from "./kit/tokens.js";
 import { getAppearance, setAppearance } from "./kit/appearance.js";
-import { Explorer } from "./explorer.js";
+import { Explorer, projectNode } from "./explorer.js";
+import { ProjectIcon } from "./kit/projecticon.js";
 import { TeamViews } from "./teamviews.js";
 
 const ITEMS = [
@@ -409,9 +410,14 @@ export default class CaptainNav extends View {
       .child(v_flex().w_full().when(rail, (e) => e.flex_1().min_h(0)).when(!rail, (e) => e.flex_none().border_t(1).border_color(c.rule)).py(6)
         .when(!rail, (e) => e.child(h_flex().h(22).px(14).items_center().gap(6)
           .child(div().text_size(11).font_semibold().text_color(c.grey500).child("VIEWS"))
-          .when(Boolean(shared("captain.scope")), (x) => x.child(div().id("nav-scope-clear").min_w(0).flex_1().truncate().text_size(11).text_color(c.blue).cursor_pointer()
-            .tooltip("Show the whole workspace").on_click((_e, cx) => { setShared("captain.scope", null); cx.notify(); })
-            .child(`in ${shared("captain.scope")?.label ?? ""}`)))))
+          .when(Boolean(shared("captain.scope")), (x) => {
+            const sc = shared("captain.scope");
+            const proj = sc?.kind === "project" ? projectNode(this.explorer?.tree, sc.id) : null;
+            return x.child(h_flex().id("nav-scope-clear").min_w(0).flex_1().gap(4).items_center().cursor_pointer()
+              .tooltip("Show the whole workspace").on_click((_e, cx) => { setShared("captain.scope", null); cx.notify(); })
+              .when(Boolean(proj), (y) => y.child(ProjectIcon(c, proj, 12)))
+              .child(div().min_w(0).truncate().text_size(11).text_color(c.blue).child(`in ${sc?.label ?? ""}`)));
+          })))
         .children(this.items().map((it) => this.row(c, it, it.id === active, rail, go(it))))
         .child(this.teamRows(c, rail) ?? div()))
       .child(this.agentRows(c, rail) ?? div())

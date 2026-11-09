@@ -17,6 +17,7 @@ import { Badge, Button, Empty, Skeleton, Problem, plainError } from "./kit/ui.js
 import { icon } from "./kit/icons.js";
 import { Brand, engineTitle } from "./kit/brands.js";
 import { askAgent } from "./kit/agent.js";
+import { ProjectBadge } from "./kit/projecticon.js";
 import { int } from "./kit/num.js";
 
 const day = (iso) => (iso ? String(iso).slice(0, 10) : "");
@@ -768,7 +769,7 @@ export default class ProjectHome extends View {
     return v_flex().id(`ph-p-${i}`).w(300).min_h(176).flex_none().p(14).gap(8).bg(c.surface).border_1().border_color(c.rule).cursor_pointer()
       .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => this.pickProject(cx, p))
       .child(h_flex().gap(10).items_center()
-        .child(div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("workflow")).size(14)))
+        .child(ProjectBadge(c, p, 28))
         .child(v_flex().flex_1().min_w(0)
           .child(div().truncate().text_size(14).font_semibold().child(p.name))
           .child(div().truncate().text_size(11.5).text_color(c.grey500).child(p.description || "No description"))))
@@ -861,6 +862,9 @@ export default class ProjectHome extends View {
       .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => { this.menuOpen = !this.menuOpen; cx.notify(); }).child("More");
     return Popup.new("ph-more-pop", trigger).anchor("bottom_right")
       .when(Boolean(this.menuOpen), (e) => e.content(v_flex().id("ph-more-list").w(200).py(4).bg(c.surface).border_1().border_color(c.grey300)
+        .child(h_flex().id("ph-icon").h(30).px(10).gap(8).items_center().cursor_pointer().text_size(12.5).text_color(c.navy).hover((s) => s.bg(c.surface2))
+          .on_click((_e, cx) => { this.menuOpen = false; cx.notify(); const p = this.project(); openOverlay({ mod: "captain-project-icon", kind: "dialog", width: 560, height: 560, props: { project: { id: this.pid(), name: p?.name ?? this.pid(), icon: p?.icon ?? null } } }); })
+          .child(svg(icon("star")).size(13)).child("Change icon"))
         .child(h_flex().id("ph-delete").h(30).px(10).gap(8).items_center().cursor_pointer().text_size(12.5).text_color(c.fail).hover((s) => s.bg(c.surface2))
           .on_click((_e, cx) => { this.menuOpen = false; cx.notify(); const p = this.project(); form("delete-project", { project: this.pid(), name: p?.name ?? this.pid() }); })
           .child(svg(icon("trash-2")).size(13)).child("Delete project"))));
@@ -884,7 +888,7 @@ export default class ProjectHome extends View {
     const pid = this.pid();
     const p = this.project();
     const head = h_flex().h(64).flex_none().px(24).gap(10).items_center().border_b(1).border_color(c.rule)
-      .child(div().size(32).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon(pid ? "workflow" : "house")).size(16)))
+      .child(pid ? ProjectBadge(c, { id: pid, icon: p?.icon ?? null }, 32) : div().size(32).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("house")).size(16)))
       .child(v_flex().flex_1().min_w(0)
         .child(div().text_size(18).font_semibold().truncate().child(p?.name ?? (pid ? shared("captain.scope")?.label ?? pid : "Home")))
         .child(div().text_size(12).text_color(c.grey500).truncate().child(p?.description || (pid ? "What you're building, its inputs, its experiments against the champion, and where it ships." : this.projects && !this.projects.length ? "Start with a project." : "Pick a project to work on."))))

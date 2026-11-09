@@ -37,4 +37,15 @@ e = PS.experiment_add(ctx, p["id"], "demo-tuned", labels="demo-judgments", train
 PS.set_champion(ctx, p["id"], "demo-bm25@v1")
 PS.experiment_backtest(ctx, p["id"], e["id"])
 PR.create(ctx, "Shot Gifts", description="A second project, just made")  # the card list shows a new one too
+# Icons: a glyph on the shot project, and a made-up two-color logo (no real company's) on the other.
+PR.set_icon(ctx, p["id"], {"kind": "glyph", "name": "store", "color": "#059669"})
+from PIL import Image, ImageDraw
+
+logo = os.path.join(os.environ["CST_HOME"], "shot-logo.png")
+im = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+d = ImageDraw.Draw(im)
+d.ellipse((16, 16, 240, 240), fill=(219, 39, 119, 255))
+d.rectangle((96, 70, 160, 186), fill=(255, 255, 255, 255))
+im.save(logo)
+PR.upload_logo(ctx, "shot-gifts", logo)
 print(p["id"])
