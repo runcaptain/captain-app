@@ -27,4 +27,5 @@ PS.experiment_add(ctx, p["id"], "demo-bm25")
 e = PS.experiment_add(ctx, p["id"], "demo-tuned", labels="demo-judgments", trainer="python train.py")
 PS.set_champion(ctx, p["id"], "demo-bm25@v1")
 PS.experiment_backtest(ctx, p["id"], e["id"])
+PR.create(ctx, "Shot Gifts", description="A second project, just made")  # the card list shows a new one too
 print(p["id"])

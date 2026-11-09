@@ -60,11 +60,17 @@ export default class ProjectHome extends View {
     this.load(cx);
     if ((layoutProps?.() ?? {}).chooseModels) { this.everything = true; this.toggleChoosing(cx); }
     this.openFirst = Boolean((layoutProps?.() ?? {}).openExperiment); // a layout, or the real-window check: open a row
+    if ((layoutProps?.() ?? {}).allProjects) this.allProjects(cx); // the real-window check: the card list, nothing picked
     watchScope(cx, (cx) => this.load(cx));
     watchWorkspace(cx, (cx) => { this.last = null; this.load(cx); });
     watchRecords(cx, (cx) => this.load(cx));
     let rev = shared("captain.explorer.rev") ?? null;
     cx.timer.every(1000, (cx) => { const r = shared("captain.explorer.rev") ?? null; if (r !== rev) { rev = r; this.load(cx); } });
+    // Until the first answer (the services may still be starting), ask again every 3 s.
+    cx.timer.every(3000, (cx) => {
+      const pid = this.pid();
+      if ((!pid && this.projects === null && !this.listProblem) || (pid && !this.stages && (!this.problem || this.problem.starting))) this.load(cx);
+    });
     // While an experiment is being judged, read again until its run lands.
     cx.timer.every(4000, (cx) => { if ((this.exps?.experiments ?? []).some((e) => e.status === "backtesting")) this.load(cx); });
   }
@@ -99,7 +105,10 @@ export default class ProjectHome extends View {
       cx.spawn(async (cx) => {
         const r = await api("/api/projects", { scoped: false });
         if (seq !== this.seq) return;
-        this.projects = r.ok ? (Array.isArray(r.data) ? r.data : r.data?.projects ?? []) : [];
+        // Still starting is not "no projects": keep waiting (the retry timer asks again), and only an answer that
+        // lists nothing shows the empty state. Home is the first screen, so it often asks before the services are up.
+        if (r.ok) { this.projects = Array.isArray(r.data) ? r.data : r.data?.projects ?? []; this.listProblem = null; this.loadSummaries(cx, seq); }
+        else if (!r.starting) this.listProblem = r;
         cx.notify();
       });
       cx.notify();
@@ -123,7 +132,7 @@ export default class ProjectHome extends View {
         this.allProjects(cx); // the remembered project is gone (another workspace, or removed)
         return;
       }
-      if (st.ok && ex.ok) { this.stages = st.data; this.exps = ex.data; } else this.problem = st.ok ? ex : st;
+      if (st.ok && ex.ok) { this.stages = st.data; this.exps = ex.data; } else if (!(st.starting || ex.starting)) this.problem = st.ok ? ex : st;
       if (this.openFirst && this.exps) { this.open = this.exps.experiments.find((e) => !e.is_champion)?.id ?? null; this.openFirst = false; }
       cx.notify();
     });
@@ -484,12 +493,82 @@ export default class ProjectHome extends View {
       .child(body);
   }
 
+  /** Each project's champion, experiments and next step, for its card on Home. */
+  loadSummaries(cx, seq) {
+    this.summaries ??= {};
+    for (const p of this.projects ?? []) {
+      cx.spawn(async (cx) => {
+        const [st, ex] = await Promise.all([api(`/api/projects/${enc(p.id)}/stages`, { scoped: false }), api(`/api/projects/${enc(p.id)}/experiments`, { scoped: false })]);
+        if (seq !== this.seq) return;
+        this.summaries[p.id] = st.ok && ex.ok ? { stages: st.data, exps: ex.data } : { failed: true };
+        cx.notify();
+      });
+    }
+  }
+
+  /** What a project needs next, in words, and what doing it opens. */
+  nextOf(sum) {
+    const missing = (sum.stages.inputs ?? []).find((i) => i.status === "missing" && i.slot !== "events");
+    if (missing) return { label: `Choose ${SLOTS[missing.slot]?.noun ?? missing.slot}`, task: "pin", slot: missing.slot };
+    const n = sum.stages.experiments?.next ?? {};
+    if (n.action === "make-champion") return { label: "Make a champion" };
+    if (n.action === "backtest") return { label: "Judge an experiment" };
+    return { label: "New experiment", task: "experiment" };
+  }
+
+  projectCard(c, p, i) {
+    const sum = this.summaries?.[p.id];
+    const ready = sum && !sum.failed;
+    const exps = ready ? sum.exps.experiments ?? [] : [];
+    const champ = ready ? sum.exps.champion : null;
+    const champExp = exps.find((e) => e.is_champion);
+    // The verdict worth showing: the champion's own, else the newest challenger judged against it.
+    const judged = [...exps].reverse().find((e) => !e.is_champion && e.evaluation);
+    const shown = champExp?.evaluation ? { who: "Champion", v: verdictOf(champExp.evaluation) } : judged ? { who: parseRef(judged.pipeline).name, v: verdictOf(judged.evaluation) } : null;
+    const tone = shown ? { good: c.good, bad: c.fail, warn: c.warn, neutral: c.grey500 }[shown.v.tone] : c.grey500;
+    const next = ready ? this.nextOf(sum) : null;
+    const cr = parseRef(champ);
+    return v_flex().id(`ph-p-${i}`).w(300).min_h(176).flex_none().p(14).gap(8).bg(c.surface).border_1().border_color(c.rule).cursor_pointer()
+      .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => this.pickProject(cx, p))
+      .child(h_flex().gap(10).items_center()
+        .child(div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("workflow")).size(14)))
+        .child(v_flex().flex_1().min_w(0)
+          .child(div().truncate().text_size(14).font_semibold().child(p.name))
+          .child(div().truncate().text_size(11.5).text_color(c.grey500).child(p.description || "No description"))))
+      .child(!sum ? div().text_size(12).text_color(c.grey500).child("Reading...")
+        : sum.failed ? div().text_size(12).text_color(c.grey500).child("Couldn't read this project. Open it to try again.")
+        : v_flex().gap(5)
+          .child(h_flex().gap(6).items_center().min_w(0)
+            .child(svg(icon("trophy")).size(13).flex_none().text_color(champ ? c.blue : c.grey300))
+            .child(champ
+              ? h_flex().gap(6).items_center().min_w(0).child(div().min_w(0).truncate().font_family(MONO).text_size(12).child(cr.name)).when(cr.version != null, (e) => e.child(Badge(c, `v${cr.version}`)))
+              : div().text_size(12).text_color(c.grey500).child("No champion yet")))
+          .child(h_flex().gap(6).items_center().min_w(0)
+            .child(svg(icon(shown ? shown.v.icon : "clock")).size(13).flex_none().text_color(tone))
+            .child(div().min_w(0).truncate().text_size(12).text_color(tone).child(shown ? `${shown.who}: ${shown.v.text.toLowerCase()}` : "Nothing judged yet")))
+          .child(h_flex().gap(6).items_center()
+            .child(svg(icon("flask-conical")).size(13).flex_none().text_color(c.grey500))
+            .child(div().text_size(12).text_color(c.grey900).child(`${int(exps.length)} experiment${exps.length === 1 ? "" : "s"}`))))
+      .child(div().flex_1())
+      .when(Boolean(next), (e) => e.child(h_flex().child(Button(c, `ph-p-${i}-next`, next.label, (_e, cx) => {
+        this.pickProject(cx, p);
+        const pins = Object.fromEntries(sum.stages.inputs.map((x) => [x.slot, x.pinned]));
+        if (next.task === "pin") form("pin", { project: p.id, pins, slot: next.slot });
+        else if (next.task === "experiment") form("experiment", { project: p.id, pins, champion: champ, base: champ ? cr.name : undefined });
+      }, { small: true, kind: "primary" }))));
+  }
+
   list(c) {
     const ps = this.projects;
+    if (this.listProblem) return Problem(c, this.listProblem, (cx) => { this.listProblem = null; this.load(cx); });
     if (ps === null) return Skeleton(c, 4);
     const newBtn = Button(c, "ph-empty-new", "New project", () => form("project"), { kind: "primary" });
     if (!ps.length) return Empty(c, "Start with a project", "A project holds one search you're improving: its catalog, the labels that grade it, the experiments you train and the champion you ship.", newBtn);
-    return this.section(c, "all", "Projects", ps, (p, i) => this.row(c, `ph-p-${i}`, p.name, p.description ?? "", [], "workflow", (_e, cx) => this.pickProject(cx, p), false), "");
+    return v_flex().gap(10)
+      .child(v_flex().gap(1)
+        .child(div().text_size(15).font_semibold().child("Projects"))
+        .child(div().text_size(12).text_color(c.grey500).child("Each one is a search you're improving. Open one to see its inputs, experiments and champion.")))
+      .child(h_flex().id("ph-projects").flex_wrap().items_start().gap(10).children(ps.map((p, i) => this.projectCard(c, p, i))));
   }
 
   render() {
@@ -500,7 +579,7 @@ export default class ProjectHome extends View {
       .child(div().size(32).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon(pid ? "workflow" : "house")).size(16)))
       .child(v_flex().flex_1().min_w(0)
         .child(div().text_size(18).font_semibold().truncate().child(p?.name ?? (pid ? shared("captain.scope")?.label ?? pid : "Home")))
-        .child(div().text_size(12).text_color(c.grey500).truncate().child(p?.description || (pid ? "Pinned inputs, experiments against the champion, and where it ships." : "Pick a project, or start one."))))
+        .child(div().text_size(12).text_color(c.grey500).truncate().child(p?.description || (pid ? "Pinned inputs, experiments against the champion, and where it ships." : this.projects && !this.projects.length ? "Start with a project." : "Pick a project to work on."))))
       .child(Button(c, "ph-workflows", "Workflows", () => go("runs", { tab: "workflows" }), { small: true, kind: "quiet" }))
       .when(Boolean(pid), (e) => e.child(Button(c, "ph-all", "All projects", (_e, cx) => this.allProjects(cx), { small: true, kind: "quiet" })))
       .child(Button(c, "ph-new", "New project", () => form("project"), { small: true }));
