@@ -13,7 +13,7 @@ def test_snowflake_and_databricks_urls_reference_secrets_by_name():
     assert s["secrets"] == ["WAREHOUSE_PASSWORD"] and s["dialect"] == "snowflake"
     d = K.build("databricks", "lake", {"server_hostname": "dbc-1.cloud.databricks.com", "http_path": "/sql/1.0/warehouses/ab"})
     assert d["url"].startswith("databricks://token:{secret:LAKE_TOKEN}@dbc-1.cloud.databricks.com?http_path=%2Fsql")
-    assert "catalog=main" in d["url"] and d["secrets"] == ["LAKE_TOKEN"]
+    assert "catalog=" not in d["url"] and d["secrets"] == ["LAKE_TOKEN"]  # no default catalog: newer workspaces have no main
 
 
 def test_validation_is_plain():
@@ -60,3 +60,26 @@ def test_add_route_refuses_secrets_and_tests_sqlite(tmp_path, monkeypatch):
     assert c.post("/api/connections/local/test", headers=h).json()["ok"] is True
     assert c.post("/api/connections", headers=h, json={"name": "local", "kind": "sqlite", "fields": {"path": str(db)}}).status_code == 400
     assert "snowflake" in {k["kind"] for k in c.get("/api/connections/kinds", headers=h).json()}
+
+
+def test_databricks_test_catches_a_missing_catalog(monkeypatch):
+    import pyarrow as pa
+
+    from captain_search.connectors import checks
+    from captain_search.connectors import sql as SQL
+    from captain_search.model.entities import Connection
+
+    def fake(conn, sql, **kw):
+        rows = {"select 1 as ok": [{"ok": 1}], "SHOW CATALOGS": [{"catalog": c} for c in ("samples", "system", "workspace")],
+                "SHOW SCHEMAS IN `system`": [{"databaseName": "billing"}, {"databaseName": "access"}]}[sql]
+        return SQL.Result(table=pa.Table.from_pylist(rows), truncated=False, elapsed_ms=3)
+
+    monkeypatch.setattr(SQL, "run_sql", fake)
+    mk = lambda q: Connection(org="o", workspace="w", created_by="me", name="lake", engine="databricks",
+                              url=f"databricks://token:{{secret:LAKE_TOKEN}}@h?http_path=%2Fp{q}")
+    r = checks.verify(mk("&catalog=main"))
+    assert not r["ok"] and "'main' doesn't exist" in r["error"] and "samples, system, workspace" in r["error"]
+    assert checks.verify(mk("&catalog=system&schema=billing"))["ok"]
+    assert "isn't in system" in checks.verify(mk("&catalog=system&schema=gold"))["error"]
+    assert checks.verify(mk(""))["catalogs"] == ["samples", "system", "workspace"]
+    assert "dapi***" in checks._plain(RuntimeError("bad token dapi0123456789abcdef"))
