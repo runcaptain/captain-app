@@ -56,10 +56,22 @@ async function byRole(role) {
     .map((d) => ({ value: `${d.name}@v${d.latest}`, label: d.name, chip: `v${d.latest}` }));
 }
 const pipelines = () => list("/api/pipelines", (p) => ({ value: `${p.name}@v${p.latest}`, label: p.name, chip: `v${p.latest}` }));
+// What a project can be built for, when the services don't list recipes yet: each decides the inputs it asks for.
+const RECIPE_ICONS = { "search-events": "activity", "search-judgments": "tag", recommendations: "sparkles", "bring-your-own": "layers" };
+export const FALLBACK_RECIPES = [
+  { id: "search-events", title: "Search ranking from events", about: "Learn ranking from what shoppers searched, clicked and bought.", needs: "a catalog and search events." },
+  { id: "search-judgments", title: "Search ranking with judgments", about: "Learn ranking from graded query and product pairs.", needs: "a catalog and relevance labels." },
+  { id: "recommendations", title: "Recommendations", about: "Suggest products from what people viewed and bought.", needs: "a catalog and interaction events." },
+  { id: "bring-your-own", title: "Bring your own pipeline", about: "Your own inputs and training script. Captain judges and ships what it makes.", needs: "whatever your script reads. Add inputs as you go." },
+];
+export async function recipes() {
+  const r = await api("/api/project-recipes", { scoped: false });
+  const list = r.ok ? (Array.isArray(r.data) ? r.data : r.data?.recipes) : null;
+  return Array.isArray(list) && list.length ? list : FALLBACK_RECIPES;
+}
 // A project's inputs: each slot's title and the dataset kinds it takes (project_state.SLOTS).
 const SLOT_WORDS = { catalog: ["Catalog", ["catalog"]], events: ["Events", ["events", "logs"]], queries: ["Queries", ["queries"]],
   labels: ["Labels", ["judgments"]], holdout: ["Sealed holdout", ["queries"]] };
-const IMPORT_NOW = "__import__";
 /** Datasets of these kinds, by kind or by their class's role, across the workspace (not the Explorer's pick). */
 async function datasetsOf(kinds) {
   const [cl, ds] = await Promise.all([api("/api/dataset-classes", { scoped: false }), api("/api/datasets", { scoped: false })]);
@@ -95,33 +107,58 @@ export const TASKS = [
   },
   {
     id: "project", label: "New project", icon: "workflow",
-    about: "A project holds one search you're improving: its catalog, the labels that grade it, the experiments you train and the champion you ship. Nothing moves or is copied.",
+    about: "Start with what you're building. It decides which inputs the project asks for, and you can add or remove inputs later.",
+    load: async () => ({ recipes: await recipes() }),
     fields: [
+      { key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true,
+        options: (ctx) => (ctx.recipes ?? []).map((r) => ({ value: r.id, label: r.title, about: r.about, needs: r.needs, icon: r.icon ?? RECIPE_ICONS[r.id] ?? (r.team ? "users" : "workflow"), chip: r.team ? "your team's" : null })) },
       { key: "name", label: "Name", placeholder: "Outdoor store search", required: true },
       { key: "description", label: "What it's for", optional: true, placeholder: "Product search for the outdoor storefront" },
-      { key: "catalog", label: "Catalog", kind: "choice", optional: true, options: async () => [...await datasetsOf(["catalog"]), { value: IMPORT_NOW, label: "Import one now" }],
-        help: "The products this search ranks. It's pinned to its exact version, and you can change it later." },
     ],
     submit: async (v) => {
-      const r = await api("/api/projects", { body: { name: v.name.trim(), ...(v.description ? { description: v.description.trim() } : {}) } });
+      const r = await api("/api/projects", { body: { name: v.name.trim(), recipe: v.recipe, ...(v.description ? { description: v.description.trim() } : {}) } });
       const made = ok(r, "");
       if (!made.ok) return made;
-      const id = r.data?.id;
       setShared("captain.explorer.rev", Date.now()); // the Explorer lists it now
-      setShared("captain.scope", { kind: "project", id, label: r.data?.name ?? v.name.trim() });
+      setShared("captain.scope", { kind: "project", id: r.data?.id, label: r.data?.name ?? v.name.trim() });
       runCommand("layout.select", { stack: "sections", child: "project" });
-      if (v.catalog === IMPORT_NOW) {
-        openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { project: id } });
-        return { ok: true, message: `Project ${v.name.trim()} made. Import its catalog, then choose it in Inputs.` };
-      }
-      if (v.catalog) {
-        const p = await api(`/api/projects/${encodeURIComponent(id)}/pin`, { body: { catalog: v.catalog }, scoped: false });
-        if (!p.ok) return { ok: true, message: `Project ${v.name.trim()} made, but its catalog wasn't pinned: ${plain(p.data?.error ?? p.error)}` };
-      }
-      return { ok: true, message: `Project ${v.name.trim()} made.` };
+      return { ok: true, message: `Project ${v.name.trim()} made. Its inputs come next.` };
     },
   },
   // ---- a project's own tasks: opened from its page with its values preset (project, pins, champion, registry) ----
+  {
+    id: "add-input", label: "Add an input", icon: "plus", hidden: true,
+    about: "Anything your training reads that the project doesn't ask for yet. It's optional, so the project can still train without it.",
+    fields: [
+      { key: "label", label: "Name", placeholder: "Product embeddings", required: true },
+      { key: "kind", label: "What it is", kind: "choice", required: true, default: "generic",
+        options: [{ value: "catalog", label: "Products" }, { value: "events", label: "Events" }, { value: "queries", label: "Queries" }, { value: "judgments", label: "Labels" }, { value: "generic", label: "Something else" }] },
+    ],
+    submit: async (v) => {
+      const label = v.label.trim();
+      const slot = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "input";
+      // Choosing its source makes it: the picker saves the new input with its data.
+      openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { input: { project: v.project, slot, label, kinds: v.kind === "generic" ? [] : [v.kind], role: v.kind, custom: true } } });
+      return { ok: true, message: `Choose where ${label.toLowerCase()} comes from.` };
+    },
+  },
+  {
+    id: "delete-project", label: "Delete project", icon: "trash-2", hidden: true,
+    about: "The project goes: its inputs, experiments and champion. Its datasets, models and runs are kept, and so is everything else in the workspace.",
+    fields: [
+      { key: "confirm", label: "Type the project's name to delete it", required: true, help: (_ctx, v) => `It's called ${v.name}.` },
+    ],
+    submit: async (v) => {
+      if (v.confirm.trim() !== String(v.name).trim()) return { ok: false, error: `That isn't the project's name. It's called ${v.name}.` };
+      const r = await api(`/api/projects/${encodeURIComponent(v.project)}`, { method: "DELETE", scoped: false });
+      const done = ok(r, `Deleted ${v.name}. Its datasets, models and runs are still in the workspace.`);
+      if (done.ok) {
+        if (shared("captain.scope")?.kind === "project" && shared("captain.scope")?.id === v.project) setShared("captain.scope", null);
+        setShared("captain.explorer.rev", Date.now());
+      }
+      return done;
+    },
+  },
   {
     id: "pin", label: "Choose an input", icon: "tag", hidden: true,
     about: "Pin the project to an exact version. Every experiment trains and is judged on what's pinned, so results stay comparable.",
@@ -129,7 +166,17 @@ export const TASKS = [
       { key: "project", label: "Project", kind: "choice", required: true, when: (_v, ctx) => Boolean(ctx.args?.pickProject),
         options: () => list("/api/projects", (p) => ({ value: p.id, label: p.name }), false), empty: "No projects yet. Make one with New project." },
       { key: "slot", label: "Input", kind: "choice", required: true, options: Object.entries(SLOT_WORDS).map(([value, [label]]) => ({ value, label })) },
-      { key: "ref", label: "Version", kind: "choice", required: true, options: (_ctx, v) => datasetsOf(SLOT_WORDS[v.slot]?.[1] ?? []), empty: "Nothing of this kind yet. Import one first.",
+      { key: "ref", label: "Version", kind: "choice", required: true, options: async (_ctx, v) => {
+        // An input that already has a dataset: its own versions, newest first ("Use an older version").
+        const cur = String(v.pins?.[v.slot] ?? "").replace(/:\w+$/, "");
+        const m = cur.match(/^(.*)@v(\d+)$/);
+        if (m) {
+          const d = await api(`/api/datasets/${m[1].split("/").map(encodeURIComponent).join("/")}`, { scoped: false });
+          const n = d.ok ? d.data.version : Number(m[2]);
+          return Array.from({ length: n }, (_, i) => n - i).map((ver) => ({ value: `${m[1]}@v${ver}`, label: `${m[1]} version ${ver}`, chip: ver === n ? "newest" : ver === Number(m[2]) ? "in use" : null }));
+        }
+        return datasetsOf(SLOT_WORDS[v.slot]?.[1] ?? []);
+      }, empty: "Nothing of this kind yet. Import one first.",
         help: (_ctx, v) => (v.slot === "holdout" ? "A query set that isn't sealed yet gets sealed now: half its queries are kept back for judging, and no model trains on them." : v.slot === "labels" ? "These grade the sealed holdout. A model trained on the same labels can only show it agrees with them." : null) },
     ],
     submit: async (v) => {

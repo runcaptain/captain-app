@@ -139,6 +139,25 @@ export default class CaptainForms extends View {
       }));
   }
 
+  /** Big choices with a line each (what you're building): a card per option, two to a row, its icon, title, what
+   *  it is and what you'll need. */
+  cardChoice(c, f, opts) {
+    const rows = [];
+    for (let i = 0; i < opts.length; i += 2) rows.push(opts.slice(i, i + 2));
+    return v_flex().gap(8).children(rows.map((row, r) => h_flex().gap(8).items_start().children([...row.map((o) => {
+      const on = this.values[f.key] === o.value;
+      return v_flex().id(`f-${f.key}-${o.value}`).flex_1().min_w(0).min_h(112).p(12).gap(6).cursor_pointer().border_1()
+        .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).hover((s) => (on ? s : s.border_color(c.blue)))
+        .on_click((_e, cx) => this.pick(cx, f, o))
+        .child(h_flex().gap(8).items_center()
+          .child(div().size(24).flex_none().flex().items_center().justify_center().bg(on ? c.blue : c.blueLight).text_color(on ? c.onBlue : c.blue).child(svg(icon(o.icon ?? "workflow")).size(13)))
+          .child(div().flex_1().min_w(0).text_size(13).font_semibold().text_color(on ? c.blue : c.navy).child(o.label))
+          .when(Boolean(o.chip), (e) => e.child(Badge(c, o.chip, on ? "blue" : "neutral"))))
+        .when(Boolean(o.about), (e) => e.child(div().text_size(12).line_height("16px").text_color(c.grey900).child(o.about)))
+        .when(Boolean(o.needs), (e) => e.child(div().text_size(11.5).line_height("16px").text_color(c.grey500).child(`You'll need ${o.needs}`)));
+    }), ...(row.length < 2 ? [div().id(`f-${f.key}-pad-${r}`).flex_1()] : [])])));
+  }
+
   // A picker of products (databases, places to run work): a grid of tiles, each with its mark, `columns` to a row.
   gridChoice(c, f, opts) {
     const n = f.columns ?? 3;
@@ -168,6 +187,7 @@ export default class CaptainForms extends View {
       const opts = this.options[f.key];
       control = !opts ? div().h(30).w(160).bg(c.surface2)
         : !opts.length ? div().text_size(12.5).text_color(c.grey500).child(f.empty ?? "Nothing to pick yet.")
+        : f.cards ? this.cardChoice(c, f, opts)
         : f.grid ? this.gridChoice(c, f, opts)
         : opts.length > 8 ? this.longChoice(c, f, opts)
         : h_flex().flex_wrap().gap(6).children(opts.map((o) => {

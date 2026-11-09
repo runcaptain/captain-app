@@ -175,6 +175,10 @@ export class Explorer {
       if (n.type === "project") return [{ label: "New project", overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "project" } } }];
       return [add(n.type, holder)];
     }
+    if (n.kind === "project") {
+      const name = n.name ?? n.label ?? n.id;
+      return [{ label: "Delete project", danger: true, overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "delete-project", values: { project: n.id, name } } } }];
+    }
     if (n.kind !== "scope" && n.kind !== "engine") return [];
     const me = { kind: n.kind, id: n.id, type: n.type, name: n.name };
     return [
@@ -188,7 +192,7 @@ export class Explorer {
   menuList(c, id, acts, indent) {
     return v_flex().ml(indent).mr(8).mb(4).py(4).border_1().border_color(c.grey300).bg(c.surface)
       .children(acts.map((a, i) => div().id(`ex-act-${id}-${i}`).h(26).px(10).flex().items_center().text_size(12.5).cursor_pointer()
-        .text_color(a.props?.action === "archive" ? c.fail : c.navy).hover((s) => s.bg(c.surface2))
+        .text_color(a.props?.action === "archive" || a.danger ? c.fail : c.navy).hover((s) => s.bg(c.surface2))
         .on_click((_e, cx) => { this.menu = null; cx.notify(); openOverlay(a.overlay ?? DIALOG(a.props)); })
         .child(a.label)));
   }

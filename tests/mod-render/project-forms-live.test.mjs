@@ -39,10 +39,10 @@ const submit = async (id, values, args = {}) => { const t = task(id); const ctx 
 const state = async () => (await api('/api/projects/trail/state', { scoped: false })).data;
 const opts = async (id, key, values = {}) => { const f = task(id).fields.find((x) => x.key === key); return typeof f.options === 'function' ? f.options({}, values) : f.options; };
 
-// New project, with a catalog picked: made and pinned.
-const cats = await opts('project', 'catalog');
-assert.ok(cats.some((o) => o.value === 'demo-catalog@v1') && cats.some((o) => o.label === 'Import one now'), 'catalog choices');
-let r = await submit('project', { name: 'Trail', catalog: 'demo-catalog@v1' });
+// New project: what you're building, then the name. The catalog is chosen on its page.
+let r = await submit('project', { name: 'Trail', recipe: 'search-judgments' });
+assert.ok(r.ok, r.error);
+r = await submit('pin', { project: 'trail', slot: 'catalog', ref: 'demo-catalog@v1' });
 assert.ok(r.ok, r.error);
 assert.equal((await state()).pins.catalog, 'demo-catalog@v1');
 
