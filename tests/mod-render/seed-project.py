@@ -23,6 +23,15 @@ PR.assign(ctx, p["id"], [{"kind": "dataset", "name": "demo-catalog"}])
 from captain_search import project_state as PS
 
 PS.pin(ctx, p["id"], {"catalog": "demo-catalog", "queries": "demo-queries@v1", "holdout": "demo-queries", "labels": "demo-judgments"})
+# What it builds (a recipe), its search events kept live from the demo store, and an optional input of its own.
+from captain_search import project_inputs as PI
+
+PS.set_kind(ctx, p["id"], "search-judgments")
+try:
+    PI.set_input(ctx, p["id"], "events", {"from": "connection", "connection": "demo-store", "table": "main.search_log"}, "live")
+except Exception:  # noqa: BLE001  a recipe without an events slot: the page still shows the rest
+    pass
+PS.slot_add(ctx, p["id"], {"label": "Product embeddings", "why": "Item vectors for the second-stage ranker"})
 PS.experiment_add(ctx, p["id"], "demo-bm25")
 e = PS.experiment_add(ctx, p["id"], "demo-tuned", labels="demo-judgments", trainer="python train.py")
 PS.set_champion(ctx, p["id"], "demo-bm25@v1")

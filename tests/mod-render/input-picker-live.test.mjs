@@ -79,7 +79,7 @@ await h.click('input-use-conn');
 await until(h, () => !h.mod.busy, 'saved live');
 st = await get('/api/projects/outdoor/stages');
 const live = (st.inputs ?? []).find((x) => x.slot === 'catalog');
-assert.equal(live?.mode, 'live', `live catalog: ${JSON.stringify(live)}`);
+assert.equal(live?.mode, 'live', `live catalog: ${JSON.stringify(live)} note: ${JSON.stringify(h.mod.note)}`);
 assert.equal(live?.status, 'live');
 const state = await get('/api/projects/outdoor/state');
 assert.equal(state.inputs.catalog.source.connection, 'demo-store');

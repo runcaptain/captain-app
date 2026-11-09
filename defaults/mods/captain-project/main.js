@@ -140,7 +140,8 @@ export default class ProjectHome extends View {
       ]);
       if (seq !== this.seq) return;
       if (sd?.ok) this.state = sd.data;
-      if (rc?.ok && Array.isArray(rc.data)) this.recipes = rc.data;
+      const rl = rc?.ok ? (Array.isArray(rc.data) ? rc.data : rc.data?.recipes) : null;
+      if (Array.isArray(rl)) this.recipes = rl;
       // Each connection's kind, for its mark on an input's card.
       if (cn?.ok && Array.isArray(cn.data)) this.sources = Object.fromEntries(cn.data.map((k) => [k.name, k.kind ?? k.engine]));
       // The newest proposal still waiting, from the agent this page started (or any agent): shown until it's handled.
@@ -150,7 +151,7 @@ export default class ProjectHome extends View {
           this.assist = { status: "proposed", proposal: open, agent: open.agent, skipped: [], done: [] };
           if (open.trainer?.script) this.loadScript(cx, open);
         }
-        else if (!open && this.assist?.proposal) this.assist = null;
+        else if (!open && this.assist?.proposal && this.assist.status !== "accepted") this.assist = null;
       }
       if (seq !== this.seq) return;
       if (ps.ok) this.projects = Array.isArray(ps.data) ? ps.data : ps.data?.projects ?? [];
@@ -261,17 +262,17 @@ export default class ProjectHome extends View {
     return v_flex().id(id).w(232).min_h(168).flex_none().p(12).gap(7).bg(c.surface).border_1().border_color(missing && inp.required ? c.grey300 : c.rule)
       .child(h_flex().gap(8).items_center()
         .child(div().size(26).flex_none().flex().items_center().justify_center().bg(missing ? c.surface2 : c.blueLight).text_color(missing ? c.grey500 : c.blue).child(svg(icon(inp.icon)).size(14)))
-        .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(inp.label))
+        .child(div().flex_1().min_w(0).text_size(13).line_height("17px").font_semibold().child(inp.label))
         .child(Badge(c, inp.required ? "required" : "optional", missing && inp.required ? "warn" : "neutral"))
         .when(!inp.required, (e) => e.child(div().id(`${id}-remove`).size(18).flex_none().flex().items_center().justify_center().cursor_pointer().text_color(c.grey500)
           .hover((s) => s.text_color(c.fail)).tooltip(`Remove ${inp.label.toLowerCase()} from this project`)
           .on_click((_e, cx) => this.removeInput(cx, inp)).child(svg(icon("x")).size(12)))))
       .child(this.sourceLine(c, inp))
       .when(!missing, (e) => e.child(h_flex().gap(6).items_center().min_w(0)
-        .child(Badge(c, live ? "live" : "snapshot", live ? "blue" : "neutral"))
-        .child(div().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(inp.last_read_at ? `last read ${day(inp.last_read_at)}${inp.rows != null ? `, ${int(inp.rows)} rows` : ""}`
-          : inp.as_of ? `${live ? "chosen" : "taken"} ${day(inp.as_of)}${inp.rows != null ? `, ${int(inp.rows)} rows` : ""}` : live ? "read on the next run" : ""))
-        .when(r.version != null && !live, (x) => x.child(div().flex_none().text_size(10.5).font_family(MONO).text_color(c.grey500).child(`v${r.version}`)))))
+          .child(Badge(c, live ? "live" : "snapshot", live ? "blue" : "neutral"))
+          .when(r.version != null && !live, (x) => x.child(div().flex_none().text_size(10.5).font_family(MONO).text_color(c.grey500).child(`version ${r.version}`))))
+        .child(div().text_size(11.5).line_height("16px").text_color(c.grey500).child(inp.last_read_at ? `Last read ${day(inp.last_read_at)}${inp.rows != null ? `, ${int(inp.rows)} rows` : ""}`
+          : inp.as_of ? `${live ? "Chosen" : "Taken"} ${day(inp.as_of)}${inp.rows != null ? `, ${int(inp.rows)} rows` : ""}` : live ? "Read on the next run" : "")))
       .children((inp.info ?? []).slice(0, 2).map((i, k) => h_flex().id(`${id}-info-${k}`).gap(6).items_start()
         .child(svg(icon(i.code === "newer-version" ? "sparkles" : "triangle-alert")).size(12).mt(2).flex_none().text_color(i.code === "newer-version" ? c.blue : c.warn))
         .child(div().flex_1().min_w(0).text_size(11.5).line_height("16px").text_color(c.grey900).child(i.text))))
@@ -351,12 +352,16 @@ export default class ProjectHome extends View {
     if (this.busy) return;
     this.busy = true;
     cx.spawn(async (cx) => {
-      const r = await api(`/api/projects/${enc(this.pid())}/proposals/${enc(prop.id)}/accept`, { body: only ? { only } : {}, scoped: false });
+      // One accept per proposal: the services close it after, so the checked items go together.
+      if (!only) only = [...(prop.slots ?? []).map((x) => x.slot).filter((x) => !(a.skipped ?? []).includes(x)),
+        ...(prop.trainer && !a.scriptSkipped ? ["trainer"] : []), ...(prop.evaluation ? ["evaluation"] : [])];
+      const r = await api(`/api/projects/${enc(this.pid())}/proposals/${enc(prop.id)}/accept`, { body: { only }, scoped: false });
       this.busy = false;
       if (!r.ok) { this.note = { tone: "fail", text: plainError(r.data?.error ?? r.error, "Couldn't apply that.") }; cx.notify(); return; }
-      a.done = [...(a.done ?? []), ...(only ?? (prop.slots ?? []).map((x) => x.slot))];
-      a.toConnect = [...(a.toConnect ?? []).filter((t) => !(r.data?.to_connect ?? []).some((n) => n.slot === t.slot)), ...(r.data?.to_connect ?? [])];
-      if (!only) a.status = "accepted";
+      a.done = [...only];
+      a.toConnect = r.data?.to_connect ?? [];
+      a.status = "accepted";
+      if (!a.toConnect.length) this.assist = null;
       setShared("captain.explorer.rev", Date.now());
       this.note = { tone: "good", text: (r.data?.to_connect ?? []).length ? "Accepted. For each source below, take a snapshot now or keep it live." : "Accepted. Change any input from its card." };
       this.load(cx);
@@ -384,36 +389,37 @@ export default class ProjectHome extends View {
     const head = h_flex().gap(8).items_center()
       .child(svg(mark).size(16).flex_none())
       .child(div().flex_1().min_w(0).text_size(13).font_semibold().child(waiting ? "The agent is looking at your connections and folders in a new tab" : a.status === "accepted" ? `${name}'s proposal is in` : `${name} proposes`))
-      .when(!waiting && a.status !== "accepted", (e) => e.child(Button(c, "assist-accept-all", "Accept all", (_e, cx) => this.accept(cx, null), { kind: "primary", small: true, disabled: this.busy }))
+      .when(!waiting && a.status !== "accepted", (e) => e.child(Button(c, "assist-accept-all", (a.skipped ?? []).length || a.scriptSkipped ? "Accept the checked ones" : "Accept all", (_e, cx) => this.accept(cx, null), { kind: "primary", small: true, disabled: this.busy }))
         .child(Button(c, "assist-reject", "Set aside", (_e, cx) => this.reject(cx), { small: true, kind: "quiet", disabled: this.busy })))
       .child(div().id("assist-close").cursor_pointer().text_color(c.grey500).tooltip("Hide").on_click((_e, cx) => { this.assist = null; cx.notify(); }).child(svg(icon("x")).size(12)));
-    const slots = (prop?.slots ?? []).filter((s) => !(a.skipped ?? []).includes(s.slot));
+    const slots = a.status === "accepted" ? [] : prop?.slots ?? [];
     const label = (s) => s.label ?? this.slotOf((this.stages?.inputs ?? []).find((x) => x.slot === s.slot) ?? { slot: s.slot }).label;
     return v_flex().id("assist").p(12).gap(8).bg(c.surface).border_1().border_color(c.blue)
       .child(head)
-      .when(waiting, (e) => e.child(div().text_size(12).text_color(c.grey900).child("When it has a proposal, it shows here to accept, change or skip, one input at a time. Nothing changes until you accept.")))
+      .when(waiting, (e) => e.child(div().text_size(12).text_color(c.grey900).child("When it has a proposal, it shows here. Untick what you don't want, change any source, then accept. Nothing changes until you do.")))
       .when(Boolean(prop?.note), (e) => e.child(div().text_size(12).text_color(c.grey900).child(prop.note)))
       .children(slots.map((s, i) => {
-        const done = (a.done ?? []).includes(s.slot);
+        const on = !(a.skipped ?? []).includes(s.slot);
         return h_flex().id(`assist-${i}`).gap(10).items_center().py(6).border_t(1).border_color(c.rule)
-          .child(svg(icon(done ? "circle-check" : s.add ? "plus" : SLOTS[s.role ?? s.slot]?.icon ?? "database")).size(14).flex_none().text_color(done ? c.good : c.grey500))
-          .child(v_flex().flex_1().min_w(0).gap(2)
+          .child(div().id(`assist-${i}-check`).cursor_pointer().tooltip(on ? "Leave this one out" : "Include this one")
+            .on_click((_e, cx) => { a.skipped = on ? [...(a.skipped ?? []), s.slot] : (a.skipped ?? []).filter((x) => x !== s.slot); cx.notify(); })
+            .child(svg(icon(on ? "square-check" : "square")).size(15).text_color(on ? c.blue : c.grey500)))
+          .child(v_flex().flex_1().min_w(0).gap(2).when(!on, (x) => x.opacity(0.55))
             .child(h_flex().gap(8).items_center().min_w(0)
               .child(div().flex_none().text_size(12.5).font_medium().child(`${s.add ? "Add " : ""}${label(s)}`))
               .when(Boolean(s.source), (x) => x.child(this.sourceLine(c, { ...s, about: "" })))
               .when(Boolean(s.mode), (x) => x.child(Badge(c, s.mode, s.mode === "live" ? "blue" : "neutral"))))
             .when(Boolean(s.why), (x) => x.child(div().text_size(11.5).text_color(c.grey500).child(s.why))))
-          .when(!done && a.status !== "accepted", (x) => x
-            .child(Button(c, `assist-${i}-accept`, "Accept", (_e, cx) => this.accept(cx, [s.slot]), { small: true, kind: "primary", disabled: this.busy }))
-            .child(Button(c, `assist-${i}-edit`, "Change", () => pickInput(this.pid(), { slot: s.slot, label: label(s), accepts: s.accepts }), { small: true }))
-            .child(Button(c, `assist-${i}-skip`, "Skip", (_e, cx) => { a.skipped = [...(a.skipped ?? []), s.slot]; cx.notify(); }, { small: true, kind: "quiet" })));
+          .child(Button(c, `assist-${i}-edit`, "Change", () => pickInput(this.pid(), { slot: s.slot, label: label(s), accepts: s.accepts }), { small: true, kind: "quiet" }));
       }))
       .when((prop?.remove_slots ?? []).length > 0, (e) => e.child(div().text_size(12).text_color(c.grey900)
         .child(`It would also remove ${prop.remove_slots.map((x) => label({ slot: x })).join(", ")}, which this setup doesn't use.`)))
-      .when(Boolean(prop?.trainer), (e) => {
+      .when(Boolean(prop?.trainer) && a.status !== "accepted", (e) => {
         const tr = prop.trainer;
         return e.child(v_flex().id("assist-script").gap(4).pt(6).border_t(1).border_color(c.rule)
           .child(h_flex().gap(8).items_center()
+            .child(div().id("assist-script-check").cursor_pointer().on_click((_e, cx) => { a.scriptSkipped = !a.scriptSkipped; cx.notify(); })
+              .child(svg(icon(a.scriptSkipped ? "square" : "square-check")).size(15).text_color(a.scriptSkipped ? c.grey500 : c.blue)))
             .child(svg(icon("file-text")).size(14).flex_none().text_color(c.grey500))
             .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().child(tr.script?.path ? `Training script: ${tr.script.path}` : "Training command")))
           .when(Boolean(tr.command), (x) => x.child(div().px(8).py(4).bg(c.surface2).font_family(MONO).text_size(11.5).text_color(c.grey900).truncate().child(tr.command)))
@@ -521,13 +527,15 @@ export default class ProjectHome extends View {
     const evalSet = (this.stages?.inputs ?? []).find((i) => (i.role ?? i.slot) === "holdout");
     const noEval = ev0 ? !ev0.ready : !evalSet || evalSet.status === "missing" || evalSet.status === "empty";
     const missingEval = ev0?.missing?.length ? (this.stages.inputs ?? []).find((i) => i.slot === ev0.missing[0]) : null;
-    const how = ev0?.label ? ` by ${String(ev0.label).replace(/^./, (x) => x.toLowerCase())}` : " on the evaluation set";
-    const hint = noEval ? "Experiments train without one, but nothing judges them until there's an evaluation set."
+    const how = ev0?.label ? `. Judged by: ${String(ev0.label).replace(/^./, (x) => x.toLowerCase())}` : " on the evaluation set";
+    const hint = noEval ? "Experiments can train now. Nothing judges them until the project can evaluate."
       : !champ && xs.length ? `Make one experiment the champion. Every other one is judged against it${how}.` : `Each one is judged against the champion${how}.`;
     const banner = noEval ? h_flex().id("exp-no-eval").p(10).gap(10).items_center().bg(c.surface).border_1().border_color(c.rule)
       .child(svg(icon("square-check")).size(14).flex_none().text_color(c.grey500))
-      .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child(ev0?.text ?? "No evaluation set yet. Add queries kept back from training, with labels that grade them."))
-      .child(Button(c, "exp-add-eval", "Add an evaluation set", () => (missingEval ?? evalSet
+      .child(v_flex().flex_1().min_w(0).gap(1)
+        .when(Boolean(ev0?.label), (e) => e.child(div().text_size(12.5).font_medium().text_color(c.navy).child(`Judged by: ${ev0.label}`)))
+        .child(div().text_size(12.5).text_color(c.grey900).child(ev0?.text ?? "No evaluation set yet. Add queries kept back from training, with labels that grade them.")))
+      .child(Button(c, "exp-add-eval", missingEval ? `Choose ${this.slotOf(missingEval).noun}` : "Add an evaluation set", () => (missingEval ?? evalSet
         ? pickInput(this.pid(), this.slotOf(missingEval ?? evalSet))
         : form("add-input", { project: this.pid(), label: "Evaluation set", kind: "queries", why: "Queries kept back from training, to judge experiments" })), { small: true })) : null;
     return this.part(c, "experiments", "Train and compare", hint, actions, v_flex().gap(8).when(Boolean(banner), (e) => e.child(banner)).child(body));
@@ -707,7 +715,7 @@ export default class ProjectHome extends View {
         .when(Boolean(n), (e) => e.child(div().size(22).flex_none().flex().items_center().justify_center().rounded_full().bg(c.navy).text_color(c.surface).text_size(11.5).font_semibold().child(String(n))))
         .child(v_flex().flex_1().min_w(0).gap(1)
           .child(div().text_size(15).font_semibold().child(title))
-          .child(div().truncate().text_size(12).text_color(c.grey500).child(sub)))
+          .child(div().text_size(12).line_height("17px").text_color(c.grey500).child(sub)))
         .children(actions))
       .child(body);
   }
@@ -727,6 +735,16 @@ export default class ProjectHome extends View {
 
   /** What a project needs next, in words, and what doing it opens. */
   nextOf(sum) {
+    // The services' own next step, when they name one (the same line the project page shows on top).
+    const n0 = sum.stages.next;
+    if (n0?.action) {
+      const inp = (sum.stages.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === n0.slot);
+      if (n0.action === "set-input" && inp) return { label: `Choose ${inp.noun}`, task: "input", slot: inp };
+      if (n0.action === "add-evaluation") return { label: "Add an evaluation set" };
+      if (n0.action === "make-champion") return { label: "Make a champion" };
+      if (n0.action === "backtest") return { label: "Judge an experiment" };
+      if (n0.action === "new-experiment") return { label: "New experiment", task: "experiment" };
+    }
     const missing = (sum.stages.inputs ?? []).find((i) => i.status === "missing" && i.slot !== "events");
     if (missing) return { label: `Choose ${SLOTS[missing.slot]?.noun ?? missing.slot}`, task: "pin", slot: missing.slot };
     const n = sum.stages.experiments?.next ?? {};
@@ -772,7 +790,8 @@ export default class ProjectHome extends View {
       .when(Boolean(next), (e) => e.child(h_flex().child(Button(c, `ph-p-${i}-next`, next.label, (_e, cx) => {
         this.pickProject(cx, p);
         const pins = Object.fromEntries(sum.stages.inputs.map((x) => [x.slot, x.pinned]));
-        if (next.task === "pin") form("pin", { project: p.id, pins, slot: next.slot });
+        if (next.task === "input") pickInput(p.id, next.slot);
+        else if (next.task === "pin") form("pin", { project: p.id, pins, slot: next.slot });
         else if (next.task === "experiment") form("experiment", { project: p.id, pins, champion: champ, base: champ ? cr.name : undefined });
       }, { small: true, kind: "primary" }))));
   }
@@ -838,7 +857,7 @@ export default class ProjectHome extends View {
 
   /** The header's menu: what's rarely needed. */
   moreMenu(c) {
-    const trigger = div().id("ph-more").h(26).px(8).flex().items_center().cursor_pointer().text_color(c.grey900).border_1().border_color(c.grey300)
+    const trigger = div().id("ph-more").h(26).px(10).flex().items_center().cursor_pointer().text_size(12).font_medium().text_color(c.navy).bg(c.surface).border_1().border_color(c.grey300)
       .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => { this.menuOpen = !this.menuOpen; cx.notify(); }).child("More");
     return Popup.new("ph-more-pop", trigger).anchor("bottom_right")
       .when(Boolean(this.menuOpen), (e) => e.content(v_flex().id("ph-more-list").w(200).py(4).bg(c.surface).border_1().border_color(c.grey300)
@@ -868,7 +887,7 @@ export default class ProjectHome extends View {
       .child(div().size(32).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon(pid ? "workflow" : "house")).size(16)))
       .child(v_flex().flex_1().min_w(0)
         .child(div().text_size(18).font_semibold().truncate().child(p?.name ?? (pid ? shared("captain.scope")?.label ?? pid : "Home")))
-        .child(div().text_size(12).text_color(c.grey500).truncate().child(p?.description || (pid ? "Pinned inputs, experiments against the champion, and where it ships." : this.projects && !this.projects.length ? "Start with a project." : "Pick a project to work on."))))
+        .child(div().text_size(12).text_color(c.grey500).truncate().child(p?.description || (pid ? "What you're building, its inputs, its experiments against the champion, and where it ships." : this.projects && !this.projects.length ? "Start with a project." : "Pick a project to work on."))))
       .child(Button(c, "ph-workflows", "Workflows", () => go("runs", { tab: "workflows" }), { small: true, kind: "quiet" }))
       .when(Boolean(pid), (e) => e.child(Button(c, "ph-all", "All projects", (_e, cx) => this.allProjects(cx), { small: true, kind: "quiet" })))
       .when(Boolean(pid) && Boolean(this.stages), (e) => e.child(Button(c, "ph-assist", "Set up with an agent", (_e, cx) => this.startAssist(cx), { small: true, disabled: this.busy || Boolean(this.assist) })))

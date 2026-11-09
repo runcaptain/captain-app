@@ -521,7 +521,8 @@ export default class CaptainImport extends View {
     const k = (this.conns ?? []).find((x) => x.name === conn);
     if (this.eventPick) return { from: "connection", connection: conn, event: { name: this.eventPick, days: 30 } };
     if (!p?.source) return null;
-    if (p.source.table) return { from: "connection", connection: conn, table: p.source.table };
+    // The table browser names a table with its database in front ("shop".main.products); the input wants schema.table.
+    if (p.source.table) return { from: "connection", connection: conn, table: p.source.table.split(".").slice(-2).map((x) => x.replace(/"/g, "")).join(".") };
     if ((k?.kind ?? k?.engine) === "ga4") {
       try { return { from: "connection", connection: conn, report: JSON.parse(p.source.sql) }; } catch { return null; }
     }
