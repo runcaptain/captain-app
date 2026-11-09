@@ -284,7 +284,10 @@ export default class CaptainInvestigations extends View {
     return dec ? Card(c, { title: "Decision" },
       h_flex().gap(8).items_center().child(Badge(c, words(dec.outcome), toneOf(dec.outcome))).child(div().text_size(12).text_color(c.grey500).child(`${who(dec.by ?? dec.decided_by)} ${when(dec.at ?? dec.decided_at)}`)),
       ...[["Claim", dec.claim], ["Interpretation", dec.interpretation], ["Limitations", Array.isArray(dec.limitations) ? dec.limitations.join("; ") : dec.limitations], ["Next step", dec.next_step]]
-        .filter(([, v]) => v).map(([k, v]) => v_flex().gap(2).child(div().text_size(11.5).font_medium().text_color(c.grey500).child(k)).child(div().text_size(13).line_height("19px").text_color(c.navy).child(String(v)))))
+        .filter(([, v]) => v).map(([k, v]) => v_flex().gap(2).child(div().text_size(11.5).font_medium().text_color(c.grey500).child(k)).child(div().text_size(13).line_height("19px").text_color(c.navy).child(String(v)))),
+        // A decision to go on: its handoff is the next step, with the plan's candidate.
+        ...(["continue", "online-test"].includes(dec.outcome) ? [h_flex().child(Button(c, "decision-handoff", "Hand off the candidate", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560,
+          props: { task: "handoff", values: (d.plan?.candidates ?? d.candidates ?? [])[0] ? { pipeline: (d.plan?.candidates ?? d.candidates)[0] } : {} } }), { kind: "primary", small: true }))] : []))
       : Empty(c, "No decision yet", "Only a person records the decision: continue, online test, reject or inconclusive.",
         Button(c, "decide", "Record a decision", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "decision", args: { id: this.open } } }), { kind: "primary" }));
   }

@@ -337,6 +337,20 @@ export default class CaptainCompare extends View {
         .child(div().flex_1().min_w(0).child(sentence(x.text)))));
   }
 
+  /** What to do with a finished comparison, pre-filled with its candidate (arm B) and this run. */
+  nextSteps(c, p) {
+    const ev = { SIMULATED: "simulated", LLM_GRADED: "LLM graded", LOGGED_CLICKS: "logged clicks", HUMAN_GRADED: "human graded", REAL_TRAFFIC: "real traffic" }[p.evidence] ?? "not judged";
+    const own = (this.compat?.warnings ?? []).some((w) => w.code === "own-labeler");
+    // A project's experiment backtests are named <project>/<experiment>.
+    const project = /^([a-z0-9][a-z0-9-]*)\/exp-/.test(this.sel?.backtest ?? "") ? this.sel.backtest.split("/")[0] : undefined;
+    const form = (task, values, args) => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, values, ...(args ? { args } : {}) } });
+    return h_flex().id("next-steps").flex_wrap().gap(8).items_center()
+      .child(div().text_size(12).text_color(c.grey500).child(own ? "The candidate learned from the labeler that grades it, so this isn't a win yet." : "Next:"))
+      .child(Button(c, "next-champion", `Make champion (${ev})`, () => form("champion", { pipeline: p.b, evidence: ev, project }), { small: true, kind: p.verdict === "win" && !own ? "primary" : "secondary" }))
+      .child(Button(c, "next-decide", "Record a decision", () => form("decision", { run: this.runRef(), candidate: p.b }), { small: true }))
+      .child(Button(c, "next-handoff", "Hand off", () => form("handoff", { pipeline: p.b }), { small: true }));
+  }
+
   overview(c, w) {
     const r = this.run;
     const cmps = r.comparisons ?? [];
@@ -353,6 +367,7 @@ export default class CaptainCompare extends View {
         .child(div().text_size(12).font_family(MONO).text_color(c.grey900).child(`[${fmtD(p.ci_low)}, ${fmtD(p.ci_high)}]`))
         .child(this.badge(c, p.verdict, p.verdict))
         .when(!!p.evidence, (e) => e.child(this.badge(c, p.evidence)))))
+      .when(!!p && String(p.b ?? "").includes("@v"), (e) => e.child(this.nextSteps(c, p)))
       .when(!!cost, (e) => e.child(h_flex().flex_wrap().gap(14).items_center().text_size(12.5)
         .child(this.icon("cost", 14, c.navy))
         .child(this.badge(c, cost.flag ? cost.flag.replace(/-/g, " ") : "add a cost", cost.flag === "retire" ? "fail" : cost.flag ? "blue" : null))

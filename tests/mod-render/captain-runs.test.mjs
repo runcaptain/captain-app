@@ -92,7 +92,12 @@ assert.ok(globalThis.__asked.some((p) => /\/grade$/.test(p)), 'POST grade');
 globalThis.__routes.find((r) => r[1] === 'grading')[1] = 'grading-1';
 await h.click('grader-back');
 await h.click('publish-demo-grading');
-assert.ok(h.text().includes('Published demo-grading-human@v1: HUMAN_GRADED'), 'published');
+assert.ok(h.text().includes('Published demo-grading-human@v1: judgments graded by people.'), 'published');
+// Carried on: the new grades can become a project's labels, the pin form pre-filled.
+globalThis.__overlays = [];
+await h.click('use-labels-demo-grading');
+assert.deepEqual(globalThis.__overlays.at(-1)?.props?.values?.ref, 'demo-grading-human@v1');
+assert.equal(globalThis.__overlays.at(-1)?.props?.task, 'pin');
 
 // Replays: a line per outcome (dashed when directional), the legend, and the points.
 await h.click('tab-replays');

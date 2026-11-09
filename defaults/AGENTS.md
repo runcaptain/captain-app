@@ -1055,9 +1055,25 @@ Sample-only read history is removed too. Other workspaces are preserved. `cst --
 The older generated experiment demo remains available with `cst demo seed --legacy`;
 it writes simulated experiments into the selected workspace.
 
+## Captain project page (Home)
+
+The sidebar's **Home** opens the current project's page (`captain-project`): the Explorer's pick, else the
+last project opened there. With no project it offers New project, which can pin a catalog at once.
+- **Inputs**: catalog, events, queries, labels and the sealed holdout, each pinned to an exact version. A newer
+  version shows as information with one action ("Use version 2"); a missing input asks to choose one.
+- **Experiments**: trained versions judged against the champion on the sealed holdout and the pinned labels. A
+  model trained on the labeler that grades the holdout reads "Agrees with its own labeler", never as a win.
+  New experiment trains on the pins with your own command; Import a model version brings one from MLflow or a
+  registry. Rows open to: the comparison, Rerun with changes, Judge against the champion, Make champion (with
+  its evidence) and Publish to the registry.
+- **Ship**: the registry place (asked once), staging (not yet), the live handoff, and the online check.
+The page links to Workflows, which also opens from the palette ("Open workflows"). The forms are
+`captain-forms` tasks (`pin`, `experiment`, `import-version`, `publish`, `champion`) opened with
+`props: {task, values}`; a failed readiness check and a decision to go on offer their next step.
+
 ## Captain team collaboration
 
-The Captain palette's **Team collaboration** entry opens the `captain-team` mod.
+The sidebar's **Team** and the Captain palette's **Team collaboration** entry open the `captain-team` mod.
 The editor keeps the selected revision when you pull newer records, so stale drafts
 conflict instead of overwriting them. A restored server history clears the editor;
 reload and review before saving or resolving a draft.

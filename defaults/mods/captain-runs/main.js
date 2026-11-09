@@ -155,6 +155,13 @@ export default class CaptainRuns extends View {
         cx.notify();
         return;
       }
+      if (o?.section === "runs" && o.tab && !o.backtest && !o.replay && o.at !== this.opened) {
+        this.opened = o.at;
+        this.tab = o.tab; this.grader = null;
+        if (o.tab === "jobs") this.jobs.load(cx); else if (o.tab === "live") this.live.load(cx); else this.load(cx, o.tab);
+        cx.notify();
+        return;
+      }
       if (o?.section === "runs" && (o.backtest || o.replay) && o.at !== this.opened) {
         this.opened = o.at;
         const [tab, name] = o.replay ? ["replays", o.replay] : ["backtests", o.backtest];
@@ -579,7 +586,7 @@ export default class CaptainRuns extends View {
     const qs = this.data.grading ?? [];
     return v_flex().id("grading").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(10)
       .when(!!this.error, (e) => e.child(div().text_size(12.5).text_color(c.fail).child(this.error)))
-      .when(Array.isArray(this.data.grading) && !qs.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("No grading queues. Make one with New, Grading queue.")))
+      .when(Array.isArray(this.data.grading) && !qs.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("No grading queues yet. Start grading from New, Start grading.")))
       .children(qs.map((q) => {
         const pub = this.published?.queue === q.name ? this.published : null;
         return v_flex().id(`queue-${q.name}`).border_1().border_color(c.rule).p(14).gap(8)
@@ -599,8 +606,12 @@ export default class CaptainRuns extends View {
             .child(div().tooltip("Cohen's kappa, on pairs two graders both graded").child(q.kappa === null || q.kappa === undefined
               ? `Agreement between graders: not measured until 10 pairs are graded twice (${int(q.agreement_pairs ?? 0)} so far)`
               : `Agreement between graders: ${Number(q.kappa).toFixed(2)}`)))
-          .when(!!pub, (e) => e.child(div().text_size(12.5).text_color(pub.status === "failed" ? c.fail : c.navy)
-            .child(pub.status === "done" ? `Published ${pub.ref}: HUMAN_GRADED judgments.` : pub.status === "failed" ? pub.error : "Publishing")))
+          .when(!!pub, (e) => e.child(h_flex().gap(10).items_center()
+            .child(div().flex_1().min_w(0).text_size(12.5).text_color(pub.status === "failed" ? c.fail : c.navy)
+              .child(pub.status === "done" ? `Published ${pub.ref}: judgments graded by people.` : pub.status === "failed" ? pub.error : "Publishing"))
+            // Carry them on: these grades become the labels that judge a project's experiments.
+            .when(pub.status === "done", (x) => x.child(Button(c, `use-labels-${q.name}`, "Use as a project's labels", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "pin", args: { pickProject: true },
+              values: { slot: "labels", ref: pub.ref, project: shared("captain.scope")?.kind === "project" ? shared("captain.scope").id : undefined } } }), { small: true, kind: "primary" })))))
           .when(q.graded > 0 && !pub, (e) => e.child(h_flex().gap(8).items_center().text_size(12)
             .child(div().text_color(c.grey900).child("Publish as"))
             .child(div().id(`pubname-${q.name}`).w(240).h(28).px(8).flex().items_center().border_1().border_color(c.grey300)
