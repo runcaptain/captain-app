@@ -796,13 +796,30 @@ def models_pull(model_id: str = typer.Argument(..., help="brand@version, or a br
             f"{r['downloaded']} downloaded, {r['already_there']} already there, {r['checked']} checked against SHA256SUMS." + note)
 
 
-@app.command()
-def lineage(view: str = typer.Option("artifacts", "--view", help="artifacts or models")):
+lineage_app = typer.Typer(help="Print the lineage graph as edges. `cst lineage reindex` backfills its index.")
+app.add_typer(lineage_app, name="lineage")
+
+
+@lineage_app.callback(invoke_without_command=True)
+def lineage(typer_ctx: typer.Context, view: str = typer.Option("artifacts", "--view", help="artifacts or models")):
     """Print the lineage graph as edges."""
+    if typer_ctx.invoked_subcommand:
+        return
     from .. import models as MD
 
     g = MD.lineage(ctx()) if view == "models" else ops.lineage(ctx())
     emit(g, "\n".join(f"{e['src']}  --{e['relation']}-->  {e['dst']}" for e in g["edges"]) or "no lineage yet")
+
+
+@lineage_app.command("reindex")
+def lineage_reindex():
+    """Write lineage records for every version published before the index existed. Safe to run again."""
+    from .. import lineage_index as LI
+
+    r = LI.reindex(ctx(), dry_run=S.dry_run)
+    verb = "Would add" if S.dry_run else "Added"
+    emit(r, f"{verb} {r['added']} lineage records ({r['existing']} already there)."
+            + ("" if S.dry_run else " The index now covers the whole workspace."))
 
 
 @pipeline_app.command("serve")

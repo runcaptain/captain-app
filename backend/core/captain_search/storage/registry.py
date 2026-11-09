@@ -39,8 +39,9 @@ def sha256(data: bytes) -> str:
 
 
 class Registry:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, index_lineage: bool = True):
         self.store = store
+        self.index_lineage = index_lineage  # append lineage edge records on publish (lineage_index.py)
 
     # -- blobs -------------------------------------------------------------------------
 
@@ -107,6 +108,10 @@ class Registry:
                 continue
             sums = "".join(f"{f.sha256}  {f.path}\n" for f in m.files)
             self.store.put_new(f"{d}/SHA256SUMS", sums.encode())
+            if self.index_lineage:
+                from ..lineage_index import record
+
+                record(self, m)
             return m
         raise Conflict(f"could not claim a version for {kind}/{manifest.name} after {max_tries} tries")
 

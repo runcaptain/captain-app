@@ -232,11 +232,12 @@ def _legacy_models(ctx: Context, limit: int = 200) -> list[dict]:
 
 def link(ctx: Context, model: str, version: str, pipeline: str) -> dict:
     """Say which Captain pipeline serves an MLflow model version, for lineage."""
-    ctx.registry.resolve("pipeline", pipeline)
+    pm, _ = ctx.registry.resolve("pipeline", pipeline)
+    pinned = f"{pm.name}@v{pm.version}"  # the exact version, so lineage doesn't drift to whatever is newest
 
     def ch(doc):
-        doc.setdefault("links", {})[f"{model}@{version}"] = pipeline.split("@")[0]
-        return {"model": model, "version": version, "pipeline": pipeline.split("@")[0]}
+        doc.setdefault("links", {})[f"{model}@{version}"] = pinned
+        return {"model": model, "version": version, "pipeline": pinned}
 
     return _write(ctx, ch)
 
@@ -260,9 +261,11 @@ def lineage(ctx: Context) -> dict:
         name, _, ver = key.rpartition("@")
         mv = f"mlflow-model:{name}@{ver}"
         nodes[mv] = {"id": mv, "kind": "mlflow-model", "label": f"{name} v{ver}"}
-        for v in ctx.registry.versions("pipeline", pipe)[-1:]:
-            pid = f"pipeline:{pipe}@v{v}"
-            nodes.setdefault(pid, {"id": pid, "kind": "pipeline", "label": f"{pipe}@v{v}"})
+        name_, _, pv = pipe.partition("@v")
+        # Links made before versions were pinned name only the pipeline: those still point at its newest version.
+        for v in ([int(pv)] if pv.isdigit() else ctx.registry.versions("pipeline", pipe)[-1:]):
+            pid = f"pipeline:{name_}@v{v}"
+            nodes.setdefault(pid, {"id": pid, "kind": "pipeline", "label": f"{name_}@v{v}"})
             edges.append({"src": mv, "dst": pid, "relation": "served_by"})
         run_id = (reg.get((name, ver)) or {}).get("run_id")
         if run_id:

@@ -202,7 +202,8 @@ def publish(ctx: Context, name: str, into: str, dry_run: bool = False):
     st = status(ctx, name)
     t = pa.Table.from_pylist(rows)
     m = snapshot(ctx, check_name(into), t, kind=DatasetKind.judgments, dry_run=True,
-                 provenance=Provenance(source="generated", params={"grading_queue": name, "graders": sorted(files),
+                 provenance=Provenance(source="generated", params={"grading_queue": name, "queries": q["queries"], "pipelines": list(q.get("pipelines") or []),
+                                                                     "graders": sorted(files),
                                                                      "kappa": st["kappa"], "coverage": st["share"]}),
                  description=f"{len(rows)} human grades from queue {name} by {len(files)} grader(s)")
     m = m.model_copy(update={"judgment_source": "human", "judge": {"model": "human", "prompt_version": f"queue {name}"}})

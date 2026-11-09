@@ -166,6 +166,9 @@ def seed(*, dry_run: bool = False) -> dict:
                 ws = Workspace(org="sample", workspace=NAME, name=NAME, storage_uri=str(root),
                                created_by="sample@captain.local", members=["sample@captain.local"])
                 store.put_new("workspace.yaml", dump_yaml(ws.model_dump(mode="json")))
+                from .lineage_index import mark_complete
+
+                mark_complete(store, "new workspace")
                 ctx = Context(ws, store, Registry(store))
                 def save(name, rows, kind, label):
                     table = pa.Table.from_pylist(rows)

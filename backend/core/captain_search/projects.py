@@ -279,7 +279,7 @@ def home(ctx: Context, pid: str) -> dict:
         links = {}
     mine = {p["name"] for p in pipelines}
     mlflow = [{"model": k.rpartition("@")[0], "version": k.rpartition("@")[2], "pipeline": v}
-              for k, v in links.items() if v in mine]
+              for k, v in links.items() if v.split("@")[0] in mine]
     doc, _ = _read(ctx)
     brands = sorted(b for b, q in doc["brands"].items() if q == pid)
     return {"project": {**c["project"], "brands": brands}, "datasets": sorted(datasets, key=lambda d: d["created_at"], reverse=True),

@@ -102,6 +102,9 @@ def init_workspace(name: str, storage_uri: str, org: str = "captain", profile: s
     ws = Workspace(org=org, workspace=name, name=name, storage_uri=storage_uri, created_by=whoami(), members=[whoami()])
     try:
         store.put_new("workspace.yaml", dump_yaml(ws.model_dump(mode="json")))
+        from .lineage_index import mark_complete
+
+        mark_complete(store, "new workspace")  # nothing published yet, so the edge index starts complete
     except AlreadyExists:
         ws = Workspace.model_validate(yaml.safe_load(store.get("workspace.yaml")))
         if ws.name != name:

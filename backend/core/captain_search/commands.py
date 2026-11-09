@@ -57,6 +57,10 @@ def tree() -> list[dict]:
         if _is_group(cmd):
             if tuple(path) in HIDDEN_GROUPS:
                 return
+            if path and getattr(cmd, "invoke_without_command", False) and tuple(path) not in HIDDEN:
+                # a group that also runs on its own (cst lineage prints the graph, cst lineage reindex backfills)
+                out.append({"path": path, "help": (cmd.help or "").strip().split("\n\n")[0],
+                            "params": [_param(p) for p in cmd.params if p.name != "help"]})
             for name, sub in sorted(cmd.commands.items()):
                 walk(sub, path + [name])
             return

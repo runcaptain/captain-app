@@ -626,6 +626,9 @@ def backtest_report(run: BacktestRun, bt: Backtest) -> str:
          f"Queries: {bt.queries}   Judgments: {bt.judgments or 'none'}   Population: {bt.population or 'none'}", ""]
     if run.mode == "imported":
         L += [f"Imported readout: {run.source}", run.description, ""]
+    if (bt.tags or {}).get("label_independence") == "shared":
+        L += ["WARNING: the trained arm learned from the labeler that grades this holdout. A higher score means it",
+              "agrees with its own labeler, not that it beats the other arm.", ""]
     if not run.independent:
         L += ["WARNING: not independent. The shoppers' clicks and the nDCG come from the same judgments,", "so they are one signal counted twice.", ""]
     if not run.complete:
@@ -981,56 +984,27 @@ def rollback(ctx, env_name: str, confirm: bool = False, dry_run=False) -> Deploy
 
 
 def lineage(ctx) -> dict:
-    nodes, edges = {}, []
+    """Datasets, pipelines and backtest runs with their sources, plus what each environment serves. Read from the
+    lineage index (lineage_index.py) when it covers the whole bucket, else by loading every manifest. A source
+    that can't be found shows as an "unknown source" node, never an error."""
+    from . import lineage_index as LI
 
-    def node(kind, r, label=None, scope=None):
-        nid = f"{kind}:{scope + ':' if scope else ''}{r}"
-        nodes[nid] = {"id": nid, "kind": kind, "label": label or r}
-        return nid
-
-    for n in ctx.registry.names("dataset"):
-        for v in ctx.registry.versions("dataset", n):
-            m = ctx.registry.load("dataset", n, v)
-            me = node("dataset", ref(m))
-            p = m.provenance
-            if p.connection:
-                edges.append({"src": node("connection", p.connection), "dst": me, "relation": "produced_by"})
-            for key in ("catalog", "queries"):
-                if isinstance(p.params.get(key), str):
-                    edges.append({"src": node("dataset", ref(ctx.registry.resolve("dataset", p.params[key].split(":")[0])[0])), "dst": me, "relation": "derived_from"})
-            if m.parent and m.holdout_seal:
-                edges.append({"src": node("dataset", f"{m.name}@v{m.parent}"), "dst": me, "relation": "derived_from"})
-    for n in ctx.registry.names("pipeline"):
-        for v in ctx.registry.versions("pipeline", n):
-            m = ctx.registry.load("pipeline", n, v)
-            me = node("pipeline", ref(m))
-            if m.catalog:
-                edges.append({"src": node("dataset", m.catalog), "dst": me, "relation": "derived_from"})
-            for par in filter(None, (m.tags or {}).get("parents", "").split(",")):
-                vs = ctx.registry.versions("pipeline", par)
-                src = node("pipeline", f"{par}@v{vs[-1]}") if vs else node("model-unregistered", par)
-                edges.append({"src": src, "dst": me, "relation": "parent"})
-            if m.registry_ref:
-                edges.append({"src": node("registry", m.registry_ref), "dst": me, "relation": "produced_by"})
-    for n in ctx.registry.names("backtest-run"):
-        for v in ctx.registry.versions("backtest-run", n):
-            r = ctx.registry.load("backtest-run", n, v)
-            me = node("run", ref(r))
-            bt = ctx.registry.load("backtest", n)
-            for a in r.arms:
-                if "@v" in a.arm:
-                    src = node("pipeline", a.arm)
-                else:  # a baseline named in an imported readout: one node per run, not shared across brands
-                    src = node("baseline", a.arm, label=f"{a.arm} ({(bt.tags or {}).get('brand', n)})", scope=n)
-                edges.append({"src": src, "dst": me, "relation": "evaluated_on"})
-            if bt.judgments:
-                edges.append({"src": node("dataset", bt.judgments), "dst": me, "relation": "evaluated_on"})
-            if bt.mode != "imported":
-                edges.append({"src": node("dataset", bt.queries.split(":")[0]), "dst": me, "relation": "evaluated_on"})
-            if bt.logs:
-                edges.append({"src": node("dataset", bt.logs), "dst": me, "relation": "evaluated_on"})
+    if LI.is_complete(ctx.store):
+        g = LI.graph_from(LI.read(ctx.store))
+    else:
+        g = LI.graph_from(LI.scan(ctx.registry))
+    nodes = {n["id"]: n for n in g["nodes"]}
+    edges = list(g["edges"])
     for e in env_list(ctx):
-        me = node("environment", e["name"])
+        me = f"environment:{e['name']}"
+        nodes[me] = {"id": me, "kind": "environment", "label": e["name"]}
         if e["current"]:
-            edges.append({"src": node("pipeline", e["current"]), "dst": me, "relation": "deployed_from"})
+            src = f"pipeline:{e['current']}"
+            nodes.setdefault(src, {"id": src, "kind": "pipeline", "label": e["current"]})
+            edges.append({"src": src, "dst": me, "relation": "deployed_from"})
+    for e in edges:  # every endpoint is a node, so readers never meet a dangling edge
+        for nid in (e["src"], e["dst"]):
+            if nid not in nodes:
+                k = LI.kind_of(nid)
+                nodes[nid] = {"id": nid, "kind": k, "label": nid.split(":", 1)[1] if ":" in nid else nid}
     return {"nodes": list(nodes.values()), "edges": edges}

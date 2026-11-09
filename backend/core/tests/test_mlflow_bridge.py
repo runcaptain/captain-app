@@ -56,7 +56,7 @@ def test_link_puts_mlflow_upstream_of_the_pipeline(ctx, monkeypatch):
     edges = {(e["src"], e["dst"]) for e in g["edges"]}
     assert ("mlflow-run:abc123def456", "mlflow-model:ranker@3") in edges
     assert ("mlflow-model:ranker@3", "pipeline:demo-tuned@v1") in edges
-    assert MF.status(ctx)["links"] == {"ranker@3": "demo-tuned"}
+    assert MF.status(ctx)["links"] == {"ranker@3": "demo-tuned@v1"}  # pinned to the version linked
     with pytest.raises(Exception):
         MF.link(ctx, "ranker", "4", "no-such-pipeline")
 
