@@ -25,7 +25,7 @@ fs.writeFileSync(path.join(project, 'captain.toml'), '');
 fs.writeFileSync(path.join(project, 'rubrics', 'apparel.md'), '# Apparel\n\nA result is relevant when it is the garment asked for, in the size and color asked for.\n');
 const env = { ...process.env, CST_HOME: path.join(work, 'cst'), CST_PROJECT: project, PYTHONPATH: path.join(root, 'backend/core') };
 spawnSync(cst, ['init', 'ev', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 const serve = spawn(cst, ['serve'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
 const stop = () => { try { serve.kill('SIGTERM'); } catch {} try { fs.rmSync(work, { recursive: true, force: true }); } catch {} };
 process.on('exit', stop);

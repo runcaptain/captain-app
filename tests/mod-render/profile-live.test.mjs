@@ -17,7 +17,7 @@ if (!cst) { console.log(`profile-live render test: skipped (${why})`); process.e
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-prof-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'prof', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 // An imported run (rankings from outside): its arms can't be replayed.
 const python = fs.readFileSync(cst, 'utf8').split('\n')[0].replace(/^#!/, '');
 spawnSync(python, [path.join(here, 'seed-imported.py')], { env });

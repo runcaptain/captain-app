@@ -195,7 +195,7 @@ def listing(limit: int = 30, active: bool = False) -> list[dict]:
             continue
     if active:
         rows = [r for r in rows if r.get("status") == "running"]
-    return sorted(rows, key=lambda r: r.get("started", ""), reverse=True)[:limit]
+    return sorted(rows, key=lambda r: (r.get("started", ""), r.get("id", "")), reverse=True)[:limit]  # ids are ULIDs: same-second starts still sort newest first
 
 
 def feed(run: "Run", line: str) -> None:
@@ -419,7 +419,7 @@ def listing_remote(ctx, limit: int = 30) -> list[dict]:
                 rows.append(_remote_header(ctx, k.rsplit("/", 1)[-1][:-5]))
             except Exception:  # noqa: BLE001
                 continue
-    return sorted(rows, key=lambda r: r.get("started", ""), reverse=True)[:limit]
+    return sorted(rows, key=lambda r: (r.get("started", ""), r.get("id", "")), reverse=True)[:limit]  # ids are ULIDs: same-second starts still sort newest first
 
 
 def is_remote(ctx, rid: str) -> bool:

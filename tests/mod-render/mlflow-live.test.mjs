@@ -43,7 +43,7 @@ const goodUri = `http://127.0.0.1:${good.address().port}`, badUri = `http://127.
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-mlflow-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'ml', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 const back = spawn(cst, ['serve'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
 const stop = () => { try { back.kill('SIGTERM'); } catch {} good.close(); bad.close(); };
 process.on('exit', stop);

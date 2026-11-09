@@ -95,7 +95,7 @@ export default class Welcome extends View {
     this.seeding = true;
     cx.notify();
     cx.spawn(async (cx) => {
-      const r = await api("/api/commands/run", { body: { path: ["demo", "seed"], args: {} }, timeout: 590 });
+      const r = await api("/api/commands/run", { body: { path: ["demo", "seed"], args: { legacy: true } }, timeout: 590 });
       this.seeding = false;
       const failed = !r.ok || r.data?.exit_code || r.data?.error;
       this.error = failed ? `cst demo seed failed: ${r.data?.error ?? r.error ?? "exit " + r.data?.exit_code}` : null;

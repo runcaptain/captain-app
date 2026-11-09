@@ -14,14 +14,16 @@
 // to the services, so they cover the whole table, and Previous and Next page through it. Make it outside render.
 //   const grid = new ResultGrid({ id: "rows", name: "products", load: (q) => api(`/api/tables/c/s/t/rows${query(q)}`) });
 //   grid.fetch(cx);                      // q = {offset, limit, order, desc, where, count}
+//   The rows come first, without a count: counting a big file means reading all of it (seconds on S3), so the total
+//   is asked for separately once the rows are on screen, and the footer says "counting" meanwhile.
 //   grid.render(c, { fill: true })       // takes the height its parent gives it and scrolls inside
 // `source` ("Databricks") names where rows come from while a slow page loads: "Reading rows from Databricks, 4 s".
 //
 // Columns format by their `kind` when the services send one: numbers right-aligned, decimals exactly as sent, lists
 // and structs shortened ("[3] a, b, c"). Clicking a row opens it below the grid, every column written out in full.
-import { div, svg } from "gpui-kit";
-import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input, Popup } from "gpui-base";
-import { writeTextFile, readTextFile, home } from "herdr";
+import { div, svg, image } from "gpui-kit";
+import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input, Popup, EditorState, Editor } from "gpui-base";
+import { writeTextFile, readTextFile, home, appHome } from "herdr";
 import { MONO } from "./tokens.js";
 import { icon } from "./icons.js";
 import { int, num } from "./num.js";
@@ -46,6 +48,10 @@ const FORMATS = {
 
 const isNum = (v) => typeof v === "number" || (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)));
 const toNum = (v) => (typeof v === "number" ? v : Number(v));
+// A cell shows one line, cut to its column: laying out kilobytes of text to show forty characters is what made wide
+// JSON columns slow to draw. The whole value stays in the row (row details, CSV, copy).
+const CLIP = 240;
+const clip = (s) => (s.length > CLIP ? `${s.slice(0, CLIP)}...` : s);
 const text = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 const fmtInt = (n) => int(n ?? 0);
 const fmtNum = (n) => (Number.isInteger(n) ? fmtInt(n) : num(n, 4));
@@ -85,6 +91,14 @@ export function columnType(col, values) {
 }
 
 /** A list or struct, shortened to fit a cell: "[3] a, b, c" or "{2} k: v, k: v". */
+/** A cell's image items: a list's strings (or {url|src|name}), a JSON list in a string, or one string. */
+export function mediaItems(v) {
+  if (v == null) return [];
+  if (Array.isArray(v)) return v.map((x) => (typeof x === "string" ? x : x?.url ?? x?.src ?? x?.name ?? null)).filter(Boolean).map(String);
+  if (typeof v === "string" && v.startsWith("[") && v.endsWith("]")) { try { return mediaItems(JSON.parse(v)); } catch { return [v]; } }
+  return typeof v === "string" && v ? [v] : [];
+}
+
 export function shortJson(v) {
   let o = v;
   if (typeof v === "string") { try { o = JSON.parse(v); } catch { return v; } }
@@ -131,10 +145,16 @@ export function passes(v, f, type) {
 }
 
 export class ResultGrid {
-  constructor({ id, table, name, load, pageSize = 100, searchable = false, source = null }) {
+  constructor({ id, table, name, load, pageSize = 100, searchable = false, source = null, openRow = null, thumbs = null }) {
     this.id = id;
+    // Images in cells: thumbs(srcs, size, dest) resolves to {src: {file} | {error}} (POST /api/media/thumbs). The
+    // columns that hold images come later, from setMedia.
+    this.thumbsOf = thumbs;
+    this.media = null; // {column name: address template or null}
+    this.thumbs = new Map(); // `${size}:${src}` -> file name | null (failed) | undefined (asked)
     this.name = name ?? table?.var ?? "result";
     this.openRow = null; // the row shown in full below the grid
+    this.openFirst = openRow; // a row to open once the first page is in (a screen's start props)
     // Paged from the services (load(q) resolves like kit/cst.js api()).
     this.load = load ?? null;
     if (this.load) {
@@ -160,7 +180,7 @@ export class ResultGrid {
   /** Ask the services for a page. Keeps the order and WHERE; a new WHERE or order starts at the first row. */
   fetch(cx, offset = this.page.offset) {
     const seq = (this.seq = (this.seq ?? 0) + 1);
-    const q = { offset, limit: this.page.limit, order: this.order?.name, desc: this.order?.desc ? "true" : undefined, where: this.where || undefined, search: this.search || undefined, count: this.page.total === null ? "true" : undefined };
+    const q = { offset, limit: this.page.limit, order: this.order?.name, desc: this.order?.desc ? "true" : undefined, where: this.where || undefined, search: this.search || undefined };
     this.loading = true;
     this.started = Date.now();
     // Redraw each second while a page loads, so the time on screen moves (one timer per grid).
@@ -172,21 +192,44 @@ export class ResultGrid {
       if (r.ok) {
         const d = r.data ?? {};
         this.last = d; // the whole answer, for what a screen reads beside the rows (a dataset's files)
-        const total = d.total ?? this.page.total;
+        // The last page says the total by itself: no count to ask for.
+        const total = d.total ?? this.page.total ?? (!d.has_more ? (d.offset ?? offset) + (d.rows ?? []).length : null);
         this.page = { offset: d.offset ?? offset, limit: d.limit ?? this.page.limit, has_more: !!d.has_more, total: total ?? null, ms: d.ms ?? null, sql: d.sql };
         this.error = null;
         this.openRow = null;
         this.set({ columns: d.columns ?? [], rows: d.rows ?? [], row_count: total ?? undefined });
+        if (this.openFirst !== null && this.table.rows[this.openFirst]) { this.toggleRow(this.openFirst, cx); this.openFirst = null; }
+        this.askThumbs(cx);
+        if ((total === null || total === undefined) && (d.has_more || offset > 0)) this.count(cx, q);
       } else this.error = sayError(r);
       cx.notify();
     });
     cx.notify();
   }
 
+  /** The total for the current filter, asked for after the rows are shown. Only the number is used from the answer. */
+  count(cx, q) {
+    const key = JSON.stringify([q.where, q.search]);
+    if (this.counting === key) return;
+    this.counting = key;
+    cx.spawn(async (cx) => {
+      const r = await this.load({ ...q, offset: 0, limit: 1, order: undefined, desc: undefined, count: "true" });
+      if (this.counting !== key) return; // the filter changed meanwhile
+      this.counting = null;
+      const total = r.ok ? r.data?.total : null;
+      if (total !== null && total !== undefined && JSON.stringify([this.where || undefined, this.search || undefined]) === key) {
+        this.page.total = total;
+        this.table.row_count = total;
+      }
+      cx.notify();
+    });
+  }
+
   applyWhere(cx) {
     this.where = this.whereBox.value().trim();
     this.search = this.searchBox?.value().trim() ?? "";
     this.page.total = null; // a new WHERE: count again
+    this.counting = null;
     this.fetch(cx, 0);
   }
 
@@ -245,8 +288,8 @@ export class ResultGrid {
     }
     if (type === "boolean" && f === "yesno") return v === true || v === "true" ? "Yes" : "No";
     if (type === "string" && f === "capitalize") { const s = text(v); return s ? `${s[0].toUpperCase()}${s.slice(1)}` : s; }
-    if (type === "json") return f === "raw" ? text(v) : shortJson(v);
-    return text(v);
+    if (type === "json") return clip(f === "raw" ? text(v) : shortJson(v));
+    return clip(text(v));
   }
 
   /** The rows shown, as CSV text (header first). */
@@ -367,6 +410,10 @@ export class ResultGrid {
           .child(div().w(NUM_W).flex_none().px(6).text_right().font_family(MONO).text_color(c.grey500).child(String(base + idx[i] + 1)))
           .children(cols.map(([, j]) => {
             const t = this.types[j];
+            const pics = this.imageSrcs(r, j);
+            if (pics?.length) return h_flex().w(COL).flex_none().px(8).gap(6).items_center().overflow_hidden()
+              .child(this.thumb(c, pics[0], 64, ROW - 6))
+              .child(div().min_w(0).truncate().font_family(MONO).text_color(c.grey500).child(this.show(r[j], j)));
             return div().w(COL).flex_none().px(8).truncate().font_family(MONO)
               .when(t === "number", (e) => e.text_right())
               .when(t === "url" && this.formats[j] === "link", (e) => e.text_color(c.blue).underline())
@@ -395,7 +442,7 @@ export class ResultGrid {
         .child(header)
         .child(div().when(fill, (e) => e.flex_1().min_h(0)).when(!fill, (e) => e.h(bodyH)).relative()
           .when(!idx.length, (e) => e.child(div().px(10).py(4).text_size(12).text_color(c.grey500).child(this.loading ? "Loading rows" : filters || this.where ? "No rows match." : "No rows.")))
-          .when(idx.length > 0, (e) => e.child(list.size_full().on_item_click((key, cx) => { const r = Number(String(key).split(":").pop()); this.openRow = this.openRow === r ? null : r; cx.notify(); })).child(Scrollbar.vertical(`grid-${id}`).viewport_from_layout().absolute().inset_0()))));
+          .when(idx.length > 0, (e) => e.child(list.size_full().on_item_click((key, cx) => { const r = Number(String(key).split(":").pop()); this.toggleRow(r, cx); cx.notify(); })).child(Scrollbar.vertical(`grid-${id}`).viewport_from_layout().absolute().inset_0()))));
     return v_flex().id(`grid-wrap-${id}`).w_full().when(fill, (e) => e.flex_1().min_h(0).h_full())
       .when(this.paged, (e) => e.child(this.whereRow(c)))
       .when(this.paged && !!this.error, (e) => e.child(div().px(10).py(6).text_size(12).text_color(c.fail).child(this.error)))
@@ -458,7 +505,7 @@ export class ResultGrid {
     const { offset, limit, has_more, total, ms } = this.page;
     const n = (this.table.rows ?? []).length;
     const span = n ? `${fmtInt(offset + 1)} to ${fmtInt(offset + n)}` : "No rows";
-    const of = total !== null && total !== undefined ? ` of ${fmtInt(total)}` : has_more ? ", more after" : "";
+    const of = total !== null && total !== undefined ? ` of ${fmtInt(total)}` : this.counting ? ", counting the rest" : has_more ? ", more after" : "";
     const step = (label, gid, on, to) => div().id(gid).h(22).px(8).flex().flex_none().items_center().text_size(11.5).border_1()
       .border_color(on ? c.grey300 : c.rule).text_color(on ? c.navy : c.grey300)
       .when(on, (e) => e.cursor_pointer().hover((st) => st.border_color(c.blue)).on_click((_e, cx) => this.fetch(cx, to))).child(label);
@@ -472,18 +519,95 @@ export class ResultGrid {
   }
 
   /** One row, every column in full: lists and structs written out. */
+  // ---- images in cells ---------------------------------------------------------------------------------
+
+  /** Which columns hold images, and for relative names where they live: [{column, template}]. */
+  setMedia(cx, columns) {
+    this.media = columns?.length ? Object.fromEntries(columns.map((m) => [m.column, m.template ?? null])) : null;
+    this.askThumbs(cx);
+    if (this.openRow !== null) this.askThumbs(cx, [this.openRow], 480);
+    cx.notify();
+  }
+
+  /** A cell's image addresses: its value (or each item of a list), filled into the column's template. */
+  imageSrcs(r, j) {
+    const col = this.table.columns?.[j];
+    const name = col?.name ?? col;
+    if (!this.media || !(name in this.media)) return null;
+    const tpl = this.media[name];
+    const items = mediaItems(r[j]);
+    const row = Object.fromEntries((this.table.columns ?? []).map((c, k) => [c?.name ?? c, r[k]]));
+    return items.map((v) => (/^(https?|s3|gs):\/\//.test(v) || v.startsWith("/") ? v : tpl ? tpl.replace("{value}", v).replace(/\{([A-Za-z0-9_.$-]+)\}/g, (m, k) => (k in row ? String(row[k]) : m)) : null)).filter(Boolean);
+  }
+
+  /** Thumbnails for the rows on this page (the first image of each cell), or every image of the given rows. */
+  askThumbs(cx, only = null, size = 64) {
+    if (!this.media || !this.thumbsOf) return;
+    const rows = this.table.rows ?? [];
+    const want = [];
+    for (const i of only ?? rows.map((_, k) => k)) {
+      const r = rows[i];
+      if (!r) continue;
+      (this.table.columns ?? []).forEach((_, j) => {
+        const srcs = this.imageSrcs(r, j);
+        for (const s of (srcs ?? []).slice(0, only ? 6 : 1)) if (!this.thumbs.has(`${size}:${s}`)) want.push(s);
+      });
+    }
+    if (!want.length) return;
+    for (const s of want) this.thumbs.set(`${size}:${s}`, undefined);
+    cx.spawn(async (cx) => {
+      const r = await this.thumbsOf([...new Set(want)], size, `${appHome()}/cache/thumbs`);
+      for (const s of want) this.thumbs.set(`${size}:${s}`, r?.[s]?.file ?? null);
+      cx.notify();
+    });
+  }
+
+  /** One thumbnail: the picture once it's made, a quiet box while it's on its way, nothing when it failed. */
+  thumb(c, src, size, px) {
+    const f = this.thumbs.get(`${size}:${src}`);
+    if (f) return image(`cache/thumbs/${f}`).w(px).h(px).flex_none();
+    return div().w(px).h(px).flex_none().bg(f === null ? "#00000000" : c.surface2);
+  }
+
+  /** Open or close a row. Its text goes in a read-only editor, made here (an editor can't be made while drawing). */
+  toggleRow(i, cx = null) {
+    this.openRow = this.openRow === i ? null : i;
+    if (this.openRow === null) return;
+    if (cx) this.askThumbs(cx, [i], 480);
+    const r = this.table.rows[i];
+    const cols = this.table.columns ?? [];
+    const base = this.paged ? this.page.offset : 0;
+    const key = `${base + i}:${cols.length}`;
+    if (r && this.rowText?.key !== key) {
+      const w = Math.min(24, Math.max(4, ...cols.map((col) => String(col.name).length)));
+      const lines = cols.flatMap((col, j) => {
+        const v = r[j] === null || r[j] === undefined ? "null" : String(fullCell(r[j], this.types[j]));
+        const [first, ...rest] = v.split("\n");
+        return [`${String(col.name).padEnd(w)}  ${first}`, ...rest.map((l) => `${" ".repeat(w + 2)}${l}`)];
+      });
+      this.rowText = { key, lines: lines.length, state: EditorState.new({ language: "txt", readonly: true, value: lines.join("\n"), font_family: MONO, font_size: 12, soft_wrap: true, line_numbers: false }) };
+    }
+  }
+
   rowPanel(c, i) {
     const id = this.id;
     const r = this.table.rows[i];
     const base = this.paged ? this.page.offset : 0;
-    return v_flex().id(`grow-${id}`).max_h(260).overflow_y_scrollbar().px(10).py(8).gap(4).border_t(1).border_color(c.rule).bg(c.surface2).text_size(12)
-      .child(h_flex().gap(8).items_center()
+    const cols = this.table.columns ?? [];
+    const text = this.rowText?.key === `${base + i}:${cols.length}` ? this.rowText : null;
+    const json = () => JSON.stringify(Object.fromEntries(cols.map((col, j) => [col.name, r[j] ?? null])), null, 2);
+    const pics = cols.map((_, j) => this.imageSrcs(r, j) ?? []).flat().slice(0, 6);
+    const strip = pics.length ? 132 : 0;
+    return v_flex().id(`grow-${id}`).flex_none().h(Math.min(300, 44 + (text?.lines ?? cols.length) * 18) + strip).px(10).py(8).gap(6).border_t(1).border_color(c.rule).bg(c.surface2).text_size(12)
+      .child(h_flex().flex_none().gap(10).items_center()
         .child(div().font_medium().text_color(c.navy).child(`Row ${fmtInt(base + i + 1)}`))
-        .child(div().flex_1())
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child("Select any part to copy it."))
+        .child(div().id(`grow-json-${id}`).flex_none().cursor_pointer().text_size(11.5).text_color(c.blue).on_click((_e, cx) => { cx.write_to_clipboard(json()); this.note = "Copied the row as JSON."; cx.notify(); }).child("Copy as JSON"))
         .child(div().id(`grow-x-${id}`).cursor_pointer().text_color(c.grey500).on_click((_e, cx) => { this.openRow = null; cx.notify(); }).child(this.icon("x", 12))))
-      .children((this.table.columns ?? []).map((col, j) => h_flex().gap(10).items_start()
-        .child(div().w(160).flex_none().truncate().text_color(c.grey500).child(col.name))
-        .child(div().flex_1().min_w(0).font_family(MONO).text_color(r[j] === null || r[j] === undefined ? c.grey300 : c.navy).child(fullCell(r[j], this.types[j])))));
+      .when(pics.length > 0, (e) => e.child(h_flex().id(`grow-pics-${id}`).flex_none().h(124).gap(8).overflow_x_scrollbar()
+        .children(pics.map((s, k) => div().id(`grow-pic-${k}`).flex_none().p(2).border_1().border_color(c.rule).bg(c.surface).tooltip(s)
+          .child(this.thumb(c, s, 480, 116))))))
+      .child(v_flex().flex_1().min_h(0).bg(c.surface).when(!!text, (e) => e.child(Editor.new(text.state).flex_1().min_h(0))));
   }
 
   columnMenu(c, j) {

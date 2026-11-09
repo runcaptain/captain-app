@@ -16,7 +16,7 @@ because the job reads and writes it there.
 ```sh
 cst compute add <target> --kind <kind> --profile <login> --region <region> --set field=value ...
 cst compute test <target>                       # read-only: the login works and the resources exist
-cst job run <target> -- demo seed               # a small fixture, made in the cloud, not uploaded
+cst job run <target> -- demo seed --legacy      # a small fixture, made in the cloud, not uploaded
 cst job show <job-id> --wait                    # queued, running, succeeded, with a run time
 cst job logs <job-id>                           # the lines cst printed
 cst backtest run demo-tuned-vs-bm25 --compute <target>

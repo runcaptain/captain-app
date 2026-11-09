@@ -23,7 +23,7 @@ const python = fs.readFileSync(cst, 'utf8').split('\n')[0].replace(/^#!/, '');
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-live-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'live', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 spawnSync(python, [path.join(here, 'seed-imported.py')], { env });
 
 let serve = null;

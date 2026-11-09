@@ -19,7 +19,7 @@ if (!cst) { console.log(`engine-live render test: skipped (${why})`); process.ex
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cst-engine-'));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'engines', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 const serve = spawn(cst, ['serve'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
 const stop = () => { try { serve.kill('SIGTERM'); } catch {} };
 process.on('exit', stop);

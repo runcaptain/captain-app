@@ -17,7 +17,7 @@ if (!cst) { console.log(`dataset-page-live render test: skipped (${why})`); proc
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-page-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'page', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 spawnSync(cst, ['tables', 'pull', 'demo-store'], { env });
 
 const serve = spawn(cst, ['serve'], { env, stdio: ['ignore', 'pipe', 'ignore'] });

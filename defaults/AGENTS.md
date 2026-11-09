@@ -1062,7 +1062,7 @@ The editor keeps the selected revision when you pull newer records, so stale dra
 conflict instead of overwriting them. A restored server history clears the editor;
 reload and review before saving or resolving a draft.
 Connect with a server URL, workspace and masked access token using the protected
-local `/api/team/connect` route. The daemon validates access and stores credentials
+local `/api/team/connect` route. Captain checks access and stores credentials
 in the OS keychain; the mod clears the token field after each attempt. Company SSO
 is optional when configured. The mod provides cached records, explicit pull/push,
 local drafts and reviewed conflict resolution. The team workspace is independent

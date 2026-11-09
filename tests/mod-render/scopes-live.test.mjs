@@ -20,7 +20,7 @@ if (!cst) { console.log(`scopes-live render test: skipped (${why})`); process.ex
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-scopes-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'scopes', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 const serve = spawn(cst, ['serve'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
 const stop = () => { try { serve.kill('SIGTERM'); } catch {} };
 process.on('exit', stop);

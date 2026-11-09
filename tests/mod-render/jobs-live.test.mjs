@@ -17,7 +17,7 @@ if (!cst) { console.log(`jobs-live render test: skipped (${why})`); process.exit
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-jobs-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'jobs', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 spawnSync(cst, ['job', 'run', 'local', '--', 'data', 'list'], { env });
 spawnSync(cst, ['job', 'run', 'local', '--', 'sql', 'nope', '-e', 'select 1'], { env });
 spawnSync(cst, ['job', 'run', 'local', '--', 'sql', 'demo-store', '-e', 'select sum(a.range * b.range) from range(200000) a, range(200000) b'], { env });

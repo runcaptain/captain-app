@@ -21,7 +21,7 @@ if (!cst) { console.log(`explain-live render test: skipped (${why})`); process.e
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cst-explain-'));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst'), PYTHONPATH: path.join(root, 'backend/core') };
 spawnSync(cst, ['init', 'ex', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 const serve = spawn(cst, ['serve'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
 const stop = () => { try { serve.kill('SIGTERM'); } catch {} try { fs.rmSync(work, { recursive: true, force: true }); } catch {} };
 process.on('exit', stop);

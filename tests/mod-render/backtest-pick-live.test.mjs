@@ -17,7 +17,7 @@ if (!cst) { console.log(`backtest-pick-live render test: skipped (${why})`); pro
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-btpick-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'bt', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 const python = fs.readFileSync(cst, 'utf8').split('\n')[0].replace(/^#!/, '');
 // Ten more pipelines, copies of demo-bm25, so the choice draws as the long list.
 spawnSync(python, ['-c', `

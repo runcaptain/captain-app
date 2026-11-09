@@ -19,7 +19,7 @@ if (!cst) { console.log(`sql-tools-live render test: skipped (${why})`); process
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-sqlt-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'sqlt', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 spawnSync(cst, ['sql', 'demo-store', '-e', 'select count(*) from products'], { env });
 spawnSync(cst, ['sql', 'demo-store', '-e', 'select nope from products'], { env });
 

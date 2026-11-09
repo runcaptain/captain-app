@@ -18,7 +18,7 @@ const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-live-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 delete env.CLAUDECODE;
 spawnSync(cst, ['init', 'live', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 // A team's own trainer, streaming through cst live pipe: a log line and a falling loss.
 const trainer = 'import json\nprint("epoch 1")\nfor i in range(5): print(json.dumps({"type": "metric", "name": "loss", "value": 1/(i+1), "step": i}))';
 spawnSync(cst, ['live', 'pipe', '--title', 'house-trainer', '--kind', 'training', '--', 'python3', '-c', trainer], { env });

@@ -45,7 +45,7 @@ const data = harness(Data);
 await data.start();
 await until(data, (t) => t.includes('No database connected'), 'nothing connected yet');
 // Connected from the forms: they save, then signal. Tables lists it without a restart.
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 globalThis.__shared['captain.connections.changed'] = Date.now();
 await until(data, (t) => t.includes('demo-store') && !t.includes('No database connected'), () => `Tables lists the new connection (state: ${JSON.stringify({ seq: data.mod.tables.loadSeq, fresh: data.mod.tables.fresh, conns: data.mod.tables.conns, sig: globalThis.__shared['captain.connections.changed'] })})`);
 // Connected with no signal (another app, the command line): opening the tab again relists.

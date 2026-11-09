@@ -85,7 +85,7 @@ if [[ -n "${SHOT_CST_HOME:-}" ]]; then
 else
 CSTH=$WORK/cst
 CST_HOME=$WORK/cst "$CSTCMD" init test --storage "$WORK/store" >/dev/null 2>&1
-CST_HOME=$WORK/cst "$CSTCMD" demo seed >/dev/null 2>&1
+CST_HOME=$WORK/cst "$CSTCMD" demo seed --legacy >/dev/null 2>&1
 # An imported run (a readout only, no per-query rankings), as `cst demos import` makes them.
 CST_PY=$(head -1 "$(command -v "$CSTCMD")" | sed 's/^#!//')
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-imported.py >/dev/null

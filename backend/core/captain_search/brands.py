@@ -46,7 +46,7 @@ def load_demos() -> tuple[str, dict]:
     f = demos_file()
     if not os.path.exists(f):
         raise FileNotFoundError(f"no demos file at {f}. Put your organization's store demos there (or set CST_DEMOS). "
-                                "`cst demo seed` makes a synthetic store instead.")
+                                "`cst demo seed --legacy` makes a synthetic store instead.")
     with open(f) as fh:
         doc = yaml.safe_load(fh) or {}
     return doc.get("registry") or "", doc.get("brands") or {}

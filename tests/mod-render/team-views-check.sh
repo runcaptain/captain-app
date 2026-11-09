@@ -67,7 +67,7 @@ trap cleanup EXIT
 
 echo "seeding a scratch workspace and project"
 CST_HOME=$WORK/cst "$CST" init test --storage "$WORK/store" >/dev/null 2>&1
-CST_HOME=$WORK/cst "$CST" demo seed >/dev/null 2>&1
+CST_HOME=$WORK/cst "$CST" demo seed --legacy >/dev/null 2>&1
 PROJECT=$WORK/project/captain
 for v in rows other; do
   mkdir -p "$PROJECT/views/$v"

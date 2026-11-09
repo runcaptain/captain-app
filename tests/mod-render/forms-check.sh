@@ -59,7 +59,7 @@ trap cleanup EXIT
 
 echo "seeding a scratch workspace"
 CST_HOME=$WORK/cst "$CST" init test --storage "$WORK/store" >/dev/null 2>&1
-CST_HOME=$WORK/cst "$CST" demo seed >/dev/null 2>&1
+CST_HOME=$WORK/cst "$CST" demo seed --legacy >/dev/null 2>&1
 
 # Every task, with values that bring out the fields that only appear after a choice.
 PREVIEW=$(node --import ./tests/mod-render/stubs/register.mjs -e '

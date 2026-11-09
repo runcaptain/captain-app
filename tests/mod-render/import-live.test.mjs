@@ -17,7 +17,7 @@ if (!cst) { console.log(`import-live render test: skipped (${why})`); process.ex
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-import-')));
 const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
 spawnSync(cst, ['init', 'imp', '--storage', path.join(work, 'store')], { env });
-spawnSync(cst, ['demo', 'seed'], { env });
+spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
 spawnSync(cst, ['data', 'mkdir', 'Shop'], { env });
 const drop = path.join(work, 'drop');
 fs.mkdirSync(drop);

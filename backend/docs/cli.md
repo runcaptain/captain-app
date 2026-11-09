@@ -43,4 +43,4 @@ Global flags: `-w/--workspace NAME`, `--json`, `--dry-run`.
 | `cst agent "question" [--yes]` | Ask the agent; it checks its figures against tool results |
 | `cst serve [--port 0]` | The daemon (see api.md). Binding beyond localhost needs CST_ALLOW_REMOTE=1 and a TLS proxy |
 | `cst app` | Open the desktop app |
-| `cst demo seed` | Fill the workspace with a labeled synthetic store |
+| `cst demo seed` | Load the separate Sample North Pole workspace (`--legacy`: fill this workspace with a labeled synthetic store) |

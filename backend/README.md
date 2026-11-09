@@ -21,7 +21,7 @@ uv venv && uv pip install -e '.[dev,warehouses]'
 `backend/install.sh` puts `cst` in `~/.local/bin` for use outside the app.
 
 Organization-specific data, such as store demos or a model registry, is never part of this code. `cst demo import`
-reads it from a private file (`$CST_DEMOS`), and `cst demo seed` makes a synthetic store instead.
+reads it from a private file (`$CST_DEMOS`), and `cst demo seed --legacy` makes a synthetic store instead.
 
 ## Default sample workspace
 
