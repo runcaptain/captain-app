@@ -243,18 +243,9 @@ def training_labels(ctx: Context, exp: dict) -> str | None:
     except Exception:  # noqa: BLE001
         pm = None
     if pm is not None:
-        tr = getattr(pm, "training", None)
-        if hasattr(tr, "model_dump"):
-            tr = tr.model_dump()
-        inputs = (tr or {}).get("inputs") if isinstance(tr, dict) else None
-        if isinstance(inputs, dict):
-            lab = inputs.get("labels")
-            if isinstance(lab, dict):
-                lab = lab.get("ref") or lab.get("source")
-            if isinstance(lab, str) and lab:
-                return lab
-            if isinstance(inputs.get("label_source"), str):
-                return inputs["label_source"]
+        lab = labels_from_inputs(getattr(pm, "train_inputs", None) or [])
+        if lab:
+            return lab
         if (pm.tags or {}).get("train_labels"):
             return pm.tags["train_labels"]
     if exp.get("training_set"):
@@ -271,6 +262,22 @@ def training_labels(ctx: Context, exp: dict) -> str | None:
         if tm.judgment_source:
             return f"{tm.name}@v{tm.version}"
     return None
+
+
+def labels_from_inputs(inputs: list) -> str | None:
+    """The labels in a version's train_inputs: the judgments item, preferring role "labels". Its exact ref when it
+    has one, else its label_source (human, llm, clicks, simulated)."""
+    items = [i if isinstance(i, dict) else (i.model_dump() if hasattr(i, "model_dump") else {}) for i in inputs]
+    labs = [i for i in items if i.get("kind") == "judgments"]
+    lab = next((i for i in labs if i.get("role") == "labels"), labs[0] if labs else None)
+    if not lab:
+        return None
+    return lab.get("ref") or lab.get("label_source") or None
+
+
+# The trainer contract says clicks and simulated, judgment datasets say click and heuristic: one name each.
+_SOURCE = {"click": "clicks", "clicks": "clicks", "heuristic": "simulated", "simulated": "simulated", "llm": "llm",
+           "human": "human"}
 
 
 def label_independence(ctx: Context, train: str | None, holdout_judgments: str | None) -> dict:
@@ -297,11 +304,11 @@ def label_independence(ctx: Context, train: str | None, holdout_judgments: str |
         except Exception:  # noqa: BLE001
             tm = None
     if tm is None:
-        tsrc = train.lower()
-        if tsrc not in ("human", "llm", "heuristic", "click"):
+        tsrc = _SOURCE.get(train.lower())
+        if tsrc is None:
             return {**out, "status": "unknown", "train_source": None,
                     "text": f"The training labels ({train}) can't be found, so independence can't be checked."}
-        if tsrc == hsrc and tsrc != "human":
+        if tsrc == _SOURCE.get(hsrc or "") and tsrc != "human":
             return {**out, "status": "shared", "train_source": tsrc,
                     "text": f"Training labels and holdout grades both come from {tsrc} labeling."}
         return {**out, "status": "independent", "train_source": tsrc,

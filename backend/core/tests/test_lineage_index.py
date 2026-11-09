@@ -81,3 +81,11 @@ def test_retrains_record_their_parent(tmp_path):
     m = ops.pipeline_publish(c, {"name": "retrained", "engine": "http", "spec": {"url": "https://x/rank"}}, dry_run=True)
     c.registry.publish(m.model_copy(update={"tags": {"retrained_from": ops.ref(a)}}))
     assert ("pipeline:base@v1", "pipeline:retrained@v1", "retrained_from") in _shape(ops.lineage(c))[1]
+
+
+def test_trained_on_and_parents_from_the_trainer_contract():
+    from types import SimpleNamespace
+
+    m = SimpleNamespace(train_inputs=[{"ref": "cat@v1", "kind": "catalog"}, {"kind": "judgments"}], parents=["a@v1"])
+    assert LI._training_refs(m) == ["cat@v1"]
+    assert LI._training_refs(SimpleNamespace()) == []

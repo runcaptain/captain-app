@@ -174,3 +174,19 @@ def test_project_routes(tmp_path, monkeypatch):
     assert cl.get("/api/projects/outdoor/state", headers=h).json()["champion"] == "demo-bm25@v1"
     tmpl = cl.get("/api/engine-templates", headers=h).json()
     assert {t["engine"] for t in tmpl} >= {"local-bm25", "http"}
+
+
+def test_labels_come_from_the_trainer_contracts_train_inputs(tmp_path):
+    c = init_workspace("t", str(tmp_path / "b"))
+    _judgments(c, "clicks-holdout", "click")
+    _judgments(c, "sim-holdout", "heuristic")
+    inputs = [{"ref": "cat@v1", "kind": "catalog", "role": "catalog"},
+              {"ref": "first@v1", "kind": "judgments", "role": "judgments", "label_source": "llm"},
+              {"ref": "grades@v2:train", "kind": "judgments", "role": "labels", "label_source": "human"}]
+    assert PS.labels_from_inputs(inputs) == "grades@v2:train"
+    assert PS.labels_from_inputs([{"kind": "judgments", "label_source": "clicks"}]) == "clicks"
+    assert PS.labels_from_inputs([]) is None  # older and imported versions: unknown, never independent
+    # the contract says clicks and simulated, judgment datasets say click and heuristic
+    assert PS.label_independence(c, "clicks", "clicks-holdout@v1")["status"] == "shared"
+    assert PS.label_independence(c, "simulated", "sim-holdout@v1")["status"] == "shared"
+    assert PS.label_independence(c, "human", "sim-holdout@v1")["status"] == "independent"

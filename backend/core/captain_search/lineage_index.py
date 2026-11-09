@@ -122,6 +122,9 @@ def derive(reg, m) -> tuple[list[dict], dict[str, str]]:
             edges.append({"src": nid, "dst": me, "relation": "parent"})
         if tags.get("retrained_from"):
             src("pipeline", tags["retrained_from"], "retrained_from")
+        for par in getattr(m, "parents", None) or []:  # full refs, from the trainer contract
+            if isinstance(par, str) and par and par != tags.get("retrained_from"):
+                src("pipeline", par, "parent")
         if m.registry_ref:
             edges.append({"src": f"registry:{m.registry_ref}", "dst": me, "relation": "produced_by"})
         for r in _training_refs(m):
@@ -150,21 +153,13 @@ def derive(reg, m) -> tuple[list[dict], dict[str, str]]:
 
 
 def _training_refs(m) -> list[str]:
-    """Dataset refs a trained pipeline version says it trained on, read defensively: the trainer contract stores
-    them on the version, and older versions have none."""
-    tr = getattr(m, "training", None)
-    if hasattr(tr, "model_dump"):
-        tr = tr.model_dump()
-    inputs = (tr or {}).get("inputs") if isinstance(tr, dict) else None
+    """Dataset refs a trained pipeline version says it trained on: `train_inputs`, a list of {ref, kind, role, uri,
+    label_source, as_of} written by the trainer contract. Older and imported versions have none."""
     out = []
-    if isinstance(inputs, dict):
-        for k, v in inputs.items():
-            if k in ("as_of", "label_source", "params"):
-                continue
-            if isinstance(v, str) and "@v" in v:
-                out.append(v)
-            elif isinstance(v, dict) and isinstance(v.get("ref"), str):
-                out.append(v["ref"])
+    for it in getattr(m, "train_inputs", None) or []:
+        r = it.get("ref") if isinstance(it, dict) else getattr(it, "ref", None)
+        if isinstance(r, str) and "@v" in r:
+            out.append(r)
     return out
 
 
