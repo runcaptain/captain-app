@@ -10,6 +10,7 @@ import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gp
 import { theme, shared, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace, watchScope, watchConnections } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
+import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button, Badge } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
@@ -413,7 +414,8 @@ export default class CaptainData extends View {
       .when(!!d.description, (e) => e.child(div().flex_none().px(20).pb(8).text_size(12.5).text_color(c.grey900).child(d.description)))
       .child(h_flex().flex_none().gap(8).px(20).pb(8)
         .child(Button(c, "agent-dataset", "Open an agent in this space", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, datasetPrompt(d))), { small: true }))
-        .child(Button(c, "prompt-dataset", "Copy prompt", (_e, cx) => copyPrompt(cx, datasetPrompt(d)), { kind: "quiet", small: true })))
+        .child(Button(c, "prompt-dataset", "Copy prompt", (_e, cx) => copyPrompt(cx, datasetPrompt(d)), { kind: "quiet", small: true }))
+        .child(SendToAgent(c, "send-dataset", { ref: `dataset:${d.name}@v${d.version}`, kind: "dataset", label: `${d.name}@v${d.version}` })))
       .child(this.page.tabs(c))
       .child(this.page.body(c, w, d));
   }

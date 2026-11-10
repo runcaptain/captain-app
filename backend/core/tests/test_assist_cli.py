@@ -91,7 +91,9 @@ def test_the_assist_prompt_names_the_cst_and_no_missing_file(ws, own_cst):
     for word in ("CST_TRAIN_INPUTS", "CST_PARAMS", "CST_OUT", "result.yaml", "metrics", "artifact_dir", "registry_ref",
                  "{path, uri, bytes}", "objects/sha256", "data/part-0.parquet"):
         assert word in p, word
-    assert "You cannot apply the proposal" in p and "press\nAccept in Captain (Home, the proposal panel)" in p
+    assert "Propose first. When the person says to apply it" in p and "Never apply on your own" in p
+    assert f"{own_cst} projects accept shop <proposal id> --as-asked" in p and "press Accept in Captain" in p
+    assert "stay with the person" in p
 
 
 def test_other_agent_prompts_name_the_cst(ws, own_cst):
@@ -101,6 +103,8 @@ def test_other_agent_prompts_name_the_cst(ws, own_cst):
     assert info["env"]["CST_BIN"] == own_cst and info["env"]["PATH"].split(os.pathsep)[0] == os.path.dirname(own_cst)
     guide = open(os.path.join(info["cwd"], "AGENTS.md")).read()
     assert f"Use this cst: `{own_cst}`" in guide and "press Accept in Captain" in guide
+    assert "Propose first. When the person says to apply it" in guide and "--as-asked" in guide and "Never apply on your\n  own" in guide
+    assert "are the person's, in the app" in guide
 
 
 # ---- the contract is a command --------------------------------------------------------------------
@@ -171,27 +175,50 @@ def test_accept_reports_a_slot_that_is_gone_and_applies_the_rest(ws, monkeypatch
 # ---- "put that in", said to the agent --------------------------------------------------------------
 
 
-def test_an_agent_session_cannot_apply_its_open_proposal_by_hand(ws, monkeypatch):
+def test_an_agent_applies_only_on_the_persons_word_and_it_is_recorded(ws, monkeypatch):
     run = CliRunner()
     cli = lambda *a: run.invoke(app, ["--json", "-w", "t", "projects", *a])
-    p = _proposal(ws, monkeypatch, [{"slot": "sessions", "add": True, "label": "Sessions", "why": "w"}])
+    p = _proposal(ws, monkeypatch, [{"slot": "sessions", "add": True, "label": "Sessions", "why": "w"},
+                                    {"slot": "catalog", "add": False, "source": {"from": "dataset", "ref": "shop-catalog@v1"}, "why": "w"}])
     monkeypatch.setenv("CLAUDECODE", "1")
-    for args in (("slot-add", "shop", "Sessions"), ("slot-edit", "shop", "catalog", "--label", "Items"),
-                 ("slot-rm", "shop", "queries"), ("pin", "shop", "--catalog", "shop-catalog@v1"),
-                 ("input", "shop", "catalog", "--mode", "snapshot", "--dataset", "shop-catalog@v1"),
-                 ("input-clear", "shop", "catalog"), ("accept", "shop", p["id"])):
-        r = cli(*args)
-        assert r.exit_code == 1, (args, r.output)
-        assert "You cannot apply it. Tell the person to press Accept in Captain (Home, the proposal panel)." in r.output, args
+    # Without the person's words: refused, with what to do next. Nothing changed.
+    for extra in ((), ("--as-asked", ""), ("--as-asked", " ")):
+        r = cli("accept", "shop", p["id"], *extra)
+        assert r.exit_code == 1, r.output
+        assert "only when the person asked" in r.output and "--as-asked" in r.output and "press Accept in Captain" in r.output
     assert "sessions" not in [s["id"] for s in PS.get(ws, "shop")["slots"]] and PS.get(ws, "shop")["pins"]["catalog"] is None
-    assert cli("state", "shop").exit_code == 0 and cli("proposals", "shop").exit_code == 0  # reading still works
-    # A person at the command line is never stopped, proposal open or not.
-    monkeypatch.delenv("CLAUDECODE")
-    assert cli("slot-add", "shop", "Sessions").exit_code == 0
-    assert cli("pin", "shop", "--catalog", "shop-catalog@v1").exit_code == 0
-    # And the person's Accept still goes through over what was done by hand.
-    r = PA.accept(ws, "shop", p["id"])
-    assert r["applied"]["already"] == ["sessions"]
-    # With no proposal open, an agent session works on a project as before.
+    assert PA._load(ws, "shop", p["id"])[0]["status"] == "proposed"
+    # An agent still can't reject: that is the person's.
+    assert cli("reject", "shop", p["id"]).exit_code == 1
+    # With their words: applied, and the proposal and the project's history say who, on what instruction, and when.
+    r = cli("accept", "shop", p["id"], "--as-asked", "ok put that in")
+    assert r.exit_code == 0, r.output
+    done = PA._load(ws, "shop", p["id"])[0]
+    assert done["status"] == "accepted" and done["applied_by"] == "claude" and done["on_instruction"] == "ok put that in"
+    assert done["applied_at"] and done["history"][-1]["note"] == "on instruction: ok put that in"
+    doc = PS.get(ws, "shop")
+    assert "sessions" in [s["id"] for s in doc["slots"]] and doc["pins"]["catalog"] == "shop-catalog@v1"
+    h = doc["history"][-1]
+    assert h["applied_by"] == "claude" and h["on_instruction"] == "ok put that in" and h["proposal"] == p["id"] and h["at"]
+    assert h["what"] == f"applied proposal {p['id']}" and h["user"] == "tester@captain.dev"
+    assert cli("accept", "shop", p["id"], "--as-asked", "again").exit_code == 1  # once
+    # The project commands work for an agent too, proposal open or not, and each one is written down.
+    p2 = _proposal(ws, monkeypatch, [{"slot": "promos", "add": True, "label": "Promos", "why": "w"}])
     monkeypatch.setenv("CLAUDECODE", "1")
-    assert cli("slot-add", "shop", "Promos").exit_code == 0
+    n = len(PS.get(ws, "shop")["history"])
+    assert cli("slot-add", "shop", "Returns").exit_code == 0
+    assert cli("pin", "shop", "--catalog", "shop-catalog@v1").exit_code == 0
+    hist = PS.get(ws, "shop")["history"]
+    assert [x["what"] for x in hist[n:]] == ["add a slot", "pin an input"] and all(x["applied_by"] == "claude" for x in hist[n:])
+    assert run.invoke(app, ["--json", "--dry-run", "-w", "t", "projects", "slot-add", "shop", "Dry"]).exit_code == 0
+    assert len(PS.get(ws, "shop")["history"]) == len(hist), "a dry run writes nothing"
+    # A person is unaffected: no flag needed, no agent named, no history line for their own commands.
+    monkeypatch.delenv("CLAUDECODE")
+    assert cli("slot-add", "shop", "Sessions2").exit_code == 0
+    assert len(PS.get(ws, "shop")["history"]) == len(hist)
+    r = PA.accept(ws, "shop", p2["id"])
+    assert r["proposal"]["status"] == "accepted" and "applied_by" not in r["proposal"]
+    # A person's accept is in the history too, under their name and with no agent.
+    last = PS.get(ws, "shop")["history"]
+    assert len(last) == len(hist) + 1 and last[-1]["what"] == f"applied proposal {p2['id']}"
+    assert last[-1]["user"] == "tester@captain.dev" and "applied_by" not in last[-1] and "on_instruction" not in last[-1]

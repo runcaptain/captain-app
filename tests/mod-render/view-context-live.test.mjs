@@ -170,6 +170,88 @@ hf.mod.close();
 assert.equal(shared('captain.view.dialog'), null, 'closing the form clears it');
 globalThis.__props = {};
 
+// --- Send to agent: a dataset is pinned for the agent and a reference lands in the open agent tab's input ---
+const pinFile = '/tmp/captain-app/context/viewtest.json';
+const pinned = () => JSON.parse(globalThis.__files?.[pinFile] ?? '{"items":[]}').items;
+globalThis.__layout = sections('data');
+let clip = null;
+hd.cx.write_to_clipboard = (t) => { clip = t; };
+globalThis.__shared['captain.scope'] = null; // the whole workspace again, so Data lists the demo datasets
+for (let i = 0; i < 80 && hd.byIdPrefix('send-dataset').length === 0; i++) { await hd.layoutLists({}); await hd.idle(150); }
+assert.equal(hd.byIdPrefix('send-dataset').length, 1, 'the dataset page offers Send to agent');
+globalThis.__agentList = [{ address: 't7', status: 'idle', tab_name: 'Claude Code', focused: true }];
+globalThis.__runs = []; globalThis.__hc = [];
+await hd.click('send-dataset');
+await hd.idle(50);
+assert.deepEqual(pinned().map((i) => [i.ref, i.kind]), [[`dataset:${dv.dataset}@v${shared('captain.view.data').version}`, 'dataset']], 'pinned in the app home, per workspace');
+assert.ok(pinned()[0].added_at && pinned()[0].added_by, 'with who and when');
+assert.deepEqual(globalThis.__runs.map(([n]) => n), ['layout.show', 'agent.focus', 'terminal.paste'], 'pasted into the open tab, not sent');
+const pasted = globalThis.__runs.at(-1)[1].text;
+assert.ok(pasted.includes(`dataset ${dv.dataset}@v${shared('captain.view.data').version}`) && pasted.includes('cst context show') && !pasted.includes('\n'), `one line of reference: ${pasted}`);
+assert.equal(clip, null, 'the clipboard is not touched: what the person copied is still there');
+assert.equal(globalThis.__hc.length, 0, 'nothing is submitted for the person');
+// The same thing sent twice is pinned once.
+await hd.click('send-dataset');
+await hd.idle(50);
+assert.equal(pinned().length, 1);
+// No agent tab open: one opens, with the reference as its task.
+globalThis.__agentList = []; globalThis.__runs = [];
+const ctxKit = await import(path.join(data.dir, 'kit/context.js'));
+await ctxKit.sendToAgent(hd.cx, { ref: 'run:demo-tuned-vs-bm25', kind: 'run', label: 'demo-tuned-vs-bm25' });
+opened = globalThis.__runs.find(([n]) => n === 'tab.new');
+assert.ok(opened && opened[1].task.includes('run demo-tuned-vs-bm25') && opened[1].task.includes('cst context show'), 'a new agent tab gets it');
+assert.equal(pinned().length, 2);
+
+globalThis.__shared['captain.scope'] = { kind: 'project', id: 'gifts', label: 'Gifts' };
+// --- The sidebar's Agent context strip: the screen, always, and each pinned thing with an x ---
+const nav = await load('captain-nav');
+globalThis.__nextCommand = () => new Promise(() => {}); // no command arrives
+globalThis.__props = {};
+globalThis.__layout = sections('project');
+const hn = harness(nav.Mod);
+await hn.start();
+for (let i = 0; i < 20 && !hn.text().includes('demo-tuned-vs-bm25'); i++) { await hn.layoutLists({}); await hn.idle(30); }
+let nt = hn.text();
+assert.ok(nt.includes('AGENT CONTEXT') && nt.includes('Home, Gifts'), `the current screen is in the strip: ${nt.slice(-600)}`);
+assert.ok(nt.includes(`${dv.dataset}@v${shared('captain.view.data').version}`) && nt.includes('demo-tuned-vs-bm25') && nt.includes('Clear'), 'the pinned things are listed');
+assert.ok(!/[←-⇿—]/.test(nt), 'no arrows or em dashes in the sidebar');
+// Something pinned from the command line (cst context add) shows up without a click.
+globalThis.__files[pinFile] = JSON.stringify({ items: [...pinned(), { ref: 'project:gifts', kind: 'project', label: 'Gifts', added_by: 'cli', added_at: 'now' }] });
+for (let i = 0; i < 20 && hn.byIdPrefix('ctx-pin-2').length === 0; i++) { await hn.layoutLists({}); await hn.idle(30); }
+assert.ok(hn.byIdPrefix('ctx-pin-2').length > 0, 'a pin added by cst appears');
+await hn.click('ctx-pin-0-x');
+await hn.idle(50);
+assert.deepEqual(pinned().map((i) => i.ref), ['run:demo-tuned-vs-bm25', 'project:gifts'], 'x removes that one');
+await hn.click('ctx-clear');
+await hn.idle(50);
+assert.deepEqual(pinned(), [], 'Clear removes them all');
+assert.ok(hn.text().includes('AGENT CONTEXT') && hn.text().includes('Home, Gifts') && !hn.text().includes('Clear'), 'the screen stays: it is always included');
+
+// --- cst app open: the sidebar shows what an agent asked to show; a form opens filled and is never submitted ---
+// (The sidebar also runs commands of its own, such as making a first space: look for ours among them.)
+const ran = (name, args) => assert.ok(globalThis.__runs.some(([n, x]) => n === name && JSON.stringify(x) === JSON.stringify(args)), `${name} ${JSON.stringify(args)} in ${JSON.stringify(globalThis.__runs)}`);
+const openWith = async (t) => { globalThis.__runs = []; globalThis.__overlays = []; globalThis.__shared['captain.agent.open'] = { ...t, at: Date.now() + Math.random() }; await hn.layoutLists({}); };
+await openWith({ section: 'runs' });
+ran('layout.select', { stack: 'sections', child: 'runs' });
+await openWith({ section: 'data', dataset: 'demo-catalog', tab: 'sample' });
+assert.equal(shared('captain.open').dataset, 'demo-catalog');
+assert.equal(shared('captain.open').tab, 'sample');
+assert.equal(shared('captain.scope'), null, 'a record outside the picked project still opens: the whole workspace is shown');
+assert.ok(globalThis.__toasts.at(-1).title === 'Showing the whole workspace', 'and the person is told');
+ran('layout.select', { stack: 'sections', child: 'data' });
+await openWith({ project: 'outdoor', label: 'Outdoor' });
+assert.deepEqual(shared('captain.scope'), { kind: 'project', id: 'outdoor', label: 'Outdoor' });
+ran('layout.select', { stack: 'sections', child: 'project' });
+await openWith({ settings: 'structure' });
+ran('app.settings', { section: 'structure' });
+await openWith({ form: 'investigation', values: { title: 'Do long queries regress?' } });
+assert.deepEqual(globalThis.__overlays.at(-1).props, { task: 'investigation', values: { title: 'Do long queries regress?' } });
+assert.equal(globalThis.__overlays.at(-1).mod, 'captain-forms');
+const before = globalThis.__overlays.length;
+await hn.layoutLists({});
+assert.equal(globalThis.__overlays.length, before, 'acted on once');
+globalThis.__shared['captain.scope'] = { kind: 'project', id: 'gifts', label: 'Gifts' };
+
 // --- The helpers alone ---
 assert.deepEqual(safeFields({ name: 'prod', password: 'p', api_key: 'k', empty: '', note: 'fine' }), { name: 'prod', password: '(hidden)', api_key: '(hidden)', note: 'fine' });
 assert.deepEqual(safeFields({ 'af:pat': 'x', plain: 'y' }, ['af:pat']), { 'af:pat': '(hidden)', plain: 'y' });

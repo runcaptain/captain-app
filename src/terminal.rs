@@ -635,6 +635,13 @@ impl TerminalView {
         }
     }
 
+    /// CAPTAIN: text given by a command (`terminal.paste {text}`), as a paste, without the clipboard: what the
+    /// person copied stays as it was. Nothing is submitted: no Enter is pressed.
+    pub fn paste_text(&mut self, text: &str) {
+        let bytes = self.grid.borrow().vt.paste_bytes(text);
+        self.send(&bytes);
+    }
+
     /// Ctrl+V: a remote image, clipboard text on Windows, or the key itself.
     pub fn paste_image(&mut self, cx: &mut Context<Self>) {
         if self.send_image(cx) {

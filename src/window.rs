@@ -3160,7 +3160,10 @@ impl AppWindow {
             }
             "terminal.copy" | "terminal.paste" | "terminal.paste_image" => {
                 if let Some(t) = self.focused_terminal(window, cx) {
+                    // CAPTAIN: `terminal.paste {text}` pastes that text and leaves the clipboard alone.
+                    let text = Self::owned(a, "text");
                     t.view.update(cx, |v, cx| match name {
+                        "terminal.paste" if text.is_some() => v.paste_text(text.as_deref().unwrap_or_default()),
                         "terminal.paste" => v.paste(cx),
                         "terminal.paste_image" => v.paste_image(cx),
                         // A command, not a key: copy and leave the selection.
@@ -3782,6 +3785,14 @@ impl AppWindow {
             let terminals_shown = self.chrome.find("work").map(|n| !n.hidden);
             return crate::cst::view_record(section, overlays, self.shown_agent(), terminals_shown, &self.layout_name);
         }
+        // CAPTAIN: `cst app open <target>`: an agent shows the person a screen, a record or a filled form. The
+        // sidebar mod acts on it (captain-nav openTarget); the window only passes it on, stamped.
+        if let Some(target) = cmd.get("open").filter(|t| t.is_object()) {
+            let mut target = target.clone();
+            target["at"] = json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0));
+            crate::mods::set_shared("captain.agent.open".into(), target);
+            return json!({ "ok": true });
+        }
         if cmd.get("status").is_some() {
             let round = |v: f32| (v as f64 * 100.0).round() / 100.0;
             let errors: Vec<String> = ["settings", "keys", "layout", "programs"]
@@ -3807,7 +3818,7 @@ impl AppWindow {
                 "errors": errors,
             });
         }
-        json!({ "error": "expected { do }, { ls }, { commands }, { view } or { status }" })
+        json!({ "error": "expected { do }, { ls }, { commands }, { view }, { open } or { status }" })
     }
 
     /// Spaces, their tabs and terminals, for `captain-app ls`. Sub-agents are listed

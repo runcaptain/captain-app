@@ -29,4 +29,5 @@ export const keys = () => globalThis.__keys ?? [];
 // captain-nav's sidebar.
 export const appHome = () => '/tmp/captain-app';
 export const machines = () => globalThis.__machines ?? [];
-export const nextCommand = async () => null;
+// A test that starts a mod with a command loop (captain-nav) sets __nextCommand to one that waits, as the app's does.
+export const nextCommand = () => (globalThis.__nextCommand ? globalThis.__nextCommand() : Promise.resolve(null));

@@ -7,12 +7,15 @@ answer with `cst projects propose <project> --file proposal.yaml`.
 
 A proposal changes nothing. The person reviews it in the app and accepts all of it, or some slots, or rejects it.
 Accepting applies the slot changes, pins sources that are datasets already, and returns the connection and local
-sources so the app asks snapshot or live for each. An agent session can propose, never accept (proposals.agent_name).
+sources so the app asks snapshot or live for each. An agent session proposes first, and applies only when the
+person told it to: `cst projects accept <project> <proposal> --as-asked "<their words>"`. The proposal and the
+project's history keep who applied it, on what instruction, and when.
 
 Accepting is safe to repeat over work already done by hand: a proposed slot that exists with the same role and
 accepts counts as applied, and one that exists with a different definition is reported for that slot while the rest
-goes in. When a person tells the agent in chat to "put it in", the agent still can't: the prompt says to send them to
-Accept, and the CLI's slot, input and pin commands refuse an agent session while its proposal is open (guard_agent).
+goes in. When a person tells the agent in chat to "put it in", the agent does it and quotes them (--as-asked).
+Without their words an agent's accept is refused. The CLI's slot, input and pin commands work for an agent session
+too, and each one it runs is written to the project's history (note_agent_change). Rejecting stays the person's.
 
   projects/<id>/assist/<assist id>.yaml        the request (write-once)
   projects/<id>/proposals/<proposal id>.yaml   the proposal and its status (compare-and-swap)
@@ -112,9 +115,11 @@ known_issues, description, cost. An unknown key fails the run.
 Write proposal.yaml, then run:
   {cst} projects propose {pid} --file proposal.yaml --assist {aid}
 
-You cannot apply the proposal, even when the person tells you to in chat ("put that in"). Tell the person to press
-Accept in Captain (Home, the proposal panel). Don't apply it by hand with `cst projects slot-add`, `input` or `pin`
-either: they refuse an agent session while your proposal is open. To change the proposal, file a new one.
+Propose first. When the person says to apply it ("put that in"), apply it and quote them:
+  {cst} projects accept {pid} <proposal id> --as-asked "<the person's words>"
+Never apply on your own: without their instruction the accept is refused, and they can also press Accept in Captain
+(Home, the proposal panel). What you apply is recorded with their words. To change the proposal, file a new one.
+Deleting a project, deleting data and overriding a live launch review stay with the person, in the app.
 
 proposal.yaml:
   note: what you found and why, in two or three sentences
@@ -248,26 +253,27 @@ def _set_status(ctx: Context, pid: str, prop: str, status: str, note: str = "", 
     raise Conflict(f"{prop} kept changing")
 
 
-ACCEPT_IN_APP = "You cannot apply it. Tell the person to press Accept in Captain (Home, the proposal panel)."
+ACCEPT_IN_APP = "Tell the person to press Reject in Captain (Home, the proposal panel)."
+ASK_FIRST = ("An agent applies a proposal only when the person asked for it. Ask them. When they say yes, run it again "
+             "with --as-asked \"<their words>\", or they can press Accept in Captain (Home, the proposal panel).")
 
 
 def _person_only(what: str) -> None:
     if agent_name():
-        raise ValueError(f"an agent session can propose but not {what}. {ACCEPT_IN_APP}")
+        raise ValueError(f"an agent session can't {what}. {ACCEPT_IN_APP}")
 
 
-def guard_agent(ctx: Context, pid: str, what: str) -> None:
-    """Refuse an agent session that changes a project by hand while an agent's proposal for it is open: that is
-    applying the proposal without the person. A person at the command line, and the app, are never stopped."""
-    if not agent_name():
+def note_agent_change(ctx: Context, pid: str, what: str, on_instruction: str | None = None) -> None:
+    """Write down that an agent session is changing a project by hand (a slot, an input, a pin). It is allowed: the
+    person told it to. A person at the command line, and the app, leave no such line."""
+    agent = agent_name()
+    if not agent:
         return
     try:
-        waiting = [p for p in listing(ctx, pid) if p["status"] == "proposed" and p.get("agent")]
+        PS.record_change(ctx, pid, {"what": what, "applied_by": agent, "user": whoami(),
+                                    **({"on_instruction": on_instruction} if on_instruction else {})})
     except NotFound:
         return  # no such project: the command itself says so
-    if waiting:
-        raise ValueError(f"{ACCEPT_IN_APP} {waiting[0]['id']} is waiting there, and an agent session can't {what} "
-                         f"while it is. To change what you proposed, file a new proposal.")
 
 
 def _add_slot(ctx: Context, pid: str, s: dict, spec: dict) -> str | None:
@@ -302,7 +308,7 @@ def reject(ctx: Context, pid: str, prop: str, note: str = "") -> dict:
     return _set_status(ctx, pid, prop, "rejected", note)
 
 
-def accept(ctx: Context, pid: str, prop: str, only: list[str] | None = None) -> dict:
+def accept(ctx: Context, pid: str, prop: str, only: list[str] | None = None, as_asked: str | None = None) -> dict:
     """Apply a proposal (or only some of its slots). Dataset sources are pinned now. Connection and local sources come
     back in to_connect, for the person to pick snapshot or live.
 
@@ -311,7 +317,11 @@ def accept(ctx: Context, pid: str, prop: str, only: list[str] | None = None) -> 
     applied.conflicts with the reason, and its source is left out."""
     from . import project_inputs as PI
 
-    _person_only("accept a proposal")
+    # An agent applies only on the person's word, and quotes it. A person (the app, the command line) just accepts.
+    agent = agent_name()
+    said = " ".join((as_asked or "").split())
+    if agent and len(said) < 2:
+        raise ValueError(ASK_FIRST)
     rec, _ = _load(ctx, pid, prop)
     if rec["status"] != "proposed":
         raise ValueError(f"{prop} was already {rec['status']}")
@@ -351,6 +361,13 @@ def accept(ctx: Context, pid: str, prop: str, only: list[str] | None = None) -> 
             PS.set_trainer_suggestion(ctx, pid, {**rec["trainer"], "from_proposal": prop, "agent": rec.get("agent")})
     if (want is None or "evaluation" in want) and rec.get("evaluation"):
         PS.set_evaluation(ctx, pid, rec["evaluation"]["method"])
-    done = _set_status(ctx, pid, prop, "accepted", only=sorted(want) if want else None, applied=applied)
+    by = {"applied_by": agent, "on_instruction": said[:2000], "applied_at": _now()} if agent else {}
+    done = _set_status(ctx, pid, prop, "accepted", note=f"on instruction: {said[:2000]}" if agent else "",
+                       only=sorted(want) if want else None, applied=applied, **by)
+    # Every accepted proposal is a line in the project's history: an agent's with the person's words, a person's
+    # with their name. The project page lists the last ten.
+    PS.record_change(ctx, pid, {"what": f"applied proposal {prop}", **({"applied_by": agent, "on_instruction": said[:2000]} if agent else {}),
+                                "user": whoami(), "proposal": prop,
+                                "applied": {k: (len(v) if isinstance(v, list) else v) for k, v in applied.items()}})
     return {"proposal": done, "state": PS.get(ctx, pid), "applied": applied, "to_connect": to_connect,
             "trainer": rec.get("trainer")}

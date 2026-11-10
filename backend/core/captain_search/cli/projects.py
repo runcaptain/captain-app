@@ -23,11 +23,12 @@ def _do(fn, *a, **kw):
 
 
 def _by_hand(c, name: str, what: str) -> None:
-    """These commands change a project directly. An agent session with a proposal open for it is sent to the person
-    instead (project_assist.guard_agent). A person at the command line is never stopped."""
+    """These commands change a project directly. An agent session may run them when the person told it to, and each
+    one is written to the project's history (project_assist.note_agent_change). A person leaves no such line."""
     from .. import project_assist as PA
 
-    _do(PA.guard_agent, c, name, what)
+    if not S.dry_run:
+        _do(PA.note_agent_change, c, name, what)
 
 
 @projects_app.command("state")
@@ -289,11 +290,13 @@ def proposals(name: str):
 
 
 @projects_app.command("accept")
-def accept(name: str, proposal: str, only: list[str] = typer.Option([], "--only", help="apply only these slots (or trainer, evaluation). Repeat")):
-    """Apply a proposal. Connection and local sources are listed for you to set with `cst projects input`."""
+def accept(name: str, proposal: str, only: list[str] = typer.Option([], "--only", help="apply only these slots (or trainer, evaluation). Repeat"),
+           as_asked: Optional[str] = typer.Option(None, "--as-asked", help="For an agent: the person's own words telling you to apply it. Recorded with the change")):
+    """Apply a proposal. Connection and local sources are listed for you to set with `cst projects input`.
+    An agent session must pass --as-asked with the person's instruction; without it the accept is refused."""
     from .. import project_assist as PA
 
-    r = _do(PA.accept, ctx(), name, proposal, only or None)
+    r = _do(PA.accept, ctx(), name, proposal, only or None, as_asked)
     a = r["applied"]
     lines = [f"Accepted {proposal}: added {len(a['added'])}, changed {len(a['changed'])}, removed {len(a['removed'])}, pinned {len(a['pinned'])}."]
     if a.get("already"):
