@@ -174,11 +174,19 @@ def dataset_fingerprint(m) -> str:
     return "sha256:" + h.hexdigest()
 
 
+def simulated_mark(m) -> dict:
+    """{"simulated": True} for a dataset version made by a generator (tagged synthetic), else nothing. An input's
+    record carries it, so the project page can say so without loading the dataset."""
+    from .historic import synthetic
+
+    return {"simulated": True} if synthetic(m) else {}
+
+
 def _dataset_input(ctx: Context, exact: str) -> dict:
     m, _ = ctx.registry.resolve("dataset", exact)
     return {"mode": "snapshot", "from": "dataset", "source": {"from": "dataset", "ref": exact}, "ref": exact,
             "rows": m.row_count or None, "fingerprint": dataset_fingerprint(m), "as_of": (m.tags or {}).get("as_of"),
-            "pinned_at": _now(), "pinned_by": whoami()}
+            "pinned_at": _now(), "pinned_by": whoami(), **simulated_mark(m)}
 
 
 def pin(ctx: Context, pid: str, refs: dict[str, str | None], dry_run: bool = False) -> dict:
@@ -577,6 +585,15 @@ def _has_columns(ctx: Context, ref_: str, cols: set[str]) -> bool:
     return not have or cols <= have  # by-reference data has no schema recorded: let the replay say what's missing
 
 
+def _simulated(ctx: Context, ref_: str) -> bool:
+    from .historic import synthetic
+
+    try:
+        return synthetic(ctx.registry.resolve("dataset", ref_.split(":")[0])[0])
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def evaluation_plan(ctx: Context, doc: dict) -> dict:
     """How this project's experiments are judged, given the slots it has filled. Never pretends: a method that can't
     run says what it is missing, and with nothing to judge on the answer is "no evaluation set yet"."""
@@ -610,10 +627,13 @@ def evaluation_plan(ctx: Context, doc: dict) -> dict:
 
     def clicks():
         if logs and _has_columns(ctx, logs, REQUIRED):
-            return {"method": "logged-clicks", "ready": True, "evidence": "LOGGED_CLICKS", "missing": [],
-                    "uses": {"logs": logs},
+            sim = _simulated(ctx, logs)
+            return {"method": "logged-clicks", "ready": True, "evidence": "SIMULATED" if sim else "LOGGED_CLICKS",
+                    "simulated": sim, "missing": [], "uses": {"logs": logs},
                     "text": f"Replays the searches logged in {logs}, graded from clicks. Grades only exist for products "
-                            "the old ranker showed. With an as_of cutoff on training, only later searches are replayed."}
+                            "the old ranker showed. With an as_of cutoff on training, only later searches are replayed."
+                            + (" These events are simulated: no real shopper made them, so the result is simulated too."
+                               if sim else "")}
         if live_events:
             return {"method": "logged-clicks", "ready": False, "evidence": None, "missing": live_events,
                     "text": "The events input is a live query. A replay reads rows Captain holds: take a snapshot of it."}
@@ -677,7 +697,9 @@ def _after(ctx: Context, logs: str, as_of: str, into: str) -> str | None:
     keep = [r for r in rows if str(r.get(col) or "") > as_of]
     if not keep:
         raise ValueError(f"{logs} has no searches after {as_of}, so there is nothing later to replay")
+    # A cut of synthetic logs is still synthetic: without the tag the replay would read as logged clicks.
     out = snapshot(ctx, into, pa.Table.from_pylist(keep), kind=m.dataset_kind,
+                   tags={k: v for k, v in (m.tags or {}).items() if k in ("synthetic", "label_source")},
                    provenance=Provenance(source="generated", params={"from": ref(m), "after": as_of, "column": col}),
                    description=f"{len(keep)} of {len(rows)} logged rows after {as_of}, from {ref(m)}")
     return ref(out)
@@ -885,6 +907,7 @@ def stages(ctx: Context, pid: str) -> dict:
                "accepts": list(sl["accepts"]), "required": sl["required"], "why": sl["why"], "origin": sl.get("origin"),
                "pinned": r, "mode": rec.get("mode"), "from": rec.get("from"), "rows": rec.get("rows"),
                "fingerprint": rec.get("fingerprint"), "as_of": rec.get("as_of"), "last_read": rec.get("last_read"),
+               "simulated": bool(rec.get("simulated")),
                "status": "live" if live else "pinned" if r else ("missing" if sl["required"] else "empty"),
                "newest": None, "info": [], "next": None}
         if not r:

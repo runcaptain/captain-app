@@ -200,6 +200,20 @@ def input_set(name: str, slot: str,
     emit(r, f"{slot}: {i.get('ref') or 'live query'} ({mode}), {i.get('rows') if i.get('rows') is not None else 'unknown'} rows")
 
 
+@projects_app.command("generate-events")
+def generate_events(name: str, slot: str = typer.Argument("events"),
+                    sessions: int = typer.Option(20000, "--sessions"), days: int = typer.Option(30, "--days"),
+                    seed: int = typer.Option(7, "--seed"),
+                    end: Optional[str] = typer.Option(None, "--end", help="last day of the range, YYYY-MM-DD (today when left out)")):
+    """Generate SIMULATED shopper events from the project's catalog and set them as an events input."""
+    from .. import project_inputs as PI
+
+    c = ctx()
+    _by_hand(c, name, "generate events")
+    r = _do(PI.generate_events, c, name, slot, sessions, days, seed, end)
+    emit(r, f"{slot}: {r['dataset']} [SIMULATED], {r['input'].get('rows'):,} rows. Results judged on them are simulated.")
+
+
 @projects_app.command("input-clear")
 def input_clear(name: str, slot: str):
     """Point a slot at nothing again. What it pointed at stays in the workspace."""
@@ -303,7 +317,7 @@ def stages(name: str):
     d = _do(PS.stages, ctx(), name)
     lines = []
     for r in d["inputs"]:
-        lines.append(f"{r['slot']:8} {r['pinned'] or 'not pinned'}")
+        lines.append(f"{r['slot']:8} {r['pinned'] or 'not pinned'}" + (" [SIMULATED]" if r.get("simulated") else ""))
         lines += [f"         {i['text']}" for i in r["info"]]
     e = d["experiments"]
     lines.append(f"experiments: {e['count']} " + ", ".join(f"{k} {v}" for k, v in e["by_status"].items()))

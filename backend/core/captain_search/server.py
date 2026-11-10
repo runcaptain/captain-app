@@ -834,6 +834,26 @@ def project_input_set(pid: str, slot: str, body: dict):
     return {"slot": slot, "mode": mode, "job": None, "input": r["input"]}
 
 
+@app.post("/api/projects/{pid}/inputs/{slot}/generate", dependencies=A)
+def project_input_generate(pid: str, slot: str, body: dict | None = None):
+    """{sessions?, days?, seed?, end?}: generate SIMULATED shopper events from the project's catalog and set them as
+    this events input. Runs as a job; its result is {slot, input, dataset, stats, simulated}. 400 when the project has
+    no catalog or the slot doesn't take events."""
+    from . import project_inputs as PI
+    from .sim import events as SE
+
+    c, b = ctx(), body or {}
+    try:
+        sessions, days, seed = (int(d if b.get(k) is None else b[k]) for k, d in (("sessions", 20000), ("days", 30), ("seed", 7)))
+        SE.check(sessions, days)
+        plan = PI.events_plan(c, pid, slot)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, str(e)) from None
+    jid = _job(lambda p: PI.generate_events(c, pid, slot, sessions, days, seed, b.get("end"), p),
+               f"Generate simulated shopper events for {pid}")
+    return {"slot": slot, "job": jid, "simulated": True, "catalog": plan["catalog"], "dataset": plan["name"]}
+
+
 @app.delete("/api/projects/{pid}/inputs/{slot}", dependencies=A)
 def project_input_clear(pid: str, slot: str):
     from . import project_inputs as PI

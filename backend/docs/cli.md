@@ -29,6 +29,8 @@ Global flags: `-w/--workspace NAME`, `--json`, `--dry-run`.
 | `cst judge import FILE --name N` / `calibrate --llm REF --human REF` | Human labels / kappa and bias |
 | `cst pipeline new N --engine E [--catalog REF]` / `publish FILE` / `list` / `show` / `diff A B` / `link N --registry S3URI` | Pipelines |
 | `cst sim population create N --size 10000 --seed 1 [--click-judgments REF]` | Shopper population |
+| `cst sim events --catalog REF --name N [--sessions 20000] [--days 30] [--seed 7] [--end DATE]` | SIMULATED shopper events from a catalog: an `events` dataset of impressions, clicks, carts and purchases |
+| `cst projects generate-events P [SLOT] [--sessions 20000] [--days 30] [--seed 7] [--end DATE]` | The same from the project's catalog, set as its events input |
 | `cst backtest plan N --arms base,challenger --queries REF:holdout --judgments REF --population REF --hypothesis "..."` | Pre-register |
 | `cst backtest run N` / `report N` / `verify N` / `list` | Run, read, rerun-and-compare |
 | `cst deploy env add N --tier demo|live --target record|webhook|captain` / `env list` | Environments |

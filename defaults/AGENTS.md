@@ -1070,8 +1070,30 @@ last project opened there. With no project it offers New project, which can pin 
 - **Ship**: the registry place (asked once), staging (not yet), the launch review, and the online check. The
   baseline is what MLflow and Unity Catalog users call the `champion` alias.
 The page links to Workflows, which also opens from the palette ("Open workflows"). The forms are
-`captain-forms` tasks (`pin`, `experiment`, `import-version`, `publish`, `champion`) opened with
+`captain-forms` tasks (`pin`, `generate-events`, `experiment`, `import-version`, `publish`, `champion`) opened with
 `props: {task, values}`; a failed launch criterion and a decision to go on offer their next step.
+
+## Synthetic shopper events
+
+A project with a catalog and no traffic yet can train on generated events. On the project page, an empty events
+input offers **Generate synthetic events** once the catalog is set (the `captain-forms` task `generate-events`,
+`values: {project, slot}`): sessions and days, then a job writes `<project>/synthetic-events` and sets it as the
+input. From a terminal:
+
+```
+cst sim events --catalog shop-catalog --name sim/shop-events --sessions 20000 --days 30 --seed 7
+cst projects generate-events my-project --sessions 20000 --days 30
+```
+
+- One row per impression: `session_id, user_id, ts, device, query, query_class, product_id, position, clicked,
+  added_to_cart, purchased, price, simulated`. Queries come from the catalog's own words, pages from a local BM25
+  ranker, clicks from position and text match, purchases from the shopper's budget.
+- It is all **simulated**. The dataset is tagged `synthetic`, its card shows a "simulated" badge, a trainer gets
+  `label_source: simulated`, and a project judged on it reads "Replay of logged searches, graded from clicks" with
+  SIMULATED evidence. Never report a number from it as a result on real shoppers.
+- It reproduces: the same catalog version, seed, sessions, days and `--end` date give the same rows. The
+  provenance records them all, and lineage links the events to the catalog version.
+- It refuses a project with no catalog, and a dataset that isn't a catalog.
 
 ## Words
 

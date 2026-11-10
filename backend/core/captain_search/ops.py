@@ -99,6 +99,33 @@ def queries_gen(ctx, catalog: str, name: str, classes: list[str], n: int, seed: 
                     description=f"{len(rows)} generated queries from {catalog}", dry_run=dry_run)
 
 
+def sim_events(ctx, catalog: str, name: str, sessions: int = 20000, days: int = 30, seed: int = 7,
+               end: str | None = None, dry_run=False, progress=None) -> DatasetVersion:
+    """Synthetic shopper events for a catalog, as a versioned `events` dataset (sim/events.py). The version is tagged
+    synthetic, so everything judged on it reads SIMULATED, and its provenance names the exact catalog version, which
+    is its lineage edge."""
+    from .sim import events as SE
+
+    SE.check(sessions, days)
+    cm, split = ctx.registry.resolve("dataset", catalog)
+    if split or cm.dataset_kind != DatasetKind.catalog:
+        raise ValueError(f"{catalog} isn't a catalog dataset. Shopper events are generated from a catalog's products.")
+    end = end or utcnow().date().isoformat()
+    try:
+        dt.date.fromisoformat(end)
+    except ValueError:
+        raise ValueError(f"--end is a date like 2026-10-31, not {end!r}") from None
+    rows, stats = SE.generate(products_of(ctx, ref(cm)), sessions, days, seed, end, progress=progress)
+    t = pa.Table.from_pylist(rows).select(SE.COLUMNS)
+    return snapshot(ctx, check_name(name), t, kind=DatasetKind.events, dry_run=dry_run,
+                    provenance=Provenance(source="generated", params=SE.params(ref(cm), sessions, days, seed, end, stats)),
+                    description=f"SIMULATED shopper events: {sessions:,} sessions over {days} days, generated from "
+                                f"{ref(cm)} (seed {seed}). No real shopper made them."
+                                + ("" if stats["price_sensitivity"] else " The catalog has no prices, so the shoppers "
+                                                                         "have no price sensitivity."),
+                    tags={"synthetic": "true", "label_source": "simulated"})
+
+
 def queries_seal(ctx, qref: str, holdout: float, dry_run=False) -> DatasetVersion:
     m, rows, _ = rows_of(ctx, qref)
     from . import classes as CL

@@ -33,14 +33,15 @@ def read_file(path: str) -> pa.Table:
 
 
 def snapshot(ctx: Context, name: str, table: pa.Table, *, kind: DatasetKind, provenance: Provenance,
-             description: str = "", truncated: bool = False, dry_run: bool = False) -> DatasetVersion:
+             description: str = "", truncated: bool = False, dry_run: bool = False,
+             tags: dict[str, str] | None = None) -> DatasetVersion:
     data = to_parquet(table)
     entry_path = "data/part-0.parquet"
     m = DatasetVersion(
         org=ctx.workspace.org, workspace=ctx.workspace.name, created_by=whoami(),
         name=name, version=0, dataset_kind=kind, description=description,
         schema_fields=[{"name": f.name, "type": str(f.type)} for f in table.schema],
-        row_count=table.num_rows, truncated=truncated, provenance=provenance,
+        row_count=table.num_rows, truncated=truncated, provenance=provenance, tags=dict(tags or {}),
     )
     if dry_run:
         from ..storage.registry import sha256
