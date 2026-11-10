@@ -150,6 +150,13 @@
       ]
     },
     {
+      "name": "AWS and Microsoft product marks (defaults/icons/brand-amazon*.svg, brand-microsoft*.svg)",
+      "source": "https://aws.amazon.com/architecture/icons/ and https://learn.microsoft.com/en-us/azure/architecture/icons/; not open source: each mark is its owner's property and trademark, used to name the service.",
+      "files": [
+        "defaults/icons/LICENSES.md"
+      ]
+    },
+    {
       "name": "Geist and Geist Mono fonts",
       "source": "https://github.com/vercel/geist-font",
       "files": [

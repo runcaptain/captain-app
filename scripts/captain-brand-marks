@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""CAPTAIN: size the full-color vendor marks (AWS, Redshift, Athena, Azure, SQL Server) for defaults/icons.
+
+image() draws a full-color SVG by rasterizing it at the width and height the file declares, times two, and the GPU
+then scales that to the size on screen in one step. A file that declares the exact size it is drawn at is therefore
+rasterized pixel for pixel on a 2x display, and halved exactly on a 1x one. So each mark ships once per drawn size:
+the vendor's own file with only the root width and height changed. Nothing else in the art is touched.
+
+  scripts/captain-brand-marks <AWS Architecture Icons folder> <Azure_Public_Service_Icons folder>
+
+The two folders are the vendors' own downloads, unzipped (sources and dates: defaults/icons/LICENSES.md).
+"""
+import re
+import sys
+from pathlib import Path
+
+SIZES = [14, 15, 16, 18, 20, 24, 32]  # keep in step with FULL_SIZES in defaults/captain/kit/brands.js
+SMALL = 20  # AWS draws separate, simpler art for small sizes: its "16" files up to here, its "32" files above
+
+
+def aws(root: Path, pattern: str) -> Path:
+    found = sorted(p for p in root.glob(pattern) if "__MACOSX" not in p.parts)
+    if len(found) != 1:
+        sys.exit(f"expected one file for {pattern}, found {len(found)}")
+    return found[0]
+
+
+def sized(svg: str, size: int) -> str:
+    m = re.search(r"<svg\b[^>]*>", svg)
+    tag = m.group(0)
+    if not all(re.search(rf'\b{a}="', tag) for a in ("width", "height", "viewBox")):
+        sys.exit("the root tag has no width, height and viewBox to size")
+    new = re.sub(r'\bwidth="[^"]*"', f'width="{size}"', tag, count=1)
+    new = re.sub(r'\bheight="[^"]*"', f'height="{size}"', new, count=1)
+    return svg[: m.start()] + new + svg[m.end():]
+
+
+def main() -> None:
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    a, z = Path(sys.argv[1]), Path(sys.argv[2])
+    out = Path(__file__).resolve().parent.parent / "defaults" / "icons"
+    marks = {
+        # slug: (art for small sizes, art for large sizes)
+        "amazonaws": (aws(a, "Architecture-Group-Icons_*/AWS-Cloud-logo_32.svg"),) * 2,
+        "amazonaws-dark": (aws(a, "Architecture-Group-Icons_*/AWS-Cloud-logo_32_Dark.svg"),) * 2,
+        "amazonredshift": (aws(a, "Architecture-Service-Icons_*/Arch_Analytics/16/Arch_Amazon-Redshift_16.svg"),
+                           aws(a, "Architecture-Service-Icons_*/Arch_Analytics/32/Arch_Amazon-Redshift_32.svg")),
+        "amazonathena": (aws(a, "Architecture-Service-Icons_*/Arch_Analytics/16/Arch_Amazon-Athena_16.svg"),
+                         aws(a, "Architecture-Service-Icons_*/Arch_Analytics/32/Arch_Amazon-Athena_32.svg")),
+        "microsoftazure": (z / "Icons/other/10018-icon-service-Azure-A.svg",) * 2,
+        "microsoftsqlserver": (z / "Icons/databases/10132-icon-service-SQL-Server.svg",) * 2,
+    }
+    for slug, (small, large) in marks.items():
+        for size in SIZES:
+            src = small if size <= SMALL else large
+            (out / f"brand-{slug}-{size}.svg").write_text(sized(src.read_text(encoding="utf-8"), size), encoding="utf-8")
+    print(f"wrote {len(marks) * len(SIZES)} files to {out}")
+
+
+if __name__ == "__main__":
+    main()

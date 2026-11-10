@@ -14,7 +14,7 @@ Input-SHA256: 9ccb6b1a96db08162bbeea238747fcf1e6d08537260f92529ae2eebe74d0f1b3 c
 Input-SHA256: fbc6bf4ca768aadc8a6fed045721777034e8d4e2679af7cac7facac54dbce432 crates/ghostty-sys/build.rs
 Input-SHA256: add9d7531d1b21646317a8958e38fc727506fa39d24bdecb44154d943c82753a defaults/icons/LICENSE-LobeHub.txt
 Input-SHA256: b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57 defaults/icons/LICENSE-Lucide.txt
-Input-SHA256: a3b6ab0b2f11cbc8caf9e723c8f1c10c09d99a34d5f10705d79afb6c327ea5b9 defaults/icons/LICENSES.md
+Input-SHA256: 7bde774024b112556704567e9dd96d8e88b11b95d4b77e057ce20420a05aa9a7 defaults/icons/LICENSES.md
 Input-SHA256: 262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a defaults/mods/captain-nav/fonts/LICENSE-Inter.txt
 Input-SHA256: e7bae1721866dc0152e9e8f9fb8c0033a6f8ee98f63c4d64b0f06bf6f27a13e8 defaults/mods/win98/fonts/LICENSE-MSSansSerif.txt
 Input-SHA256: 9348ddfd44da5a127c59141981954746a860ec8e03e0412cf3af7134af0f97e2 defaults/mods/win98/fonts/LICENSE-PxPlus.txt
@@ -30,7 +30,7 @@ Input-SHA256: f8ac2c75e7f629a87565c80d61ff9fe5aa15cdea0bda997d52a4dc13fdbd19cb l
 Input-SHA256: 5c537d6853e005298a285d508cff9ac7192cea23576c840d485b2b586a7ff177 licenses/Zig.txt
 Input-SHA256: d25e82e26acd42ca3ccc9993622631163425b869b9e16284226d534cff6470f2 licenses/highway-BSD3.txt
 Input-SHA256: 43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1 licenses/highway.txt
-Input-SHA256: 02c18fe9b174dfb73e8c81621cf28c70eee435cfbacdd0eb860cab9f16377d17 licenses/inventory.json
+Input-SHA256: e24076533cf68e45297bd13e0f6c3ade69cf2eac09743ac1b294b6bff57d4ee1 licenses/inventory.json
 Input-SHA256: f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af licenses/musl.txt
 Input-SHA256: 204bbed08ddeeecb362b4da36d3479a0167b7356a9d6024a24f9833affbe228a licenses/simdutf-TH.txt
 Input-SHA256: fc8dbc04e03ad4efc08a647ffe7f995b811a95bc04c0e85a56d5277c6593fa5f licenses/simdutf.txt
@@ -20399,6 +20399,95 @@ express Statement of Purpose.
  d. Affirmer understands and acknowledges that Creative Commons is not a
     party to this document and has no duty or obligation with respect to
     this CC0 or use of the Work.
+
+
+----------------------------------------------------------------------
+AWS and Microsoft product marks (defaults/icons/brand-amazon*.svg, brand-microsoft*.svg)
+https://aws.amazon.com/architecture/icons/ and https://learn.microsoft.com/en-us/azure/architecture/icons/; not open source: each mark is its owner's property and trademark, used to name the service.
+
+--- defaults/icons/LICENSES.md ---
+# Icons
+
+- Brand icons: Simple Icons (https://simpleicons.org), CC0 1.0. Brands are their owners' trademarks.
+- Amazon and Microsoft marks: the vendors' own icon packages, under the vendors' terms (not CC0). See "Vendor marks" below.
+- Glyphs (terminal, bot, search, activity, ...), including icons in shipped mods: Lucide (https://lucide.dev), ISC, with MIT-licensed Feather-derived icons. Full notices: [LICENSE-Lucide.txt](LICENSE-Lucide.txt).
+- Agent icons: from LobeHub icons (MIT) and the agents' own marks. Full notice: [LICENSE-LobeHub.txt](LICENSE-LobeHub.txt).
+
+The release's THIRD-PARTY-NOTICES includes these notices and the full CC0 text. Trademark rights are not granted by these licenses.
+
+## Data platform and cloud marks (brand-<name>.svg)
+
+From Simple Icons 16.36.0 (CC0 1.0), shown in each brand's own color (or the text color when that color would vanish
+on the background). Copied unaltered, except brand-mysql.svg: its viewBox is cropped to the dolphin, because the
+wordmark under it is illegible at 14 px. Each mark is its owner's trademark and is used only to name the product
+Captain connects to, under the owner's guidelines below. Kinds without a mark (Oracle, Typesense: not in Simple
+Icons) show a neutral glyph.
+
+| File | Brand | Source | Guidelines |
+|---|---|---|---|
+| brand-googlecloud.svg | Google Cloud | https://cloud.google.com | https://about.google/brand-resource-center |
+| brand-googleanalytics.svg | Google Analytics | https://marketingplatform.google.com/about/analytics/ | https://about.google/brand-resource-center |
+| brand-posthog.svg | PostHog | https://posthog.com/handbook/company/brand-assets | https://posthog.com/handbook/company/brand-assets |
+| brand-snowflake.svg | Snowflake | https://www.snowflake.com/brand-guidelines/ | https://www.snowflake.com/brand-guidelines/ |
+| brand-databricks.svg | Databricks | https://www.databricks.com | https://brand.databricks.com/Styleguide/Guide/ |
+| brand-googlebigquery.svg | Google BigQuery | https://cloud.google.com/icons | https://about.google/brand-resource-center |
+| brand-postgresql.svg | PostgreSQL | https://wiki.postgresql.org/wiki/Logo | https://www.postgresql.org/about/policies/trademarks/ |
+| brand-mysql.svg | MySQL | https://www.mysql.com/about/legal/logos.html | https://www.mysql.com/about/legal/logos.html |
+| brand-trino.svg | Trino | https://github.com/trinodb/docs.trino.io | |
+| brand-presto.svg | Presto | https://github.com/prestodb/presto | |
+| brand-clickhouse.svg | ClickHouse | https://github.com/ClickHouse/ClickHouse | |
+| brand-duckdb.svg | DuckDB | https://duckdb.org | |
+| brand-sqlite.svg | SQLite | https://github.com/sqlite/sqlite | |
+| brand-elasticsearch.svg | Elasticsearch | https://www.elastic.co/brand | https://www.elastic.co/brand |
+| brand-mlflow.svg | MLflow | https://github.com/mlflow/mlflow | https://mlflow.org |
+| brand-opensearch.svg | OpenSearch | https://opensearch.org/trademark-brand-policy.html | https://opensearch.org/trademark-brand-policy.html |
+| brand-algolia.svg | Algolia | https://algolia.frontify.com/d/1AZwVNcFZiu7/style-guide | https://algolia.frontify.com/d/1AZwVNcFZiu7/style-guide |
+| brand-modal.svg | Modal | https://modal.com | |
+
+## Vendor marks (brand-<name>-<size>.svg): AWS, Amazon Redshift, Amazon Athena, Azure, SQL Server
+
+Amazon and Microsoft had their marks removed from Simple Icons, so these are the vendors' own files, downloaded from
+the vendors' own sites on 2026-11-09. They are not CC0 and not ours to license: each stays its owner's property and
+trademark, all rights reserved by the owner.
+
+| Files | Mark | File in the vendor's package |
+|---|---|---|
+| brand-amazonaws-<size>.svg | AWS, for light backgrounds | Architecture-Group-Icons_07312026/AWS-Cloud-logo_32.svg |
+| brand-amazonaws-dark-<size>.svg | AWS, for dark backgrounds | Architecture-Group-Icons_07312026/AWS-Cloud-logo_32_Dark.svg |
+| brand-amazonredshift-<size>.svg | Amazon Redshift | Architecture-Service-Icons_07312026/Arch_Analytics/16 and 32/Arch_Amazon-Redshift_16.svg, _32.svg |
+| brand-amazonathena-<size>.svg | Amazon Athena | Architecture-Service-Icons_07312026/Arch_Analytics/16 and 32/Arch_Amazon-Athena_16.svg, _32.svg |
+| brand-microsoftazure-<size>.svg | Azure | Icons/other/10018-icon-service-Azure-A.svg |
+| brand-microsoftsqlserver-<size>.svg | SQL Server | Icons/databases/10132-icon-service-SQL-Server.svg |
+
+Sources:
+
+- AWS Architecture Icons, release 07312026, from https://aws.amazon.com/architecture/icons/ (package:
+  https://d1.awsstatic.com/onedam/marketing-channels/website/public/shared/architecture-icon-release/Icon-package_07312026.5846e92413caa21490223536cc97f1269e44fa92.zip,
+  SHA-256 d2d166c453526471749d520e0db022c459abef759d2946cf2dd1d1c992dc6526).
+  Trademark guidelines: https://aws.amazon.com/trademark-guidelines/.
+- Azure Public Service Icons V25, from https://learn.microsoft.com/en-us/azure/architecture/icons/ (package:
+  https://arch-center.azureedge.net/icons/Azure_Public_Service_Icons_V25.zip,
+  SHA-256 f293d99252b3638557dd08ccbff9f2529083473d39b373fb2af29a7200351339).
+  Trademark guidelines: https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks.
+
+What was changed: only the width and height on each file's root tag, once per size the mark is drawn at (14, 15, 16,
+18, 20, 24 and 32 px), by scripts/captain-brand-marks. The art is untouched: not recolored, cropped, flipped or
+redrawn. The reason is sharpness. A full-color image is rasterized at the size its file declares and then scaled to
+the size on screen in one step, so a file that declares the drawn size is drawn pixel for pixel. AWS draws simpler art
+for small sizes: its "16" files are used up to 20 px and its "32" files above.
+
+Usage basis: each mark is shown next to the service's name, only to name a service a person connects Captain to (a
+database connection, a cloud login, a place to run work). It never stands for Captain or suggests the vendor
+endorses it.
+
+Open point for whoever owns legal review: the terms printed on both download pages cover a narrower use than this.
+AWS: "We allow customers and partners to use these toolkits and assets to create architecture diagrams." Microsoft:
+"Microsoft permits the use of these icons in architectural diagrams, training materials, or documentation. You can
+copy, distribute, and display the icons only for the permitted use unless granted explicit permission by Microsoft."
+Showing them in a product's connection list rests on referential trademark use under the guidelines linked above,
+not on an explicit grant in those terms. Edgar chose the vendors' own marks on 2026-11-09 ("Use the proper logos for
+the third parties"). If either vendor objects, removing the `full` entries in defaults/captain/kit/brands.js puts
+the neutral glyph back.
 
 
 ----------------------------------------------------------------------
