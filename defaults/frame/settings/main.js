@@ -2,6 +2,8 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
+import { ScopeModelPanel } from "./kit/scopemodel.js";
+import { palette, isDark } from "./kit/tokens.js";
 import { hc, run, theme, themes, fonts, updates, telemetry, settings, layouts, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window } from "herdr";
 
 const I = (name) => `frame/settings/${name}.svg`;
@@ -10,6 +12,9 @@ const SECTIONS = [
   { id: "look", title: "Look", icon: "palette" },
   ...(window()?.platform === "macos" ? [{ id: "keyboard", title: "Keyboard", icon: "keyboard" }] : []),
   { id: "machines", title: "Machines", icon: "server" },
+  // Captain's scope model, under the name people use for it (Edgar, 2026-11-09: "Put the scope model option within
+  // settings. Call it Project Structure."). The panel is the captain kit's, shared with the captain-scope-model dialog.
+  { id: "structure", title: "Project Structure", icon: "structure" },
   { id: "alerts", title: "Alerts", icon: "bell" },
   { id: "updates", title: "Updates", icon: "refresh" },
   { id: "privacy", title: "Privacy", icon: "shield" },
@@ -30,6 +35,8 @@ export default class Settings extends View {
   init(_props, cx) {
     const asked = props()?.section;
     this.section = SECTIONS.some((s) => s.id === asked) ? asked : "look";
+    // Project Structure's panel makes inputs, so it's made here or on the click that opens it, never while drawing.
+    if (this.section === "structure") this.structurePanel = new ScopeModelPanel(cx, props()?.tab);
     this.picking = null; // "font" | "ui_font" while its list is open
     this.filter = "";
     this.fontInput = InputState.new({ placeholder: "Type to search fonts" });
@@ -850,6 +857,7 @@ export default class Settings extends View {
               this.machineEdit = null;
               this.handle.focus();
               if (s.id === "machines") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
+              if (s.id === "structure" && !this.structurePanel) this.structurePanel = new ScopeModelPanel(cx);
               cx.notify();
             })
             .child(svg(I(s.icon)).size(15).text_color(on ? t.accent : t.dim))
@@ -883,7 +891,10 @@ export default class Settings extends View {
         cx.notify();
       })
       .child(nav.h_full().child(div().flex_1()).child(this.button(t, "st-feedback", "Send feedback", () => { closeOverlay(props()?.overlay); run("app.feedback"); })))
-      .child(
+      .child(this.section === "structure" && this.structurePanel
+        // Project Structure scrolls inside its own panel, with its Save bar always in view.
+        ? div().id("st-structure").flex_1().min_w(0).h_full().child(this.structurePanel.render(palette(isDark(theme()))))
+        :
         // A bar that always shows: the pages are taller than the dialog and
         // people should see that they scroll.
         div()

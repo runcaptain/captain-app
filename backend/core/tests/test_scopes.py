@@ -31,7 +31,7 @@ def test_explorer_follows_the_spec_tree(tmp_path):
     PR.create(c, "Session-aware ranking")
     t = SC.explorer(c)["tree"]
     labels = [n.get("label") for n in t]
-    assert labels[:3] == ["All engines", "All experiments", "Brands"] and labels[-2:] == ["Projects", "Scope model"]
+    assert labels[:3] == ["All engines", "All experiments", "Brands"] and labels[-1] == "Projects"
     acme = t[2]["children"][0]
     us = acme["children"][0]["children"][0]
     assert acme["name"] == "Acme Outdoors" and acme["children"][0]["label"] == "Sites" and us["name"] == "US storefront"

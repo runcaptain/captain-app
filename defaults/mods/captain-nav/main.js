@@ -90,6 +90,8 @@ export function staticEntries(sections) {
     { name: "app.welcome", args: {}, group: "Captain", icon: icon("compass"), title: "Show the Captain tour", words: "onboarding welcome checklist start setup" },
     { group: "Captain", icon: icon("workflow"), title: "Open workflows", words: "workflow schedule nightly steps chain automate", overlay: go("runs", { tab: "workflows" }) },
     { group: "Captain", icon: icon("users"), title: "Team collaboration", words: "company sync login shared records drafts", overlay: { mod: "captain-team", kind: "dialog", width: 960, height: 680 } },
+    // The scope model, under the name people use for it; it lives in Settings (Edgar, 2026-11-09).
+    { name: "app.settings", args: { section: "structure" }, group: "Captain", icon: icon("waypoints"), title: "Project Structure", words: "scope model levels brand site hierarchy terminology types explorer metadata fields settings" },
     { group: "Captain", icon: icon("cloud"), title: "Cloud and compute", words: "aws gcp azure login profile region compute", overlay: { mod: "captain-cloud", kind: "dialog", width: 760, height: 640 } },
     { group: "Captain", icon: icon("terminal"), title: "Run a cst command...", words: "cli advanced power command", overlay: { mod: "captain-commands", kind: "dialog", width: 560, height: 560, props: { menu: "all" } } },
   ];

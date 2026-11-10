@@ -1,6 +1,6 @@
 // CAPTAIN: the Explorer, under the workspace selector (Edgar's spec, 2026-11-06). The tree is the services'
 // (GET /api/explorer, kit/scopes.js): the scope groups (Brand > Site > Engine by default, Brand and Site optional),
-// unscoped engines, Projects, and Settings > Scope model, with All engines and All experiments as real lists, like
+// unscoped engines and Projects (the levels themselves are set in Settings, Project Structure), with All engines and All experiments as real lists, like
 // folders (Edgar: "All Experiments and All Engines aren't lists"): the engines (GET /api/engines) and the experiments
 // newest first (GET /api/backtests: latest run, else creation), each following the Explorer's pick. Selecting a node sets
 // shared "captain.scope" = {kind: scope | engine | project | view, id, label}, which the five sections read to
@@ -133,8 +133,8 @@ export class Explorer {
   }
 
   /** False for a click that can't be meant: in the first moments after the tree appears (the click that brings the
-   *  window forward lands on whatever is under the pointer) or just after the rows moved. Settings never opens by
-   *  itself at launch (Edgar saw Scope model open right after starting). */
+   *  window forward lands on whatever is under the pointer) or just after the rows moved. Nothing opens by itself at
+   *  launch. */
   meant() {
     const now = Date.now();
     return Boolean(this.firstAt) && now - this.firstAt > SETTLE_MS && now - (this.movedAt ?? 0) > MOVED_MS;
@@ -143,7 +143,6 @@ export class Explorer {
   select(n) {
     this.menu = null;
     if (!this.meant()) return;
-    if (n.kind === "settings") { openOverlay({ mod: "captain-scope-model", kind: "dialog", width: 760, height: 640 }); return; }
     if (n.kind === "group" || n.kind === "list") return;
     // A hint row does what it says ("No engines yet: add one"); "Show all" opens Runs.
     if (n.kind === "hint") { if (n.overlay) openOverlay(n.overlay); return; }
@@ -213,6 +212,8 @@ export class Explorer {
    *  still empty shows its projects and nothing bare. */
   shown() {
     const tree = (this.tree ?? []).filter((n) => !(n.kind === "view" && (n.id === "all-engines" || n.id === "all-experiments")))
+      // Project Structure lives in Settings now (Edgar, 2026-11-09), so a "Scope model" row from older services is dropped.
+      .filter((n) => n.kind !== "settings" && n.id !== "scope-model")
       .filter((n) => !(n.kind === "group" && n.type !== "project" && !(n.children ?? []).length))
       .map((n) => (n.kind === "group" && n.type === "project" && !(n.children ?? []).length
         ? { ...n, children: [{ kind: "hint", key: "projects/none", label: "No projects yet: add one", overlay: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "project" } } }] }
@@ -284,7 +285,7 @@ export class Explorer {
           .hover((s) => s.text_color(c.navy)).on_click((_e, cx) => { this.menu = this.menu === "top" ? null : "top"; cx.notify(); })
           .child(svg(icon("plus")).size(12))))
       .when(this.menu === "top", (e) => e.child(this.menuList(c, "top", top, 8)))
-      // MLflow goes after Projects, before the Scope model row.
+      // MLflow goes after Projects.
       .children(this.shown().flatMap((n, i) => {
         const r = this.row(c, n, 0, null, `t${i}`);
         return n.kind === "group" && n.type === "project" ? [r, this.mlflowRow(c)] : [r];

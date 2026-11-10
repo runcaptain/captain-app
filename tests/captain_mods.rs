@@ -27,5 +27,6 @@ fn every_captain_mod_carries_the_same_kit() {
         }
     }
     same_kit(root, &root.join("defaults/frame/welcome"));
+    same_kit(root, &root.join("defaults/frame/settings")); // Project Structure: the kit's scope model panel
     assert!(seen >= 2, "expected the captain mods");
 }

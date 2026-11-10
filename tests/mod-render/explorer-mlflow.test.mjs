@@ -1,4 +1,4 @@
-// The Explorer's MLflow heading, on fixtures: after Projects and before Scope model, closed at first, a click right
+// The Explorer's MLflow heading, on fixtures: after Projects, with no Scope model row (the fixture's is dropped), closed at first, a click right
 // after launch ignored (the launch-click guard), MLflow read only when the heading first opens, and the open state
 // remembered per workspace.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/explorer-mlflow.test.mjs
@@ -35,7 +35,8 @@ const ex = new Explorer();
 ex.start(cx);
 await flush();
 let t = texts(ex.render(c)).join(' | ');
-assert.ok(/Projects \|.*Acme \| (\.\.\. \| )?MLflow \| Scope model/.test(t), `after Projects, before Scope model: ${t}`);
+assert.ok(/Projects \|.*Acme \| (\.\.\. \| )?MLflow$/.test(t), `after Projects, last: ${t}`);
+assert.ok(!t.includes('Scope model'), `Scope model lives in Settings, Project Structure: ${t}`);
 assert.ok(!t.includes('/rankers'), 'closed at first');
 assert.ok(!asked().some((p) => p.startsWith('/api/mlflow')), 'MLflow not read while closed');
 // A click right after launch is ignored.

@@ -36,7 +36,7 @@ const NOT_SHIPPED: &[&str] = &["defaults/mods/win98", "defaults/layouts/win98.js
 
 /// The scope model's files, where "engine" means the customer's search or recommendation system (see
 /// no_engine_or_daemon_a_person_sees).
-const SCOPE_MODEL: &[&str] = &["defaults/captain/kit/scopes.js", "defaults/mods/captain-scope", "defaults/mods/captain-nav/explorer.js", "defaults/mods/captain-engine"];
+const SCOPE_MODEL: &[&str] = &["defaults/captain/kit/scopes.js", "defaults/captain/kit/scopemodel.js", "defaults/mods/captain-scope", "defaults/mods/captain-nav/explorer.js", "defaults/mods/captain-engine"];
 
 /// Files on their way out, each with the commit that removes it. Keep this empty.
 const PENDING: &[&str] = &[];
@@ -232,7 +232,7 @@ fn no_engine_or_daemon_a_person_sees() {
         // Edgar's product spec (2026-11-06) names the customer's search or recommendation system an Engine
         // (Brand > Site > Engine, "All engines", "Add engine"). That's a different thing from Captain's own
         // backend, which stays unnamed: the scope model's files may say "engine" in that sense, nowhere else.
-        if SCOPE_MODEL.iter().any(|m| r.starts_with(m) || r.ends_with("/kit/scopes.js")) {
+        if SCOPE_MODEL.iter().any(|m| r.starts_with(m) || r.ends_with("/kit/scopes.js") || r.ends_with("/kit/scopemodel.js")) {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(&f) else { continue };

@@ -1,4 +1,4 @@
-// The Explorer, its scope actions and Settings > Scope model, against a real backend (this repo's backend/core) and
+// The Explorer, its scope actions and Settings > Project Structure, against a real backend (this repo's backend/core) and
 // the real kit: no fixtures. Adds a brand, a site in it and an engine in the site through captain-scope, reads them
 // back in the Explorer, moves, renames and archives, then edits the scope model: a loop is refused on screen, a
 // change the services refuse shows their reason as it is, and a new type saves.
@@ -80,9 +80,8 @@ await until(ex, () => Boolean(ex.mod.ex.tree), 'the Explorer loaded');
 let t = ex.text();
 // Edgar, 2026-11-07: everything through projects. Projects come first; no All engines or All experiments views; and
 // no bare Brands or Sites groups while the scope model has no levels with anything in them.
-assert.ok(t.includes('Projects') && t.includes('Scope model'), `base tree: ${t}`);
+assert.ok(t.includes('Projects') && !t.includes('Scope model'), `base tree, with no Scope model row (it lives in Settings, Project Structure): ${t}`);
 for (const gone of ['All engines', 'All experiments', 'Brands']) assert.ok(!t.includes(gone), `no ${gone}: ${t}`);
-assert.ok(t.indexOf('Projects') < t.indexOf('Scope model'), 'Projects first');
 assert.equal(ex.mod.ex.live, true, 'the Explorer reads the services');
 assert.ok(t.includes('No projects yet: add one'), 'an empty Projects says so');
 await new Promise((r) => setTimeout(r, 1300)); // past the Explorer's first moments, when a click is ignored
@@ -123,14 +122,11 @@ t = ex.text();
 for (const name of ['Brands', 'Acme Outdoors', 'Sites', 'US storefront', 'Engines', 'Product search']) assert.ok(t.includes(name), `${name} in the Explorer: ${t}`);
 assert.ok(t.indexOf('Acme Outdoors') < t.indexOf('US storefront') && t.indexOf('US storefront') < t.lastIndexOf('Product search'), 'nested in order');
 
-// 4. A click in the Explorer's first moments is ignored (the click that brings the window forward lands on whatever
-//    is under the pointer): Scope model doesn't open by itself. A click after that does.
+// 4. The Explorer has no Scope model row: it's Settings, Project Structure now. Past the Explorer's first moments,
+//    when a click is ignored (the click that brings the window forward lands on whatever is under the pointer).
+assert.ok(!ex.text().includes('Scope model'), `no Scope model row: ${ex.text()}`);
 globalThis.__overlays = [];
-await ex.click('ex-scope-model');
-assert.equal(globalThis.__overlays.length, 0, 'an early click opened nothing');
 await new Promise((r) => setTimeout(r, 1300));
-await ex.click('ex-scope-model');
-assert.equal(globalThis.__overlays.at(-1)?.mod, 'captain-scope-model', 'a later click opens Scope model');
 
 // A project: made, given the demo's catalog, tuned pipeline and backtest, then picked in the Explorer, it opens its
 // home, where each item opens where it lives.
@@ -230,28 +226,28 @@ assert.ok(findScope(tree, 'Site search'), 'the engine has its new name');
 // 7. The scope model: a loop is refused on screen, before anything is sent.
 let m = harness(ModelMod);
 await m.start();
-await until(m, () => Boolean(m.mod.model) && m.mod.live, 'the scope model loaded');
+await until(m, () => Boolean(m.mod.panel.model) && m.mod.panel.live, 'the scope model loaded');
 await m.click('sm-tabs-hierarchy');
 await m.click('h-brand-site');
-assert.match(String(m.mod.error), /would make a loop/, `loop refused: ${m.mod.error}`);
+assert.match(String(m.mod.panel.error), /would make a loop/, `loop refused: ${m.mod.panel.error}`);
 
 // 8. A change the services refuse shows their reason as it is: removing Site while US storefront is one.
 await m.click('sm-tabs-types');
 await m.click('type-rm-site');
 await m.click('sm-save');
-await until(m, () => !m.mod.busy, 'the save finished');
-assert.match(String(m.mod.error), /US storefront/, `the services' reason: ${m.mod.error}`);
+await until(m, () => !m.mod.panel.busy, 'the save finished');
+assert.match(String(m.mod.panel.error), /US storefront/, `the services' reason: ${m.mod.panel.error}`);
 
 // 9. A new type saves, and the model's revision moves.
 m = harness(ModelMod);
 await m.start();
-await until(m, () => Boolean(m.mod.model) && m.mod.live, 'the scope model loaded again');
+await until(m, () => Boolean(m.mod.panel.model) && m.mod.panel.live, 'the scope model loaded again');
 const before = (await get('/api/scope-model')).revision;
-m.mod.newType.set_value('Region');
+m.mod.panel.newType.set_value('Region');
 await m.click('type-add');
 await m.click('sm-save');
-await until(m, () => !m.mod.busy, 'the second save finished');
-assert.ok(!m.mod.error, `save: ${m.mod.error}`);
+await until(m, () => !m.mod.panel.busy, 'the second save finished');
+assert.ok(!m.mod.panel.error, `save: ${m.mod.panel.error}`);
 const after = await get('/api/scope-model');
 assert.ok(after.types.some((x) => x.key === 'region' && x.singular === 'Region'), 'Region is a type');
 assert.ok(after.revision > before, 'the revision moved');

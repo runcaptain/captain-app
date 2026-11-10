@@ -754,7 +754,7 @@ Routes:
 ## Scope model, engines and the Explorer
 
 - `GET /api/explorer` returns the navigation tree: All engines, All experiments, scope groups (Brand > Site > Engine
-  by default), unscoped engines, Projects, and Settings > Scope model. It also returns `actions` (Add brand, Add site,
+  by default), unscoped engines and Projects. It also returns `actions` (Add brand, Add site,
   Add engine) and the model's `model_revision`.
 - `GET /api/scope-model` returns the model. `PUT /api/scope-model {types, explorer, engine_types, expect_revision?}`
   replaces it, and is refused with reasons on unknown parents, loops, removed types still in use, or a stale revision.

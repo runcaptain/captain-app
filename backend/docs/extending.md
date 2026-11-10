@@ -104,6 +104,7 @@ From the kit (`./kit/...`), the same pieces Captain's own screens use:
 | `tokens.js` | `palette(isDark(theme()))` (Captain's colors in light and dark), `FONT`, `MONO`, `RADIUS`. |
 | `icons.js`, `brands.js` | `icon(name)` for `svg()`; `Brand(c, kind, size)` for a database's or cloud's mark. |
 | `scopes.js` | the scope model's words and the Explorer's pick (`currentScope()`). |
+| `scopemodel.js` | `ScopeModelPanel`: Project Structure, shown in Settings and in the `captain-scope-model` dialog. |
 | `agent.js` | `askAgent(cx, prompt)`, `copyPrompt(cx, prompt)`, `openForm(task, args)`. |
 
 From `"herdr"`: `theme()`, `shared`/`setShared`, `openOverlay`/`closeOverlay`, `notify`, `exec`, `readTextFile`,

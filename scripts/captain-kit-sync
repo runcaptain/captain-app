@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 targets=("$@")
 if [[ ${#targets[@]} -eq 0 ]]; then
-  targets=(defaults/mods/captain-* defaults/frame/welcome)
+  targets=(defaults/mods/captain-* defaults/frame/welcome defaults/frame/settings)
 fi
 for t in "${targets[@]}"; do
   [[ -d "$t" ]] || continue

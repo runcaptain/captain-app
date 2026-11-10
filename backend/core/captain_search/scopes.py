@@ -8,7 +8,7 @@
   and configuration changes. It links to any number of scopes and owns the pipelines (and their versions) that
   implement it, so its history is its lineage.
 - **Explorer** projects all of this as a tree: All engines, All experiments, the scope tree with engines under their
-  scopes, Projects, and Settings. An engine linked to two scopes shows in both places with the same id. The tree is
+  scopes and Projects. An engine linked to two scopes shows in both places with the same id. The tree is
   navigation only: it is not a copy and not an authorization mechanism.
 
 The model and its instances live in the workspace's storage (`scope-model.yaml`, `scopes.yaml`, compare-and-swap).
@@ -160,7 +160,7 @@ def add_scope(ctx: Context, type_key: str, name: str, parent: str | None = None,
     t = next((t for t in m["types"] if t["key"] == type_key), None)
     if t is None:
         if not m["types"]:
-            raise ValueError("There are no scope levels yet. Add one in Settings, Scope model (for example Brand), "
+            raise ValueError("There are no scope levels yet. Add one in Settings, Project Structure (for example Brand), "
                              "then add scopes to it.")
         raise ValueError(f"no scope type {type_key!r}. Types: {', '.join(x['key'] for x in m['types'])}")
     if not name.strip():
@@ -401,7 +401,6 @@ def explorer(ctx: Context) -> dict:
     tree.append({"kind": "group", "type": "project", "label": "Projects",
                  "children": [{"kind": "project", "id": p["id"], "name": p["name"], "icon": p.get("icon")} for p in PR.listing(ctx)
                               if not p.get("archived")]})
-    tree.append({"kind": "settings", "id": "scope-model", "label": "Scope model"})
     return {"workspace": ctx.workspace.name, "model_revision": m.get("revision", 1), "tree": tree,
             "actions": [{"type": t["key"], "label": f"Add {t['singular'].lower()}"} for t in m["types"]]
                        + [{"type": "engine", "label": "Add engine"}]}

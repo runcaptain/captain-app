@@ -127,13 +127,14 @@ if [[ -n "${SHOT_PROJECT:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
   echo "Explorer pick: $PID"
 fi
 # SHOT_FORMS_PREVIEW=cloud: the audit's forms dialog opens on that form (captain-forms' test hook), e.g. to compare the
-# cloud marks before and after a change.
+# cloud marks before and after a change. A comma list (database,cloud) shoots one dialog per form:
+# audit-dialog-captain-forms-database.png, audit-dialog-captain-forms-cloud.png.
 if [[ -n "${SHOT_FORMS_PREVIEW:-}" ]]; then
   python3 - "$HOME_DIR/shared.json" "$SHOT_FORMS_PREVIEW" <<'PY'
 import json, sys
 p, form = sys.argv[1:]
 d = json.load(open(p))
-d["captain.forms.preview"] = form
+d["captain.forms.preview"] = form.split(",") if "," in form else form
 json.dump(d, open(p, "w"))
 PY
 fi
@@ -300,9 +301,20 @@ if [[ -n "${SHOT_AUDIT:-}" ]]; then
   done
   app do layout.select '{"stack":"sections","child":"data"}' >/dev/null || true
   app do app.palette >/dev/null || true; shoot palette 2; app do app.palette >/dev/null || true
-  app do app.settings >/dev/null || true; shoot settings 3; app do app.settings >/dev/null || true
+  # app.settings opens Settings and never closes it (a second press doesn't stack another), so close it by id.
+  app do app.settings >/dev/null || true; shoot settings 3; app do overlay.close '{"id":"settings"}' >/dev/null || true; sleep 1
+  # Settings, Project Structure (the scope model's page).
+  app do app.settings '{"section":"structure"}' >/dev/null || true; shoot settings-structure 5; app do overlay.close '{"id":"settings"}' >/dev/null || true; sleep 1
   app do mod.open '{"name":"folds-open"}' >/dev/null || true; shoot explorer-mlflow 6
   for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup captain-services captain-scope-model captain-cloud captain-project-icon; do
+    if [[ "$m" == captain-forms && "${SHOT_FORMS_PREVIEW:-}" == *,* ]]; then
+      # One dialog per form in the list: each open takes the next one.
+      for form in ${SHOT_FORMS_PREVIEW//,/ }; do
+        app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; shoot "dialog-$m-$form" 4
+        app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; sleep 1
+      done
+      continue
+    fi
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; shoot "dialog-$m" 4
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; sleep 1
   done

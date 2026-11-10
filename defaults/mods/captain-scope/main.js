@@ -109,7 +109,7 @@ export default class Scope extends View {
               .bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).hover((s) => (on ? s : s.bg(c.surface2)))
               .on_click((_e, cx) => { this.target = t.id; this.error = null; cx.notify(); }).child(div().truncate().child(t.label));
           })))
-        .child(div().text_size(12).text_color(c.grey500).child(`Scope model sets where a ${w.singular.toLowerCase()} may go.`));
+        .child(div().text_size(12).text_color(c.grey500).child(`Project Structure, in Settings, sets where a ${w.singular.toLowerCase()} may go.`));
     }
     const types = (this.model?.engine_types ?? ["search", "recommendation"]).map((t) => ({ id: t, label: t === "recommendation" ? "Recommendations" : t === "search" ? "Search" : t }));
     return v_flex().gap(12)
