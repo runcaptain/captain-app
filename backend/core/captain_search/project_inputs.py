@@ -289,7 +289,7 @@ def set_input(ctx: Context, pid: str, sid: str, source: dict, mode: str | None, 
         if mode == "live":
             rec["source"] = {"from": "dataset", "ref": m.name}  # follow the name, not the version
         rec.update(ref=pin_ref, rows=m.row_count or None, fingerprint=PS.dataset_fingerprint(m),
-                   as_of=as_of or (m.tags or {}).get("as_of"))
+                   as_of=as_of or (m.tags or {}).get("as_of"), **PS.simulated_mark(m))
     elif frm == "local":
         path = str(source.get("path") or "")
         if mode == "live":
@@ -336,6 +336,31 @@ def set_input(ctx: Context, pid: str, sid: str, source: dict, mode: str | None, 
     progress(0.9)
     PS.set_input(ctx, pid, sid, rec, pin_ref)
     return {"slot": sid, "input": rec}
+
+
+def events_plan(ctx: Context, pid: str, sid: str) -> dict:
+    """What generating synthetic events for this slot would read and write. Refuses a slot that doesn't take events,
+    and a project with no catalog: the shoppers search the catalog's own products."""
+    doc = PS.get(ctx, pid)
+    sl = PS.slot(doc, sid)
+    if sl["role"] != "events" and "events" not in sl["accepts"]:
+        raise ValueError(f"the {sl['label']} input doesn't take events, so synthetic events can't go in it")
+    catalog = PS.pinned(doc, "catalog")
+    if not catalog:
+        raise ValueError("choose a catalog first: synthetic shoppers search the catalog's own products")
+    return {"project": pid, "slot": sid, "catalog": catalog, "name": f"{pid}/synthetic-events"}
+
+
+def generate_events(ctx: Context, pid: str, sid: str, sessions: int = 20000, days: int = 30, seed: int = 7,
+                    end: str | None = None, progress=lambda f: None) -> dict:
+    """Generate synthetic shopper events from the project's catalog and set them as this slot's input, as a snapshot.
+    Returns {slot, input, dataset, stats, simulated}."""
+    from . import ops
+
+    plan = events_plan(ctx, pid, sid)
+    m = ops.sim_events(ctx, plan["catalog"], plan["name"], sessions, days, seed, end, progress=progress)
+    r = set_input(ctx, pid, sid, {"from": "dataset", "ref": ops.ref(m)}, "snapshot")
+    return {**r, "dataset": ops.ref(m), "stats": m.provenance.params.get("stats"), "simulated": True}
 
 
 def needs_job(source: dict, mode: str | None) -> bool:

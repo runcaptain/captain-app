@@ -186,6 +186,24 @@ def pipeline_link(name: str, registry: str = typer.Option(..., "--registry", hel
     _out(m, f"published {m.name}@v{m.version} linked to {registry} (dvc alias {m.dvc_alias}, repro {m.repro_status.value})")
 
 
+# ---- synthetic events ----------------------------------------------------------------------
+
+
+@sim_app.command("events")
+def sim_events(catalog: str = typer.Option(..., "--catalog", help="the catalog dataset the shoppers search"),
+               name: str = typer.Option(..., "--name", help="the events dataset to write"),
+               sessions: int = typer.Option(20000, "--sessions"), days: int = typer.Option(30, "--days"),
+               seed: int = typer.Option(7, "--seed"),
+               end: Optional[str] = typer.Option(None, "--end", help="last day of the range, YYYY-MM-DD (today when left out)")):
+    """Generate SIMULATED shopper events from a catalog: searches, impressions, clicks, carts and purchases.
+    The same catalog version, seed, sessions, days and end date give the same rows."""
+    m = _do(ops.sim_events, ctx(), catalog, name, sessions, days, seed, end, dry_run=S.dry_run)
+    st = m.provenance.params["stats"]
+    _out(m, f"{'would save' if S.dry_run else 'saved'} {m.name}@v{m.version} [SIMULATED]: {m.row_count:,} impressions from "
+            f"{st['sessions']:,} sessions and {st['searches']:,} searches, {st['clicks']:,} clicks, "
+            f"{st['purchases']:,} purchases, {st['first_day']} to {st['last_day']}. No real shopper made them.")
+
+
 # ---- populations --------------------------------------------------------------------------
 
 

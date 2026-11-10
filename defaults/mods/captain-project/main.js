@@ -228,6 +228,7 @@ export default class ProjectHome extends View {
   slotOf(inp) {
     const meta = SLOTS[inp.role ?? inp.slot] ?? SLOTS[inp.slot] ?? {};
     const held = this.state?.inputs?.[inp.slot];
+    if (held?.simulated && inp.simulated == null) inp = { ...inp, simulated: true };
     if (held && !inp.source) inp = { ...inp, source: held.source, mode: inp.mode ?? held.mode, from: inp.from ?? held.from, as_of: inp.as_of ?? held.as_of ?? held.pinned_at };
     const lr = inp.last_read ?? held?.last_read;
     if (lr?.at) inp = { ...inp, last_read_at: lr.at, rows: lr.rows ?? inp.rows };
@@ -265,6 +266,12 @@ export default class ProjectHome extends View {
       : newer
         ? Button(c, `${id}-newer`, `Use version ${newer.version}`, (_e, cx) => this.usePin(cx, inp.slot, inp.next.ref), { kind: "primary", small: true, disabled: this.busy })
         : Button(c, `${id}-change`, "Change", () => pickInput(this.pid(), inp), { small: true });
+    // An empty events input on a project that has its catalog: simulated shoppers can make one (labelled simulated).
+    const hasCatalog = (this.stages?.inputs ?? []).some((i) => (i.role ?? i.slot) === "catalog" && i.pinned);
+    const generate = missing && hasCatalog && ((inp.role ?? inp.slot) === "events" || (inp.accepts ?? []).includes("events"))
+      ? div().id(`${id}-generate`).text_size(11.5).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
+        .tooltip("Simulated shoppers search your catalog. Results judged on these events are simulated.")
+        .on_click(() => form("generate-events", { project: this.pid(), slot: inp.slot })).child("Generate synthetic events") : null;
     const older = !missing && !live && r.version > 1
       ? div().id(`${id}-older`).text_size(11.5).text_color(c.blue).cursor_pointer().hover((s) => s.underline()).on_click(() => form("pin", { ...this.values(), slot: inp.slot })).child("Use an older version") : null;
     return v_flex().id(id).w(232).min_h(168).flex_none().p(12).gap(7).bg(c.surface).border_1().border_color(missing && inp.required ? c.grey300 : c.rule)
@@ -278,6 +285,7 @@ export default class ProjectHome extends View {
       .child(this.sourceLine(c, inp))
       .when(!missing, (e) => e.child(h_flex().gap(6).items_center().min_w(0)
           .child(Badge(c, live ? "live" : "snapshot", live ? "blue" : "neutral"))
+          .when(Boolean(inp.simulated), (x) => x.child(div().id(`${id}-simulated`).flex_none().tooltip("Made by a generator, not by real shoppers. Results judged on it are simulated.").child(Badge(c, "simulated", "warn"))))
           .when(r.version != null && !live, (x) => x.child(div().flex_none().text_size(10.5).font_family(MONO).text_color(c.grey500).child(`version ${r.version}`))))
         .child(div().text_size(11.5).line_height("16px").text_color(c.grey500).child(inp.last_read_at ? `Last read ${day(inp.last_read_at)}${inp.rows != null ? `, ${int(inp.rows)} rows` : ""}`
           : inp.as_of ? `${live ? "Chosen" : "Taken"} ${day(inp.as_of)}${inp.rows != null ? `, ${int(inp.rows)} rows` : ""}` : live ? "Read on the next run" : "")))
@@ -285,7 +293,7 @@ export default class ProjectHome extends View {
         .child(svg(icon(i.code === "newer-version" ? "sparkles" : "triangle-alert")).size(12).mt(2).flex_none().text_color(i.code === "newer-version" ? c.blue : c.warn))
         .child(div().flex_1().min_w(0).text_size(11.5).line_height("16px").text_color(c.grey900).child(i.text))))
       .child(div().flex_1())
-      .child(h_flex().gap(10).items_center().child(action).when(Boolean(older), (e) => e.child(older)));
+      .child(h_flex().flex_wrap().gap(10).items_center().child(action).when(Boolean(older), (e) => e.child(older)).when(Boolean(generate), (e) => e.child(generate)));
   }
 
   addCard(c) {
@@ -538,7 +546,7 @@ export default class ProjectHome extends View {
     const evalSet = (this.stages?.inputs ?? []).find((i) => (i.role ?? i.slot) === "holdout");
     const noEval = ev0 ? !ev0.ready : !evalSet || evalSet.status === "missing" || evalSet.status === "empty";
     const missingEval = ev0?.missing?.length ? (this.stages.inputs ?? []).find((i) => i.slot === ev0.missing[0]) : null;
-    const how = ev0?.label ? `. Judged by: ${String(ev0.label).replace(/^./, (x) => x.toLowerCase())}` : " on the evaluation set";
+    const how = ev0?.label ? `. Judged by: ${String(ev0.label).replace(/^./, (x) => x.toLowerCase())}${ev0.simulated ? ", on simulated events" : ""}` : " on the evaluation set";
     const hint = noEval ? "Candidates can train now. Nothing judges them until the project can evaluate."
       : !champ && xs.length ? `Make one candidate the baseline. Every other one is judged against it${how}.` : `Each candidate is judged against the baseline${how}.`;
     const banner = noEval ? h_flex().id("exp-no-eval").p(10).gap(10).items_center().bg(c.surface).border_1().border_color(c.rule)

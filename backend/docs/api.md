@@ -717,7 +717,21 @@ Routes:
     count. A path is registered by reference (sizes and modified times). A dataset follows its newest version.
     These answer at once: `{slot, mode, job: null, input}`.
   - `input` is `{mode, from, source, ref, rows, fingerprint, as_of, pinned_at, pinned_by}`. `ref` is null for a live
-    query. `DELETE /api/projects/{id}/inputs/{slot}` clears one.
+    query. `DELETE /api/projects/{id}/inputs/{slot}` clears one. An input pinned to a generated dataset (tagged
+    `synthetic`) also has `simulated: true`, and so does its row in `/stages`.
+- **Synthetic events.** `POST /api/projects/{id}/inputs/{slot}/generate {sessions?: 20000, days?: 30, seed?: 7,
+  end?: YYYY-MM-DD}` generates SIMULATED shopper events from the project's catalog and sets them as that events
+  input, as a snapshot. It runs as a job: `{slot, job, simulated: true, catalog, dataset}`, whose result is
+  `{slot, input, dataset, stats, simulated}`. 400 when the project has no catalog, the slot doesn't take events, or
+  `sessions` (1 to 200,000) or `days` (1 to 365) is out of range.
+  - The dataset is `<project>/synthetic-events`, kind `events`, one row per impression: `session_id, user_id, ts,
+    device, query, query_class, product_id, position, clicked, added_to_cart, purchased, price, simulated`. It is
+    tagged `synthetic: true` and `label_source: simulated`, and its provenance holds the generator and its version,
+    the seed, the exact catalog version (its lineage edge) and every parameter. The same catalog version, seed,
+    sessions, days and end date give the same rows.
+  - A project judged on it reads `evaluation: {method: logged-clicks, label: "Replay of logged searches, graded
+    from clicks", evidence: SIMULATED, simulated: true}`, and every run's evidence is `SIMULATED`. A trainer gets
+    `label_source: simulated` for the input.
 - **What runs read.** A retrain started with `project` and no `inputs` trains on the project's inputs, live ones read
   again at that moment (a folder that changed is registered as a new by-reference version). Each trainer input, and
   the experiment's `inputs_read`, is `{slot, role, ref, mode, rows, fingerprint, as_of, changed_since_pin, read_at}`,

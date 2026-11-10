@@ -167,6 +167,29 @@ export const TASKS = [
     },
   },
   {
+    // CAPTAIN: a project with a catalog and no traffic yet: simulated shoppers make an events input to train on.
+    id: "generate-events", label: "Generate synthetic events", icon: "flask-conical", hidden: true,
+    about: "Simulated shoppers search your catalog, click and buy. No real shopper made these events, so every result judged on them is simulated.",
+    fields: [
+      { key: "sessions", label: "Shopper sessions", required: true, default: "20000", help: "One visit with one or more searches. Expect about five rows a session." },
+      { key: "days", label: "Days to spread them over", required: true, default: "30", help: "The range ends today." },
+    ],
+    submit: async (v) => {
+      const whole = (x) => { const n = Number(String(x ?? "").replace(/[,_\s]/g, "")); return Number.isInteger(n) ? n : NaN; };
+      const sessions = whole(v.sessions), days = whole(v.days);
+      if (!(sessions >= 1 && sessions <= 200000)) return { ok: false, error: "Shopper sessions is a whole number from 1 to 200,000." };
+      if (!(days >= 1 && days <= 365)) return { ok: false, error: "Days is a whole number from 1 to 365." };
+      const r = await api(`/api/projects/${encodeURIComponent(v.project)}/inputs/${encodeURIComponent(v.slot ?? "events")}/generate`, { body: { sessions, days }, scoped: false });
+      const started = ok(r, "");
+      if (!started.ok) return started;
+      const job = await waitJob(r.data?.job);
+      if (!job.ok) return job;
+      setShared("captain.explorer.rev", Date.now());
+      const rows = Number(job.result?.input?.rows ?? 0).toLocaleString("en-US");
+      return { ok: true, message: `Generated ${rows} rows of simulated events. Results judged on them are simulated.` };
+    },
+  },
+  {
     id: "delete-project", label: "Delete project", icon: "trash-2", hidden: true,
     about: "The project goes: its inputs, candidates and baseline. Its datasets, models and runs are kept, and so is everything else in the workspace.",
     fields: [
