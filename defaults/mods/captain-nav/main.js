@@ -27,6 +27,8 @@ import { Explorer, projectNode } from "./explorer.js";
 import { ProjectIcon } from "./kit/projecticon.js";
 import { TeamViews } from "./teamviews.js";
 import { askAboutScreen } from "./kit/agent.js";
+import { currentView } from "./kit/view.js";
+import { loadPins, unpin, clearPins } from "./kit/context.js";
 
 const ITEMS = [
   // Home: the current project's page (captain-project), or New project when there is none.
@@ -146,6 +148,27 @@ export default class CaptainNav extends View {
       const kept = Object.fromEntries(Object.entries(map).filter(([, b]) => b?.investigation));
       if (Object.keys(kept).length !== Object.keys(map).length) setShared("captain.spaces", kept);
     }
+    if (props()?.part !== "brand") {
+      // The agent's context (kit/context.js): what the person pinned for their agent. Read at start, when this
+      // window pins or removes something, and every few seconds for what `cst context add` put there.
+      this.pins = [];
+      const reload = (cx) => cx.spawn(async (cx) => { const next = await loadPins(); if (JSON.stringify(next) !== JSON.stringify(this.pins)) { this.pins = next; cx.notify(); } });
+      // The first read is on the timer too: nothing here reads a file while the sidebar starts.
+      let changed = shared("captain.context.changed") ?? null, ws = workspace(), n = 0;
+      cx.timer.every(500, (cx) => {
+        const now = shared("captain.context.changed") ?? null;
+        if (now !== changed || workspace() !== ws || n++ % 6 === 0) { changed = now; ws = workspace(); reload(cx); }
+      });
+      // `cst app open <target>` (an agent showing the person something): the window puts it in shared
+      // "captain.agent.open" {…, at}. Only one that arrives while this window runs is acted on.
+      let opened = shared("captain.agent.open")?.at ?? null;
+      cx.timer.every(300, () => {
+        const t = shared("captain.agent.open");
+        if (!t?.at || t.at === opened) return;
+        opened = t.at;
+        this.openTarget(t);
+      });
+    }
     this.explorer = new Explorer();
     this.explorer.start(cx);
     // Team views from the project's captain/views/ (teamviews.js).
@@ -160,6 +183,61 @@ export default class CaptainNav extends View {
 
   items() {
     return props()?.items ?? ITEMS;
+  }
+
+  /** Show what an agent asked to show (`cst app open`): a screen, a project, a record on its screen, Settings, or a
+   *  form with values filled in. A form only opens: the person reads it and submits it, or doesn't. */
+  openTarget(t) {
+    const stack = props()?.stack ?? "sections";
+    if ("settings" in t) return run("app.settings", t.settings ? { section: t.settings } : {});
+    if (t.form) {
+      const overlay = t.form === "dataset" ? { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} }
+        : t.form === "rankings" ? { mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }
+          : { mod: "captain-forms", kind: "dialog", width: 560, props: { task: t.form, values: t.values ?? {} } };
+      return openOverlay(overlay);
+    }
+    if (t.project) {
+      setShared("captain.scope", { kind: "project", id: t.project, label: t.label ?? t.project });
+      return run("layout.select", { stack, child: "project" });
+    }
+    if (!t.section) return null;
+    const { at: _at, ...rest } = t;
+    // A record by name (a dataset, an evaluation, an experiment): the lists are filtered to the Explorer's pick, and
+    // a record outside it would not open. Show the whole workspace, and say so.
+    if ((t.dataset || t.backtest || t.investigation) && shared("captain.scope")?.id) {
+      notify({ title: "Showing the whole workspace", body: `So ${t.dataset ?? t.backtest ?? t.investigation} can open. Pick your project again in the Explorer to filter.`, level: "info" });
+      setShared("captain.scope", null);
+    }
+    if (Object.keys(rest).length > 1) setShared("captain.open", { ...rest, at: Date.now() });
+    return run("layout.select", { stack, child: t.section });
+  }
+
+  // Agent context: the screen the person is on (always part of it) and what they pinned, each with an x.
+  contextStrip(c, rail) {
+    if (rail || props()?.agents === false) return null;
+    const v = currentView();
+    const pins = this.pins ?? [];
+    const on = v.view?.project?.name ?? (v.scope?.kind === "project" ? v.scope.label : null);
+    const picked = v.view?.dataset ?? v.view?.backtest ?? v.view?.title ?? v.view?.experiment ?? v.view?.launch_review ?? null;
+    const screen = [v.screen, on, picked].filter(Boolean).join(", ");
+    return v_flex().id("nav-context").w_full().flex_none().pb(4)
+      .child(h_flex().h(24).px(16).items_center().text_size(11).font_medium().text_color(c.grey500)
+        .child(div().flex_1().child("AGENT CONTEXT"))
+        .when(pins.length > 0, (e) => e.child(div().id("ctx-clear").px(4).cursor_pointer().text_color(c.blue).hover((s) => s.underline())
+          .tooltip("Remove every pinned item").on_click((_e, cx) => { cx.spawn(async (cx) => { this.pins = await clearPins(); cx.notify(); }); }).child("Clear"))))
+      .child(h_flex().id("ctx-screen").h(24).px(16).gap(7).items_center().text_size(12).text_color(c.grey900)
+        .tooltip("The screen you're on is always part of what your agent sees")
+        .child(svg(icon("monitor")).size(12).flex_none().text_color(c.grey500))
+        .child(div().flex_1().min_w(0).truncate().child(screen || "This screen")))
+      .children(pins.slice(-6).map((p, i) => h_flex().id(`ctx-pin-${i}`).h(24).px(16).gap(7).items_center().text_size(12).text_color(c.navy)
+        .tooltip(p.ref)
+        .child(svg(icon("link")).size(12).flex_none().text_color(c.blue))
+        .child(div().flex_1().min_w(0).truncate().child(p.label ?? p.ref))
+        .child(div().id(`ctx-pin-${i}-x`).size(16).flex().flex_none().items_center().justify_center().cursor_pointer().text_color(c.grey500)
+          .hover((s) => s.text_color(c.fail)).tooltip("Remove from the agent's context")
+          .on_click((_e, cx) => { cx.spawn(async (cx) => { this.pins = await unpin(p.ref); cx.notify(); }); })
+          .child(svg(icon("x")).size(11)))))
+      .when(pins.length > 6, (e) => e.child(div().h(20).px(16).text_size(11).text_color(c.grey500).child(`and ${pins.length - 6} more`)));
   }
 
   refresh(cx) {
@@ -434,6 +512,7 @@ export default class CaptainNav extends View {
         .children(this.items().map((it) => this.row(c, it, it.id === active, rail, go(it))))
         .child(this.teamRows(c, rail) ?? div()))
       .child(this.agentRows(c, rail) ?? div())
+      .child(this.contextStrip(c, rail) ?? div())
       .child(v_flex().w_full().flex_none().py(8).border_t(1).border_color(c.rule)
         .child(this.cloudChip(c, rail) ?? div())
         .child(this.themeSwitch(c, rail))

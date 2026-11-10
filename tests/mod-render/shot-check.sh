@@ -305,6 +305,40 @@ if pic=$(cst_app app shot 2>&1) && [[ "$pic" == "$HOME_DIR/cache/shots/"*.png &&
 else
   echo "cst app shot: no picture of the window: $pic"; fail=1
 fi
+# `cst app open`: an agent shows the person a screen, a record or a filled form, and the window follows. Read back
+# with `cst app context`, in Captain's own layout (every shipped mod), with whatever a view left open closed first.
+for _ in 1 2 3; do app do overlay.close '{}' >/dev/null 2>&1 || true; done
+app do layout.switch '{"name":"captain"}' >/dev/null || true
+sleep 3
+now() { cst_app --json app context --bare 2>/dev/null | python3 -c "
+import json,sys
+d=json.load(sys.stdin); g=d.get('dialog') or {}
+print(d.get('section'), (d.get('selected') or {}).get('dataset') or (d.get('selected') or {}).get('backtest') or '-', g.get('form') or '-', (g.get('fields') or {}).get('title') or '-', sep='|')" 2>/dev/null || echo "?"; }
+opened() { # opened <what was asked> <pattern the context must match>
+  local got=""
+  for _ in $(seq 1 12); do sleep 1; got=$(now); [[ "$got" == $2 ]] && { echo "cst app open $1: the window shows it ($got)"; return 0; }; done
+  echo "cst app open $1: the window shows $got, expected $2"; fail=1
+}
+cst_app app open runs >/dev/null && opened runs 'runs|*'
+cst_app app open dataset:demo-queries >/dev/null && opened dataset:demo-queries 'data|demo-queries|*'
+cst_app app open compare >/dev/null && opened compare 'comparisons|*'
+cst_app app open form:investigation --value "title=Opened by an agent" >/dev/null && opened form:investigation '*|investigation|Opened by an agent'
+app shot "$OUT/cst-app-open-form.png" >/dev/null || true
+app do overlay.close '{}' >/dev/null 2>&1 || true
+# Pinned things: `cst context add` puts them in this window's sidebar strip, and `cst context show` expands them.
+if cst_app context add demo-catalog run:demo-tuned-vs-bm25 >/dev/null 2>&1 && cst_app --json context show | python3 -c "
+import json,sys
+d=json.load(sys.stdin); p={i['kind']: i.get('summary') or {} for i in d['pinned']}
+assert d['captain_running'] and d['view']['section'], d
+assert p['dataset'].get('rows') and len(p['dataset'].get('sample') or []) == 3, p
+assert p['run'].get('status'), p"; then
+  sleep 4; app shot "$OUT/cst-context-strip.png" >/dev/null || true
+  echo "cst context: two things pinned and expanded ($OUT/cst-context-strip.png shows the sidebar strip)"
+  if [[ -n "${SHOT_CONTEXT:-}" ]]; then echo "--- cst context show"; cst_app context show | cut -c1-220 || true; echo "---"; fi
+  cst_app context clear >/dev/null || true
+else
+  echo "cst context: pinning or expanding failed: $(cst_app context show 2>&1 | tail -3)"; fail=1
+fi
 # SHOT_CONTEXT=1: the same from a terminal this window opens, with nothing set by hand: Captain's terminals carry
 # CAPTAIN_APP_HOME and CST_BIN (src/cst.rs terminal_env), so an agent there asks this window and no other.
 if [[ -n "${SHOT_CONTEXT:-}" ]]; then

@@ -11,6 +11,7 @@ import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gp
 import { theme, shared, openOverlay, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
+import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
@@ -362,7 +363,8 @@ export default class CaptainCompare extends View {
     return v_flex().id("overview").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(14)
       .child(h_flex().gap(8)
         .child(Button(c, "run-agent", "Open an agent in this space", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, runPrompt(this.runRef(), r, this.compat))), { small: true }))
-        .child(Button(c, "run-prompt", "Copy prompt", (_e, cx) => copyPrompt(cx, runPrompt(this.runRef(), r, this.compat)), { kind: "quiet", small: true })))
+        .child(Button(c, "run-prompt", "Copy prompt", (_e, cx) => copyPrompt(cx, runPrompt(this.runRef(), r, this.compat)), { kind: "quiet", small: true }))
+        .when(Boolean(this.sel?.backtest), (e) => e.child(SendToAgent(c, "send-comparison", { ref: `run:${this.sel.backtest}`, kind: "run", label: this.sel.backtest }))))
       .when(!!p, (e) => e.child(h_flex().flex_wrap().gap(10).items_center().p(12).border_1().border_color(c.rule)
         .child(this.icon(p.delta > 0 ? "up" : p.delta < 0 ? "down" : "flat", 18, p.verdict === "win" ? c.blue : p.verdict === "loss" ? c.fail : c.grey500))
         .child(div().id("primary-metric").text_size(13).font_medium().tooltip(p.metric).child(`${metricWords(p.metric)}, B minus A`))

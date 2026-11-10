@@ -288,7 +288,7 @@ def test_an_agent_proposes_and_a_person_accepts(ws, monkeypatch, tmp_path):
     p = PA.propose(ctx, "shop", prop, a["assist"], base_dir=str(tmp_path))
     assert p["agent"] == "claude" and p["status"] == "proposed" and p["trainer"]["script"]["bytes"] == 15
     assert PS.get(ctx, "shop")["pins"]["catalog"] is None  # nothing applied yet
-    with pytest.raises(ValueError, match="agent session can propose but not"):
+    with pytest.raises(ValueError, match="only when the person asked"):
         PA.accept(ctx, "shop", p["id"])
     with pytest.raises(ValueError, match="no slot 'nope'"):
         PA.propose(ctx, "shop", {"slots": [{"slot": "nope"}]})

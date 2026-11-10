@@ -2,7 +2,7 @@
 // you're building, 2 Inputs (required first, optional ones removable, Add an input), 3 Train and compare (no
 // evaluation set says so), 4 Ship. Set up with an agent: the agent gets a prompt in a tab, files a proposal, and the
 // page shows it to accept per input; a connection it named asks snapshot or live. The prompt names the cst to run by
-// its path. An agent session can't apply its own open proposal by hand, and Accept goes through over inputs someone
+// its path. An agent session applies only on the person's word (recorded), and Accept goes through over inputs someone
 // added by hand since. Delete project keeps the data.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/project-dynamic-live.test.mjs
 import fs from 'node:fs';
@@ -83,7 +83,7 @@ const asked = String(globalThis.__clipboard);
 assert.match(asked.split('\n')[0], /^Use this cst: \/.*\/cst$/, 'the first line is the cst path');
 assert.equal(asked.split('Use this cst:').length, 2, 'named once');
 assert.ok(!asked.includes('docs/trainer-contract.md') && asked.includes('docs trainer-contract') && asked.includes('CST_TRAIN_INPUTS'), 'the contract is a command, with its outline inline');
-assert.ok(asked.includes('press\nAccept in Captain'), 'the agent is told it cannot apply the proposal');
+assert.ok(asked.includes('Propose first. When the person says to apply it') && asked.includes('--as-asked') && asked.includes('Never apply on your own'), 'the agent is told to propose first and apply only on the person\'s word');
 // A prompt a screen wrote itself gets the same first line.
 const { withCst } = await import(path.join(dir, 'kit/agent.js'));
 assert.equal(withCst('Look at this run.').split('\n')[0], `Use this cst: ${cst}`);
@@ -113,8 +113,8 @@ await until(() => h.mod.state?.inputs?.events?.mode === 'live', 'events kept liv
 t = h.text();
 assert.ok(t.includes('search_log') && t.includes('live'), 'the card shows the connection and live');
 
-// "Put that in", said to the agent: it files a proposal, then tries to apply it by hand. Refused, with what to tell
-// the person. Then inputs get added by hand anyway (a person can), and Accept still goes through: the one that
+// "Put that in", said to the agent: it files a proposal. On its own it can't accept it. Asked, it adds an input by
+// hand (recorded), a person adds another with a different definition, and Accept still goes through: the one that
 // matches counts as done, the one with another definition is left alone and named, and the rest goes in.
 const again = await post('/api/projects/outdoor/assist', {});
 fs.writeFileSync(prop, [
@@ -127,11 +127,16 @@ fs.writeFileSync(prop, [
 const agentEnv = { ...env, CLAUDECODE: '1' };
 const second = spawnSync(cst, ['projects', 'propose', 'outdoor', '--file', prop, '--assist', again.assist], { env: agentEnv, encoding: 'utf8' });
 assert.equal(second.status, 0, second.stdout + second.stderr);
-const byHand = spawnSync(cst, ['projects', 'slot-add', 'outdoor', 'Sessions'], { env: agentEnv, encoding: 'utf8' });
-assert.equal(byHand.status, 1, 'an agent session cannot apply its open proposal by hand');
-assert.ok((byHand.stdout + byHand.stderr).includes('Tell the person to press Accept in Captain (Home, the proposal panel).'), byHand.stdout + byHand.stderr);
+// Without the person's words the agent's accept is refused, with what to do. Nothing changed.
+const unasked = spawnSync(cst, ['projects', 'accept', 'outdoor', JSON.parse(spawnSync(cst, ['--json', 'projects', 'proposals', 'outdoor'], { env, encoding: 'utf8' }).stdout)[0].id], { env: agentEnv, encoding: 'utf8' });
+assert.equal(unasked.status, 1, 'an agent session cannot accept on its own');
+assert.ok((unasked.stdout + unasked.stderr).includes('only when the person asked') && (unasked.stdout + unasked.stderr).includes('--as-asked'), unasked.stdout + unasked.stderr);
 assert.ok(!(await get('/api/projects/outdoor/state')).slots.some((s) => s.id === 'sessions'), 'nothing was added');
-await post('/api/projects/outdoor/slots', { label: 'Sessions' });
+// Told to "put that in", the agent adds one input by hand. It goes in, and the project's history says an agent did it.
+const byHand = spawnSync(cst, ['projects', 'slot-add', 'outdoor', 'Sessions'], { env: agentEnv, encoding: 'utf8' });
+assert.equal(byHand.status, 0, byHand.stdout + byHand.stderr);
+const hist = (await get('/api/projects/outdoor/state')).history ?? [];
+assert.ok(hist.at(-1)?.applied_by === 'claude' && hist.at(-1)?.what === 'add a slot', JSON.stringify(hist.at(-1)));
 await post('/api/projects/outdoor/slots', { label: 'Promos', role: 'events', accepts: ['events'] });
 h.mod.load(h.cx);
 await until((x) => x.includes('Claude Code proposes') && x.includes('promoted products'), 'the second proposal shows');

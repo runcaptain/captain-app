@@ -17,7 +17,9 @@ captain-app commands    # available commands, arguments and descriptions
 
 `cst app context` is `view` in readable words, joined with what Captain's services
 know about the project, dataset or run on screen: run it when the person says
-"this" or "here". `cst app shot` saves a picture of the window.
+"this" or "here". `cst context show` adds what they pinned for you, `cst app shot`
+saves a picture of the window, and `cst app open <target>` shows them a screen,
+a record or a filled form to confirm.
 
 `ls` and `status` talk to the running window, not a new app. `commands`
 prints the built-in command list even without an open window. Do not launch bare

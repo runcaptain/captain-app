@@ -76,27 +76,51 @@ screen-recording permission is needed. Captain must be running; before its
 first frame or during GPU recovery it reports an error instead of a PNG.
 `CAPTAIN_APP_HOME` selects which running window to ask, as with `status`.
 
-## Seeing what the person sees
+## What an agent can see and do
 
-When the person says "this", "here" or "what I'm looking at", or names nothing, look before you ask:
+**See.** When the person says "this", "here" or "what I'm looking at", or names nothing, look before you ask:
 
-- `cst app context` prints what they have open in Captain right now: the workspace, the project, the screen (in
-  the screen's word, with its section id), the selected item (a dataset, a run, an experiment, a launch review),
-  an open form with its filled fields, and the page's "Next:" line with its action. Below that it prints what
-  Captain's services know about those things: a project's inputs and next step, a dataset's rows and columns, a
-  run's status. `--json` for a record, `--bare` for only what the window says.
+- `cst context show` prints what they have open in Captain right now and what they pinned for you. The screen
+  part: the workspace, the project, the screen (in the screen's word, with its section id), the selected item (a
+  dataset, a run, an experiment, a launch review), an open form with its filled fields, and the page's "Next:"
+  line with its action, then what Captain's services know about those things. The pinned part: each thing with a
+  short summary (a dataset's kind, rows, columns and three sample rows, a run's status and metrics, a project's
+  inputs and next step). `--json` for a record, `--bare` for names only. With Captain closed it still lists pins.
+- `cst app context` is the screen part alone, and exits 1 with one sentence when Captain is closed.
 - `cst app shot [file.png]` saves a picture of the window and prints its path. With no path it goes under the
   app's own folder (`cache/shots/`, the newest 20 are kept), never your working folder.
+- `cst context add <ref>...` pins more: `dataset:<name>[@vN]`, `model:<name>@vN`, `run:<evaluation>`,
+  `experiment:<id>`, `candidate:<project>/<id>`, `table:<connection>.<table>`, `project:<id>` or a file path. A
+  bare name is looked up. `cst context rm <ref>` and `cst context clear` remove. People pin with "Send to agent"
+  on a dataset, an input card, a candidate, a comparison, a run or an experiment: that also puts a one-line
+  reference in the open agent tab's input. The sidebar's Agent context strip lists the screen and the pins.
+  Pins live per workspace in `context/<workspace>.json` in the app's folder, with who added each and when.
 
-Both work in any terminal Captain opened: those carry `CAPTAIN_APP_HOME` (which window) and `CST_BIN` (which
-`cst`). With Captain closed they say so in one sentence and exit 1. Secrets never come out: a filled secret field
-reads `(hidden)`, and a URL loses its login. `captain-app view` is the window's own answer, unjoined.
+These work in any terminal Captain opened: those carry `CAPTAIN_APP_HOME` (which window) and `CST_BIN` (which
+`cst`). Secrets never come out: a filled secret field reads `(hidden)`, a URL loses its login, a file named like
+a key file is refused, and a connection is named but never opened.
 
-Mods add to it with the kit's `view.js`: `watchView(cx, "<section id>", () => ({ tab, dataset, ... }))` in `init`
-(never in render) keeps shared `captain.view.<section id>` current, written only when it changes. A form over the
-page publishes `"dialog"` with `safeFields(values, secretKeys)`. `askAgent` and `copyPrompt` (kit `agent.js`) put
-the same few lines at the top of every prompt, and the palette's "Ask an agent about this screen" (also the small
-button beside Agents in the sidebar) sends them to the open agent tab, or opens one.
+**Show.** `cst app open <target>` shows the person something: a screen (`home`, `experiments`, `data`, `runs`,
+`compare`, `launch-review`, `team`), `project:<id>`, `dataset:<name>` (`--tab sample`), `run:<evaluation>`,
+`comparison:<evaluation>[@vN]`, `experiment:<id>`, `settings[:<section>]`, or `form:<task> --value field=value`.
+A form opens filled in for the person to read and confirm. It is never submitted for them, and a secret is never
+filled in. A record outside the Explorer's pick opens by showing the whole workspace, with a note saying so.
+
+**Do.** Propose first. When the person says to apply it, apply it and quote them:
+`cst projects accept <project> <proposal> --as-asked "<their words>"`. Never apply on your own: without
+`--as-asked` an agent's accept is refused. `cst projects slot-add`, `slot-edit`, `slot-rm`, `input`, `input-clear`,
+`pin`, `kind` and `evaluation` work for an agent when the person asked. Each change an agent makes is written to
+the project's history with the agent's name, the time and, for an accept, the person's instruction; the proposal
+keeps `applied_by` and `on_instruction` too. Rejecting a proposal, deleting a project, deleting data and
+overriding a live launch review stay with the person, in the app.
+
+Mods add to what is seen with the kit's `view.js`: `watchView(cx, "<section id>", () => ({ tab, dataset, ... }))`
+in `init` keeps shared `captain.view.<section id>` current from a timer, written only when it changes (never call
+it from render). A form over the page publishes `"dialog"` with `safeFields(values, secretKeys)`. `context.js` has
+`SendToAgent(c, id, { ref, kind, label })` for a screen's own things. `askAgent` and `copyPrompt` (kit `agent.js`)
+put the screen at the top of every prompt, and the palette's "Ask an agent about this screen" (also the button
+beside Agents in the sidebar) sends it to the open agent tab, or opens one. `captain-app view` is the window's own
+answer, unjoined.
 
 ## The files
 

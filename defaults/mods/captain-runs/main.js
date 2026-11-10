@@ -8,6 +8,7 @@ import { theme, run, setShared, shared, openOverlay, props as layoutProps } from
 import { Curve } from "./kit/chart.js";
 import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
+import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
@@ -472,7 +473,8 @@ export default class CaptainRuns extends View {
       .child(div().text_size(13).font_medium().child(b.preregistration?.hypothesis ?? ""))
       .child(h_flex().gap(8)
         .child(Button(c, "bt-agent", "Open an agent in this space", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, backtestPrompt(name, b, r))), { small: true }))
-        .child(Button(c, "bt-prompt", "Copy prompt", (_e, cx) => copyPrompt(cx, backtestPrompt(name, b, r)), { kind: "quiet", small: true })))
+        .child(Button(c, "bt-prompt", "Copy prompt", (_e, cx) => copyPrompt(cx, backtestPrompt(name, b, r)), { kind: "quiet", small: true }))
+        .child(SendToAgent(c, "send-run", { ref: `run:${name}`, kind: "run", label: name })))
       .child(h_flex().flex_wrap().gap(16).text_size(12).text_color(c.grey900)
         .children((b.arms ?? []).map((a, i) => h_flex().gap(6).items_center().child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(named(c, a))
           // Backtest settings (captain-sandbox): try other settings of this arm's pipeline.

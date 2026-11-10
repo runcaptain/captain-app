@@ -48,6 +48,8 @@ class Window:
                 self.asked.append(req)
                 if "view" in req:
                     out = self.view
+                elif "open" in req:
+                    out = {"ok": True}
                 elif "shot" in req:
                     with open(req["shot"], "wb") as f:
                         f.write(b"\x89PNG\r\n\x1a\n")
@@ -266,3 +268,133 @@ def test_agents_are_told_how_to_look(ws):
     d = INV.create(ws, "Why do numeric queries regress?")
     p = INV.prompt(ws, d["id"])
     assert p.splitlines()[0].startswith("Use this cst: ") and line in p.split("\n\n")[0]
+
+
+# ---- cst context: what the person pinned for the agent, beside the screen ------------------------------------------
+
+
+def test_pin_expand_remove_and_clear(app_home, ws, tmp_path):
+    inv = INV.create(ws, "Why do numeric queries regress?")
+    notes = tmp_path / "notes.md"
+    notes.write_text("# Findings\nLong queries lose recall.\n")
+    r = CliRunner()
+    # With Captain closed, pins still work, and show says the screen is unknown instead of failing.
+    out = r.invoke(app, ["context", "show"])
+    assert out.exit_code == 0 and "Captain isn't open" in out.output and "nothing yet" in out.output
+    out = r.invoke(app, ["context", "add", "demo-catalog", "run:demo-tuned-vs-bm25", f"experiment:{inv['id']}", "project:outdoor",
+                         "model:demo-bm25", "table:demo-store.products", str(notes)])
+    assert out.exit_code == 0, out.output
+    assert "Pinned dataset:demo-catalog@v1" in out.output and "Pinned run:demo-tuned-vs-bm25" in out.output
+    # Kept per workspace in the app's own folder, with who added each and when.
+    stored = json.load(open(os.path.join(app_home, "context", "shop.json")))["items"]
+    assert [i["kind"] for i in stored] == ["dataset", "run", "experiment", "project", "model", "table", "file"]
+    assert all(i["added_by"] == "tester@captain.dev" and i["added_at"] and i["agent"] is None for i in stored)
+    # The same thing twice is one pin.
+    r.invoke(app, ["context", "add", "dataset:demo-catalog@v1"])
+    assert len(json.load(open(os.path.join(app_home, "context", "shop.json")))["items"]) == 7
+
+    w = Window(app_home, view())
+    d = json.loads(r.invoke(app, ["--json", "context", "show"]).output)
+    assert d["captain_running"] and d["view"]["screen"] == "Home" and d["view"]["known"]["project"]["inputs"]
+    by = {i["kind"]: i["summary"] for i in d["pinned"]}
+    assert by["dataset"]["kind"] == "catalog" and by["dataset"]["rows"] > 0 and by["dataset"]["columns"]
+    assert len(by["dataset"]["sample"]) == 3 and "title" in by["dataset"]["sample"][0]
+    assert by["run"]["status"] in ("finished", "planned, not run yet") and by["run"]["arms"]
+    if by["run"]["status"] == "finished":
+        assert by["run"]["metrics"] and by["run"]["metrics"][0]["arm"] and by["run"]["metrics"][0]["evidence"]
+    assert by["experiment"]["title"] == "Why do numeric queries regress?"
+    assert by["project"]["inputs"] and any(i.get("pinned", "").startswith("demo-catalog@v") for i in by["project"]["inputs"])
+    assert by["model"]["engine"] and by["table"]["connection"] == "demo-store"
+    assert by["file"]["first_lines"][0] == "# Findings"
+    t = r.invoke(app, ["context", "show"]).output
+    assert "What the person is looking at in Captain" in t and "Pinned for the agent (7):" in t
+    assert "sample rows:" in t and "added by tester@captain.dev" in t
+    # --bare: names only.
+    assert "summary" not in json.loads(r.invoke(app, ["--json", "context", "show", "--bare"]).output)["pinned"][0]
+
+    out = r.invoke(app, ["context", "rm", "demo-catalog"])
+    assert out.exit_code == 0 and "Removed dataset:demo-catalog@v1" in out.output
+    assert r.invoke(app, ["context", "rm", "run:demo-tuned-vs-bm25"]).exit_code == 0
+    out = r.invoke(app, ["context", "rm", "never-added"])
+    assert out.exit_code == 1 and "is not in the agent's context" in out.output
+    out = r.invoke(app, ["context", "clear"])
+    assert out.exit_code == 0 and "Removed 5 pinned things." in out.output
+    assert json.loads(r.invoke(app, ["--json", "context", "show"]).output)["pinned"] == []
+    # Something that isn't there says what it could be.
+    out = r.invoke(app, ["context", "add", "no-such-thing"])
+    assert out.exit_code == 1 and "nothing named 'no-such-thing'" in out.output and "dataset:no-such-thing" in out.output
+    w.close()
+
+
+def test_an_agent_pin_is_marked_and_pins_are_per_workspace(app_home, ws, tmp_path, monkeypatch):
+    r = CliRunner()
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert r.invoke(app, ["context", "add", "dataset:demo-catalog"]).exit_code == 0
+    assert json.load(open(os.path.join(app_home, "context", "shop.json")))["items"][0]["agent"] == "claude"
+    monkeypatch.delenv("CLAUDECODE")
+    wsp.init_workspace("other", str(tmp_path / "other-store"))
+    assert json.loads(r.invoke(app, ["--json", "-w", "other", "context", "show"]).output)["pinned"] == []
+    assert len(json.loads(r.invoke(app, ["--json", "-w", "shop", "context", "show"]).output)["pinned"]) == 1
+
+
+def test_pins_never_carry_secrets(app_home, ws, tmp_path):
+    r = CliRunner()
+    # A file of secrets is refused by its name, whatever is in it.
+    for name in (".env", "prod.pem", "credentials.json", "api-token.txt"):
+        f = tmp_path / name
+        f.write_text(f"API_KEY={TOKEN}\n")
+        out = r.invoke(app, ["context", "add", str(f)])
+        assert out.exit_code == 1 and "looks like a file of secrets" in out.output, name
+    # An ordinary file with a secret inside: pinned, and the secret is hidden when it is shown.
+    cfg = tmp_path / "settings.yaml"
+    cfg.write_text(f"name: shop\nurl: postgresql://app:{PASSWORD}@db.example.test/shop\nkey: {TOKEN}\n"
+                   f"DB_PASSWORD={PASSWORD}\nheader = Bearer {TOKEN}\n")
+    assert r.invoke(app, ["context", "add", str(cfg)]).exit_code == 0
+    for args in (["context", "show"], ["--json", "context", "show"]):
+        out = r.invoke(app, args).output
+        assert TOKEN not in out and PASSWORD not in out, args
+        assert "postgresql://(hidden)@db.example.test/shop" in out
+        assert "name: shop" in out, "the harmless lines stay"
+    # A connection is named, never opened: no URL, no password.
+    assert r.invoke(app, ["context", "add", "table:demo-store.products"]).exit_code == 0
+    d = json.loads(r.invoke(app, ["--json", "context", "show"]).output)
+    table = next(i for i in d["pinned"] if i["kind"] == "table")["summary"]
+    assert set(table) <= {"connection", "engine", "table", "rows", "columns", "note"}
+
+
+# ---- cst app open: an agent shows the person something -------------------------------------------------------------
+
+
+def test_app_open_sends_the_window_what_to_show(app_home, ws):
+    r = CliRunner()
+    out = r.invoke(app, ["app", "open", "data"])
+    assert out.exit_code == 1 and "Captain isn't running" in out.output
+    w = Window(app_home, view())
+    sent = lambda: w.asked[-1]["open"]
+    assert r.invoke(app, ["app", "open", "data"]).exit_code == 0 and sent() == {"section": "data"}
+    assert r.invoke(app, ["app", "open", "launch-review"]).exit_code == 0 and sent() == {"section": "handoff"}
+    assert r.invoke(app, ["app", "open", "experiments"]).exit_code == 0 and sent() == {"section": "investigations"}
+    assert r.invoke(app, ["app", "open", "project:Outdoor"]).exit_code == 0 and sent() == {"project": "outdoor", "label": "Outdoor"}
+    assert r.invoke(app, ["app", "open", "dataset:demo-catalog", "--tab", "sample"]).exit_code == 0
+    assert sent() == {"section": "data", "dataset": "demo-catalog", "tab": "sample"}
+    assert r.invoke(app, ["app", "open", "run:demo-tuned-vs-bm25"]).exit_code == 0 and sent() == {"section": "runs", "backtest": "demo-tuned-vs-bm25"}
+    assert r.invoke(app, ["app", "open", "comparison:demo-tuned-vs-bm25@v1"]).exit_code == 0
+    assert sent() == {"section": "comparisons", "backtest": "demo-tuned-vs-bm25", "version": 1}
+    assert r.invoke(app, ["app", "open", "settings:structure"]).exit_code == 0 and sent() == {"settings": "structure"}
+    # A form, filled in for the person. It opens; nothing is submitted.
+    out = r.invoke(app, ["app", "open", "form:investigation", "--value", "title=Do long queries regress?"])
+    assert out.exit_code == 0 and "nothing was submitted" in out.output
+    assert sent() == {"form": "investigation", "values": {"title": "Do long queries regress?"}}
+    # A secret is never filled in for them.
+    n = len(w.asked)
+    for v in ("password=hunter2", f"note={TOKEN}", f"url=postgresql://app:{PASSWORD}@db.example.test/x"):
+        out = r.invoke(app, ["app", "open", "form:database", "--value", v])
+        assert out.exit_code == 1 and "looks like a secret" in out.output, v
+    # Something that isn't there, or isn't a target, says so and sends nothing.
+    out = r.invoke(app, ["app", "open", "dataset:nope"])
+    assert out.exit_code == 1 and "no dataset named 'nope'" in out.output
+    out = r.invoke(app, ["app", "open", "the-moon"])
+    assert out.exit_code == 1 and "don't know how to open" in out.output
+    assert [q for q in w.asked[n:] if "open" in q] == []
+    assert json.loads(r.invoke(app, ["--json", "--dry-run", "app", "open", "runs"]).output) == {"would_open": {"section": "runs"}}
+    w.close()

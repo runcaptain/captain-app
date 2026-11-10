@@ -336,6 +336,16 @@ def slot_remove(ctx: Context, pid: str, sid: str) -> dict:
     return get(ctx, pid)
 
 
+def record_change(ctx: Context, pid: str, entry: dict) -> None:
+    """Add one line to the project's history (the newest 200 are kept): who changed what, when, and, for a change an
+    agent made, the person's instruction it acted on. What agents do to a project is always written down."""
+    def ch(doc):
+        doc["history"] = ((doc.get("history") or []) + [{"at": _now(), **entry}])[-200:]
+        return None
+
+    _update(ctx, pid, ch)
+
+
 def set_evaluation(ctx: Context, pid: str, method: str) -> dict:
     from . import recipes as RC
 

@@ -80,9 +80,13 @@ line, with what Captain knows about them. It needs Captain open, and says so pla
 - `cst notebook import <file>` (ipynb, jupytext, Databricks, marimo, Quarto, R Markdown, MyST, Zeppelin)
 - `cst models list --json` (the model registry), `cst lineage --view models`
 - `cst projects kinds`, `cst projects state <p> --json`, `cst projects sources --json`. To help set up a project,
-  propose with `cst projects propose <p> --file proposal.yaml`. A person accepts it in the app. You cannot apply it,
-  even when asked in chat: tell the person to press Accept in Captain (Home, the proposal panel). While your proposal
-  is open, `cst projects slot-add`, `input` and `pin` refuse an agent session
+  propose with `cst projects propose <p> --file proposal.yaml`. Propose first. When the person says to apply it,
+  apply it with `cst projects accept <p> <proposal> --as-asked "<their words>"` and quote them. Never apply on your
+  own: without their instruction the accept is refused. They can also press Accept in Captain (Home, the proposal
+  panel). `cst projects slot-add`, `input` and `pin` work for you too when they ask, and each is recorded
+- Deleting a project, deleting data and overriding a live launch review are the person's, in the app. Don't do them
+- `cst context show`: the person's screen and what they pinned for you. `cst context add <ref>` pins more.
+  `cst app open <target>` shows them a screen, a dataset, a run or a filled form to confirm
 - `cst docs trainer-contract`: what a training command gets (CST_TRAIN_INPUTS, CST_PARAMS, CST_OUT) and writes
 - `cst skill list`; skills are also in .claude/skills/
 

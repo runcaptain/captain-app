@@ -10,6 +10,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, openOverlay, notify, run, spaces, focused, shared, setShared, exec, knownAgents } from "herdr";
 import { api, query, watchWorkspace, watchScope, watchRecords } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
+import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
 import { View } from "gpui-kit";
@@ -302,7 +303,7 @@ export default class CaptainInvestigations extends View {
     const d = this.detail.data ?? {};
     return v_flex().size_full().min_h(0)
       .child(v_flex().flex_none().px(24).pt(16).gap(10)
-        .child(h_flex().child(back))
+        .child(h_flex().gap(8).items_center().child(back).child(SendToAgent(c, "send-experiment", { ref: `experiment:${this.open}`, kind: "experiment", label: d.title ?? this.open })))
         .child(h_flex().gap(10).items_center()
           .child(div().flex_1().min_w(0).truncate().text_size(20).font_semibold().text_color(c.navy).child(d.title ?? this.open))
           .child(Button(c, "inv-agent", "Open an agent in this space", (_e, cx) => this.askAgent(cx)))
