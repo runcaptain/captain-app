@@ -32,7 +32,7 @@ await h.layoutLists({});
 
 let text = h.text();
 if (process.env.SHOW) console.log('overview ::', text.replace(/\s+/g, ' ').slice(0, 700));
-assert.ok(globalThis.__asked.some((p) => /^\/api\/runs\/demos\/aptdeco\/ab6c-seg\?v=0/.test(p)), `opened v0: ${globalThis.__asked.join(' ')}`);
+assert.ok(globalThis.__asked.some((p) => /^\/api\/runs\/demos\/northpole\/ab6c-seg\?v=0/.test(p)), `opened v0: ${globalThis.__asked.join(' ')}`);
 assert.ok(!/Loading/.test(text), 'not stuck loading');
 assert.ok(text.includes('Conversion (relative)') && !text.includes('conversion.rel'), 'comparisons from the record, in words');
 assert.ok(/imported/i.test(text), 'says it was imported');
@@ -49,7 +49,7 @@ for (const t of ['tab-queries', 'tab-segments', 'tab-surfaces']) {
 
 // A run whose record is gone: one sentence, Retry and Copy details; the storage key only on the clipboard.
 globalThis.__routes.unshift([/^\/api\/runs\/[^?]+\?v=/, 'missing']);
-h.mod.open(h.cx, 'demos/aptdeco/ab6c-seg', 0);
+h.mod.open(h.cx, 'demos/northpole/ab6c-seg', 0);
 await h.idle();
 text = h.text();
 assert.ok(text.includes("This run's record is missing from the workspace."), `missing record sentence: ${text.slice(0, 300)}`);

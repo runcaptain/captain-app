@@ -17,7 +17,8 @@ for arch, brand, ver in [("arch-v1", "shop", "v1"), ("arch-v2", "shop", "v2"), (
     with open(os.path.join(reg, arch, brand, ver, "MANIFEST.yaml"), "w") as f:
         f.write("status: candidate\n")
 AT.attach(ctx, reg)
-p = PR.create(ctx, "Shot Project", brands=["shop"])
+# SHOT_PROJECT_NAME: another name, e.g. a long one to check the header keeps it readable.
+p = PR.create(ctx, os.environ.get("SHOT_PROJECT_NAME") or "Shot Project", brands=["shop"])
 PR.assign(ctx, p["id"], [{"kind": "dataset", "name": "demo-catalog"}])
 
 from captain_search import project_state as PS

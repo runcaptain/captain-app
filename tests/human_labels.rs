@@ -61,7 +61,7 @@ fn the_check_tells_commands_from_words() {
     for bad in ["cloud add", "data / class add", "cst demo seed", "compute add", "demo seed"] {
         assert!(raw(bad), "{bad}");
     }
-    for good in ["Data and signals", "Connect a cloud account", "New experiment", "Run a cst command...", "Start a launch review", "Open makro-catalog"] {
+    for good in ["Data and signals", "Connect a cloud account", "New experiment", "Run a cst command...", "Start a launch review", "Open gift-catalog"] {
         assert!(!raw(good), "{good}");
     }
 }

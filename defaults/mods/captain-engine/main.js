@@ -190,7 +190,7 @@ export default class Engine extends View {
           .child(svg(icon("search")).size(28).text_color(c.blue))
           .child(div().text_size(15).font_semibold().text_color(c.navy).child("No engines yet"))
           .child(div().max_w(460).text_size(13).line_height("20px").text_color(c.grey900).child("An engine is one lasting name for a search or recommendation system. Its models and their versions change over time; the engine stays, so its history stays together."))
-          .child(div().text_size(12.5).text_color(c.grey500).child("For example: AptDeco product search."))
+          .child(div().text_size(12.5).text_color(c.grey500).child("For example: North Pole gift search."))
           .child(div().pt(4).child(Button(c, "eng-add-first", "Add your first engine", add, { kind: "primary" })))
         : v_flex().border_t(1).border_color(c.rule).children(es.map((e, i) => this.row(c, `eng-pick-${i}`, e.name, SERVES[e.type] ?? e.type,
           [`${(e.pipelines ?? []).length} model versions`], (_ev, cx) => { setShared("captain.scope", { kind: "engine", id: e.id, label: e.name }); cx.notify(); }))));

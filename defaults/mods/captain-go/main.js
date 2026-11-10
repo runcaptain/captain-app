@@ -1,4 +1,4 @@
-// CAPTAIN: opens something by name from the palette ("Open makro-catalog"): records
+// CAPTAIN: opens something by name from the palette ("Open gift-catalog"): records
 // what to open in shared "captain.open" {section, ...} for that section's screen,
 // switches the sections stack to it, and closes itself at once.
 import { View, div } from "gpui-kit";

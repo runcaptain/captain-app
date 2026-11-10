@@ -12,7 +12,7 @@ const AUDIENCES = [
   [/^desktop$/, "desktop"], [/^search$/, "search"], [/^browse$/, "browse"], [/^(head|torso|tail)$/, (m) => `${m[0]} queries`],
 ];
 
-/** A metric key in words: "arms.full~digifit+m6.all.conv_vs_ref" reads "Conversion vs the reference, all shoppers",
+/** A metric key in words: "arms.full~tuned+m6.all.conv_vs_ref" reads "Conversion vs the reference, all shoppers",
  *  "ndcg@10_tw" reads "nDCG@10, traffic-weighted". Unknown keys come back tidied, never invented. */
 export function metricWords(key) {
   const raw = String(key ?? "");

@@ -1,1 +1,1 @@
-{"run": "demos/aptdeco/ab6c-seg@v0", "trustworthy": false, "warnings": [{"code": "imported", "text": "imported from a readout: no per-query rankings to re-check"}, {"code": "offline", "text": "offline evidence (SIMULATED): not proof of online or business impact"}]}
+{"run": "demos/northpole/ab6c-seg@v0", "trustworthy": false, "warnings": [{"code": "imported", "text": "imported from a readout: no per-query rankings to re-check"}, {"code": "offline", "text": "offline evidence (SIMULATED): not proof of online or business impact"}]}

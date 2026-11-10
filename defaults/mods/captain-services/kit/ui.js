@@ -33,7 +33,7 @@ export function toneOf(state) {
   return "neutral";
 }
 
-/** A versioned thing ("makro-catalog@v3") as its name and a version chip, never raw syntax. */
+/** A versioned thing ("gift-catalog@v3") as its name and a version chip, never raw syntax. */
 export function RefChip(c, ref) {
   const m = String(ref ?? "").match(/^(.*)@v?(\d+)$/);
   const name = m ? m[1] : String(ref ?? "");

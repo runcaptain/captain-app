@@ -254,7 +254,7 @@ def thumbs(srcs: list[str], dest_dir: str, size: int = 160, profile: str | None 
 # ---- finding where relative images live, without being told ---------------------------------------
 #
 # 1. Learn from addresses already saved for other datasets: a catalog's images usually sit where its siblings' do,
-#    with the sibling's name swapped for this one's (.../makro/images/{pid}/{value} -> .../generika/images/...).
+#    with the sibling's name swapped for this one's (.../outdoor/images/{pid}/{value} -> .../generika/images/...).
 # 2. Next to the dataset's own file (guesses above).
 # 3. Search the buckets the login can see: buckets and folders whose names match the dataset first, then any whose
 #    names say images or media, three levels deep at most, trying <folder>/{id}/{value} and <folder>/{value} for each

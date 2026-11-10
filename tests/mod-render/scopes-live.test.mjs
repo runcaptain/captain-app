@@ -94,7 +94,7 @@ const { default: EngineMod } = await import(path.join(await copy('captain-engine
 const none = harness(EngineMod);
 await none.start();
 await until(none, () => none.text().includes('No engines yet'), 'the engines page explains an empty workspace');
-assert.ok(none.text().includes('AptDeco product search'), 'it gives an example');
+assert.ok(none.text().includes('North Pole gift search'), 'it gives an example');
 globalThis.__overlays = [];
 await none.click('eng-add-first');
 assert.equal(globalThis.__overlays.at(-1)?.mod, 'captain-scope', 'Add your first engine opens the add dialog');

@@ -890,16 +890,19 @@ export default class ProjectHome extends View {
     const c = palette(isDark(theme()));
     const pid = this.pid();
     const p = this.project();
-    const head = h_flex().h(64).flex_none().px(24).gap(10).items_center().border_b(1).border_color(c.rule)
+    // The name comes first: its block never goes under 220 px, and the actions drop to a second row when the row is
+    // narrow (a terminal column open) instead of squeezing the name to "S...".
+    const head = h_flex().min_h(64).py(10).flex_wrap().flex_none().px(24).gap(10).items_center().border_b(1).border_color(c.rule)
       .child(pid ? ProjectBadge(c, { id: pid, icon: p?.icon ?? null }, 32) : div().size(32).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("house")).size(16)))
-      .child(v_flex().flex_1().min_w(0)
+      .child(v_flex().flex_1().min_w(220)
         .child(div().text_size(18).font_semibold().truncate().child(p?.name ?? (pid ? shared("captain.scope")?.label ?? pid : "Home")))
         .child(div().text_size(12).text_color(c.grey500).truncate().child(p?.description || (pid ? "What you're building, its inputs, its candidates against the baseline, and where it ships." : this.projects && !this.projects.length ? "Start with a project." : "Pick a project to work on."))))
-      .child(Button(c, "ph-workflows", "Workflows", () => go("runs", { tab: "workflows" }), { small: true, kind: "quiet" }))
-      .when(Boolean(pid), (e) => e.child(Button(c, "ph-all", "All projects", (_e, cx) => this.allProjects(cx), { small: true, kind: "quiet" })))
-      .when(Boolean(pid) && Boolean(this.stages), (e) => e.child(Button(c, "ph-assist", "Set up with an agent", (_e, cx) => this.startAssist(cx), { small: true, disabled: this.busy || Boolean(this.assist) })))
-      .child(Button(c, "ph-new", "New project", () => form("project"), { small: true }))
-      .when(Boolean(pid), (e) => e.child(this.moreMenu(c)));
+      .child(h_flex().id("ph-actions").flex_none().max_w_full().flex_wrap().gap(10).items_center()
+        .child(Button(c, "ph-workflows", "Workflows", () => go("runs", { tab: "workflows" }), { small: true, kind: "quiet" }))
+        .when(Boolean(pid), (e) => e.child(Button(c, "ph-all", "All projects", (_e, cx) => this.allProjects(cx), { small: true, kind: "quiet" })))
+        .when(Boolean(pid) && Boolean(this.stages), (e) => e.child(Button(c, "ph-assist", "Set up with an agent", (_e, cx) => this.startAssist(cx), { small: true, disabled: this.busy || Boolean(this.assist) })))
+        .child(Button(c, "ph-new", "New project", () => form("project"), { small: true }))
+        .when(Boolean(pid), (e) => e.child(this.moreMenu(c))));
     let body;
     if (!pid) body = this.list(c);
     else if (this.problem) body = Problem(c, this.problem, (cx) => this.load(cx));

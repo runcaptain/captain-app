@@ -1,1 +1,1 @@
-[{"name": "demos/aptdeco/ab6c-seg", "latest": 0, "arms": ["aptdeco-baseline@v1", "aptdeco-ab6c@v1"], "primary_metric": "conversion.rel", "runs": 1}]
+[{"name": "demos/northpole/ab6c-seg", "latest": 0, "arms": ["northpole-baseline@v1", "northpole-ab6c@v1"], "primary_metric": "conversion.rel", "runs": 1}]

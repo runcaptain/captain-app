@@ -333,7 +333,7 @@ export const TASKS = [
     about: "Bring in a catalog, queries, judgments or logs, from a file on this computer or a SQL query.",
     fields: [
       { key: "from", label: "From", kind: "choice", default: "file", options: [{ value: "file", label: "A file" }, { value: "sql", label: "A SQL query" }] },
-      { key: "name", label: "Name", placeholder: "makro-catalog", required: true, help: "Letters, digits and dashes. Each import becomes a new version of it." },
+      { key: "name", label: "Name", placeholder: "gift-catalog", required: true, help: "Letters, digits and dashes. Each import becomes a new version of it." },
       { key: "kind", label: "What it holds", kind: "choice", default: "catalog",
         options: [{ value: "catalog", label: "Catalog" }, { value: "queries", label: "Queries" }, { value: "judgments", label: "Judgments" }, { value: "events", label: "Events or logs" }, { value: "generic", label: "Something else" }] },
       { key: "file", label: "File", placeholder: "~/Downloads/catalog.parquet", required: true, when: (v) => v.from !== "sql", help: "CSV, TSV, Parquet or JSON lines." },
@@ -631,7 +631,7 @@ export const TASKS = [
     fields: [
       { key: "kind", label: "What it is", kind: "choice", required: true,
         options: ["dataset", "run", "slice", "query", "signal", "label", "replay", "handoff", "note"].map((k) => ({ value: k, label: { replay: "Off-policy evaluation", handoff: "Launch review" }[k] ?? k.charAt(0).toUpperCase() + k.slice(1) })) },
-      { key: "ref", label: "Which one", required: true, when: (v) => v.kind !== "note", placeholder: "makro-catalog", help: "Its name. Add a version like @v3 to pin one." },
+      { key: "ref", label: "Which one", required: true, when: (v) => v.kind !== "note", placeholder: "gift-catalog", help: "Its name. Add a version like @v3 to pin one." },
       { key: "note", label: "Why it matters", kind: "long", required: true, when: (v) => v.kind === "note" },
       { key: "note", label: "Why it matters", kind: "long", optional: true, when: (v) => v.kind !== "note" },
     ],
