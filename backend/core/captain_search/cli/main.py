@@ -433,6 +433,7 @@ def _yaml(obj) -> str:
 
 
 from . import more  # noqa: E402,F401  registers the remaining commands
+from . import docs  # noqa: E402,F401  cst docs
 
 
 def main():  # pragma: no cover

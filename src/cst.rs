@@ -49,8 +49,10 @@ fn is_executable(p: &Path) -> bool {
 }
 
 /// $CST_BIN, then settings.json `cst` (for development), then the cst packaged inside
-/// Captain.app. Only a build without one (run from target/) looks in ~/.local/bin and PATH.
-fn find() -> Option<PathBuf> {
+/// Captain.app. A build without one (run from target/) uses its own repo's backend
+/// (backend/core/.venv/bin/cst) when that is set up, and only then ~/.local/bin and PATH:
+/// those can hold an older install, without the commands this build's screens and prompts use.
+pub fn find() -> Option<PathBuf> {
     if let Some(b) = std::env::var_os("CST_BIN").map(PathBuf::from).filter(|b| is_executable(b)) {
         return Some(b);
     }
@@ -63,9 +65,38 @@ fn find() -> Option<PathBuf> {
     if let Some(b) = crate::brand::bundled("cst/bin/cst").filter(|b| is_executable(b)) {
         return Some(b);
     }
+    if let Some(b) = std::env::current_exe().ok().and_then(|exe| repo_cst(&exe)) {
+        return Some(b);
+    }
     let local = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/bin/cst"));
     let on_path = std::env::var_os("PATH").into_iter().flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).map(|d| d.join("cst"));
     local.into_iter().chain(on_path).find(|c| is_executable(c))
+}
+
+/// The backend of the repo a development build was built in: <repo>/target/<profile>/captain-app
+/// beside <repo>/backend/core/.venv/bin/cst.
+fn repo_cst(exe: &Path) -> Option<PathBuf> {
+    let target = exe.ancestors().find(|a| a.file_name().is_some_and(|n| n == "target"))?;
+    Some(target.parent()?.join("backend/core/.venv/bin/cst")).filter(|c| is_executable(c))
+}
+
+/// The folder to put first on a terminal's PATH so `cst` there is `cst`, the one the
+/// app runs. The packaged cst sits alone in its folder, so that folder is used as is.
+/// Any other (a venv's bin, with its python and pip) would bring those along, so
+/// `shim` gets a link named cst and is used instead.
+pub fn path_dir(cst: &Path, shim: &Path) -> Option<PathBuf> {
+    let dir = cst.parent()?;
+    let alone = std::fs::read_dir(dir).ok()?.flatten().all(|e| e.file_name() == "cst");
+    if alone {
+        return Some(dir.to_owned());
+    }
+    let link = shim.join("cst");
+    if std::fs::read_link(&link).ok().as_deref() != Some(cst) {
+        std::fs::create_dir_all(shim).ok()?;
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(cst, &link).ok()?;
+    }
+    Some(shim.to_owned())
 }
 
 /// Offer the packaged cst on the command line as ~/.local/bin/cst, so agents in
@@ -125,17 +156,22 @@ fn serve_json() -> Option<PathBuf> {
 
 /// Environment for a terminal in `space`: the Captain context it's bound to
 /// (shared "captain.spaces" {<space>: {workspace, investigation?}}, else the
-/// current workspace from shared "captain.workspace"), and ~/.local/bin first on
-/// PATH so `cst` is found. Agents and Copy prompt read CST_WORKSPACE and
-/// CST_INVESTIGATION to know where they are.
+/// current workspace from shared "captain.workspace"), and the app's own cst: its
+/// folder first on PATH and its path in CST_BIN. ~/.local/bin alone is not enough: an
+/// older cst installed there has no `projects` or `tables`, and an agent sent to run
+/// them fails. Agents and Copy prompt read CST_WORKSPACE and CST_INVESTIGATION to know
+/// where they are.
 pub fn terminal_env(space: &str) -> serde_json::Map<String, Value> {
     let bound = crate::mods::shared("captain.spaces").and_then(|m| m.get(space).cloned()).unwrap_or(Value::Null);
     let workspace = bound.get("workspace").and_then(Value::as_str).map(str::to_owned)
         .or_else(|| crate::mods::shared("captain.workspace").and_then(|v| v.as_str().map(str::to_owned)));
-    env_for(workspace.as_deref(), bound.get("investigation").and_then(Value::as_str), std::env::var("PATH").ok().as_deref())
+    let cst = find();
+    let dir = cst.as_deref().and_then(|c| path_dir(c, &crate::mods::app_dir().join("bin")));
+    env_for(workspace.as_deref(), bound.get("investigation").and_then(Value::as_str), std::env::var("PATH").ok().as_deref(), cst.as_deref().zip(dir.as_deref()))
 }
 
-pub fn env_for(workspace: Option<&str>, investigation: Option<&str>, path: Option<&str>) -> serde_json::Map<String, Value> {
+/// `cst`: the app's cst and the folder that goes first on PATH for it (`path_dir`).
+pub fn env_for(workspace: Option<&str>, investigation: Option<&str>, path: Option<&str>, cst: Option<(&Path, &Path)>) -> serde_json::Map<String, Value> {
     let mut env = serde_json::Map::new();
     if let Some(w) = workspace.filter(|w| !w.is_empty()) {
         env.insert("CST_WORKSPACE".into(), Value::String(w.into()));
@@ -143,12 +179,23 @@ pub fn env_for(workspace: Option<&str>, investigation: Option<&str>, path: Optio
     if let Some(i) = investigation.filter(|i| !i.is_empty()) {
         env.insert("CST_INVESTIGATION".into(), Value::String(i.into()));
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        let local = PathBuf::from(home).join(".local/bin").display().to_string();
-        let rest = path.unwrap_or("/usr/bin:/bin:/usr/sbin:/sbin");
-        if !rest.split(':').any(|p| p == local) {
-            env.insert("PATH".into(), Value::String(format!("{local}:{rest}")));
+    let rest = path.unwrap_or("/usr/bin:/bin:/usr/sbin:/sbin");
+    let mut front = Vec::new();
+    if let Some((bin, dir)) = cst {
+        env.insert("CST_BIN".into(), Value::String(bin.display().to_string()));
+        front.push(dir.display().to_string());
+    }
+    if let Some(local) = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/bin").display().to_string()) {
+        // Kept for the other tools people install there. After the app's cst, never before it.
+        if !rest.split(':').any(|p| p == local) && !front.contains(&local) {
+            front.push(local);
         }
+    }
+    // The app's cst folder is first even when PATH names it later.
+    let keep = rest.split(':').filter(|p| cst.is_none_or(|(_, dir)| Path::new(p) != dir));
+    let path = front.iter().map(String::as_str).chain(keep).collect::<Vec<_>>().join(":");
+    if path != rest {
+        env.insert("PATH".into(), Value::String(path));
     }
     env
 }
@@ -219,6 +266,8 @@ pub fn ensure(ready: impl Fn() + Send + 'static) {
     };
     let mut cmd = Command::new(&bin);
     cmd.env("CST_HOME", &home);
+    // The prompts the services write for agents name this cst by its path (codeagent.cst_path).
+    cmd.env("CST_BIN", &bin);
     cmd.args(["serve", "--port", "0"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     {
         use std::os::unix::process::CommandExt;
@@ -308,7 +357,9 @@ fn guard(pgid: i32) -> Option<Child> {
 /// is up, else `{state, error?}` (starting, missing with the install command, failed).
 pub fn shared_value(state: &State) -> Value {
     match state {
-        State::Ready { port, token } => serde_json::json!({ "state": "ready", "base": format!("http://127.0.0.1:{port}"), "token": token, "home": cst_home().map(|h| h.display().to_string()) }),
+        State::Ready { port, token } => serde_json::json!({ "state": "ready", "base": format!("http://127.0.0.1:{port}"), "token": token, "home": cst_home().map(|h| h.display().to_string()),
+            // The cst the app runs, for prompts handed to agents (kit/agent.js): an older one can be first on their PATH.
+            "cst": find().map(|c| c.display().to_string()) }),
         State::Idle | State::Starting => serde_json::json!({ "state": "starting" }),
         State::Missing => serde_json::json!({ "state": "missing", "error": format!("Captain Search isn't installed. Install it with: {INSTALL}") }),
         State::Failed(e) => serde_json::json!({ "state": "failed", "error": e }),
@@ -382,12 +433,70 @@ mod tests {
 
     #[test]
     fn terminals_know_their_captain_context() {
-        let env = env_for(Some("acme"), Some("01abc"), Some("/usr/bin:/bin"));
+        let env = env_for(Some("acme"), Some("01abc"), Some("/usr/bin:/bin"), None);
         assert_eq!(env["CST_WORKSPACE"], "acme");
         assert_eq!(env["CST_INVESTIGATION"], "01abc");
         assert!(env["PATH"].as_str().unwrap().ends_with("/.local/bin:/usr/bin:/bin"));
-        let bare = env_for(None, None, Some("/usr/bin"));
-        assert!(!bare.contains_key("CST_WORKSPACE") && !bare.contains_key("CST_INVESTIGATION"));
+        let bare = env_for(None, None, Some("/usr/bin"), None);
+        assert!(!bare.contains_key("CST_WORKSPACE") && !bare.contains_key("CST_INVESTIGATION") && !bare.contains_key("CST_BIN"));
+    }
+
+    #[test]
+    fn terminals_get_the_apps_own_cst_before_an_older_one() {
+        // An older cst lives in ~/.local/bin, which is already on PATH. The app's must still come first.
+        let local = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".local/bin").display().to_string();
+        let bin = Path::new("/Applications/Captain.app/Contents/Resources/cst/bin/cst");
+        let dir = bin.parent().unwrap();
+        let env = env_for(None, None, Some(&format!("{local}:/usr/bin:{}", dir.display())), Some((bin, dir)));
+        assert_eq!(env["CST_BIN"], bin.display().to_string());
+        assert_eq!(env["PATH"], format!("{}:{local}:/usr/bin", dir.display()));
+        let env = env_for(None, None, Some("/usr/bin"), Some((bin, dir)));
+        assert_eq!(env["PATH"], format!("{}:{local}:/usr/bin", dir.display()));
+    }
+
+    #[test]
+    fn the_cst_folder_on_path_holds_only_cst() {
+        let dir = std::env::temp_dir().join(format!("captain-cst-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Packaged: cst sits alone in its folder, which is used as is.
+        let packaged = dir.join("Captain.app/Contents/Resources/cst/bin/cst");
+        std::fs::create_dir_all(packaged.parent().unwrap()).unwrap();
+        std::fs::write(&packaged, "").unwrap();
+        assert_eq!(path_dir(&packaged, &dir.join("shim")).as_deref(), packaged.parent());
+        assert!(!dir.join("shim").exists());
+        // A venv: its bin also has python, so terminals get a folder with a link to cst alone.
+        let venv = dir.join("venv/bin/cst");
+        std::fs::create_dir_all(venv.parent().unwrap()).unwrap();
+        std::fs::write(&venv, "").unwrap();
+        std::fs::write(venv.with_file_name("python"), "").unwrap();
+        let shim = dir.join("shim");
+        assert_eq!(path_dir(&venv, &shim), Some(shim.clone()));
+        assert_eq!(std::fs::read_link(shim.join("cst")).unwrap(), venv);
+        assert_eq!(std::fs::read_dir(&shim).unwrap().count(), 1);
+        // The app's cst changed (another build): the link follows.
+        let other = dir.join("other/bin/cst");
+        std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+        std::fs::write(&other, "").unwrap();
+        std::fs::write(other.with_file_name("pip"), "").unwrap();
+        assert_eq!(path_dir(&other, &shim), Some(shim.clone()));
+        assert_eq!(std::fs::read_link(shim.join("cst")).unwrap(), other);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_development_build_uses_its_own_repos_backend() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("captain-cst-repo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let exe = dir.join("repo/target/debug/captain-app");
+        assert_eq!(repo_cst(&exe), None);
+        let cst = dir.join("repo/backend/core/.venv/bin/cst");
+        std::fs::create_dir_all(cst.parent().unwrap()).unwrap();
+        std::fs::write(&cst, "").unwrap();
+        std::fs::set_permissions(&cst, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(repo_cst(&exe), Some(cst));
+        assert_eq!(repo_cst(Path::new("/Applications/Captain.app/Contents/MacOS/captain-app")), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -43,4 +43,6 @@ Global flags: `-w/--workspace NAME`, `--json`, `--dry-run`.
 | `cst agent "question" [--yes]` | Ask the agent; it checks its figures against tool results |
 | `cst serve [--port 0]` | The daemon (see api.md). Binding beyond localhost needs CST_ALLOW_REMOTE=1 and a TLS proxy |
 | `cst app` | Open the desktop app |
+| `cst docs [NAME]` | Print a guide that ships with cst, such as `cst docs trainer-contract`. Without a name: the list |
+| `cst projects assist P` / `propose P --file proposal.yaml [--assist ID]` | A prompt for a coding agent to set up a project, and the proposal it files. A person accepts it in the app. An agent session can't accept, and can't change the project by hand while its proposal is open |
 | `cst demo seed` | Load the separate Sample North Pole workspace (`--legacy`: fill this workspace with a labeled synthetic store) |

@@ -1,6 +1,6 @@
 // captain-ui: Captain's local services (the cst backend), from a mod.
 // The app starts them at launch and keeps shared "captain.daemon" current:
-// {state: "ready", base, token, home}, or {state: "starting" | "missing" | "failed", error}.
+// {state: "ready", base, token, home, cst}, or {state: "starting" | "missing" | "failed", error}.
 // Requests go through fetch, in-process, so the token never shows up in `ps`.
 // Where they listen comes only from the app (shared "captain.daemon").
 import { shared, setShared } from "herdr";

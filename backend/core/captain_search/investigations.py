@@ -408,7 +408,11 @@ def prompt(ctx: Context, iid: str, ask: str = "investigate", base_url: str | Non
     }
     if ask not in asks:
         raise ValueError(f"ask is one of {', '.join(asks)}")
+    from .codeagent import cst_line
+
     lines = [
+        cst_line(),
+        "",
         f"Investigation {doc['id']}: {doc['title']}",
         "",
         f"Hypothesis (revision {p.get('rev')}): {unk(p.get('hypothesis'))}",

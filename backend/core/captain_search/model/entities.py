@@ -188,7 +188,7 @@ class PipelineVersion(VersionBase):
     training_commit: str | None = None
     repro_status: ReproStatus = ReproStatus.not_tested
     known_issues: list[str] = Field(default_factory=list)
-    # What training saw and reported (docs/trainer-contract.md). Empty on versions written before the contract.
+    # What training saw and reported (`cst docs trainer-contract`). Empty on versions written before the contract.
     train_inputs: list[dict[str, Any]] = Field(default_factory=list)  # [{ref, kind, role, uri, label_source, as_of}]
     train_metrics: dict[str, Any] = Field(default_factory=dict)
     train_params: dict[str, Any] = Field(default_factory=dict)

@@ -119,7 +119,7 @@ Server to client (one turn):
 
 | Method | Path | Returns |
 |---|---|---|
-| GET | `/api/coding-agent` | `{cwd, env:{CST_HOME, CST_WORKSPACE, PATH}, agents:[{id:"claude"|"codex", label, command:[...], available}]}` |
+| GET | `/api/coding-agent` | `{cwd, env:{CST_HOME, CST_WORKSPACE, PATH, CST_BIN}, agents:[{id:"claude"|"codex", label, command:[...], available}]}` |
 
 The daemon prepares `cwd` (a per-workspace folder) with `AGENTS.md`, `CLAUDE.md` (how to use `cst`, the workspace,
 the evidence rules) and `.claude/skills/<skill>/SKILL.md`. The app runs `command` in a PTY with that `cwd` and `env`
@@ -415,7 +415,7 @@ latest snapshot with the pipeline's first, best or previous one and returns `deg
 
 `cst pipeline retrain NAME[@vN]` runs the command the pipeline declares in `spec.train.command` and publishes a new
 version whose parent is the old one. The command gets `CST_TRAIN_INPUTS`, `CST_PARAMS` and `CST_OUT`, and writes
-`CST_OUT/result.yaml` (see [trainer-contract.md](trainer-contract.md)). The older `$CST_TRAIN_OUT` file still works.
+`CST_OUT/result.yaml` (see [trainer-contract.md](../core/captain_search/docs/trainer-contract.md), or `cst docs trainer-contract`). The older `$CST_TRAIN_OUT` file still works.
 Running it locally needs `--local-exec`. On a compute target it runs as a job in the runner image and returns
 `{pending:true, job, live_id, parent}` with no `pipeline` ref. `--wait` returns the new version once the job records it.
 `POST /api/pipelines/{name}/retrain` takes `{compute?, inputs?, params?, as_of?}`.

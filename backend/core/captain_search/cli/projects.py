@@ -22,6 +22,14 @@ def _do(fn, *a, **kw):
         fail(str(e))
 
 
+def _by_hand(c, name: str, what: str) -> None:
+    """These commands change a project directly. An agent session with a proposal open for it is sent to the person
+    instead (project_assist.guard_agent). A person at the command line is never stopped."""
+    from .. import project_assist as PA
+
+    _do(PA.guard_agent, c, name, what)
+
+
 @projects_app.command("state")
 def state(name: str):
     """The project's state doc: its kind, slots and inputs, experiments, champion and registry."""
@@ -75,7 +83,9 @@ def new(name: str, kind: Optional[str] = typer.Option(None, "--kind", help="what
 @projects_app.command("kind")
 def set_kind(name: str, kind: str):
     """Switch a project to another kind. Inputs whose slot is still there are kept."""
-    d = _do(PS.set_kind, ctx(), name, kind)
+    c = ctx()
+    _by_hand(c, name, "switch the project's kind")
+    d = _do(PS.set_kind, c, name, kind)
     emit(d, f"{name} is now {d['recipe']['label']}: inputs {', '.join(s['id'] for s in d['slots']) or 'none'}")
 
 
@@ -88,7 +98,9 @@ def slot_add(name: str, label: str,
     """Add an input slot of your own."""
     spec = {"label": label, "role": role, "required": required, "why": why, **({"id": id} if id else {}),
             **({"accepts": accepts} if accepts else {})}
-    d = _do(PS.slot_add, ctx(), name, spec)
+    c = ctx()
+    _by_hand(c, name, "add a slot")
+    d = _do(PS.slot_add, c, name, spec)
     emit(d, f"Added {d['slots'][-1]['id']} to {name}")
 
 
@@ -104,14 +116,18 @@ def slot_edit(name: str, slot: str, label: Optional[str] = typer.Option(None, "-
         ch["accepts"] = accepts
     if not ch:
         fail("change at least one of --label, --role, --accepts, --required/--optional, --why")
-    _do(PS.slot_update, ctx(), name, slot, ch)
+    c = ctx()
+    _by_hand(c, name, "change a slot")
+    _do(PS.slot_update, c, name, slot, ch)
     emit({"project": name, "slot": slot, "changed": ch}, f"Changed {slot}: {', '.join(ch)}")
 
 
 @projects_app.command("slot-rm")
 def slot_rm(name: str, slot: str):
     """Remove an optional slot, and what it pointed at. The datasets themselves stay."""
-    _do(PS.slot_remove, ctx(), name, slot)
+    c = ctx()
+    _by_hand(c, name, "remove a slot")
+    _do(PS.slot_remove, c, name, slot)
     emit({"project": name, "removed": slot}, f"Removed {slot} from {name}")
 
 
@@ -120,6 +136,7 @@ def evaluation(name: str, method: Optional[str] = typer.Argument(None, help="aut
     """Show how experiments are judged, or choose the method."""
     c = ctx()
     if method:
+        _by_hand(c, name, "choose the evaluation")
         _do(PS.set_evaluation, c, name, method)
     ev = PS.evaluation_plan(c, _do(PS.get, c, name))
     emit(ev, f"{ev['label']} ({'ready' if ev['ready'] else 'not ready'}). {ev['text']}")
@@ -176,7 +193,9 @@ def input_set(name: str, slot: str,
         src = {"from": "dataset", "ref": dataset}
     else:
         fail("name a source: --connection (with --table, --sql, --event or --report), --path or --dataset")
-    r = _do(PI.set_input, ctx(), name, slot, src, mode, as_of, kind)
+    c = ctx()
+    _by_hand(c, name, "set an input")
+    r = _do(PI.set_input, c, name, slot, src, mode, as_of, kind)
     i = r["input"]
     emit(r, f"{slot}: {i.get('ref') or 'live query'} ({mode}), {i.get('rows') if i.get('rows') is not None else 'unknown'} rows")
 
@@ -186,7 +205,9 @@ def input_clear(name: str, slot: str):
     """Point a slot at nothing again. What it pointed at stays in the workspace."""
     from .. import project_inputs as PI
 
-    _do(PI.clear_input, ctx(), name, slot)
+    c = ctx()
+    _by_hand(c, name, "clear an input")
+    _do(PI.clear_input, c, name, slot)
     emit({"project": name, "slot": slot, "cleared": True}, f"Cleared {slot}")
 
 
@@ -261,6 +282,9 @@ def accept(name: str, proposal: str, only: list[str] = typer.Option([], "--only"
     r = _do(PA.accept, ctx(), name, proposal, only or None)
     a = r["applied"]
     lines = [f"Accepted {proposal}: added {len(a['added'])}, changed {len(a['changed'])}, removed {len(a['removed'])}, pinned {len(a['pinned'])}."]
+    if a.get("already"):
+        lines.append(f"Already there, as proposed: {', '.join(a['already'])}.")
+    lines += [f"Left out {x['slot']}: {x['reason']}" for x in a.get("conflicts") or []]
     lines += [f"Set {t['slot']} next: cst projects input {name} {t['slot']} --mode snapshot|live ..." for t in r["to_connect"]]
     emit(r, "\n".join(lines))
 
@@ -312,6 +336,8 @@ def pin(name: str,
     c = ctx()
     out = {}
     if refs:
+        if not S.dry_run:
+            _by_hand(c, name, "pin an input")
         out = _do(PS.pin, c, name, refs, dry_run=S.dry_run)
     if arch is not None or brand is not None or registry is not None:
         out["registry"] = _do(PS.set_registry, c, name, arch, brand, registry, dry_run=S.dry_run)["registry"]

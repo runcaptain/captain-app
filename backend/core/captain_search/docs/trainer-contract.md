@@ -31,6 +31,20 @@ On a compute target add `--compute <target>`, and `--wait` to block until the jo
 | `CST_PIPELINE`, `CST_WORKSPACE` | The version being retrained and the workspace |
 | `CST_TRAIN_OUT` | Older trainers: a file path for the same result. Still read. If both are written, `result.yaml` wins key by key |
 
+### An input's files
+
+`files` is a list of `{path, uri, bytes}`, one per part. Read each part from its own `uri`:
+
+- Parts are stored by content hash, at `<store>/objects/sha256/<first 2 hex>/<hash>`. So a part's `uri` has no file
+  extension, and it is not inside the input's `uri` folder (that folder holds the version's manifest).
+- `path` is the part's name in the dataset and tells you the format. A snapshot is parquet: `data/part-0.parquet`.
+- A file kept by reference (a live folder, an external file) has `path: null` and the `uri` where it lives.
+- A live query has `ref: null`, `uri: null`, no `files`, and `source: {connection, query}`. The trainer reads the
+  source itself.
+
+A project's run also sets `slot` (the project slot the input fills), `mode` (`snapshot` or `live`), `rows` and
+`fingerprint` on each item.
+
 `label_source` comes from the dataset: a judgments dataset's own judge (`click` reads as `clicks`, `heuristic` as
 `simulated`), or a `label_source` tag, or the input's own `label_source`. `as_of` comes from the input, then the
 dataset's `as_of` tag, then `--as-of`. Captain passes it on and records it. Honoring the cutoff is the trainer's job.

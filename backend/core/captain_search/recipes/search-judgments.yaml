@@ -12,7 +12,7 @@ slots:
      why: "Optional. Click or purchase logs, if your trainer uses them as features."}
 trainers:
   - {id: your-command, label: Your training command, command: "python train.py",
-     why: "Your script reads CST_TRAIN_INPUTS and writes CST_OUT/result.yaml (docs/trainer-contract.md)."}
+     why: "Your script reads CST_TRAIN_INPUTS and writes CST_OUT/result.yaml (the trainer contract)."}
 evaluation:
   method: holdout
   holdout: true

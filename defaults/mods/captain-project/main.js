@@ -364,7 +364,10 @@ export default class ProjectHome extends View {
       a.status = "accepted";
       if (!a.toConnect.length) this.assist = null;
       setShared("captain.explorer.rev", Date.now());
-      this.note = { tone: "good", text: (r.data?.to_connect ?? []).length ? "Accepted. For each source below, take a snapshot now or keep it live." : "Accepted. Change any input from its card." };
+      // An input that already exists as proposed counts as done. One that exists with another definition is left alone, and named.
+      const left = r.data?.applied?.conflicts ?? [];
+      this.note = left.length ? { tone: "fail", text: `Accepted, except ${left.length === 1 ? "one input" : `${left.length} inputs`}. ${left.map((x) => x.reason).join(" ")}` }
+        : { tone: "good", text: (r.data?.to_connect ?? []).length ? "Accepted. For each source below, take a snapshot now or keep it live." : "Accepted. Change any input from its card." };
       this.load(cx);
     });
     cx.notify();

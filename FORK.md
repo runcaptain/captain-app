@@ -89,7 +89,9 @@ terminal engine's install command on the setup screen, until backend/install.sh 
 uv) with captain-search installed from `backend/core` in this repo, with every database driver, in
 `Contents/Resources/cst/`, with a `bin/cst` launcher that works through a symlink; and the herdr-core
 (hc, Apache-2.0) binary with its `--licenses` output in `Contents/Resources/hc/`. Captain starts the packaged cst
-and hc (`brand::bundled`). settings.json `cst` / `core` or `CST_BIN` point elsewhere for development. At launch it
+and hc (`brand::bundled`). settings.json `cst` / `core` or `CST_BIN` point elsewhere for development. Every terminal
+Captain opens gets that same cst: its folder first on PATH and its path in `CST_BIN` (`cst::terminal_env`), and every
+prompt handed to an agent names the path, because an older cst in `~/.local/bin` lacks the commands prompts use. At launch it
 offers the packaged cst as `~/.local/bin/cst` only when there's none, or the link already points into a
 Captain.app: a cst the person installed is never replaced, and `~/.local/bin/herdr-core` is never touched.
 Captain's services are never named to the person: no "engine" or "daemon" in visible text (tests/branding.rs).

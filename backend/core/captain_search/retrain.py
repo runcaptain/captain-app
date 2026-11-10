@@ -9,7 +9,7 @@ The team's training code stays theirs. A pipeline declares it in its spec:
       timeout_s: 7200                                   # optional, default 3 hours
       compute: my-gpu-batch                             # optional compute target, default local
 
-The full contract is docs/trainer-contract.md. In short, the command runs with:
+The full contract is docs/trainer-contract.md in this package (`cst docs trainer-contract` prints it). In short, the command runs with:
   CST_TRAIN_INPUTS  JSON list of the exact inputs: {ref, kind, role, uri, files, label_source, as_of}
   CST_PARAMS        JSON object of params (spec.train.params, then --param on the command line)
   CST_OUT           an empty folder. The command writes CST_OUT/result.yaml with any of:

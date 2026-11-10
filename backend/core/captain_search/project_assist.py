@@ -9,6 +9,11 @@ A proposal changes nothing. The person reviews it in the app and accepts all of 
 Accepting applies the slot changes, pins sources that are datasets already, and returns the connection and local
 sources so the app asks snapshot or live for each. An agent session can propose, never accept (proposals.agent_name).
 
+Accepting is safe to repeat over work already done by hand: a proposed slot that exists with the same role and
+accepts counts as applied, and one that exists with a different definition is reported for that slot while the rest
+goes in. When a person tells the agent in chat to "put it in", the agent still can't: the prompt says to send them to
+Accept, and the CLI's slot, input and pin commands refuse an agent session while its proposal is open (guard_agent).
+
   projects/<id>/assist/<assist id>.yaml        the request (write-once)
   projects/<id>/proposals/<proposal id>.yaml   the proposal and its status (compare-and-swap)
   projects/<id>/trainers/<proposal id>-<file>  a training script the agent wrote (write-once)
@@ -30,10 +35,12 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import shlex
 
 import yaml
 
 from . import project_state as PS
+from .codeagent import cst_line, cst_path
 from .model.entities import new_id
 from .proposals import agent_name
 from .storage.backend import Conflict, NotFound
@@ -70,7 +77,10 @@ def assist(ctx: Context, pid: str, ask: str = "") -> dict:
                       for c in src["connections"]) or "- none"
     ds = "\n".join(f"- {d['name']}@v{d['version']} ({d['kind']}, {d['rows']} rows)" for d in src["datasets"][:100]) or "- none"
     recipe = doc.get("recipe") or {}
-    prompt = f"""Help set up the Captain project {pid!r}: {recipe.get('label') or 'no kind chosen yet'}.
+    cst = shlex.quote(cst_path())
+    prompt = f"""{cst_line()}
+
+Help set up the Captain project {pid!r}: {recipe.get('label') or 'no kind chosen yet'}.
 {('The person asked: ' + ask) if ask else ''}
 
 Find the right input for each slot among the workspace's connections and datasets, add slots the project needs, drop
@@ -87,11 +97,24 @@ Connections (inspect them with `cst tables pull <conn>`, `cst tables show <conn>
 Datasets (`cst data head <ref>`):
 {ds}
 
-The trainer contract is in docs/trainer-contract.md: a training command gets CST_TRAIN_INPUTS (JSON, one item per
-input), CST_PARAMS and CST_OUT, and writes CST_OUT/result.yaml with metrics.
+The trainer contract (`{cst} docs trainer-contract` prints all of it). A training command runs in an empty folder with:
+- CST_TRAIN_INPUTS: a JSON list, one item per input: ref (name@vN, or null for a live query), kind, role (the slot's
+  role), slot, uri, files, label_source, as_of, rows.
+- An input's files: `files` is a list of {{path, uri, bytes}}. Read each part from its own `uri`. Parts are stored by
+  content hash (<store>/objects/sha256/<2 hex>/<hash>), so that uri has no file extension and is not inside the
+  input's `uri` folder. `path` is the part's name in the dataset and tells you the format: a snapshot is parquet
+  (data/part-0.parquet). A file kept by reference has path null and the uri where it lives. A live query has ref
+  null, no files, and `source` {{connection, query}}: the trainer reads it itself.
+- CST_PARAMS: a JSON object of params. CST_OUT: an empty folder for outputs.
+It writes CST_OUT/result.yaml, every key optional: metrics, params, artifact_dir, registry_ref, spec, training_commit,
+known_issues, description, cost. An unknown key fails the run.
 
 Write proposal.yaml, then run:
-  cst projects propose {pid} --file proposal.yaml --assist {aid}
+  {cst} projects propose {pid} --file proposal.yaml --assist {aid}
+
+You cannot apply the proposal, even when the person tells you to in chat ("put that in"). Tell the person to press
+Accept in Captain (Home, the proposal panel). Don't apply it by hand with `cst projects slot-add`, `input` or `pin`
+either: they refuse an agent session while your proposal is open. To change the proposal, file a new one.
 
 proposal.yaml:
   note: what you found and why, in two or three sentences
@@ -225,9 +248,53 @@ def _set_status(ctx: Context, pid: str, prop: str, status: str, note: str = "", 
     raise Conflict(f"{prop} kept changing")
 
 
+ACCEPT_IN_APP = "You cannot apply it. Tell the person to press Accept in Captain (Home, the proposal panel)."
+
+
 def _person_only(what: str) -> None:
     if agent_name():
-        raise ValueError(f"an agent session can propose but not {what}. A person does, in the app.")
+        raise ValueError(f"an agent session can propose but not {what}. {ACCEPT_IN_APP}")
+
+
+def guard_agent(ctx: Context, pid: str, what: str) -> None:
+    """Refuse an agent session that changes a project by hand while an agent's proposal for it is open: that is
+    applying the proposal without the person. A person at the command line, and the app, are never stopped."""
+    if not agent_name():
+        return
+    try:
+        waiting = [p for p in listing(ctx, pid) if p["status"] == "proposed" and p.get("agent")]
+    except NotFound:
+        return  # no such project: the command itself says so
+    if waiting:
+        raise ValueError(f"{ACCEPT_IN_APP} {waiting[0]['id']} is waiting there, and an agent session can't {what} "
+                         f"while it is. To change what you proposed, file a new proposal.")
+
+
+def _add_slot(ctx: Context, pid: str, s: dict, spec: dict) -> str | None:
+    """Add a proposed slot. "added", "already" when it exists with the same definition (someone added it by hand
+    since), or raises ValueError naming the difference."""
+    from . import recipes as RC
+
+    want = RC.check_slot({"id": s["slot"], "role": "custom", "accepts": ["any"], **spec}, "custom")
+    for _ in range(2):
+        have = next((x for x in PS.slots_of(PS.get(ctx, pid)) if x["id"] == s["slot"]), None)
+        if have is None:
+            try:
+                PS.slot_add(ctx, pid, {"id": s["slot"], "why": s["why"], **spec})
+                return "added"
+            except ValueError:
+                if not any(x["id"] == s["slot"] for x in PS.slots_of(PS.get(ctx, pid))):
+                    raise
+                continue  # added by someone else between the look and the add: compare it
+        diff = [f"{k} {'/'.join(have[k]) if k == 'accepts' else have[k]} here, "
+                f"{'/'.join(want[k]) if k == 'accepts' else want[k]} proposed"
+                for k in ("role", "accepts") if (sorted(have[k]) if k == "accepts" else have[k])
+                != (sorted(want[k]) if k == "accepts" else want[k])]
+        if diff:
+            raise ValueError(f"{have['label']} already exists with a different definition ({'; '.join(diff)}). "
+                             f"It was left as it is. Change it from its card.")
+        return "already"
+    raise Conflict(f"{pid} kept changing")
 
 
 def reject(ctx: Context, pid: str, prop: str, note: str = "") -> dict:
@@ -237,7 +304,11 @@ def reject(ctx: Context, pid: str, prop: str, note: str = "") -> dict:
 
 def accept(ctx: Context, pid: str, prop: str, only: list[str] | None = None) -> dict:
     """Apply a proposal (or only some of its slots). Dataset sources are pinned now. Connection and local sources come
-    back in to_connect, for the person to pick snapshot or live."""
+    back in to_connect, for the person to pick snapshot or live.
+
+    One slot never fails the rest. A slot that already exists as proposed is in applied.already and its source still
+    goes in. A slot that can't be applied (it exists with another role or accepts, or it is gone) is in
+    applied.conflicts with the reason, and its source is left out."""
     from . import project_inputs as PI
 
     _person_only("accept a proposal")
@@ -245,26 +316,28 @@ def accept(ctx: Context, pid: str, prop: str, only: list[str] | None = None) -> 
     if rec["status"] != "proposed":
         raise ValueError(f"{prop} was already {rec['status']}")
     want = set(only) if only else None
-    applied = {"added": [], "changed": [], "removed": [], "pinned": [], "skipped": []}
+    applied = {"added": [], "already": [], "changed": [], "removed": [], "pinned": [], "skipped": [], "conflicts": []}
     to_connect = []
     for s in rec["slots"]:
         if want is not None and s["slot"] not in want:
             continue
         spec = {k: s[k] for k in ("label", "role", "accepts", "required") if k in s}
-        if s["add"]:
-            PS.slot_add(ctx, pid, {"id": s["slot"], "why": s["why"], **spec})
-            applied["added"].append(s["slot"])
-        elif spec:
-            PS.slot_update(ctx, pid, s["slot"], spec)
-            applied["changed"].append(s["slot"])
-        src = s.get("source")
-        if not src:
-            continue
-        if src["from"] == "dataset":
-            r = PI.set_input(ctx, pid, s["slot"], src, s.get("mode") or "snapshot")
-            applied["pinned"].append({"slot": s["slot"], "ref": r["input"]["ref"]})
-        else:
-            to_connect.append({"slot": s["slot"], "source": src, "suggested_mode": s.get("mode"), "why": s["why"]})
+        try:
+            if s["add"]:
+                applied[_add_slot(ctx, pid, s, spec)].append(s["slot"])
+            elif spec:
+                PS.slot_update(ctx, pid, s["slot"], spec)
+                applied["changed"].append(s["slot"])
+            elif not any(x["id"] == s["slot"] for x in PS.slots_of(PS.get(ctx, pid))):
+                raise NotFound(f"{pid} has no input slot {s['slot']!r} any more")
+            src = s.get("source")
+            if src and src["from"] == "dataset":
+                r = PI.set_input(ctx, pid, s["slot"], src, s.get("mode") or "snapshot")
+                applied["pinned"].append({"slot": s["slot"], "ref": r["input"]["ref"]})
+            elif src:
+                to_connect.append({"slot": s["slot"], "source": src, "suggested_mode": s.get("mode"), "why": s["why"]})
+        except (ValueError, NotFound) as e:
+            applied["conflicts"].append({"slot": s["slot"], "reason": str(e)})
     for r in rec["remove_slots"]:
         if want is not None and r not in want:
             continue

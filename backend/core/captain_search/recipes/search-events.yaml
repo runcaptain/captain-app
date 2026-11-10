@@ -10,7 +10,7 @@ slots:
      why: "Optional. A fixed query list. Without one, the logged queries are used."}
 trainers:
   - {id: your-command, label: Your training command, command: "python train.py",
-     why: "Your script reads CST_TRAIN_INPUTS and writes CST_OUT/result.yaml (docs/trainer-contract.md)."}
+     why: "Your script reads CST_TRAIN_INPUTS and writes CST_OUT/result.yaml (the trainer contract)."}
 evaluation:
   method: logged-clicks
   holdout: false
