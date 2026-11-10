@@ -51,13 +51,13 @@ async function submitForm(overlay, values) {
 globalThis.__props = {};
 const h = harness(Handoff);
 await h.start();
-await until(h, () => h.text().includes('No handoffs yet'), 'the empty state');
+await until(h, () => h.text().includes('No launch reviews yet'), 'the empty state');
 
 // 1. The empty state's button opens the handoff form; handing off lists it in Handoff at once.
 globalThis.__overlays = [];
 await h.click('ho-empty-new');
 const form = globalThis.__overlays.at(-1);
-assert.equal(form?.props?.task, 'handoff', 'Hand off a candidate opens the form');
+assert.equal(form?.props?.task, 'handoff', 'Start a launch review opens the form');
 const r1 = await submitForm(form, { pipeline: 'demo-tuned@v1', env: 'prod', reason: 'live test: hand off end to end' });
 assert.ok(r1.ok, `handed off: ${JSON.stringify(r1)}`);
 await until(h, () => h.mod.table.rows.length === 1, 'Handoff lists the new handoff without reopening', 30);
@@ -65,7 +65,7 @@ const ho = h.mod.table.rows[0];
 
 // 2. The row opens its detail: readiness checks, each passed, failed or overridden.
 h.mod.show(ho.id, h.cx);
-await until(h, () => h.text().includes('Readiness checks'), 'the detail');
+await until(h, () => h.text().includes('Launch criteria'), 'the detail');
 assert.match(h.text(), /passed|failed|overridden/, 'each check says how it went');
 assert.ok(h.text().includes('Overridden: live test: hand off end to end'), 'the reason is shown');
 

@@ -37,7 +37,7 @@ def test_budgets_flag_breaches_in_words():
     assert not b["ok"] and b["breaches"] == [
         "p99 is 150.0 ms, over the 120 ms budget",
         "lexical retrieval (BM25) p99 is 40.0 ms, over its 30 ms budget",
-        "the budget names a stage 'rerank' this pipeline doesn't have"]
+        "the budget names a stage 'rerank' this version doesn't have"]
     assert PF.check_budget({"p99_ms": 200}, prof)["ok"]
 
 

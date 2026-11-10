@@ -97,7 +97,7 @@ export default class Rankings extends View {
         if (st === "done") {
           const res = j.data?.result ?? {};
           const [backtest, v] = String(res.run ?? `${name}@v1`).split("@v");
-          notify({ title: `Imported ${name}`, body: "It opens in Comparisons, like any backtest.", level: "info" });
+          notify({ title: `Imported ${name}`, body: "It opens in Compare, like any offline evaluation.", level: "info" });
           setShared("captain.open", { section: "comparisons", backtest: res.backtest ? String(res.backtest).split("@")[0] : backtest, version: Number(v) || 1, at: Date.now() });
           run("layout.select", { stack: "sections", child: "comparisons" });
           this.busy = false; this.done = res;
@@ -228,7 +228,7 @@ export default class Rankings extends View {
         .child(div().id("rk-cancel").text_size(12.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
           .on_click(() => closeOverlay(props()?.overlay)).child("Cancel")))
       .child(div().id("rk-body").flex_1().min_h(0).overflow_y_scroll().child(v_flex().px(20).py(16).gap(16)
-        .child(div().text_size(12.5).line_height("19px").text_color(c.grey900).child("Bring your own system's ranked results, and compare them like any backtest: metrics with intervals, slices, and each query side by side."))
+        .child(div().text_size(12.5).line_height("19px").text_color(c.grey900).child("Bring your own system's ranked results, and compare them like any offline evaluation: metrics with intervals, slices, and each query side by side."))
         .child(this.fileStep(c))
         .child(this.mappingStep(c) ?? div())
         .child(this.checkStep(c) ?? div())

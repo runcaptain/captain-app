@@ -85,7 +85,7 @@ assert.equal((await state()).champion, 'demo-bm25@v1');
 
 // A failed readiness check's fix, and the handoff after a decision to go on.
 assert.equal(fixFor([{ gate: 'evidence', detail: 'SIMULATED, needs HUMAN_GRADED or stronger' }], 'x@v1').task, 'grading');
-assert.equal(fixFor([{ gate: 'evidence', detail: 'agrees with its own labeler' }], 'x@v1').label, 'Grade the holdout by hand');
+assert.equal(fixFor([{ gate: 'evidence', detail: 'agrees with its own labeler' }], 'x@v1').label, 'Rate the test set by hand');
 assert.equal(fixFor([{ gate: 'backtest', detail: 'no run' }], 'x@v1').values.b, 'x@v1');
 r = await submit('handoff', { pipeline: ref, env: 'prod' });
 assert.ok(!r.ok && r.next?.task, `a failed check offers its fix: ${JSON.stringify(r)}`);

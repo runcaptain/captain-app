@@ -97,7 +97,7 @@ export default class CaptainCloud extends View {
             .child(div().flex_1().text_size(12).text_color(c.grey500).child([SHORT[t.provider] ?? t.provider, t.region, t.profile && `login ${t.profile}`].filter(Boolean).join(", ")))
             .child(div().text_size(12).text_color(c.grey500).child((t.purposes ?? []).join(", "))))
             : [div().text_size(12.5).text_color(c.grey500).child("No compute targets yet.")]),
-          ...(s.can_run_in_cloud ? [] : [div().text_size(12.5).text_color(c.grey900).child(`Backtests run on this computer. Add a compute target to run them in ${SHORT[s.active?.provider] ?? "the cloud"}.`)])))
+          ...(s.can_run_in_cloud ? [] : [div().text_size(12.5).text_color(c.grey900).child(`Offline evaluations run on this computer. Add a compute target to run them in ${SHORT[s.active?.provider] ?? "the cloud"}.`)])))
         .children((s.notes ?? []).map((n) => div().text_size(12.5).line_height("18px").text_color(c.grey900).child(String(n))));
     }
     return v_flex().size_full().bg(c.canvas).rounded(RADIUS).font_family(FONT).text_color(c.navy)

@@ -69,10 +69,10 @@ function stepWords(command) {
   const [noun, verb, ...rest] = parts.map(String);
   const what = rest.length ? ` ${rest.join(" ")}` : "";
   const VERBS = {
-    "backtest run": "Run backtest", "backtest plan": "Plan backtest", "dataset import": "Import dataset",
+    "backtest run": "Run offline evaluation", "backtest plan": "Plan offline evaluation", "dataset import": "Import dataset",
     "dataset create": "Create dataset", "label define": "Define label", "label build": "Build label",
-    "grade start": "Start grading", "grading start": "Start grading", "replay run": "Run replay",
-    "pipeline publish": "Publish pipeline", "deploy promote": "Promote", "handoff create": "Hand off",
+    "grade start": "Start rating", "grading start": "Start rating", "replay run": "Run off-policy evaluation",
+    "pipeline publish": "Publish model version", "deploy promote": "Promote", "handoff create": "Send to launch review",
   };
   const known = VERBS[`${noun} ${verb}`];
   if (known) return `${known}${what}`;
@@ -96,7 +96,7 @@ const bare = (ref) => String(ref ?? "").replace(/@v\d+$/, "");
 function backtestPrompt(name, b, r) {
   const p = (r?.comparisons ?? []).find((x) => x.primary) ?? r?.comparisons?.[0];
   return [
-    `In Captain, look at the backtest ${name}: it compares ${(b.arms ?? []).map(bare).join(" against ")}.`,
+    `In Captain, look at the offline evaluation ${name} (cst backtest): it compares ${(b.arms ?? []).map(bare).join(" against ")}.`,
     b.preregistration?.hypothesis ? `The hypothesis was: ${b.preregistration.hypothesis}` : "",
     p ? `On ${metricWords(p.metric)}, B minus A is ${p.delta} with a 95% interval of [${p.ci_low}, ${p.ci_high}], verdict ${p.verdict}.` : "",
     "Explain what drives the difference: which queries moved and why, and whether the result can be trusted.",
@@ -105,10 +105,10 @@ function backtestPrompt(name, b, r) {
 }
 
 const EMPTY = {
-  backtests: ["No backtests yet", "A backtest runs two versions of your search on the same queries and tells you whether the difference is real.", "Run a backtest", "backtest"],
-  workflows: ["No workflows yet", "A workflow runs steps on a schedule, such as importing fresh logs and re-running a backtest each night. Ask an agent to set one up.", null, null],
-  grading: ["Nothing to grade yet", "Grading asks people which products are relevant for a query. Their answers become judgments backtests can trust.", "Start grading", "grading"],
-  replays: ["No replays yet", "A replay re-scores searches people really made, against a new version of your search.", null, null],
+  backtests: ["No offline evaluations yet", "An offline evaluation runs two versions of your search on the same queries and tells you whether the difference is real.", "Run an offline evaluation", "backtest"],
+  workflows: ["No workflows yet", "A workflow runs steps on a schedule, such as importing fresh logs and re-running an offline evaluation each night. Ask an agent to set one up.", null, null],
+  grading: ["Nothing to rate yet", "Rating asks people which products are relevant for a query. Their answers become judgments offline evaluations can trust.", "Start rating", "grading"],
+  replays: ["No off-policy evaluations yet", "Off-policy evaluation (counterfactual replay of logged traffic) re-scores searches people really made, against a new version of your search.", null, null],
 };
 
 export default class CaptainRuns extends View {
@@ -211,7 +211,7 @@ export default class CaptainRuns extends View {
       cx.spawn(async (cx) => {
         const r = await api(`/api/backtests/${enc(name)}`);
         if (this.sel.backtests !== name) return;
-        this.detail.backtest = r.ok ? r.data : { error: say(r, "Couldn't load this backtest.") };
+        this.detail.backtest = r.ok ? r.data : { error: say(r, "Couldn't load this offline evaluation.") };
         const v = r.ok ? r.data.runs?.at(-1)?.version : null;
         if (v) this.pickRun(cx, name, v);
         cx.notify();
@@ -379,8 +379,9 @@ export default class CaptainRuns extends View {
   }
 
   header(c) {
-    const tabs = [["live", "Live", "running"], ["backtests", "Backtests", "backtest"], ["workflows", "Workflows", "workflow"], ["grading", "Grading", "grade"], ["replays", "Replays", "replay"], ["jobs", "Jobs", "compute"]];
-    return h_flex().h(52).flex_none().px(20).gap(14).items_center().border_b(1).border_color(c.rule)
+    const tabs = [["live", "Live", "running"], ["backtests", "Offline evaluations", "backtest"], ["workflows", "Workflows", "workflow"], ["grading", "Rating", "grade"], ["replays", "Off-policy", "replay"], ["jobs", "Jobs", "compute"]];
+    // The tabs' names are long ("Offline evaluations"): beside an open terminal column the row wraps instead of clipping Jobs.
+    return h_flex().min_h(52).py(8).flex_wrap().flex_none().px(20).gap(14).items_center().border_b(1).border_color(c.rule)
       .child(div().flex_none().text_size(18).font_semibold().child("Runs"))
       .child(h_flex().flex_none().border_1().border_color(c.grey300).children(tabs.map(([id, label, icon]) =>
         h_flex().id(`tab-${id}`).h(28).px(12).gap(6).items_center().cursor_pointer().border_r(1).border_color(c.grey300).text_size(12.5)
@@ -390,8 +391,8 @@ export default class CaptainRuns extends View {
           .when(id === "live" && this.live.active > 0, (e) => e.child(div().px(5).h(16).flex().items_center().text_size(10.5).font_family(MONO)
             .bg(this.tab === id ? c.surface : c.blue).text_color(this.tab === id ? c.navy : c.surface).child(String(this.live.active)))))))
       .child(div().flex_1())
-      .when(this.tab === "backtests", (e) => e.child(Button(c, "new-backtest", "Run a backtest", () => openForm("backtest"), { kind: "primary", small: true })))
-      .when(this.tab === "grading", (e) => e.child(Button(c, "new-grading", "Start grading", () => openForm("grading"), { kind: "primary", small: true })))
+      .when(this.tab === "backtests", (e) => e.child(Button(c, "new-backtest", "Run an offline evaluation", () => openForm("backtest"), { kind: "primary", small: true })))
+      .when(this.tab === "grading", (e) => e.child(Button(c, "new-grading", "Start rating", () => openForm("grading"), { kind: "primary", small: true })))
       .child(div().id("runs-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()
         .border_1().border_color(c.grey300).text_color(c.grey900).hover((s) => s.text_color(c.blue).border_color(c.blue))
         .tooltip("Refresh").on_click((_e, cx) => { this.load(cx, this.tab); if (this.sel[this.tab]) this.pick(cx, this.tab, this.sel[this.tab]); })
@@ -450,7 +451,7 @@ export default class CaptainRuns extends View {
 
   backtestDetail(c) {
     const b = this.detail.backtest;
-    if (!this.sel.backtests) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick a backtest.");
+    if (!this.sel.backtests) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick an offline evaluation.");
     if (!b) return v_flex().flex_1().child(Skeleton(c, 8));
     if (b.error) return v_flex().flex_1().p(24).text_size(13).text_color(c.fail).child(b.error);
     const name = this.sel.backtests;
@@ -464,7 +465,7 @@ export default class CaptainRuns extends View {
         .child(div().flex_1())
         .when(!!this.live.running.find((x) => x.of === name), (e) => e.child(Button(c, "bt-watch", "Watch it live", (_e, cx) => {
           this.tab = "live"; this.live.load(cx, this.live.running.find((x) => x.of === name).id); cx.notify(); }, { small: true })))
-        .when(b.mode !== "imported", (e) => e.child(this.button(c, "run-backtest", running ? "Running" : "Run backtest", "run", (_e, cx) => this.start(cx, "Backtest", `/api/backtests/${enc(name)}/run`, (cx) => this.pick(cx, "backtests", name)), true, !!running))))
+        .when(b.mode !== "imported", (e) => e.child(this.button(c, "run-backtest", running ? "Running" : "Run evaluation", "run", (_e, cx) => this.start(cx, "Offline evaluation", `/api/backtests/${enc(name)}/run`, (cx) => this.pick(cx, "backtests", name)), true, !!running))))
       .child(div().text_size(13).font_medium().child(b.preregistration?.hypothesis ?? ""))
       .child(h_flex().gap(8)
         .child(Button(c, "bt-agent", "Open an agent in this space", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, backtestPrompt(name, b, r))), { small: true }))
@@ -473,7 +474,7 @@ export default class CaptainRuns extends View {
         .children((b.arms ?? []).map((a, i) => h_flex().gap(6).items_center().child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(named(c, a))
           // Backtest settings (captain-sandbox): try other settings of this arm's pipeline.
           .child(div().id(`bt-whatif-${i}`).text_size(11.5).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
-            .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: String(a) } })).child("Backtest settings"))))
+            .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: String(a) } })).child("Evaluation settings"))))
         .child(div().child(b.preregistration?.primary_metric ? `Judged on ${metricWords(b.preregistration.primary_metric)}${b.preregistration.mde ? `, looking for a change of at least ${b.preregistration.mde}` : ""}` : "")))
       .child(h_flex().flex_wrap().gap(6).children((b.runs ?? []).map((x) => {
         const on = x.version === this.detail.runV;
@@ -586,7 +587,7 @@ export default class CaptainRuns extends View {
     const qs = this.data.grading ?? [];
     return v_flex().id("grading").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(10)
       .when(!!this.error, (e) => e.child(div().text_size(12.5).text_color(c.fail).child(this.error)))
-      .when(Array.isArray(this.data.grading) && !qs.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("No grading queues yet. Start grading from New, Start grading.")))
+      .when(Array.isArray(this.data.grading) && !qs.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("No rating queues yet. Start one from New, Start rating.")))
       .children(qs.map((q) => {
         const pub = this.published?.queue === q.name ? this.published : null;
         return v_flex().id(`queue-${q.name}`).border_1().border_color(c.rule).p(14).gap(8)
@@ -594,7 +595,7 @@ export default class CaptainRuns extends View {
             .child(this.icon("grade", 15, c.navy))
             .child(div().flex_1().min_w(0).truncate().font_family(MONO).text_size(13).font_medium().child(q.name))
             .child(this.button(c, `publish-${q.name}`, "Publish", "publish", (_e, cx) => this.publish(cx, q), false, !q.graded))
-            .child(this.button(c, `grade-${q.name}`, "Grade", "grade", (_e, cx) => this.openGrader(cx, q.name), true)))
+            .child(this.button(c, `grade-${q.name}`, "Rate", "grade", (_e, cx) => this.openGrader(cx, q.name), true)))
           .child(h_flex().gap(10).items_center()
             .child(div().flex_1().h(8).bg(c.grey300).child(div().h_full().bg(c.blue).w(`${Math.round((q.share ?? 0) * 100)}%`)))
             .child(div().flex_none().font_family(MONO).text_size(12).child(`${int(q.graded)} of ${int(q.pairs)} pairs`)))
@@ -602,10 +603,10 @@ export default class CaptainRuns extends View {
             // In words: which queries, whose results, who has graded, and whether graders agree (Cohen's kappa).
             .child(div().child(`Queries from ${String(q.queries ?? "").replace(/:(\w+)$/, " ($1)")}`))
             .child(div().child(`The top ${q.depth} results of ${(q.pipelines ?? []).join(" and ")}`))
-            .child(div().child(Object.keys(q.graders ?? {}).length ? `Graded by ${Object.entries(q.graders).map(([w, n]) => `${w} (${int(n)})`).join(", ")}` : "Nobody has graded yet"))
-            .child(div().tooltip("Cohen's kappa, on pairs two graders both graded").child(q.kappa === null || q.kappa === undefined
-              ? `Agreement between graders: not measured until 10 pairs are graded twice (${int(q.agreement_pairs ?? 0)} so far)`
-              : `Agreement between graders: ${Number(q.kappa).toFixed(2)}`)))
+            .child(div().child(Object.keys(q.graders ?? {}).length ? `Rated by ${Object.entries(q.graders).map(([w, n]) => `${w} (${int(n)})`).join(", ")}` : "Nobody has rated yet"))
+            .child(div().tooltip("Cohen's kappa, on pairs two raters both rated").child(q.kappa === null || q.kappa === undefined
+              ? `Agreement between raters: not measured until 10 pairs are rated twice (${int(q.agreement_pairs ?? 0)} so far)`
+              : `Agreement between raters: ${Number(q.kappa).toFixed(2)}`)))
           .when(!!pub, (e) => e.child(h_flex().gap(10).items_center()
             .child(div().flex_1().min_w(0).text_size(12.5).text_color(pub.status === "failed" ? c.fail : c.navy)
               .child(pub.status === "done" ? `Published ${pub.ref}: judgments graded by people.` : pub.status === "failed" ? pub.error : "Publishing"))
@@ -633,16 +634,16 @@ export default class CaptainRuns extends View {
         .child(this.button(c, "grader-back", "All queues", "chevron-left", (_e, cx) => { this.grader = null; this.load(cx, "grading"); }))
         .child(div().font_family(MONO).text_size(13).child(g.name))
         .child(div().flex_1())
-        .child(div().text_size(12.5).text_color(c.grey900).child(n ? (n.done ? "All graded" : `${n.remaining} left`) : "").when(g.count > 0, (e) => e.child(`, ${g.count} graded now`))))
+        .child(div().text_size(12.5).text_color(c.grey900).child(n ? (n.done ? "All rated" : `${n.remaining} left`) : "").when(g.count > 0, (e) => e.child(`, ${g.count} rated now`))))
       .child(v_flex().id("grader-body").flex_1().min_h(0).overflow_y_scrollbar().px(28).py(20).gap(16).max_w(900)
         .when(!!g.error, (e) => e.child(div().text_size(12.5).text_color(c.fail).child(g.error)))
         .when(!n && !g.error, (e) => e.child(Skeleton(c, 6)))
-        .when(!!n?.done, (e) => e.child(div().text_size(14).child("You graded every pair in this queue. Publish it from the list.")))
+        .when(!!n?.done, (e) => e.child(div().text_size(14).child("You rated every pair in this queue. Publish it from the list.")))
         .when(!!n?.pair, (e) => e
           .child(v_flex().gap(2)
             .child(div().text_size(11).text_color(c.grey500).child("QUERY"))
             .child(div().text_size(26).font_semibold().child(n.pair.query))
-            .child(div().text_size(11.5).text_color(c.grey500).child(`first seen in ${n.pair.first_seen}${n.pair.overlap ? ", also graded by others" : ""}`)))
+            .child(div().text_size(11.5).text_color(c.grey500).child(`first seen in ${n.pair.first_seen}${n.pair.overlap ? ", also rated by others" : ""}`)))
           .child(v_flex().p(14).gap(6).border_1().border_color(c.grey300)
             .child(div().text_size(16).font_medium().child(field("title") ?? n.pair.product_id))
             .child(h_flex().flex_wrap().gap(14).text_size(12.5).text_color(c.grey900)
@@ -662,7 +663,7 @@ export default class CaptainRuns extends View {
           .child(div().id("grade-note").h(30).px(8).flex().items_center().border_1().border_color(c.grey300)
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
             .child(Input.new(this.gradeNote).w_full().text_size(12.5).text_color(c.navy)))
-          .child(div().text_size(11.5).text_color(c.grey500).child("Keys 0 to 3 grade the pair. Click outside the note first."))));
+          .child(div().text_size(11.5).text_color(c.grey500).child("Keys 0 to 3 give the grade. Click outside the note first."))));
   }
 
   // ---- replays ------------------------------------------------------------------------------------------------
@@ -673,7 +674,7 @@ export default class CaptainRuns extends View {
     const r = rows.find((x) => x.name === this.sel.replays) ?? null;
     return h_flex().flex_1().min_h(0)
       .child(this.list(c, lw, "replays", rows, "replay", (x) => `${(x.curve ?? []).length} points · ${x.evidence ?? ""}`))
-      .child(!r ? v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick a replay.") : this.replayDetail(c, r, w - lw));
+      .child(!r ? v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick an off-policy evaluation.") : this.replayDetail(c, r, w - lw));
   }
 
   replayDetail(c, r, w) {

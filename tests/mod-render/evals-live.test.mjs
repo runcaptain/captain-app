@@ -78,7 +78,7 @@ const st = h.mod.h.health.staleness;
 assert.ok(st.retired.some((x) => x.product_id === gone), `the retired product's grades are found: ${JSON.stringify(st.retired).slice(0, 200)}`);
 assert.ok(st.changed.some((x) => x.product_id === renamed), `the renamed product's grades are found: ${JSON.stringify(st.changed).slice(0, 200)}`);
 let t = h.text();
-assert.ok(t.includes('grades on products that are gone') && t.includes('grades on products changed since grading'), 'staleness, in words');
+assert.ok(t.includes('grades on products that are gone') && t.includes('grades on products changed since rating'), 'staleness, in words');
 await h.click('eh-x-retired');
 assert.ok(h.text().includes(gone), 'the retired list opens');
 assert.ok(t.includes('Head') && t.includes('Tail') && t.includes('SEARCHED OFTEN, NOT IN THE SET'), 'traffic coverage and the top unseen');

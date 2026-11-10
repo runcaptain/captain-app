@@ -63,7 +63,7 @@ assert.ok(globalThis.__runs.some(([n, a]) => n === 'layout.select' && a.child ==
 await h.click('run-backtest');
 for (const f of [0, 1]) await h.layoutLists({});
 text = h.text();
-assert.ok(/Backtest: done/.test(text), 'job finished');
+assert.ok(/Offline evaluation: done/.test(text), 'job finished');
 
 // Workflows: status icons, the steps with command icons, and a failed run's reasons.
 await h.click('tab-workflows');
@@ -86,7 +86,7 @@ assert.ok(text.includes(fx('grading-next').pair.query), 'the query, large');
 const grader = h.byIdPrefix('grader')[0];
 grader.call('on_key_down')[0]({ key: '2' }, h.cx);
 await h.layoutLists({});
-assert.ok(/1 graded now/.test(h.text()), 'key 2 graded the pair');
+assert.ok(/1 rated now/.test(h.text()), 'key 2 graded the pair');
 assert.ok(globalThis.__asked.some((p) => /\/grade$/.test(p)), 'POST grade');
 // The daemon now counts one grade.
 globalThis.__routes.find((r) => r[1] === 'grading')[1] = 'grading-1';

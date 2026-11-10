@@ -5,7 +5,7 @@
 // /api/evals/health, and shows the status, the findings in words, traffic coverage by head, torso and tail with the
 // top unseen queries, staleness (retired, changed and with which fields, relevant now out of stock), coverage per run
 // arm and reliability (or its note). "Refresh as a new version" asks POST /api/evals/refresh with dry_run for the
-// changelog, then publishes (a job), says so, and offers "Grade the new and changed pairs" (Start grading).
+// changelog, then publishes (a job), says so, and offers "Rate the new and changed pairs" (Start rating).
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { notify, openOverlay } from "herdr";
@@ -160,7 +160,7 @@ export class EvalHealth {
       ]))
       .child(this.section(c, "Are the grades still true?", [
         this.expandable(c, "retired", "grades on products that are gone", st.retired ?? [], (x) => `${x.query_id} ${x.product_id} (grade ${x.grade})`),
-        this.expandable(c, "changed", "grades on products changed since grading", st.changed ?? [], (x) => `${x.query_id} ${x.product_id}: ${[].concat(x.fields ?? x.changed ?? []).join(", ")}`),
+        this.expandable(c, "changed", "grades on products changed since rating", st.changed ?? [], (x) => `${x.query_id} ${x.product_id}: ${[].concat(x.fields ?? x.changed ?? []).join(", ")}`),
         this.expandable(c, "oos", "relevant products now out of stock", st.out_of_stock_relevant ?? [], (x) => `${x.query_id} ${x.product_id} (grade ${x.grade})`),
       ]))
       .when((h.coverage ?? []).length > 0, (e) => e.child(this.section(c, "How much of each run is graded?",
@@ -169,7 +169,7 @@ export class EvalHealth {
           .child(Badge(c, `${pct(r.judged_at_10)} of top 10 graded`, r.judged_at_10 >= 0.9 ? "good" : "warn"))))))
       .child(this.section(c, "Can the grades be trusted?", [
         rel.exact_agreement != null
-          ? div().text_size(12.5).text_color(c.navy).child(`Graders agreed exactly on ${pct(rel.exact_agreement)} of ${rel.pairs_graded_twice} pairs graded twice.`)
+          ? div().text_size(12.5).text_color(c.navy).child(`Raters agreed exactly on ${pct(rel.exact_agreement)} of ${rel.pairs_graded_twice} pairs rated twice.`)
           : div().text_size(12.5).text_color(c.grey900).child(rel.note ?? "Agreement can't be measured yet."),
       ]));
   }
@@ -180,7 +180,7 @@ export class EvalHealth {
       .child(h_flex().gap(10).items_center()
         .child(v_flex().flex_1().min_w(0).gap(2)
           .child(div().text_size(13).font_semibold().text_color(c.navy).child("Refresh as a new version"))
-          .child(div().min_w(0).text_size(12).text_color(c.grey900).child("Adds queries from recent traffic and drops grades on retired products, as new versions. The sealed holdout and the old versions stay as they are.")))
+          .child(div().min_w(0).text_size(12).text_color(c.grey900).child("Adds queries from recent traffic and drops grades on retired products, as new versions. The sealed test set and the old versions stay as they are.")))
         .when(!plan, (e) => e.child(Button(c, "eh-plan", this.busy === "plan" ? "Planning..." : "See what would change", (_e, cx) => this.refresh(cx, false), { small: true, disabled: Boolean(this.busy) }))))
       .when(Boolean(plan), (e) => e
         .child(v_flex().gap(2).children((plan.changelog ?? []).map((l, i) => div().id(`eh-cl-${i}`).text_size(12.5).text_color(c.navy).child(l))))
@@ -189,7 +189,7 @@ export class EvalHealth {
           .child(Button(c, "eh-cancel", "Not now", (_e, cx) => { this.plan = null; cx.notify(); }, { kind: "quiet", small: true }))))
       .when(Boolean(done), (e) => e.child(h_flex().gap(10).items_center()
         .child(div().flex_1().text_size(12.5).text_color(c.good).child(`Published ${done.queries} and ${done.judgments}. ${(done.regrade ?? []).length + (done.added_queries ?? []).length} pairs and queries to grade.`))
-        .child(Button(c, "eh-grade", "Grade the new and changed pairs", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "grading", values: { queries: String(done.queries ?? "").split("@")[0] } } }), { kind: "primary", small: true }))));
+        .child(Button(c, "eh-grade", "Rate the new and changed pairs", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "grading", values: { queries: String(done.queries ?? "").split("@")[0] } } }), { kind: "primary", small: true }))));
   }
 
   render(c) {

@@ -20,11 +20,11 @@ const PAGES = 5;
 const I = (name) => `mods/captain-nav/${name}.svg`;
 
 const SECTIONS = [
-  ["search", "Investigations", "Home. Each question you're working on: the hypothesis and its revisions, evidence, signals, runs, and the decision."],
+  ["search", "Experiments", "Home. Each question you're working on: the hypothesis and its revisions, evidence, signals, runs, and the decision."],
   ["database", "Data and signals", "Datasets (classes, grid, labels as code) and the signals you rank with."],
-  ["play", "Runs", "Every execution with its manifest, logs, artifacts and how reproducible it is: backtests, replays, grading jobs, workflows."],
-  ["git-compare", "Comparisons", "Metrics, slices, queries side by side, and the limits of what a result shows."],
-  ["send", "Handoff", "Candidates you export, serving contracts, linked deployments and their online outcomes."],
+  ["play", "Runs", "Every execution with its manifest, logs, artifacts and how reproducible it is: offline evaluations, off-policy evaluations, rating queues, workflows."],
+  ["git-compare", "Compare", "Metrics, slices, queries side by side, and the limits of what a result shows."],
+  ["send", "Launch review", "Candidates you send to review, serving contracts, linked deployments and their online outcomes."],
 ];
 
 // What each checklist step's "Do it" opens: a designed form (captain-forms), or the
@@ -185,7 +185,7 @@ export default class Welcome extends View {
         ? this.code(c, `cmd-${s.id}`, command)
         : div().id(`show-${s.id}`).text_size(12).text_color(c.blue).cursor_pointer().on_click((_e, cx) => { this.shownCmd[s.id] = true; cx.notify(); }).child("Show the command"))))
       .when(s.id === "agent", (e) => e.child(div().pl(28).child(this.para(c,
-        "Every investigation has Copy prompt and Open an agent in this space. An agent in a terminal here, or in Cursor, Devin or any terminal, can do everything Captain can. Records it makes say which agent made them."))));
+        "Every experiment has Copy prompt and Open an agent in this space. An agent in a terminal here, or in Cursor, Devin or any terminal, can do everything Captain can. Records it makes say which agent made them."))));
   }
 
   pageWork(c) {

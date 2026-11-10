@@ -48,7 +48,7 @@ function agentMark(c, name) {
 export default class CaptainInvestigations extends View {
   init(_props, cx) {
     this.state = "";
-    this.search = InputState.new({ placeholder: "Search investigations" });
+    this.search = InputState.new({ placeholder: "Search experiments" });
     this.search.on("change", (_e, cx) => { this.q = this.search.value(); this.reload(cx); });
     this.q = "";
     this.open = null;
@@ -60,11 +60,11 @@ export default class CaptainInvestigations extends View {
       rowKey: (r) => String(r.id),
       onRow: (r, cx) => this.show(r.id, cx),
       // What an investigation is, and the way to start one.
-      empty: (c) => Empty(c, "No investigations yet",
-        "An investigation is one question about your search, like \"does the tuned ranker help long queries?\", with its hypothesis, the runs that test it, and the decision you make. Agents in a space can work on it with you.",
-        Button(c, "inv-empty-new", "New investigation", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "investigation" } }), { kind: "primary" })),
+      empty: (c) => Empty(c, "No experiments yet",
+        "An experiment is one question about your search, like \"does the tuned ranker help long queries?\", with its hypothesis, the evaluations that test it, and the decision you make. Agents in a space can work on it with you.",
+        Button(c, "inv-empty-new", "New experiment", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "investigation" } }), { kind: "primary" })),
       columns: [
-        { key: "title", label: "Investigation", render: (r) => r.title ?? r.id },
+        { key: "title", label: "Experiment", render: (r) => r.title ?? r.id },
         { key: "state", label: "State", width: 130, render: (r, c) => Badge(c, words(r.state), toneOf(r.state)) },
         { key: "latest_run", label: "Latest run", width: 120, optional: true, render: (r, c) => r.latest_run ? Badge(c, words(r.latest_run.status ?? r.latest_run), toneOf(r.latest_run.status ?? r.latest_run)) : "none" },
         { key: "runs", label: "Runs", width: 50, optional: true, render: (r) => String(Array.isArray(r.runs) ? r.runs.length : r.runs ?? 0) },
@@ -123,7 +123,7 @@ export default class CaptainInvestigations extends View {
       run("space.new", folder ? { name: d.title ?? this.open, folder } : { name: d.title ?? this.open });
       const made = spaces().find((x) => !before.has(x.id));
       if (made) setShared("captain.spaces", { ...(shared("captain.spaces") ?? {}), [made.id]: { workspace: ws, investigation: this.open } });
-      notify({ title: "Space opened", body: `Terminals there know this investigation (CST_INVESTIGATION=${this.open}).`, level: "info" });
+      notify({ title: "Space opened", body: `Terminals there know this experiment (CST_INVESTIGATION=${this.open}).`, level: "info" });
       cx.notify();
     });
   }
@@ -160,7 +160,7 @@ export default class CaptainInvestigations extends View {
     if (!ps.length) return null;
     return v_flex().id("inv-proposals").gap(8).p(14).border_1().border_color(c.blue).bg(c.blueLight)
       .child(div().text_size(13).font_semibold().text_color(c.navy).child(`${ps.length} ${ps.length === 1 ? "recommendation" : "recommendations"} to review`))
-      .child(div().text_size(12).text_color(c.grey900).child("Agents recommend experiments from the cst CLI. Nothing runs until a person approves it."))
+      .child(div().text_size(12).text_color(c.grey900).child("Agents recommend offline evaluations from the cst CLI. Nothing runs until a person approves it."))
       .children(ps.slice(0, 5).map((p) => h_flex().id(`inv-prop-${p.id}`).gap(10).items_center().p(10).bg(c.surface).border_1().border_color(c.rule)
         .child(agentMark(c, p.agent))
         .child(v_flex().flex_1().min_w(0).gap(2)
@@ -228,12 +228,12 @@ export default class CaptainInvestigations extends View {
   list(c) {
     return v_flex().size_full().p(24).gap(14)
       .child(h_flex().gap(12).items_center()
-        .child(div().flex_none().text_size(20).font_semibold().text_color(c.navy).child("Investigations"))
+        .child(div().flex_none().text_size(20).font_semibold().text_color(c.navy).child("Experiments"))
         .child(div().flex_1())
         // The search gives way first when the section is narrow.
         .child(div().id("inv-search").flex_shrink(1).min_w(120).w(260).h(32).px(10).flex().items_center().bg(c.surface).border_1().border_color(c.grey300).cursor_text()
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.search).w_full().text_size(13).text_color(c.navy)))
-        .child(Button(c, "inv-new", "New investigation", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "investigation" } }), { kind: "primary" })))
+        .child(Button(c, "inv-new", "New experiment", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "investigation" } }), { kind: "primary" })))
       .child(this.toReview(c) ?? div())
       .child(Tabs(c, "inv-state", STATES.map(([id, label]) => ({ id, label })), this.state, (id, cx) => { this.state = id; this.reload(cx); }))
       .child(div().flex_1().min_h(0).child(this.table.render(c)));
@@ -257,7 +257,7 @@ export default class CaptainInvestigations extends View {
         .child(Badge(c, words(e.kind), "neutral")).child(v_flex().flex_1().min_w(0).gap(2)
           .child(RefChip(c, e.ref))
           .when(Boolean(e.note), (x) => x.child(div().text_size(12.5).text_color(c.grey900).child(e.note))))))
-        : Empty(c, "No evidence attached", "Datasets, runs, slices, queries, signals and notes attached to this investigation show here.",
+        : Empty(c, "No evidence attached", "Datasets, runs, slices, queries, signals and notes attached to this experiment show here.",
           Button(c, "ev-add", "Attach evidence", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "evidence", args: { id: this.open } } })));
     }
     if (tab === "signals") {
@@ -267,7 +267,7 @@ export default class CaptainInvestigations extends View {
           .children(Object.entries(s.checks ?? {}).map(([k, v]) => Badge(c, `${k}: ${words(v?.status ?? v)}`, toneOf(v?.status ?? v)))))
         .when(Boolean(s.definition), (x) => x.child(div().font_family(MONO).text_size(12).text_color(c.grey900).child(s.definition)))
         .when(Boolean(s.rationale), (x) => x.child(div().text_size(12.5).text_color(c.grey900).child(s.rationale)))))
-        : Empty(c, "No candidate signals", "Signals this investigation proposes, with their availability and leakage checks, show here.");
+        : Empty(c, "No candidate signals", "Signals this experiment proposes, with their availability and leakage checks, show here.");
     }
     if (tab === "runs") {
       return runs.length ? Card(c, { title: `Runs (${runs.length})` }, ...runs.slice().reverse().map((r) => v_flex().gap(4).pb(8).border_b(1).border_color(c.rule)
@@ -286,14 +286,14 @@ export default class CaptainInvestigations extends View {
       ...[["Claim", dec.claim], ["Interpretation", dec.interpretation], ["Limitations", Array.isArray(dec.limitations) ? dec.limitations.join("; ") : dec.limitations], ["Next step", dec.next_step]]
         .filter(([, v]) => v).map(([k, v]) => v_flex().gap(2).child(div().text_size(11.5).font_medium().text_color(c.grey500).child(k)).child(div().text_size(13).line_height("19px").text_color(c.navy).child(String(v)))),
         // A decision to go on: its handoff is the next step, with the plan's candidate.
-        ...(["continue", "online-test"].includes(dec.outcome) ? [h_flex().child(Button(c, "decision-handoff", "Hand off the candidate", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560,
+        ...(["continue", "online-test"].includes(dec.outcome) ? [h_flex().child(Button(c, "decision-handoff", "Send to launch review", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560,
           props: { task: "handoff", values: (d.plan?.candidates ?? d.candidates ?? [])[0] ? { pipeline: (d.plan?.candidates ?? d.candidates)[0] } : {} } }), { kind: "primary", small: true }))] : []))
       : Empty(c, "No decision yet", "Only a person records the decision: continue, online test, reject or inconclusive.",
         Button(c, "decide", "Record a decision", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "decision", args: { id: this.open } } }), { kind: "primary" }));
   }
 
   detailView(c) {
-    const back = Button(c, "inv-back", "All investigations", (_e, cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); }, { kind: "quiet", small: true });
+    const back = Button(c, "inv-back", "All experiments", (_e, cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); }, { kind: "quiet", small: true });
     if (!this.detail) return v_flex().size_full().p(24).gap(10).child(h_flex().child(back)).child(Loading(c));
     if (this.detail.problem) return v_flex().size_full().p(24).gap(10).child(h_flex().child(back)).child(Problem(c, this.detail.problem, (cx) => this.load(this.open, cx)));
     const d = this.detail.data ?? {};
@@ -303,7 +303,7 @@ export default class CaptainInvestigations extends View {
         .child(h_flex().gap(10).items_center()
           .child(div().flex_1().min_w(0).truncate().text_size(20).font_semibold().text_color(c.navy).child(d.title ?? this.open))
           .child(Button(c, "inv-agent", "Open an agent in this space", (_e, cx) => this.askAgent(cx)))
-          .child(Button(c, "inv-space", "Open a space for this investigation", (_e, cx) => this.openSpace(d, cx)))
+          .child(Button(c, "inv-space", "Open a space for this experiment", (_e, cx) => this.openSpace(d, cx)))
           .child(Button(c, "inv-prompt", this.copied ? "Copied" : "Copy prompt", (_e, cx) => this.copyPrompt(cx)))
           .child(Button(c, "inv-run", "Run", (_e, cx) => this.run(cx), { kind: "primary" })))
         .child(h_flex().gap(8).items_center()

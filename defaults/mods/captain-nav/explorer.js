@@ -22,7 +22,7 @@ const SETTLE_MS = 1200, MOVED_MS = 350;
 // What the two workspace-wide lists hold, as hover text (Edgar: "not sure the differences between them").
 const ABOUT = {
   "all-engines": "The search and recommendation systems you're improving, across every brand",
-  "all-experiments": "Every comparison you've run, newest first",
+  "all-experiments": "Every offline evaluation you've run, newest first",
 };
 const DIALOG = (props) => ({ mod: "captain-scope", kind: "dialog", width: 460, props });
 const ADD_ENGINE = DIALOG({ action: "add", kind: "engine", type: "engine", parent: null });
@@ -118,7 +118,7 @@ export class Explorer {
     return v_flex().w_full()
       .child(h_flex().id("ex-mlflow").h(26).flex_none().pl(8).pr(6).gap(5).items_center().cursor_pointer()
         .bg(c.surface).text_color(c.navy).text_size(12.5).font_medium().hover((s) => s.bg(c.surface2))
-        .tooltip("Experiments, runs and registered models from MLflow, read-only")
+        .tooltip("MLflow experiments, runs and registered models, read-only")
         .on_click((_e, cx) => this.toggleMlflow(cx))
         .child(div().size(12).flex_none().flex().items_center().justify_center().text_color(c.grey500).child(svg(icon(open ? "chevron-down" : "chevron-right")).size(11)))
         .child(Brand(c, "mlflow", 13))

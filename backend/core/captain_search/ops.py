@@ -127,7 +127,7 @@ def check_seal(ctx, qref: str) -> dict:
         return {"gate": "holdout_seal", "ok": False, "detail": f"{ref(m)} is not sealed"}
     rows = load_table(ctx, m).to_pylist()
     ok = Q.seal(rows, m.splits["holdout"]) == m.holdout_seal
-    return {"gate": "holdout_seal", "ok": ok, "detail": "intact" if ok else "the holdout queries changed after sealing"}
+    return {"gate": "holdout_seal", "ok": ok, "detail": "intact" if ok else "the test set queries changed after sealing"}
 
 
 # ---- judging ---------------------------------------------------------------------------
@@ -352,7 +352,7 @@ def backtest_plan(ctx, name: str, arms: list[str], queries: str | None, judgment
                   logs: str | None = None, compute: str | None = None, population_size: int = 4000,
                   surfaces: list[dict] | None = None) -> Backtest:
     if len(arms) < 2:
-        raise ValueError("a backtest needs at least two arms. The first is the baseline.")
+        raise ValueError("an offline evaluation needs at least two arms. The first is the baseline.")
     if compute:
         from . import compute as C
 
@@ -385,7 +385,7 @@ def backtest_plan(ctx, name: str, arms: list[str], queries: str | None, judgment
     if split == "holdout":
         s = check_seal(ctx, ref(qm))
         if not s["ok"]:
-            raise ValueError(f"holdout check failed: {s['detail']}")
+            raise ValueError(f"sealed test set check failed: {s['detail']}")
     qpin = ref(qm) + (f":{split}" if split else "")
     jpin = ref(ctx.registry.resolve("dataset", judgments)[0]) if judgments else None
     ppin = ref(ctx.registry.resolve("population", population)[0]) if population else None
@@ -442,7 +442,7 @@ def backtest_run(ctx, name: str, progress=None, live=None) -> BacktestRun:
     if split == "holdout":
         s = check_seal(ctx, bt.queries)
         if not s["ok"]:
-            raise ValueError(f"holdout check failed: {s['detail']}")
+            raise ValueError(f"sealed test set check failed: {s['detail']}")
     jm, jmap = judgments_map(ctx, bt.judgments) if bt.judgments else (None, {})
     offline_ev = J.EVIDENCE[jm.judgment_source or "heuristic"] if jm else Evidence.SIMULATED
     if jm and str((jm.tags or {}).get("synthetic", "")).lower() == "true":
@@ -620,14 +620,14 @@ def backtest_launch(ctx, name: str, compute: str | None = None, progress=None, d
 
 
 def backtest_report(run: BacktestRun, bt: Backtest) -> str:
-    L = [f"# Backtest {run.name} run v{run.version} ({run.mode}, on {run.compute})", "",
+    L = [f"# Offline evaluation {run.name} run v{run.version} ({run.mode}, on {run.compute})", "",
          f"Hypothesis (pre-registered {bt.preregistration.written_at:%Y-%m-%d}): {bt.preregistration.hypothesis}",
          f"Primary metric: {bt.preregistration.primary_metric}, smallest effect that counts: {bt.preregistration.mde}",
          f"Queries: {bt.queries}   Judgments: {bt.judgments or 'none'}   Population: {bt.population or 'none'}", ""]
     if run.mode == "imported":
         L += [f"Imported readout: {run.source}", run.description, ""]
     if (bt.tags or {}).get("label_independence") == "shared":
-        L += ["WARNING: the trained arm learned from the labeler that grades this holdout. A higher score means it",
+        L += ["WARNING: the trained arm learned from the labeler that grades this test set. A higher score means it",
               "agrees with its own labeler, not that it beats the other arm.", ""]
     if not run.independent:
         L += ["WARNING: not independent. The shoppers' clicks and the nDCG come from the same judgments,", "so they are one signal counted twice.", ""]
@@ -762,7 +762,7 @@ def env_create(ctx, name: str, tier: str, target: dict, gates: dict | None = Non
 
         t = C.get(ctx, compute)
         if "serve" not in t["purposes"]:
-            raise ValueError(f"compute target {compute} ({t['kind']}) cannot serve pipelines")
+            raise ValueError(f"compute target {compute} ({t['kind']}) cannot serve models")
         target = {**target, "type": target.get("type") if target.get("type") not in (None, "record") else t["kind"]}
     e = Environment(**_base(ctx), name=check_name(name), tier=Tier(tier), target=target, compute=compute,
                     gates=gates or ({"p99_ms": 50.0, "recall_floor": 0.98, "min_evidence": "HUMAN_GRADED"} if tier == "live" else {}))
@@ -831,7 +831,7 @@ def gates_for(ctx, env: Environment, pipeline_ref: str) -> list[dict]:
     res = []
     run = _latest_run_for(ctx, pipeline_ref)
     if run is None:
-        return [{"gate": "backtest", "ok": False, "detail": f"no backtest run has {pipeline_ref} as a challenger arm"}]
+        return [{"gate": "backtest", "ok": False, "detail": f"no offline evaluation run has {pipeline_ref} as a candidate arm"}]
     bt = ctx.registry.load("backtest", run.name)
     primary = bt.preregistration.primary_metric
     comp = next((c for c in run.comparisons if c["b"] == pipeline_ref and c["metric"] == primary), None)
@@ -843,7 +843,7 @@ def gates_for(ctx, env: Environment, pipeline_ref: str) -> list[dict]:
     ev = arm.evidence if primary in M.NAMES else arm.simulated_evidence
     shared = (bt.tags or {}).get("label_independence") == "shared"  # trained on the labeler that grades this holdout
     res.append({"gate": "evidence", "ok": ev.rank >= need.rank and not shared,
-                "detail": (f"{ev.value}, but the training labels come from the labeler that grades this holdout, so the "
+                "detail": (f"{ev.value}, but the training labels come from the labeler that grades this test set, so the "
                            "win only shows it agrees with its own labeler") if shared else f"{ev.value}, needs {need.value} or stronger"})
     res.append({"gate": "complete", "ok": run.complete and run.independent,
                 "detail": "complete and independent" if run.complete and run.independent else

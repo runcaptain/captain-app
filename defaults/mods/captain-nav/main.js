@@ -30,11 +30,11 @@ import { TeamViews } from "./teamviews.js";
 const ITEMS = [
   // Home: the current project's page (captain-project), or New project when there is none.
   { id: "project", label: "Home", icon: icon("house") },
-  { id: "investigations", label: "Investigations", icon: "search", badge: "/api/proposals?status=proposed", badgeLabel: "proposals to review" },
+  { id: "investigations", label: "Experiments", was: "investigations", icon: "search", badge: "/api/proposals?status=proposed", badgeLabel: "recommendations to review" },
   { id: "data", label: "Data and signals", icon: "database" },
-  { id: "runs", label: "Runs", icon: "play" },
-  { id: "comparisons", label: "Comparisons", icon: "git-compare" },
-  { id: "handoff", label: "Handoff", icon: "send" },
+  { id: "runs", label: "Runs", was: "offline evaluations backtests rating grading off-policy replays", icon: "play" },
+  { id: "comparisons", label: "Compare", was: "comparisons side by side", icon: "git-compare" },
+  { id: "handoff", label: "Launch review", was: "handoff hand off", icon: "send" },
   // Team collaboration was only in the palette, so people who built it couldn't find it (Edgar, 2026-11-09).
   { id: "team", label: "Team", icon: icon("users") },
 ];
@@ -56,15 +56,15 @@ function find(node, id) {
 // Raw cst commands sit behind one "Run a cst command..." entry; agents use the CLI.
 const TASK_ENTRIES = [
   // [task, title, search words, icon: the New menu's for the same task (captain-forms/tasks.js)]
-  ["investigation", "New investigation", "question hypothesis start", "search"],
+  ["investigation", "New experiment", "investigation question hypothesis start", "search"],
   ["dataset", "Import a dataset", "file csv parquet sql upload catalog queries judgments", "database"],
   ["database", "Connect a database", "postgres snowflake bigquery mysql redshift sql", "server"],
   ["cloud", "Connect a cloud account", "aws gcp azure login credentials", "cloud"],
   ["mlflow", "Connect MLflow", "mlflow tracking experiments models registry", "flask-conical"],
-  ["compute", "Add a place to run work", "compute cloud run backtests serve", "boxes"],
-  ["handoff", "Hand off a candidate", "promote deploy ship release", "send"],
-  ["backtest", "Run a backtest", "compare evaluate offline experiment ndcg what if settings tune knobs sweep sandbox", "flask-conical"],
-  ["grading", "Start grading", "judgments labels relevance human", "square-check"],
+  ["compute", "Add a place to run work", "compute cloud run offline evaluations backtests serve", "boxes"],
+  ["handoff", "Start a launch review", "handoff hand off candidate promote deploy ship release readiness", "send"],
+  ["backtest", "Run an offline evaluation", "backtest compare evaluate offline ndcg what if settings tune knobs sweep sandbox", "flask-conical"],
+  ["grading", "Start rating", "grading grade grader raters judgments labels relevance human", "square-check"],
   ["dataset-class", "New dataset class", "class type role catalog queries judgments", "tag"],
   ["rankings", "Compare your own rankings", "bring import rankings results system offline compare evaluate", "git-compare"],
   ["explain", "Explain a query", "debug why ranking stage score trace query debugger", "layers"],
@@ -82,7 +82,7 @@ export function staticEntries(sections) {
         : task === "rankings" ? { mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }
         : task === "explain" ? { mod: "captain-explain", kind: "dialog", width: 0.9, height: 0.9 }
         : task === "sandbox" ? { mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9 } : { mod: "captain-forms", kind: "dialog", width: 560, props: { task } } })),
-    ...sections.map((s) => ({ group: "Captain", title: `Go to ${s.label}`, words: `section ${s.label}`, icon: s.icon && !String(s.icon).includes("/") ? icon(s.icon) : undefined, overlay: go(s.id) })),
+    ...sections.map((s) => ({ group: "Captain", title: `Go to ${s.label}`, words: `section ${s.label} ${s.was ?? ""}`, icon: s.icon && !String(s.icon).includes("/") ? icon(s.icon) : undefined, overlay: go(s.id) })),
     { name: "captain-nav.theme-light", args: {}, group: "Captain", icon: icon("sun"), title: "Switch to light", words: "appearance theme light mode" },
     { name: "captain-nav.theme-dark", args: {}, group: "Captain", icon: icon("moon"), title: "Switch to dark", words: "appearance theme dark mode night" },
     { name: "captain-nav.theme-system", args: {}, group: "Captain", icon: icon("monitor"), title: "Match the system appearance", words: "appearance theme system auto" },
@@ -101,11 +101,11 @@ export function staticEntries(sections) {
 export function openEntries(datasets, investigations, backtests = []) {
   return [
     ...backtests.slice(0, 200).flatMap((b) => [
-      { group: "Captain", icon: icon("flask-conical"), title: `Open ${b.name}`, words: "backtest run", overlay: go("runs", { backtest: b.name }) },
-      { group: "Captain", icon: icon("git-compare"), title: `Compare ${b.name}`, words: "backtest comparison results", overlay: go("comparisons", { backtest: b.name }) },
+      { group: "Captain", icon: icon("flask-conical"), title: `Open ${b.name}`, words: "offline evaluation backtest run", overlay: go("runs", { backtest: b.name }) },
+      { group: "Captain", icon: icon("git-compare"), title: `Compare ${b.name}`, words: "offline evaluation backtest comparison results side by side", overlay: go("comparisons", { backtest: b.name }) },
     ]),
     ...datasets.slice(0, 200).map((d) => ({ group: "Captain", icon: icon("table"), title: `Open ${d.name}`, words: `dataset ${d.kind ?? ""}`, overlay: go("data", { dataset: d.name }) })),
-    ...investigations.slice(0, 200).map((i) => ({ group: "Captain", icon: icon("search"), title: `Open investigation: ${i.title ?? i.id}`, words: `investigation ${i.state ?? ""}`, overlay: go("investigations", { investigation: i.id }) })),
+    ...investigations.slice(0, 200).map((i) => ({ group: "Captain", icon: icon("search"), title: `Open experiment: ${i.title ?? i.id}`, words: `experiment investigation ${i.state ?? ""}`, overlay: go("investigations", { investigation: i.id }) })),
   ];
 }
 

@@ -78,7 +78,7 @@ def dataset_insights(ctx: Context, name: str, max_versions: int = 10, depth: int
         e["created_by"], e["created_at"] = m.created_by, _iso(m.created_at)
         if e["level"] == 1:
             builders[m.created_by] += 1
-        verb = {"pipeline": "built pipeline", "run": "scored run", "dataset": "made dataset"}[e["kind"]]
+        verb = {"pipeline": "built model version", "run": "scored run", "dataset": "made dataset"}[e["kind"]]
         activity.append({"at": e["created_at"], "who": m.created_by, "what": f"{verb} {e['label']}", "kind": e["kind"], "id": e["id"]})
 
     by_kind: dict[str, list] = {}

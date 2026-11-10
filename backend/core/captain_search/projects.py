@@ -269,7 +269,7 @@ def delete(ctx: Context, pid: str, force: bool = False) -> dict:
     c = contents(ctx, pid)
     waiting = pending_handoffs(ctx, pid)
     if waiting and not force:
-        err = ValueError(f"{pid} has {len(waiting)} live handoff(s) waiting for a deployment "
+        err = ValueError(f"{pid} has {len(waiting)} launch review(s) waiting for a deployment "
                          f"({', '.join(h['pipeline'] for h in waiting)}). Link or close them first, or delete with force.")
         err.handoffs = waiting
         raise err

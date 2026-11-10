@@ -394,7 +394,7 @@ def explorer(ctx: Context) -> dict:
             groups.append({"kind": "group", "type": k, "label": types[k]["plural"], "children": items})
     unscoped = [eng_node(e) for e in engines if not e["scopes"]]
     tree = [{"kind": "view", "id": "all-engines", "label": "All engines"},
-            {"kind": "view", "id": "all-experiments", "label": "All experiments"},
+            {"kind": "view", "id": "all-experiments", "label": "All offline evaluations"},
             *groups]
     if unscoped:
         tree.append({"kind": "group", "type": "engine", "label": "Engines", "children": unscoped})

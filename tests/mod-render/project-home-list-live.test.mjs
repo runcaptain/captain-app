@@ -53,12 +53,12 @@ const until = async (ok, what, n = 80) => {
   for (let i = 0; i < n && !ok(h.text()); i++) { await h.layoutLists({}); await h.idle(150); }
   assert.ok(ok(h.text()), `${what}: ${h.text().slice(0, 1500)}`);
 };
-await until((t) => t.includes('Outdoor') && t.includes('Gifts') && t.includes('2 experiments'), 'project cards');
+await until((t) => t.includes('Outdoor') && t.includes('Gifts') && t.includes('2 candidates'), 'project cards');
 const t = h.text();
 assert.ok(!t.includes('Start with a project'), 'no empty state when projects exist');
 assert.ok(t.includes('demo-bm25') && t.includes('demo-tuned: agrees with its own labeler'), 'champion and the verdict worth showing');
-assert.ok(t.includes('No champion yet') && t.includes('0 experiments') && t.includes('Nothing judged yet'), 'a new project reads as new');
-assert.ok(t.includes('Choose a catalog') && t.includes('New experiment'), `each card has its next action: ${t}`);
+assert.ok(t.includes('No baseline yet') && t.includes('0 candidates') && t.includes('Nothing judged yet'), 'a new project reads as new');
+assert.ok(t.includes('Choose a catalog') && t.includes('New candidate'), `each card has its next action: ${t}`);
 assert.equal(h.byIdPrefix('ph-new').length, 1, 'New project stays, as a secondary button');
 
 // Clicking a card picks it, as the Explorer does, and the page opens on it.

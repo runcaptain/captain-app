@@ -53,7 +53,7 @@ def sweep(ctx: Context, name: str, logs: str, score_col: str, action_col: str, o
     p = f"cast({_ident(propensity_col)} as double)" if propensity_col else "0.5"
     bad = con.sql(f"select count(*) from {src} where {p} <= 0 or {p} >= 1").fetchall()[0][0]
     if bad:
-        raise ValueError(f"{bad} rows have a propensity of 0 or 1, so the replay cannot reweight them. "
+        raise ValueError(f"{bad} rows have a propensity of 0 or 1, so the off-policy evaluation cannot reweight them. "
                          "Every request needs a real chance of either action.")
     qs = ", ".join(str(i / (points - 1)) for i in range(points))
     thresholds = [r[0] for r in con.sql(f"select unnest(quantile_cont({s}, [{qs}])) from {src}").fetchall()]
@@ -82,7 +82,7 @@ def sweep(ctx: Context, name: str, logs: str, score_col: str, action_col: str, o
                       "kind": "direct" if y in direct else "directional"}
         curve.append({"threshold": float(t), "trigger_rate": round(float(trig), 5), "n": int(n), "matched": int(matched),
                       "outcomes": out})
-    note = ("Replay over a randomized holdout. Outcomes marked directional show which way they move, not by how much. "
+    note = ("Off-policy evaluation (counterfactual replay of logged traffic) over randomized logs. Outcomes marked directional show which way they move, not by how much. "
             "Confirm the chosen threshold with an online A/B test.")
     m = ReplayRun(org=ctx.workspace.org, workspace=ctx.workspace.name, created_by=whoami(), name=check_name(name), version=0,
                   logs=f"{lm.name}@v{lm.version}", score_col=score_col, action_col=action_col, propensity_col=propensity_col,

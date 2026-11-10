@@ -111,8 +111,8 @@ def test_independence_reads_the_labeler(tmp_path):
     assert PS.label_independence(c, "llm", "llm-holdout@v1")["status"] == "shared"
     assert PS.label_independence(c, None, "human-holdout@v1")["status"] == "unknown"
     assert PS.verdict("win", {"status": "shared"}) == "agrees with its own labeler"
-    assert PS.verdict("win", {"status": "independent"}) == "beats the champion"
-    assert PS.verdict("loss", {"status": "independent"}) == "loses to the champion"
+    assert PS.verdict("win", {"status": "independent"}) == "beats the baseline"
+    assert PS.verdict("loss", {"status": "independent"}) == "loses to the baseline"
 
 
 def test_an_experiment_against_the_champion_says_when_it_only_agrees_with_its_labeler(tmp_path):
@@ -121,7 +121,7 @@ def test_an_experiment_against_the_champion_says_when_it_only_agrees_with_its_la
     PS.pin(c, "outdoor", {"holdout": "demo-queries", "labels": "demo-judgments"})
     PS.experiment_add(c, "outdoor", "demo-bm25")
     e = PS.experiment_add(c, "outdoor", "demo-tuned", labels="demo-judgments")
-    with pytest.raises(ValueError, match="no champion"):
+    with pytest.raises(ValueError, match="no baseline"):
         PS.experiment_backtest(c, "outdoor", e["id"])
     PS.set_champion(c, "outdoor", "demo-bm25@v1")
 

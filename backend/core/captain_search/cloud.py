@@ -252,4 +252,4 @@ def summary(ctx) -> dict:
             "active": active, "profiles": profs, "compute": targets,
             "can_run_in_cloud": any(t["kind"] != "local" for t in targets),
             "notes": ([] if any(t["kind"] != "local" for t in targets) else
-                      ["No cloud compute target yet: backtests run on this computer. Add one with `cst compute add`."])}
+                      ["No cloud compute target yet: offline evaluations run on this computer. Add one with `cst compute add`."])}

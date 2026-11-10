@@ -80,7 +80,7 @@ export const SAMPLE = {
   actions: [{ type: "brand", label: "Add brand" }, { type: "site", label: "Add site" }, { type: "engine", label: "Add engine" }],
   tree: [
     { kind: "view", id: "all-engines", label: "All engines" },
-    { kind: "view", id: "all-experiments", label: "All experiments" },
+    { kind: "view", id: "all-experiments", label: "All offline evaluations" },
     { kind: "group", type: "brand", label: "Brands", children: [
       { kind: "scope", id: "sc-acme-outdoors", type: "brand", name: "Acme Outdoors", label: "Brand", children: [
         { kind: "group", type: "site", label: "Sites", children: [
@@ -102,7 +102,7 @@ export const SAMPLE = {
 export function baseTree() {
   return [
     { kind: "view", id: "all-engines", label: "All engines" },
-    { kind: "view", id: "all-experiments", label: "All experiments" },
+    { kind: "view", id: "all-experiments", label: "All offline evaluations" },
     { kind: "group", type: "project", label: "Projects", children: [] },
     { kind: "settings", id: "scope-model", label: "Scope model" },
   ];

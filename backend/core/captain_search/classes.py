@@ -25,9 +25,9 @@ from .workspace import Context, whoami
 ROLES = [k.value for k in DatasetKind if k.value != "generic"]
 CLASSES_KEY = "classes/classes.yaml"
 DEFAULTS = [
-    {"name": "catalog", "description": "Products a pipeline searches over", "color": "#0043CA", "role": "catalog",
+    {"name": "catalog", "description": "Products a search ranks", "color": "#0043CA", "role": "catalog",
      "required_columns": ["id", "title"]},
-    {"name": "queries", "description": "Query sets for backtests", "color": "#7C3AED", "role": "queries",
+    {"name": "queries", "description": "Query sets for offline evaluations", "color": "#7C3AED", "role": "queries",
      "required_columns": ["query_id", "query"]},
     {"name": "judgments", "description": "Relevance grades", "color": "#059669", "role": "judgments",
      "required_columns": ["query_id", "product_id", "grade"]},

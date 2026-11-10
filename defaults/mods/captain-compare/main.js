@@ -68,7 +68,7 @@ const bare = (ref) => String(ref ?? "").replace(/@v\d+$/, "");
 /** What an agent should look into for one query that moved. */
 function queryPrompt(run, row, d) {
   return [
-    `In Captain, in the backtest run ${run}, look at the query "${row.query || d?.query || row.query_id}".`,
+    `In Captain, in the offline evaluation run ${run} (cst backtest), look at the query "${row.query || d?.query || row.query_id}".`,
     d ? `Under A (${bare(d.a?.arm)}) its nDCG@10 is ${d.a?.ndcg10}, under B (${bare(d.b?.arm)}) it is ${d.b?.ndcg10}.` : "",
     "Compare the two ranked lists, say why B ranks the way it does, and whether this is a real regression or a judging gap",
     "(unjudged products count as not relevant). Use the cst CLI to read the run. Change nothing without asking me.",
@@ -82,7 +82,7 @@ const sentence = (t) => { const s = String(t ?? "").trim(); return s ? `${s[0].t
 function runPrompt(ref, r, compat) {
   const p = (r.comparisons ?? []).find((x) => x.primary) ?? r.comparisons?.[0];
   return [
-    `In Captain, look at the backtest run ${ref}${r.mode === "imported" ? ", imported from a readout" : ""}: it compares ${(r.arms ?? []).map((a) => bare(a.arm)).join(" against ")}.`,
+    `In Captain, look at the offline evaluation run ${ref} (cst backtest)${r.mode === "imported" ? ", imported from a readout" : ""}: it compares ${(r.arms ?? []).map((a) => bare(a.arm)).join(" against ")}.`,
     p ? `The main result is ${metricWords(p.metric)}: B minus A is ${p.delta}, 95% interval [${p.ci_low}, ${p.ci_high}], verdict ${p.verdict}.` : "",
     (compat?.warnings ?? []).length ? `Captain warns: ${compat.warnings.map((w) => w.text).join("; ")}.` : "",
     "Tell me whether to trust it, what would make it conclusive, and what to try next.",
@@ -147,7 +147,7 @@ export default class CaptainCompare extends View {
       this.starting = !r.ok && !!r.starting;
       if (this.starting) { cx.notify(); return; }
       if (r.ok) this.backtests = r.data ?? [];
-      this.error = r.ok ? null : say(r, "Couldn't load backtests.");
+      this.error = r.ok ? null : say(r, "Couldn't load offline evaluations.");
       this.errorR = r;
       const h = shared("captain.compare") ?? (this.wantProps.backtest ? { backtest: this.wantProps.backtest, version: this.wantProps.version ?? 1 } : null);
       const first = h?.backtest ? h : this.backtests?.[0] ? { backtest: this.backtests[0].name, version: this.backtests[0].latest } : null;
@@ -290,7 +290,7 @@ export default class CaptainCompare extends View {
   header(c) {
     const tabs = [["overview", "Overview", "overview"], ["queries", "Queries", "queries"], ["segments", "Segments", "segments"], ["surfaces", "Surfaces", "surfaces"], ["profile", "Profile", "kit:activity"]];
     return h_flex().h(52).flex_none().px(20).gap(14).items_center().border_b(1).border_color(c.rule)
-      .child(div().flex_none().text_size(18).font_semibold().child("Comparisons"))
+      .child(div().flex_none().text_size(18).font_semibold().child("Compare"))
       .child(h_flex().flex_none().border_1().border_color(c.grey300).children(tabs.map(([id, label, icon]) =>
         h_flex().id(`tab-${id}`).h(28).px(12).gap(6).items_center().cursor_pointer().border_r(1).border_color(c.grey300).text_size(12.5)
           .bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
@@ -305,7 +305,7 @@ export default class CaptainCompare extends View {
       .when(!!this.error, (e) => e.child(div().p(10).child(trouble(c, "backtests-load", this.errorR, this.error, (cx) => this.loadBacktests(cx)))))
       .when(this.backtests === null && !this.error, (e) => e.child(div().child(Skeleton(c, 8))))
       .when(Array.isArray(this.backtests) && !this.backtests.length, (e) => e.child(v_flex().p(12).gap(8)
-        .child(div().text_size(12.5).text_color(c.grey500).child("No backtests yet."))
+        .child(div().text_size(12.5).text_color(c.grey500).child("No offline evaluations yet."))
         // Results from your own system compare the same way (captain-rankings).
         .child(Button(c, "empty-rankings", "Compare your own rankings", () => openOverlay({ mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }), { small: true }))))
       .children((this.backtests ?? []).map((b) => {
@@ -346,9 +346,9 @@ export default class CaptainCompare extends View {
     const form = (task, values, args) => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, values, ...(args ? { args } : {}) } });
     return h_flex().id("next-steps").flex_wrap().gap(8).items_center()
       .child(div().text_size(12).text_color(c.grey500).child(own ? "The candidate learned from the labeler that grades it, so this isn't a win yet." : "Next:"))
-      .child(Button(c, "next-champion", `Make champion (${ev})`, () => form("champion", { pipeline: p.b, evidence: ev, project }), { small: true, kind: p.verdict === "win" && !own ? "primary" : "secondary" }))
+      .child(Button(c, "next-champion", `Make it the baseline (${ev})`, () => form("champion", { pipeline: p.b, evidence: ev, project }), { small: true, kind: p.verdict === "win" && !own ? "primary" : "secondary" }))
       .child(Button(c, "next-decide", "Record a decision", () => form("decision", { run: this.runRef(), candidate: p.b }), { small: true }))
-      .child(Button(c, "next-handoff", "Hand off", () => form("handoff", { pipeline: p.b }), { small: true }));
+      .child(Button(c, "next-handoff", "Send to launch review", () => form("handoff", { pipeline: p.b }), { small: true }));
   }
 
   overview(c, w) {
@@ -599,7 +599,7 @@ export default class CaptainCompare extends View {
   surfaces(c) {
     const ss = this.run.surfaces ?? [];
     return v_flex().id("surfaces").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(12)
-      .when(!ss.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("This run has no surfaces. Add one, with its guardrail, when you plan a backtest.")))
+      .when(!ss.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("This run has no surfaces. Add one, with its guardrail, when you plan an offline evaluation.")))
       .children(ss.map((s) => {
         const failed = (s.guardrails ?? []).filter((g) => !g.ok).length;
         return v_flex().id(`surface-${s.surface}`).border_1().border_color(failed ? c.fail : c.rule)
@@ -627,9 +627,9 @@ export default class CaptainCompare extends View {
         .child(this.icon("compare", 22, c.grey500))
         .child(div().text_size(15).font_medium().child("Nothing to compare yet"))
         .child(div().max_w(460).text_center().text_size(12.5).line_height("19px").text_color(c.grey900)
-          .child("A comparison shows whether one version of your search really beats another: the difference, how sure Captain is, and query by query why. Run a backtest to get one."))
+          .child("A comparison shows whether one version of your search really beats another: the difference, how sure Captain is, and query by query why. Run an offline evaluation to get one."))
         .child(h_flex().gap(8)
-          .child(Button(c, "first-backtest", "Run a backtest", () => openForm("backtest"), { kind: "primary" }))
+          .child(Button(c, "first-backtest", "Run an offline evaluation", () => openForm("backtest"), { kind: "primary" }))
           .child(Button(c, "first-demo", "Load Sample North Pole", () => openForm("demo"))))
         : v_flex().flex_1().child(Skeleton(c, 8)))
       : !r ? v_flex().flex_1().child(Skeleton(c, 8))

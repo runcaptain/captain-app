@@ -693,7 +693,7 @@ def project_experiment_add(pid: str, body: dict):
     from . import project_state as PS
 
     if not body.get("pipeline"):
-        raise HTTPException(400, "name the trained pipeline version")
+        raise HTTPException(400, "name the trained model version")
     return PS.experiment_add(ctx(), pid, body["pipeline"], body.get("training_set"), body.get("labels"),
                              body.get("trainer"), body.get("note", ""), dry_run=bool(body.get("dry_run")))
 
@@ -748,10 +748,10 @@ def project_experiment_backtest(pid: str, eid: str, body: dict | None = None):
         if live_id and r.get("job"):
             LV.note_remote(c, live_id, job=r["job"])
         if lv:
-            lv.end("done", ref=r.get("run"), summary=f"Compared {plan['arms'][1]} with the champion")
+            lv.end("done", ref=r.get("run"), summary=f"Compared {plan['arms'][1]} with the baseline")
         return r
 
-    jid = _job(go, f"comparing {plan['arms'][1]} with the champion on {compute}")
+    jid = _job(go, f"comparing {plan['arms'][1]} with the baseline on {compute}")
     JOBS[jid]["compute"] = compute
     rid = lv.id if lv else live_id
     JOBS[jid]["live"] = rid
@@ -1623,7 +1623,7 @@ def grading_create(body: dict):
     if isinstance(pipes, str):
         pipes = [p.strip() for p in pipes.split(",") if p.strip()]
     if not pipes:
-        raise ValueError("pick at least one pipeline whose results people will grade")
+        raise ValueError("pick at least one model version whose results people will rate")
     return GR.create(ctx(), body.get("name", ""), body.get("queries", ""), pipes, int(body.get("depth") or 10),
                      int(body["sample"]) if body.get("sample") else None, float(body.get("overlap", 0.1)),
                      rubric=body.get("rubric") or None)
@@ -1761,7 +1761,7 @@ def investigation_run(iid: str, body: dict | None = None):
     c, b = ctx(), body or {}
     INV.get(c, iid)
     return {"job": _job(lambda p: f"ran {INV.run(c, iid, b.get('agent'), b.get('idempotency_key'), progress=p)['id']}",
-                        f"running investigation {iid}")}
+                        f"running experiment {iid}")}
 
 
 @app.post("/api/investigations/{iid}/decide", dependencies=A)

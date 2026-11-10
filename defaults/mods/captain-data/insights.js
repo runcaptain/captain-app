@@ -17,7 +17,7 @@ import { Skeleton } from "./kit/ui.js";
 import { int } from "./kit/num.js";
 
 const enc = (name) => String(name).split("/").map(encodeURIComponent).join("/");
-const KINDS = [["pipeline", "Pipelines built on it", "pipeline", "pipelines"], ["run", "Runs scored with it", "run", "runs"],
+const KINDS = [["pipeline", "Model versions built on it", "model version", "model versions"], ["run", "Runs scored with it", "run", "runs"],
   ["environment", "Environments it reached", "environment", "environments"], ["dataset", "Datasets made from it", "dataset", "datasets"]];
 const plural = (n, one, many) => `${int(n)} ${n === 1 ? one : many}`;
 function ago(iso) {
@@ -84,7 +84,7 @@ export class DatasetInsights {
       .when(!!onClick, (e) => e.cursor_pointer().hover((s) => s.bg(c.surface2)).on_click(onClick)).children(cells);
     return v_flex().id("ds-insights").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(12).gap(16)
       .child(div().text_size(13.5).text_color(c.navy).child(nothing
-        ? "Nothing uses this dataset yet. Pipelines built on it, runs scored with it and notebooks that name it will show here."
+        ? "Nothing uses this dataset yet. Model versions built on it, runs scored with it and notebooks that name it will show here."
         : `Used by ${parts.length ? parts.join(", ") : "nothing yet"}. Named in ${plural(n.notebooks ?? 0, "notebook", "notebooks")}. Read ${plural(rd.reads, "time", "times")} in the last ${int(rd.days ?? 90)} days.`))
       .children(KINDS.filter(([k]) => (d.used_by?.[k] ?? []).length).map(([k, title]) => section(title, v_flex().border_1().border_color(c.rule)
         .children(d.used_by[k].map((e, i) => row(`ins-${k}-${i}`, [

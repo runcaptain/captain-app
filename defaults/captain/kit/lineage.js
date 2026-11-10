@@ -25,8 +25,8 @@ const PAD = 16;
 
 export const KINDS = {
   table: ["Source table", "table"], connection: ["Database", "server"], dataset: ["Dataset", "database"],
-  pipeline: ["Pipeline", "workflow"], model: ["Model", "boxes"], backtest: ["Backtest", "flask-conical"],
-  run: ["Backtest run", "flask-conical"], handoff: ["Handoff", "send"], label: ["Label", "tag"],
+  pipeline: ["Model version", "workflow"], model: ["Model", "boxes"], backtest: ["Offline evaluation", "flask-conical"],
+  run: ["Evaluation run", "flask-conical"], handoff: ["Launch review", "send"], label: ["Label", "tag"],
   notebook: ["Notebook", "file-text"], registry: ["Registry", "cloud"], environment: ["Environment", "rocket"],
   // MLflow, read through the bridge (kit/mlflow.js withMlflow): drawn with its own mark.
   "mlflow-run": ["MLflow run", "brand:mlflow"], "mlflow-model": ["MLflow model", "brand:mlflow"],

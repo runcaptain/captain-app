@@ -151,7 +151,7 @@ def compatibility(ctx: Context, run_ref: str) -> dict:
     if (bt.tags or {}).get("label_independence") == "shared":
         from .project_state import OWN_LABELER
 
-        warnings.append({"code": "own-labeler", "text": f"the trained arm learned from the same labeler that grades the holdout "
+        warnings.append({"code": "own-labeler", "text": f"the trained arm learned from the same labeler that grades the test set "
                          f"({bt.tags.get('train_labels') or 'its training labels'}), so a higher score {OWN_LABELER} rather than beating the other arm"})
     if not run.complete:
         warnings.append({"code": "incomplete", "text": "an arm has judged@10 under 90%, so its nDCG is understated"})
@@ -164,7 +164,7 @@ def compatibility(ctx: Context, run_ref: str) -> dict:
     if ev and ev[-1].rank < Evidence.REAL_TRAFFIC.rank:
         warnings.append({"code": "offline", "text": f"offline evidence ({ev[-1].value}): not proof of online or business impact"})
     if bt.queries and not bt.queries.endswith(":holdout"):
-        warnings.append({"code": "not-holdout", "text": "scored on a query set that is not a sealed holdout, so tuning on it can overfit"})
+        warnings.append({"code": "not-holdout", "text": "scored on a query set that is not a sealed test set, so tuning on it can overfit"})
     small = [s for s in run.segments if s.get("verdict") == "too few"]
     if small:
         warnings.append({"code": "small-slices", "text": (f"{len(small)} slice results rest on fewer than 5 queries each" if len(small) != 1 else "1 slice result rests on fewer than 5 queries")})

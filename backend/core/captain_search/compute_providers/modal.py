@@ -22,7 +22,7 @@ class ModalProvider(ComputeProvider):
         fn = c.get("function") or "run_cst"
         if fn == "run_backtest":  # targets made before run_cst existed
             if job.backtest is None:
-                raise ValueError("this Modal target calls run_backtest, which runs backtests only. Set function=run_cst.")
+                raise ValueError("this Modal target calls run_backtest, which runs offline evaluations only. Set function=run_cst.")
             payload = {"workspace": job.env, "backtest": job.backtest}
         else:
             payload = {"workspace": job.env, "argv": job.argv}

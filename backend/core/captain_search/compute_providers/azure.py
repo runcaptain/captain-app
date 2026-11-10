@@ -47,7 +47,7 @@ class ContainerAppsProvider(_Azure):
     purposes = ["backtest", "serve"]
     fields = [
         {"name": "resource_group", "label": "Resource group", "required": True},
-        {"name": "job", "label": "Job name (for backtests)", "required": False},
+        {"name": "job", "label": "Job name (for offline evaluations)", "required": False},
         {"name": "app", "label": "Container app name (for serving)", "required": False},
         {"name": "image", "label": "Runner image", "required": True, "default": IMAGE_DEFAULT},
         {"name": "container", "label": "Container name in the job template", "required": False, "default": "runner"},
@@ -56,7 +56,7 @@ class ContainerAppsProvider(_Azure):
     def plan(self, job: Job) -> list[dict]:
         c = self.config
         if not c.get("job"):
-            raise ValueError("this Container Apps target has no job name, so it cannot run backtests")
+            raise ValueError("this Container Apps target has no job name, so it cannot run offline evaluations")
         return [{"service": "containerapps", "call": "jobs.begin_start", "args": {
             "resource_group_name": c["resource_group"], "job_name": c["job"],
             # args, not command: the image's entrypoint is cst
@@ -138,7 +138,7 @@ class AzureMLProvider(_Azure):
     def plan(self, job: Job) -> list[dict]:
         c = self.config
         if not c.get("compute"):
-            raise ValueError("this Azure ML target has no compute cluster, so it cannot run backtests")
+            raise ValueError("this Azure ML target has no compute cluster, so it cannot run offline evaluations")
         import shlex
 
         return [{"service": "azureml", "call": "jobs.create_or_update(command)", "args": {

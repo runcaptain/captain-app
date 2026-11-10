@@ -16,8 +16,8 @@ import { icon } from "./kit/icons.js";
 import { nodeName } from "./kit/scopes.js";
 import { int } from "./kit/num.js";
 
-const TABS = [["overview", "Overview"], ["investigations", "Investigations"], ["experiments", "Experiments"], ["runs", "Runs"],
-  ["evaluations", "Evaluations"], ["datasets", "Datasets"], ["signals", "Signals"], ["versions", "Versions"]];
+const TABS = [["overview", "Overview"], ["investigations", "Experiments"], ["experiments", "Offline evaluations"], ["runs", "Runs"],
+  ["evaluations", "Rating"], ["datasets", "Datasets"], ["signals", "Signals"], ["versions", "Versions"]];
 const SERVES = { search: "Search", recommendation: "Recommendations" };
 const list = (r) => (r?.ok ? (Array.isArray(r.data) ? r.data : r.data?.items ?? []) : null);
 const when = (iso) => (iso ? String(iso).slice(0, 10) : "");
@@ -132,27 +132,27 @@ export default class Engine extends View {
     };
     return v_flex().gap(16).p(16)
       .when(Boolean(e.description), (x) => x.child(div().text_size(13).line_height("20px").text_color(c.grey900).child(e.description)))
-      .child(h_flex().flex_wrap().gap(10).children([["investigations", "Investigations"], ["experiments", "Experiments"], ["runs", "Runs"],
+      .child(h_flex().flex_wrap().gap(10).children([["investigations", "Experiments"], ["experiments", "Offline evaluations"], ["runs", "Runs"],
         ["evaluations", "Evaluations"], ["datasets", "Datasets"], ["versions", "Versions"]].map(([k, l]) => card(k, l))))
       .child(v_flex().gap(6)
-        .child(div().text_size(12.5).font_semibold().text_color(c.navy).child("Pipelines"))
+        .child(div().text_size(12.5).font_semibold().text_color(c.navy).child("Model versions"))
         .child((e.pipelines ?? []).length
           ? h_flex().flex_wrap().gap(6).children(e.pipelines.map((p) => Badge(c, p, "neutral")))
-          : div().text_size(12.5).text_color(c.grey500).child("No pipelines belong to this engine yet. A pipeline belongs to the engine that lists it.")));
+          : div().text_size(12.5).text_color(c.grey500).child("No model versions belong to this engine yet. A model version belongs to the engine that lists it.")));
   }
 
   body(c) {
     const t = this.tab;
     if (t === "overview") return this.overview(c);
-    if (t === "investigations") return this.listTab(c, "investigations", { title: "No investigations here yet", body: "Investigations linked to this engine show here." },
+    if (t === "investigations") return this.listTab(c, "investigations", { title: "No experiments here yet", body: "Experiments linked to this engine show here." },
       (x, i) => this.row(c, `eng-inv-${i}`, x.title ?? x.id, x.question ?? x.hypothesis ?? "", [x.status], () => this.open("investigations", { investigation: x.id })));
-    if (t === "experiments") return this.listTab(c, "experiments", { title: "No experiments here yet", body: "Backtests comparing this engine's pipelines show here." },
+    if (t === "experiments") return this.listTab(c, "experiments", { title: "No offline evaluations here yet", body: "Offline evaluations comparing this engine's model versions show here." },
       (x, i) => this.row(c, `eng-exp-${i}`, x.name, (x.arms ?? []).join(" vs "), [x.primary_metric, `${x.runs ?? 0} runs`], () => this.open("comparisons", { backtest: x.name, version: x.latest })));
-    if (t === "runs") return this.listTab(c, "runs", { title: "No runs here yet", body: "Every run of this engine's experiments shows here, newest first." },
+    if (t === "runs") return this.listTab(c, "runs", { title: "No runs here yet", body: "Every run of this engine's offline evaluations shows here, newest first." },
       (x, i) => this.row(c, `eng-run-${i}`, `${x.name}, run ${x.version}`, [(x.arms ?? []).join(" vs "), when(x.created), x.by].filter(Boolean).join(", "),
         [x.complete === false ? "incomplete" : null, x.mode, x.wall_s != null ? `${Math.round(x.wall_s)} s` : null], () => this.open("runs", { backtest: x.name, version: x.version })));
-    if (t === "evaluations") return this.listTab(c, "evaluations", { title: "No evaluations here yet", body: "Grading over this engine's pipelines shows here." },
-      (x, i) => this.row(c, `eng-eval-${i}`, x.name, `${x.graded ?? 0} of ${x.pairs ?? 0} graded, depth ${x.depth ?? "?"}`, [x.queries], () => this.open("runs", { grading: x.name })));
+    if (t === "evaluations") return this.listTab(c, "evaluations", { title: "No rating queues here yet", body: "Rating over this engine's model versions shows here." },
+      (x, i) => this.row(c, `eng-eval-${i}`, x.name, `${x.graded ?? 0} of ${x.pairs ?? 0} rated, depth ${x.depth ?? "?"}`, [x.queries], () => this.open("runs", { grading: x.name })));
     if (t === "datasets") return this.listTab(c, "datasets", { title: "No datasets here yet", body: "Datasets linked to this engine show here." },
       (x, i) => this.row(c, `eng-ds-${i}`, x.name, x.description ?? "", [x.kind, x.rows != null ? `${int(x.rows)} rows` : null, `v${x.latest ?? 1}`], () => this.open("data", { dataset: x.name })));
     if (t === "signals") return this.listTab(c, "signals", { title: "No signals here yet", body: "Signals this engine ranks with show here." },
@@ -163,14 +163,14 @@ export default class Engine extends View {
     if (!p.ok) return Problem(c, p, (cx) => this.load(cx));
     const pipes = list(p), models = list(m) ?? [];
     return v_flex().w_full()
-      .child(div().px(14).py(8).text_size(12).font_semibold().text_color(c.grey500).child("PIPELINES"))
+      .child(div().px(14).py(8).text_size(12).font_semibold().text_color(c.grey500).child("MODEL VERSIONS"))
       .child(pipes.length ? v_flex().border_t(1).border_color(c.rule).children(pipes.map((x, i) => h_flex().child(div().flex_1().min_w(0).child(this.row(c, `eng-pl-${i}`, `${x.name}@v${x.latest ?? 1}`, x.description ?? "", [x.engine, x.repro_status && x.repro_status.replace(/-/g, " ")])))
         // A pipeline that declares its training command can retrain from here; Runs opens on it, live.
         .when(!!x.trains, (e) => e.child(div().id(`eng-retrain-${i}`).px(10).text_size(12).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
           .on_click((_e, cx) => this.retrain(cx, x)).child(this.retraining === x.name ? "Starting..." : "Retrain")))
         .child(div().id(`eng-whatif-${i}`).px(14).text_size(12).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
-          .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: x.name } })).child("Backtest settings"))))
-        : div().px(14).pb(8).text_size(12.5).text_color(c.grey500).child("No pipeline versions here yet."))
+          .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: x.name } })).child("Evaluation settings"))))
+        : div().px(14).pb(8).text_size(12.5).text_color(c.grey500).child("No model versions here yet."))
       .child(div().px(14).pt(14).pb(8).text_size(12).font_semibold().text_color(c.grey500).child("MODELS"))
       .child(models.length ? v_flex().border_t(1).border_color(c.rule).children(models.map((x, i) => this.row(c, `eng-md-${i}`, x.name ?? x.id, [x.architecture, x.brand].filter(Boolean).join(", "), [x.version != null ? `v${x.version}` : null, when(x.created)])))
         : div().px(14).text_size(12.5).text_color(c.grey500).child("No models here yet. Attach a model registry to see them."));
@@ -184,16 +184,16 @@ export default class Engine extends View {
       .child(h_flex().items_center().gap(12)
         .child(div().flex_1().text_size(18).font_semibold().text_color(c.navy).child("All engines"))
         .when(es.length > 0, (e) => e.child(Button(c, "eng-add", "Add engine", add, { small: true }))))
-      .child(div().text_size(13).text_color(c.grey900).child("The search and recommendation systems you're improving, across every brand. Pick one to see its experiments, runs and versions."))
+      .child(div().text_size(13).text_color(c.grey900).child("The search and recommendation systems you're improving, across every brand. Pick one to see its experiments, evaluations, runs and versions."))
       .child(!this.engines ? Skeleton(c, 3) : !es.length
         ? v_flex().id("eng-empty").mt(12).p(24).gap(10).items_center().border_1().border_color(c.rule).bg(c.surface2)
           .child(svg(icon("search")).size(28).text_color(c.blue))
           .child(div().text_size(15).font_semibold().text_color(c.navy).child("No engines yet"))
-          .child(div().max_w(460).text_size(13).line_height("20px").text_color(c.grey900).child("An engine is one lasting name for a search or recommendation system. Its models and pipelines change over time; the engine stays, so its history stays together."))
+          .child(div().max_w(460).text_size(13).line_height("20px").text_color(c.grey900).child("An engine is one lasting name for a search or recommendation system. Its models and their versions change over time; the engine stays, so its history stays together."))
           .child(div().text_size(12.5).text_color(c.grey500).child("For example: AptDeco product search."))
           .child(div().pt(4).child(Button(c, "eng-add-first", "Add your first engine", add, { kind: "primary" })))
         : v_flex().border_t(1).border_color(c.rule).children(es.map((e, i) => this.row(c, `eng-pick-${i}`, e.name, SERVES[e.type] ?? e.type,
-          [`${(e.pipelines ?? []).length} pipelines`], (_ev, cx) => { setShared("captain.scope", { kind: "engine", id: e.id, label: e.name }); cx.notify(); }))));
+          [`${(e.pipelines ?? []).length} model versions`], (_ev, cx) => { setShared("captain.scope", { kind: "engine", id: e.id, label: e.name }); cx.notify(); }))));
   }
 
   render() {

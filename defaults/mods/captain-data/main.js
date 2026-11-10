@@ -308,7 +308,7 @@ export default class CaptainData extends View {
       // What the tab holds, only when there's room: in a narrow pane it would push the buttons out of view.
       .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.grey900)
         .when((this.width ?? 0) < 1180, (e) => e.invisible())
-        .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your experiments read." : this.tab === "notebooks" ? "SQL, Python, notes and charts, saved as versions." : this.tab === "models" ? "Trained models from your registries, and what each was built from." : this.tab === "tables" ? "Your databases' tables, their columns and rows, and how they're queried." : "Rules that turn logged events into judgments."))
+        .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your evaluations read." : this.tab === "notebooks" ? "SQL, Python, notes and charts, saved as versions." : this.tab === "models" ? "Trained models from your registries, and what each was built from." : this.tab === "tables" ? "Your databases' tables, their columns and rows, and how they're queried." : "Rules that turn logged events into judgments."))
       .when(this.tab === "datasets", (e) => e
         .child(Button(c, "new-class", "New class", () => openForm("dataset-class"), { small: true }))
         .child(Button(c, "import-dataset", "Import a dataset", () => openImport(), { kind: "primary", small: true })))
@@ -326,7 +326,7 @@ export default class CaptainData extends View {
       .child(this.icon("table", 22, c.grey500))
       .child(div().text_size(15).font_medium().child("Bring in your data"))
       .child(div().max_w(460).text_center().text_size(12.5).line_height("19px").text_color(c.grey900)
-        .child("Experiments read four kinds of data: your catalog, the queries people search, judgments of what is relevant, and logs of what shoppers did. Import a file, save a SQL query, or start from the demo store."))
+        .child("Evaluations read four kinds of data: your catalog, the queries people search, judgments of what is relevant, and logs of what shoppers did. Import a file, save a SQL query, or start from the demo store."))
       .child(h_flex().gap(8)
         .child(Button(c, "first-import", "Import a dataset", () => openImport(), { kind: "primary" }))
         .child(Button(c, "first-demo", "Load Sample North Pole", () => openForm("demo"))));
@@ -435,7 +435,7 @@ export default class CaptainData extends View {
     const listW = Math.max(200, Math.min(280, Math.floor(w * 0.26)));
     // What a label is, always in view (Edgar didn't know what labels do).
     const about = div().id("labels-about").flex_none().px(16).py(8).border_b(1).border_color(c.rule).text_size(12.5).line_height("18px").text_color(c.grey900)
-      .child("A label grades each search from what shoppers did, so you can train and judge without grading by hand. For example, deep-search is 1 when a shopper clicked one of the top 3 results.");
+      .child("A label grades each search from what shoppers did, so you can train and judge without rating by hand. For example, deep-search is 1 when a shopper clicked one of the top 3 results.");
     return v_flex().flex_1().min_h(0).child(about).child(h_flex().flex_1().min_h(0)
       .child(v_flex().id("label-list").w(listW).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
         .when(ls === null, (e) => e.child(div().child(Skeleton(c, 8))))

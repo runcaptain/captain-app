@@ -80,7 +80,7 @@ await until(h, (t) => t.includes('/rankers') && t.includes('ranker'), 'experimen
 await h.click('ml-exp-1');
 await until(h, (t) => t.includes('lgbm') && t.includes('ndcg_10 0.71') && t.includes('lr=0.05') && t.includes('finished'), 'a run with its metrics and params');
 await h.click('ml-model-ranker');
-await until(h, (t) => t.includes('v3') && t.includes('from run abc123de') && t.includes('Served by pipeline...'), 'a model version');
+await until(h, (t) => t.includes('v3') && t.includes('from run abc123de') && t.includes('Served by model version...'), 'a model version');
 await h.click('ml-link-ranker@3');
 await until(h, () => Array.isArray(h.mod.ml.pipelines) && h.mod.ml.pipelines.includes('demo-tuned'), 'the pipelines to pick from');
 await h.click(`ml-pick-ranker@3-${h.mod.ml.pipelines.indexOf('demo-tuned')}`);

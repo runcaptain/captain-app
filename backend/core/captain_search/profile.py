@@ -102,7 +102,7 @@ def check_budget(budget: dict | None, prof: dict) -> dict | None:
     for key, limit in (budget.get("stages") or {}).items():
         st = next((s for s in prof["stages"] if s["stage"] == key or s["kind"] == key), None)
         if st is None:
-            breaches.append(f"the budget names a stage {key!r} this pipeline doesn't have")
+            breaches.append(f"the budget names a stage {key!r} this version doesn't have")
         elif st["p99_ms"] is not None and st["p99_ms"] > float(limit):
             breaches.append(f"{st['stage']} p99 is {st['p99_ms']:.1f} ms, over its {float(limit):g} ms budget")
     return {"ok": not breaches, "breaches": breaches, "budget": budget}

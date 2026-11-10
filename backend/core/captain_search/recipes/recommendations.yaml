@@ -15,5 +15,5 @@ evaluation:
   method: trainer-reported
   holdout: false
   text: >-
-    Captain has no recommendation backtest yet. The verdict uses the metrics your trainer reports on its own held-out
+    Captain has no offline evaluation for recommendations yet. The verdict uses the metrics your trainer reports on its own held-out
     users, labelled as reported by the trainer and not checked by Captain.

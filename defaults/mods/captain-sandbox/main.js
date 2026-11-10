@@ -151,11 +151,11 @@ export default class Sandbox extends View {
   promote(cx) {
     this.busy = "promote"; this.error = null; cx.notify();
     cx.spawn(async (cx) => {
-      const r = await api("/api/sandbox/promote", { body: { pipeline: this.pipeline, values: this.cell.values, note: `From a settings backtest: ${Object.entries(this.cell.values).map(([k, v]) => `${k} ${v}`).join(", ")}` } });
+      const r = await api("/api/sandbox/promote", { body: { pipeline: this.pipeline, values: this.cell.values, note: `From an evaluation of settings: ${Object.entries(this.cell.values).map(([k, v]) => `${k} ${v}`).join(", ")}` } });
       this.busy = null;
       if (!r.ok) { this.error = plainError(r.error, "Captain couldn't make the next version."); cx.notify(); return; }
       this.promoted = r.data;
-      notify({ title: `${this.pipeline}: next version ready`, body: "Nothing went live. Run a backtest against the current version next.", level: "info" });
+      notify({ title: `${this.pipeline}: next version ready`, body: "Nothing went live. Run an offline evaluation against the current version next.", level: "info" });
       cx.notify();
     });
   }
@@ -311,7 +311,7 @@ export default class Sandbox extends View {
           .child(v_flex().flex_1().min_w(0).child(list("Must not break", rp.must_not_break ?? [], (x) => `${x.query ?? x}: ${(rp.broken ?? []).some((b) => (b.query ?? b) === (x.query ?? x)) ? "breaks" : "holds"}`)))))
       .when(Boolean(pr), (e) => e.child(h_flex().gap(10).items_center()
         .child(div().flex_1().text_size(12.5).text_color(c.good).child(`Made ${pr.pipeline ?? pr.ref ?? "the next version"}. Nothing went live.`))
-        .child(Button(c, "sb-backtest", "Run a backtest against the current version", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "backtest", values: { a: `${this.pipeline}@v${this.version}`, b: pr.pipeline ?? pr.ref } } }), { kind: "primary", small: true }))));
+        .child(Button(c, "sb-backtest", "Evaluate it against the current version", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "backtest", values: { a: `${this.pipeline}@v${this.version}`, b: pr.pipeline ?? pr.ref } } }), { kind: "primary", small: true }))));
   }
 
   render() {
@@ -320,8 +320,8 @@ export default class Sandbox extends View {
       .child(h_flex().h(56).flex_none().px(20).gap(12).items_center().border_b(1).border_color(c.rule)
         .child(div().size(28).flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("flask-conical")).size(15)))
         .child(v_flex().flex_1().min_w(0)
-          .child(div().text_size(15).font_semibold().child("Backtest settings"))
-          .child(div().text_size(12).text_color(c.grey500).child("Try other values of one version's settings on your graded queries, then backtest the best against today's.")))
+          .child(div().text_size(15).font_semibold().child("Evaluation settings"))
+          .child(div().text_size(12).text_color(c.grey500).child("Try other values of one version's settings on your graded queries, then evaluate the best against today's.")))
         .child(div().id("sb-close").text_size(12.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
           .on_click(() => closeOverlay(props()?.overlay)).child("Close")))
       .child(div().id("sb-body").flex_1().min_h(0).overflow_y_scroll().child(v_flex().px(20).py(16).gap(16)

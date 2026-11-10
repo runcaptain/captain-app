@@ -52,8 +52,8 @@ Captain features (new files where possible):
 the `{"webview": ...}` block, its commands and `webview_hosts` are gone, and the fork delta with them.
 `src/cst.rs` stays: it starts or reuses the Captain Search backend and tells mods where it is.
 
-**The Captain window:** `defaults/layouts/captain.json` and the `captain-nav` mod (Investigations, Data and
-signals, Runs, Comparisons, Handoff, a Terminals toggle that hides the shells without ending them, Settings).
+**The Captain window:** `defaults/layouts/captain.json` and the `captain-nav` mod (Experiments, Data and
+signals, Runs, Compare, Launch review, a Terminals toggle that hides the shells without ending them, Settings).
 It's the default layout and the escape hatch's target (`brand::DEFAULT_LAYOUT`). Herdr's `main` ships as
 "Spaces". New sections are built as native gpui-kit mods first; the web view only carries existing screens.
 

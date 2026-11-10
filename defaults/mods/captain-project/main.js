@@ -35,8 +35,8 @@ export const SLOTS = {
   catalog: { title: "Catalog", icon: "table", about: "The products your search ranks.", noun: "a catalog" },
   events: { title: "Events", icon: "activity", about: "Searches, clicks and orders, for training.", noun: "events" },
   queries: { title: "Queries", icon: "search", about: "The queries models train on.", noun: "queries" },
-  labels: { title: "Labels", icon: "tag", about: "The judgments that grade the holdout.", noun: "labels" },
-  holdout: { title: "Sealed holdout", icon: "square-check", about: "Queries no model trains on, kept to judge them.", noun: "a sealed holdout" },
+  labels: { title: "Labels", icon: "tag", about: "The judgments that grade the test set.", noun: "labels" },
+  holdout: { title: "Sealed test set", icon: "square-check", about: "Queries no model trains on, kept to judge them.", noun: "a sealed test set" },
 };
 export const EVIDENCE = { SIMULATED: "simulated", LLM_GRADED: "LLM graded", LOGGED_CLICKS: "logged clicks", HUMAN_GRADED: "human graded", REAL_TRAFFIC: "real traffic" };
 const INDEPENDENCE = { independent: ["Independent labels", "good"], shared: ["Same labeler", "warn"], unknown: ["Label source unknown", "neutral"] };
@@ -54,8 +54,8 @@ export function verdictOf(ev) {
   if (!ev) return { text: "Not judged yet", tone: "neutral", icon: "clock" };
   if (ev.error) return { text: "Result can't be read", tone: "bad", icon: "circle-x" };
   if (ev.verdict === OWN || ev.label_independence?.status === "shared") return { text: "Agrees with its own labeler", tone: "warn", icon: "triangle-alert" };
-  if (ev.comparison === "win") return { text: "Beats the champion", tone: "good", icon: "circle-check" };
-  if (ev.comparison === "loss") return { text: "Loses to the champion", tone: "bad", icon: "circle-x" };
+  if (ev.comparison === "win") return { text: "Beats the baseline", tone: "good", icon: "circle-check" };
+  if (ev.comparison === "loss") return { text: "Loses to the baseline", tone: "bad", icon: "circle-x" };
   if (ev.comparison === "noise") return { text: "No clear difference", tone: "neutral", icon: "activity" };
   return { text: "Not judged yet", tone: "neutral", icon: "clock" };
 }
@@ -197,12 +197,12 @@ export default class ProjectHome extends View {
   }
 
   backtest(cx, e) {
-    this.act(cx, `/api/projects/${enc(this.pid())}/experiments/${enc(e.id)}/backtest`, {}, `Judging ${e.pipeline} against the champion. It's open in Runs, live.`,
+    this.act(cx, `/api/projects/${enc(this.pid())}/experiments/${enc(e.id)}/backtest`, {}, `Judging ${e.pipeline} against the baseline. It's open in Runs, live.`,
       (d) => { if (d?.live) { setShared("captain.open", { section: "runs", live: d.live, at: Date.now() }); run("layout.select", { stack: "sections", child: "runs" }); } });
   }
 
   makeChampion(cx, e) {
-    this.act(cx, `/api/projects/${enc(this.pid())}/champion`, { experiment: e.id, expect: this.exps?.champion ?? null }, `${e.pipeline} is the champion now.`);
+    this.act(cx, `/api/projects/${enc(this.pid())}/champion`, { experiment: e.id, expect: this.exps?.champion ?? null }, `${e.pipeline} is the baseline now.`);
   }
 
   usePin(cx, slot, ref) {
@@ -458,7 +458,7 @@ export default class ProjectHome extends View {
     const r = parseRef(e.pipeline);
     const ind = ev?.label_independence ? INDEPENDENCE[ev.label_independence.status] ?? INDEPENDENCE.unknown : null;
     const toneColor = { good: c.good, bad: c.fail, warn: c.warn, neutral: c.grey500 }[v.tone];
-    const sub = e.status === "backtesting" ? "Being judged against the champion" : e.status === "failed" ? "Judging failed. Open it to try again." : e.trainer ? `Trained with ${e.trainer}` : `Added ${day(e.created_at)}`;
+    const sub = e.status === "backtesting" ? "Being judged against the baseline" : e.status === "failed" ? "Judging failed. Open it to try again." : e.trainer ? `Trained with ${e.trainer}` : `Added ${day(e.created_at)}`;
     // Two lines, so nothing spills at any width: who and the verdict, then the numbers and badges, which wrap.
     const head = v_flex().id(`exp-${i}`).px(14).py(8).gap(6).cursor_pointer().hover((s) => s.bg(c.surface2))
       .on_click((_e, cx) => { this.open = open ? null : e.id; cx.notify(); })
@@ -468,7 +468,7 @@ export default class ProjectHome extends View {
           .child(h_flex().gap(6).items_center().min_w(0)
             .child(div().min_w(0).truncate().font_family(MONO).text_size(12.5).font_medium().child(r.name))
             .when(r.version != null, (x) => x.child(Badge(c, `v${r.version}`)))
-            .when(e.is_champion, (x) => x.child(Badge(c, "champion", "blue"))))
+            .when(e.is_champion, (x) => x.child(Badge(c, "baseline", "blue"))))
           .child(div().truncate().text_size(11.5).text_color(c.grey500).child(sub)))
         .when(!e.is_champion, (x) => x.child(h_flex().flex_none().gap(6).items_center()
           .child(svg(icon(v.icon)).size(13).flex_none().text_color(toneColor))
@@ -496,13 +496,13 @@ export default class ProjectHome extends View {
     const evWord = ev?.evidence ? EVIDENCE[ev.evidence] ?? String(ev.evidence).toLowerCase() : "not judged yet";
     const lines = [
       e.error ? plainError(e.error, "Judging it didn't finish.") : null,
-      ev?.against && !ev.against_is_champion ? `Judged against ${ev.against}, which is no longer the champion. Judge it again to compare with today's.` : null,
+      ev?.against && !ev.against_is_champion ? `Judged against ${ev.against}, which is no longer the baseline. Judge it again to compare with today's.` : null,
       ind?.text ?? null,
       ind?.status === "shared" ? "So the higher score shows the model learned that labeler, not that it ranks better. Judge it on labels from another source to know." : null,
       ev?.evaluated_on ? `Judged on ${ev.evaluated_on}.` : null,
       ...[...(e.inputs_read ?? []), ...(e.eval_inputs ?? [])].filter((x) => x.changed_since_pin).map((x) => `${x.slot} was read live and has changed since it was chosen${x.as_of ? ` (read ${day(x.as_of)})` : ""}, so a rerun may differ.`),
       ev?.click_grades ? "Click grades only exist for products the old ranker showed, which favors the old ranker." : null,
-      ev ? "Not yet confirmed online: an offline result until your team's own A/B or shadow readout agrees." : e.is_champion ? null : "Not judged against the champion yet.",
+      ev ? "Not yet confirmed online: an offline result until your team's own A/B or shadow readout agrees." : e.is_champion ? null : "Not judged against the baseline yet.",
     ].filter(Boolean);
     return v_flex().px(14).pl(39).pb(12).gap(8)
       .children(lines.map((t, k) => div().id(`exp-${i}-line-${k}`).text_size(12).line_height("17px").text_color(c.grey900).child(t)))
@@ -512,8 +512,8 @@ export default class ProjectHome extends View {
           go("comparisons", { backtest: r.name, version: r.version ?? undefined });
         }, { small: true })))
         .child(Button(c, `exp-${i}-rerun`, "Rerun with changes", () => form("experiment", { ...this.values(), base: name, labels: e.labels ?? undefined }), { small: true }))
-        .when(Boolean(champ) && !e.is_champion, (x) => x.child(Button(c, `exp-${i}-judge`, ev ? "Judge again against the champion" : "Judge against the champion", (_e, cx) => this.backtest(cx, e), { small: true, kind: ev ? "secondary" : "primary", disabled: this.busy || e.status === "backtesting" })))
-        .when(!e.is_champion, (x) => x.child(Button(c, `exp-${i}-champion`, `Make champion (${evWord})`, (_e, cx) => this.makeChampion(cx, e), { small: true, disabled: this.busy })))
+        .when(Boolean(champ) && !e.is_champion, (x) => x.child(Button(c, `exp-${i}-judge`, ev ? "Judge again against the baseline" : "Judge against the baseline", (_e, cx) => this.backtest(cx, e), { small: true, kind: ev ? "secondary" : "primary", disabled: this.busy || e.status === "backtesting" })))
+        .when(!e.is_champion, (x) => x.child(Button(c, `exp-${i}-champion`, `Make it the baseline (${evWord})`, (_e, cx) => this.makeChampion(cx, e), { small: true, disabled: this.busy })))
         .child(Button(c, `exp-${i}-publish`, "Publish to the registry", () => form("publish", { ...this.values(), pipeline: e.pipeline }), { small: true, kind: "quiet" })));
   }
 
@@ -521,19 +521,19 @@ export default class ProjectHome extends View {
     const xs = this.exps?.experiments ?? [];
     const champ = this.exps?.champion;
     const actions = [
-      Button(c, "exp-new", "New experiment", () => form("experiment", { ...this.values(), base: champ ? parseRef(champ).name : undefined }), { small: true, kind: "primary" }),
+      Button(c, "exp-new", "New candidate", () => form("experiment", { ...this.values(), base: champ ? parseRef(champ).name : undefined }), { small: true, kind: "primary" }),
       Button(c, "exp-import", "Import a model version", () => form("import-version", this.values()), { small: true }),
     ];
     const body = !xs.length
-      ? v_flex().w_full().border_1().border_color(c.rule).bg(c.surface).child(Empty(c, "No experiments yet", "An experiment is one trained version of your ranker. Train one from the pinned inputs, or bring a version trained in MLflow or your own registry."))
+      ? v_flex().w_full().border_1().border_color(c.rule).bg(c.surface).child(Empty(c, "No candidates yet", "A candidate is one trained version of your ranker. Train one from the pinned inputs, or bring a version trained in MLflow or your own registry."))
       : v_flex().w_full().border_1().border_color(c.rule).bg(c.surface).children(xs.map((e, i) => this.expRow(c, e, i)));
     const ev0 = this.stages?.evaluation;
     const evalSet = (this.stages?.inputs ?? []).find((i) => (i.role ?? i.slot) === "holdout");
     const noEval = ev0 ? !ev0.ready : !evalSet || evalSet.status === "missing" || evalSet.status === "empty";
     const missingEval = ev0?.missing?.length ? (this.stages.inputs ?? []).find((i) => i.slot === ev0.missing[0]) : null;
     const how = ev0?.label ? `. Judged by: ${String(ev0.label).replace(/^./, (x) => x.toLowerCase())}` : " on the evaluation set";
-    const hint = noEval ? "Experiments can train now. Nothing judges them until the project can evaluate."
-      : !champ && xs.length ? `Make one experiment the champion. Every other one is judged against it${how}.` : `Each one is judged against the champion${how}.`;
+    const hint = noEval ? "Candidates can train now. Nothing judges them until the project can evaluate."
+      : !champ && xs.length ? `Make one candidate the baseline. Every other one is judged against it${how}.` : `Each candidate is judged against the baseline${how}.`;
     const banner = noEval ? h_flex().id("exp-no-eval").p(10).gap(10).items_center().bg(c.surface).border_1().border_color(c.rule)
       .child(svg(icon("square-check")).size(14).flex_none().text_color(c.grey500))
       .child(v_flex().flex_1().min_w(0).gap(1)
@@ -541,7 +541,7 @@ export default class ProjectHome extends View {
         .child(div().text_size(12.5).text_color(c.grey900).child(ev0?.text ?? "No evaluation set yet. Add queries kept back from training, with labels that grade them.")))
       .child(Button(c, "exp-add-eval", missingEval ? `Choose ${this.slotOf(missingEval).noun}` : "Add an evaluation set", () => (missingEval ?? evalSet
         ? pickInput(this.pid(), this.slotOf(missingEval ?? evalSet))
-        : form("add-input", { project: this.pid(), label: "Evaluation set", kind: "queries", why: "Queries kept back from training, to judge experiments" })), { small: true })) : null;
+        : form("add-input", { project: this.pid(), label: "Evaluation set", kind: "queries", why: "Queries kept back from training, to judge candidates" })), { small: true })) : null;
     return this.part(c, "experiments", "Train and compare", hint, actions, v_flex().gap(8).when(Boolean(banner), (e) => e.child(banner)).child(body));
   }
 
@@ -561,19 +561,19 @@ export default class ProjectHome extends View {
     const st = this.stages, champ = this.exps?.champion;
     const reg = st.ship?.registry ?? {};
     const where = reg.arch && reg.brand ? `${reg.arch} / ${reg.brand}` : null;
-    return this.part(c, "ship", "Ship", "Where the champion goes once it wins.", [],
+    return this.part(c, "ship", "Ship", "Where the baseline goes next. MLflow and Unity Catalog call this version the \"champion\" alias.", [],
       h_flex().flex_wrap().items_start().gap(10)
         .child(this.tile(c, "ship-registry", "package", "Model registry",
-          [where ? `Publishes to ${where}${reg.uri ? "" : " in the default registry"}.` : "Not set yet. Publishing asks where, once.", champ ? null : "Make a champion first."],
-          champ ? Button(c, "ship-publish", "Publish the champion", () => form("publish", { ...this.values(), pipeline: champ }), { small: true }) : null))
+          [where ? `Publishes to ${where}${reg.uri ? "" : " in the default registry"}.` : "Not set yet. Publishing asks where, once.", champ ? null : "Make a baseline first."],
+          champ ? Button(c, "ship-publish", "Publish the baseline", () => form("publish", { ...this.values(), pipeline: champ }), { small: true }) : null))
         .child(this.tile(c, "ship-staging", "server", "Staging",
           ["Serving a trained ranker on a staging endpoint comes in a later release.", "Until then, hand a candidate to your own staging."], null))
-        .child(this.tile(c, "ship-live", "send", "Live handoff",
-          ["Readiness checks, then a bundle for your deployment process. Captain deploys nothing itself."],
-          champ ? Button(c, "ship-handoff", "Hand off the champion", () => form("handoff", { pipeline: champ }), { small: true }) : null))
+        .child(this.tile(c, "ship-live", "send", "Launch review",
+          ["Launch criteria, then a bundle for your deployment process. Captain deploys nothing itself."],
+          champ ? Button(c, "ship-handoff", "Send to launch review", () => form("handoff", { pipeline: champ }), { small: true }) : null))
         .child(this.tile(c, "ship-online", "activity", "Online check",
-          ["Not yet confirmed online.", "Bring in your team's A/B or shadow readout from Handoff once it runs."],
-          Button(c, "ship-open-handoff", "Open Handoff", () => go("handoff"), { small: true, kind: "quiet" }))));
+          ["Not yet confirmed online.", "Bring in your team's A/B or shadow readout from Launch review once it runs."],
+          Button(c, "ship-open-handoff", "Open Launch review", () => go("handoff"), { small: true, kind: "quiet" }))));
   }
 
   // ---- everything in the project (the earlier home) --------------------------------------------------------------
@@ -686,11 +686,11 @@ export default class ProjectHome extends View {
       .child(this.section(c, "runs", "Recent runs", h.runs ?? [],
         (r, i) => this.row(c, `ph-run-${i}`, r.backtest, `${(r.arms ?? []).join(" vs ")}, ${day(r.created_at)}`, [String(r.run ?? "").split("@")[1] ?? null], "git-compare",
           () => go("comparisons", { backtest: r.backtest, version: Number(String(r.run ?? "").split("@v")[1]) || undefined })),
-        "No runs yet. Judge an experiment against the champion."))
-      .child(this.section(c, "pipelines", "Pipelines", h.pipelines ?? [],
-        (p, i) => this.row(c, `ph-pl-${i}`, `${p.name}@v${p.version ?? 1}`, `Backtest other settings (by ${p.created_by ?? "?"} ${day(p.created_at)})`, [], "layers",
+        "No runs yet. Judge a candidate against the baseline."))
+      .child(this.section(c, "pipelines", "Model versions", h.pipelines ?? [],
+        (p, i) => this.row(c, `ph-pl-${i}`, `${p.name}@v${p.version ?? 1}`, `Evaluate other settings (by ${p.created_by ?? "?"} ${day(p.created_at)})`, [], "layers",
           () => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: p.name } })),
-        `No pipelines yet. ${joins}`))
+        `No model versions yet. ${joins}`))
       .child(this.section(c, "models", "Models", models,
         (m, i) => this.row(c, `ph-md-${i}`, m.model ?? m.name ?? m.brand ?? m.id ?? "", m.pipeline ? `${m.from}, served by ${m.pipeline}` : [m.from, m.architecture, m.status_kind].filter(Boolean).join(", "), [m.version != null ? (/^\d+$/.test(String(m.version)) ? `v${m.version}` : String(m.version)) : null], "package", () => go("data", { view: "models" })),
         "No models yet. Choose models, or tick a registry brand to bring all of its models.",
@@ -706,7 +706,7 @@ export default class ProjectHome extends View {
       .on_click((_e, cx) => { this.everything = !this.everything; if (this.everything) this.loadHome(cx); cx.notify(); })
       .child(svg(icon(this.everything ? "chevron-down" : "chevron-right")).size(13))
       .child(div().text_size(13).font_semibold().child("Everything in this project"))
-      .child(div().min_w(0).truncate().text_size(12).text_color(c.grey500).child("datasets, runs, pipelines, models and notebooks"));
+      .child(div().min_w(0).truncate().text_size(12).text_color(c.grey500).child("datasets, runs, model versions, models and notebooks"));
     return v_flex().gap(8).child(toggle).when(this.everything, (e) => e.child(this.everythingBody(c)));
   }
 
@@ -745,16 +745,16 @@ export default class ProjectHome extends View {
       const inp = (sum.stages.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === n0.slot);
       if (n0.action === "set-input" && inp) return { label: `Choose ${inp.noun}`, task: "input", slot: inp };
       if (n0.action === "add-evaluation") return { label: "Add an evaluation set" };
-      if (n0.action === "make-champion") return { label: "Make a champion" };
-      if (n0.action === "backtest") return { label: "Judge an experiment" };
-      if (n0.action === "new-experiment") return { label: "New experiment", task: "experiment" };
+      if (n0.action === "make-champion") return { label: "Make a baseline" };
+      if (n0.action === "backtest") return { label: "Judge a candidate" };
+      if (n0.action === "new-experiment") return { label: "New candidate", task: "experiment" };
     }
     const missing = (sum.stages.inputs ?? []).find((i) => i.status === "missing" && i.slot !== "events");
     if (missing) return { label: `Choose ${SLOTS[missing.slot]?.noun ?? missing.slot}`, task: "pin", slot: missing.slot };
     const n = sum.stages.experiments?.next ?? {};
-    if (n.action === "make-champion") return { label: "Make a champion" };
-    if (n.action === "backtest") return { label: "Judge an experiment" };
-    return { label: "New experiment", task: "experiment" };
+    if (n.action === "make-champion") return { label: "Make a baseline" };
+    if (n.action === "backtest") return { label: "Judge a candidate" };
+    return { label: "New candidate", task: "experiment" };
   }
 
   projectCard(c, p, i) {
@@ -765,7 +765,7 @@ export default class ProjectHome extends View {
     const champExp = exps.find((e) => e.is_champion);
     // The verdict worth showing: the champion's own, else the newest challenger judged against it.
     const judged = [...exps].reverse().find((e) => !e.is_champion && e.evaluation);
-    const shown = champExp?.evaluation ? { who: "Champion", v: verdictOf(champExp.evaluation) } : judged ? { who: parseRef(judged.pipeline).name, v: verdictOf(judged.evaluation) } : null;
+    const shown = champExp?.evaluation ? { who: "Baseline", v: verdictOf(champExp.evaluation) } : judged ? { who: parseRef(judged.pipeline).name, v: verdictOf(judged.evaluation) } : null;
     const tone = shown ? { good: c.good, bad: c.fail, warn: c.warn, neutral: c.grey500 }[shown.v.tone] : c.grey500;
     const next = ready ? this.nextOf(sum) : null;
     const cr = parseRef(champ);
@@ -783,13 +783,13 @@ export default class ProjectHome extends View {
             .child(svg(icon("trophy")).size(13).flex_none().text_color(champ ? c.blue : c.grey300))
             .child(champ
               ? h_flex().gap(6).items_center().min_w(0).child(div().min_w(0).truncate().font_family(MONO).text_size(12).child(cr.name)).when(cr.version != null, (e) => e.child(Badge(c, `v${cr.version}`)))
-              : div().text_size(12).text_color(c.grey500).child("No champion yet")))
+              : div().text_size(12).text_color(c.grey500).child("No baseline yet")))
           .child(h_flex().gap(6).items_center().min_w(0)
             .child(svg(icon(shown ? shown.v.icon : "clock")).size(13).flex_none().text_color(tone))
             .child(div().min_w(0).truncate().text_size(12).text_color(tone).child(shown ? `${shown.who}: ${shown.v.text.toLowerCase()}` : "Nothing judged yet")))
           .child(h_flex().gap(6).items_center()
             .child(svg(icon("flask-conical")).size(13).flex_none().text_color(c.grey500))
-            .child(div().text_size(12).text_color(c.grey900).child(`${int(exps.length)} experiment${exps.length === 1 ? "" : "s"}`))))
+            .child(div().text_size(12).text_color(c.grey900).child(`${int(exps.length)} candidate${exps.length === 1 ? "" : "s"}`))))
       .child(div().flex_1())
       .when(Boolean(next), (e) => e.child(h_flex().child(Button(c, `ph-p-${i}-next`, next.label, (_e, cx) => {
         this.pickProject(cx, p);
@@ -821,18 +821,18 @@ export default class ProjectHome extends View {
     const st = this.stages, ex = this.exps;
     if (st?.next?.text) {
       const slot = (st.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === st.next.slot);
-      const label = { "set-input": slot ? `Choose ${slot.noun}` : "Choose an input", "add-evaluation": "Add an evaluation set", "new-experiment": "New experiment", backtest: "Judge it" }[st.next.action] ?? null;
+      const label = { "set-input": slot ? `Choose ${slot.noun}` : "Choose an input", "add-evaluation": "Add an evaluation set", "new-experiment": "New candidate", backtest: "Judge it" }[st.next.action] ?? null;
       return { text: st.next.text, label, action: st.next };
     }
     const req = (st?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.required && i.empty);
     if (req) return { text: `Choose ${req.noun}: the project can't train without it.`, label: `Choose ${req.noun}`, run: () => pickInput(this.pid(), req) };
     const xs = ex?.experiments ?? [];
-    if (st?.evaluation && !st.evaluation.ready && !(ex?.experiments ?? []).length) return { text: "Train a first experiment. Add an evaluation set too, so experiments can be judged.", label: "New experiment", run: () => form("experiment", { ...this.values() }) };
-    if (!xs.length) return { text: "Train a first experiment on these inputs, or import one you trained elsewhere.", label: "New experiment", run: () => form("experiment", { ...this.values() }) };
-    if (!ex.champion) return { text: "Make one experiment the champion, so the others are judged against it.", label: null };
+    if (st?.evaluation && !st.evaluation.ready && !(ex?.experiments ?? []).length) return { text: "Train a first candidate. Add an evaluation set too, so candidates can be judged.", label: "New candidate", run: () => form("experiment", { ...this.values() }) };
+    if (!xs.length) return { text: "Train a first candidate on these inputs, or import one you trained elsewhere.", label: "New candidate", run: () => form("experiment", { ...this.values() }) };
+    if (!ex.champion) return { text: "Make one candidate the baseline, so the others are judged against it.", label: null };
     const pending = xs.find((e) => !e.is_champion && !e.evaluation && e.status !== "backtesting");
-    if (pending) return { text: `Judge ${parseRef(pending.pipeline).name} against the champion.`, label: "Judge it", run: (cx) => this.backtest(cx, pending) };
-    return { text: "Publish the champion, or train another experiment to beat it.", label: null };
+    if (pending) return { text: `Judge ${parseRef(pending.pipeline).name} against the baseline.`, label: "Judge it", run: (cx) => this.backtest(cx, pending) };
+    return { text: "Publish the baseline, or train another candidate to beat it.", label: null };
   }
 
   nextLine(c) {
@@ -850,7 +850,7 @@ export default class ProjectHome extends View {
     if ((a.action === "pin" || a.action === "set-input") && inp) return pickInput(this.pid(), inp);
     if (a.action === "add-evaluation") {
       const ev = this.stages?.evaluation, miss = (this.stages?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === ev?.missing?.[0]);
-      return miss ? pickInput(this.pid(), miss) : form("add-input", { project: this.pid(), label: "Evaluation set", kind: "queries", why: "Queries kept back from training, to judge experiments" });
+      return miss ? pickInput(this.pid(), miss) : form("add-input", { project: this.pid(), label: "Evaluation set", kind: "queries", why: "Queries kept back from training, to judge candidates" });
     }
     if (a.action === "new-experiment") return form("experiment", { ...this.values() });
     if (a.action === "assist") return this.startAssist(cx);
@@ -878,11 +878,11 @@ export default class ProjectHome extends View {
     if (this.listProblem) return Problem(c, this.listProblem, (cx) => { this.listProblem = null; this.load(cx); });
     if (ps === null) return Skeleton(c, 4);
     const newBtn = Button(c, "ph-empty-new", "New project", () => form("project"), { kind: "primary" });
-    if (!ps.length) return Empty(c, "Start with a project", "A project holds one search you're improving: its catalog, the labels that grade it, the experiments you train and the champion you ship.", newBtn);
+    if (!ps.length) return Empty(c, "Start with a project", "A project holds one search you're improving: its catalog, the labels that grade it, the candidates you train and the baseline you ship.", newBtn);
     return v_flex().gap(10)
       .child(v_flex().gap(1)
         .child(div().text_size(15).font_semibold().child("Projects"))
-        .child(div().text_size(12).text_color(c.grey500).child("Each one is a search you're improving. Open one to see its inputs, experiments and champion.")))
+        .child(div().text_size(12).text_color(c.grey500).child("Each one is a search you're improving. Open one to see its inputs, candidates and baseline.")))
       .child(h_flex().id("ph-projects").flex_wrap().items_start().gap(10).children(ps.map((p, i) => this.projectCard(c, p, i))));
   }
 
@@ -894,7 +894,7 @@ export default class ProjectHome extends View {
       .child(pid ? ProjectBadge(c, { id: pid, icon: p?.icon ?? null }, 32) : div().size(32).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("house")).size(16)))
       .child(v_flex().flex_1().min_w(0)
         .child(div().text_size(18).font_semibold().truncate().child(p?.name ?? (pid ? shared("captain.scope")?.label ?? pid : "Home")))
-        .child(div().text_size(12).text_color(c.grey500).truncate().child(p?.description || (pid ? "What you're building, its inputs, its experiments against the champion, and where it ships." : this.projects && !this.projects.length ? "Start with a project." : "Pick a project to work on."))))
+        .child(div().text_size(12).text_color(c.grey500).truncate().child(p?.description || (pid ? "What you're building, its inputs, its candidates against the baseline, and where it ships." : this.projects && !this.projects.length ? "Start with a project." : "Pick a project to work on."))))
       .child(Button(c, "ph-workflows", "Workflows", () => go("runs", { tab: "workflows" }), { small: true, kind: "quiet" }))
       .when(Boolean(pid), (e) => e.child(Button(c, "ph-all", "All projects", (_e, cx) => this.allProjects(cx), { small: true, kind: "quiet" })))
       .when(Boolean(pid) && Boolean(this.stages), (e) => e.child(Button(c, "ph-assist", "Set up with an agent", (_e, cx) => this.startAssist(cx), { small: true, disabled: this.busy || Boolean(this.assist) })))

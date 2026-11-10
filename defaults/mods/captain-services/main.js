@@ -13,7 +13,7 @@ import { Brand, engineTitle } from "./kit/brands.js";
 import { ICONS } from "./kit/icons.js";
 
 const form = (task, values = {}) => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, values } });
-const PURPOSE = { backtest: "Backtests run on", serve: "Pipelines are served on" };
+const PURPOSE = { backtest: "Offline evaluations run on", serve: "Models are served on" };
 
 export default class CaptainServices extends View {
   init(_props, cx) {
@@ -45,7 +45,7 @@ export default class CaptainServices extends View {
     cx.spawn(async (cx) => {
       const r = await api("/api/settings/compute", { method: "PUT", body: { [purpose]: name } });
       this.saving = null;
-      if (!r.ok) this.problem = `Couldn't save where ${purpose === "serve" ? "pipelines are served" : "backtests run"}. ${r.error ?? ""}`.trim();
+      if (!r.ok) this.problem = `Couldn't save where ${purpose === "serve" ? "models are served" : "offline evaluations run"}. ${r.error ?? ""}`.trim();
       this.load(cx);
     });
   }
@@ -94,7 +94,7 @@ export default class CaptainServices extends View {
       const able = targets.filter((t) => (t.purposes ?? []).includes(purpose));
       return h_flex().id(`pick-${purpose}`).flex_wrap().gap(6).items_center()
         .child(div().w(170).flex_none().text_size(12.5).text_color(c.grey900).child(PURPOSE[purpose]))
-        .when(!able.length, (e) => e.child(div().text_size(12).text_color(c.grey500).child(purpose === "serve" ? "Nothing that can serve yet. Add compute that serves pipelines." : "Nothing that can run backtests yet.")))
+        .when(!able.length, (e) => e.child(div().text_size(12).text_color(c.grey500).child(purpose === "serve" ? "Nothing that can serve yet. Add compute that serves models." : "Nothing that can run offline evaluations yet.")))
         .children(able.map((t) => {
           const on = comp.defaults?.[purpose] === t.name;
           return h_flex().id(`pick-${purpose}-${t.name}`).h(28).px(10).gap(6).items_center().cursor_pointer().border_1()
@@ -106,7 +106,7 @@ export default class CaptainServices extends View {
     };
     const rows = targets.map((t) => this.row(c, `compute-${t.name}`, {
       ic: "boxes", name: t.name, sub: [t.label, t.region].filter(Boolean).join(", "),
-      chips: (t.default_for ?? []).map((p) => (p === "serve" ? "default for serving" : "default for backtests")),
+      chips: (t.default_for ?? []).map((p) => (p === "serve" ? "default for serving" : "default for offline evaluations")),
       status: this.status(c, t.status, t.live_tested ? null : "Not yet tried on a real account"),
       edit: () => form("compute", { kind: t.kind, name: t.name }),
     }));
@@ -117,12 +117,12 @@ export default class CaptainServices extends View {
         .child(this.ic("boxes", 14, c.grey500))
         .child(v_flex().flex_1().min_w(0)
           .child(div().text_size(12.5).text_color(c.navy).child(k.label ?? k.kind))
-          .child(div().text_size(11).text_color(c.grey500).child([(k.purposes ?? []).map((p) => (p === "serve" ? "serves pipelines" : "runs backtests")).join(" and "),
+          .child(div().text_size(11).text_color(c.grey500).child([(k.purposes ?? []).map((p) => (p === "serve" ? "serves models" : "runs offline evaluations")).join(" and "),
             k.live_tested ? null : "Not yet tried on a real account"].filter(Boolean).join(". ")))
         )
         .child(this.ic("plus", 13, c.blue))));
     return v_flex().gap(10)
-      .child(this.section(c, "compute", "Compute", "Where Captain's work runs. Each backtest or pipeline can name its own, otherwise it uses these.", rows,
+      .child(this.section(c, "compute", "Compute", "Where Captain's work runs. Each offline evaluation or model version can name its own, otherwise it uses these.", rows,
         Button(c, "add-compute-toggle", this.addOpen ? "Close" : "Add compute", (_e, cx) => { this.addOpen = !this.addOpen; cx.notify(); }, { small: true })))
       .when(this.addOpen, (e) => e.child(add))
       .child(v_flex().gap(8).p(12).border_1().border_color(c.rule).child(pick("backtest")).child(pick("serve")));

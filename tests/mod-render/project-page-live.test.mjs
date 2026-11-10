@@ -55,15 +55,15 @@ const until = async (ok, what, n = 80) => {
 await until((t) => t.includes('Train and compare') && t.includes('demo-tuned'), 'page loads');
 let t = h.text();
 // Inputs: each pinned version, one action each.
-for (const s of ['Catalog', 'Events', 'Queries', 'Labels', 'Sealed holdout']) assert.ok(t.includes(s), `input card ${s}`);
+for (const s of ['Catalog', 'Events', 'Queries', 'Labels', 'Sealed test set']) assert.ok(t.includes(s), `input card ${s}`);
 assert.ok(t.includes('demo-catalog') && t.includes('demo-judgments'), 'pinned names');
 assert.ok(t.includes('Newer version available: demo-queries@v2.'), 'newer version as information');
 assert.equal(h.byIdPrefix('in-queries-newer').length, 1, 'one action: use the newer version');
 assert.equal(h.byIdPrefix('in-events-pick').length, 1, 'a missing input asks to choose one');
 // Experiments: the champion, and the tuned ranker trained on its own labeler, which never reads as a win.
-assert.ok(t.includes('champion'), 'champion badge');
+assert.ok(t.includes('baseline'), 'baseline badge');
 assert.ok(t.includes('Agrees with its own labeler') && t.includes('Same labeler'), 'shared labels read differently');
-assert.ok(!t.includes('Beats the champion'), 'no win claimed');
+assert.ok(!t.includes('Beats the baseline'), 'no win claimed');
 assert.ok(t.includes('nDCG@10') && t.includes('Recall@50') && t.includes('Judged@10') && t.includes('simulated'), 'metrics and evidence');
 // Ship
 assert.ok(t.includes('Not yet confirmed online.') && t.includes('Model registry') && t.includes('Staging'), 'ship tiles');
@@ -73,7 +73,7 @@ const row = h.mod.exps.experiments.findIndex((e) => e.id === tuned.id);
 await h.click(`exp-${row}`);
 t = h.text();
 assert.ok(t.includes('same judgment set'), 'independence explained');
-assert.ok(t.includes('Make champion (simulated)'), 'evidence on the button');
+assert.ok(t.includes('Make it the baseline (simulated)'), 'evidence on the button');
 for (const id of ['open', 'rerun', 'judge', 'champion', 'publish']) assert.equal(h.byIdPrefix(`exp-${row}-${id}`).length, 1, `row action ${id}`);
 await h.click(`exp-${row}-rerun`);
 const o = globalThis.__overlays.at(-1);
@@ -102,7 +102,7 @@ assert.equal(spawnSync(cst, ['judge', 'import', graded, '--name', 'human-grades'
 await post('/api/projects/outdoor/pin', { labels: 'human-grades' });
 assert.equal(spawnSync(cst, ['projects', 'experiment-backtest', 'outdoor', tuned.id], { env }).status, 0, 'judged on human grades');
 h.mod.load(h.cx);
-await until((x) => /Beats the champion|Loses to the champion|No clear difference/.test(x), 'a real verdict with independent labels');
+await until((x) => /Beats the baseline|Loses to the baseline|No clear difference/.test(x), 'a real verdict with independent labels');
 assert.ok(h.text().includes('Independent labels'));
 assert.ok(!h.text().includes('Agrees with its own labeler'));
 

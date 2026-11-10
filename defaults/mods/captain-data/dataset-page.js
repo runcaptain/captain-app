@@ -327,7 +327,7 @@ export class DatasetPage {
     const latest = (this.host.list ?? []).find((x) => x.name === d.name)?.latest ?? d.version;
     const versions = Array.from({ length: latest }, (_, i) => latest - i);
     const row = (k, v) => v ? h_flex().gap(10).text_size(12.5).child(div().w(110).flex_none().text_color(c.grey500).child(k)).child(div().flex_1().min_w(0).child(v)) : null;
-    const source = { sql: "A SQL query", file: "A file", notebook: "A notebook", label: "A label", grading: "Grading", import: "An import" }[p.source] ?? p.source ?? "";
+    const source = { sql: "A SQL query", file: "A file", notebook: "A notebook", label: "A label", grading: "Rating", import: "An import" }[p.source] ?? p.source ?? "";
     return v_flex().id("ds-details").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(10).gap(14)
       .child(v_flex().gap(6)
         .child(div().text_size(13).font_medium().child("Versions"))
@@ -351,7 +351,7 @@ export class DatasetPage {
         .children((d.files ?? []).slice(0, 50).map((f, i) => h_flex().id(`file-${i}`).gap(10).text_size(12)
           .child(div().flex_1().min_w(0).truncate().font_family(MONO).child(f.path))
           .child(div().flex_none().font_family(MONO).text_color(c.grey500).child(fmtBytes(f.bytes))))))
-      .when(!!d.holdout_seal, (e) => e.child(row("Holdout", "Sealed: scored only once a backtest's plan is fixed.")))
+      .when(!!d.holdout_seal, (e) => e.child(row("Test set", "Sealed: scored only once an offline evaluation's plan is fixed.")))
       .when(!!d.judgment_source, (e) => e.child(row("Judgments from", String(d.judgment_source))));
   }
 

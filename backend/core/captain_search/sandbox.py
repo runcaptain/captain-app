@@ -214,4 +214,4 @@ def promote(ctx, pipeline: str, values: dict, note: str = "") -> dict:
     nv = ops.pipeline_publish(ctx, {"name": pm.name, "engine": pm.engine, "spec": spec, "catalog": pm.catalog,
                                     "description": note or f"From a sweep: {values}"})
     return {"pipeline": ops.ref(nv), "from": ops.ref(pm), "values": values,
-            "next": f"Pre-register a backtest of {ops.ref(nv)} against {ops.ref(pm)} before trusting the sweep's number."}
+            "next": f"Pre-register an offline evaluation of {ops.ref(nv)} against {ops.ref(pm)} before trusting the sweep's number."}

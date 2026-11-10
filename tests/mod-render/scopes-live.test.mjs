@@ -81,7 +81,7 @@ let t = ex.text();
 // Edgar, 2026-11-07: everything through projects. Projects come first; no All engines or All experiments views; and
 // no bare Brands or Sites groups while the scope model has no levels with anything in them.
 assert.ok(t.includes('Projects') && !t.includes('Scope model'), `base tree, with no Scope model row (it lives in Settings, Project Structure): ${t}`);
-for (const gone of ['All engines', 'All experiments', 'Brands']) assert.ok(!t.includes(gone), `no ${gone}: ${t}`);
+for (const gone of ['All engines', 'All experiments', 'All offline evaluations', 'Brands']) assert.ok(!t.includes(gone), `no ${gone}: ${t}`);
 assert.equal(ex.mod.ex.live, true, 'the Explorer reads the services');
 assert.ok(t.includes('No projects yet: add one'), 'an empty Projects says so');
 await new Promise((r) => setTimeout(r, 1300)); // past the Explorer's first moments, when a click is ignored
@@ -150,7 +150,7 @@ await home.start();
 await until(home, () => home.text().includes('Everything in this project'), 'the project page loads');
 await home.click('ph-everything');
 await until(home, () => home.text().includes('demo-catalog'), 'the home lists its dataset');
-for (const thing of ['demo-tuned@v1', 'demo-tuned-vs-bm25', 'DATASETS', 'RECENT RUNS', 'PIPELINES', 'MODELS', 'NOTEBOOKS']) assert.ok(home.text().includes(thing), `the home shows ${thing}: ${home.text().slice(0, 500)}`);
+for (const thing of ['demo-tuned@v1', 'demo-tuned-vs-bm25', 'DATASETS', 'RECENT RUNS', 'MODEL VERSIONS', 'MODELS', 'NOTEBOOKS']) assert.ok(home.text().includes(thing), `the home shows ${thing}: ${home.text().slice(0, 500)}`);
 await home.click('ph-ds-0');
 assert.equal(globalThis.__shared['captain.open']?.section, 'data');
 assert.equal(globalThis.__shared['captain.open']?.dataset, 'demo-catalog', 'a dataset opens in Data');

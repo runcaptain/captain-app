@@ -27,11 +27,11 @@ const ok = (r, done) => {
 export function fixFor(gates, pipeline) {
   const names = new Set(gates.map((g) => g.gate));
   const sharedLabels = gates.some((g) => g.gate === "evidence" && /own labeler/.test(String(g.detail ?? "")));
-  if (names.has("backtest")) return { label: "Run a backtest", task: "backtest", values: { kind: "versions", b: pipeline } };
+  if (names.has("backtest")) return { label: "Run an offline evaluation", task: "backtest", values: { kind: "versions", b: pipeline } };
   if (names.has("evidence") || names.has("complete"))
-    return { label: sharedLabels ? "Grade the holdout by hand" : "Start grading", task: "grading", values: { a: pipeline } };
-  if (names.has("primary_metric")) return { label: "Run a backtest", task: "backtest", values: { kind: "versions", b: pipeline } };
-  if (names.has("human_approval")) return { label: "Open Investigations", section: "investigations" };
+    return { label: sharedLabels ? "Rate the test set by hand" : "Start rating", task: "grading", values: { a: pipeline } };
+  if (names.has("primary_metric")) return { label: "Run an offline evaluation", task: "backtest", values: { kind: "versions", b: pipeline } };
+  if (names.has("human_approval")) return { label: "Open Experiments", section: "investigations" };
   return null;
 }
 // Through the services' command runner, for the few tasks without their own route.
@@ -63,7 +63,7 @@ export const FALLBACK_RECIPES = [
   { id: "search-events", label: "Search ranking from events", description: "Learn ranking from what shoppers searched, clicked and bought.", slots: [{ label: "Catalog", required: true }, { label: "Search events", required: true }] },
   { id: "search-judgments", label: "Search ranking with judgments", description: "Learn ranking from graded query and product pairs.", slots: [{ label: "Catalog", required: true }, { label: "Relevance labels", required: true }] },
   { id: "recommendations", label: "Recommendations", description: "Suggest products from what people viewed and bought.", slots: [{ label: "Catalog", required: true }, { label: "Interactions", required: true }] },
-  { id: "byo-pipeline", label: "Bring your own pipeline", description: "Your own inputs and training script. Captain judges and ships what it makes.", slots: [] },
+  { id: "byo-pipeline", label: "Bring your own training pipeline", description: "Your own inputs and training script. Captain judges and ships what it makes.", slots: [] },
 ];
 /** "a catalog and search events": what a recipe's required inputs are, in a line. */
 export function needsOf(r) {
@@ -80,7 +80,7 @@ export async function recipes() {
 const recipeOptions = (ctx) => (ctx.recipes ?? []).map((r) => ({ value: r.id, label: r.title, about: r.about, needs: r.needs, icon: r.icon, chip: r.team ? "your team's" : null }));
 // A project's inputs: each slot's title and the dataset kinds it takes (project_state.SLOTS).
 const SLOT_WORDS = { catalog: ["Catalog", ["catalog"]], events: ["Events", ["events", "logs"]], queries: ["Queries", ["queries"]],
-  labels: ["Labels", ["judgments"]], holdout: ["Sealed holdout", ["queries"]] };
+  labels: ["Labels", ["judgments"]], holdout: ["Sealed test set", ["queries"]] };
 /** Datasets of these kinds, by kind or by their class's role, across the workspace (not the Explorer's pick). */
 async function datasetsOf(kinds) {
   const [cl, ds] = await Promise.all([api("/api/dataset-classes", { scoped: false }), api("/api/datasets", { scoped: false })]);
@@ -104,7 +104,7 @@ const COLORS = [["#0043CA", "Blue"], ["#7C3AED", "Violet"], ["#059669", "Green"]
 
 export const TASKS = [
   {
-    id: "investigation", label: "New investigation", icon: "search",
+    id: "investigation", label: "New experiment", icon: "search",
     about: "Ask a question about your search or recommendations, and gather the evidence to answer it.",
     fields: [
       { key: "title", label: "Question", placeholder: "Does the typo-tolerant retriever help tail queries?", required: true },
@@ -112,7 +112,7 @@ export const TASKS = [
       { key: "baseline", label: "Compare against", kind: "choice", help: "The version in production today, usually.", optional: true,
         options: () => list("/api/pipelines", (p) => ({ value: `${p.name}@v${p.latest}`, label: p.name, chip: `v${p.latest}` })) },
     ],
-    submit: async (v) => ok(await api("/api/investigations", { body: { title: v.title, hypothesis: v.hypothesis || undefined, baseline: v.baseline || undefined } }), "Investigation opened."),
+    submit: async (v) => ok(await api("/api/investigations", { body: { title: v.title, hypothesis: v.hypothesis || undefined, baseline: v.baseline || undefined } }), "Experiment opened."),
   },
   {
     id: "project", label: "New project", icon: "workflow",
@@ -168,11 +168,11 @@ export const TASKS = [
   },
   {
     id: "delete-project", label: "Delete project", icon: "trash-2", hidden: true,
-    about: "The project goes: its inputs, experiments and champion. Its datasets, models and runs are kept, and so is everything else in the workspace.",
+    about: "The project goes: its inputs, candidates and baseline. Its datasets, models and runs are kept, and so is everything else in the workspace.",
     fields: [
       { key: "confirm", label: "Type the project's name to delete it", required: true, help: (_ctx, v) => `It's called ${v.name}.` },
-      { key: "force", label: "Delete it even with a handoff waiting", kind: "toggle", optional: true, when: (v) => Boolean(v.waiting),
-        help: "A live handoff from this project has no deployment recorded yet. Its bundle is kept either way." },
+      { key: "force", label: "Delete it even with a launch review waiting", kind: "toggle", optional: true, when: (v) => Boolean(v.waiting),
+        help: "A launch review from this project has no deployment recorded yet. Its bundle is kept either way." },
     ],
     submit: async (v) => {
       if (v.confirm.trim() !== String(v.name).trim()) return { ok: false, error: `That isn't the project's name. It's called ${v.name}.` };
@@ -180,10 +180,10 @@ export const TASKS = [
       if (r.status === 409) {
         const hs = r.data?.handoffs ?? [];
         v.waiting = true;
-        return { ok: false, error: `${hs.length === 1 ? `${hs[0].pipeline} was handed off to ${hs[0].environment}` : `${hs.length} handoffs were made`} and no deployment is recorded yet. Record it in Handoff first, or turn on Delete it even with a handoff waiting.` };
+        return { ok: false, error: `${hs.length === 1 ? `${hs[0].pipeline} was sent to launch review for ${hs[0].environment}` : `${hs.length} launch reviews were started`} and no deployment is recorded yet. Record it in Launch review first, or turn on Delete it even with a launch review waiting.` };
       }
       const k = r.data?.kept ?? {};
-      const kept = [["datasets", k.datasets], ["pipelines", k.pipelines], ["runs", k.backtests], ["models", k.models], ["notebooks", k.notebooks]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`).join(", ");
+      const kept = [["datasets", k.datasets], ["model versions", k.pipelines], ["runs", k.backtests], ["models", k.models], ["notebooks", k.notebooks]].filter(([, n]) => n).map(([w, n]) => `${n} ${w}`).join(", ");
       const done = ok(r, `Deleted ${v.name}. Kept ${kept || "its datasets, models and runs"}.`);
       if (done.ok) {
         if (shared("captain.scope")?.kind === "project" && shared("captain.scope")?.id === v.project) setShared("captain.scope", null);
@@ -194,7 +194,7 @@ export const TASKS = [
   },
   {
     id: "pin", label: "Choose an input", icon: "tag", hidden: true,
-    about: "Pin the project to an exact version. Every experiment trains and is judged on what's pinned, so results stay comparable.",
+    about: "Pin the project to an exact version. Every candidate trains and is judged on what's pinned, so results stay comparable.",
     fields: [
       { key: "project", label: "Project", kind: "choice", required: true, when: (_v, ctx) => Boolean(ctx.args?.pickProject),
         options: () => list("/api/projects", (p) => ({ value: p.id, label: p.name }), false), empty: "No projects yet. Make one with New project." },
@@ -210,7 +210,7 @@ export const TASKS = [
         }
         return datasetsOf(SLOT_WORDS[v.slot]?.[1] ?? []);
       }, empty: "Nothing of this kind yet. Import one first.",
-        help: (_ctx, v) => (v.slot === "holdout" ? "A query set that isn't sealed yet gets sealed now: half its queries are kept back for judging, and no model trains on them." : v.slot === "labels" ? "These grade the sealed holdout. A model trained on the same labels can only show it agrees with them." : null) },
+        help: (_ctx, v) => (v.slot === "holdout" ? "A query set that isn't sealed yet gets sealed now: half its queries are kept back for judging, and no model trains on them." : v.slot === "labels" ? "These grade the sealed test set. A model trained on the same labels can only show it agrees with them." : null) },
     ],
     submit: async (v) => {
       const pin = (ref) => api(`/api/projects/${encodeURIComponent(v.project)}/pin`, { body: { [v.slot]: ref }, scoped: false });
@@ -224,8 +224,8 @@ export const TASKS = [
     },
   },
   {
-    id: "experiment", label: "New experiment", icon: "flask-conical", hidden: true,
-    about: "Train a new version of a ranker on the project's pinned inputs. It's judged against the champion once it lands.",
+    id: "experiment", label: "New candidate", icon: "flask-conical", hidden: true,
+    about: "Train a new version of a ranker on the project's pinned inputs. It's judged against the baseline once it lands.",
     load: async (v) => {
       if (!v?.base) return {};
       const r = await api(`/api/pipelines/${(v.base).split("/").map(encodeURIComponent).join("/")}`, { scoped: false });
@@ -237,7 +237,7 @@ export const TASKS = [
       { key: "command", label: "Training command", required: true, placeholder: "python train.py",
         help: "Runs on this computer, in a fresh folder. It gets the exact inputs, the params and a folder to write the trained model into." },
       { key: "labels", label: "Training labels", kind: "choice", required: true, options: () => datasetsOf(["judgments"]),
-        help: (_ctx, v) => (v.labels && v.labels === v.pins?.labels ? "These are the labels that grade the holdout too, so the result can only say it agrees with its own labeler. Pick labels from another source to get a real verdict." : "Labels from another source than the holdout's give a verdict you can trust.") },
+        help: (_ctx, v) => (v.labels && v.labels === v.pins?.labels ? "These are the labels that grade the test set too, so the result can only say it agrees with its own labeler. Pick labels from another source to get a real verdict." : "Labels from another source than the test set's give a verdict you can trust.") },
       { key: "params", label: "Params", kind: "long", optional: true, placeholder: "learning_rate = 0.05", help: "One per line, name = value." },
       { key: "as_of", label: "Train on data before", optional: true, placeholder: "2026-10-01", help: "A date. Leave empty to use everything pinned." },
     ],
@@ -268,12 +268,12 @@ export const TASKS = [
         setShared("captain.open", { section: "runs", live: started.data.live, at: Date.now() });
         runCommand("layout.select", { stack: "sections", child: "runs" });
       }
-      return ok(started, started.data?.live ? "Training. It's open in Runs, live, and joins the project's experiments when it lands." : "Training. It joins the project's experiments when it lands.");
+      return ok(started, started.data?.live ? "Training. It's open in Runs, live, and joins the project's candidates when it lands." : "Training. It joins the project's candidates when it lands.");
     },
   },
   {
     id: "import-version", label: "Import a model version", icon: "upload", hidden: true,
-    about: "Bring a model trained in MLflow or your own registry into the project as an experiment, with its metrics and where it came from.",
+    about: "Bring a model trained in MLflow or your own registry into the project as a candidate, with its metrics and where it came from.",
     fields: [
       { key: "pipeline", label: "Ranker it becomes a version of", kind: "choice", required: true, options: () => list("/api/pipelines", (p) => ({ value: p.name, label: p.name, chip: `v${p.latest}` })),
         help: "Its search setup is copied from that ranker's newest version." },
@@ -282,7 +282,7 @@ export const TASKS = [
       { key: "source", label: "Which one", required: true, placeholder: "ranker@4",
         help: (_ctx, v) => (v.from === "mlflow_run" ? "The run's id." : v.from === "registry_path" ? "Architecture, brand and version, like arch-v2/outdoor/v3." : "The registered model's name and version, like ranker@4.") },
       { key: "labels", label: "Labels it was trained on", kind: "choice", optional: true, options: () => datasetsOf(["judgments"]),
-        help: "Optional. Without it, the experiment's label independence reads unknown." },
+        help: "Optional. Without it, the candidate's label independence reads unknown." },
     ],
     submit: async (v) => {
       const r = await api("/api/models/import-version", { body: { pipeline: v.pipeline, [v.from]: v.source.trim() }, scoped: false });
@@ -294,7 +294,7 @@ export const TASKS = [
         const e = await api(`/api/projects/${encodeURIComponent(v.project)}/experiments`, { body: { pipeline: ref, labels: v.labels || undefined, trainer: `imported from ${v.from === "registry_path" ? "a registry" : "MLflow"}` }, scoped: false });
         if (!e.ok) return { ok: true, message: `Imported ${ref}, but it wasn't added to the project: ${plain(e.data?.error ?? e.error)}` };
       }
-      return { ok: true, message: `Imported ${ref ?? "the version"}${v.project ? " as an experiment" : ""}.` };
+      return { ok: true, message: `Imported ${ref ?? "the version"}${v.project ? " as a candidate" : ""}.` };
     },
   },
   {
@@ -316,8 +316,8 @@ export const TASKS = [
     },
   },
   {
-    id: "champion", label: "Make champion", icon: "trophy", hidden: true,
-    about: "The champion is the version a project ships. Every experiment is judged against it on the project's sealed holdout.",
+    id: "champion", label: "Make it the baseline", icon: "trophy", hidden: true,
+    about: "The baseline is the version a project ships. Every candidate is judged against it on the project's sealed test set.",
     fields: [
       { key: "pipeline", label: "Version", kind: "choice", required: true, options: (_ctx, v) => [{ value: v.pipeline, label: v.pipeline, chip: v.evidence }].filter((o) => o.value) },
       { key: "project", label: "Project", kind: "choice", required: true, options: () => list("/api/projects", (p) => ({ value: p.id, label: p.name }), false) },
@@ -325,7 +325,7 @@ export const TASKS = [
     submit: async (v) => {
       const r = await api(`/api/projects/${encodeURIComponent(v.project)}/champion`, { body: { pipeline: v.pipeline }, scoped: false });
       if (r.ok) setShared("captain.explorer.rev", Date.now());
-      return ok(r, `${v.pipeline} is the champion now.`);
+      return ok(r, `${v.pipeline} is the baseline now.`);
     },
   },
   {
@@ -453,7 +453,7 @@ export const TASKS = [
   },
   {
     id: "compute", label: "Add a place to run work", icon: "boxes",
-    about: "Run backtests and serve candidates on this computer or in your cloud.",
+    about: "Run offline evaluations and serve candidates on this computer or in your cloud.",
     // Every kind comes from the services (GET /api/compute/kinds), including a team's own from its captain/ folder.
     load: async () => ({ kinds: (await api("/api/compute/kinds")).data ?? [], profiles: (await api("/api/cloud/profiles")).data ?? [] }),
     fields: [
@@ -491,17 +491,17 @@ export const TASKS = [
   {
     // Its own screen (captain-rankings): a file, a check, an import. The New menu and the palette open it.
     id: "rankings", label: "Compare your own rankings", icon: "git-compare",
-    about: "Import your own system's ranked results and compare them like any backtest.",
+    about: "Import your own system's ranked results and compare them like any offline evaluation.",
     opens: { mod: "captain-rankings", kind: "dialog", width: 760, height: 660 },
     fields: [],
   },
   {
     id: "dataset-class", label: "New dataset class", icon: "tag",
-    about: "A class groups datasets by what they are for, and says which experiments can use them.",
+    about: "A class groups datasets by what they are for, and says which evaluations can use them.",
     fields: [
       { key: "name", label: "Name", placeholder: "product-reviews", required: true, help: "Letters, digits and dashes." },
       { key: "description", label: "What it's for", kind: "long", required: true, placeholder: "Reviews shoppers left, used to find quality signals" },
-      { key: "role", label: "Experiments can use it as", kind: "choice", default: "generic",
+      { key: "role", label: "Evaluations can use it as", kind: "choice", default: "generic",
         options: async () => {
           const r = await api("/api/dataset-classes");
           const roles = r.ok ? r.data?.roles ?? [] : [];
@@ -516,15 +516,15 @@ export const TASKS = [
     } }), `Added the ${v.name.trim()} class.`),
   },
   {
-    id: "backtest", label: "Run a backtest", icon: "flask-conical",
+    id: "backtest", label: "Run an offline evaluation", icon: "flask-conical",
     about: "Compare two versions of your search on the same queries, or try other settings of one version, and see whether the difference is real.",
     fields: [
       { key: "kind", label: "What to test", kind: "choice", default: "versions",
         options: [{ value: "versions", label: "Two versions" }, { value: "settings", label: "Other settings of one version" }] },
       { key: "name", label: "Name", placeholder: "tuned-vs-current", required: true, help: "Letters, digits and dashes.", when: (v) => v.kind !== "settings" },
-      { key: "a", label: "Compare", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet.", when: (v) => v.kind !== "settings" },
-      { key: "b", label: "With", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet.", when: (v) => v.kind !== "settings" },
-      { key: "pipeline", label: "Version", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet.", when: (v) => v.kind === "settings",
+      { key: "a", label: "Compare", kind: "choice", required: true, options: pipelines, empty: "No model versions yet.", when: (v) => v.kind !== "settings" },
+      { key: "b", label: "With", kind: "choice", required: true, options: pipelines, empty: "No model versions yet.", when: (v) => v.kind !== "settings" },
+      { key: "pipeline", label: "Version", kind: "choice", required: true, options: pipelines, empty: "No model versions yet.", when: (v) => v.kind === "settings",
         help: "Captain tries other values of its numeric settings, a quick pass on a sample of queries first." },
       { key: "mode", label: "Shoppers", kind: "choice", default: "simulated", when: (v) => v.kind !== "settings",
         options: [{ value: "simulated", label: "Simulated shoppers" }, { value: "historic", label: "Replay logged searches" }] },
@@ -557,14 +557,14 @@ export const TASKS = [
     },
   },
   {
-    id: "grading", label: "Start grading", icon: "square-check",
-    about: "Grade the products your search returns, so backtests have judgments people trust.",
+    id: "grading", label: "Start rating", icon: "square-check",
+    about: "Rate the products your search returns, so offline evaluations have judgments people trust.",
     // The team's rubrics (captain/rubrics/<domain>.md): graders see the same words beside each pair.
     load: async () => ({ rubrics: (await api("/api/rubrics")).data ?? [] }),
     fields: [
-      { key: "name", label: "Name", placeholder: "spring-grading", required: true, help: "Letters, digits and dashes." },
+      { key: "name", label: "Name", placeholder: "spring-rating", required: true, help: "Letters, digits and dashes." },
       { key: "queries", label: "Queries", kind: "choice", required: true, options: () => byRole("queries"), empty: "No query sets yet. Import one first." },
-      { key: "a", label: "Results from", kind: "choice", required: true, options: pipelines, empty: "No pipelines yet." },
+      { key: "a", label: "Results from", kind: "choice", required: true, options: pipelines, empty: "No model versions yet." },
       { key: "b", label: "And from", kind: "choice", optional: true, options: pipelines },
       { key: "depth", label: "Results per query", default: "10" },
       { key: "sample", label: "How many queries", optional: true, placeholder: "all of them" },
@@ -576,15 +576,15 @@ export const TASKS = [
     submit: async (v) => ok(await api("/api/grading", { body: {
       name: v.name.trim(), queries: v.queries, pipelines: [v.a, v.b].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(","),
       depth: Number(v.depth) || 10, ...(Number(v.sample) > 0 ? { sample: Number(v.sample) } : {}), ...(v.rubric ? { rubric: v.rubric } : {}),
-    } }), "Queue ready. Grade it in Runs, under Grading."),
+    } }), "Queue ready. Rate it in Runs, under Rating."),
   },
   {
-    id: "handoff", label: "Hand off a candidate", icon: "send",
-    about: "Check a version is ready and hand it to your own deployment process. Captain deploys nothing itself.",
+    id: "handoff", label: "Start a launch review", icon: "send",
+    about: "Check a version against your launch criteria and pass it to your own deployment process. Captain deploys nothing itself.",
     fields: [
       { key: "pipeline", label: "Candidate", kind: "choice", required: true, options: () => list("/api/pipelines", (p) => ({ value: `${p.name}@v${p.latest}`, label: p.name, chip: `v${p.latest}` })) },
       { key: "env", label: "To", kind: "choice", required: true, options: () => list("/api/environments", (e) => ({ value: e.name, label: e.name, chip: e.tier })) },
-      { key: "reason", label: "If a readiness check fails, hand off anyway because", optional: true, help: "Leave empty to stop when a check fails. A reason is recorded with the handoff." },
+      { key: "reason", label: "If a launch criterion fails, go ahead anyway because", optional: true, help: "Leave empty to stop when a criterion fails. A reason is recorded with the launch review." },
     ],
     submit: async (v) => {
       const r = await api("/api/deploy/promote", { body: { pipeline: v.pipeline, env: v.env, confirm: true, override_reason: v.reason || undefined } });
@@ -593,7 +593,7 @@ export const TASKS = [
         const failed = gates.map((g) => `${String(g.gate).replace(/_/g, " ")}: ${plain(g.detail ?? "failed")}`);
         return { ok: false, error: `Not ready. ${failed.join(". ")}`, next: fixFor(gates, v.pipeline) };
       }
-      return ok(r, "Handed off. Record the deployment once your process has run it.");
+      return ok(r, "Sent to launch review. Record the deployment once your process has run it.");
     },
   },
   // Opened from a record (props.args.id), not listed in New.
@@ -601,9 +601,9 @@ export const TASKS = [
     id: "decision", label: "Record a decision", icon: "circle-check", hidden: true,
     about: "Only a person records the decision. Offline evidence gets the limitation \"not proof of online or profit lift\" added for you.",
     fields: [
-      { key: "investigation", label: "Investigation", kind: "choice", required: true, when: (_v, ctx) => !ctx.args?.id,
+      { key: "investigation", label: "Experiment", kind: "choice", required: true, when: (_v, ctx) => !ctx.args?.id,
         options: () => list("/api/investigations", (i) => ({ value: i.id, label: i.title ?? i.id, chip: i.state })),
-        empty: "No investigations yet. Open one first: a decision answers its question.",
+        empty: "No experiments yet. Open one first: a decision answers its question.",
         help: (_ctx, v) => (v.run ? `The decision is about ${v.run}.` : null) },
       { key: "outcome", label: "Decision", kind: "choice", required: true,
         options: [{ value: "continue", label: "Continue" }, { value: "online-test", label: "Run an online test" }, { value: "reject", label: "Reject" }, { value: "inconclusive", label: "Inconclusive" }] },
@@ -613,7 +613,7 @@ export const TASKS = [
         help: "Better online needs results from real traffic attached to the runs." },
       { key: "interpretation", label: "What it means", kind: "long", required: true },
       { key: "limitations", label: "What it doesn't show", kind: "long", optional: true },
-      { key: "next_step", label: "Next step", required: true, placeholder: "Hand it off to staging", help: "Needed, so someone else can act on the decision." },
+      { key: "next_step", label: "Next step", required: true, placeholder: "Send it to launch review for staging", help: "Needed, so someone else can act on the decision." },
     ],
     submit: async (v, ctx, args) => {
       const id = args.id ?? v.investigation;
@@ -621,16 +621,16 @@ export const TASKS = [
       const r = await api(`/api/investigations/${encodeURIComponent(id)}/decide`, { body: { outcome: v.outcome, claim: v.claim, interpretation: v.interpretation || undefined, limitations: v.limitations || undefined, next_step: v.next_step || undefined, ...(v.run ? { runs: [v.run] } : {}) } });
       const done = ok(r, "Decision recorded.");
       // A decision to go on is followed by its handoff.
-      if (done.ok && ["continue", "online-test"].includes(v.outcome)) done.next = { label: "Hand off a candidate", task: "handoff", values: v.candidate ? { pipeline: v.candidate } : {} };
+      if (done.ok && ["continue", "online-test"].includes(v.outcome)) done.next = { label: "Start a launch review", task: "handoff", values: v.candidate ? { pipeline: v.candidate } : {} };
       return done;
     },
   },
   {
     id: "evidence", label: "Attach evidence", icon: "link", hidden: true,
-    about: "Point this investigation at what supports or questions it.",
+    about: "Point this experiment at what supports or questions it.",
     fields: [
       { key: "kind", label: "What it is", kind: "choice", required: true,
-        options: ["dataset", "run", "slice", "query", "signal", "label", "replay", "handoff", "note"].map((k) => ({ value: k, label: k.charAt(0).toUpperCase() + k.slice(1) })) },
+        options: ["dataset", "run", "slice", "query", "signal", "label", "replay", "handoff", "note"].map((k) => ({ value: k, label: { replay: "Off-policy evaluation", handoff: "Launch review" }[k] ?? k.charAt(0).toUpperCase() + k.slice(1) })) },
       { key: "ref", label: "Which one", required: true, when: (v) => v.kind !== "note", placeholder: "makro-catalog", help: "Its name. Add a version like @v3 to pin one." },
       { key: "note", label: "Why it matters", kind: "long", required: true, when: (v) => v.kind === "note" },
       { key: "note", label: "Why it matters", kind: "long", optional: true, when: (v) => v.kind !== "note" },
@@ -650,14 +650,14 @@ export const TASKS = [
   },
   {
     id: "add-outcome", label: "Add an online result", icon: "chart-line", hidden: true,
-    about: "A result from your experiment system. It counts as real-traffic evidence.",
+    about: "A result from your A/B testing system. It counts as real-traffic evidence.",
     fields: [
       { key: "metric", label: "Metric", required: true, placeholder: "conversion rate" },
       { key: "value", label: "Change", required: true, placeholder: "0.012", help: "The measured lift as a number, e.g. 0.012 for +1.2%." },
       { key: "ci_low", label: "Interval low", optional: true },
       { key: "ci_high", label: "Interval high", optional: true },
       { key: "source", label: "Where it comes from", required: true, placeholder: "the Optimizely report for test 42" },
-      { key: "experiment", label: "Experiment", optional: true },
+      { key: "experiment", label: "A/B test", optional: true },
     ],
     submit: async (v, ctx, args) => {
       const num = (x) => (x === undefined || x === "" ? undefined : Number(x));

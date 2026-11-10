@@ -41,7 +41,7 @@ export default class Explain extends View {
       const qs = new URLSearchParams({ ...(p.a ? { a: p.a } : {}), ...(p.b ? { b: p.b } : {}) }).toString();
       path = `/api/runs/${enc(p.run)}/queries/${enc(p.query_id)}/explain${qs ? `?${qs}` : ""}`;
     } else {
-      if (!this.pipeline || !q) { this.error = !this.pipeline ? "Pick a pipeline." : "Type a query."; cx.notify(); return; }
+      if (!this.pipeline || !q) { this.error = !this.pipeline ? "Pick a model version." : "Type a query."; cx.notify(); return; }
       path = `/api/explain?${new URLSearchParams({ pipeline: this.pipeline, q, k: String(TOP), ...(this.vs ? { vs: this.vs } : {}) })}`;
     }
     this.loading = true; this.error = null; cx.notify();
@@ -203,7 +203,7 @@ export default class Explain extends View {
       .when(Boolean(none), (e) => e.child(this.pick(c, `${id}-none`, none, value == null, () => pick(null))))
       .children(pipes.map((p) => this.pick(c, `${id}-${p.name}`, p.name, value === p.name, () => pick(p.name))));
     return v_flex().gap(12).p(16).border_1().border_color(c.rule)
-      .child(v_flex().gap(6).child(div().text_size(12.5).font_semibold().child("Pipeline")).child(!this.pipelines ? div().h(28).w(200).bg(c.surface2) : chips("ex-pipe", this.pipeline, (v) => { this.pipeline = v; })))
+      .child(v_flex().gap(6).child(div().text_size(12.5).font_semibold().child("Model version")).child(!this.pipelines ? div().h(28).w(200).bg(c.surface2) : chips("ex-pipe", this.pipeline, (v) => { this.pipeline = v; })))
       .child(v_flex().gap(6).child(div().text_size(12.5).font_semibold().child("Compare with (optional)")).child(chips("ex-vs", this.vs, (v) => { this.vs = v; }, "Nothing")))
       .child(v_flex().gap(6).child(div().text_size(12.5).font_semibold().child("Query"))
         .child(h_flex().gap(8)

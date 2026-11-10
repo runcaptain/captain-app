@@ -3,7 +3,7 @@
 //
 //   const ml = new MlflowList({ id: "ml", onSetup: () => openForm("mlflow") });
 //   ml.load(cx);  ml.render(c, w)     // experiments, then their runs (status, metrics, params); registered models and
-//                                     // their versions, each with "Served by pipeline..." (POST /api/mlflow/links)
+//                                     // their versions, each with "Served by model version..." (POST /api/mlflow/links)
 //   graph = await withMlflow(graph)   // MLflow runs and model versions upstream of the pipelines they serve
 //
 // Errors read as the services say them (MLflow refused the login, couldn't be reached, isn't set up).
@@ -116,7 +116,7 @@ export class MlflowList {
     cx.notify();
   }
 
-  /** "Served by pipeline...": the pipelines to pick from. */
+  /** "Served by model version...": the pipelines to pick from. */
   openLink(cx, key) {
     this.linking = this.linking === key ? null : key;
     if (this.linking && this.pipelines === null) {
@@ -135,7 +135,7 @@ export class MlflowList {
       const r = await api("/api/mlflow/links", { body: { model, version, pipeline }, scoped: false });
       if (r.ok) {
         (this.status.links ??= {})[`${model}@${version}`] = r.data.pipeline;
-        this.note = { text: `${model} version ${version} is served by ${r.data.pipeline}. It shows upstream of that pipeline in lineage.`, tone: "good" };
+        this.note = { text: `${model} version ${version} is served by ${r.data.pipeline}. It shows upstream of that model version in lineage.`, tone: "good" };
       } else this.note = { text: said(r, "Couldn't record that link."), tone: "fail" };
       cx.notify();
     });
@@ -158,7 +158,7 @@ export class MlflowList {
     if (!s.configured) return top(v_flex().id(id).gap(4))
       .child(h_flex().id(`${id}-off`).px(10).py(2).gap(8).flex_wrap().items_center().text_size(12)
         .child(div().text_color(c.grey900).child("MLflow isn't connected"))
-        .when(!!this.onSetup, (e) => e.child(div().id(`${id}-setup`).cursor_pointer().text_color(c.blue).tooltip("Read your experiments, runs and registered models, read-only")
+        .when(!!this.onSetup, (e) => e.child(div().id(`${id}-setup`).cursor_pointer().text_color(c.blue).tooltip("Read your MLflow experiments, runs and registered models, read-only")
           .on_click(() => this.onSetup()).child("Connect MLflow"))));
     const row = (rid, depth, kids, onClick) => h_flex().id(rid).min_h(26).py(3).pl(10 + depth * 14).pr(10).gap(6).items_center().text_size(12)
       .when(!!onClick, (e) => e.cursor_pointer().hover((st) => st.bg(c.surface2)).on_click(onClick)).children(kids);
@@ -166,10 +166,10 @@ export class MlflowList {
     const exps = this.experiments, models = this.models;
     return top(v_flex().id(id).gap(2))
       .when(!!this.note, (e) => e.child(div().px(10).text_size(11.5).text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
-      .child(div().px(10).pt(4).text_size(11).text_color(c.grey500).child("Experiments"))
+      .child(div().px(10).pt(4).text_size(11).text_color(c.grey500).child("MLflow experiments"))
       .when(exps === null, (e) => e.child(div().px(10).child(Skeleton(c, 2))))
       .when(!!exps?.error, (e) => e.child(div().px(10).text_size(12).text_color(c.fail).child(exps.error)))
-      .when(Array.isArray(exps) && !exps.length, (e) => e.child(div().px(10).text_size(12).text_color(c.grey500).child("No experiments yet.")))
+      .when(Array.isArray(exps) && !exps.length, (e) => e.child(div().px(10).text_size(12).text_color(c.grey500).child("No MLflow experiments yet.")))
       .children(Array.isArray(exps) ? exps.flatMap((x) => {
         const open = this.open.has(x.id);
         const runs = this.runs.get(x.id);
@@ -206,11 +206,11 @@ export class MlflowList {
                   .child(div().text_color(c.grey500).child([String(v.status ?? "").toLowerCase(), v.stage && v.stage !== "None" ? v.stage.toLowerCase() : null, ...(v.aliases ?? []).map((a) => `@${a}`)].filter(Boolean).join(", ")))
                   .child(div().flex_1())
                   .child(div().id(`${id}-link-${key}`).cursor_pointer().text_color(c.blue).on_click((_e, cx) => this.openLink(cx, key))
-                    .child(served ? `Served by ${served}` : "Served by pipeline...")))
+                    .child(served ? `Served by ${served}` : "Served by model version...")))
                 .when(!!v.run_id, (e) => e.child(div().font_family(MONO).text_color(c.grey500).child(`from run ${v.run_id.slice(0, 8)}`))),
               ...(this.linking !== key ? [] : [v_flex().id(`${id}-pick-${key}`).ml(34).mr(10).border_1().border_color(c.grey300).bg(c.surface)
                 .when(this.pipelines === null, (e) => e.child(div().p(6).child(Skeleton(c, 1))))
-                .when(Array.isArray(this.pipelines) && !this.pipelines.length, (e) => e.child(div().p(6).text_size(12).text_color(c.grey500).child("No pipelines in this workspace yet.")))
+                .when(Array.isArray(this.pipelines) && !this.pipelines.length, (e) => e.child(div().p(6).text_size(12).text_color(c.grey500).child("No model versions in this workspace yet.")))
                 .children((this.pipelines ?? []).map((p, i) => div().id(`${id}-pick-${key}-${i}`).h(24).px(8).flex().items_center().cursor_pointer().text_size(12).font_family(MONO)
                   .text_color(p === served ? c.blue : c.navy).hover((st) => st.bg(c.surface2)).on_click((_e, cx) => this.link(cx, m.name, v.version, p)).child(p)))]),
             ];

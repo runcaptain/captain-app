@@ -1,12 +1,12 @@
 id: search-judgments
 label: Search ranking with judgments
-description: Rank search results against graded (query, product) judgments, scored on a sealed holdout.
+description: Rank search results against graded (query, product) judgments, scored on a sealed test set.
 slots:
   - {id: catalog, label: Catalog, role: catalog, accepts: [catalog], required: true,
      why: "The products to rank."}
   - {id: labels, label: Judgments, role: labels, accepts: [judgments], required: true,
-     why: "Graded (query, product) pairs. They score the holdout, and can train the ranker."}
-  - {id: holdout, label: Sealed holdout, role: holdout, accepts: [queries], required: false,
+     why: "Graded (query, product) pairs. They score the test set, and can train the ranker."}
+  - {id: holdout, label: Sealed test set, role: holdout, accepts: [queries], required: false,
      why: "Optional. Queries kept back from training, so the score isn't on data the model saw."}
   - {id: events, label: Events, role: events, accepts: [events, logs], required: false,
      why: "Optional. Click or purchase logs, if your trainer uses them as features."}
@@ -17,5 +17,5 @@ evaluation:
   method: holdout
   holdout: true
   text: >-
-    Scores both rankers on the sealed holdout with the judgments. If the training labels and the holdout grades come
+    Scores both rankers on the sealed test set with the judgments. If the training labels and the test set grades come
     from the same labeler, a win only says the model agrees with its own labeler.

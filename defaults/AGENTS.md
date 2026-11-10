@@ -175,9 +175,10 @@ the highlighted line shows where it will land.
 Each file is one whole window. `layout.switch` (`ctrl-shift-l`) cycles
 through them, `layout.switch {name}` picks one; `shared("layout")` is the
 shown one's name. Captain opens with `captain` ("Captain": the `captain-nav`
-sidebar with spaces, Investigations, Data and signals, Runs, Comparisons and
-Handoff; a `sections` stack of native screens, `captain-investigations`,
-`captain-handoff` and the others; terminal tabs and panes on the right).
+sidebar with spaces, Experiments, Data and signals, Runs, Compare and
+Launch review; a `sections` stack of native screens, `captain-investigations`
+(Experiments), `captain-handoff` (Launch review) and the others; terminal tabs
+and panes on the right; see Words for what each screen word is called in the CLI).
 Captain's screens read Captain's local services, which it starts at launch;
 a mod reaches them through shared `captain.daemon` (`{base, token}`). It also
 ships `main` ("Spaces": spaces by machine and the
@@ -1045,31 +1046,54 @@ including a small hc skill you can install with the user's permission.
 Sample Workshop Supply, Sample Polar Outfitter (50 products each), six Sample lists,
 30 search queries and illustrative manual judgments for 10 queries. Prices, stock,
 and specifications are synthetic demo data, not verified commercial offers. Unlisted
-query/product pairs are unjudged. No clicks, conversions or experiment results are
+query/product pairs are unjudged. No clicks, conversions or A/B test results are
 supplied. The app's “Load Sample North Pole” task selects this workspace.
 
 Use “Remove Sample North Pole” in the New menu/palette, or `cst demo remove-sample`,
 to remove it. Removal refuses added or modified files: move your work out first.
 Sample-only read history is removed too. Other workspaces are preserved. `cst --dry-run demo seed` and
 `cst --dry-run demo remove-sample` preview without changing sample data.
-The older generated experiment demo remains available with `cst demo seed --legacy`;
-it writes simulated experiments into the selected workspace.
+The older generated demo remains available with `cst demo seed --legacy`;
+it writes simulated offline evaluations into the selected workspace.
 
 ## Captain project page (Home)
 
 The sidebar's **Home** opens the current project's page (`captain-project`): the Explorer's pick, else the
 last project opened there. With no project it offers New project, which can pin a catalog at once.
-- **Inputs**: catalog, events, queries, labels and the sealed holdout, each pinned to an exact version. A newer
+- **Inputs**: catalog, events, queries, labels and the sealed test set, each pinned to an exact version. A newer
   version shows as information with one action ("Use version 2"); a missing input asks to choose one.
-- **Experiments**: trained versions judged against the champion on the sealed holdout and the pinned labels. A
-  model trained on the labeler that grades the holdout reads "Agrees with its own labeler", never as a win.
-  New experiment trains on the pins with your own command; Import a model version brings one from MLflow or a
-  registry. Rows open to: the comparison, Rerun with changes, Judge against the champion, Make champion (with
-  its evidence) and Publish to the registry.
-- **Ship**: the registry place (asked once), staging (not yet), the live handoff, and the online check.
+- **Train and compare**: candidates, each one trained version judged against the baseline on the sealed test set
+  and the pinned labels. A model trained on the labeler that grades the test set reads "Agrees with its own
+  labeler", never as a win. New candidate trains on the pins with your own command; Import a model version brings
+  one from MLflow or a registry. Rows open to: the comparison, Rerun with changes, Judge against the baseline,
+  Make it the baseline (with its evidence) and Publish to the registry.
+- **Ship**: the registry place (asked once), staging (not yet), the launch review, and the online check. The
+  baseline is what MLflow and Unity Catalog users call the `champion` alias.
 The page links to Workflows, which also opens from the palette ("Open workflows"). The forms are
 `captain-forms` tasks (`pin`, `experiment`, `import-version`, `publish`, `champion`) opened with
-`props: {task, values}`; a failed readiness check and a decision to go on offer their next step.
+`props: {task, values}`; a failed launch criterion and a decision to go on offer their next step.
+
+## Words
+
+The screens use the words search and recommendation teams use. The CLI, the API, the files and the ids keep
+their earlier names, so saved workspaces and scripts keep working. Translate with this table: say the screen
+word to a person, and type the CLI word.
+
+| On screen | In `cst`, the API and ids | What it is |
+|---|---|---|
+| Offline evaluation | `backtest` (`cst backtest`, `/api/backtests`, the `backtests` tab id) | Two or more versions scored on the same queries |
+| Evaluation settings | the `captain-sandbox` mod, `/api/sandbox` | Other settings of one version, tried offline |
+| Candidate | a project `experiment` (`/api/projects/<id>/experiments`, form task `experiment`) | One trained version in a project, judged against the baseline |
+| Baseline | `champion` (`/api/projects/<id>/champion`, form task `champion`) | The version a project ships and judges candidates against |
+| Experiment | `investigation` (`cst investigate`, `/api/investigations`, `CST_INVESTIGATION`, section id `investigations`) | A hypothesis, its evaluations and a decision |
+| Rating, rating queue, rater | `grading`, `grader` (`cst grade`, `/api/grading`) | People giving grades 0 to 3; the data stays "judgments" and "grades" |
+| Compare | section id `comparisons`, the `captain-compare` mod | One evaluation run read in depth; a single result is still a comparison |
+| Launch review, launch criteria | `handoff`, readiness gates (`cst handoff`, `/api/handoffs`, section id `handoff`) | A candidate checked and passed to your own deployment process |
+| Off-policy evaluation | `replay` (`cst replay`, `/api/replays`, the `replays` tab id) | Counterfactual replay of logged traffic |
+| Sealed test set | `holdout` (the `holdout` slot, the `:holdout` split, `--holdout`) | Queries no model trains on, kept to judge them |
+| Model version | `pipeline` version (`cst pipeline`, `/api/pipelines`, `name@vN`) | A version of a ranker; "search configuration" when it has no trained weights |
+
+The palette still finds the earlier words: typing "backtest" finds "Run an offline evaluation".
 
 ## Captain team collaboration
 

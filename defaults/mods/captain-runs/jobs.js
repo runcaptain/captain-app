@@ -30,9 +30,9 @@ export function jobWords(j) {
   const [noun, verb, ...rest] = words.map(String);
   const what = rest.length ? ` ${rest[0]}` : "";
   const VERBS = {
-    "backtest run": "Run backtest", "pipeline retrain": "Retrain", "data import": "Import data", "data list": "List datasets",
-    "data snapshot": "Import a dataset", "tables pull": "Read the tables of", "grade queue": "Build a grading queue",
-    "replay run": "Run replay", "workflow run": "Run workflow", "label build": "Build label",
+    "backtest run": "Run offline evaluation", "pipeline retrain": "Retrain", "data import": "Import data", "data list": "List datasets",
+    "data snapshot": "Import a dataset", "tables pull": "Read the tables of", "grade queue": "Build a rating queue",
+    "replay run": "Run off-policy evaluation", "workflow run": "Run workflow", "label build": "Build label",
   };
   const known = VERBS[`${noun} ${verb}`];
   if (known) return `${known}${what}`;
@@ -147,7 +147,7 @@ export class Jobs {
       .when(Array.isArray(list) && !list.length, (e) => e.child(v_flex().p(14).gap(6)
         .child(div().text_size(13).font_medium().child("No jobs yet"))
         .child(div().text_size(12).line_height("18px").text_color(c.grey900)
-          .child("A job is work Captain runs once on a compute target: this computer, AWS, Google Cloud, Azure or Modal. Backtests and retrains you start on the cloud show up here with their logs."))))
+          .child("A job is work Captain runs once on a compute target: this computer, AWS, Google Cloud, Azure or Modal. Offline evaluations and retrains you start on the cloud show up here with their logs."))))
       .children((list ?? []).map((j) => {
         const on = this.sel === j.id;
         return v_flex().id(`job-${j.id}`).w_full().flex_none().px(10).py(8).gap(3).cursor_pointer()

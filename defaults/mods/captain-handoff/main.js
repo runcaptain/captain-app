@@ -10,7 +10,7 @@ import { api, watchWorkspace, watchScope, watchRecords } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
 
-const TABS = [["readiness", "Readiness"], ["evidence", "Evidence"], ["candidate", "Candidate"], ["links", "Deployments"], ["outcomes", "Online outcomes"]];
+const TABS = [["readiness", "Launch criteria"], ["evidence", "Evidence"], ["candidate", "Candidate"], ["links", "Deployments"], ["outcomes", "Online outcomes"]];
 const words = (s) => String(s ?? "").replace(/[_-]/g, " ");
 const day = (t) => (t ? String(t).slice(0, 16).replace("T", " ") : "");
 
@@ -19,7 +19,8 @@ export function stage(h) {
   const deps = (h.links ?? []).filter((e) => e.kind === "deployment");
   if (deps.some((e) => e.live)) return "live";
   if (deps.length) return "deployed";
-  return h.status ?? "handed off";
+  // The stored status stays "handed-off"; a person reads where the review stands.
+  return !h.status || h.status === "handed-off" ? "in review" : h.status;
 }
 
 /** Gates passed out of all, and whether any were overridden. */
@@ -40,17 +41,17 @@ export default class CaptainHandoff extends View {
       rowKey: (r) => String(r.id),
       onRow: (r, cx) => this.show(r.id, cx),
       // What a handoff is, and how to make one.
-      empty: (c) => Empty(c, "No handoffs yet",
-        "A handoff passes a pipeline version that won its backtest to your own deployment process, after Captain checks it's ready. Captain deploys nothing itself, and records what went live and how it did.",
-        Button(c, "ho-empty-new", "Hand off a candidate", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "handoff" } }), { kind: "primary" })),
+      empty: (c) => Empty(c, "No launch reviews yet",
+        "A launch review checks a model version that won its offline evaluation against your launch criteria, then passes it to your own deployment process. Captain deploys nothing itself, and records what went live and how it did.",
+        Button(c, "ho-empty-new", "Start a launch review", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "handoff" } }), { kind: "primary" })),
       columns: [
         { key: "pipeline", label: "Candidate", render: (r, c) => RefChip(c, r.pipeline ?? r.id) },
         { key: "environment", label: "Environment", width: 150, optional: true, render: (r) => `${r.environment ?? ""}${r.tier ? ` (${r.tier})` : ""}` },
         { key: "stage", label: "Stage", width: 110, render: (r, c) => Badge(c, words(stage(r)), stage(r) === "live" ? "good" : stage(r) === "deployed" ? "blue" : "neutral") },
-        { key: "readiness", label: "Readiness", width: 120, optional: true, render: (r, c) => { const x = readiness(r); return Badge(c, x.overridden ? `${x.ok}/${x.all}, overridden` : `${x.ok}/${x.all} passed`, x.overridden ? "warn" : x.ok === x.all ? "good" : "bad"); } },
+        { key: "readiness", label: "Criteria", width: 120, optional: true, render: (r, c) => { const x = readiness(r); return Badge(c, x.overridden ? `${x.ok}/${x.all}, overridden` : `${x.ok}/${x.all} passed`, x.overridden ? "warn" : x.ok === x.all ? "good" : "bad"); } },
         { key: "evidence", label: "Evidence", width: 130, optional: true, render: (r) => words(r.evidence?.evidence_label ?? "none") },
         { key: "outcomes", label: "Outcomes", width: 80, optional: true, render: (r) => String((r.links ?? []).filter((e) => e.kind === "outcome").length) },
-        { key: "created_at", label: "Handed off", width: 130, render: (r) => day(r.created_at) },
+        { key: "created_at", label: "Sent", width: 130, render: (r) => day(r.created_at) },
       ],
       fetch: async () => {
         const r = await api("/api/handoffs");
@@ -97,17 +98,17 @@ export default class CaptainHandoff extends View {
     if (this.tab === "readiness") {
       const gates = h.readiness?.gates ?? [];
       return v_flex().gap(14)
-        .child(Card(c, { title: "Readiness checks" }, ...(gates.length ? gates.map((g) => h_flex().gap(10).items_center().pb(6).border_b(1).border_color(c.rule)
+        .child(Card(c, { title: "Launch criteria" }, ...(gates.length ? gates.map((g) => h_flex().gap(10).items_center().pb(6).border_b(1).border_color(c.rule)
           .child(Badge(c, g.ok ? "passed" : (h.readiness?.overridden ?? []).includes(g.gate) ? "overridden" : "failed", g.ok ? "good" : (h.readiness?.overridden ?? []).includes(g.gate) ? "warn" : "bad"))
           .child(div().flex_1().min_w(0).text_size(13).text_color(c.navy).child(words(g.gate)))
-          .child(div().text_size(12).font_family(MONO).text_color(c.grey900).child(String(g.detail ?? g.value ?? g.message ?? "")))) : [div().text_size(13).text_color(c.grey500).child("This environment has no readiness checks.")])))
+          .child(div().text_size(12).font_family(MONO).text_color(c.grey900).child(String(g.detail ?? g.value ?? g.message ?? "")))) : [div().text_size(13).text_color(c.grey500).child("This environment has no launch criteria.")])))
         .when(Boolean(h.readiness?.override_reason), (e) => e.child(ErrorState(c, `Overridden: ${h.readiness.override_reason}`)))
         .child(Card(c, { title: "Limitations" }, ...((h.limitations ?? []).length ? h.limitations.map((l) => div().text_size(13).line_height("19px").text_color(c.navy).child(l)) : [div().text_size(13).text_color(c.grey500).child("None recorded.")])))
         .child(Card(c, { title: "What happens next" }, div().text_size(13).line_height("19px").text_color(c.grey900).child(h.next ?? "Deploy it through your own process, then record the deployment here.")));
     }
     if (this.tab === "evidence") {
       const ev = h.evidence;
-      if (!ev) return Empty(c, "No backtest evidence", "No backtest has this version as a challenger, so the handoff carries no offline evidence.");
+      if (!ev) return Empty(c, "No offline evidence", "No offline evaluation has this version as a candidate, so the launch review carries no offline evidence.");
       return Card(c, { title: "Evidence" },
         this.field(c, "Run", ev.run, true),
         h_flex().gap(12).items_center().py(4).child(div().w(170).flex_none().text_size(12).text_color(c.grey500).child("Evidence label")).child(Badge(c, words(ev.evidence_label), ev.evidence_label === "REAL_TRAFFIC" ? "good" : "warn")),
@@ -134,7 +135,7 @@ export default class CaptainHandoff extends View {
     if (!list.length) {
       return this.tab === "links"
         ? Empty(c, "Not deployed yet", "Deploy this candidate through your own system, then record the deployment so Captain knows what's live.", Button(c, "ho-link", "Record a deployment", task("record-deployment", { id: this.open }), { kind: "primary" }))
-        : Empty(c, "No online outcomes", "Attach results from your experiment system. They count as REAL_TRAFFIC evidence.", Button(c, "ho-out", "Add an outcome", task("add-outcome", { id: this.open }), { kind: "primary" }));
+        : Empty(c, "No online outcomes", "Attach results from your A/B testing system. They count as REAL_TRAFFIC evidence.", Button(c, "ho-out", "Add an outcome", task("add-outcome", { id: this.open }), { kind: "primary" }));
     }
     return Card(c, { title: this.tab === "links" ? `Deployments (${list.length})` : `Online outcomes (${list.length})` }, ...list.slice().reverse().map((e) => v_flex().gap(4).pb(8).border_b(1).border_color(c.rule)
       .child(h_flex().gap(8).items_center()
@@ -148,7 +149,7 @@ export default class CaptainHandoff extends View {
   }
 
   detailView(c) {
-    const back = Button(c, "ho-back", "All handoffs", (_e, cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); }, { kind: "quiet", small: true });
+    const back = Button(c, "ho-back", "All launch reviews", (_e, cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); }, { kind: "quiet", small: true });
     if (!this.detail) return v_flex().size_full().p(24).gap(10).child(h_flex().child(back)).child(Loading(c));
     if (this.detail.problem) return v_flex().size_full().p(24).gap(10).child(h_flex().child(back)).child(Problem(c, this.detail.problem, (cx) => this.load(this.open, cx)));
     const h = this.detail.data ?? {};
@@ -173,9 +174,9 @@ export default class CaptainHandoff extends View {
     return v_flex().size_full().p(24).gap(14)
       .child(h_flex().gap(12).items_center()
         .child(v_flex().flex_1().min_w(0).gap(2)
-          .child(div().text_size(20).font_semibold().text_color(c.navy).child("Handoff"))
-          .child(div().text_size(12.5).text_color(c.grey500).child("Captain hands candidates to your deployment process and deploys nothing itself. What went live, and how it did, is recorded here.")))
-        .child(Button(c, "ho-new", "Hand off a candidate", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "handoff" } }), { kind: "primary" })))
+          .child(div().text_size(20).font_semibold().text_color(c.navy).child("Launch review"))
+          .child(div().text_size(12.5).text_color(c.grey500).child("Captain checks a candidate against your launch criteria, passes it to your deployment process and deploys nothing itself. What went live, and how it did, is recorded here.")))
+        .child(Button(c, "ho-new", "Start a launch review", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "handoff" } }), { kind: "primary" })))
       .child(div().flex_1().min_h(0).child(this.table.render(c)));
   }
 

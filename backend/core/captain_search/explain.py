@@ -84,7 +84,7 @@ def explain_bm25(eng, query: str, k: int = 50) -> list[dict]:
     pos0 = {p: i + 1 for i, p in enumerate(r0)}
     rules = {"stage": "boosts", "kind": "rules", "explained": True,
              "notes": [f"{sum(1 for v in fired.values() if v)} products boosted"] if eng.spec.get("boosts") else
-                      ["no boosts in this pipeline"],
+                      ["no boosts in this version"],
              "items": [_item(p, i + 1, scored[p], {"before": base[p], "after": scored[p]}, fired[p],
                              moved=pos0[p] - (i + 1), title=title(p)) for i, p in enumerate(r1[:k])],
              "timing_ms": lap()}
@@ -233,6 +233,6 @@ def from_run(ctx, run_ref: str, query_id: str, a: str | None = None, b: str | No
         try:
             ctx.registry.resolve("pipeline", arm)
         except Exception:  # noqa: BLE001
-            raise ValueError(f"{arm} isn't a Captain pipeline (it came from imported rankings), so Captain can't "
-                             "replay it to explain it. Import its traces, or rebuild it as a pipeline.") from None
+            raise ValueError(f"{arm} isn't a Captain model version (it came from imported rankings), so Captain can't "
+                             "replay it to explain it. Import its traces, or rebuild it as a model version.") from None
     return compare_traces(ctx, a, b, q["query"], str(query_id), bt.judgments, k)

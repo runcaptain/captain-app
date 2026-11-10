@@ -49,7 +49,7 @@ class CloudRunProvider(_GCP):
     kind, label = "gcp-cloud-run", "Google Cloud Run (jobs and services)"
     purposes = ["backtest", "serve"]
     fields = [
-        {"name": "job", "label": "Job name (for backtests)", "required": False},
+        {"name": "job", "label": "Job name (for offline evaluations)", "required": False},
         {"name": "service", "label": "Service name (for serving)", "required": False},
         {"name": "image", "label": "Runner image", "required": True, "default": IMAGE_DEFAULT}]
 
@@ -58,7 +58,7 @@ class CloudRunProvider(_GCP):
 
     def plan(self, job: Job) -> list[dict]:
         if not self.config.get("job"):
-            raise ValueError("this Cloud Run target has no job name, so it cannot run backtests")
+            raise ValueError("this Cloud Run target has no job name, so it cannot run offline evaluations")
         return [{"service": "run", "region": self.region, "call": "JobsClient.run_job", "args": {
             "name": self._job_path(),
             "overrides": {"container_overrides": [{"args": job.argv, "env": env_list(job.env)}]}}}]

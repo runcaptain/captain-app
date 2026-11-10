@@ -234,7 +234,7 @@ def plan_serve(ctx: Context, target: dict, pipeline_ref: str, env_name: str) -> 
         return [{"service": "azureml", "call": "online_deployments.begin_create_or_update", "args": {
             "resource_group": c["resource_group"], "workspace_name": c["workspace_name"], "endpoint": c["endpoint"],
             "deployment": tag, "image": c["image"], "environment_variables": env, "traffic": {tag: 100}}}]
-    raise ValueError(f"{k} cannot serve pipelines")
+    raise ValueError(f"{k} cannot serve models")
 
 
 def execute_serve(ctx: Context, target: dict, plan: list[dict]) -> dict:

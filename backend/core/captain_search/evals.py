@@ -115,7 +115,7 @@ def health(ctx, queries: str, judgments: str, logs: str | None = None, catalog: 
         stale["catalog_now"] = f"{now_m.name}@v{now_m.version}"
         stale["catalog_when_graded"] = f"{then_m.name}@v{then_m.version}" if then_m else None
         for key, what in (("retired", "products no longer in the catalog"),
-                          ("changed", "products whose title, price or stock changed since grading"),
+                          ("changed", "products whose title, price or stock changed since rating"),
                           ("out_of_stock_relevant", "relevant products now out of stock")):
             if stale[key]:
                 findings.append(f"{len(stale[key])} grades are on {what}.")
@@ -150,7 +150,7 @@ def health(ctx, queries: str, judgments: str, logs: str | None = None, catalog: 
         agree = sum(1 for v in multi if len({g for _, g in v}) == 1) / len(multi)
         out["reliability"] = {"pairs_graded_twice": len(multi), "exact_agreement": round(agree, 3)}
         if agree < 0.7:
-            findings.append(f"Graders agree on only {agree:.0%} of the pairs graded twice.")
+            findings.append(f"Raters agree on only {agree:.0%} of the pairs rated twice.")
     else:
         out["reliability"] = {"pairs_graded_twice": 0, "exact_agreement": None,
                               "note": "Each pair has one grade, so agreement can't be measured. Grade a sample twice "

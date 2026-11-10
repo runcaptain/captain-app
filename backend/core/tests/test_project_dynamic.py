@@ -255,7 +255,7 @@ def test_delete_keeps_the_data_and_waits_for_live_handoffs(ws):
     PS.set_champion(ctx, "shop", a)
     ctx.store.put_new("handoffs/h1.yaml", yaml.safe_dump({"id": "h1", "pipeline": a, "environment": "prod",
                                                          "created_at": "2026-11-09T00:00:00+00:00", "status": "handed-off"}).encode())
-    with pytest.raises(ValueError, match="live handoff"):
+    with pytest.raises(ValueError, match="launch review"):
         PR.delete(ctx, "shop")
     r = PR.delete(ctx, "shop", force=True)
     assert r["deleted"] == "shop" and r["forced_past"][0]["id"] == "h1"

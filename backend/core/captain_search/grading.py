@@ -84,7 +84,7 @@ def create(ctx: Context, name: str, queries: str, pipelines: list[str], depth: i
                 if pid in pmap and pid not in products:
                     products[pid] = {f: pmap[pid].get(f) for f in SHOW if pmap[pid].get(f) is not None}
     if not pairs:
-        raise ValueError("the pipelines returned nothing to grade for these queries")
+        raise ValueError("the model versions returned nothing to rate for these queries")
     rng.shuffle(pairs)
     n_over = int(round(len(pairs) * overlap))
     for i, p in enumerate(pairs):
@@ -96,7 +96,7 @@ def create(ctx: Context, name: str, queries: str, pipelines: list[str], depth: i
     try:
         ctx.store.put_new(_qkey(name), dump_yaml(doc))
     except AlreadyExists:
-        raise ValueError(f"a grading queue named {name} already exists") from None
+        raise ValueError(f"a rating queue named {name} already exists") from None
     return status(ctx, name)
 
 
@@ -104,7 +104,7 @@ def _queue(ctx: Context, name: str):
     try:
         data, tag = ctx.store.get_with_tag(_qkey(name))
     except NotFound:
-        raise NotFound(f"no grading queue {name}") from None
+        raise NotFound(f"no rating queue {name}") from None
     return yaml.safe_load(data), tag
 
 
@@ -205,7 +205,7 @@ def publish(ctx: Context, name: str, into: str, dry_run: bool = False):
                  provenance=Provenance(source="generated", params={"grading_queue": name, "queries": q["queries"], "pipelines": list(q.get("pipelines") or []),
                                                                      "graders": sorted(files),
                                                                      "kappa": st["kappa"], "coverage": st["share"]}),
-                 description=f"{len(rows)} human grades from queue {name} by {len(files)} grader(s)")
+                 description=f"{len(rows)} human grades from queue {name} by {len(files)} rater(s)")
     m = m.model_copy(update={"judgment_source": "human", "judge": {"model": "human", "prompt_version": f"queue {name}"}})
     if dry_run:
         return m

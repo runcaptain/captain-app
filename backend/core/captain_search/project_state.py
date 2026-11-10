@@ -46,10 +46,10 @@ SLOTS = {  # the five slots of projects made before kinds: slot -> (group on the
     "labels": ("labels", ("judgments",)),
     "holdout": ("holdout", ("queries",)),
 }
-LEGACY_SLOTS = [{"id": s, "label": s.capitalize() if s != "holdout" else "Sealed holdout", "role": s,
+LEGACY_SLOTS = [{"id": s, "label": s.capitalize() if s != "holdout" else "Sealed test set", "role": s,
                  "accepts": list(k), "required": False, "why": "", "origin": "recipe"} for s, (_, k) in SLOTS.items()]
 GROUP = {"labels": "labels", "holdout": "holdout"}  # role -> group on the page; everything else is data
-VERDICTS = {"win": "beats the champion", "loss": "loses to the champion", "noise": "no clear difference from the champion"}
+VERDICTS = {"win": "beats the baseline", "loss": "loses to the baseline", "noise": "no clear difference from the baseline"}
 OWN_LABELER = "agrees with its own labeler"
 NOT_ONLINE = "not yet confirmed online"
 TRIES = 50
@@ -151,7 +151,7 @@ def _exact(ctx: Context, sl: dict, raw: str) -> str:
             raise ValueError(f"{ref(m)} holds {kind} rows, and the {sl['label']} input takes {' or '.join(ok)}")
     if sl["role"] == "holdout":
         if not m.holdout_seal:
-            raise ValueError(f"{ref(m)} isn't sealed, so it has no holdout yet. Seal it first: that keeps part of its queries back for judging.")
+            raise ValueError(f"{ref(m)} isn't sealed, so it has no test set yet. Seal it first: that keeps part of its queries back for judging.")
         s = check_seal(ctx, ref(m))
         if not s["ok"]:
             raise ValueError(f"{ref(m)} failed its seal check: {s['detail']}")
@@ -389,7 +389,7 @@ def experiment_add(ctx: Context, pid: str, pipeline: str, training_set: str | No
 
     def ch(doc):
         if any(e["pipeline"] == exp["pipeline"] for e in doc["experiments"]):
-            raise ValueError(f"{exp['pipeline']} is already an experiment in {pid}")
+            raise ValueError(f"{exp['pipeline']} is already a candidate in {pid}")
         doc["experiments"].append(exp)
         return exp
 
@@ -408,14 +408,14 @@ def _read_from(pm) -> list[dict]:
 def _exp(doc: dict, eid: str) -> dict:
     e = next((e for e in doc["experiments"] if e["id"] == eid or e["pipeline"] == eid), None)
     if e is None:
-        raise NotFound(f"no experiment {eid!r} in {doc['project']}")
+        raise NotFound(f"no candidate {eid!r} in {doc['project']}")
     return e
 
 
 def experiment_record(ctx: Context, pid: str, eid: str, **fields) -> dict:
     allowed = {"backtest", "run", "job", "status", "note", "error", "eval_inputs", "inputs_read", "reported"}
     if set(fields) - allowed:
-        raise ValueError(f"an experiment records {', '.join(sorted(allowed))}")
+        raise ValueError(f"a candidate records {', '.join(sorted(allowed))}")
 
     def ch(doc):
         e = _exp(doc, eid)
@@ -439,7 +439,7 @@ def set_champion(ctx: Context, pid: str, which: str | None, expect: str | None =
 
     def ch(doc):
         if expect != "" and doc.get("champion") != expect:
-            raise Conflict(f"the champion changed to {doc.get('champion') or 'none'} since you looked. Check again.")
+            raise Conflict(f"the baseline changed to {doc.get('champion') or 'none'} since you looked. Check again.")
         prev = doc.get("champion")
         doc["champion"] = target
         doc["champion_history"] = (doc.get("champion_history") or []) + [{"from": prev, "to": target, "at": _now(),
@@ -506,7 +506,7 @@ def label_independence(ctx: Context, train: str | None, holdout_judgments: str |
     shared or unknown."""
     if not holdout_judgments:
         return {"status": "unknown", "train": train, "holdout": None,
-                "text": "The holdout has no judgments, so independence can't be checked."}
+                "text": "The test set has no judgments, so independence can't be checked."}
     try:
         hm, _ = ctx.registry.resolve("dataset", holdout_judgments)
     except Exception:  # noqa: BLE001
@@ -531,21 +531,21 @@ def label_independence(ctx: Context, train: str | None, holdout_judgments: str |
                     "text": f"The training labels ({train}) can't be found, so independence can't be checked."}
         if tsrc == _SOURCE.get(hsrc or "") and tsrc != "human":
             return {**out, "status": "shared", "train_source": tsrc,
-                    "text": f"Training labels and holdout grades both come from {tsrc} labeling."}
+                    "text": f"Training labels and test set grades both come from {tsrc} labeling."}
         return {**out, "status": "independent", "train_source": tsrc,
-                "text": f"Training labels come from {tsrc} labeling and the holdout grades from {hsrc or 'another source'}."}
+                "text": f"Training labels come from {tsrc} labeling and the test set grades from {hsrc or 'another source'}."}
     tref = f"{tm.name}@v{tm.version}"
     tsrc = tm.judgment_source
     out |= {"train": tref, "train_source": tsrc}
     if tm.name == hm.name:
         return {**out, "status": "shared",
-                "text": f"The training labels and the holdout grades are the same judgment set ({tm.name})."}
+                "text": f"The training labels and the test set grades are the same judgment set ({tm.name})."}
     tj, hj = (tm.judge or {}).get("model"), (hm.judge or {}).get("model")
     if tsrc and tsrc == hsrc and tsrc != "human" and (tsrc == "click" or not tj or not hj or tj == hj):
         who = f"the same {tsrc} judge" + (f" ({tj})" if tj and tsrc != "click" else "")
-        return {**out, "status": "shared", "text": f"The training labels and the holdout grades were made by {who}."}
+        return {**out, "status": "shared", "text": f"The training labels and the test set grades were made by {who}."}
     return {**out, "status": "independent",
-            "text": f"Training labels come from {tref} ({tsrc or 'unknown source'}), holdout grades from {href} "
+            "text": f"Training labels come from {tref} ({tsrc or 'unknown source'}), test set grades from {href} "
                     f"({hsrc or 'unknown source'})."}
 
 
@@ -560,7 +560,7 @@ def verdict(comparison_verdict: str | None, independence: dict) -> str | None:
 # ---- experiments against the champion ------------------------------------------------------------
 
 
-EVAL_LABELS = {"holdout": "Sealed holdout, graded by judgments",
+EVAL_LABELS = {"holdout": "Sealed test set, graded by judgments",
                "judged-queries": "Judged queries, not sealed",
                "logged-clicks": "Replay of logged searches, graded from clicks",
                "trainer-reported": "Reported by the trainer, not checked by Captain",
@@ -599,14 +599,14 @@ def evaluation_plan(ctx: Context, doc: dict) -> dict:
             m = "holdout" if hold else "judged-queries"
             text = (f"Scores both rankers on {hold or queries} with {labels}." if hold else
                     f"Scores both rankers on {queries} with {labels}. These queries aren't sealed, so the model may "
-                    "have trained on them: seal a holdout for a fair score.")
+                    "have trained on them: seal a test set for a fair score.")
             return {"method": m, "ready": True, "evidence": _EVIDENCE.get(src or ""), "text": text,
                     "uses": {"queries": hold or queries, "judgments": labels}, "missing": []}
         miss = [s["id"] for s in by_role(doc, "labels")][:1] if not labels else []
         if not (hold or queries):
             miss += [s["id"] for s in (by_role(doc, "holdout") or by_role(doc, "queries"))][:1]
         return {"method": "holdout", "ready": False, "evidence": None, "missing": miss,
-                "text": "Scoring on judgments needs a judgments input and a queries or sealed holdout input."}
+                "text": "Scoring on judgments needs a judgments input and a queries or sealed test set input."}
 
     def clicks():
         if logs and _has_columns(ctx, logs, REQUIRED):
@@ -625,10 +625,10 @@ def evaluation_plan(ctx: Context, doc: dict) -> dict:
         return {"method": "trainer-reported", "ready": reported, "evidence": "TRAINER_REPORTED" if reported else None,
                 "missing": [], "text": "Compares the metrics each trainer reported on its own held-out data. Captain "
                                        "didn't compute them and can't check them, and they carry no interval."
-                if reported else "No experiment reported metrics yet (result.yaml metrics)."}
+                if reported else "No candidate reported metrics yet (result.yaml metrics)."}
 
     none = {"method": "none", "ready": False, "evidence": None, "missing": [],
-            "text": "No evaluation set yet: add judgments with queries or a sealed holdout, or an events input with "
+            "text": "No evaluation set yet: add judgments with queries or a sealed test set, or an events input with "
                     "clicks, or have your trainer report metrics."}
     if chosen == "none":
         out = none
@@ -727,9 +727,9 @@ def experiment_backtest(ctx: Context, pid: str, eid: str, compute: str | None = 
     exp = _exp(doc, eid)
     champ = doc.get("champion")
     if not champ:
-        raise ValueError(f"{pid} has no champion yet. Make one first: the first experiment or today's ranker.")
+        raise ValueError(f"{pid} has no baseline yet. Make one first: the first candidate or today's ranker.")
     if champ == exp["pipeline"]:
-        raise ValueError(f"{exp['pipeline']} is the champion. Pick another experiment to compare with it.")
+        raise ValueError(f"{exp['pipeline']} is the baseline. Pick another candidate to compare with it.")
     ep = evaluation_plan(ctx, doc)
     if not ep["ready"]:
         raise ValueError(ep["text"])
@@ -767,7 +767,7 @@ def experiment_backtest(ctx: Context, pid: str, eid: str, compute: str | None = 
         pop = ops.ref(ops.population_create(ctx, f"{name}/shoppers", "cascade-v1", 4000, 1, from_logs=lpin))
         ind = label_independence(ctx, train, j)
         bt = ops.backtest_plan(ctx, name, [champ, exp["pipeline"]], q, j, pop, primary="ndcg@10_tw", dry_run=True,
-                               hypothesis=f"{exp['pipeline']} ranks logged searches better than the champion {champ}")
+                               hypothesis=f"{exp['pipeline']} ranks logged searches better than the baseline {champ}")
         bt = bt.model_copy(update={"mode": "historic", "logs": lpin, "tags": {
             **(bt.tags or {}), "project": pid, "experiment": exp["id"], "train_labels": ind.get("train") or "",
             "label_independence": ind["status"], "evaluation": ep["method"], **({"note": note} if note else {})}})
@@ -777,7 +777,7 @@ def experiment_backtest(ctx: Context, pid: str, eid: str, compute: str | None = 
         q, j = ep["uses"]["queries"], ep["uses"]["judgments"]
         ind = label_independence(ctx, train, j)
         bt = ops.backtest_plan(ctx, name, [champ, exp["pipeline"]], q, j, None,
-                               hypothesis=f"{exp['pipeline']} ranks {q} better than the champion {champ}", dry_run=True)
+                               hypothesis=f"{exp['pipeline']} ranks {q} better than the baseline {champ}", dry_run=True)
         bt = bt.model_copy(update={"tags": {**(bt.tags or {}), "project": pid, "experiment": exp["id"],
                                             "train_labels": ind.get("train") or "", "label_independence": ind["status"],
                                             "evaluation": ep["method"]}})
@@ -950,8 +950,8 @@ def stages(ctx: Context, pid: str) -> dict:
     elif exps and not ev["ready"]:
         top = {"action": "add-evaluation", "text": ev["text"]}
     else:
-        words = {"new-experiment": "Train a new experiment.", "make-champion": "Make an experiment the champion.",
-                 "backtest": "Compare the newest experiment with the champion."}
+        words = {"new-experiment": "Train a new candidate.", "make-champion": "Make a candidate the baseline.",
+                 "backtest": "Compare the newest candidate with the baseline."}
         top = {**nxt, "text": words.get(nxt["action"], "")}
     return {
         "project": pid, "kind": doc.get("kind"), "recipe": doc.get("recipe"), "index_complete": idx.complete,

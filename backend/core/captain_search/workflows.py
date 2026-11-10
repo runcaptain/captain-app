@@ -26,7 +26,7 @@ TPL = re.compile(r"\$\{(params|steps)\.([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9_.\-\[\]]
 
 TEMPLATES = {
     "simulated-backtest": {
-        "description": "Generate and seal queries from a catalog, grade two pipelines, simulate shoppers, backtest.",
+        "description": "Generate and seal queries from a catalog, grade two model versions, simulate shoppers, run an offline evaluation.",
         "params": {"catalog": "demo-catalog@v1", "baseline": "demo-bm25@v1", "challenger": "demo-tuned@v1", "name": "wf-backtest"},
         "steps": [
             {"id": "gen", "command": ["queries", "gen"], "args": {"catalog": "${params.catalog}", "name": "${params.name}/queries", "n": 300}},
@@ -56,7 +56,7 @@ TEMPLATES = {
     },
     "retrain-and-review": {
         "description": "Record live metrics for an environment. If the metric fell past the threshold, retrain the deployed "
-                       "pipeline and backtest it against what is live. It stops at a candidate ready for review: Captain "
+                       "model and evaluate it offline against what is live. It stops at a candidate ready for review: Captain "
                        "never promotes a model. Promotion is the customer's own deployment process.",
         "params": {"env": "demo-staging", "logs": "logs/demo-search-sessions@v1", "metric": "ctr", "drop": 0.05,
                    "pipeline": "demo-tuned", "queries": "demo-queries@v2:holdout", "judgments": "demo-judgments@v1",
@@ -74,7 +74,7 @@ TEMPLATES = {
             {"id": "plan", "command": ["backtest", "plan"], "args": {
                 "name": "${params.name}", "arms": "${steps.live.pipeline},${steps.retrain.pipeline}",
                 "queries": "${params.queries}", "judgments": "${params.judgments}",
-                "hypothesis": "The retrained pipeline beats the one that is live."}, "needs": ["live", "retrain"]},
+                "hypothesis": "The retrained model beats the one that is live."}, "needs": ["live", "retrain"]},
             {"id": "run", "command": ["backtest", "run"], "args": {"name": "${params.name}"}, "needs": ["plan"]},
         ],
     },

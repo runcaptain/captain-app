@@ -49,7 +49,7 @@ def bundle(ctx: Context, pipeline_ref: str, env_name: str, gates: list[dict], ov
     cost = COST.get(ctx, ref(pm))
     limitations = list(pm.known_issues)
     if evidence is None:
-        limitations.append("no backtest has this version as a challenger")
+        limitations.append("no offline evaluation has this version as a candidate")
     elif Evidence(evidence["evidence_label"]).rank < Evidence.REAL_TRAFFIC.rank:
         limitations.append(f"offline evidence only ({evidence['evidence_label']}): not proof of online or profit lift")
     if override_reason:
@@ -78,7 +78,7 @@ def get(ctx: Context, hid: str) -> dict:
     try:
         b = yaml.safe_load(ctx.store.get(f"handoffs/{hid}.yaml"))
     except NotFound:
-        raise NotFound(f"no handoff {hid}") from None
+        raise NotFound(f"no launch review {hid}") from None
     b["links"] = _links(ctx, hid)[0].get("events", [])
     return b
 
@@ -109,7 +109,7 @@ def _append(ctx: Context, hid: str, event: dict) -> dict:
     try:
         ctx.store.put_if(f"handoffs/{hid}/links.yaml", dump_yaml(doc), tag)
     except Conflict:
-        raise Conflict("someone recorded on this handoff at the same moment. Try again.") from None
+        raise Conflict("someone recorded on this launch review at the same moment. Try again.") from None
     return get(ctx, hid)
 
 
@@ -135,6 +135,6 @@ def outcome(ctx: Context, hid: str, metric: str, value: float, source: str, expe
             ci_low: float | None = None, ci_high: float | None = None) -> dict:
     """Attach an online result from the customer's experiment system. These are REAL_TRAFFIC numbers."""
     if not source.strip():
-        raise ValueError("say where the number comes from (the experiment system and its report)")
+        raise ValueError("say where the number comes from (the A/B testing system and its report)")
     return _append(ctx, hid, {"kind": "outcome", "metric": metric, "value": float(value), "ci_low": ci_low, "ci_high": ci_high,
                               "source": source, "experiment": experiment, "evidence": Evidence.REAL_TRAFFIC.value})

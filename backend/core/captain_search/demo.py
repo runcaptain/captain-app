@@ -138,7 +138,7 @@ def review_demo(ctx, q, base, tuned, logs_ref: str, progress=print) -> dict:
     progress(f"queued {gq['pairs']} pairs for people to grade in demo-grading")
     pr = PR.create(ctx, "Tuned title boost on numeric queries", "Raising the title boost lifts nDCG@10 on numeric queries.",
                    [ops.ref(base), ops.ref(tuned)], ops.ref(q) + ":holdout", "demo-judgments@v1", agent="demo-agent",
-                   rationale="Segments show the tuned pipeline's biggest gain is on numeric queries.")
+                   rationale="Segments show the tuned version's biggest gain is on numeric queries.")
     progress(f"filed agent proposal {pr['id']} for a person to review")
     return {"label": ops.ref(lab), "replay": ops.ref(rp), "grading": "demo-grading", "proposal": pr["id"]}
 
@@ -163,7 +163,7 @@ def historic_demo(ctx, cat, base, tuned, progress=print) -> dict:
     logs = ctx.registry.publish(m.model_copy(update={"files": [e], "tags": {"synthetic": "true"}}))
     progress(f"saved {ops.ref(logs)} ({len(rows)} impressions, tagged synthetic)")
     bt = ops.backtest_plan(ctx, "demo-historic-replay", [ops.ref(base), ops.ref(tuned)], None, None, None,
-                           "Replaying logged searches, the tuned pipeline beats the old ranker on traffic-weighted nDCG@10.",
+                           "Replaying logged searches, the tuned version beats the old ranker on traffic-weighted nDCG@10.",
                            primary="ndcg@10_tw", mode="historic", logs=ops.ref(logs))
     run = ops.backtest_run(ctx, bt.name)
     progress(f"ran historic replay {ops.ref(run)}")

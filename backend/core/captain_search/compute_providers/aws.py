@@ -262,7 +262,7 @@ class SageMakerProvider(_AWS):
         {"name": "instance_count", "label": "Instance count", "required": False, "default": "1"}]
 
     def plan(self, job: Job) -> list[dict]:
-        raise ValueError("a SageMaker endpoint serves pipelines and cannot run jobs. Use an ECS or Batch target.")
+        raise ValueError("a SageMaker endpoint serves models and cannot run jobs. Use an ECS or Batch target.")
 
     submit = plan
 

@@ -12,7 +12,7 @@ import { metricWords } from "./kit/words.js";
 import { int } from "./kit/num.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
-const KIND = { backtest: ["backtest", "Backtest"], training: ["pipeline", "Training"], sweep: ["sim", "Settings sweep"], custom: ["run", "Run"] };
+const KIND = { backtest: ["backtest", "Offline evaluation"], training: ["pipeline", "Training"], sweep: ["sim", "Settings sweep"], custom: ["run", "Run"] };
 const STATUS = { queued: ["queued", "Waiting to start"], running: ["running", "Running"], done: ["done", "Finished"], failed: ["failed", "Failed"], stopped: ["x", "Stopped"] };
 const KEEP = { shoppers: 240, logs: 400, points: 600 };
 const PCT = new Set(["conversion", "ctr", "zero_result_rate", "judged@10", "coverage"]);
@@ -168,7 +168,7 @@ export class Live {
       .when(!!this.error, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child("Couldn't list the live runs.")))
       .when(Array.isArray(this.list) && !rows.length, (e) => e.child(v_flex().p(14).gap(8)
         .child(div().text_size(13).font_medium().child("Nothing running"))
-        .child(div().text_size(12).line_height("18px").text_color(c.grey900).child("Run a backtest and it shows here as it goes: each step, simulated shoppers on both versions side by side, and the numbers as they fill in. Your own simulator or training script can stream here too, through cst live."))))
+        .child(div().text_size(12).line_height("18px").text_color(c.grey900).child("Run an offline evaluation and it shows here as it goes: each step, simulated shoppers on both versions side by side, and the numbers as they fill in. Your own simulator or training script can stream here too, through cst live."))))
       .children(rows.map((x) => {
         const on = x.id === this.sel;
         const [ic] = KIND[x.kind] ?? KIND.custom;

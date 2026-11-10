@@ -52,7 +52,7 @@ def _load(ctx: Context, iid: str):
     try:
         data, tag = ctx.store.get_with_tag(_key(iid))
     except NotFound:
-        raise NotFound(f"no investigation {iid}") from None
+        raise NotFound(f"no experiment {iid}") from None
     return yaml.safe_load(data), tag
 
 
@@ -60,7 +60,7 @@ def _save(ctx: Context, doc: dict, tag) -> dict:
     try:
         ctx.store.put_if(_key(doc["id"]), dump_yaml(doc), tag)
     except Conflict:
-        raise Conflict(f"investigation {doc['id']} changed while you were editing it (another person or agent). "
+        raise Conflict(f"experiment {doc['id']} changed while you were editing it (another person or agent). "
                        "Reload it and apply your change again.") from None
     return doc
 
@@ -87,7 +87,7 @@ def missing(plan: dict) -> list[str]:
 def create(ctx: Context, title: str, hypothesis: str = "", agent: str | None = None, dry_run: bool = False,
            expected_revision: int | None = None, **plan) -> dict:
     if not title.strip():
-        raise ValueError("an investigation needs a title (the question)")
+        raise ValueError("an experiment needs a title (the question)")
     unknown = set(plan) - set(PLAN_FIELDS)
     if unknown:
         raise ValueError(f"unknown plan fields {sorted(unknown)}: use {', '.join(PLAN_FIELDS)}")
@@ -154,10 +154,10 @@ def revise(ctx: Context, iid: str, hypothesis: str | None = None, note: str = ""
            expected_revision: int | None = None, **plan) -> dict:
     doc, tag = _load(ctx, iid)
     if doc["state"] == "decided":
-        raise ValueError(f"investigation {iid} is decided. Open a new investigation that links to it to keep going.")
+        raise ValueError(f"experiment {iid} is decided. Open a new experiment that links to it to keep going.")
     cur = current_plan(doc)
     if expected_revision is not None and cur.get("rev") != expected_revision:
-        raise Conflict(f"investigation {iid} is at revision {cur.get('rev')}, not {expected_revision}. Reload and revise again.")
+        raise Conflict(f"experiment {iid} is at revision {cur.get('rev')}, not {expected_revision}. Reload and revise again.")
     merged = {k: cur.get(k) for k in PLAN_FIELDS} | {k: v for k, v in plan.items() if v is not None}
     rev = _revision(ctx, cur.get("rev", 0) + 1, hypothesis if hypothesis is not None else cur.get("hypothesis", ""), merged,
                     agent, note=note)
@@ -222,7 +222,7 @@ def _check_policy(ctx: Context, doc: dict, plan: dict, agent: str | None) -> Non
     today = _now()[:10]
     n_today = sum(1 for r in doc["runs"] if str(r.get("at", "")).startswith(today))
     if n_today >= pol["max_runs_per_day"]:
-        raise ValueError(f"this investigation already started {n_today} runs today, the policy limit")
+        raise ValueError(f"this experiment already started {n_today} runs today, the policy limit")
 
 
 # ---- runs -----------------------------------------------------------------------------------
@@ -234,7 +234,7 @@ def run(ctx: Context, iid: str, agent: str | None = None, idempotency_key: str |
 
     doc, tag = _load(ctx, iid)
     if doc["state"] == "decided":
-        raise ValueError(f"investigation {iid} is decided. Open a new one to run more.")
+        raise ValueError(f"experiment {iid} is decided. Open a new one to run more.")
     plan = current_plan(doc)
     need = missing(plan)
     if need:
@@ -255,7 +255,7 @@ def run(ctx: Context, iid: str, agent: str | None = None, idempotency_key: str |
         sf = [{"name": g["surface"], "queries": g["queries"], "judgments": g["judgments"], "guardrails": g.get("rules", [])}
               for g in plan.get("guardrails", []) if isinstance(g, dict) and g.get("surface")]
         bt = ops.backtest_plan(ctx, name, arms, plan["queries"], plan.get("judgments"), plan.get("population"),
-                               f"{plan['hypothesis']} (investigation {iid}, revision {plan['rev']})",
+                               f"{plan['hypothesis']} (experiment {iid}, revision {plan['rev']})",
                                plan.get("primary_metric", "ndcg@10"), float(plan.get("mde") or 0.003), surfaces=sf or None)
         r = ops.backtest_run(ctx, bt.name, progress=progress)
         status, ref, err = "done", f"{r.name}@v{r.version}", None
@@ -270,7 +270,7 @@ def run(ctx: Context, iid: str, agent: str | None = None, idempotency_key: str |
     _event(doc, f"run {status}", agent, run=ref, error=err)
     out = get(ctx, _save(ctx, doc, tag)["id"])
     if status == "failed":
-        raise ValueError(f"the run failed and is recorded on the investigation: {err}")
+        raise ValueError(f"the run failed and is recorded on the experiment: {err}")
     return out
 
 
@@ -291,7 +291,7 @@ def decide(ctx: Context, iid: str, outcome: str, interpretation: str, limitation
         raise ValueError("a decision needs an interpretation and a next step, so someone else can assess it")
     doc, tag = _load(ctx, iid)
     if doc["state"] == "decided":
-        raise ValueError(f"investigation {iid} is already decided ({doc['decision']['outcome']})")
+        raise ValueError(f"experiment {iid} is already decided ({doc['decision']['outcome']})")
     runs = runs or [r["run"] for r in doc["runs"] if r.get("run")]
     labels = []
     for ref in runs:
@@ -401,9 +401,9 @@ def prompt(ctx: Context, iid: str, ask: str = "investigate", base_url: str | Non
     asks = {
         "investigate": "Inspect the failures behind this question, document candidate signals with their historical "
                        "availability, and propose the next comparison.",
-        "run": "Run the comparison this investigation's current revision describes, then summarise what changed, where it "
+        "run": "Run the comparison this experiment's current revision describes, then summarise what changed, where it "
                "helped or hurt, and whether the comparison can be trusted.",
-        "panel": "Build a custom panel (a Captain app mod) that shows the evidence for this investigation.",
+        "panel": "Build a custom panel (a Captain app mod) that shows the evidence for this experiment.",
         "explain": "Explain the latest run's regressions at query and slice level.",
     }
     if ask not in asks:
@@ -413,7 +413,7 @@ def prompt(ctx: Context, iid: str, ask: str = "investigate", base_url: str | Non
     lines = [
         cst_line(),
         "",
-        f"Investigation {doc['id']}: {doc['title']}",
+        f"Experiment {doc['id']} (`cst investigate`): {doc['title']}",
         "",
         f"Hypothesis (revision {p.get('rev')}): {unk(p.get('hypothesis'))}",
         f"Baseline: {unk(p.get('baseline'))}   Candidates: {unk(', '.join(p.get('candidates') or []))}",
@@ -424,13 +424,13 @@ def prompt(ctx: Context, iid: str, ask: str = "investigate", base_url: str | Non
         f"What to do: {asks[ask]}",
         "",
         "How: use the `cst` CLI with --json (run `cst --help`; `cst investigate show " + doc["id"] + " --json` for this record). "
-        "Record your work on the investigation: `cst investigate evidence`, `cst signal new`, `cst investigate revise`, "
+        "Record your work on the experiment: `cst investigate evidence`, `cst signal new`, `cst investigate revise`, "
         "`cst investigate run`. Save definitions as code (labels: `cst label define`).",
         f"Limits: agent runs {'allowed' if pol['agent_runs'] else 'NOT allowed'}, up to {pol['max_queries']:,} queries, "
         f"{pol['max_runs_per_day']} runs a day, compute {', '.join(pol['compute'])}. Captain labels your work as yours (Claude Code, Codex and Cursor are recognised; anything else, set CST_AGENT=<your name>). "
-        "Recommend an experiment for a person to approve with `cst recommend new --title ... --hypothesis ... --arms baseline@v1,candidate@v1 --queries ...`.",
+        "Recommend an offline evaluation for a person to approve with `cst recommend new --title ... --hypothesis ... --arms baseline@v1,candidate@v1 --queries ...`.",
         "Credentials: use the workspace's configured profiles and keychain secrets by name. Never print or copy secret values.",
-        "Report limitations and the next experiment. Keep offline evidence separate from online or business impact. "
+        "Report limitations and the next step. Keep offline evidence separate from online or business impact. "
         "A person records the decision.",
     ]
     if base_url:
