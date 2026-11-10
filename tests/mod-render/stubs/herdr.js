@@ -4,8 +4,10 @@ export const run = (name, args) => (globalThis.__runs ??= []).push([name, args])
 export const props = () => globalThis.__props ?? {};
 export const shared = (k) => globalThis.__shared?.[k];
 export const setShared = (k, v) => ((globalThis.__shared ??= {})[k] = v);
-export const layout = () => ({ id: 'root', children: [] });
-export const agents = () => [];
+export const layout = () => globalThis.__layout ?? { id: 'root', children: [] };
+export const agents = () => globalThis.__agentList ?? [];
+// Terminal commands a mod runs (hc send ...), recorded.
+export const hc = async (args) => { (globalThis.__hc ??= []).push(args); return { code: 0, stdout: '', stderr: '' }; };
 export const openOverlay = (o) => { (globalThis.__overlays ??= []).push(o); return 1; };
 export const closeOverlay = (id) => { (globalThis.__closed ??= []).push(id ?? null); };
 export const notify = (n) => { (globalThis.__toasts ??= []).push(n); return String(globalThis.__toasts.length); };

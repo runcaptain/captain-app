@@ -501,6 +501,11 @@ pub fn shared(key: &str) -> Option<Value> {
     with_shared(|s| s.values.get(key).cloned())
 }
 
+/// CAPTAIN: every shared value whose key starts with `prefix`, keyed by the rest of the key.
+pub fn shared_under(prefix: &str) -> serde_json::Map<String, Value> {
+    with_shared(|s| s.values.iter().filter_map(|(k, v)| Some((k.strip_prefix(prefix)?.to_owned(), v.clone()))).collect())
+}
+
 /// Sets a value every mod can read (persisted in shared.json); mods re-render.
 pub fn set_shared(key: String, value: Value) {
     if with_shared(|s| s.set(key, value)) {

@@ -17,6 +17,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, EditorState, Editor, Popup } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay, pickFolder, home, shared, setShared, notify, run } from "herdr";
 import { api, query, watchConnections } from "./kit/cst.js";
+import { watchView, publishView } from "./kit/view.js";
 import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -90,6 +91,10 @@ export function localSuggestions(tree) {
 export default class CaptainImport extends View {
   init(_props, cx) {
     this.step = 1;
+    // The import open over the page, for agents (cst app context): the step, the source and the input it fills.
+    watchView(cx, "dialog", () => ({ mod: "captain-import", form: this.input ? "choose-input" : "import-dataset", title: this.input ? "Choose an input" : "Import a dataset",
+      fields: { step: this.step, source: this.source?.kind ?? null, connection: typeof this.source?.conn === "string" ? this.source.conn : this.source?.conn?.name ?? null,
+        input: this.input?.slot ?? null, dataset: typeof this.picked === "string" ? this.picked : this.picked?.name ?? null } }));
     this.input = props()?.input ?? null; // a project's input being chosen, not a plain import
     this.inTab = "connection";
     this.mode = "snapshot";
@@ -237,7 +242,7 @@ export default class CaptainImport extends View {
     });
   }
 
-  close() { closeOverlay(props().overlay); }
+  close() { publishView("dialog", null); closeOverlay(props().overlay); }
 
   /** The editor for this source: JSON for Google Analytics 4, SQL for everything else. */
   get sql() {

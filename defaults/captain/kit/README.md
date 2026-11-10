@@ -7,6 +7,10 @@ Edit it here, in defaults/captain/kit, then run `scripts/captain-kit-sync`, whic
 - `tokens.js`: Captain's colors (the Captain Search desktop app's index.css), light and dark, and fonts.
 - `cst.js`: the daemon. `api(path, {method, body})` resolves `{ok, status, data, error, starting}` and never
   rejects. The base URL and token come from shared "captain.daemon", which the app keeps current.
+- `view.js`: what the person is looking at, for agents. `watchView(cx, section, read)` in `init` publishes a
+  screen's small slice (project, tab, selection, the Next line) to shared "captain.view.<section>" when it changes;
+  `safeFields` hides secrets; `viewSnapshot()` is the few lines `agent.js` puts on top of every prompt. `cst app
+  context` reads it all back through the window (`captain-app view`). Never call these from render.
 - `icons.js`: `icon(name)`, the home path of a shared Lucide glyph (defaults/icons/captain-*.svg), for `svg()`.
 - `appearance.js`: `getAppearance()` and `setAppearance("light" | "dark" | "system")`.
 - `ui.js`: Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Bars, Line, and Table (a fixed list, or

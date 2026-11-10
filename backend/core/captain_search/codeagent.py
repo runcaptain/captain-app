@@ -34,13 +34,19 @@ def cst_path() -> str:
     return shutil.which("cst") or "cst"
 
 
+# One paragraph, near the top of the agent's AGENTS.md / CLAUDE.md and of every prompt the services build: how an
+# agent sees what the person sees, so it never has to ask "which project do you mean?".
+SEE = ("To see what the person is looking at in Captain right now, run `cst app context` (and `cst app shot` for a "
+       "picture). Do this when they say \"this\", \"here\", \"what I'm looking at\", or name nothing.")
+
+
 def cst_line() -> str:
     """The first lines of every prompt the services build for an agent."""
     c = cst_path()
     return (f"Use this cst: {c}\n"
             f"Run every `cst` command below with that exact path (it is also in $CST_BIN when Captain opened your "
             f"terminal). An older `cst` may come first on your PATH: if `{shlex.quote(c)} projects --help` fails, you "
-            f"are on an old copy.")
+            f"are on an old copy.\n{SEE}")
 
 
 GUIDE = """# Captain Search Tools workspace: {ws}
@@ -50,6 +56,9 @@ read results. Storage: `{uri}`. Never write to the bucket any other way.
 
 Use this cst: `{cst}` (also `$CST_BIN`). An older `cst` may come first on your PATH: if `cst projects --help` fails,
 you are on an old copy, so run the path above.
+
+{see} It prints the workspace, the project, the screen, the selected item, any open form and the page's "Next:"
+line, with what Captain knows about them. It needs Captain open, and says so plainly when it isn't.
 
 ## Rules
 - Versions are write-once. A change is a new version (`cst pipeline publish`, `cst data snapshot`, `--save`).
@@ -86,7 +95,7 @@ def prepare(ctx: Context) -> dict:
     os.makedirs(cwd, exist_ok=True)
     conns = ", ".join(ctx.connections()) or "none yet"
     cst = cst_path()
-    text = GUIDE.format(ws=ctx.workspace.name, uri=ctx.workspace.storage_uri, conns=conns, cst=cst)
+    text = GUIDE.format(ws=ctx.workspace.name, uri=ctx.workspace.storage_uri, conns=conns, cst=cst, see=SEE)
     for f in ("AGENTS.md", "CLAUDE.md"):
         with open(os.path.join(cwd, f), "w") as fh:
             fh.write(text)

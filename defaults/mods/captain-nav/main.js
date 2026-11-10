@@ -26,6 +26,7 @@ import { getAppearance, setAppearance } from "./kit/appearance.js";
 import { Explorer, projectNode } from "./explorer.js";
 import { ProjectIcon } from "./kit/projecticon.js";
 import { TeamViews } from "./teamviews.js";
+import { askAboutScreen } from "./kit/agent.js";
 
 const ITEMS = [
   // Home: the current project's page (captain-project), or New project when there is none.
@@ -87,6 +88,8 @@ export function staticEntries(sections) {
     { name: "captain-nav.theme-dark", args: {}, group: "Captain", icon: icon("moon"), title: "Switch to dark", words: "appearance theme dark mode night" },
     { name: "captain-nav.theme-system", args: {}, group: "Captain", icon: icon("monitor"), title: "Match the system appearance", words: "appearance theme system auto" },
     { group: "Captain", icon: icon("folder-open"), title: "New workspace...", words: "workspace storage folder bucket s3 gcs azure create start import drop", overlay: SETUP },
+    // The agent tab gets what is on screen (workspace, project, section, selection, the Next line): kit/agent.js.
+    { name: "captain-nav.ask-screen", args: {}, group: "Captain", icon: icon("bot"), title: "Ask an agent about this screen", words: "agent claude codex context see looking help next this here what am I looking at" },
     { name: "app.welcome", args: {}, group: "Captain", icon: icon("compass"), title: "Show the Captain tour", words: "onboarding welcome checklist start setup" },
     { group: "Captain", icon: icon("workflow"), title: "Open workflows", words: "workflow schedule nightly steps chain automate", overlay: go("runs", { tab: "workflows" }) },
     { group: "Captain", icon: icon("users"), title: "Team collaboration", words: "company sync login shared records drafts", overlay: { mod: "captain-team", kind: "dialog", width: 960, height: 680 } },
@@ -129,6 +132,8 @@ export default class CaptainNav extends View {
             await setAppearance(this.appearance);
           } else if (c === "space-new") {
             await this.newSpace();
+          } else if (c === "ask-screen") {
+            await askAboutScreen(cx);
           }
           cx.notify();
         }
@@ -368,12 +373,18 @@ export default class CaptainNav extends View {
 
   agentRows(c, rail) {
     const list = agents();
-    if (props()?.agents === false || !list.length) return null;
+    if (props()?.agents === false) return null;
+    // One click sends this screen to the open agent tab, or opens one (kit/agent.js askAboutScreen).
+    const ask = (id) => div().id(id).size(22).flex().flex_none().items_center().justify_center().cursor_pointer().text_color(c.grey500)
+      .hover((s) => s.text_color(c.blue)).tooltip("Ask an agent about this screen")
+      .on_click((_e, cx) => { cx.stop_propagation(); cx.spawn(async (cx) => { await askAboutScreen(cx); }); })
+      .child(svg(icon("bot")).size(14));
+    if (rail && !list.length) return h_flex().w_full().flex_none().h(30).justify_center().items_center().border_t(1).border_color(c.rule).child(ask("nav-ask-screen"));
     const dot = (s) => (s === "blocked" ? c.fail : s === "working" ? c.blue : s === "done" ? "#12b76a" : c.grey300);
     return v_flex().w_full().flex_none().pt(6).border_t(1).border_color(c.rule)
       .when(!rail, (e) => e.child(h_flex().id("nav-agents").h(26).px(16).items_center().cursor_pointer()
         .text_size(11).font_medium().text_color(c.grey500).on_click((_e, cx) => { this.agentsOpen = !this.agentsOpen; cx.notify(); })
-        .child(div().flex_1().child("AGENTS")).child(div().child(this.agentsOpen ? "hide" : `${list.length}`))))
+        .child(div().flex_1().child("AGENTS")).child(ask("nav-ask-screen")).when(list.length > 0, (x) => x.child(div().ml(6).child(this.agentsOpen ? "hide" : `${list.length}`)))))
       .when(this.agentsOpen || rail, (e) => e.children(list.slice(0, 8).map((a) => h_flex().id(`agent-${a.address}`).h(28).gap(8).items_center()
         .cursor_pointer().when(!rail, (d) => d.px(16)).when(rail, (d) => d.justify_center())
         .text_size(12.5).text_color(c.navy).hover((s) => s.bg(c.surface2))

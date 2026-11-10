@@ -3770,6 +3770,18 @@ impl AppWindow {
         if cmd.get("ls").is_some() {
             return self.world();
         }
+        // CAPTAIN: what the person is looking at (`captain-app view`, `cst app context`): the workspace, the
+        // Explorer's pick, the section shown, the open dialogs, and what each screen published about itself
+        // (shared "captain.view.<section>", kit/view.js). Read here, on the window's thread, so it is never stale.
+        if cmd.get("view").is_some() {
+            let overlays: Vec<String> = self.overlays.iter().filter_map(|o| match &o.layout {
+                Some(_) => None,
+                None => self.copies.get(&o.slot).map(|c| c.inst.name.clone()),
+            }).collect();
+            let section = self.chrome.find("sections").and_then(|s| s.active_child()).map(|n| n.id.clone());
+            let terminals_shown = self.chrome.find("work").map(|n| !n.hidden);
+            return crate::cst::view_record(section, overlays, self.shown_agent(), terminals_shown, &self.layout_name);
+        }
         if cmd.get("status").is_some() {
             let round = |v: f32| (v as f64 * 100.0).round() / 100.0;
             let errors: Vec<String> = ["settings", "keys", "layout", "programs"]
@@ -3795,7 +3807,7 @@ impl AppWindow {
                 "errors": errors,
             });
         }
-        json!({ "error": "expected { do }, { ls }, { commands } or { status }" })
+        json!({ "error": "expected { do }, { ls }, { commands }, { view } or { status }" })
     }
 
     /// Spaces, their tabs and terminals, for `captain-app ls`. Sub-agents are listed
