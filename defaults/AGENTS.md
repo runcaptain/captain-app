@@ -93,7 +93,8 @@ first frame or during GPU recovery it reports an error instead of a PNG.
   `experiment:<id>`, `candidate:<project>/<id>`, `table:<connection>.<table>`, `project:<id>` or a file path. A
   bare name is looked up. `cst context rm <ref>` and `cst context clear` remove. People pin with "Send to agent"
   on a dataset, an input card, a candidate, a comparison, a run or an experiment: that also puts a one-line
-  reference in the open agent tab's input. The sidebar's Agent context strip lists the screen and the pins.
+  reference in the open agent tab's input (not through the clipboard: what they copied stays). The sidebar's
+  Agent context strip lists the screen and the pins.
   Pins live per workspace in `context/<workspace>.json` in the app's folder, with who added each and when.
 
 These work in any terminal Captain opened: those carry `CAPTAIN_APP_HOME` (which window) and `CST_BIN` (which
@@ -111,7 +112,8 @@ filled in. A record outside the Explorer's pick opens by showing the whole works
 `--as-asked` an agent's accept is refused. `cst projects slot-add`, `slot-edit`, `slot-rm`, `input`, `input-clear`,
 `pin`, `kind` and `evaluation` work for an agent when the person asked. Each change an agent makes is written to
 the project's history with the agent's name, the time and, for an accept, the person's instruction; the proposal
-keeps `applied_by` and `on_instruction` too. Rejecting a proposal, deleting a project, deleting data and
+keeps `applied_by` and `on_instruction` too. The person sees it on Home: the proposal panel says "Applied by
+<agent> on your instruction", and Recent changes under "Everything in this project" lists the last ten. Rejecting a proposal, deleting a project, deleting data and
 overriding a live launch review stay with the person, in the app.
 
 Mods add to what is seen with the kit's `view.js`: `watchView(cx, "<section id>", () => ({ tab, dataset, ... }))`
@@ -632,9 +634,10 @@ The main ones:
   `terminal.keep {terminal, place?}`, `terminal.park {terminal}`,
   `terminal.peek {terminal}` (peek over the tab, with keep-as-tab and close),
   `terminal.show {terminal?, pane?}`, `terminal.search` (screen and scrollback;
-  find bar state stays with that terminal), `terminal.copy`, `terminal.paste` (copied
+  find bar state stays with that terminal), `terminal.copy`, `terminal.paste {text?}` (copied
   files, such as Finder's or a clipboard manager's image, as if dropped; an image
-  alone as `terminal.paste_image` pastes it), `terminal.paste_image` (Ctrl+V: an
+  alone as `terminal.paste_image` pastes it; with `text`, that text is pasted and
+  the clipboard is left as it was, with no Enter), `terminal.paste_image` (Ctrl+V: an
   image, into a terminal on another machine: copied there, its path pasted; on
   Windows, clipboard text is pasted; otherwise Ctrl+V goes to the program, which
   reads the clipboard itself). TIFF and BMP clipboard

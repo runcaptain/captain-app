@@ -389,4 +389,20 @@ if [[ -n "${SHOT_AUDIT:-}" ]]; then
     app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; sleep 1
   done
 fi
+# `terminal.paste {text}` ("Send to agent" uses it): the text lands in the focused terminal's input, Enter is not
+# pressed, and the clipboard is exactly what it was. A program that reads 11 raw bytes stands in for the agent.
+if [[ -n "${SHOT_CONTEXT:-}" ]]; then
+  clip_before=$(pbpaste 2>/dev/null | shasum | cut -d' ' -f1 || true)
+  rm -f "$OUT/pasted.txt"
+  app do tab.new "{\"name\":\"paste\",\"argv\":[\"/bin/sh\",\"-c\",\"stty -icanon -echo; dd bs=1 count=11 of='$OUT/pasted.txt' 2>/dev/null; sleep 1\"]}" >/dev/null || true
+  sleep 4
+  app do terminal.paste '{"text":"hello agent"}' >/dev/null || true
+  for _ in $(seq 1 15); do [[ "$(cat "$OUT/pasted.txt" 2>/dev/null)" == "hello agent" ]] && break; sleep 1; done
+  clip_after=$(pbpaste 2>/dev/null | shasum | cut -d' ' -f1 || true)
+  if [[ "$(cat "$OUT/pasted.txt" 2>/dev/null)" == "hello agent" && "$clip_before" == "$clip_after" ]]; then
+    echo "terminal.paste {text}: the terminal got the text, and the clipboard is unchanged"
+  else
+    echo "terminal.paste {text}: got '$(cat "$OUT/pasted.txt" 2>/dev/null)', clipboard $([[ "$clip_before" == "$clip_after" ]] && echo unchanged || echo CHANGED)"; fail=1
+  fi
+fi
 exit $fail

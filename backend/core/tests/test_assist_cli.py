@@ -218,4 +218,7 @@ def test_an_agent_applies_only_on_the_persons_word_and_it_is_recorded(ws, monkey
     assert len(PS.get(ws, "shop")["history"]) == len(hist)
     r = PA.accept(ws, "shop", p2["id"])
     assert r["proposal"]["status"] == "accepted" and "applied_by" not in r["proposal"]
-    assert len(PS.get(ws, "shop")["history"]) == len(hist)
+    # A person's accept is in the history too, under their name and with no agent.
+    last = PS.get(ws, "shop")["history"]
+    assert len(last) == len(hist) + 1 and last[-1]["what"] == f"applied proposal {p2['id']}"
+    assert last[-1]["user"] == "tester@captain.dev" and "applied_by" not in last[-1] and "on_instruction" not in last[-1]

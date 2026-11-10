@@ -160,7 +160,12 @@ export default class ProjectHome extends View {
           this.assist = { status: "proposed", proposal: open, agent: open.agent, skipped: [], done: [] };
           if (open.trainer?.script) this.loadScript(cx, open);
         }
-        else if (!open && this.assist?.proposal && this.assist.status !== "accepted") this.assist = null;
+        else if (!open && this.assist?.proposal && this.assist.status !== "accepted") {
+          // The proposal on show was handled somewhere else. Applied by the agent because the person told it to
+          // (cst projects accept --as-asked): keep the panel and say so. Anything else: it is gone.
+          const now = pr.data.find((x) => x.id === this.assist.proposal.id);
+          this.assist = now?.status === "accepted" && now.applied_by ? { status: "accepted", proposal: now, agent: now.agent, skipped: [], done: [], toConnect: [] } : null;
+        }
       }
       if (seq !== this.seq) return;
       if (ps.ok) this.projects = Array.isArray(ps.data) ? ps.data : ps.data?.projects ?? [];
@@ -420,6 +425,10 @@ export default class ProjectHome extends View {
       .child(head)
       .when(waiting, (e) => e.child(div().text_size(12).text_color(c.grey900).child("When it has a proposal, it shows here. Untick what you don't want, change any source, then accept. Nothing changes until you do.")))
       .when(Boolean(prop?.note), (e) => e.child(div().text_size(12).text_color(c.grey900).child(prop.note)))
+      // Applied from the agent's side, on the person's word: who, and the words it quoted.
+      .when(Boolean(prop?.applied_by), (e) => e.child(h_flex().id("assist-applied").gap(6).items_start().text_size(12).text_color(c.navy)
+        .child(svg(icon("square-check")).size(13).mt(2).flex_none().text_color(c.blue))
+        .child(div().flex_1().min_w(0).child(`Applied by ${(AGENTS[String(prop.applied_by).toLowerCase()] ?? [prop.applied_by])[0]} on your instruction: "${prop.on_instruction ?? ""}"`))))
       .children(slots.map((s, i) => {
         const on = !(a.skipped ?? []).includes(s.slot);
         return h_flex().id(`assist-${i}`).gap(10).items_center().py(6).border_t(1).border_color(c.rule)
@@ -725,8 +734,26 @@ export default class ProjectHome extends View {
       .on_click((_e, cx) => { this.everything = !this.everything; if (this.everything) this.loadHome(cx); cx.notify(); })
       .child(svg(icon(this.everything ? "chevron-down" : "chevron-right")).size(13))
       .child(div().text_size(13).font_semibold().child("Everything in this project"))
-      .child(div().min_w(0).truncate().text_size(12).text_color(c.grey500).child("datasets, runs, model versions, models and notebooks"));
-    return v_flex().gap(8).child(toggle).when(this.everything, (e) => e.child(this.everythingBody(c)));
+      .child(div().min_w(0).truncate().text_size(12).text_color(c.grey500).child("datasets, runs, model versions, models, notebooks and recent changes"));
+    return v_flex().gap(8).child(toggle).when(this.everything, (e) => e.child(this.historyList(c) ?? div()).child(this.everythingBody(c)));
+  }
+
+  /** The last 10 changes the project's history holds: every accepted proposal, and each change an agent made by
+   *  hand (cst projects slot-add, input, pin...), with who made it, when, and the instruction an agent acted on. */
+  historyList(c) {
+    const rows = (this.state?.history ?? []).slice(-10).reverse();
+    if (!rows.length) return null;
+    const who = (h) => (h.applied_by ? (AGENTS[String(h.applied_by).toLowerCase()] ?? [h.applied_by])[0] : h.user ?? "Someone");
+    const what = (h) => { const w = String(h.what ?? "changed the project"); return w[0].toUpperCase() + w.slice(1); };
+    return v_flex().id("ph-history").gap(4)
+      .child(div().text_size(12).font_semibold().text_color(c.grey900).child("Recent changes"))
+      .children(rows.map((h, i) => h_flex().id(`ph-history-${i}`).gap(8).items_start().py(4).border_t(1).border_color(c.rule).text_size(12)
+        .child(svg(icon(h.applied_by ? "bot" : "users")).size(13).mt(2).flex_none().text_color(h.applied_by ? c.blue : c.grey500))
+        .child(v_flex().flex_1().min_w(0).gap(1)
+          .child(div().text_color(c.navy).child(`${who(h)}: ${what(h)}`))
+          .when(Boolean(h.on_instruction), (e) => e.child(div().text_color(c.grey900).child(`On your instruction: "${h.on_instruction}"`)))
+          .when(Boolean(h.applied_by) && !h.on_instruction, (e) => e.child(div().text_color(c.grey500).child(`Run by an agent${h.user ? ` in ${h.user}'s session` : ""}`))))
+        .child(div().flex_none().font_family(MONO).text_size(11).text_color(c.grey500).child(String(h.at ?? "").slice(0, 16).replace("T", " ")))));
   }
 
   // ---- frame ----------------------------------------------------------------------------------------------------

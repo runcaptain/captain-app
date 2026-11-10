@@ -63,11 +63,11 @@ export async function sendToAgent(cx, item) {
     await askAgent(cx, `The person pinned ${item.kind} ${item.label ?? item.ref} for you in Captain. Run \`cst context show\` to read it, then ask what they want done with it. Change nothing yet.`);
     return;
   }
-  // The terminal takes it as a paste: nothing is sent until the person presses Enter.
-  cx.write_to_clipboard(referenceLine(item));
+  // The terminal takes it as a paste: nothing is sent until the person presses Enter. The text goes with the
+  // command, never through the clipboard, so what the person had copied is still there.
   run("layout.show", { id: "work" });
   run("agent.focus", { terminal: open.address });
-  run("terminal.paste", {});
+  run("terminal.paste", { text: referenceLine(item) });
   notify({ title: "Sent to your agent", body: `${item.label ?? item.ref} is pinned, and a reference is in the agent's input. Add what you want done and press Enter.`, level: "info" });
 }
 

@@ -149,6 +149,27 @@ assert.ok(['sessions', 'promos', 'stock'].every((id) => after.slots.some((s) => 
 assert.equal(after.slots.find((s) => s.id === 'promos').role, 'events', 'the one with another definition is untouched');
 assert.equal((await get('/api/projects/outdoor/proposals'))[0].status, 'accepted');
 
+// Applied from the agent's side, because the person said so: the panel says who and quotes them, and Recent changes
+// (under Everything in this project) lists it with the input the agent added by hand and the person's own accept.
+const third = await post('/api/projects/outdoor/assist', {});
+fs.writeFileSync(prop, ['note: one more input', 'slots:', '  - {slot: returns, add: true, label: Returns, role: custom, why: refund signals}'].join('\n'));
+assert.equal(spawnSync(cst, ['projects', 'propose', 'outdoor', '--file', prop, '--assist', third.assist], { env: agentEnv, encoding: 'utf8' }).status, 0);
+h.mod.load(h.cx);
+await until((x) => x.includes('refund signals'), 'the third proposal shows');
+const pid3 = (await get('/api/projects/outdoor/proposals')).find((p) => p.status === 'proposed').id;
+const asked3 = spawnSync(cst, ['projects', 'accept', 'outdoor', pid3, '--as-asked', 'ok put that in'], { env: agentEnv, encoding: 'utf8' });
+assert.equal(asked3.status, 0, asked3.stdout + asked3.stderr);
+h.mod.load(h.cx);
+await until((x) => x.includes('Applied by Claude Code on your instruction: "ok put that in"'), 'the panel says the agent applied it, and quotes the person');
+assert.equal(h.byIdPrefix('assist-accept-all').length, 0, 'nothing left to accept');
+await h.click('ph-everything');
+await until((x) => x.includes('Recent changes'), 'the history list');
+t = h.text();
+assert.ok(t.includes(`Claude Code: Applied proposal ${pid3}`) && t.includes('On your instruction: "ok put that in"'), t.slice(-1500));
+assert.ok(t.includes('Claude Code: Add a slot') && t.includes('Run by an agent'), 'a command the agent ran by hand is listed too');
+assert.ok(h.byIdPrefix('ph-history-').length >= 3 && h.byIdPrefix('ph-history-').length <= 10 * 1, 'the last ten at most');
+assert.ok(/Applied proposal [^|]*\|[^|]*\d{4}-\d\d-\d\d \d\d:\d\d/.test(t) || /\d{4}-\d\d-\d\d \d\d:\d\d/.test(t), 'each with when');
+
 // Delete project: the data is kept.
 const fdir = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-forms-')));
 fs.cpSync(path.join(root, 'defaults/mods/captain-forms'), fdir, { recursive: true });

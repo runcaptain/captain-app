@@ -185,8 +185,10 @@ await hd.click('send-dataset');
 await hd.idle(50);
 assert.deepEqual(pinned().map((i) => [i.ref, i.kind]), [[`dataset:${dv.dataset}@v${shared('captain.view.data').version}`, 'dataset']], 'pinned in the app home, per workspace');
 assert.ok(pinned()[0].added_at && pinned()[0].added_by, 'with who and when');
-assert.ok(clip.includes(`dataset ${dv.dataset}@v${shared('captain.view.data').version}`) && clip.includes('cst context show') && !clip.includes('\n'), `one line of reference: ${clip}`);
 assert.deepEqual(globalThis.__runs.map(([n]) => n), ['layout.show', 'agent.focus', 'terminal.paste'], 'pasted into the open tab, not sent');
+const pasted = globalThis.__runs.at(-1)[1].text;
+assert.ok(pasted.includes(`dataset ${dv.dataset}@v${shared('captain.view.data').version}`) && pasted.includes('cst context show') && !pasted.includes('\n'), `one line of reference: ${pasted}`);
+assert.equal(clip, null, 'the clipboard is not touched: what the person copied is still there');
 assert.equal(globalThis.__hc.length, 0, 'nothing is submitted for the person');
 // The same thing sent twice is pinned once.
 await hd.click('send-dataset');

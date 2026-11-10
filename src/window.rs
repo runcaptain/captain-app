@@ -3160,7 +3160,10 @@ impl AppWindow {
             }
             "terminal.copy" | "terminal.paste" | "terminal.paste_image" => {
                 if let Some(t) = self.focused_terminal(window, cx) {
+                    // CAPTAIN: `terminal.paste {text}` pastes that text and leaves the clipboard alone.
+                    let text = Self::owned(a, "text");
                     t.view.update(cx, |v, cx| match name {
+                        "terminal.paste" if text.is_some() => v.paste_text(text.as_deref().unwrap_or_default()),
                         "terminal.paste" => v.paste(cx),
                         "terminal.paste_image" => v.paste_image(cx),
                         // A command, not a key: copy and leave the selection.

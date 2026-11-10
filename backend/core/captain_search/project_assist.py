@@ -364,9 +364,10 @@ def accept(ctx: Context, pid: str, prop: str, only: list[str] | None = None, as_
     by = {"applied_by": agent, "on_instruction": said[:2000], "applied_at": _now()} if agent else {}
     done = _set_status(ctx, pid, prop, "accepted", note=f"on instruction: {said[:2000]}" if agent else "",
                        only=sorted(want) if want else None, applied=applied, **by)
-    if agent:
-        PS.record_change(ctx, pid, {"what": f"applied proposal {prop}", "applied_by": agent, "user": whoami(),
-                                    "on_instruction": said[:2000], "proposal": prop,
-                                    "applied": {k: (len(v) if isinstance(v, list) else v) for k, v in applied.items()}})
+    # Every accepted proposal is a line in the project's history: an agent's with the person's words, a person's
+    # with their name. The project page lists the last ten.
+    PS.record_change(ctx, pid, {"what": f"applied proposal {prop}", **({"applied_by": agent, "on_instruction": said[:2000]} if agent else {}),
+                                "user": whoami(), "proposal": prop,
+                                "applied": {k: (len(v) if isinstance(v, list) else v) for k, v in applied.items()}})
     return {"proposal": done, "state": PS.get(ctx, pid), "applied": applied, "to_connect": to_connect,
             "trainer": rec.get("trainer")}
