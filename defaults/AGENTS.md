@@ -1113,8 +1113,13 @@ last project opened there. With no project it offers New project, which can pin 
   version shows as information with one action ("Use version 2"); a missing input asks to choose one.
 - **Train and compare**: candidates, each one trained version judged against the baseline on the sealed test set
   and the pinned labels. A model trained on the labeler that grades the test set reads "Agrees with its own
-  labeler", never as a win. New candidate trains on the pins with your own command; Import a model version brings
-  one from MLflow or a registry. Rows open to: the comparison, Rerun with changes, Judge against the baseline,
+  labeler", never as a win. With nothing trained yet it is a guided start: 1 Set a baseline (keyword search over
+  the catalog, no training, `cst projects baseline-start <project>`), 2 Train a starter ranker. New candidate asks
+  "How do you want to train?": Starter ranker (no code: Captain builds a leak-checked training set from the
+  pinned clicks or judgments and trains LightGBM on it, `cst projects starter-train <project>`; the first run sets
+  the trainer up once in a private environment), Write one with an agent, or My own training command. A replay of
+  logged clicks where under half of a candidate's top 10 has grades reads "Too few judged results to call". Import
+  a model version brings one from MLflow or a registry. Rows open to: the comparison, Rerun with changes, Judge against the baseline,
   Make it the baseline (with its evidence) and Publish to the registry.
 - **Ship**: the registry place (asked once), staging (not yet), the launch review, and the online check. The
   baseline is what MLflow and Unity Catalog users call the `champion` alias.

@@ -92,7 +92,8 @@ def test_stages_come_from_the_pin_doc_and_index_without_listing_the_registry(tmp
     # the labels were graded on the sealed queries, but the queries pin is v1
     assert any(i["code"] == "made-from-other-version" for i in rows["labels"]["info"])
     assert rows["events"]["status"] == "empty" and rows["events"]["next"]  # optional and not set == {"action": "pin", "slot": "events"}
-    assert st["experiments"]["next"] == {"action": "new-experiment"} and st["index_complete"]
+    # nothing trained and no baseline, with a catalog pinned: keyword search is offered as the baseline first
+    assert st["experiments"]["next"] == {"action": "baseline-start"} and st["index_complete"]
 
 
 # ---- experiments against the champion -----------------------------------------------------------

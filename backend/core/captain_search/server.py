@@ -2537,8 +2537,10 @@ def engine_templates():
     """What a new pipeline can rank with, and a starting spec for each. (It was GET /api/engines, which the
     persistent engines route above already answered, so this one was never reached.)"""
     labels = {"local-bm25": "Local BM25 (in process)", "http": "Any HTTP search service", "elastic": "Elasticsearch / OpenSearch",
-              "typesense": "Typesense", "algolia": "Algolia", "captain": "Captain /v1/rank"}
-    return [{"engine": e, "label": labels[e], "template": t, "needs_catalog": e == "local-bm25"} for e, t in ops.TEMPLATE.items()]
+              "typesense": "Typesense", "algolia": "Algolia", "captain": "Captain /v1/rank",
+              "bm25-ltr": "Local BM25, then a trained ranker on the top results"}
+    return [{"engine": e, "label": labels.get(e, e), "template": t, "needs_catalog": e in ("local-bm25", "bm25-ltr")}
+            for e, t in ops.TEMPLATE.items()]
 
 
 @app.post("/api/pipelines", dependencies=A)

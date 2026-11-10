@@ -134,7 +134,8 @@ if [[ -n "${SHOT_FORMS_PREVIEW:-}" ]]; then
 import json, sys
 p, form = sys.argv[1:]
 d = json.load(open(p))
-d["captain.forms.preview"] = form.split(",") if "," in form else form
+# A JSON value presets fields too: '{"task":"experiment","values":{"project":"shot-project"}}'.
+d["captain.forms.preview"] = json.loads(form) if form[:1] in "[{" else form.split(",") if "," in form else form
 json.dump(d, open(p, "w"))
 PY
 fi
@@ -377,7 +378,7 @@ if [[ -n "${SHOT_AUDIT:-}" ]]; then
   app do app.settings '{"section":"structure"}' >/dev/null || true; shoot settings-structure 5; app do overlay.close '{"id":"settings"}' >/dev/null || true; sleep 1
   app do mod.open '{"name":"folds-open"}' >/dev/null || true; shoot explorer-mlflow 6
   for m in captain-sandbox captain-explain captain-import captain-forms captain-rankings captain-setup captain-services captain-scope-model captain-cloud captain-project-icon; do
-    if [[ "$m" == captain-forms && "${SHOT_FORMS_PREVIEW:-}" == *,* ]]; then
+    if [[ "$m" == captain-forms && "${SHOT_FORMS_PREVIEW:-}" == *,* && "${SHOT_FORMS_PREVIEW:0:1}" != "{" && "${SHOT_FORMS_PREVIEW:0:1}" != "[" ]]; then
       # One dialog per form in the list: each open takes the next one.
       for form in ${SHOT_FORMS_PREVIEW//,/ }; do
         app do mod.open "{\"name\":\"$m\"}" >/dev/null || true; shoot "dialog-$m-$form" 4

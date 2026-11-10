@@ -54,7 +54,8 @@ export default class CaptainForms extends View {
     // "(hidden)": its value never leaves this form.
     watchView(cx, "dialog", () => ({ mod: "captain-forms", form: this.task.id, title: this.task.label,
       fields: safeFields(this.values, this.shown().filter((f) => f.kind === "secret").map((f) => f.key)) }));
-    for (const f of this.task.fields) if (f.default !== undefined) this.values[f.key] ??= f.default;
+    // A default can depend on what the caller preset (New candidate opens on your own command when a ranker is named).
+    for (const f of this.task.fields) if (f.default !== undefined) this.values[f.key] ??= typeof f.default === "function" ? f.default(this.values) : f.default;
     // Text inputs keep state, which gpui-kit only lets a view create outside render.
     this.ensureStates();
     cx.spawn(async (cx) => {
@@ -88,7 +89,7 @@ export default class CaptainForms extends View {
         if (f.kind !== "choice") continue;
         const o = typeof f.options === "function" ? await f.options(this.ctx, this.values) : f.options;
         this.options[f.key] = o ?? [];
-        if (this.values[f.key] === undefined && f.default !== undefined) this.values[f.key] = f.default;
+        if (this.values[f.key] === undefined && f.default !== undefined) this.values[f.key] = typeof f.default === "function" ? f.default(this.values) : f.default;
         if (this.values[f.key] === undefined && this.options[f.key].length === 1 && f.required) this.values[f.key] = this.options[f.key][0].value;
       }
     }
@@ -100,7 +101,7 @@ export default class CaptainForms extends View {
   /** Make the input state for every text field that's shown now. Never call it from render. */
   ensureStates() {
     for (const f of this.shown()) {
-      if (f.kind === "choice" || f.kind === "toggle" || this.states[f.key]) continue;
+      if (f.kind === "choice" || f.kind === "toggle" || f.kind === "note" || this.states[f.key]) continue;
       const long = f.kind === "long";
       // "e.g." so an example never reads as a value that's already filled in.
       const hint = f.placeholder ? `e.g. ${f.placeholder}` : "";
@@ -188,6 +189,17 @@ export default class CaptainForms extends View {
       .child(div().text_size(13).font_medium().text_color(c.navy).child(f.label))
       .when(Boolean(f.optional), (e) => e.child(div().text_size(11.5).text_color(c.grey500).child("optional")));
     let control;
+    if (f.kind === "note") {
+      // What this choice will do, in lines the services wrote: nothing to fill in. A line can warn.
+      const lines = (f.lines(this.ctx, this.values) ?? []).filter((l) => l?.text);
+      return v_flex().id(`f-${f.key}`).p(12).gap(6).bg(c.surface2).border_1().border_color(c.rule)
+        .when(Boolean(f.label), (e) => e.child(div().text_size(12.5).font_semibold().text_color(c.navy).child(f.label)))
+        .children(lines.map((l, k) => h_flex().id(`f-${f.key}-line-${k}`).gap(8).items_start()
+          .child(svg(icon(l.tone === "warn" ? "triangle-alert" : l.tone === "bad" ? "circle-x" : l.icon ?? "check")).size(13).flex_none().mt(2)
+            .text_color(l.tone === "warn" ? c.warn : l.tone === "bad" ? c.fail : c.grey500))
+          .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(l.tone === "warn" ? c.warn : l.tone === "bad" ? c.fail : c.grey900).child(l.text))
+          .when(Boolean(l.chip), (e) => e.child(Badge(c, l.chip, l.chip === "simulated" ? "warn" : "neutral")))));
+    }
     if (f.kind === "choice") {
       const opts = this.options[f.key];
       control = !opts ? div().h(30).w(160).bg(c.surface2)
@@ -233,7 +245,7 @@ export default class CaptainForms extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       let r;
-      try { r = await this.task.submit(this.values, this.ctx, props()?.args ?? {}); } catch (e) { r = { ok: false, error: String(e) }; }
+      try { r = await this.task.submit(this.values, this.ctx, props()?.args ?? {}, cx); } catch (e) { r = { ok: false, error: String(e) }; }
       this.busy = false;
       this.result = r;
       if (r.ok) {
@@ -253,6 +265,7 @@ export default class CaptainForms extends View {
       .child(div().flex_1().text_size(12.5).text_color(c.grey900).child(this.done ? "Next:" : "To fix it:"))
       .child(Button(c, "form-next", n.label, () => {
         this.close();
+        if (n.run) { n.run(); return; } // a step with no form of its own (judge the candidate just trained)
         if (n.section) { setShared("captain.open", { section: n.section, at: Date.now() }); runCommand("layout.select", { stack: "sections", child: n.section }); return; }
         openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: n.task, values: n.values ?? {} } });
       }, { kind: "primary", small: true }));
@@ -314,6 +327,6 @@ export default class CaptainForms extends View {
         .when(Boolean(this.result?.next ?? this.done?.next), (e) => e.child(this.nextStep(c, this.result?.next ?? this.done?.next))))
       .child(h_flex().h(60).flex_none().px(20).gap(8).items_center().justify_end().border_t(1).border_color(c.rule)
         .child(Button(c, "form-cancel", "Cancel", () => this.close()))
-        .child(this.done ? Button(c, "form-done", "Close", () => this.close()) : Button(c, "form-go", this.busy ? "Working..." : t.label, (_e, cx) => this.submit(cx), { kind: "primary", disabled: Boolean(this.busy) })));
+        .child(this.done ? Button(c, "form-done", "Close", () => this.close()) : Button(c, "form-go", this.busy ? (t.busy?.(this.values) ?? "Working...") : (t.go?.(this.values, this.ctx) ?? t.label), (_e, cx) => this.submit(cx), { kind: "primary", disabled: Boolean(this.busy) || Boolean(t.blocked?.(this.values, this.ctx)) })));
   }
 }

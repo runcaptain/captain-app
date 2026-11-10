@@ -2,7 +2,10 @@
 // the palette and onboarding all open these. The CLI is for agents; nothing here shows
 // a command name or a flag.
 import { api, connectionsChanged } from "./kit/cst.js";
-import { exec, home, shared, setShared, openOverlay, run as runCommand } from "herdr";
+import { exec, home, shared, setShared, openOverlay, notify, run as runCommand } from "herdr";
+import { askAgent } from "./kit/agent.js";
+
+const notifyProblem = (text) => notify({ title: "Judging didn't start", body: text, level: "info" });
 
 const list = async (path, map, scoped = true) => {
   const r = await api(path, { scoped });
@@ -99,6 +102,54 @@ async function waitJob(id) {
     try { await exec("sleep", ["0.5"]); } catch { break; }
   }
   return { ok: false, error: "It's still running. Check Runs, Jobs, in a minute." };
+}
+/** The Starter ranker card's lines: what it reads, the cutoff it picked and why, and what to know before training. */
+export function starterLines(p) {
+  if (!p) return [{ text: "Reading the project's inputs...", icon: "clock" }];
+  if (!p.ready) return [{ text: p.text, tone: "bad" }];
+  return [
+    ...(p.uses ?? []).map((u) => ({ text: u.text, chip: u.simulated ? "simulated" : null, icon: "check" })),
+    p.why ? { text: p.why, icon: "clock" } : null,
+    p.baseline?.text ? { text: p.baseline.text, icon: "trophy" } : null,
+    ...(p.warnings ?? []).map((w) => ({ text: w, tone: "warn" })),
+    p.setup?.needs_setup ? { text: "The first run sets up the starter trainer, one time. It downloads about 150 MB, so it needs the internet.", icon: "cloud" } : null,
+  ].filter(Boolean);
+}
+
+/** Wait for a training job: up to twenty minutes, since the first run also sets the trainer up. */
+async function waitTraining(id) {
+  for (let i = 0; i < 2400; i++) {
+    const r = await api(`/api/jobs/${encodeURIComponent(id)}`, { scoped: false });
+    if (r.ok && r.data?.status === "done") return { ok: true, result: r.data.result };
+    if (r.ok && r.data?.status === "failed") return { ok: false, error: plain(r.data.message) };
+    try { await exec("sleep", ["0.5"]); } catch { break; }
+  }
+  return { ok: false, error: "It's still training. Check Runs, Live, in a minute: it joins the project's candidates when it lands." };
+}
+
+/** Train a starter ranker: the services set the keyword baseline if there is none, build the training set and train.
+ *  The form stays open until it lands, then offers to judge it against the baseline. */
+async function trainStarter(v) {
+  const project = encodeURIComponent(v.project);
+  const started = await api(`/api/projects/${project}/starter/train`, { body: {}, scoped: false });
+  if (!started.ok) return ok(started, "");
+  const job = await waitTraining(started.data?.job);
+  if (!job.ok) return job;
+  const r = job.result ?? {};
+  const score = r.metrics?.["ndcg@10"];
+  const message = [
+    `Trained ${r.pipeline}.`,
+    typeof score === "number" ? `It scores nDCG@10 ${score.toFixed(3)} on its own validation queries. That shows it learned something. It hasn't been judged against the baseline yet.` : null,
+    r.baseline_set ? "There was no baseline, so keyword search was set as the baseline first." : null,
+    r.simulated ? "The events are simulated, so anything judged on them reads as simulated." : null,
+  ].filter(Boolean).join(" ");
+  return { ok: true, message, next: { label: "Judge it against the baseline", run: async () => {
+    const j = await api(`/api/projects/${project}/experiments/${encodeURIComponent(r.experiment)}/backtest`, { body: {}, scoped: false });
+    if (j.ok && j.data?.live) {
+      setShared("captain.open", { section: "runs", live: j.data.live, at: Date.now() });
+      runCommand("layout.select", { stack: "sections", child: "runs" });
+    } else if (!j.ok) notifyProblem(plain(j.data?.error ?? j.error));
+  } } };
 }
 const COLORS = [["#0043CA", "Blue"], ["#7C3AED", "Violet"], ["#059669", "Green"], ["#D97706", "Amber"], ["#DC2626", "Red"], ["#64748B", "Slate"]];
 
@@ -247,25 +298,65 @@ export const TASKS = [
     },
   },
   {
-    id: "experiment", label: "New candidate", icon: "flask-conical", hidden: true,
-    about: "Train a new version of a ranker on the project's pinned inputs. It's judged against the baseline once it lands.",
-    load: async (v) => {
-      if (!v?.base) return {};
-      const r = await api(`/api/pipelines/${(v.base).split("/").map(encodeURIComponent).join("/")}`, { scoped: false });
-      return r.ok ? { pipeline: r.data, defaults: { command: r.data?.spec?.train?.command ?? "" } } : {};
-    },
+    id: "baseline", label: "Set a baseline", icon: "trophy", hidden: true,
+    about: "Keyword search over your catalog becomes the baseline. It needs no training, and every candidate is judged against it.",
+    go: () => "Start with keyword search",
     fields: [
-      { key: "base", label: "Ranker", kind: "choice", required: true, options: () => list("/api/pipelines", (p) => ({ value: p.name, label: p.name, chip: `v${p.latest}` })),
-        help: "The new version keeps its search setup and changes only what training changes." },
-      { key: "command", label: "Training command", required: true, placeholder: "python train.py",
-        help: "Runs on this computer, in a fresh folder. It gets the exact inputs, the params and a folder to write the trained model into." },
-      { key: "labels", label: "Training labels", kind: "choice", required: true, options: () => datasetsOf(["judgments"]),
-        help: (_ctx, v) => (v.labels && v.labels === v.pins?.labels ? "These are the labels that grade the test set too, so the result can only say it agrees with its own labeler. Pick labels from another source to get a real verdict." : "Labels from another source than the test set's give a verdict you can trust.") },
-      { key: "params", label: "Params", kind: "long", optional: true, placeholder: "learning_rate = 0.05", help: "One per line, name = value." },
-      { key: "as_of", label: "Train on data before", optional: true, placeholder: "2026-10-01", help: "A date. Leave empty to use everything pinned." },
+      { key: "title", label: "Which column holds the product title?", kind: "choice", required: true,
+        options: (_ctx, v) => (v.columns ?? []).filter((c) => c !== "id").map((c) => ({ value: c, label: c })),
+        help: "Captain couldn't tell from the column names. Keyword search weighs this column most." },
     ],
-    submit: async (v, ctx) => {
+    submit: async (v) => ok(await api(`/api/projects/${encodeURIComponent(v.project)}/baseline-start`, { body: { title: v.title }, scoped: false }),
+      "Keyword search is the baseline now. Candidates are judged against it."),
+  },
+  {
+    id: "experiment", label: "New candidate", icon: "flask-conical", hidden: true,
+    about: "A candidate is one trained version of your ranker. It's judged against the baseline once it lands.",
+    // What the Starter ranker card will use: read once, when the form opens.
+    load: async (v) => {
+      const out = {};
+      if (v?.project) {
+        const st = await api(`/api/projects/${encodeURIComponent(v.project)}/starter`, { scoped: false });
+        out.starter = st.ok ? st.data : { ready: false, text: plain(st.data?.error ?? st.error ?? "Captain couldn't read this project's inputs.") };
+      }
+      if (v?.base) {
+        const r = await api(`/api/pipelines/${(v.base).split("/").map(encodeURIComponent).join("/")}`, { scoped: false });
+        if (r.ok) { out.pipeline = r.data; out.defaults = { command: r.data?.spec?.train?.command ?? "" }; }
+      }
+      return out;
+    },
+    go: (v) => (v.how === "starter" ? "Train" : v.how === "agent" ? "Open an agent" : "Start training"),
+    busy: (v) => (v.how === "starter" ? "Training..." : "Working..."),
+    blocked: (v, ctx) => v.how === "starter" && ctx.starter && !ctx.starter.ready,
+    fields: [
+      { key: "how", label: "How do you want to train?", kind: "choice", cards: true, required: true, default: (v) => (v.base || v.command ? "own" : "starter"),
+        options: [
+          { value: "starter", label: "Starter ranker", chip: "no code", icon: "sparkles", about: "Learns to rank from your clicks. Good first candidate." },
+          { value: "agent", label: "Write one with an agent", icon: "bot", about: "An agent reads this project and writes a training script that follows Captain's trainer contract." },
+          { value: "own", label: "My own training command", icon: "terminal", about: "Run the training code you already have on the project's inputs." },
+        ] },
+      { key: "starter_plan", kind: "note", label: "What it will use", when: (v) => v.how === "starter", lines: (ctx) => starterLines(ctx.starter) },
+      { key: "ask", label: "What should it train?", kind: "long", optional: true, when: (v) => v.how === "agent", placeholder: "a LightGBM ranker on clicks, with price features",
+        help: "The agent gets this project's inputs and the trainer contract. It proposes a script, and nothing changes until you accept it on the project page." },
+      { key: "base", label: "Ranker", kind: "choice", required: true, when: (v) => v.how === "own", options: () => list("/api/pipelines", (p) => ({ value: p.name, label: p.name, chip: `v${p.latest}` })),
+        help: "The new version keeps its search setup and changes only what training changes." },
+      { key: "command", label: "Training command", required: true, when: (v) => v.how === "own", placeholder: "python train.py",
+        help: "Runs on this computer, in a fresh folder. It gets the exact inputs, the params and a folder to write the trained model into." },
+      { key: "labels", label: "Training labels", kind: "choice", required: true, when: (v) => v.how === "own", options: () => datasetsOf(["judgments"]),
+        help: (_ctx, v) => (v.labels && v.labels === v.pins?.labels ? "These are the labels that grade the test set too, so the result can only say it agrees with its own labeler. Pick labels from another source to get a real verdict." : "Labels from another source than the test set's give a verdict you can trust.") },
+      { key: "params", label: "Params", kind: "long", optional: true, when: (v) => v.how === "own", placeholder: "learning_rate = 0.05", help: "One per line, name = value." },
+      { key: "as_of", label: "Train on data before", optional: true, when: (v) => v.how === "own", placeholder: "2026-10-01", help: "A date. Leave empty to use everything pinned." },
+    ],
+    submit: async (v, ctx, _args, cx) => {
       if (!v.project) return { ok: false, error: "Open this from a project." };
+      if (v.how === "starter") return trainStarter(v);
+      if (v.how === "agent") {
+        const ask = `Write a training script for this project's ranker that follows Captain's trainer contract (read it with \`cst docs trainer-contract\`), and propose it as the project's trainer.${v.ask ? ` What I want: ${String(v.ask).trim()}` : ""}`;
+        const r = await api(`/api/projects/${encodeURIComponent(v.project)}/assist`, { body: { ask }, scoped: false });
+        if (!r.ok) return ok(r, "");
+        await askAgent(cx, r.data?.prompt ?? ask);
+        return { ok: true, message: "An agent is writing a training script. Its proposal shows on the project page for you to accept." };
+      }
       const name = v.base;
       const cur = ctx.pipeline && ctx.pipeline.name === name ? ctx.pipeline : (await api(`/api/pipelines/${name.split("/").map(encodeURIComponent).join("/")}`, { scoped: false })).data;
       if (!cur?.spec) return { ok: false, error: `Couldn't read ${name}.` };

@@ -343,7 +343,8 @@ def test_routes(ws, monkeypatch):
     assert server.JOBS[r["job"]]["result"]["input"]["rows"] == 3
     stg = c.get("/api/projects/shop/stages", headers=h).json()
     assert {x["slot"]: x["status"] for x in stg["inputs"]}["events"] == "pinned" and stg["evaluation"]["method"] == "logged-clicks"
-    assert stg["next"]["action"] in ("new-experiment", "set-input")
+    # a catalog and no baseline yet: the first step is the keyword baseline, which needs no training
+    assert stg["next"]["action"] in ("baseline-start", "set-input")
     assert c.put("/api/projects/shop/evaluation", headers=h, json={"method": "nope"}).status_code == 400
     assert {x["name"] for x in c.get("/api/sources", headers=h).json()["connections"]} == {"wh"}
     a = c.post("/api/projects/shop/assist", headers=h, json={}).json()
