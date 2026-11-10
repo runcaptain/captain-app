@@ -11,6 +11,9 @@ Edit it here, in defaults/captain/kit, then run `scripts/captain-kit-sync`, whic
   screen's small slice (project, tab, selection, the Next line) to shared "captain.view.<section>" when it changes;
   `safeFields` hides secrets; `viewSnapshot()` is the few lines `agent.js` puts on top of every prompt. `cst app
   context` reads it all back through the window (`captain-app view`). Never call these from render.
+- `context.js`: what a person pinned for their agent. `SendToAgent(c, id, {ref, kind, label})` is the small action for
+  a screen's own things; `loadPins`, `pin`, `unpin`, `clearPins` read and write `<app home>/context/<workspace>.json`,
+  the same file `cst context` uses.
 - `icons.js`: `icon(name)`, the home path of a shared Lucide glyph (defaults/icons/captain-*.svg), for `svg()`.
 - `appearance.js`: `getAppearance()` and `setAppearance("light" | "dark" | "system")`.
 - `ui.js`: Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Bars, Line, and Table (a fixed list, or

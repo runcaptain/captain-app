@@ -14,6 +14,7 @@ import { theme, shared, setShared, run, openOverlay, props as layoutProps } from
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { api, watchScope, watchWorkspace, watchRecords } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
+import { SendToAgent } from "./kit/context.js";
 import { Badge, Button, Empty, Skeleton, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand, engineTitle } from "./kit/brands.js";
@@ -293,7 +294,9 @@ export default class ProjectHome extends View {
         .child(svg(icon(i.code === "newer-version" ? "sparkles" : "triangle-alert")).size(12).mt(2).flex_none().text_color(i.code === "newer-version" ? c.blue : c.warn))
         .child(div().flex_1().min_w(0).text_size(11.5).line_height("16px").text_color(c.grey900).child(i.text))))
       .child(div().flex_1())
-      .child(h_flex().flex_wrap().gap(10).items_center().child(action).when(Boolean(older), (e) => e.child(older)).when(Boolean(generate), (e) => e.child(generate)));
+      .child(h_flex().flex_wrap().gap(10).items_center().child(action).when(Boolean(older), (e) => e.child(older)).when(Boolean(generate), (e) => e.child(generate))
+        // A pinned dataset goes to the agent as itself; a live or empty input has nothing to hand over yet.
+        .when(!missing && !live && Boolean(r.name), (e) => e.child(SendToAgent(c, `${id}-send`, { ref: `dataset:${r.name}${r.version != null ? `@v${r.version}` : ""}`, kind: "dataset", label: `${inp.label}: ${r.name}${r.version != null ? `@v${r.version}` : ""}` }))));
   }
 
   addCard(c) {
@@ -529,7 +532,8 @@ export default class ProjectHome extends View {
         .child(Button(c, `exp-${i}-rerun`, "Rerun with changes", () => form("experiment", { ...this.values(), base: name, labels: e.labels ?? undefined }), { small: true }))
         .when(Boolean(champ) && !e.is_champion, (x) => x.child(Button(c, `exp-${i}-judge`, ev ? "Judge again against the baseline" : "Judge against the baseline", (_e, cx) => this.backtest(cx, e), { small: true, kind: ev ? "secondary" : "primary", disabled: this.busy || e.status === "backtesting" })))
         .when(!e.is_champion, (x) => x.child(Button(c, `exp-${i}-champion`, `Make it the baseline (${evWord})`, (_e, cx) => this.makeChampion(cx, e), { small: true, disabled: this.busy })))
-        .child(Button(c, `exp-${i}-publish`, "Publish to the registry", () => form("publish", { ...this.values(), pipeline: e.pipeline }), { small: true, kind: "quiet" })));
+        .child(Button(c, `exp-${i}-publish`, "Publish to the registry", () => form("publish", { ...this.values(), pipeline: e.pipeline }), { small: true, kind: "quiet" }))
+        .child(SendToAgent(c, `exp-${i}-send`, { ref: `candidate:${this.pid()}/${e.id}`, kind: "candidate", label: `${e.pipeline} in ${this.project()?.name ?? this.pid()}` })));
   }
 
   experiments(c) {

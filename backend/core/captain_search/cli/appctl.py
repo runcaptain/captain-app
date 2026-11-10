@@ -154,12 +154,27 @@ def scrub(v, key: str = ""):
     return URL_PARAM.sub(rf"\1{HIDDEN}", URL_LOGIN.sub(rf"\1{HIDDEN}@", s))
 
 
+_ASSIGN = re.compile(r"(?i)([\w.\-\"']*(?:pass|pwd|secret|token|key|credential|auth|cookie|dsn)[\w.\-\"']*\s*[:=]\s*)(\S.*)$")
+
+
+def scrub_text(line: str) -> str:
+    """One line of someone's file, safe to show: `name: value` and `NAME=value` lose the value when the name says
+    secret, a word shaped like a key is hidden wherever it stands, and a URL loses its login."""
+    line = _ASSIGN.sub(lambda m: m.group(1) + HIDDEN, line)
+    return " ".join(HIDDEN if SECRET_VALUE.search(w.strip("\"',;")) else scrub(w) for w in line.split(" "))
+
+
 def window_home() -> str:
     return os.environ.get("CAPTAIN_APP_HOME") or os.path.join(os.path.expanduser("~"), ".config", "captain-app")
 
 
-def _window(request: dict, timeout: float = 6.0) -> dict:
-    """Ask the running window one thing. Fails with a plain sentence when Captain isn't running."""
+class NotRunning(Exception):
+    pass
+
+
+def _window(request: dict, timeout: float = 6.0, quiet: bool = False) -> dict:
+    """Ask the running window one thing. Fails with a plain sentence when Captain isn't running (`quiet`: raises
+    NotRunning instead, for a caller that has more to say without the window)."""
     import socket
 
     path = os.path.join(window_home(), SOCKET)
@@ -177,6 +192,8 @@ def _window(request: dict, timeout: float = 6.0) -> dict:
                     break
                 buf += chunk
     except (FileNotFoundError, ConnectionRefusedError):
+        if quiet:
+            raise NotRunning() from None
         fail(f"Captain isn't running, so there is no screen to read. Open Captain and try again. (Looked for its window at {path}.)")
     except (OSError, socket.timeout) as e:
         fail(f"Captain's window didn't answer ({e}). It may be busy or starting: try again in a moment.")
@@ -383,6 +400,183 @@ def app_shot(path: Optional[str] = typer.Argument(None, help="Where to save the 
         out = os.path.join(folder, time.strftime("captain-%Y%m%d-%H%M%S.png"))
     got = _window({"shot": out}, timeout=35)
     emit({"path": got.get("path", out)}, got.get("path", out))
+
+
+# --- The agent's context: the screen, plus what the person pinned ------------------------------------------------
+
+context_app = typer.Typer(no_args_is_help=True, help="What the person gave their agent: the screen they're on, and the things they pinned")
+app.add_typer(context_app, name="context")
+
+
+def _ctx_do(fn, *a, **kw):
+    from ..storage.backend import NotFound
+
+    try:
+        return fn(*a, **kw)
+    except (ValueError, NotFound, KeyError) as e:
+        fail(str(e).strip("'\""))
+
+
+def _pin_ctx(view: dict | None):
+    """The workspace the pins belong to: the one the window shows, else -w, else the current one."""
+    from .main import ctx
+
+    if view and view.get("workspace") and not S.workspace:
+        from .. import workspace as wsp
+
+        try:
+            return wsp.open_context(view["workspace"])
+        except Exception:  # noqa: BLE001  the window shows a workspace this cst can't open: fall back
+            pass
+    return ctx()
+
+
+def _live_view() -> dict | None:
+    try:
+        return _record(_window({"view": True}, quiet=True))
+    except NotRunning:
+        return None
+
+
+def _pins_text(items: list[dict]) -> list[str]:
+    if not items:
+        return ["Pinned for the agent: nothing yet. Add with `cst context add <ref>`, or \"Send to agent\" in Captain."]
+    lines = [f"Pinned for the agent ({len(items)}):"]
+    for i in items:
+        who = i.get("agent") or i.get("added_by") or "?"
+        lines.append(f"  {i['ref']}   (added by {who}, {str(i.get('added_at') or '')[:16].replace('T', ' ')})")
+        for k, v in (i.get("summary") or {}).items():
+            if v in (None, "", [], {}):
+                continue
+            if k == "sample" and isinstance(v, list):
+                lines.append("      sample rows:")
+                lines += [f"        {_say(r)}" for r in v]
+            elif k == "first_lines" and isinstance(v, list):
+                lines.append("      first lines:")
+                lines += [f"        {r}" for r in v]
+            else:
+                lines.append(f"      {k.replace('_', ' ')}: {_say(v)}")
+    return lines
+
+
+@context_app.command("show")
+def context_show(bare: bool = typer.Option(False, "--bare", help="Names only: no summaries, nothing asked of the services")):
+    """The current screen (when Captain is open) and every pinned thing, each with a short summary: a dataset's kind,
+    rows, columns and sample rows, a run's status and metrics, a project's inputs and next step."""
+    from .. import agent_context as AC
+
+    view = _live_view()
+    c = _pin_ctx(view)
+    items = AC.load(c.workspace.name)
+    if not bare:
+        if view is not None:
+            view["known"] = _known(view)
+        items = [{**i, "summary": AC.expand(c, i)} for i in items]
+    items = scrub(items)
+    out = {"workspace": c.workspace.name, "view": view, "captain_running": view is not None, "pinned": items}
+    text = ([_text(view)] if view is not None else ["Captain isn't open, so the current screen is unknown. Pinned things still are:"]) + [""] + _pins_text(items)
+    emit(out, "\n".join(text))
+
+
+@context_app.command("add")
+def context_add(refs: list[str] = typer.Argument(..., help="dataset:<name>[@vN], model:<name>@vN, run:<evaluation>, experiment:<id>, candidate:<project>/<id>, table:<connection>.<table>, project:<id>, or a file path. A bare name is looked up")):
+    """Pin things for the agent. They stay until removed, and `cst context show` expands each."""
+    from .. import agent_context as AC
+    from ..proposals import agent_name
+
+    c = _pin_ctx(_live_view())
+    if S.dry_run:
+        return emit({"would_add": [_ctx_do(AC.resolve, c, r) for r in refs]})
+    got = _ctx_do(AC.add, c, refs, agent_name())
+    emit(got, "\n".join(f"Pinned {i['ref']}" for i in got))
+
+
+@context_app.command("rm")
+def context_rm(ref: str):
+    """Remove one pinned thing, by its ref or its name."""
+    from .. import agent_context as AC
+
+    c = _pin_ctx(_live_view())
+    gone = _ctx_do(AC.remove, c, ref)
+    emit(gone, "\n".join(f"Removed {i['ref']}" for i in gone))
+
+
+@context_app.command("clear")
+def context_clear():
+    """Remove every pinned thing. The current screen is always part of the context and isn't something to clear."""
+    from .. import agent_context as AC
+
+    c = _pin_ctx(_live_view())
+    n = _ctx_do(AC.clear, c)
+    emit({"removed": n}, f"Removed {n} pinned thing{'s' if n != 1 else ''}.")
+
+
+# --- Showing the person something ---------------------------------------------------------------------------------
+
+SECTIONS = {"home": "project", "project": "project", "experiments": "investigations", "investigations": "investigations",
+            "data": "data", "data-and-signals": "data", "runs": "runs", "compare": "comparisons", "comparisons": "comparisons",
+            "launch-review": "handoff", "handoff": "handoff", "team": "team"}
+
+
+@app_app.command("open")
+def app_open(target: str = typer.Argument(..., help="A screen (home, experiments, data, runs, compare, launch-review, team), project:<id>, dataset:<name>, run:<evaluation>, comparison:<evaluation>[@vN], experiment:<id>, form:<task>, settings[:<section>]"),
+             value: list[str] = typer.Option([], "--value", "-v", help="For form:<task>: field=value to fill in, repeatable. The person confirms; nothing is submitted"),
+             tab: Optional[str] = typer.Option(None, "--tab", help="A tab on the screen opened (a dataset's sample, a comparison's queries)")):
+    """Show the person something in Captain: a screen, a project, a dataset, a run, a comparison, an experiment,
+    Settings, or a form filled in for them to confirm. It never submits a form or changes a record."""
+    from .. import agent_context as AC
+    from ..commands import SECRET_NAMES
+
+    head, sep, rest = target.strip().partition(":")
+    head = head.lower()
+    view = _live_view()
+    if view is None:
+        fail("Captain isn't running, so there is nothing to open it in. Open Captain and try again.")
+    if value and head != "form":
+        fail("--value fills a form: use it with form:<task>")
+    what: dict
+    if not sep and head in SECTIONS:
+        what = {"section": SECTIONS[head]}
+    elif head == "settings":
+        what = {"settings": rest or None}
+    elif head == "form":
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", rest or ""):
+            fail("say which form: form:<task>, for example form:investigation, form:backtest, form:database, form:experiment")
+        vals = {}
+        for item in value:
+            k, eq, v = item.partition("=")
+            if not eq:
+                fail(f"--value takes field=value (got {item!r})")
+            if k.lower() in SECRET_NAMES or SECRET_KEY.search(k) or scrub(v) != v:
+                fail(f"{k} looks like a secret. Leave it out: the person types secrets into the form themselves.")
+            vals[k] = v
+        what = {"form": rest, "values": vals}
+    elif head in ("project", "dataset", "run", "comparison", "experiment", "investigation", "evaluation", "backtest") and rest:
+        c = _pin_ctx(view)
+        kind = {"comparison": "run"}.get(head, head)
+        version = None
+        if head == "comparison" and "@v" in rest:
+            rest, _, v = rest.partition("@v")
+            version = int(v) if v.isdigit() else None
+        it = _ctx_do(AC.resolve, c, f"{kind}:{rest}")
+        name = it["ref"].split(":", 1)[1]
+        if it["kind"] == "project":
+            what = {"project": name, "label": it["label"]}
+        elif it["kind"] == "dataset":
+            what = {"section": "data", "dataset": name.split("@v")[0]}
+        elif it["kind"] == "run":
+            what = {"section": "comparisons" if head == "comparison" else "runs", "backtest": name, **({"version": version} if version else {})}
+        else:
+            what = {"section": "investigations", "investigation": name}
+    else:
+        fail(f"don't know how to open {target!r}. Try a screen (home, experiments, data, runs, compare, launch-review, team), "
+             "project:<id>, dataset:<name>, run:<evaluation>, comparison:<evaluation>, experiment:<id>, form:<task> or settings")
+    if tab:
+        what["tab"] = tab
+    if S.dry_run:
+        return emit({"would_open": what})
+    _window({"open": what})
+    emit({"opened": what}, f"Opened {target} in Captain." + (" The form is filled in and waiting for the person: nothing was submitted." if "form" in what else ""))
 
 
 @app_app.command("check")
