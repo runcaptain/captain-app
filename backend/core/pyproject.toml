@@ -45,6 +45,9 @@ postgres = ["psycopg[binary]>=3.1"]
 warehouses = ["psycopg[binary]>=3.1", "snowflake-sqlalchemy>=1.7", "databricks-sqlalchemy>=2.0", "sqlalchemy-bigquery>=1.11",
               "pymysql>=1.1", "trino[sqlalchemy]>=0.330", "pyathena[sqlalchemy]>=3.9", "clickhouse-sqlalchemy>=0.3",
               "pymssql>=2.3", "duckdb-engine>=0.13", "google-analytics-data>=0.18"]
+# The built-in starter trainer (captain_search/trainers). Never in the base install or Captain.app: the app installs
+# this pin into a private environment the first time a starter ranker is trained. The runner image installs it.
+train-ltr = ["lightgbm==4.7.0"]
 dev = ["pytest>=8", "moto[s3,cloudformation]>=5", "boto3>=1.35"]
 
 [project.scripts]

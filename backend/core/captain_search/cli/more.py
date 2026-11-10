@@ -957,6 +957,44 @@ def wf_run(name: str, param: list[str] = typer.Option([], "-p", help="key=value"
 from .main import data_app  # noqa: E402
 
 
+@data_app.command("training-set")
+def data_training_set(
+    name: str = typer.Option(..., "--name", help="the training set's name; each build is a new version"),
+    catalog: str = typer.Option(..., "--catalog", help="catalog dataset, name@vN"),
+    events: Optional[str] = typer.Option(None, "--events", help="events with query, product_id, position, clicked and a timestamp"),
+    judgments: Optional[str] = typer.Option(None, "--judgments", help="judgments to use as labels instead of clicks"),
+    queries: Optional[str] = typer.Option(None, "--queries", help="the queries dataset the judgments' query ids come from"),
+    holdout: Optional[str] = typer.Option(None, "--holdout", help="a sealed queries dataset: its queries are kept out of training"),
+    as_of: Optional[str] = typer.Option(None, "--as-of", help="features count events up to this time. Default: the 60% point of the events"),
+    train_until: Optional[str] = typer.Option(None, "--train-until", help="labels come from events up to this time; later ones are left for evaluation. Default: the 80% point"),
+    labels: str = typer.Option("auto", "--labels", help="auto, clicks or judgments"),
+    title: Optional[str] = typer.Option(None, "--title", help="the catalog column that holds the product title, when it can't be guessed"),
+    popularity: Optional[bool] = typer.Option(None, "--popularity/--no-popularity", help="click-rate features from events before the cutoff. Default: on when there are events"),
+    min_impressions: int = typer.Option(3, "--min-impressions"),
+    valid: float = typer.Option(0.2, "--valid", help="share of queries held for early stopping"),
+):
+    """Build a versioned training set: features and labels per (query, product), cut in time so no feature sees a label."""
+    from .. import training_set as TS
+
+    c = ctx()
+    try:
+        m, p = TS.build(c, name, catalog, dry_run=S.dry_run, events=events, judgments=judgments, queries=queries,
+                        holdout=holdout, as_of=as_of, train_until=train_until, labels=labels, title=title,
+                        popularity=popularity, min_impressions=min_impressions, valid=valid)
+    except (ValueError, NotFound) as e:
+        fail(str(e))
+    s = p["summary"]
+    lines = [f"{'would save' if S.dry_run else 'saved'} {m.name}@v{m.version}" + (" [SIMULATED]" if s["simulated"] else "")
+             + f"  {s['rows']:,} rows, {s['queries']:,} queries ({s['train_queries']} train, {s['valid_queries']} valid), "
+               f"{s['features']} features",
+             f"labels from {s['labels_from']}" + (f" ({s['label_source']})" if s["label_source"] else "")]
+    if s["as_of"]:
+        lines.append(f"features count events up to {s['as_of']}" + (f", labels from then to {s['train_until']}, later events "
+                                                                    "are left for evaluation" if s["train_until"] else ""))
+    emit({"ref": f"{m.name}@v{m.version}", "summary": s, "notes": p["notes"], "provenance": p["params"], "dry_run": S.dry_run},
+         "\n".join(lines + p["notes"]))
+
+
 @data_app.command("browse")
 def data_browse(ref: str, offset: int = typer.Option(0, "--offset"), limit: int = typer.Option(20, "--limit"),
                 order: Optional[str] = typer.Option(None, "--order"), desc: bool = typer.Option(False, "--desc"),

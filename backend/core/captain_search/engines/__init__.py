@@ -4,6 +4,9 @@
 Built in:
 - `local-bm25`: in-process BM25 over a catalog dataset, with field weights, boosts and filters from
   the spec. Fully deterministic, so backtests on it reproduce. This is what demos and tests use.
+- `bm25-ltr`: `local-bm25` finds the candidates, then a trained model reorders the top K. The features come from
+  the same module that built the model's training set (features/), and the model and its feature tables are the
+  version's own artifact files. With no model yet it is plain keyword order.
 - `http`: POST {query, k} to any endpoint that returns {"ids": [...]}, for a team's own service.
 - `elastic`, `typesense`, `algolia`, `captain`: thin HTTP adapters (written, not yet tested against
   live services).
@@ -31,6 +34,10 @@ def tokens(s) -> list[str]:
 class Engine:
     def search(self, query: str, k: int = 50) -> list[str]:
         raise NotImplementedError
+
+    def search_scored(self, query: str, k: int = 50) -> list[tuple[str, float | None]]:
+        """Ids with the score each got, best first. An adapter that can't report scores gives None for each."""
+        return [(i, None) for i in self.search(query, k)]
 
     def fingerprint(self) -> IndexFingerprint | None:
         return None
@@ -82,6 +89,9 @@ class LocalBM25(Engine):
         return out
 
     def search(self, query: str, k: int = 50) -> list[str]:
+        return [p for p, _ in self.search_scored(query, k)]
+
+    def search_scored(self, query: str, k: int = 50) -> list[tuple[str, float]]:
         q = tokens(query)
         limit = None
         if self.spec.get("numeric_filter"):
@@ -106,7 +116,7 @@ class LocalBM25(Engine):
                     scores[pid] *= float(boost.get("weight", 1.0))
         if limit is not None:
             scores = {p: s for p, s in scores.items() if _price(self.products[p]) is not None and _price(self.products[p]) <= limit}
-        return [p for p, _ in sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))[:k]]
+        return sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))[:k]
 
     def fingerprint(self) -> IndexFingerprint:
         ids = sorted(self.products)
@@ -120,6 +130,62 @@ def _price(p):
         return float(p.get("price"))
     except (TypeError, ValueError):
         return None
+
+
+class BM25Rerank(Engine):
+    """Keyword search for the candidates, a trained model for their order.
+
+    spec keys:
+    retrieve: a local-bm25 spec ({fields, k1, b, ...})
+    rerank:   {model: model.json, features: features.json, top_k: 50}: artifact files of this version. The model
+              reorders the first top_k candidates; anything past them keeps its keyword order. Without `model`
+              the version is untrained and answers in keyword order.
+
+    A reranker can't add a product the first stage missed, so its recall at top_k is the first stage's recall.
+    """
+
+    def __init__(self, products: list[dict], spec: dict, artifact=None):
+        from .. import features as F
+        from ..features import model as FM
+
+        self.spec = spec
+        self.bm25 = LocalBM25(products, spec.get("retrieve") or {})
+        rr = spec.get("rerank") or {}
+        self.top_k = max(1, int(rr.get("top_k") or 50))
+        self.model = self.feat = None
+        if rr.get("model"):
+            m = artifact(rr["model"]) if artifact else None
+            f = artifact(rr.get("features") or "features.json") if artifact else None
+            if m is None or f is None:
+                raise ValueError("this trained version's model files can't be read, so it can't rank. They are stored "
+                                 "with the version under artifact/.")
+            import json
+
+            self.model = FM.load(m)
+            self.feat = F.load(products, json.loads(f))
+            if self.model.names and self.model.names != self.feat.names:
+                raise ValueError("the model's features don't match its feature file. Train it again.")
+
+    def search_scored(self, query: str, k: int = 50) -> list[tuple[str, float]]:
+        found = self.bm25.search_scored(query, max(k, self.top_k))
+        if self.model is None:
+            return found[:k]
+        head, tail = found[:self.top_k], found[self.top_k:]
+        scores = self.model.predict(self.feat.features(query, [p for p, _ in head]))
+        order = sorted(range(len(head)), key=lambda i: (-scores[i], i))
+        low = min(scores) if scores else 0.0
+        # the tail keeps its keyword order below every reranked result
+        return ([(head[i][0], scores[i]) for i in order] + [(p, low - 1 - n) for n, (p, _) in enumerate(tail)])[:k]
+
+    def search(self, query: str, k: int = 50) -> list[str]:
+        return [p for p, _ in self.search_scored(query, k)]
+
+    def retrieve(self, query: str, k: int | None = None) -> list[str]:
+        """What the first stage found, before reranking."""
+        return self.bm25.search(query, k or self.top_k)
+
+    def fingerprint(self) -> IndexFingerprint:
+        return self.bm25.fingerprint()
 
 
 class HTTPEngine(Engine):
@@ -225,7 +291,21 @@ BUILTIN = {"http": HTTPEngine, "elastic": ElasticEngine, "typesense": TypesenseE
            "captain": CaptainEngine}
 
 
-def make_engine(engine: str, spec: dict, products: list[dict] | None = None, workspace: str | None = None) -> Engine:
+def artifact_reader(ctx, pm):
+    """`read(path) -> bytes or None` over a pipeline version's own artifact files (stored under artifact/)."""
+    by = {f.path: f for f in (getattr(pm, "files", None) or []) if f.path.startswith("artifact/")}
+
+    def read(path: str):
+        f = by.get("artifact/" + str(path).lstrip("/"))
+        return ctx.registry.get_blob(f) if f else None
+
+    return read
+
+
+def make_engine(engine: str, spec: dict, products: list[dict] | None = None, workspace: str | None = None,
+                artifact=None) -> Engine:
+    """`artifact` reads a file of the version's trained artifact by path (see artifact_reader). Only engines that
+    rank with trained files need it."""
     from .. import extensions as X
 
     e = X.load(workspace).get("engine", engine)
@@ -235,12 +315,16 @@ def make_engine(engine: str, spec: dict, products: list[dict] | None = None, wor
         if products is None:
             raise ValueError("local-bm25 needs the pipeline's catalog dataset")
         return LocalBM25(products, spec)
+    if engine == "bm25-ltr":
+        if products is None:
+            raise ValueError("bm25-ltr needs the pipeline's catalog dataset")
+        return BM25Rerank(products, spec, artifact)
     if engine in BUILTIN:
         return BUILTIN[engine](spec)
     for ep in entry_points(group="captain_search.engines"):
         if ep.name == engine:
             return ep.load()(spec=spec, products=products)
-    raise ValueError(f"unknown engine {engine!r}. Built in: local-bm25, {', '.join(BUILTIN)}")
+    raise ValueError(f"unknown engine {engine!r}. Built in: local-bm25, bm25-ltr, {', '.join(BUILTIN)}")
 
 
 def timed_search(engine: Engine, query: str, k: int) -> tuple[list[str], float]:

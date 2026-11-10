@@ -15,7 +15,8 @@ The full contract is docs/trainer-contract.md in this package (`cst docs trainer
   CST_OUT           an empty folder. The command writes CST_OUT/result.yaml with any of:
                     metrics, params, artifact_dir, registry_ref, spec (merged into the new spec), training_commit,
                     known_issues, description, cost {train_usd, train_gpu_hours, gpu_type, serve_usd_per_1k}
-  CST_PIPELINE, CST_WORKSPACE, and CST_TRAIN_OUT (a file path, the older way to write the same result; still read)
+  CST_PIPELINE, CST_WORKSPACE, CST_PYTHON (the Python Captain itself runs on, which built-in trainers start from),
+  and CST_TRAIN_OUT (a file path, the older way to write the same result; still read)
 The new version's parent is the old one. It records the inputs, params and metrics. Files under artifact_dir are
 stored with the version under artifact/. Its training cost goes into the cost ledger, and the wall time is always
 recorded.
@@ -31,6 +32,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -257,6 +259,7 @@ def _train_here(ctx: Context, pm, train: dict, live, own: bool, inputs: list[dic
         os.makedirs(out_dir)
         env = {**os.environ, "CST_PIPELINE": ref(pm), "CST_WORKSPACE": ctx.workspace.name, "CST_TRAIN_OUT": out_path,
                "CST_TRAIN_INPUTS": json.dumps(inputs), "CST_PARAMS": json.dumps(params), "CST_OUT": out_dir,
+               "CST_PYTHON": sys.executable,
                "PYTHONUNBUFFERED": "1"}  # so a Python trainer's lines arrive as it prints them
         t0 = time.time()
         p = subprocess.Popen(["sh", "-c", str(train["command"])], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

@@ -51,6 +51,10 @@ LEGACY_SLOTS = [{"id": s, "label": s.capitalize() if s != "holdout" else "Sealed
 GROUP = {"labels": "labels", "holdout": "holdout"}  # role -> group on the page; everything else is data
 VERDICTS = {"win": "beats the baseline", "loss": "loses to the baseline", "noise": "no clear difference from the baseline"}
 OWN_LABELER = "agrees with its own labeler"
+# Click grades only exist for products the old ranker showed. A ranker that surfaces other products has them counted
+# as zero, so below this share of judged results in its top 10 a replay can't say which ranker is better.
+THIN_COVERAGE = 0.5
+TOO_FEW_JUDGED = "too few judged results to call"
 NOT_ONLINE = "not yet confirmed online"
 TRIES = 50
 
@@ -849,6 +853,12 @@ def _evaluation(ctx: Context, exp: dict, champion: str | None, index=None) -> di
     comp = next((c for c in run.comparisons if c.get("b") == exp["pipeline"] and c.get("metric") == primary), None)
     ind = label_independence(ctx, (bt.tags or {}).get("train_labels") or training_labels(ctx, exp), bt.judgments)
     rec = next((k for k in (me.offline if me else {}) if k.startswith("r@") or k.startswith("recall")), None)
+    click_grades = bt.mode == "historic" or (ind.get("holdout_source") == "click")
+    thin = bool(click_grades and me and me.judged_at_10 is not None and me.judged_at_10 < THIN_COVERAGE)
+    coverage_note = (f"Only {me.judged_at_10:.0%} of its top 10 results have click grades, because clicks only grade "
+                     "products the old ranker showed. The rest count as zero, so this score can be low because the "
+                     "products are new to the log, not because they are worse. Judgments on a test set would settle it."
+                     if thin else None)
     return {
         "run": f"{run.name}@v{run.version}", "against": bt.arms[0], "against_is_champion": bt.arms[0] == champion,
         "metric": primary,
@@ -863,9 +873,10 @@ def _evaluation(ctx: Context, exp: dict, champion: str | None, index=None) -> di
         "judged_at_10": me.judged_at_10 if me else None,
         "evidence": me.evidence.value if me else None,
         "label_independence": ind,
-        "verdict": verdict(comp.get("verdict") if comp else None, ind),
+        "verdict": TOO_FEW_JUDGED if thin and comp else verdict(comp.get("verdict") if comp else None, ind),
+        "coverage_note": coverage_note,
         "online": NOT_ONLINE,
-        "click_grades": bt.mode == "historic" or (ind.get("holdout_source") == "click"),
+        "click_grades": click_grades,
     }
 
 
@@ -940,7 +951,16 @@ def stages(ctx: Context, pid: str) -> dict:
     exps = doc["experiments"]
     champ = doc.get("champion")
     pending = [e for e in exps if e.get("status") in ("trained", "failed") and e["pipeline"] != champ]
-    if not exps:
+    # A project that starts from nothing: keyword search over its catalog is a baseline that needs no training.
+    has = {role: bool(pinned(doc, role)) for role in ("catalog", "events", "labels")}
+    can_baseline = has["catalog"] and not champ
+    start = {"baseline": {"done": bool(champ), "can": can_baseline, "ref": champ},
+             "starter": {"done": any(e.get("trainer") == "lightgbm-ltr" for e in exps),
+                         "can": has["catalog"] and (has["events"] or has["labels"]),
+                         "needs": [r for r in ("catalog",) if not has[r]] + ([] if has["events"] or has["labels"] else ["events"])}}
+    if not exps and can_baseline:
+        nxt = {"action": "baseline-start"}
+    elif not exps:
         nxt = {"action": "new-experiment"}
     elif not champ:
         nxt = {"action": "make-champion", "experiment": exps[0]["id"]}
@@ -973,12 +993,14 @@ def stages(ctx: Context, pid: str) -> dict:
     elif exps and not ev["ready"]:
         top = {"action": "add-evaluation", "text": ev["text"]}
     else:
-        words = {"new-experiment": "Train a new candidate.", "make-champion": "Make a candidate the baseline.",
+        words = {"baseline-start": "Set a baseline to compare against.",
+                 "new-experiment": "Train a starter ranker." if not exps and start["starter"]["can"] else "Train a new candidate.",
+                 "make-champion": "Make a candidate the baseline.",
                  "backtest": "Compare the newest candidate with the baseline."}
         top = {**nxt, "text": words.get(nxt["action"], "")}
     return {
         "project": pid, "kind": doc.get("kind"), "recipe": doc.get("recipe"), "index_complete": idx.complete,
-        "next": top, "notes": notes, "inputs": inputs, "evaluation": ev,
+        "next": top, "notes": notes, "inputs": inputs, "evaluation": ev, "start": start,
         "experiments": {"count": len(exps), "by_status": by_status, "next": nxt},
         "champion": {"pinned": champ, "experiment": champ_exp["id"] if champ_exp else None,
                      "info": [{"code": "newer-version", "ref": newest_champ,

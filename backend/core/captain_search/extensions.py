@@ -179,11 +179,12 @@ def fingerprint(path: Path) -> dict:
 
 
 def _builtins() -> list[Ext]:
-    from .engines import BUILTIN, LocalBM25
+    from .engines import BUILTIN, BM25Rerank, LocalBM25
     from .eval import metrics as M
     from .sim import SIMULATORS, run_cascade
 
     out = [Ext("engine", "local-bm25", LocalBM25, description="BM25 over the pipeline's catalog dataset")]
+    out.append(Ext("engine", "bm25-ltr", BM25Rerank, description="BM25 finds the candidates, a trained model reorders the top K"))
     out += [Ext("engine", n, c, description=(c.__doc__ or "").strip().split("\n")[0]) for n, c in BUILTIN.items()]
     out += [Ext("simulator", n, run_cascade, version=v, deterministic=True,
                 description="Cascade click model with personas and devices") for n, v in SIMULATORS.items()]

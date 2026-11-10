@@ -12,7 +12,7 @@ import pyarrow as pa
 import yaml
 
 from .data.datasets import load_table, snapshot
-from .engines import make_engine, timed_search
+from .engines import artifact_reader, make_engine, timed_search
 from .eval import judge as J
 from .eval import metrics as M
 from .eval import queries as Q
@@ -163,7 +163,7 @@ def check_seal(ctx, qref: str) -> dict:
 def _rankings(ctx, pref: str, queries: list[dict], k: int = 50, check_fp: bool = True):
     pm, _ = ctx.registry.resolve("pipeline", pref)
     prods = products_of(ctx, pm.catalog) if pm.catalog else None
-    eng = make_engine(pm.engine, pm.spec, prods, workspace=ctx.workspace.name)
+    eng = make_engine(pm.engine, pm.spec, prods, workspace=ctx.workspace.name, artifact=artifact_reader(ctx, pm))
     if check_fp and pm.index_fingerprint is not None:
         fp = eng.fingerprint()
         if fp is not None and (fp.doc_count, fp.sample_hash) != (pm.index_fingerprint.doc_count, pm.index_fingerprint.sample_hash):
@@ -268,6 +268,8 @@ def judgments_map(ctx, jref: str) -> tuple[DatasetVersion, dict[str, dict[str, i
 TEMPLATE = {
     "local-bm25": {"fields": {"title": 3.0, "brand": 1.5, "category": 1.0, "description": 0.5}, "k1": 1.2, "b": 0.75,
                    "numeric_filter": False, "prefix_match": False, "synonyms": {}, "boosts": []},
+    "bm25-ltr": {"retrieve": {"fields": {"title": 3.0, "brand": 1.5, "category": 1.0, "description": 0.5}, "k1": 1.2, "b": 0.75},
+                 "rerank": {"top_k": 50}},
     "http": {"url": "https://search.internal/query", "headers": {"Authorization": "Bearer {secret_raw:SEARCH_TOKEN}"}},
     "elastic": {"url": "https://es.internal:9200", "index": "products", "fields": ["title^3", "description"], "api_key_secret": "ES_API_KEY"},
     "typesense": {"url": "https://ts.internal", "collection": "products", "query_by": "title,description", "api_key_secret": "TS_KEY"},

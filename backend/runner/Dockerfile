@@ -11,8 +11,9 @@ COPY core/pyproject.toml /app/core/pyproject.toml
 COPY core/captain_search /app/core/captain_search
 # tini is process 1: it passes the platform's stop signal (ECS StopTask, Batch terminate, Cloud Run cancel) on to cst.
 # Without it cst is process 1, which ignores SIGTERM, so a cancelled job keeps running until the platform kills it.
-RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/* \
- && pip install --no-cache-dir "/app/core[s3,gcs,azure,postgres]" \
+# libgomp1 is the OpenMP library LightGBM (the train-ltr extra, for the built-in starter trainer) loads on Linux.
+RUN apt-get update && apt-get install -y --no-install-recommends tini libgomp1 && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir "/app/core[s3,gcs,azure,postgres,train-ltr]" \
  && useradd --create-home --uid 10001 cst
 USER cst
 ENV CST_HOME=/home/cst/.cst PYTHONUNBUFFERED=1 CST_ALLOW_REMOTE=1

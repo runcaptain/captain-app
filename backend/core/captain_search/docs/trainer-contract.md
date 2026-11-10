@@ -29,6 +29,7 @@ On a compute target add `--compute <target>`, and `--wait` to block until the jo
 | `CST_PARAMS` | JSON object: `spec.train.params`, then `--param` values on top |
 | `CST_OUT` | An empty folder for your outputs |
 | `CST_PIPELINE`, `CST_WORKSPACE` | The version being retrained and the workspace |
+| `CST_PYTHON` | The Python Captain itself runs on. Built-in trainers start from it: `"$CST_PYTHON" -m captain_search.trainers lightgbm-ltr` |
 | `CST_TRAIN_OUT` | Older trainers: a file path for the same result. Still read. If both are written, `result.yaml` wins key by key |
 
 ### An input's files
@@ -99,3 +100,19 @@ resolved when it was submitted, publishes the new version to the workspace store
 `jobs/<job>.result.yaml` with its ref. `cst job show <job>` then includes `result`. `--wait` (and the
 `retrain-and-review` workflow, which sets it) polls the job and returns the new version, or fails if the job failed
 or recorded nothing.
+
+## The built-in starter trainer
+
+`lightgbm-ltr` is a trainer like any other, kept in the package as a working example
+(`captain_search/trainers/lightgbm_ltr.py`). Its input is a training set from `cst data training-set`, given with
+role `training`: a parquet part with `query_id`, `grade`, `split` and one column per feature, plus `features.json`,
+which names the features and carries the lookup tables scoring needs. It trains LightGBM lambdarank, stops early on
+the validation queries, prints one JSON line per round (`{"type": "metric", "name": "ndcg@10", ...}`), and writes
+`model/` with the model, the unchanged `features.json` and a scorer that needs only numpy.
+
+LightGBM is not part of Captain's base install or its app. The `train-ltr` extra holds the pin
+(`pip install 'captain-search[train-ltr]'`, which the runner image does). Without it, the first run makes a private
+environment under Captain's home folder (`envs/train-ltr`), which needs the internet once.
+
+`cst projects starter-train <project>` runs all of it for a project: the keyword baseline if there is none, the
+training set, the trainer, and the new candidate.

@@ -67,10 +67,10 @@ def _stratified(qs: list[dict], n: int, seed: int) -> list[dict]:
 
 
 def _score(ctx, pm, spec: dict, prods, qs, jmap, workspace) -> tuple[dict, dict]:
-    from .engines import make_engine
+    from .engines import artifact_reader, make_engine
     from .eval import metrics as M
 
-    eng = make_engine(pm.engine, spec, prods, workspace=workspace)
+    eng = make_engine(pm.engine, spec, prods, workspace=workspace, artifact=artifact_reader(ctx, pm))
     ranks = {q["query_id"]: eng.search(q["query"], 50) for q in qs}
     return M.per_query(ranks, jmap), ranks
 

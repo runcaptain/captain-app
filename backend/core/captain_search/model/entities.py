@@ -57,6 +57,7 @@ class DatasetKind(str, Enum):
     queries = "queries"
     judgments = "judgments"
     logs = "logs"
+    training = "training"  # (query, product) rows with features and a label, built by `cst data training-set`
     generic = "generic"
 
 

@@ -797,6 +797,64 @@ def project_evaluation(pid: str, body: dict):
     return PS.set_evaluation(ctx(), pid, str(body.get("method") or ""))
 
 
+@app.get("/api/projects/{pid}/baseline-start", dependencies=A)
+def project_baseline_plan(pid: str, title: str | None = None):
+    """What "Start with keyword search as the baseline" would do: {ready, text, title, columns, ask_title}."""
+    from . import starter as STR
+
+    return STR.baseline_plan(ctx(), pid, title)
+
+
+@app.post("/api/projects/{pid}/baseline-start", dependencies=A)
+def project_baseline_start(pid: str, body: dict | None = None):
+    """{title?, dry_run?}: make a keyword-search version over the project's catalog (no training) and set it as the
+    baseline. 400 with a sentence when there is no catalog, no title column can be found, or a baseline exists."""
+    from . import starter as STR
+
+    b = body or {}
+    try:
+        return STR.baseline_start(ctx(), pid, b.get("title") or None, dry_run=bool(b.get("dry_run")))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.get("/api/projects/{pid}/starter", dependencies=A)
+def project_starter_plan(pid: str):
+    """What a starter ranker would train on: the inputs it uses, the cutoff dates it picked and why, whether the
+    events are simulated, whether the trainer needs its one-time setup, and what is missing."""
+    from . import starter as STR
+
+    return STR.plan(ctx(), pid)
+
+
+@app.post("/api/projects/{pid}/starter/train", dependencies=A)
+def project_starter_train(pid: str, body: dict | None = None):
+    """{params?}: train a starter ranker with no code, as a job with a live run. It sets keyword search as the
+    baseline when there is none, builds the training set, trains, and records the candidate. Returns {job, live};
+    the job's result is {experiment, pipeline, training_set, baseline, baseline_set, metrics, simulated, next}."""
+    from . import live as LV
+    from . import starter as STR
+
+    c, b = ctx(), body or {}
+    p = STR.plan(c, pid)
+    if not p["ready"]:
+        raise HTTPException(400, p["text"])
+    lv = LV.start("training", f"Starter ranker for {pid}", of=pid)
+
+    def go(_p):
+        try:
+            r = STR.train(c, pid, live=lv, params=b.get("params") or None)
+        except BaseException as e:
+            lv.end("failed", error=str(e) or "stopped")
+            raise
+        lv.end("done", ref=r["pipeline"], summary=r["text"])
+        return r
+
+    jid = _job(go, f"training a starter ranker for {pid}")
+    JOBS[jid]["live"] = lv.id
+    return {"job": jid, "live": lv.id, "simulated": p["simulated"], "baseline_will_be_set": bool((p.get("baseline") or {}).get("will_set"))}
+
+
 @app.get("/api/sources", dependencies=A)
 def sources_list():
     """What a project input can come from: connections and what each offers, datasets, and local folders that hold

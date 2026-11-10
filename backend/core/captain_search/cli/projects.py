@@ -401,6 +401,79 @@ def champion(name: str, which: Optional[str] = typer.Argument(None, help="an exp
             f"(was {r['previous'] or 'nothing'}).")
 
 
+@projects_app.command("baseline-start")
+def baseline_start(name: str,
+                   title: Optional[str] = typer.Option(None, "--title", help="the catalog column that holds the product title, when it can't be guessed")):
+    """Start with keyword search as the baseline: a version that needs no training, over the project's catalog."""
+    from .. import starter as ST
+
+    c = ctx()
+    if not S.dry_run:
+        _by_hand(c, name, "set the baseline")
+    r = _do(ST.baseline_start, c, name, title, dry_run=S.dry_run)
+    emit(r, (f"Would set {r['baseline']} as the baseline." if S.dry_run else r["text"]))
+
+
+@projects_app.command("starter-plan")
+def starter_plan(name: str):
+    """What a starter ranker would train on, the cutoff dates it picked and why, and what is missing."""
+    from .. import starter as ST
+
+    p = _do(ST.plan, ctx(), name)
+    lines = [p["text"]] + [f"  {u['text']}" for u in p["uses"]]
+    if p.get("why"):
+        lines.append(p["why"])
+    if p.get("baseline"):
+        lines.append(p["baseline"]["text"])
+    lines += p["warnings"]
+    if p["ready"] and p["setup"]["needs_setup"]:
+        lines.append("The first run sets up the starter trainer, one time. It needs the internet.")
+    emit(p, "\n".join(lines))
+
+
+@projects_app.command("starter-train")
+def starter_train(name: str,
+                  param: list[str] = typer.Option([], "--param", help="trainer setting, name=value (rounds, learning_rate, num_leaves). Repeat")):
+    """Train a starter ranker with no code: build the training set, train LightGBM on it, record the candidate."""
+    import json as _json
+
+    from .. import live as LV
+    from .. import starter as ST
+    from ..trainers import SetupFailed
+
+    c = ctx()
+    params = {}
+    for kv in param:
+        k, sep, v = kv.partition("=")
+        if not sep:
+            fail(f"--param takes name=value, got {kv!r}")
+        try:
+            params[k] = _json.loads(v)
+        except ValueError:
+            params[k] = v
+    if S.dry_run:
+        p = _do(ST.plan, c, name)
+        emit({**p, "dry_run": True}, p["text"] if not p["ready"] else f"Would train a starter ranker on {p['catalog']}"
+             + (f" and {p['events']}" if p["events"] else "") + ".")
+        return
+    _by_hand(c, name, "train a candidate")
+    lv = LV.for_job(c, "training", f"Starter ranker for {name}", of=name)
+    try:
+        r = ST.train(c, name, live=lv, params=params, progress=None if S.json else lambda t: typer.echo(t, err=True))
+    except (ValueError, NotFound, Conflict, SetupFailed) as e:
+        lv.end("failed", error=str(e))
+        fail(str(e))
+    except BaseException as e:
+        lv.end("failed", error=str(e) or "stopped")
+        raise
+    lv.end("done", ref=r["pipeline"], summary=r["text"])
+    m = r.get("metrics") or {}
+    emit(r, f"{r['text']}\nCandidate {r['experiment']}: {r['pipeline']}"
+            + (f", ndcg@10 {m['ndcg@10']:.4f} on its own validation queries" if m.get("ndcg@10") is not None else "")
+            + f"\nBaseline: {r['baseline']}" + (" (set now: keyword search)" if r["baseline_set"] else "")
+            + f"\nNext: cst projects experiment-backtest {name} {r['experiment']}")
+
+
 @projects_app.command("experiment-backtest")
 def experiment_backtest(name: str, experiment: str,
                         compute: Optional[str] = typer.Option(None, "--compute", help="compute target; default local")):

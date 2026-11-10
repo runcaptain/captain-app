@@ -165,11 +165,11 @@ def trace(ctx, pipeline: str, query: str, query_id: str | None = None, judgments
           k: int = 50) -> dict:
     """One pipeline's trace for one query, with grades when a judgments dataset and query id are given."""
     from . import ops
-    from .engines import make_engine
+    from .engines import artifact_reader, make_engine
 
     pm = ctx.registry.resolve("pipeline", pipeline)[0]
     prods = ops.products_of(ctx, pm.catalog) if pm.catalog else None
-    eng = make_engine(pm.engine, pm.spec, prods, workspace=ctx.workspace.name)
+    eng = make_engine(pm.engine, pm.spec, prods, workspace=ctx.workspace.name, artifact=artifact_reader(ctx, pm))
     stages = explain_engine(eng, query, k)
     grades = {}
     if judgments and query_id:

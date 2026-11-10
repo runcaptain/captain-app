@@ -34,12 +34,12 @@ def profile_pipeline(ctx, pipeline: str, queries: list[dict], *, memory: bool = 
                      progress=lambda f: None) -> dict:
     """queries: [{query_id?, query}]. Returns per-stage stats, the slowest queries and the budget check."""
     from . import ops
-    from .engines import make_engine
+    from .engines import artifact_reader, make_engine
     from .explain import explain_engine
 
     pm = ctx.registry.resolve("pipeline", pipeline)[0]
     prods = ops.products_of(ctx, pm.catalog) if pm.catalog else None
-    eng = make_engine(pm.engine, pm.spec, prods, workspace=ctx.workspace.name)
+    eng = make_engine(pm.engine, pm.spec, prods, workspace=ctx.workspace.name, artifact=artifact_reader(ctx, pm))
     stage_ms, stage_mem, order, per_query, kinds = defaultdict(list), defaultdict(list), [], [], {}
     explained = True
     for i, q in enumerate(queries):
