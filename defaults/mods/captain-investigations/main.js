@@ -9,6 +9,7 @@ import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, openOverlay, notify, run, spaces, focused, shared, setShared, exec, knownAgents } from "herdr";
 import { api, query, watchWorkspace, watchScope, watchRecords } from "./kit/cst.js";
+import { watchView } from "./kit/view.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
 import { View } from "gpui-kit";
@@ -83,6 +84,8 @@ export default class CaptainInvestigations extends View {
     // Another space's workspace: back to the list, read from there.
     // The Explorer pick: the list reloads filtered to it (the services read X-CST-Scope).
     watchScope(cx, (cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); });
+    // What this screen shows, for agents (cst app context): the experiment open, and its tab.
+    watchView(cx, "investigations", () => ({ experiment: this.open ?? null, title: this.open ? this.detail?.data?.title ?? null : null, tab: this.open ? this.tab : null }));
     watchWorkspace(cx, (cx) => { this.open = null; this.detail = null; this.bound = undefined; this.table.load(cx); cx.notify(); });
     // A form saved something (a handoff, a deployment, an outcome, a decision): the list and the open one reload now.
     watchRecords(cx, (cx) => { this.table.load(cx); if (this.open) this.load(this.open, cx); cx.notify(); });

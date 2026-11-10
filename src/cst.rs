@@ -167,7 +167,29 @@ pub fn terminal_env(space: &str) -> serde_json::Map<String, Value> {
         .or_else(|| crate::mods::shared("captain.workspace").and_then(|v| v.as_str().map(str::to_owned)));
     let cst = find();
     let dir = cst.as_deref().and_then(|c| path_dir(c, &crate::mods::app_dir().join("bin")));
-    env_for(workspace.as_deref(), bound.get("investigation").and_then(Value::as_str), std::env::var("PATH").ok().as_deref(), cst.as_deref().zip(dir.as_deref()))
+    let mut env = env_for(workspace.as_deref(), bound.get("investigation").and_then(Value::as_str), std::env::var("PATH").ok().as_deref(), cst.as_deref().zip(dir.as_deref()));
+    // The window this terminal belongs to, so `cst app context` and `cst app shot` ask this window and not another
+    // Captain on the same computer (a test window, a second home).
+    env.insert(crate::brand::HOME_ENV.into(), Value::String(crate::mods::app_dir().display().to_string()));
+    env
+}
+
+/// What the person is looking at, for `captain-app view` and `cst app context`: the window's own facts, and what
+/// each screen published about itself in shared "captain.view.<name>" (kit/view.js). No secrets: the screens leave
+/// them out, and `cst` checks again before printing.
+pub fn view_record(section: Option<String>, overlays: Vec<String>, agent: Option<String>, terminals_shown: Option<bool>, layout: &str) -> Value {
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    serde_json::json!({
+        "at": at,
+        "workspace": crate::mods::shared("captain.workspace"),
+        "scope": crate::mods::shared("captain.scope"),
+        "section": section,
+        "overlays": overlays,
+        "agent": agent,
+        "terminals_shown": terminals_shown,
+        "layout": layout,
+        "views": crate::mods::shared_under("captain.view."),
+    })
 }
 
 /// `cst`: the app's cst and the folder that goes first on PATH for it (`path_dir`).

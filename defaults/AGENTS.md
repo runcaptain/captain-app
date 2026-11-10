@@ -76,6 +76,28 @@ screen-recording permission is needed. Captain must be running; before its
 first frame or during GPU recovery it reports an error instead of a PNG.
 `CAPTAIN_APP_HOME` selects which running window to ask, as with `status`.
 
+## Seeing what the person sees
+
+When the person says "this", "here" or "what I'm looking at", or names nothing, look before you ask:
+
+- `cst app context` prints what they have open in Captain right now: the workspace, the project, the screen (in
+  the screen's word, with its section id), the selected item (a dataset, a run, an experiment, a launch review),
+  an open form with its filled fields, and the page's "Next:" line with its action. Below that it prints what
+  Captain's services know about those things: a project's inputs and next step, a dataset's rows and columns, a
+  run's status. `--json` for a record, `--bare` for only what the window says.
+- `cst app shot [file.png]` saves a picture of the window and prints its path. With no path it goes under the
+  app's own folder (`cache/shots/`, the newest 20 are kept), never your working folder.
+
+Both work in any terminal Captain opened: those carry `CAPTAIN_APP_HOME` (which window) and `CST_BIN` (which
+`cst`). With Captain closed they say so in one sentence and exit 1. Secrets never come out: a filled secret field
+reads `(hidden)`, and a URL loses its login. `captain-app view` is the window's own answer, unjoined.
+
+Mods add to it with the kit's `view.js`: `watchView(cx, "<section id>", () => ({ tab, dataset, ... }))` in `init`
+(never in render) keeps shared `captain.view.<section id>` current, written only when it changes. A form over the
+page publishes `"dialog"` with `safeFields(values, secretKeys)`. `askAgent` and `copyPrompt` (kit `agent.js`) put
+the same few lines at the top of every prompt, and the palette's "Ask an agent about this screen" (also the small
+button beside Agents in the sidebar) sends them to the open agent tab, or opens one.
+
 ## The files
 
 | File | What it decides | Applied |

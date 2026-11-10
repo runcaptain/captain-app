@@ -10,6 +10,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { theme, shared, openOverlay, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
+import { watchView } from "./kit/view.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
@@ -132,6 +133,8 @@ export default class CaptainCompare extends View {
     });
     // The Explorer's pick filters the backtests: reload them, keeping the open run if it's still listed.
     watchScope(cx, (cx) => { this.backtests = null; this.loadBacktests(cx); cx.notify(); });
+    // What this screen shows, for agents (cst app context): the evaluation run being read, and the tab.
+    watchView(cx, "comparisons", () => ({ tab: this.tab, backtest: this.sel?.backtest ?? null, run_version: this.sel?.version ?? null }));
     // Another space, another workspace: back to its first run.
     watchWorkspace(cx, (cx) => {
       this.sel = null; this.run = null; this.compat = null; this.hist = null; this.side = null; this.backtests = null; this.error = null;

@@ -13,6 +13,7 @@ import { h_flex, v_flex, Popup } from "gpui-base";
 import { theme, shared, setShared, run, openOverlay, props as layoutProps } from "herdr";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { api, watchScope, watchWorkspace, watchRecords } from "./kit/cst.js";
+import { watchView } from "./kit/view.js";
 import { Badge, Button, Empty, Skeleton, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand, engineTitle } from "./kit/brands.js";
@@ -73,6 +74,12 @@ export default class ProjectHome extends View {
     watchScope(cx, (cx) => this.load(cx));
     watchWorkspace(cx, (cx) => { this.last = null; this.load(cx); });
     watchRecords(cx, (cx) => this.load(cx));
+    // What this page shows, for agents (cst app context): the project, the open candidate and the Next line.
+    watchView(cx, "project", () => {
+      const pid = this.pid(), n = pid && this.stages ? this.nextStep() : null;
+      return pid ? { project: { id: pid, name: this.project()?.name ?? null, kind: this.state?.kind ?? null }, candidate: this.open ?? null,
+        next: n ? { text: n.text, label: n.label ?? n.action?.label ?? null, action: n.action ?? null } : null } : { showing: "all projects" };
+    });
     let rev = shared("captain.explorer.rev") ?? null;
     cx.timer.every(1000, (cx) => { const r = shared("captain.explorer.rev") ?? null; if (r !== rev) { rev = r; this.load(cx); } });
     // Until the first answer (the services may still be starting), ask again every 3 s.

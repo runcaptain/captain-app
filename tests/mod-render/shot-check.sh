@@ -168,7 +168,15 @@ launch() {
   [[ -S $HOME_DIR/captain-app.sock ]] || { echo "the window did not start: $(tail -5 "$WORK/app.log")"; exit 1; }
 }
 launch
-app() { CAPTAIN_APP_HOME=$HOME_DIR "$BIN" "$@"; }
+# SHOT_SAMPLE=1: when the window stops answering, save what its threads were doing (macOS `sample`) with the shots.
+app() {
+  CAPTAIN_APP_HOME=$HOME_DIR "$BIN" "$@" && return 0
+  local rc=$?
+  [[ -n "${SHOT_SAMPLE:-}" && -n "$APP_PID" ]] && sample "$APP_PID" 3 -file "$OUT/hang-sample.txt" >/dev/null 2>&1 || true
+  return $rc
+}
+# cst, asking this window (CAPTAIN_APP_HOME) about this workspace (CST_HOME), as a terminal it opens would.
+cst_app() { CAPTAIN_APP_HOME=$HOME_DIR CST_HOME=$CSTH "$CSTCMD" "$@"; }
 # A new home's first start opens What's New (or the welcome) over everything, and those close only by id.
 # The second start in the same home opens nothing, so restart the window once if anything covers it.
 covered() { app status | python3 -c "import json,sys; o=json.load(sys.stdin).get('overlays', []); sys.exit(0 if any(x != 'toast' for x in o) else 1)"; }
@@ -280,7 +288,35 @@ EOF
   PREV_SUM=$(shasum "$OUT/${view/:/-}.png" | cut -d' ' -f1)
   errs=$(app status | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('errors', [])))")
   if [[ $ok == 1 && $errs == 0 ]]; then echo "$view: drawn ($OUT/${view/:/-}.png)"; else echo "$view: BLANK or errors ($errs) ($OUT/${view/:/-}.png)"; app status; fail=1; fi
+  # What an agent sees of this view: `cst app context` asks this window and must name the section it shows.
+  # (A dialog over the page, the import wizard, leaves the section under it as it was.) SHOT_CONTEXT=1 prints it.
+  if ctx=$(cst_app --json app context 2>&1); then
+    sec=$(printf '%s' "$ctx" | python3 -c "import json,sys; print(json.load(sys.stdin).get('section'))" 2>/dev/null || echo "?")
+    if [[ "$sec" != "$block" ]]; then echo "$view: cst app context says section '$sec', the window shows '$block'"; fail=1; fi
+    if [[ -n "${SHOT_CONTEXT:-}" ]]; then echo "--- cst app context ($view)"; cst_app app context || true; echo "---"; fi
+  else
+    echo "$view: cst app context failed: $ctx"; fail=1
+  fi
 done
+
+# `cst app shot`: a real picture of this window, saved under the window's own cache folder and nowhere else.
+if pic=$(cst_app app shot 2>&1) && [[ "$pic" == "$HOME_DIR/cache/shots/"*.png && -s "$pic" ]] && python3 tests/mod-render/shot-busy.py "$pic"; then
+  cp "$pic" "$OUT/cst-app-shot.png"; echo "cst app shot: a picture of the window ($pic, kept as $OUT/cst-app-shot.png)"
+else
+  echo "cst app shot: no picture of the window: $pic"; fail=1
+fi
+# SHOT_CONTEXT=1: the same from a terminal this window opens, with nothing set by hand: Captain's terminals carry
+# CAPTAIN_APP_HOME and CST_BIN (src/cst.rs terminal_env), so an agent there asks this window and no other.
+if [[ -n "${SHOT_CONTEXT:-}" ]]; then
+  rm -f "$OUT/from-terminal.txt"
+  app do tab.new "{\"name\":\"context\",\"argv\":[\"/bin/sh\",\"-c\",\"{ echo home=\$CAPTAIN_APP_HOME; \\\"\$CST_BIN\\\" app context --bare; } > '$OUT/from-terminal.txt' 2>&1; sleep 2\"]}" >/dev/null || true
+  for _ in $(seq 1 30); do grep -q "For a picture" "$OUT/from-terminal.txt" 2>/dev/null && break; sleep 1; done
+  if grep -q "^home=$HOME_DIR\$" "$OUT/from-terminal.txt" 2>/dev/null && grep -q "What the person is looking at" "$OUT/from-terminal.txt"; then
+    echo "--- cst app context, run inside a terminal this window opened"; cat "$OUT/from-terminal.txt"; echo "---"
+  else
+    echo "a terminal this window opened could not run cst app context: $(cat "$OUT/from-terminal.txt" 2>/dev/null)"; fail=1
+  fi
+fi
 
 # SHOT_AUDIT=1: the whole app as a person meets it, in Captain's own layout with every current Captain mod installed:
 # each section, then the palette, Settings and the Captain dialogs. Shots only (audit-*.png): a person looks at them.

@@ -9,6 +9,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { theme, shared, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace, watchScope, watchConnections } from "./kit/cst.js";
+import { watchView } from "./kit/view.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button, Badge } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
@@ -170,6 +171,10 @@ export default class CaptainData extends View {
         cx.notify();
       }
     });
+    // What this screen shows, for agents (cst app context): the tab, the dataset open and its tab, the notebook.
+    watchView(cx, "data", () => ({ tab: this.tab, dataset: this.tab === "datasets" ? this.sel ?? null : null,
+      version: this.tab === "datasets" ? this.detail?.version ?? null : null, dataset_tab: this.tab === "datasets" && this.sel ? this.page?.tab ?? null : null,
+      notebook: this.tab === "notebooks" ? this.nb?.open?.name ?? null : null }));
     // The Explorer's pick (a brand, site, engine or project) filters every list: reload what's shown.
     watchScope(cx, (cx) => {
       this.load(cx);

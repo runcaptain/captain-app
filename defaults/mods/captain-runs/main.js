@@ -7,6 +7,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, run, setShared, shared, openOverlay, props as layoutProps } from "herdr";
 import { Curve } from "./kit/chart.js";
 import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
+import { watchView } from "./kit/view.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
@@ -173,6 +174,8 @@ export default class CaptainRuns extends View {
     });
     // The Explorer's pick filters the lists: load this tab again.
     watchScope(cx, (cx) => { this.data = {}; this.load(cx, this.tab); cx.notify(); });
+    // What this screen shows, for agents (cst app context): the tab and the run picked on it.
+    watchView(cx, "runs", () => ({ tab: this.tab, selected: this.sel[this.tab] ?? null, backtest: this.tab === "backtests" ? this.sel.backtests ?? null : null }));
     // Another space, another workspace: drop what was shown and load this tab again.
     watchWorkspace(cx, (cx) => {
       this.data = {}; this.sel = {}; this.detail = {}; this.open = {}; this.grader = null; this.error = null;

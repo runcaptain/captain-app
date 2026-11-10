@@ -11,6 +11,7 @@ import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { TASKS } from "./tasks.js";
 import { recordsChanged } from "./kit/cst.js";
+import { watchView, publishView, safeFields } from "./kit/view.js";
 
 const IMPORT = { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} };
 
@@ -46,9 +47,13 @@ export default class CaptainForms extends View {
     if (this.task) this.start(cx);
   }
 
-  close() { closeOverlay(props().overlay); }
+  close() { if (this.task) publishView("dialog", null); closeOverlay(props().overlay); }
 
   start(cx) {
+    // The form open over the page and what is filled in, for agents (cst app context). A secret field reads
+    // "(hidden)": its value never leaves this form.
+    watchView(cx, "dialog", () => ({ mod: "captain-forms", form: this.task.id, title: this.task.label,
+      fields: safeFields(this.values, this.shown().filter((f) => f.kind === "secret").map((f) => f.key)) }));
     for (const f of this.task.fields) if (f.default !== undefined) this.values[f.key] ??= f.default;
     // Text inputs keep state, which gpui-kit only lets a view create outside render.
     this.ensureStates();
