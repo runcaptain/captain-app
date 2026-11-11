@@ -109,6 +109,43 @@ def test_a_run_on_a_compute_target_streams_through_the_bucket(seeded, monkeypatc
     assert ev[-1]["type"] == "result"
 
 
+def test_live_watch_reads_a_run_on_a_compute_target(seeded, monkeypatch):
+    """`cst backtest run --compute` prints a live id. `cst live watch <id>` failed on it with "no live run <id>",
+    because it read only this computer's runs (found on the first real Modal run, 2026-11-10)."""
+    from typer.testing import CliRunner
+
+    from captain_search.cli.main import app
+
+    monkeypatch.setenv("CST_HOME", seeded.test_home)
+    monkeypatch.setattr("captain_search.cli.live.time.sleep", lambda s: None)
+    rid = live.start_remote(seeded, "training", "on a compute target", where="modal-test")
+    run = live.attach_store(seeded, rid)
+    run.stage("Train")
+    run.log("hello from the job")
+    run.end("done", ref="p@v2")
+    out = CliRunner().invoke(app, ["-w", seeded.workspace.name, "live", "watch", rid])
+    assert out.exit_code == 0, out.output
+    assert "hello from the job" in out.output and "stage" in out.output
+
+    # a run on this computer still reads as before, and an unknown id is one sentence, not a traceback
+    here = live.start("custom", "here")
+    here.log("local line")
+    here.end()
+    out = CliRunner().invoke(app, ["-w", seeded.workspace.name, "live", "watch", here.id])
+    assert out.exit_code == 0 and "local line" in out.output
+    out = CliRunner().invoke(app, ["-w", seeded.workspace.name, "live", "watch", "01nope"])
+    assert out.exit_code != 0 and "no live run 01nope" in out.output and "Traceback" not in out.output
+
+    # a remote run with no word from its job stops with the note instead of waiting forever
+    quiet = live.start_remote(seeded, "training", "far away")
+    body, tag = seeded.store.get_with_tag(f"live-heads/{quiet}.json")
+    h = json.loads(body)
+    h.update(status="running", updated="2020-01-01T00:00:00+00:00")
+    seeded.store.put_if(f"live-heads/{quiet}.json", json.dumps(h).encode(), tag)
+    out = CliRunner().invoke(app, ["-w", seeded.workspace.name, "live", "watch", quiet])
+    assert out.exit_code == 0 and "No word from the job" in out.output
+
+
 def test_a_quiet_remote_run_says_so(seeded):
     import json as _json
 
