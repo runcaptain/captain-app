@@ -475,6 +475,9 @@ def compute(ab: dict, got: dict, traffic: str | None = None, segments: dict | No
         return {"metric": metric, "label": METRICS[metric], **_diff(acc["candidate"], acc["baseline"])}
 
     evidence, label = LABELS[kind]
+    if not reqs and not by_kind:
+        # Nothing has arrived, so there is nothing to label. "Real traffic" is only ever said of real requests.
+        evidence, label = None, "No traffic yet"
     p = stat(ab["primary"])
     if not enough:
         short = max(0, need - min(n.values()))

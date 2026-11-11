@@ -164,7 +164,7 @@ def test_shadow_readout_numbers_and_labels():
     assert TF.shadow_compute(sh, {"requests": mixed, "outcomes": [], "names": {}})["requests"] == 10
     sim = TF.shadow_compute(sh, {"requests": mixed, "outcomes": [], "names": {}}, "simulated")
     assert sim["evidence"] == "SIMULATED" and sim["requests"] == 50 and sim["text"].startswith("Simulated shoppers. ")
-    assert TF.shadow_compute(sh, {"requests": [], "outcomes": [], "names": {}})["text"].startswith("Real traffic. No requests yet.")
+    assert TF.shadow_compute(sh, {"requests": [], "outcomes": [], "names": {}})["text"].startswith("No traffic yet. No requests yet.")  # never "real" before a request
     # two versions that both find nothing agree: an empty page is not a difference
     empty = TF.shadow_compute(sh, {"requests": [req(1, "nothing here", [], [])], "outcomes": [], "names": {}})
     assert empty["overlap"] == 1.0 and empty["top10_differs"] == 0
@@ -195,6 +195,8 @@ def test_practice_on_simulated_shoppers_is_labelled_and_cannot_ship(ws):  # noqa
     SG.stage(ws, "shop", target="local")
     ab = AB.start(ws, "shop", split=0.5, primary="clicks", min_sessions=50, practice=True)
     assert ab["practice"]
+    empty = AB.readout(ws, "shop")
+    assert empty["evidence"] is None and empty["label"] == "No traffic yet" and empty["text"].startswith("No traffic yet. ")
     AB.simulate(ws, "shop", sessions=200)
     r = AB.readout(ws, "shop")
     assert r["practice"] and r["evidence"] == "SIMULATED" and r["enough"] and not r["can_ship"]

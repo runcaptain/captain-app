@@ -137,6 +137,7 @@ class Runtime:
         self.requests = self.outcomes = 0
         self.by_traffic = {k: 0 for k in L.TRAFFIC}  # how many requests of each kind: only "real" is a site calling
         self.last_real_at: str | None = None
+        self.running = 0  # requests being answered right now
         self._lock = threading.Lock()
         self._req: list[dict] = []
         self._out: list[dict] = []
@@ -191,7 +192,11 @@ class Runtime:
         name = arm or ("baseline" if shadowing else assign(ctl, self.arms, str(session or user or rid)))
         a = self.arms[name]
         t0 = time.perf_counter()
-        ranked, feats = a.rank(query, k)
+        self.running += 1
+        try:
+            ranked, feats = a.rank(query, k)
+        finally:
+            self.running -= 1
         ms = round((time.perf_counter() - t0) * 1000, 3)
         ids = [str(p) for p, _ in ranked]
         shadow = None
@@ -278,7 +283,7 @@ class Runtime:
         return {"ok": self.stopped is None, "project": self.pid, "env": self.env, "stage": self.stage,
                 "arms": {n: a.pipeline for n, a in self.arms.items()}, "serve": ctl.get("serve"), "split": ctl.get("split"),
                 "experiment": ctl.get("experiment"), "started_at": self.started_at, "uptime_s": round(now - self.started),
-                "requests": self.requests, "outcomes": self.outcomes, "traffic": dict(self.by_traffic),
+                "requests": self.requests, "outcomes": self.outcomes, "running": max(0, self.running), "traffic": dict(self.by_traffic),
                 "last_real_at": self.last_real_at, "shadow": ctl.get("shadow") or None, "idle_s": round(idle),
                 "idle_minutes": self.idle_minutes, "stops_in_s": max(0, round(self.idle_minutes * 60 - idle)),
                 "stopped": self.stopped}

@@ -50,6 +50,10 @@ export class Ship {
     this.details = false;
     this.result = null; this.asking = false; this.askError = null;
     this.thumbs = new Map(); // image address -> file name | null (failed) | undefined (asked)
+    this.cloudCost = costState(); // what the same endpoint would cost in the connected cloud
+    this.places = null;    // {cloud: the connected login or null, targets: compute targets that can serve}
+    this.tab = "try";      // the deployment page's open tab
+    this.sheet = false;    // the "what serving in your cloud needs" sheet
     this.cost = costState(); // what the staged endpoint costs to keep up (POST /api/costs/estimate, kit/cost.js)
     this.conn = null;      // GET /staging/connect: the address, the snippets, how many real requests arrived
     this.shadow = null;    // GET /shadow: what the candidate would change, with no shopper seeing it
@@ -110,6 +114,36 @@ export class Ship {
     }
   }
 
+  /** Where a model could run besides this computer: the connected cloud login, and the compute targets there that
+   *  can serve. Asked once per project. The estimate for the first of them comes from the shared estimator. */
+  loadPlaces(cx) {
+    const pid = this.pid();
+    if (!pid || this.placesFor === pid) return;
+    this.placesFor = pid;
+    cx.spawn(async (cx) => {
+      const [t, cl] = await Promise.all([api("/api/compute", { scoped: false }), api("/api/cloud/summary", { scoped: false })]);
+      if (this.pid() !== pid) return;
+      const targets = (t.ok && Array.isArray(t.data) ? t.data : []).filter((x) => x.kind !== "local" && (x.purposes ?? []).includes("serve") && x.kind === "aws-sagemaker");
+      this.places = { cloud: cl.ok ? cl.data?.active ?? null : null, targets };
+      const first = targets[0];
+      if (first) await refreshEstimate(this.cloudCost, { kind: "staging", where: first.name, size: { instances: Number(first.config?.instance_count ?? 1), instance_type: first.config?.instance_type ?? "ml.m5.large" } });
+      cx.notify();
+    });
+  }
+
+  /** The cloud's name as a person says it. */
+  cloudName() { const p = this.places?.cloud?.provider ?? (this.places?.targets?.length ? "aws" : null); return { aws: "AWS", gcp: "Google Cloud", azure: "Azure" }[p] ?? null; }
+
+  /** Where this project was last staged, so the same choice is offered first next time. */
+  lastWhere() { try { return localStorage.getItem(`stage-where:${this.pid()}`) || null; } catch { return null; } }
+  stageAt(cx, where) {
+    try { localStorage.setItem(`stage-where:${this.pid()}`, where === "local" ? "local" : "cloud"); } catch {}
+    const cand = this.pick();
+    this.stage(cx, { ...(cand ? { candidate: cand.id } : { baseline: true }), target: where });
+  }
+
+  copy(cx, text, said) { cx.write_to_clipboard?.(text); this.note = { tone: "good", text: said }; cx.notify(); }
+
   /** One small write (shadow on or off, a test request, a decision), then read everything again. */
   act(cx, path, body, done, after) {
     if (this.busy) return;
@@ -134,7 +168,7 @@ export class Ship {
   }
 
   /** Put a query in the Try it box and ask it (from a list of queries that differ). */
-  tryQuery(cx, q) { this.box.set_value(q); this.ask(cx); }
+  tryQuery(cx, q) { this.tab = "try"; this.box.set_value(q); this.ask(cx); }
 
   /** The estimate for where it runs (or is about to run). Asks the services only when the question changed. */
   price(cx, where, size) {
@@ -151,6 +185,7 @@ export class Ship {
   /** From the project's own answer (GET /stages): ask for the details only when something is staged or tested. */
   sync(cx, ship) {
     this.cx = cx;
+    this.loadPlaces(cx);
     if (ship?.staging || ship?.ab) return this.load(cx);
     const pid = this.pid();
     if (pid !== this.shown) { this.shown = pid; this.result = null; this.note = null; this.confirm = null; this.askError = null; this.setup = null; this.ask2 = null; }
@@ -201,7 +236,7 @@ export class Ship {
   stage(cx, body, confirmed = false) {
     if (this.busy) return;
     this.cx = cx;
-    this.busy = "Getting it ready"; this.note = null; this.confirm = null;
+    this.busy = "Getting it ready"; this.busyStep = "stage"; this.note = null; this.confirm = null;
     this.busyFor = { what: "stage", was: this.running() ? this.staged().id : null }; this.settled = null;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -228,7 +263,7 @@ export class Ship {
   stop(cx) {
     if (this.busy) return;
     this.cx = cx;
-    this.busy = "Stopping it"; this.note = null; this.stopAsk = false;
+    this.busy = "Stopping it"; this.busyStep = "stage"; this.note = null; this.stopAsk = false;
     this.busyFor = { what: "stop" }; this.settled = null;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -262,6 +297,7 @@ export class Ship {
     if (this.busy) return;
     this.cx = cx;
     this.busy = { start: "Starting the A/B test", ramp: "Changing the split", rollback: "Rolling back", stop: "Ending the test" }[what];
+    this.busyStep = "ab";
     this.note = null; this.ask2 = null;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -278,7 +314,7 @@ export class Ship {
   simulate(cx) {
     if (this.busy) return;
     this.cx = cx;
-    this.busy = "Sending simulated shoppers"; this.note = null;
+    this.busy = "Sending simulated shoppers"; this.busyStep = "ab"; this.note = null;
     cx.notify();
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(this.pid())}/ab/simulate`, { body: { sessions: 1000 }, scoped: false });
@@ -381,7 +417,7 @@ export class Ship {
     // The result itself is in the readout below, once: here only what is running.
     else text = `${a.practice ? "Practice on simulated shoppers. " : ""}The candidate gets ${pct(a.split)} of traffic.${r.enough ? "" : " Not enough data yet."}`;
     const can = this.both() && !live;
-    return { n: 4, id: "ab", title: "A/B test", done, text: text.trim(), action: can ? (o?.ready ? "ab-start" : "ab-practice") : null,
+    return { n: 4, id: "ab", title: "A/B test", done, text: String(text ?? "").trim(), action: can ? (o?.ready ? "ab-start" : "ab-practice") : null,
       label: can ? (o?.ready ? (a ? "Start another A/B test" : "Start an A/B test") : "Practice with simulated shoppers") : null,
       ...(a || this.both() ? {} : { waiting_on: "Stage a candidate beside the baseline first." }) };
   }
@@ -423,7 +459,9 @@ export class Ship {
     const cand = this.pick(), champ = page.exps?.champion ?? null;
     const servesBaseline = s?.serve === "baseline";
     const buttons = h_flex().flex_none().flex_wrap().gap(6).items_center();
-    if (this.busy) buttons.child(div().id("ship-busy").text_size(12).text_color(c.grey500).child(`${this.busy}...`));
+    // A progress label shows on the step that started the work, and nowhere else.
+    if (this.busy && this.busyStep !== "ab") buttons.child(div().id("ship-busy").text_size(12).text_color(c.grey500).child(`${this.busy}...`));
+    else if (this.busy) { /* the A/B step is busy: this step offers nothing meanwhile */ }
     else if (on) {
       if (cand && servesBaseline) buttons.child(Button(c, "ship-stage", "Stage the candidate", (_e, cx) => this.stage(cx, { candidate: cand.id }), { small: true, kind: "primary" }));
       if (champ && !servesBaseline) buttons.child(Button(c, "ship-restage-baseline", "Restage with the baseline", (_e, cx) => this.stage(cx, { baseline: true }), { small: true }));
@@ -683,10 +721,12 @@ export class Ship {
     };
     return v_flex().id("ship-ab-readout").gap(8)
       .child(h_flex().gap(8).items_center().flex_wrap()
-        .child(Badge(c, r.label ?? "No traffic yet", tone))
-        .when(r.evidence !== "REAL_TRAFFIC", (e) => e.child(div().id("ship-ab-evidence").text_size(12).text_color(c.warn).child(r.evidence === "SIMULATED"
+        .child(Badge(c, r.label ?? "No traffic yet", r.evidence === "REAL_TRAFFIC" ? "good" : r.evidence ? "warn" : "neutral"))
+        .when(Boolean(r.evidence) && r.evidence !== "REAL_TRAFFIC", (e) => e.child(div().id("ship-ab-evidence").text_size(12).text_color(c.warn).child(r.evidence === "SIMULATED"
           ? "SIMULATED: these shoppers are generated. Nothing here says what real shoppers will do."
           : "Test traffic: these requests are not shoppers."))))
+      .when(!r.evidence && this.conn?.reachable === false, (e) => e.child(div().id("ship-ab-unreachable").text_size(12).text_color(c.grey900)
+        .child("A site can't reach this endpoint, so no shopper will arrive. Only this computer can send it requests.")))
       .child(h_flex().flex_wrap().items_start().gap(10).child(arm("baseline", "ship-ab-baseline")).child(arm("candidate", "ship-ab-candidate")))
       .child(div().id("ship-ab-primary").text_size(12.5).line_height("18px").text_color(r.enough ? c.navy : c.grey900).child(r.primary?.text ?? r.text))
       .children((r.guardrails ?? []).map((g, i) => h_flex().id(`ship-ab-guard-${i}`).gap(6).items_center()
@@ -764,6 +804,7 @@ export class Ship {
     const btn = h_flex().flex_none().flex_wrap().gap(6).items_center()
       .when(open && st.action === "ab-start", (e) => e.child(Button(c, "ship-ab-start", st.label, (_e, cx) => { this.openSetup(false); cx.notify(); }, { small: true, kind: a ? "secondary" : "primary" })))
       .when(open && this.both() && a?.status !== "running", (e) => e.child(Button(c, "ship-ab-practice-go", "Practice with simulated shoppers", (_e, cx) => { this.openSetup(true); cx.notify(); }, { small: true, kind: o?.ready ? "quiet" : "secondary" })));
+    if (this.busy && this.busyStep === "ab") btn.child(div().id("ship-ab-busy").text_size(12).text_color(c.grey500).child(`${this.busy}...`));
     const body = [];
     if (this.setup) body.push(this.setupBox(c));
     const filed = a?.status === "rolled_back" && r.rolled_back;
@@ -781,6 +822,157 @@ export class Ship {
       .when(st.action === "handoff", (e) => e.child(Button(c, "ship-handoff", "Send to launch review", () => form("handoff", { pipeline: of }), { small: true, kind: this.ab?.enough ? "primary" : "secondary" })))
       .child(Button(c, "ship-open-handoff", "Open Launch review", () => this.page.goTo?.("handoff"), { small: true, kind: "quiet" }));
     return this.row(c, st, btn, null);
+  }
+
+  chip(c, id, text, tone = "neutral") {
+    const col = { good: [c.goodLight, c.good], warn: [c.warnLight, c.warn], bad: [c.failLight, c.fail], neutral: [c.surface2, c.grey900] }[tone];
+    return div().id(id).h(22).px(8).flex().flex_none().items_center().text_size(11.5).font_medium().bg(col[0]).text_color(col[1]).child(text);
+  }
+
+  /** What serving in the connected cloud needs, until Captain sets it up itself. */
+  setupSheet(c) {
+    const cloud = this.cloudName() ?? "your cloud";
+    return v_flex().id("ship-setup-sheet").p(10).gap(4).bg(c.surface2).border_1().border_color(c.rule)
+      .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(`What serving in ${cloud} needs`))
+      .children(["A role the endpoint runs as, which can read the model bundle, write the request log, and delete its own endpoint so it can stop itself.",
+        "A place for Captain's serving image in your account's container registry.",
+        "A compute target in Captain that names both (Cloud and compute, kind SageMaker endpoint).",
+        "The workspace's data in a bucket, so the endpoint can read the bundle."]
+        .map((t, i) => div().id(`ship-setup-need-${i}`).text_size(12).line_height("17px").text_color(c.grey900).child(`${i + 1}. ${t}`)))
+      .child(div().text_size(12).line_height("17px").text_color(c.grey500).child("Captain does not create these for you yet. Once a SageMaker target exists, this button stages there."))
+      .child(h_flex().gap(6)
+        .child(Button(c, "ship-setup-open", "Open Cloud and compute", () => openOverlay({ mod: "captain-cloud", kind: "dialog", width: 760, height: 640 }), { small: true }))
+        .child(Button(c, "ship-setup-close", "Close", (_e, cx) => { this.sheet = false; cx.notify(); }, { small: true, kind: "quiet" })));
+  }
+
+  /** The two places a model can run, side by side with what each costs. This computer is free and only you can
+   *  reach it. The connected cloud costs by the hour and a site can reach it. The last choice comes first. */
+  choices(c) {
+    const cand = this.pick(), champ = this.page.exps?.champion ?? null;
+    if (!cand && !champ) return div().id("ship-nothing").text_size(12.5).text_color(c.grey500).child("Set a baseline or train a candidate first. Then you can stage it.");
+    const what = cand ? short(cand.pipeline) : short(champ);
+    const cloud = this.cloudName(), target = this.places?.targets?.[0] ?? null, last = this.lastWhere();
+    const est = this.cloudCost.estimate;
+    const card = (id, title, lines, button) => v_flex().id(id).flex_1().min_w(260).p(12).gap(6).bg(c.surface).border_1().border_color(c.rule)
+      .child(div().text_size(13).font_semibold().text_color(c.navy).child(title))
+      .children(lines.filter(Boolean).map((t, i) => div().id(`${id}-l${i}`).text_size(12).line_height("17px").text_color(c.grey900).child(t)))
+      .child(div().flex_1()).child(h_flex().child(button));
+    const here = card("ship-choice-local", "On this computer", ["Free. Only you can reach it.", "Good for trying a model. A site can't send it traffic."],
+      Button(c, "ship-stage", cand ? "Stage it" : "Stage the baseline", (_e, cx) => this.stageAt(cx, "local"), { small: true, kind: last === "cloud" && target ? "secondary" : "primary" }));
+    const there = !cloud ? null : card("ship-choice-cloud", `In your ${cloud} account`, ["A site can reach it.",
+      target ? est?.text ?? "Working out the cost..." : `Serving isn't set up in your ${cloud} account yet.`, target ? "This keeps billing until you stop it." : null],
+      target ? Button(c, "ship-stage-cloud", `Stage in your ${cloud} account`, (_e, cx) => this.stageAt(cx, target.name), { small: true, kind: last === "cloud" ? "primary" : "secondary" })
+        : Button(c, "ship-setup-cloud", `Set up serving in your ${cloud}`, (_e, cx) => { this.sheet = !this.sheet; cx.notify(); }, { small: true }));
+    return v_flex().id("ship-choices").gap(8)
+      .child(div().text_size(12.5).text_color(c.grey900).child(`Where should ${what} run?`))
+      .child(h_flex().flex_wrap().items_stretch().gap(10).children(last === "cloud" && there ? [there, here] : [here, there].filter(Boolean)))
+      .when(!cloud, (e) => e.child(div().id("ship-no-cloud").text_size(12).text_color(c.grey500).child("To stage where a site can reach it, connect a cloud login (the cloud chip at the bottom of the sidebar).")));
+  }
+
+  /** The deployment's header: is it up, where is it, is anything calling it, and the action for now. Nothing here
+   *  is behind a disclosure: the address, its Copy, the key and a ready test request are always in view. */
+  header(c) {
+    const s = this.staged(), on = this.running(), k = this.conn, page = this.page;
+    const cand = this.pick(), champ = page.exps?.champion ?? null;
+    const local = s?.kind === "local", cloud = this.cloudName(), target = this.places?.targets?.[0] ?? null;
+    const address = on ? (s.endpoint?.url ?? s.endpoint?.name ?? "") : null;
+    const name = on || s ? short(s.model_version) : cand ? short(cand.pipeline) : champ ? short(champ) : "Nothing to stage yet";
+    const state = this.busy && this.busyStep !== "ab" ? ["Working", "warn"] : on ? ["1 copy live", "good"] : s?.status === "starting" ? ["Starting", "warn"] : s?.status === "failed" ? ["Failed", "bad"] : s ? ["Stopped", "neutral"] : ["Not staged", "neutral"];
+    const actions = h_flex().flex_none().flex_wrap().gap(6).items_center();
+    if (this.busy && this.busyStep !== "ab") actions.child(div().id("ship-busy").text_size(12).text_color(c.grey500).child(`${this.busy}...`));
+    else if (on && !this.busy) {
+      if (local && cloud && target) actions.child(v_flex().items_end().gap(2)
+        .child(Button(c, "ship-stage-cloud", `Stage in your ${cloud} account`, (_e, cx) => this.stageAt(cx, target.name), { small: true, kind: "primary" }))
+        .child(div().id("ship-stage-cloud-cost").text_size(11.5).text_color(c.grey500).child(this.cloudCost.estimate?.text ?? "")));
+      else if (local && cloud) actions.child(Button(c, "ship-setup-cloud", `Set up serving in your ${cloud}`, (_e, cx) => { this.sheet = !this.sheet; cx.notify(); }, { small: true }));
+      if (cand && s.serve === "baseline" && !(s.arms ?? {}).candidate) actions.child(Button(c, "ship-stage", "Stage the candidate", (_e, cx) => this.stage(cx, { candidate: cand.id }), { small: true, kind: "primary" }));
+      if (champ && s.serve !== "baseline") actions.child(Button(c, "ship-restage-baseline", "Restage with the baseline", (_e, cx) => this.stage(cx, { baseline: true }), { small: true }));
+      actions.child(Button(c, "ship-stop", "Stop", (_e, cx) => { this.stopAsk = true; cx.notify(); }, { small: true }));
+    }
+    if (s && !this.busy) actions.child(SendToAgent(c, "ship-send", { ref: `staging:${this.pid()}`, kind: "staging", label: `staging for ${page.project()?.name ?? this.pid()}` }));
+    const costLine = on && !this.confirm ? v_flex().id("ship-line-cost").gap(2)
+      .child(CostLine(c, "ship-cost", this.cost.estimate ?? s?.cost?.estimate ?? { text: s?.cost?.text ?? "", basis: [] }, this.cost, { onToggle: (_e, cx) => { this.cost.open = !this.cost.open; cx.notify(); } }))
+      .when(!local, (e) => e.child(div().id("ship-cost-billing").text_size(12).text_color(c.grey900).child("This keeps billing until you stop it."))) : null;
+    return v_flex().id("ship-header").w_full().p(14).gap(10).bg(c.surface).border_1().border_color(c.rule)
+      .child(h_flex().gap(10).items_start().flex_wrap()
+        .child(v_flex().flex_1().min_w(260).gap(6)
+          .child(h_flex().gap(8).items_center().flex_wrap()
+            .child(div().id("ship-name").font_family(MONO).text_size(16).font_semibold().text_color(c.navy).child(name))
+            .when(on && Boolean(s.arms?.baseline) && s.serve !== "baseline", (e) => e.child(div().id("ship-beside").text_size(12).text_color(c.grey500).child(`beside the baseline ${short(s.arms.baseline)}`))))
+          .child(h_flex().id("ship-chips").gap(6).flex_wrap()
+            .child(this.chip(c, "ship-chip-state", state[0], state[1]))
+            .when(on, (e) => e
+              .child(this.chip(c, "ship-chip-running", `${k?.running ?? 0} request${(k?.running ?? 0) === 1 ? "" : "s"} running`))
+              .child(this.chip(c, "ship-chip-where", local ? "This computer" : `Your ${cloud ?? "cloud"} account`))
+              .when(Boolean(s.needs_key), (x) => x.child(this.chip(c, "ship-chip-key", "Key required")))
+              // What the traffic is, only once there is some. Never "real" before a real request.
+              .when(Boolean(k?.evidence_label), (x) => x.child(this.chip(c, "ship-chip-traffic", k.evidence_label, k.real ? "good" : "warn"))))))
+        .child(actions))
+      .when(on, (e) => e.child(v_flex().id("ship-reach").gap(4)
+        .child(h_flex().gap(8).items_center().flex_wrap()
+          .child(div().id("ship-address").font_family(MONO).text_size(12.5).text_color(c.navy).child(address))
+          .child(Button(c, "ship-copy-address", "Copy", (_e, cx) => this.copy(cx, address, "The address is on your clipboard."), { small: true }))
+          .child(Button(c, "ship-copy-key", "Copy the key", (_e, cx) => this.copyKey(cx), { small: true }))
+          .when(Boolean(k?.test_request), (x) => x.child(Button(c, "ship-copy-test", "Copy a test request", (_e, cx) => this.copy(cx, k.test_request, "A test request is on your clipboard. Set CAPTAIN_STAGING_KEY in that shell first: Copy the key gives it to you."), { small: true }))))
+        .child(div().id("ship-where").text_size(12).line_height("17px").text_color(c.grey900)
+          .child(local ? "Only this computer can reach it." : `It runs in your ${cloud ?? "cloud"} account. Your site can call it.`))
+        // How long it has been up and when it stops by itself. Where it runs is already said above, once.
+        .when(Boolean(this.status.health), (x) => x.child(div().id("ship-status").text_size(12).line_height("17px").text_color(c.grey500)
+          .child(`${this.status.health.shadow ? "Shadow mode is on: every request is answered with the baseline's results. " : ""}Up ${span(this.status.health.uptime_s)}. Stops by itself in ${span(this.status.health.stops_in_s)} if nobody uses it.`)))))
+      .when(!on && Boolean(s) && !this.busy, (e) => e.child(div().id("ship-line-stopped").text_size(12).line_height("17px").text_color(c.grey900)
+        .child(s.status === "stopped" ? `Last staged: ${short(s.model_version)}. ${this.status.text}` : this.status.text)))
+      .when(!on && Boolean(s?.spent?.text), (e) => e.child(div().id("ship-line-spent").text_size(12).text_color(c.grey900).child(s.spent.text)))
+      .when(!on && !s, (e) => e.child(div().id("ship-line-what").text_size(12).line_height("17px").text_color(c.grey900)
+        .child("Staging runs a model version as a live endpoint you can try before launch review. It runs in your own cloud, or on this computer.")))
+      .when(!on && !this.busy && !this.confirm, (e) => e.child(this.choices(c)))
+      .when(Boolean(costLine), (e) => e.child(costLine))
+      .when(Boolean(this.status?.warning), (e) => e.child(div().id("ship-line-warning").text_size(12).text_color(c.warn).child(this.status.warning)))
+      .when(Boolean(this.note), (e) => e.child(div().id("ship-note").px(10).py(6).text_size(12).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)
+        .text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
+      .when(Boolean(this.problem), (e) => e.child(div().id("ship-problem").text_size(12).text_color(c.fail).child(this.problem)))
+      .when(this.sheet, (e) => e.child(this.setupSheet(c)))
+      .when(Boolean(this.confirm), (e) => e.child(this.confirmBox(c)))
+      .when(Boolean(this.stopAsk) && on, (e) => e.child(this.stopBox(c)))
+      .when(Boolean(s), (e) => e.child(this.detailsBox(c, s)));
+  }
+
+  /** The deployment page: the header, then tabs. Try it and Traffic today; the rest follow. */
+  deployment(c) {
+    const [, tryIt, connect, ab, launch] = this.steps();
+    const tabs = [["try", "Try it"], ["traffic", "Traffic"]];
+    const tab = h_flex().id("dep-tabs").gap(18).border_b(1).border_color(c.rule).children(tabs.map(([id, label]) =>
+      div().id(`dep-tab-${id}`).py(8).text_size(13).font_medium().cursor_pointer().border_b(2).border_color(this.tab === id ? c.blue : "#00000000")
+        .text_color(this.tab === id ? c.blue : c.grey900).on_click((_e, cx) => { this.tab = id; cx.notify(); }).child(label)));
+    const body = this.tab === "try"
+      ? v_flex().id("dep-try").w_full().bg(c.surface).border_1().border_color(c.rule).child(this.tryStep(c, tryIt))
+      : v_flex().id("dep-traffic").w_full().bg(c.surface).border_1().border_color(c.rule)
+        .when(this.page.shipFrom !== "ab", (e) => e.child(this.connectStep(c, connect)))
+        .child(div().border_t(1).border_color(c.rule).child(this.abStep(c, ab)))
+        .child(div().border_t(1).border_color(c.rule).child(this.launchStep(c, launch)));
+    return v_flex().id("deployment").w_full().gap(12).child(this.header(c)).child(tab).child(body);
+  }
+
+  /** The Ship part of the project page: a short card that says where the model is and links to its page. */
+  summary(c) {
+    const s = this.staged(), on = this.running(), k = this.conn;
+    const address = on ? (s.endpoint?.url ?? s.endpoint?.name ?? "") : null;
+    const counts = on && k ? [`${k.real} real request${k.real === 1 ? "" : "s"}`, k.test ? `${k.test} test` : null, k.simulated ? `${k.simulated} simulated` : null].filter(Boolean).join(", ") : null;
+    const [, , , , launch] = this.steps();
+    return v_flex().id("ship-summary").w_full().bg(c.surface).border_1().border_color(c.rule)
+      .child(h_flex().p(12).gap(12).items_center().flex_wrap()
+        .child(v_flex().flex_1().min_w(280).gap(3)
+          .child(h_flex().gap(8).items_center().flex_wrap()
+            .child(div().text_size(13).font_semibold().text_color(c.navy).child("Deployment"))
+            .child(this.chip(c, "ship-summary-state", on ? "1 copy live" : s?.status === "failed" ? "Failed" : s ? "Stopped" : "Not staged", on ? "good" : "neutral"))
+            .when(on, (e) => e.child(this.chip(c, "ship-summary-where", s.kind === "local" ? "This computer" : `Your ${this.cloudName() ?? "cloud"} account`))))
+          .child(div().id("ship-summary-text").text_size(12).line_height("17px").text_color(c.grey500)
+            .child(on ? this.status.text : s ? this.status.text : "Staging runs a model version as a live endpoint you can try before launch review. It runs in your own cloud, or on this computer."))
+          .when(on, (e) => e.child(h_flex().gap(8).items_center().flex_wrap()
+            .child(div().id("ship-summary-address").font_family(MONO).text_size(12).text_color(c.navy).child(address))
+            .child(Button(c, "ship-summary-copy", "Copy", (_e, cx) => this.copy(cx, address, "The address is on your clipboard."), { small: true }))
+            .when(Boolean(counts), (x) => x.child(div().id("ship-summary-counts").text_size(12).text_color(c.grey900).child(counts))))))
+        .child(Button(c, "ship-open", on ? "Open the deployment" : "Stage it", (_e, cx) => this.page.openDeployment(cx), { small: true, kind: "primary" })))
+      .child(div().border_t(1).border_color(c.rule).child(this.launchStep(c, launch)));
   }
 
   render(c) {

@@ -66,7 +66,7 @@ assert.ok(t.includes('Agrees with its own labeler') && t.includes('Same labeler'
 assert.ok(!t.includes('Beats the baseline'), 'no win claimed');
 assert.ok(t.includes('nDCG@10') && t.includes('Recall@50') && t.includes('Judged@10') && t.includes('simulated'), 'metrics and evidence');
 // Ship
-assert.ok(t.includes('Model registry') && t.includes('Staging runs a model version as a live endpoint') && t.includes('A/B test') && t.includes('Launch review'), 'the Ship path and the registry tile');
+assert.ok(t.includes('Model registry') && t.includes('Staging runs a model version as a live endpoint') && t.includes('Deployment') && t.includes('Not staged') && t.includes('Launch review'), 'the deployment summary and the registry tile');
 
 // Open the row: why, and its actions, with the evidence on Make champion.
 const row = h.mod.exps.experiments.findIndex((e) => e.id === tuned.id);

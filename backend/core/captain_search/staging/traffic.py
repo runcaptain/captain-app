@@ -216,6 +216,7 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
                         "show your own search results. An error body is {\"detail\": \"...\"} with a 4xx or 5xx status."),
            "snippets": snippets(rec) if rec.get("how") != "image" else {}, "real": 0, "test": 0, "simulated": 0,
            "last_real_at": None}
+    h: dict = {}
     try:
         h = call(ctx, rec, "status", {}) if rec.get("how") != "image" else {}
         t = h.get("traffic") or {}
@@ -223,6 +224,20 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
                    last_real_at=h.get("last_real_at"))
     except Exception as e:  # noqa: BLE001
         out["warning"] = f"Captain couldn't reach the endpoint: {str(e)[:160]}"
+    out["running"] = 0
+    try:
+        out["running"] = int(h.get("running") or 0)
+    except Exception:  # noqa: BLE001
+        pass
+    # What the traffic so far is, said only once there is some: real beats simulated beats test.
+    out["evidence_label"] = ("Real traffic" if out["real"] else "Simulated" if out["simulated"] else "Test traffic only" if out["test"] else None)
+    q = (sample_queries(ctx, pid, 1) or ["shoes"])[0].replace("'", "")
+    ep = rec.get("endpoint") or {}
+    out["test_request"] = (
+        f"curl -s {ep.get('url')}/rank -H \"Authorization: Bearer $CAPTAIN_STAGING_KEY\" -H \"Content-Type: application/json\" "
+        f"-d '{{\"query\": \"{q}\", \"k\": 5, \"traffic\": \"test\"}}'" if rec.get("kind") == "local" else
+        f"aws sagemaker-runtime invoke-endpoint --region {ep.get('region')} --endpoint-name {ep.get('name')} --content-type application/json "
+        f"--cli-binary-format raw-in-base64-out --body '{{\"op\": \"rank\", \"key\": \"'\"$CAPTAIN_STAGING_KEY\"'\", \"query\": \"{q}\", \"k\": 5, \"traffic\": \"test\"}}' /dev/stdout")
     ago = _ago(out["last_real_at"])
     out["connected"] = out["real"] > 0
     out["live"] = (f"Received {out['real']:,} request{'s' if out['real'] != 1 else ''}"
@@ -341,6 +356,8 @@ def shadow_compute(sh: dict, got: dict, traffic: str | None = None) -> dict:
     out = {"shadow": sh["id"], "status": sh["status"], "arms": sh["arms"], "traffic": kind, "evidence": evidence,
            "label": label, "requests": n, "other_traffic": {k: v for k, v in kinds.items() if k != kind}, "queries": []}
     if not n:
+        out.update(evidence=None if not kinds else evidence, label="No traffic yet" if not kinds else label)
+        label = out["label"]
         return {**out, "top1_differs": None, "top10_differs": None, "overlap": None, "ms": None,
                 "text": f"{label}. No requests yet. The candidate has ranked nothing, and no shopper has seen it."}
     top1 = sum(1 for r in reqs if (r["ids"][:1] != r["shadow"]["ids"][:1]))

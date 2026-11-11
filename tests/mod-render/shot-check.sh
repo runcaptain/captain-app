@@ -231,7 +231,7 @@ props_of() {
     captain-project:choose) echo '{"chooseModels": true}' ;;
     captain-project:home) echo '{"openExperiment": true}' ;;
     captain-project:list) echo '{"allProjects": true}' ;;
-    captain-project:ship) echo '{"shipFirst": true}' ;;
+    captain-project:ship) echo '{"deployment": true}' ;;
     captain-project:pins) echo '{"pinCheck": true}' ;;
     captain-project:connect) echo '{"shipFrom": "connect"}' ;;
     captain-project:ab) echo '{"shipFrom": "ab"}' ;;

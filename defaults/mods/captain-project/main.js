@@ -79,10 +79,12 @@ export default class ProjectHome extends View {
     this.choosing = false; this.allModels = null; this.owners = {};
     try { this.last = localStorage.getItem("project") || null; } catch { this.last = null; }
     this.shipPath = new Ship(this); // Stage, Try it: made here, because a text box can't be made while drawing
+    if ((layoutProps?.() ?? {}).shipFrom) this.shipPath.tab = "traffic"; // the real-window check: open on Traffic
     this.load(cx);
     if ((layoutProps?.() ?? {}).chooseModels) { this.everything = true; this.toggleChoosing(cx); }
     this.openFirst = Boolean((layoutProps?.() ?? {}).openExperiment); // a layout, or the real-window check: open a row
     if ((layoutProps?.() ?? {}).allProjects) this.allProjects(cx); // the real-window check: the card list, nothing picked
+    this.deployOpen = Boolean((layoutProps?.() ?? {}).deployment) || Boolean((layoutProps?.() ?? {}).shipFrom) || Boolean((layoutProps?.() ?? {}).shipFirst); // the staged model's own page
     this.pinCheck = Boolean((layoutProps?.() ?? {}).pinCheck); // the real-window check: pin twice, as Send to agent does
     this.shipFrom = (layoutProps?.() ?? {}).shipFrom ?? null; // the real-window check: start the Ship steps at "connect" or "ab"
     this.shipFirst = Boolean((layoutProps?.() ?? {}).shipFirst) || Boolean(this.shipFrom); // the real-window check: the Ship steps at the top
@@ -248,6 +250,9 @@ export default class ProjectHome extends View {
   project() { return (this.projects ?? []).find((p) => p.id === this.pid()) ?? null; }
 
   goTo(section) { go(section); }
+
+  /** The staged model's own page: its header (is it up, where, who is calling it) and its tabs. */
+  openDeployment(cx) { this.deployOpen = true; cx.notify(); }
 
   /** Read the project again (the Ship path asks for this after it stages or stops something). */
   reload(cx) { setShared("captain.explorer.rev", Date.now()); this.load(cx); }
@@ -703,7 +708,7 @@ export default class ProjectHome extends View {
     const reg = st.ship?.registry ?? {};
     const where = reg.arch && reg.brand ? `${reg.arch} / ${reg.brand}` : null;
     return this.part(c, "ship", "Ship", "Try a model version live, test it against the baseline, then send it to launch review. MLflow and Unity Catalog call the baseline the \"champion\" alias.", [],
-      v_flex().gap(10).child(this.shipPath.render(c)).child(h_flex().flex_wrap().items_start().gap(10)
+      v_flex().gap(10).child(this.shipPath.summary(c)).child(h_flex().flex_wrap().items_start().gap(10)
         .child(this.tile(c, "ship-registry", "package", "Model registry",
           [where ? `Publishes to ${where}${reg.uri ? "" : " in the default registry"}.` : "Not set yet. Publishing asks where, once.", champ ? null : "Make a baseline first."],
           champ ? Button(c, "ship-publish", "Publish the baseline", () => form("publish", { ...this.values(), pipeline: champ }), { small: true }) : null))
@@ -978,7 +983,7 @@ export default class ProjectHome extends View {
     if (st?.next?.text) {
       const slot = (st.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === st.next.slot);
       const label = { "set-input": slot ? `Choose ${slot.noun}` : "Choose an input", "add-evaluation": "Add an evaluation set", "baseline-start": "Start with keyword search",
-        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New candidate", backtest: "Judge it", stage: "Stage it", "ab-start": "Start an A/B test", "ab-wait": "Send simulated shoppers", "shadow-start": "Start shadow mode", handoff: "Send to launch review" }[st.next.action] ?? null;
+        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New candidate", backtest: "Judge it", stage: "Stage it", try: "Open the deployment", connect: "Open the deployment", "ab-decide": "Open the deployment", "ab-start": "Start an A/B test", "ab-wait": "Send simulated shoppers", "shadow-start": "Start shadow mode", handoff: "Send to launch review" }[st.next.action] ?? null;
       return { text: st.next.text, label, action: st.next };
     }
     const req = (st?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.required && i.empty);
@@ -1012,8 +1017,10 @@ export default class ProjectHome extends View {
     if (a.action === "baseline-start") return this.baselineStart(cx);
     if (a.action === "new-experiment") return form("experiment", { ...this.values(), ...(firstCandidate(this.stages) ? { how: "starter" } : {}) });
     if (a.action === "assist") return this.startAssist(cx);
-    if (a.action === "stage") return this.shipPath.stage(cx, a.baseline ? { baseline: true } : { candidate: a.experiment });
-    if (a.action === "ab-start") { this.shipPath.openSetup(false); cx.notify(); return; }
+    // Staging asks where first (this computer, or the connected cloud), so the Next button opens the deployment page.
+    if (a.action === "stage" || a.action === "try" || a.action === "connect") { this.shipPath.tab = a.action === "connect" ? "traffic" : "try"; return this.openDeployment(cx); }
+    if (a.action === "ab-start") { this.shipPath.tab = "traffic"; this.shipPath.openSetup(false); return this.openDeployment(cx); }
+    if (a.action === "ab-decide" || a.action === "ab-watch") { this.shipPath.tab = "traffic"; return this.openDeployment(cx); }
     if (a.action === "shadow-start") return this.shipPath.act(cx, "/shadow/start", {}, "Shadow mode is on. Shoppers keep getting the baseline's results.");
     if (a.action === "ab-wait") return this.shipPath.simulate(cx);
     if (a.action === "handoff") return form("handoff", { pipeline: a.pipeline });
@@ -1079,6 +1086,16 @@ export default class ProjectHome extends View {
     if (!pid) body = this.list(c);
     else if (this.problem) body = Problem(c, this.problem, (cx) => this.load(cx));
     else if (!this.stages || !this.exps) body = Skeleton(c, 6);
+    else if (this.deployOpen) body = v_flex().gap(14)
+      // Projects / <project> / Deployment: the middle one goes back to the project.
+      .child(h_flex().id("dep-crumbs").gap(6).items_center().text_size(12.5)
+        .child(div().id("dep-crumb-projects").text_color(c.blue).cursor_pointer().on_click((_e, cx) => { this.deployOpen = false; this.allProjects(cx); }).child("Projects"))
+        .child(div().text_color(c.grey500).child("/"))
+        .child(div().id("dep-crumb-project").text_color(c.blue).cursor_pointer().on_click((_e, cx) => { this.deployOpen = false; cx.notify(); }).child(p?.name ?? pid))
+        .child(div().text_color(c.grey500).child("/"))
+        .child(div().text_color(c.navy).font_medium().child("Deployment")))
+      .child(this.nextLine(c))
+      .child(this.shipPath.deployment(c));
     else body = v_flex().gap(22)
       .when(Boolean(this.note), (e) => e.child(div().id("ph-note").px(12).py(8).text_size(12.5).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)
         .text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
