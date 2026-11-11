@@ -696,7 +696,7 @@ requires-dist = [
     { name = "jupyter-client", specifier = ">=8" },
     { name = "keyring", specifier = ">=25" },
     { name = "lightgbm", marker = "extra == 'train-ltr'", specifier = "==4.7.0" },
-    { name = "modal", marker = "extra == 'modal'", specifier = ">=0.64" },
+    { name = "modal", marker = "extra == 'modal'", specifier = ">=1.6" },
     { name = "moto", extras = ["s3", "cloudformation"], marker = "extra == 'dev'", specifier = ">=5" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.1" },

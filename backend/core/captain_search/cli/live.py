@@ -74,15 +74,33 @@ def live_pipe(command: list[str] = typer.Argument(..., help="the command to run,
         raise typer.Exit(out["exit_code"])
 
 
+def _remote_ctx(rid: str):
+    """The workspace, when this run is one a compute job streams through its bucket; None for a run on this computer."""
+    from .. import workspace as wsp
+
+    try:
+        c = wsp.open_context(S.workspace)
+    except Exception:  # noqa: BLE001  no workspace selected: only this computer's runs can be read
+        return None
+    return c if LV.is_remote(c, rid) else None
+
+
 @live_app.command("watch")
 def live_watch(rid: str):
-    """Print a run's events as they come, until it ends."""
+    """Print a run's events as they come, until it ends. Works for a run on a compute target too (the id that
+    `cst backtest run --compute` prints), read from the workspace bucket as the app reads it."""
+    c = _remote_ctx(rid)
     n = 0
     while True:
-        got = LV.read(rid, since=n)
+        got = _do(LV.read_remote, c, rid, since=n) if c is not None else _do(LV.read, rid, since=n)
         for e in got["events"]:
             typer.echo(json.dumps(e) if S.json else f"{e['at']:8.1f}s  {e['type']:8} " + json.dumps({k: v for k, v in e.items() if k not in ('type', 'at', 'n')}))
         n = got["next"]
-        if got["run"]["status"] != "running":
+        run = got["run"]
+        if run["status"] not in ("running", "queued"):
             break
-        time.sleep(1)
+        if c is not None and run.get("note") and not got["events"]:
+            # no word from the job for a long time: say so and stop, rather than wait on a job that may be gone
+            typer.echo(run["note"], err=True)
+            break
+        time.sleep(2 if c is not None else 1)

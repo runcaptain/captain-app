@@ -268,30 +268,52 @@ def _azure_modules(w):
 
 
 def _modal_module(w):
-    class InputCancellation(Exception):
+    """What the real client did on a real account (1.6.3, 2026-11-10): a cancelled call raises RemoteError, not a
+    class with Cancel in its name, and FunctionCall.logs.fetch(since=) yields entries at or after `since`."""
+    import datetime as dt
+
+    class RemoteError(Exception):
         pass
+
+    t0 = dt.datetime(2026, 11, 10, 12, 0, 0, tzinfo=dt.timezone.utc)
+
+    class Logs:
+        def fetch(self, since=None):
+            for i, text in enumerate(w.lines):
+                ts = t0 + dt.timedelta(milliseconds=i)
+                if since is None or ts >= since:
+                    yield NS(timestamp=ts, message=text + "\n", source="stdout")
 
     class Call:
         object_id = "fc-01"
+        logs = Logs()
 
         def get(self, timeout=None):
             if w.state in ("queued", "running"):
                 raise TimeoutError()
             if w.state == "stopped":
-                raise InputCancellation("cancelled")
+                raise RemoteError("Function call was cancelled by user or a failure.")
             return 0 if w.state == "succeeded" else 3
 
-        def cancel(self):
+        def cancel(self, terminate_containers=False):
             w.calls.append(("cancel", None))
-            w.state = "stopped"
+            if w.state in ("queued", "running"):  # a call that already returned keeps its result
+                w.state = "stopped"
 
     class Fn:
         def spawn(self, env, arg):
             w.calls.append(("spawn", {"env": env, "arg": arg}))
             return Call()
 
+        def hydrate(self):
+            return self
+
+    def from_name(app, fn, environment_name=None):
+        w.calls.append(("from_name", {"app": app, "function": fn, "environment_name": environment_name}))
+        return Fn()
+
     m = types.ModuleType("modal")
-    m.Function = NS(from_name=lambda app, fn: Fn())
+    m.Function = NS(from_name=from_name)
     m.FunctionCall = NS(from_id=lambda i: Call())
     return {"modal": m}
 
@@ -350,7 +372,7 @@ def test_every_kind_runs_the_same_job_contract(kind, world, cloud_ctx):
     assert J.load(cloud_ctx, rec["id"])["handle"] == rec["handle"]
 
     # The provider received cst arguments only (the image's entrypoint is cst) and the workspace environment.
-    name, sent = world.calls[0]
+    name, sent = next(c for c in world.calls if c[0] != "from_name")
     flat = repr(sent)
     assert "backtest" in flat and "bt1" in flat and "CST_STORAGE" in flat and rec["id"] in flat
     assert "sh -c" not in flat
@@ -366,11 +388,8 @@ def test_every_kind_runs_the_same_job_contract(kind, world, cloud_ctx):
     assert J.show(cloud_ctx, rec["id"])["state"] == "succeeded"
 
     logs = J.logs(cloud_ctx, rec["id"])
-    if kind == "modal":
-        assert logs["lines"] == [] and "modal app logs" in logs["note"]
-    else:
-        assert [ln["message"] for ln in logs["lines"]] == world.lines
-        assert logs["next"]
+    assert [ln["message"] for ln in logs["lines"]] == world.lines
+    assert logs["next"]
 
 
 @pytest.mark.parametrize("kind", list(TARGETS))
@@ -407,6 +426,83 @@ def test_ecs_plan_and_log_location(world, cloud_ctx):
     first = J.logs(cloud_ctx, rec["id"])
     world.lines.append("late line")
     assert [x["message"] for x in J.logs(cloud_ctx, rec["id"], first["next"])["lines"]] == ["late line"]
+
+
+def test_modal_logs_cancel_and_environment(world, cloud_ctx, monkeypatch):
+    """Each of these was wrong or missing before the first run on a real Modal account."""
+    t = C.add(cloud_ctx, "modal-env", "modal", None, None, {"app": "captain-search-test-1", "environment": "staging"})
+    assert C.plan_job(cloud_ctx, t, ["demo", "seed"], label="seed")[0]["args"]["environment"] == "staging"
+    rec = C.submit_job(cloud_ctx, t, ["demo", "seed"], label="seed")
+    # the target's environment reaches Modal, so an app outside the login's default environment is found
+    assert ("from_name", {"app": "captain-search-test-1", "function": "run_cst", "environment_name": "staging"}) in world.calls
+    assert C.test(cloud_ctx, "modal-env")["ok"]
+
+    # logs are the call's own lines, and the cursor returns only the lines after it
+    world.state = "running"
+    first = J.logs(cloud_ctx, rec["id"])
+    assert [x["message"] for x in first["lines"]] == world.lines and "fc-01" in first["where"]
+    assert J.logs(cloud_ctx, rec["id"], first["next"])["lines"] == []
+    world.lines.append("late line")
+    assert [x["message"] for x in J.logs(cloud_ctx, rec["id"], first["next"])["lines"]] == ["late line"]
+
+    # a cancelled call reads "stopped" (Modal raises RemoteError for it), with a finish time
+    r = J.cancel(cloud_ctx, rec["id"])
+    assert r["state"] == "stopped" and "cancelled" in r["reason"] and r["finished_at"]
+
+    # a cancel that arrives after the call returned does not rewrite a success as "stopped"
+    done = C.submit_job(cloud_ctx, t, ["demo", "seed"], label="seed")
+    world.state = "succeeded"
+    r = P.get(t, cloud_ctx).cancel(done["handle"])
+    assert r["state"] == "succeeded" and r["exit_code"] == 0
+
+    # a Modal client from before per-call logs says where to look instead of failing
+    monkeypatch.setattr(type(sys.modules["modal"].FunctionCall.from_id("x")), "logs", None)
+    old = J.logs(cloud_ctx, rec["id"])
+    assert old["lines"] == [] and "modal app logs captain-search-test-1" in old["note"]
+
+
+def test_modal_runner_passes_a_cancel_on_to_cst(monkeypatch):
+    """runner/modal_app.py: Modal cancels by raising in the function. cst must get SIGTERM, then the raise goes on."""
+    import importlib.util
+    import pathlib
+    import signal
+
+    fake = types.ModuleType("modal")
+    fake.App = lambda name, tags=None: NS(function=lambda **kw: (lambda f: f), name=name, tags=tags)
+    fake.is_local = lambda: False
+    fake.Secret = NS(from_name=lambda n: n)
+    monkeypatch.setitem(sys.modules, "modal", fake)
+    monkeypatch.setenv("CST_MODAL_APP", "captain-search-test-1")
+    monkeypatch.setenv("CST_MODAL_TAGS", "app=captain-search-test")
+    path = pathlib.Path(__file__).resolve().parents[2] / "runner" / "modal_app.py"
+    spec = importlib.util.spec_from_file_location("cst_modal_app", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.app.name == "captain-search-test-1"
+    assert mod.app.tags == {"captain-purpose": "cst-compute", "app": "captain-search-test"}
+
+    class Cancelled(BaseException):
+        pass
+
+    sent = []
+
+    class Proc:
+        def __init__(self, argv, env):
+            self.argv, self.env, self.waits = argv, env, 0
+
+        def wait(self, timeout=None):
+            self.waits += 1
+            if self.waits == 1:
+                raise Cancelled()
+            return -15
+
+        def send_signal(self, sig):
+            sent.append(sig)
+
+    monkeypatch.setattr(mod.subprocess, "Popen", Proc)
+    with pytest.raises(Cancelled):
+        mod.run_cst({"CST_WORKSPACE": "ws"}, ["-w", "ws", "backtest", "run", "bt1"])
+    assert sent == [signal.SIGTERM]
 
 
 def test_submit_failure_is_recorded(world, cloud_ctx, monkeypatch):
