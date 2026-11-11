@@ -1,8 +1,14 @@
 """Azure: Container Apps jobs and Azure Machine Learning command jobs.
 
-Not tested on a real account (2026-11-06): Captain has no Azure service principal for this yet. The SDK calls
-match azure-mgmt-appcontainers 3.x, azure-ai-ml 1.x and azure-monitor-query 1.x, and are unit-tested against
-fakes with those shapes.
+Both ran real jobs on a real subscription on 2026-11-10, with the workspace in Azure Blob (az://): a demo seed, an
+offline evaluation with its live stream, a retrain, logs and cancel. docs/compute-live-testing.md has what was run
+and what it found. Serving on either is planned (compute.plan_serve) but not executable yet.
+
+Known limits, from that run:
+- Neither service reports a container's exit code, so a job's exit_code stays empty.
+- Container Apps logs come from Log Analytics, a minute or two behind the job.
+- An Azure ML job's started_at is when it was created, not when its container started. A cluster that scales
+  from zero adds about three minutes before the first line.
 """
 from __future__ import annotations
 
@@ -24,7 +30,9 @@ def _iso(t) -> str | None:
 
 class _Azure(ComputeProvider):
     provider = "azure"
-    live_tested = None
+    # Container Apps jobs and Azure ML command jobs, each on a real subscription with an az:// workspace: submit,
+    # status, logs, cancel, `demo seed --legacy`, `backtest run --compute` with its live stream, and a retrain.
+    live_tested = "2026-11-10"
 
     def _cred(self):
         from .. import cloud
@@ -69,9 +77,31 @@ class ContainerAppsProvider(_Azure):
         cred, sub = self._cred()
         return ContainerAppsAPIClient(cred, sub)
 
+    def _inherit(self, cl, a: dict) -> dict:
+        """The start template, with what the job's own container already has. A start template replaces the job's
+        container whole: one that names only image, args and env runs at Container Apps' smallest size (0.5 CPU,
+        1 GB) whatever the job was made with, and loses the job's own environment variables (a user-assigned
+        identity's AZURE_CLIENT_ID, say). So the CPU and memory, and any variable Captain doesn't set, come from
+        the job."""
+        tmpl = getattr(cl.jobs.get(a["resource_group_name"], a["job_name"]), "template", None)
+        out = []
+        for c in a["template"]["containers"]:
+            base = next((b for b in (getattr(tmpl, "containers", None) or []) if b.name == c["name"]), None)
+            if base is None:
+                raise ValueError(f"job {a['job_name']} has no container named {c['name']!r}. Set this target's "
+                                 "container name to the one in the job.")
+            mine = {e["name"] for e in c["env"]}
+            keep = [e for e in (getattr(base, "env", None) or []) if e.name not in mine]
+            c = {**c, "env": keep + c["env"]}
+            if getattr(base, "resources", None) is not None:
+                c["resources"] = base.resources
+            out.append(c)
+        return {**a["template"], "containers": out}
+
     def submit(self, job: Job) -> dict:
         a = self.plan(job)[0]["args"]
-        r = self._client().jobs.begin_start(a["resource_group_name"], a["job_name"], a["template"]).result()
+        cl = self._client()
+        r = cl.jobs.begin_start(a["resource_group_name"], a["job_name"], self._inherit(cl, a)).result()
         return {"resource_group": a["resource_group_name"], "job": a["job_name"], "execution": r.name, "id": getattr(r, "id", None)}
 
     def status(self, h: dict) -> dict:
@@ -92,21 +122,37 @@ class ContainerAppsProvider(_Azure):
         from azure.monitor.query import LogsQueryClient  # type: ignore
 
         cred, _ = self._cred()
+        # time_t is when the container printed the line. TimeGenerated is when Log Analytics took the batch in, so
+        # lines of one batch share it and come back in any order. The cursor is time_t as text, at its full
+        # precision: cut to seconds, the next read would drop the lines printed later in that second.
         q = (f"ContainerAppConsoleLogs_CL | where ContainerJobName_s == '{h['job']}' "
              f"and ContainerGroupName_s startswith '{h['execution']}'"
-             + (f" | where TimeGenerated > datetime({since})" if since else "")
-             + " | project TimeGenerated, Log_s | order by TimeGenerated asc")
-        r = LogsQueryClient(cred).query_workspace(wid, q, timespan=dt.timedelta(days=7))
+             " | extend t = column_ifexists('time_t', TimeGenerated)"
+             + (f" | where t > todatetime('{since}')" if since else "")
+             + " | order by t asc | project t, Log_s, cursor = tostring(t)")
+        try:
+            r = LogsQueryClient(cred).query_workspace(wid, q, timespan=dt.timedelta(days=7))
+        except Exception as e:  # noqa: BLE001
+            # The table is made by the environment's first log line: until then the query can't resolve it.
+            if "ContainerAppConsoleLogs_CL" in str(e) and ("resolve" in str(e).lower() or "SEM0100" in str(e)):
+                return {"lines": [], "next": since, "where": "Log Analytics",
+                        "note": "no lines yet: Log Analytics shows a job's first lines a minute or two after it prints them"}
+            raise
         lines, last = [], since
-        for t in r.tables:
+        # a partial answer (the query hit a limit) still carries the rows it found, in partial_data
+        for t in getattr(r, "tables", None) or getattr(r, "partial_data", None) or []:
             for row in t.rows:
                 lines.append({"ts": _iso(row[0]), "message": row[1]})
-                last = _iso(row[0])
+                last = row[2]
         return {"lines": lines, "next": last, "where": "Log Analytics"}
 
     def cancel(self, h: dict) -> dict:
         self._client().jobs.begin_stop_execution(h["resource_group"], h["job"], h["execution"]).result()
-        return self.status(h)
+        s = self.status(h)
+        if s["state"] == "stopped" and not s.get("finished_at"):
+            # Container Apps records no end time for an execution that was stopped, so the stop is the end
+            s["finished_at"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+        return s
 
     def test(self) -> dict:
         c = self.config
@@ -165,7 +211,8 @@ class AzureMLProvider(_Azure):
 
     def status(self, h: dict) -> dict:
         j = self._ml().jobs.get(h["name"])
-        s = j.status or "NotStarted"
+        # azure-ai-ml hands the status back as an enum that prints as "JobStatus.QUEUED": use its value, "Queued"
+        s = str(getattr(j.status, "value", j.status) or "NotStarted")
         state = _AML.get(s, "running")
         reason = {"queued": f"Azure ML is preparing the job ({s})", "running": f"the job is {s.lower()}",
                   "succeeded": "the job completed", "stopped": "the job was cancelled",
@@ -187,7 +234,10 @@ class AzureMLProvider(_Azure):
 
     def cancel(self, h: dict) -> dict:
         self._ml().jobs.begin_cancel(h["name"]).result()
-        return self.status(h)
+        s = self.status(h)
+        if s["state"] == "stopped" and not s.get("finished_at"):
+            s["finished_at"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")  # the job has no end time
+        return s
 
     def test(self) -> dict:
         try:

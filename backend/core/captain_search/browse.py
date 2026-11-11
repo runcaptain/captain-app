@@ -1,7 +1,8 @@
 """Page through any dataset, however big, without downloading it.
 
 DuckDB reads the files where they live (local parquet blobs, or S3 objects through httpfs with the
-workspace's cloud credentials). A page asks for `limit` rows at `offset`, so a 400 MB JSONL catalog
+workspace's cloud credentials). A workspace on Google Cloud Storage or Azure Blob is the exception: its blobs are
+copied to a local cache first (_cached_blob), because DuckDB has no login for those here. A page asks for `limit` rows at `offset`, so a 400 MB JSONL catalog
 returns rows in seconds and parquet reads only the row groups it needs. Sorting, text search and a
 filter expression run in DuckDB too. Counting a filtered set scans the data, so it is a separate
 opt-in call.
@@ -103,7 +104,31 @@ def _blob_uri(ctx: Context, digest: str) -> str:
         return os.path.join(st.root, key)
     if hasattr(st, "bucket"):
         return f"s3://{st.bucket}/{st.prefix + '/' if st.prefix else ''}{key}"
-    raise ValueError("browsing blobs in GCS or Azure workspaces is not supported yet")
+    return _cached_blob(ctx, digest)
+
+
+def _cached_blob(ctx: Context, digest: str) -> str:
+    """A local copy of a blob from a store DuckDB can't read in place here (Google Cloud Storage, Azure Blob): the
+    path DuckDB reads. A blob is named by its checksum, so a copy never goes stale and is fetched once per computer.
+    The whole file comes down, so the first read of a large dataset is as slow as its download."""
+    import hashlib
+    import tempfile
+
+    from .workspace import home
+
+    d = os.path.join(home(), "blob-cache", "sha256", digest[:2])
+    path = os.path.join(d, digest + ".parquet")
+    if os.path.exists(path):
+        return path
+    data = ctx.store.get(ctx.registry.blob_key(digest))
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise ValueError(f"blob {digest} failed its checksum")
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-")
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    os.replace(tmp, path)  # atomic: a reader never sees half a file
+    return path
 
 
 def _reader(uri: str, fmt: str, columns: list | None = None, sample: int | None = None) -> str:

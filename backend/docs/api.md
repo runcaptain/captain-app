@@ -223,7 +223,9 @@ Where each provider reads state and logs:
 | `modal` | `FunctionCall.get(timeout=0)` (cannot tell queued from running) | `FunctionCall.logs.fetch` (the call's own lines) | `FunctionCall.cancel` |
 
 Tested on a real account (2026-11-06): `local`, `aws-ecs` and `aws-batch` (Captain's AWS account, us-west-1, Batch on
-a Fargate compute environment). The others pass
+a Fargate compute environment).
+Also tested (2026-11-10): `azure-container-apps` and `azure-ml`, with the workspace in Azure Blob.
+The others pass
 the same contract tests against fakes of their SDKs (`core/tests/test_compute_providers.py`) and have not run
 against a real account. What each needs before it can, and the test to run: [compute-live-testing.md](compute-live-testing.md).
 

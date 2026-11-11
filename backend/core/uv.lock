@@ -617,6 +617,7 @@ dependencies = [
 
 [package.optional-dependencies]
 azure = [
+    { name = "azure-identity" },
     { name = "azure-storage-blob" },
 ]
 compute-azure = [
@@ -672,6 +673,7 @@ warehouses = [
 requires-dist = [
     { name = "anthropic", specifier = ">=0.40" },
     { name = "azure-ai-ml", marker = "extra == 'compute-azure'", specifier = ">=1.18" },
+    { name = "azure-identity", marker = "extra == 'azure'", specifier = ">=1.17" },
     { name = "azure-identity", marker = "extra == 'compute-azure'", specifier = ">=1.17" },
     { name = "azure-mgmt-appcontainers", marker = "extra == 'compute-azure'", specifier = ">=3.0" },
     { name = "azure-monitor-query", marker = "extra == 'compute-azure'", specifier = ">=1.4" },
