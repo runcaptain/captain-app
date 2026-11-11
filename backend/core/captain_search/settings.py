@@ -81,3 +81,22 @@ def set_costs(ctx: Context, confirm_above_usd) -> dict:
 
 def default_compute(ctx: Context, purpose: str = "backtest") -> str | None:
     return (get(ctx).get("compute") or {}).get(purpose)
+
+
+def set_serving_image(ctx: Context, public_image: str | None) -> dict:
+    """The published Captain serving image to copy into a person's cloud account when serving is set up. None turns
+    it off, which is how it ships: no image is published yet."""
+    for _ in range(10):
+        try:
+            body, tag = ctx.store.get_with_tag(KEY)
+            doc = yaml.safe_load(body) or {}
+        except NotFound:
+            doc, tag = {}, None
+        doc.setdefault("serving", {})["public_image"] = (public_image or "").strip() or None
+        doc["updated_by"], doc["updated_at"] = whoami(), dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+        try:
+            ctx.store.put_if(KEY, yaml.safe_dump(doc, sort_keys=False).encode(), tag)
+            return get(ctx)
+        except Conflict:
+            continue
+    raise Conflict("the settings kept changing while saving. Try again.")

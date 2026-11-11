@@ -269,12 +269,18 @@ class Runtime:
         if req or out:
             self._unpublished = True
         ref = None
+        note = None
         if publish and self._unpublished:
-            m = L.publish(self.ctx, self.pid, self.env, self.stage)
-            self._unpublished = False
+            # A serving role that may only write the request log can't publish a dataset version. That is fine: the
+            # chunks are written, and Captain publishes the version from them on its side.
             self.last_publish = self.clock()
-            ref = f"{m.name}@v{m.version}" if m else None
-        return {"requests": len(req), "outcomes": len(out), "published": ref}
+            try:
+                m = L.publish(self.ctx, self.pid, self.env, self.stage)
+                self._unpublished = False
+                ref = f"{m.name}@v{m.version}" if m else None
+            except Exception as e:  # noqa: BLE001
+                note = f"not published from the endpoint: {str(e)[:160]}"
+        return {"requests": len(req), "outcomes": len(out), "published": ref, **({"publish_note": note} if note else {})}
 
     def status(self) -> dict:
         now = self.clock()

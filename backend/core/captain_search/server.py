@@ -1042,6 +1042,58 @@ def project_ab_rollback(pid: str, body: dict | None = None):
     return _staging_call(AB.rollback, ctx(), pid, reason=(body or {}).get("reason") or None)
 
 
+@app.get("/api/serving/setup", dependencies=A)
+def serving_setup_status(profile: str | None = None, region: str | None = None, image: str = "auto"):
+    """What serving setup exists ({status, created, target, image}). With profile and region: also `plan`, what
+    setting it up would create, what it costs, and the policy the login needs."""
+    from .staging import serving_setup as SS
+
+    c = ctx()
+    out = SS.status(c)
+    if profile and region:
+        try:
+            out["plan"] = SS.plan(c, profile, region, source=image)
+        except Exception as e:  # noqa: BLE001
+            out["plan_error"] = str(e)[:300]
+    return out
+
+
+@app.post("/api/serving/setup", dependencies=A)
+def serving_setup_run(body: dict):
+    """{profile, region, name_prefix?, instance_type?, image?, bucket?, confirm}: set up serving, as a job. Without
+    confirm: 409 with the plan. A missing permission fails the job with the step, the action and the policy."""
+    from .staging import serving_setup as SS
+
+    c, b = ctx(), body
+    kw = dict(name_prefix=b.get("name_prefix") or "captain", instance_type=b.get("instance_type") or "ml.m5.large",
+              source=b.get("image") or "auto", bucket=b.get("bucket") or None)
+    p = _staging_call(SS.plan, c, str(b.get("profile") or ""), str(b.get("region") or ""), **kw)
+    if not b.get("confirm"):
+        return JSONResponse({"detail": "Confirm what will be created first.", "needs_confirm": True, "plan": p}, status_code=409)
+
+    def go(_p):
+        say = lambda t: JOBS[jid]["log"].append(str(t)) or JOBS[jid].__setitem__("message", str(t))  # noqa: E731
+        try:
+            return SS.setup(c, b["profile"], b["region"], confirm=True, progress=say, **kw)
+        except SS.MissingPermission as e:
+            JOBS[jid]["policy"] = e.policy
+            raise
+
+    jid = _job(go, "setting up serving in your AWS account")
+    return {"job": jid, "plan": p}
+
+
+@app.delete("/api/serving/setup", dependencies=A)
+def serving_setup_remove():
+    """Remove what setup made, as a job. Refused while a model is staged on the target."""
+    from .staging import serving_setup as SS
+
+    c = ctx()
+    if not SS.read(c):
+        raise HTTPException(400, "Serving was never set up for this workspace.")
+    return {"job": _job(lambda _p: SS.teardown(c), "removing the serving setup")}
+
+
 @app.get("/api/projects/{pid}/ab/options", dependencies=A)
 def project_ab_options(pid: str):
     """What the A/B form needs before it opens: {ready, real, sessions, per_day, shares: [{split, label, text}],

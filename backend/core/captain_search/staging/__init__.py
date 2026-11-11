@@ -550,7 +550,9 @@ def unstage(ctx: Context, pid: str, env: str = ENV, reason: str | None = None) -
         elif rec.get("resources"):
             if rec.get("status") == "running" and rec.get("how") != "image":
                 try:
-                    call(ctx, rec, "flush", {"publish": True})
+                    r = call(ctx, rec, "flush", {"publish": True})
+                    if r.get("publish_note"):  # the endpoint's role may only write the log: publish it from here
+                        L.publish(ctx, pid, env, rec["id"])
                 except Exception:  # noqa: BLE001
                     pass
             left = C.unstage(ctx, C.get(ctx, rec["target"]), rec["resources"])

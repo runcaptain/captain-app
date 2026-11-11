@@ -128,3 +128,43 @@ def setup_aws_ecs(profile: str = typer.Option(..., "--profile", help="cloud prof
     emit(r, "\n".join(lines))
     if any(s["action"] == "missing" for s in r["steps"]) and not dry:
         fail("the runner image is missing from ECR; push it before the first job", code=3)
+
+
+@setup_app.command("aws-serving")
+def setup_aws_serving(profile: str = typer.Option(..., "--profile", help="cloud profile (see `cst cloud`)"),
+                      region: str = typer.Option(..., "--region"),
+                      name_prefix: str = typer.Option("captain", "--name-prefix", help="every resource is named <prefix>-serving..."),
+                      instance_type: str = typer.Option("ml.m5.large", "--instance-type"),
+                      image: str = typer.Option("auto", "--image", help="auto, docker (this computer's Docker), codebuild (built in your account) or public (not available yet)"),
+                      bucket: Optional[str] = typer.Option(None, "--bucket", help="for a workspace on this computer: the bucket for the serving bundle and request log"),
+                      remove: bool = typer.Option(False, "--remove", help="remove the serving setup instead"),
+                      policy: bool = typer.Option(False, "--policy", help="print the policy your AWS login needs, for an admin"),
+                      yes: bool = typer.Option(False, "--yes", "-y")):
+    """Set up serving in your AWS account: the endpoint's role, the image repository, the image and the compute target."""
+    import json as _json
+
+    from ..staging import serving_setup as SS
+
+    c = ctx()
+    try:
+        if remove:
+            r = SS.teardown(c, progress=None if S.json else lambda t: typer.echo(t, err=True))
+            return emit(r, r["text"])
+        p = SS.plan(c, profile, region, name_prefix=name_prefix, instance_type=instance_type, source=image, bucket=bucket)
+        if policy:
+            return emit(p["login_policy"], _json.dumps(p["login_policy"], indent=2))
+        if S.dry_run or not yes:
+            lines = ["Would create:" if S.dry_run else "This will create:"] + [f"  {r['resource']:24} {r['name']:28} {r['why']}" for r in p["creates"]] + [p["cost"]["text"]]
+            if S.dry_run:
+                return emit({**p, "dry_run": True}, "\n".join(lines))
+            typer.echo("\n".join(lines))
+            if not typer.confirm("Create these?"):
+                raise typer.Exit(1)
+        r = SS.setup(c, profile, region, name_prefix=name_prefix, instance_type=instance_type, source=image, bucket=bucket,
+                     confirm=True, progress=None if S.json else lambda t: typer.echo(t, err=True))
+    except SS.MissingPermission as e:
+        emit({"error": str(e), "policy": e.policy}, f"error: {e}\n{_json.dumps(e.policy, indent=2)}")
+        raise typer.Exit(1)
+    except (ValueError, NotFound) as e:
+        fail(str(e))
+    emit(r, r["text"])

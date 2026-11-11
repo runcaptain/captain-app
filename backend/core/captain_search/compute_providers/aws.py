@@ -264,7 +264,8 @@ class SageMakerProvider(_AWS):
         {"name": "execution_role_arn", "label": "Execution role ARN", "required": True},
         {"name": "instance_type", "label": "Instance type", "required": False, "default": "ml.m5.large"},
         {"name": "instance_count", "label": "Instance count", "required": False, "default": "1"},
-        {"name": "name_prefix", "label": "Name prefix for staging resources", "required": False, "default": "captain"}]
+        {"name": "name_prefix", "label": "Name prefix for staging resources", "required": False, "default": "captain"},
+        {"name": "serving_storage", "label": "Bucket folder for the serving bundle (for a workspace kept on this computer)", "required": False}]
 
     def plan(self, job: Job) -> list[dict]:
         raise ValueError("a SageMaker endpoint serves models and cannot run jobs. Use an ECS or Batch target.")
