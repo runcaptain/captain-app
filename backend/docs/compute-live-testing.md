@@ -1,8 +1,8 @@
 # Testing a compute provider on a real account
 
-`aws-ecs`, `aws-batch` and `local` have run real jobs (2026-11-06): submit, status, logs and cancel. Cloud Run,
-Vertex, Container Apps, Azure ML and Modal pass the same contract tests against fakes of their SDKs
-(`core/tests/test_compute_providers.py`), but have not run against a real account. This page says what each one
+`aws-ecs`, `aws-batch` and `local` have run real jobs (2026-11-06): submit, status, logs and cancel. `modal` has
+too (2026-11-10, see its section). Cloud Run, Vertex, Container Apps and Azure ML pass the same contract tests
+against fakes of their SDKs (`core/tests/test_compute_providers.py`), but have not run against a real account. This page says what each one
 needs before it can, and how to run the test.
 
 Use an account the team owns, never a person's own login. Secrets go in the OS keychain through `cst cloud add`,
@@ -80,12 +80,57 @@ into a registry that cloud can pull from (Artifact Registry, Azure Container Reg
 
 ## Modal (`modal`)
 
-- Install: `pip install 'captain-search[modal]'`.
+Tested on a real Modal workspace on 2026-11-10, client 1.6.3, CPU containers, with the workspace in S3.
+
+- Install: `pip install 'captain-search[modal]'` (Modal 1.6 or newer).
 - Login: a Modal token for the team's Modal workspace (`modal token new`). The provider uses Modal's own login,
   not a `cst cloud` profile.
-- Make once: a Modal secret named `captain-search-runner` with credentials for the workspace bucket only (for S3, an
-  access key of a user or role limited to that bucket), then
-  `CST_RUNNER_IMAGE=<public image> modal deploy runner/modal_app.py`.
-- Target fields: `app` (default `captain-search-runner`), `function` (default `run_cst`).
-- Known limits: Modal's SDK can't tell queued from running, so both show as `running`. It has no per-call log read,
-  so `cst job logs` points to the Modal dashboard.
+- Make once:
+  1. A Modal secret with credentials for the workspace bucket only. For S3: `AWS_ACCESS_KEY_ID`,
+     `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, and `AWS_SESSION_TOKEN` when the keys are temporary. The test
+     used four-hour keys from `aws sts get-federation-token` with a policy limited to the workspace prefix.
+  2. From `backend/`: `modal deploy runner/modal_app.py`. Modal builds `runner/Dockerfile` itself, so no registry
+     is needed (about 90 seconds the first time). Set `CST_RUNNER_IMAGE` to use a registry image instead.
+  3. To use other names or a separate Modal environment:
+     `CST_MODAL_APP=<app> CST_MODAL_SECRET=<secret> CST_MODAL_TAGS=team=search modal deploy -e <environment> runner/modal_app.py`
+- Target fields: `app` (default `captain-search-runner`), `function` (default `run_cst`), `environment` (blank for
+  your login's default).
+  `cst compute add modal --kind modal --set app=<app> --set environment=<environment>`
+
+What ran, and how long it took:
+
+| Step | Result |
+| --- | --- |
+| `cst compute test` | found the deployed function. Without `environment` it failed with "App ... not found in environment 'main'" |
+| `cst job run <target> -- demo seed --legacy` | succeeded, 39 s from submit with a cold container |
+| `cst backtest run demo-tuned-vs-bm25 --compute <target>` | succeeded in 21 s. The run is in the bucket and its report says "on <target>" |
+| Live view of that run | 493 events in 6 batches read from the bucket: queued, running, done |
+| `cst job logs` | the call's own lines, with times |
+| `cst job cancel` on a retrain 15 s into a 90 s training command | "stopped" 12 s later, no new pipeline version, no new objects |
+| `cst pipeline retrain <name> --compute <target>` | returned at once with no new version, then the job published v2 |
+| the same with `--wait` | returned v3 |
+
+What the first run on a real account changed:
+
+- The default image (`ghcr.io/captain/captain-search-runner:0.1.0`) can't be pulled ("denied"), so the documented
+  deploy failed. The app now builds the Dockerfile on Modal unless `CST_RUNNER_IMAGE` is set.
+- The app and secret names were fixed in the file, so a second copy or a test copy could not be deployed.
+- A target could not name a Modal environment, so an app outside the login's default one was not found.
+- A cancelled call showed as "failed". Modal raises `RemoteError: Function call was cancelled by user or a failure.`
+  for it, and the provider looked for "Cancel" in the class name.
+- `cst job cancel` recorded "stopped" without asking Modal, so a job that had already returned was recorded as
+  stopped. It now reports what Modal says.
+- Modal cancels by raising inside the function, which does not reach cst. The function now sends cst SIGTERM and
+  waits up to 20 s, so cst stops as it does on the other clouds.
+- `cst job logs` pointed at the dashboard. Modal 1.6 reads one call's lines (`FunctionCall.logs`), so it now
+  returns them.
+
+Known limits:
+
+- Modal's SDK can't tell queued from running, so both show as `running`, and a job has no start time.
+- A cancelled call has no exit code (AWS gives 143), and its finish time is when Captain first saw it stopped.
+- A cancel sent in the last seconds of a job can lose the race: the demo evaluation computes in about 2 s, and one
+  cancel arrived after the run was written. Modal still reports that call as cancelled.
+- Not run: GPUs, a workspace in `gs://` or `az://`, the older `run_backtest` function, and jobs longer than a few
+  minutes (the function's limit is 6 hours).
+- Modal does not serve pipelines from Captain (`cst` reports "modal cannot serve models").

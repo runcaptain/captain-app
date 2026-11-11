@@ -220,7 +220,7 @@ Where each provider reads state and logs:
 | `gcp-vertex` | `get_custom_job` state | Cloud Logging, `ml_job` by job id | `cancel_custom_job` |
 | `azure-container-apps` | `job_execution` status | Log Analytics (set `log_analytics_workspace_id`) | `begin_stop_execution` |
 | `azure-ml` | `jobs.get` status | the job's `user_logs` | `jobs.begin_cancel` |
-| `modal` | `FunctionCall.get(timeout=0)` (cannot tell queued from running) | none from the SDK: the Modal dashboard | `FunctionCall.cancel` |
+| `modal` | `FunctionCall.get(timeout=0)` (cannot tell queued from running) | `FunctionCall.logs.fetch` (the call's own lines) | `FunctionCall.cancel` |
 
 Tested on a real account (2026-11-06): `local`, `aws-ecs` and `aws-batch` (Captain's AWS account, us-west-1, Batch on
 a Fargate compute environment). The others pass
