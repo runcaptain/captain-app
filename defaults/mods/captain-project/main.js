@@ -79,6 +79,7 @@ export default class ProjectHome extends View {
     if ((layoutProps?.() ?? {}).chooseModels) { this.everything = true; this.toggleChoosing(cx); }
     this.openFirst = Boolean((layoutProps?.() ?? {}).openExperiment); // a layout, or the real-window check: open a row
     if ((layoutProps?.() ?? {}).allProjects) this.allProjects(cx); // the real-window check: the card list, nothing picked
+    this.shipFirst = Boolean((layoutProps?.() ?? {}).shipFirst); // the real-window check: the Ship steps at the top
     watchScope(cx, (cx) => this.load(cx));
     watchWorkspace(cx, (cx) => { this.last = null; this.load(cx); });
     watchRecords(cx, (cx) => this.load(cx));
@@ -973,7 +974,7 @@ export default class ProjectHome extends View {
     if (a.action === "new-experiment") return form("experiment", { ...this.values(), ...(firstCandidate(this.stages) ? { how: "starter" } : {}) });
     if (a.action === "assist") return this.startAssist(cx);
     if (a.action === "stage") return this.shipPath.stage(cx, a.baseline ? { baseline: true } : { candidate: a.experiment });
-    if (a.action === "ab-start") { this.shipPath.setup = { split: 0.5, primary: (this.shipPath.ab?.can_measure ?? []).includes("purchases") ? "purchases" : "clicks", mode: "captain" }; cx.notify(); return; }
+    if (a.action === "ab-start") { this.shipPath.setup = { split: 0.05, must: { latency: true }, primary: (this.shipPath.ab?.can_measure ?? []).includes("purchases") ? "purchases" : "clicks", mode: "captain" }; cx.notify(); return; }
     if (a.action === "ab-wait") return this.shipPath.simulate(cx);
     if (a.action === "handoff") return form("handoff", { pipeline: a.pipeline });
     const e = (this.exps?.experiments ?? []).find((x) => x.id === a.experiment);
@@ -1033,10 +1034,11 @@ export default class ProjectHome extends View {
       .when(Boolean(this.note), (e) => e.child(div().id("ph-note").px(12).py(8).text_size(12.5).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)
         .text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
       .child(this.nextLine(c))
+      .when(this.shipFirst, (e) => e.child(this.ship(c)))
       .child(this.recipe(c))
       .child(this.part(c, "inputs", "Inputs", "Where the training data comes from: a connection, a folder here, or a dataset already in Captain.", [], this.inputs(c)))
       .child(this.experiments(c))
-      .child(this.ship(c))
+      .when(!this.shipFirst, (e) => e.child(this.ship(c)))
       .child(this.everythingPart(c));
     return v_flex().id("project-home").size_full().bg(c.canvas).font_family(FONT).text_color(c.navy)
       .child(head)

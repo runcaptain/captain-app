@@ -158,14 +158,19 @@ if (haveTrainer) {
   t = h.text();
   for (const w of ["Captain's staging endpoint", 'My own A/B system', "The candidate's share of traffic", 'What decides it', 'Sessions with a click', 'Sessions with a purchase', 'Revenue per session', 'A shopper always sees the same version.'])
     assert.ok(t.includes(w), `setup says: ${w}`);
+  for (const id of ['ship-ab-split-1', 'ship-ab-split-5', 'ship-ab-split-25', 'ship-ab-split-50']) assert.equal(byId(h, id).length, 1, id);
+  assert.ok(t.includes('Response time: must not get worse') && t.includes('Sessions with a click: watch') && t.includes('Captain pauses the ramp and says why'), `guardrails are marked must or watch: ${t.slice(-900)}`);
+  await h.click('ship-ab-guard-revenue');
+  assert.ok(h.text().includes('Revenue per session: must not get worse'), 'one click changes a guardrail');
   await h.click('ship-ab-primary-clicks');
+  await h.click('ship-ab-split-50');
   await h.click('ship-ab-start-go');
   await until(h, () => byId(h, 'ship-ab-readout').length === 1, 'the readout appears');
   t = h.text();
   assert.ok(t.includes('The A/B test is running: the candidate gets 50% of traffic.'), 'it says what started');
   assert.ok(/Not enough data yet: 0 baseline and 0 candidate sessions\. Each arm needs 200/.test(t), `no winner before there is data: ${t.slice(-1500)}`);
   assert.equal(h.byIdPrefix('ship-done-ab').length, 0, 'step 3 is not ticked yet');
-  for (const id of ['ship-ab-ramp-5', 'ship-ab-ramp-25', 'ship-ab-ramp-50', 'ship-ab-ramp-100', 'ship-ab-rollback', 'ship-ab-simulate']) assert.equal(byId(h, id).length, 1, id);
+  for (const id of ['ship-ab-ramp-1', 'ship-ab-ramp-5', 'ship-ab-ramp-25', 'ship-ab-ramp-50', 'ship-ab-ramp-100', 'ship-ab-rollback', 'ship-ab-simulate']) assert.equal(byId(h, id).length, 1, id);
   assert.ok(t.includes('Ramp') && t.includes('Roll back') && t.includes('Baseline') && t.includes('Candidate') && t.includes('A/B test'), 'the words on screen');
 
   // No traffic yet: simulated shoppers drive the endpoint, and everything they produce says so.
@@ -180,7 +185,12 @@ if (haveTrainer) {
   assert.ok(t.includes(`${ro.arms.baseline.sessions.toLocaleString('en-US')} sessions`) && t.includes(`${ro.arms.candidate.sessions.toLocaleString('en-US')} sessions`), 'sessions per arm');
   assert.ok(t.includes(ro.primary.text), `the primary metric with its interval: ${ro.primary.text}`);
   assert.ok(/between [+-]\d+\.\d and [+-]\d+\.\d points \(95% interval\)/.test(t), 'the difference comes with an interval');
-  assert.ok(t.includes('Response time:') && t.includes('The split is as asked:'), 'guardrails, and a check that the split is what was asked for');
+  assert.ok(t.includes('Must not get worse. Response time:') && t.includes('Must not get worse. Revenue per session:') && t.includes('Watch. Sessions with a purchase:') && t.includes('The split is as asked:'), 'guardrails with their marks, and a check that the split is what was asked for');
+  assert.deepEqual(ro.ab.guardrail_modes, { latency: 'must', purchases: 'watch', revenue: 'must' });
+  // The same comparison per kind of query (head, torso, tail by how often the project's log searches it) and shopper.
+  assert.equal(byId(h, 'ship-ab-segments').length, 1, 'the segment breakdown');
+  assert.ok(ro.segments.length >= 1 && ro.segments.every((x) => t.includes(x.text)), `each segment has its own line: ${JSON.stringify(ro.segments.map((x) => x.text))}`);
+  assert.ok(/(Head|Torso|Tail) queries: /.test(t), 'named in plain words');
   assert.ok(/Next: Send outdoor\/starter-ranker@v\d+ to launch review\./.test((await page()).text()), 'the top line moves on to launch review');
   clean(t, 'in the readout');
 

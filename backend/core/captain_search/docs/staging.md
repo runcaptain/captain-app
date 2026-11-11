@@ -69,6 +69,13 @@ process exits. In the cloud two things stop it, and one of them is enough:
 If the execution role cannot delete the endpoint and nobody opens Captain, the endpoint keeps running. Give the
 role that permission.
 
+## Checked before a cloud deploy
+
+Before the confirm, Captain asks IAM (a policy simulation, nothing changes) whether the execution role can delete
+its own endpoint and write the workspace bucket. If it cannot delete, the confirm says: "This endpoint can't stop
+itself when idle. It will keep billing until you stop it from Captain." If it cannot write the bucket, it says
+there will be no request log. If your sign-in is not allowed to ask IAM, it says it could not check.
+
 ## What Captain creates in AWS, and how to find it
 
 One endpoint, one endpoint config and one model, named `<prefix>-<project>-<env>` (the target's "Name prefix for
@@ -123,9 +130,9 @@ id and timestamp are logged now so that it can be.
 Offline evaluation says a candidate is safe to try. The A/B test is the try. Staging always packs the baseline
 beside the candidate, so both are already on the endpoint when a test starts.
 
-    cst projects ab-start <project> [--split 0.5] [--primary clicks|purchases|revenue] [--guardrail <metric>]... [--min-sessions 200]
+    cst projects ab-start <project> [--split 0.01] [--primary clicks|purchases|revenue] [--guardrail <metric>[:must|watch]]... [--min-sessions 200]
     cst projects ab <project> [--traffic real|simulated|test]
-    cst projects ab-ramp <project> 0.05|0.25|0.5|1
+    cst projects ab-ramp <project> 0.01|0.05|0.25|0.5|1
     cst projects ab-rollback <project>
     cst projects ab-stop <project>
     cst projects ab-simulate <project> [--sessions 1000]
@@ -135,6 +142,13 @@ beside the candidate, so both are already on the endpoint when a test starts.
 The metrics are chosen when the test starts: one primary, and the rest as guardrails. A project can measure
 sessions with a click, sessions with a purchase, and revenue per session when its catalog has a price column.
 Response time is always a guardrail.
+
+Each guardrail is marked **must not get worse** or **watch**. When a "must" guardrail clearly drops, Captain pauses
+the ramp and says why: the share can go down or be rolled back, and cannot go up until the guardrail holds again.
+A "watch" guardrail is shown and never blocks. Response time is "must" unless told otherwise; the others are
+"watch" unless marked (`--guardrail purchases:must`).
+
+Ramp steps start at 1%: 1%, 5%, 25%, 50%, 100%. A new or expensive model goes to 1% first.
 
 **Captain's endpoint splits the traffic** (the default). A hash of the session id (else the user id, else the
 request id) and the test's id picks the arm, so a shopper always sees one version, and raising the candidate's
@@ -157,6 +171,13 @@ what was asked for (a chi-square check on sessions assigned since the last ramp)
 until both arms have the minimum number of sessions, and names no winner before that. A guardrail fails only when
 the candidate is clearly worse (its interval lies below zero). The readout counts sessions from the start of the
 test, across ramps.
+
+**By segment.** The readout repeats the comparison for head, torso and tail queries, and for new and returning
+shoppers. Head, torso and tail come from the project's own events log: queries are ranked by how many searches
+they get and cut where the running share of searches passes one third and two thirds. A query the log never saw is
+tail. New or returning needs a user id on the request and in the log. Each segment has its own difference and
+interval and its own "not enough data yet", and a candidate that is ahead overall but behind on a segment is
+called out in one sentence.
 
 **Where the numbers came from** is never guessed, and traffic of different kinds is never mixed in one readout:
 

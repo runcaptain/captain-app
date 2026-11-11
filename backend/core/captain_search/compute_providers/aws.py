@@ -299,6 +299,34 @@ class SageMakerProvider(_AWS):
         return [{"Key": k, "Value": str(v)} for k, v in {"app": "captain", "project": st["project"], "env": st["env"],
                                                          "captain:stage": st["id"], **TAGS}.items()]
 
+    CANT_STOP = "This endpoint can't stop itself when idle. It will keep billing until you stop it from Captain."
+    CANT_LOG = ("The serving role can't write the workspace bucket, so the endpoint can't keep its request log: no "
+                "served-features check and no A/B readout.")
+
+    def stage_preflight(self, st: dict, storage_uri: str) -> dict:
+        """Ask IAM (simulate, nothing changes) whether the execution role may delete its own endpoint and write the
+        workspace bucket. When IAM won't answer, say that it couldn't be checked rather than guess."""
+        role = self.config["execution_role_arn"]
+        acct = role.split(":")[4] if role.count(":") >= 5 else "*"
+        name = self._names(st)["endpoint"]
+        bucket, _, prefix = storage_uri.split("://", 1)[-1].partition("/")
+        ask = {"sagemaker:DeleteEndpoint": f"arn:aws:sagemaker:{self.region}:{acct}:endpoint/{name.lower()}",
+               "s3:PutObject": f"arn:aws:s3:::{bucket}/{prefix.strip('/') + '/' if prefix.strip('/') else ''}staging/preflight"}
+        got = {}
+        try:
+            iam = self._client("iam")
+            for action, arn in ask.items():
+                r = iam.simulate_principal_policy(PolicySourceArn=role, ActionNames=[action], ResourceArns=[arn])
+                got[action] = any(x.get("EvalDecision") == "allowed" for x in r.get("EvaluationResults", []))
+        except Exception as e:  # noqa: BLE001
+            return {"checked": False, "can_delete": None, "can_write": None, "warnings": [],
+                    "note": "Captain couldn't check whether the serving role can stop its own endpoint or write the "
+                            f"workspace bucket ({_aws_sentence(e)[:160]}). If it can't, the endpoint keeps billing "
+                            "until you stop it from Captain."}
+        warnings = ([] if got["sagemaker:DeleteEndpoint"] else [self.CANT_STOP]) + ([] if got["s3:PutObject"] else [self.CANT_LOG])
+        return {"checked": True, "can_delete": got["sagemaker:DeleteEndpoint"], "can_write": got["s3:PutObject"],
+                "warnings": warnings, "note": None}
+
     def stage_plan(self, st: dict) -> list[dict]:
         c, n, tags = self.config, self._names(st), self._tags(st)
         env = dict(st.get("container_env") or {})

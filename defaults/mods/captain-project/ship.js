@@ -25,7 +25,7 @@ const short = (ref) => String(ref ?? "").replace(/^.*\//, "");
 const pct = (x) => `${Math.round(Number(x) * 100)}%`;
 const form = (task, values = {}) => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, values } });
 export const METRICS = { clicks: "Sessions with a click", purchases: "Sessions with a purchase", revenue: "Revenue per session" };
-const RAMP = [0.05, 0.25, 0.5, 1];
+const RAMP = [0.01, 0.05, 0.25, 0.5, 1]; // start small: 1% first
 
 /** "3 h 42 min", "12 min", "under a minute". */
 export function span(seconds) {
@@ -297,9 +297,9 @@ export class Ship {
 
   row(c, st, action, below) {
     return v_flex().id(`ship-step-${st.id}`).w_full()
-      .child(h_flex().p(12).gap(12).items_center()
+      .child(h_flex().p(12).gap(12).items_center().flex_wrap()
         .child(this.mark(c, st))
-        .child(v_flex().flex_1().min_w(0).gap(1)
+        .child(v_flex().flex_1().min_w(280).gap(1)
           .child(div().text_size(13).font_semibold().text_color(c.navy).child(st.title))
           .child(div().id(`ship-text-${st.id}`).text_size(12).line_height("17px").text_color(c.grey500).child(st.text)))
         .when(Boolean(action), (e) => e.child(h_flex().flex_none().gap(6).items_center().child(action))))
@@ -342,6 +342,7 @@ export class Ship {
     return v_flex().id("ship-confirm").p(10).gap(6).bg(c.warnLight).border_1().border_color(c.warn)
       .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(`Start ${short(p.model_version)} in your own cloud?`))
       .child(div().id("ship-confirm-cost").text_size(12).line_height("17px").text_color(c.grey900).child(p.cost?.text ?? "This starts a cloud endpoint that bills until you stop it."))
+      .children([...(p.warnings ?? []), p.preflight?.note].filter(Boolean).map((w, i) => div().id(`ship-confirm-warning-${i}`).text_size(12).line_height("17px").font_medium().text_color(c.fail).child(w)))
       .child(div().text_size(12).line_height("17px").text_color(c.grey900).child(`Captain stops it after ${span((this.staged()?.idle_minutes ?? 240) * 60)} with no requests, as long as Captain or the endpoint itself can reach your cloud.`))
       .child(h_flex().gap(6)
         .child(Button(c, "ship-confirm-yes", "Start it", (_e, cx) => this.stage(cx, this.confirm.body, true), { small: true, kind: "primary" }))
@@ -439,13 +440,18 @@ export class Ship {
       .child(line("Who splits the traffic", [
         this.pick1(c, "ship-ab-mode-captain", "Captain's staging endpoint", f.mode === "captain", () => { f.mode = "captain"; }),
         this.pick1(c, "ship-ab-mode-own", "My own A/B system", f.mode === "own", () => { f.mode = "own"; })]))
-      .when(f.mode === "captain", (e) => e.child(line("The candidate's share of traffic", [0.05, 0.25, 0.5].map((x) => this.pick1(c, `ship-ab-split-${Math.round(x * 100)}`, pct(x), f.split === x, () => { f.split = x; })))))
+      .when(f.mode === "captain", (e) => e.child(line("The candidate's share of traffic", [0.01, 0.05, 0.25, 0.5].map((x) => this.pick1(c, `ship-ab-split-${Math.round(x * 100)}`, pct(x), f.split === x, () => { f.split = x; })))))
       .child(line("What decides it", can.map((m) => this.pick1(c, `ship-ab-primary-${m}`, METRICS[m], f.primary === m, () => { f.primary = m; }))))
+      .when(f.mode === "captain", (e) => e.child(line("Guardrails: click one to change it", [...can.filter((m) => m !== f.primary), "latency"].map((m) => {
+        const must = (f.must ??= { latency: true })[m];
+        return this.pick1(c, `ship-ab-guard-${m}`, `${m === "latency" ? "Response time" : METRICS[m]}: ${must ? "must not get worse" : "watch"}`, Boolean(must), () => { f.must[m] = !must; });
+      }))))
       .child(div().id("ship-ab-setup-note").text_size(12).line_height("17px").text_color(c.grey900).child(f.mode === "captain"
-        ? `The other measures are guardrails: ${can.filter((m) => m !== f.primary).map((m) => METRICS[m].toLowerCase()).join(", ")} and response time. A shopper always sees the same version.`
+        ? "If a guardrail marked must not get worse clearly drops, Captain pauses the ramp and says why. One marked watch is shown and never blocks. A shopper always sees the same version."
         : "Captain gives you an address for each version on the endpoint. Split traffic in your system, then bring the readout in here."))
       .child(h_flex().gap(6)
-        .child(Button(c, "ship-ab-start-go", "Start the A/B test", (_e, cx) => this.abDo(cx, "start", { split: f.split, primary: f.primary, mode: f.mode },
+        .child(Button(c, "ship-ab-start-go", "Start the A/B test", (_e, cx) => this.abDo(cx, "start", { split: f.split, primary: f.primary, mode: f.mode,
+          guardrails: [...can.filter((m) => m !== f.primary), "latency"].map((m) => `${m}:${(f.must ?? { latency: true })[m] ? "must" : "watch"}`) },
           f.mode === "captain" ? `The A/B test is running: the candidate gets ${pct(f.split)} of traffic.` : "The A/B test is recorded. Split the traffic in your own system."), { small: true, kind: "primary" }))
         .child(Button(c, "ship-ab-start-no", "Not now", (_e, cx) => { this.setup = null; cx.notify(); }, { small: true })));
   }
@@ -474,10 +480,16 @@ export class Ship {
       .children((r.guardrails ?? []).map((g, i) => h_flex().id(`ship-ab-guard-${i}`).gap(6).items_center()
         .child(svg(icon(g.ok ? "circle-check" : "triangle-alert")).size(12).flex_none().text_color(g.ok ? c.good : c.fail))
         .child(div().text_size(12).text_color(g.ok ? c.grey900 : c.fail).child(g.text))))
+      .when(Boolean(r.hard_stop), (e) => e.child(div().id("ship-ab-paused").px(10).py(6).text_size(12.5).bg(c.failLight).text_color(c.fail).child(`${r.hard_stop} Roll back, or ramp down.`)))
+      .when((r.segments ?? []).length > 0, (e) => e.child(v_flex().id("ship-ab-segments").gap(3)
+        .child(div().text_size(12).font_semibold().text_color(c.navy).child("By kind of query and shopper"))
+        .children(r.segments.map((x) => div().id(`ship-ab-segment-${x.segment}`).text_size(12).line_height("17px")
+          .text_color(x.verdict === "candidate behind" ? c.fail : x.enough ? c.grey900 : c.grey500).child(x.text)))
+        .when(Boolean(r.segment_warning), (y) => y.child(div().id("ship-ab-segment-warning").text_size(12.5).font_medium().text_color(c.fail).child(r.segment_warning)))))
       .when(Boolean(r.srm), (e) => e.child(div().id("ship-ab-srm").text_size(12).text_color(r.srm.ok ? c.grey500 : c.fail).child(r.srm.text)))
       .when(a.status === "running", (e) => e.child(h_flex().id("ship-ab-actions").flex_wrap().gap(6).items_center()
         .child(div().text_size(12).font_semibold().child("Ramp"))
-        .children(RAMP.map((x) => this.pick1(c, `ship-ab-ramp-${Math.round(x * 100)}`, pct(x), Math.abs((a.split ?? 0) - x) < 1e-9, () => { if (Math.abs((a.split ?? 0) - x) > 1e-9) this.ask2 = { kind: "ramp", split: x }; })))
+        .children(RAMP.map((x) => this.pick1(c, `ship-ab-ramp-${Math.round(x * 100)}`, pct(x), Math.abs((a.split ?? 0) - x) < 1e-9, () => { if (Math.abs((a.split ?? 0) - x) > 1e-9 && !(r.hard_stop && x > (a.split ?? 0))) this.ask2 = { kind: "ramp", split: x }; })))
         .child(Button(c, "ship-ab-rollback", "Roll back", (_e, cx) => { this.ask2 = { kind: "rollback" }; cx.notify(); }, { small: true }))
         .child(Button(c, "ship-ab-simulate", "Send simulated shoppers at staging", (_e, cx) => this.simulate(cx), { small: true, kind: "quiet", disabled: Boolean(this.busy) }))
         .child(Button(c, "ship-ab-refresh", "Read again", (_e, cx) => this.load(cx), { small: true, kind: "quiet" }))));
@@ -512,7 +524,7 @@ export class Ship {
   abStep(c, st) {
     const r = this.ab, a = r?.ab;
     const btn = st.action === "ab-start" && !this.setup && !this.busy
-      ? Button(c, "ship-ab-start", st.label, (_e, cx) => { this.setup = { split: 0.5, primary: (r?.can_measure ?? []).includes("purchases") ? "purchases" : "clicks", mode: "captain" }; cx.notify(); }, { small: true, kind: a ? "secondary" : "primary" }) : null;
+      ? Button(c, "ship-ab-start", st.label, (_e, cx) => { this.setup = { split: 0.05, primary: (r?.can_measure ?? []).includes("purchases") ? "purchases" : "clicks", mode: "captain", must: { latency: true } }; cx.notify(); }, { small: true, kind: a ? "secondary" : "primary" }) : null;
     const body = [];
     if (this.setup) body.push(this.setupBox(c));
     if (a && a.mode === "own") body.push(this.ownBox(c));

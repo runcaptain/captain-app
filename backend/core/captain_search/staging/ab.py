@@ -38,7 +38,9 @@ from . import ENV, _note, _save, call, set_control, state
 from . import logs as L
 
 METRICS = {"clicks": "Sessions with a click", "purchases": "Sessions with a purchase", "revenue": "Revenue per session"}
-RAMP = (0.05, 0.25, 0.5, 1.0)
+RAMP = (0.01, 0.05, 0.25, 0.5, 1.0)  # start small: ship an expensive model to 1% and learn
+MODES = {"must": "Must not get worse", "watch": "Watch"}
+SEGMENTS = {"head": "Head queries", "torso": "Torso queries", "tail": "Tail queries", "new": "New shoppers", "returning": "Returning shoppers"}
 MIN_SESSIONS = 200
 LABELS = {"real": ("REAL_TRAFFIC", "Real traffic"), "simulated": ("SIMULATED", "Simulated shoppers"),
           "test": ("TEST_TRAFFIC", "Test traffic")}
@@ -113,14 +115,28 @@ def start(ctx: Context, pid: str, split: float = 0.5, primary: str | None = None
         raise ValueError(f"An A/B test is already running ({cur['id']}). Roll it back or stop it first.")
     can = metrics_for(ctx, pid)
     primary = primary or "purchases"
-    guardrails = [g for g in (guardrails if guardrails is not None else can) if g != primary]
+    # A guardrail is "must" (must not get worse: a clear drop pauses the ramp) or "watch" (shown, never blocking).
+    # Written as a name, "name:must" or "name:watch". Response time is always there, and is "must" unless told otherwise.
+    modes: dict[str, str] = {"latency": "must"}
+    named = []
+    for g in (guardrails if guardrails is not None else can):
+        name, _, how = (g if isinstance(g, str) else f"{g.get('metric')}:{g.get('mode') or ''}").partition(":")
+        if how and how not in MODES:
+            raise ValueError("a guardrail is marked must (must not get worse) or watch")
+        if name == "latency":
+            modes["latency"] = how or "must"
+            continue
+        if name != primary:
+            named.append(name)
+            modes[name] = how or "watch"
+    guardrails = named
     for m in [primary, *guardrails]:
         if m not in can:
             raise ValueError(f"{m} can't be measured here. This project can measure: {', '.join(can)}."
                              + (" Revenue needs a price column in the catalog." if m == "revenue" else ""))
     ab = {"id": "ab-" + new_id().lower()[-10:], "env": env, "status": "running", "mode": mode, "arms": dict(arms),
           "stage": rec["id"], "split": float(split) if mode == "captain" else None, "primary": primary,
-          "guardrails": guardrails, "min_sessions": int(min_sessions), "started_at": _now(), "started_by": whoami(),
+          "guardrails": guardrails, "guardrail_modes": modes, "paused": None, "min_sessions": int(min_sessions), "started_at": _now(), "started_by": whoami(),
           "ended_at": None, "ramps": [{"at": _now(), "by": whoami(), "split": float(split), "action": "start"}] if mode == "captain" else [],
           "brought": [], "last_readout": None, "addresses": addresses(rec) if mode == "own" else None}
     if dry_run:
@@ -149,6 +165,10 @@ def ramp(ctx: Context, pid: str, split: float, dry_run: bool = False) -> dict:
                          else "Your own A/B system holds the split. Ramp it there.")
     if not 0 < float(split) <= 1:
         raise ValueError("the split is the candidate's share of traffic, between 0 and 1")
+    if float(split) > float(ab.get("split") or 0):
+        ab = readout(ctx, pid)["ab"]  # look at the guardrails now, not as of the last time someone looked
+        if ab.get("paused"):
+            raise ValueError(f"The ramp is paused: {ab['paused']['why']} Roll back, or ramp down. It can go up again once that holds.")
     if dry_run:
         return {**ab, "split": float(split), "dry_run": True}
     rec = _running(ctx, pid, ab["env"])
@@ -296,8 +316,38 @@ def _fmt(metric: str, v: float) -> str:
     return f"${v:,.2f}" if metric == "revenue" else f"{v * 100:.1f}%"
 
 
-def compute(ab: dict, got: dict, traffic: str | None = None) -> dict:
-    """The readout from a staging log (logs.read), for one kind of traffic. Pure: no storage, no endpoint."""
+def segment_of(seg: dict | None, r: dict) -> list[str]:
+    """The segments one request belongs to: head, torso or tail by how often its query is searched in the project's
+    logs, and new or returning when the logs know its user."""
+    if not seg:
+        return []
+    out = [(seg.get("query") or {}).get(" ".join(str(r.get("query") or "").lower().split()), "tail")] if seg.get("query") is not None else []
+    if seg.get("users") is not None and r.get("user_id"):
+        out.append("returning" if str(r["user_id"]) in seg["users"] else "new")
+    return out
+
+
+def query_segments(rows: list[dict]) -> dict:
+    """Head, torso and tail from an events log: queries ranked by how many searches they get, cut where the running
+    share of searches passes one third and two thirds. A query the log never saw is tail."""
+    seen: dict[str, set] = {}
+    users = set()
+    for r in rows:
+        q = " ".join(str(r.get("query") or "").lower().split())
+        seen.setdefault(q, set()).add(str(r.get("session_id") or r.get("ts") or len(seen)))
+        if r.get("user_id") is not None:
+            users.add(str(r["user_id"]))
+    counts = sorted(((len(v), q) for q, v in seen.items()), reverse=True)
+    total, run, out = sum(c for c, _ in counts) or 1, 0, {}
+    for c, q in counts:
+        out[q] = "head" if run < total / 3 else "torso" if run < 2 * total / 3 else "tail"
+        run += c
+    return {"query": out, "users": users or None}
+
+
+def compute(ab: dict, got: dict, traffic: str | None = None, segments: dict | None = None) -> dict:
+    """The readout from a staging log (logs.read), for one kind of traffic. Pure: no storage, no endpoint.
+    `segments` (query_segments) adds the same comparison per query segment and per new or returning shopper."""
     reqs = [r for r in got["requests"] if r.get("experiment") == ab["id"] and not r.get("forced")]
     by_kind: dict[str, int] = {}
     for r in reqs:
@@ -306,12 +356,17 @@ def compute(ab: dict, got: dict, traffic: str | None = None) -> dict:
     reqs = [r for r in reqs if (r.get("traffic") or "real") == kind]
     unit_of = {}
     sess: dict[str, dict[str, dict]] = {"baseline": {}, "candidate": {}}
+    by_seg: dict[str, dict[str, dict[str, dict]]] = {}  # segment -> arm -> session -> what happened in that segment
     ms: dict[str, list] = {"baseline": [], "candidate": []}
+    new = lambda: {"clicks": 0.0, "purchases": 0.0, "revenue": 0.0, "searches": 0}  # noqa: E731
     for r in reqs:
         u = str(r.get("session_id") or r.get("user_id") or r["request_id"])
-        unit_of[str(r["request_id"])] = (r["arm"], u)
-        s = sess[r["arm"]].setdefault(u, {"clicks": 0.0, "purchases": 0.0, "revenue": 0.0, "searches": 0})
-        s["searches"] += 1
+        segs = segment_of(segments, r)
+        unit_of[str(r["request_id"])] = (r["arm"], u, segs)
+        cells = [sess[r["arm"]].setdefault(u, new())]
+        cells += [by_seg.setdefault(g, {"baseline": {}, "candidate": {}})[r["arm"]].setdefault(u, new()) for g in segs]
+        for s in cells:
+            s["searches"] += 1
         ms[r["arm"]].append(float(r.get("ms") or 0.0))
     unmatched = 0
     for o in got["outcomes"]:
@@ -319,20 +374,21 @@ def compute(ab: dict, got: dict, traffic: str | None = None) -> dict:
         if not hit:
             unmatched += 1
             continue
-        s = sess[hit[0]][hit[1]]
-        if o["event"] in ("click", "add-to-cart", "purchase"):
-            s["clicks"] = 1.0
-        if o["event"] == "purchase":
-            s["purchases"] = 1.0
-            s["revenue"] += float(o.get("value") or 0.0)
+        for s in [sess[hit[0]][hit[1]]] + [by_seg[g][hit[0]][hit[1]] for g in hit[2]]:
+            if o["event"] in ("click", "add-to-cart", "purchase"):
+                s["clicks"] = 1.0
+            if o["event"] == "purchase":
+                s["purchases"] = 1.0
+                s["revenue"] += float(o.get("value") or 0.0)
     n = {a: len(sess[a]) for a in sess}
     need = int(ab.get("min_sessions") or MIN_SESSIONS)
     enough = min(n.values()) >= need
 
-    def stat(metric: str) -> dict:
-        acc = {a: [0, 0.0, 0.0] for a in sess}
-        for a in sess:
-            for s in sess[a].values():
+    def stat(metric: str, of: dict | None = None) -> dict:
+        of = of or sess
+        acc = {a: [0, 0.0, 0.0] for a in of}
+        for a in of:
+            for s in of[a].values():
                 v = s[metric]
                 acc[a][0] += 1
                 acc[a][1] += v
@@ -356,9 +412,11 @@ def compute(ab: dict, got: dict, traffic: str | None = None) -> dict:
         p["text"] = (f"{p['label']}: {rng}. The difference is {delta}, between {between} (95% interval). "
                      + {"candidate ahead": "The candidate is ahead.", "candidate behind": "The candidate is behind.",
                         "no clear difference": "No clear difference yet."}[p["verdict"]])
+    modes = ab.get("guardrail_modes") or {}
     guards = []
     for g in ab.get("guardrails") or []:
         s = stat(g)
+        s["mode"] = modes.get(g, "watch")
         s["ok"] = (not enough) or s["ci_high"] >= 0  # fails only when the candidate is clearly worse
         s["text"] = (f"{s['label']}: {_fmt(g, s['baseline'])} baseline, {_fmt(g, s['candidate'])} candidate. "
                      + ("Too early to say." if not enough else "Holds." if s["ok"] else "The candidate is clearly worse."))
@@ -367,7 +425,7 @@ def compute(ab: dict, got: dict, traffic: str | None = None) -> dict:
     if pb is not None and pc is not None:
         ok = pc <= max(2 * pb, pb + 20.0)
         guards.append({"metric": "latency", "label": "Response time (95th percentile)", "baseline": pb, "candidate": pc,
-                       "ok": ok, "text": f"Response time: {pb:.1f} ms baseline, {pc:.1f} ms candidate (95th percentile). "
+                       "ok": ok, "mode": modes.get("latency", "must"), "text": f"Response time: {pb:.1f} ms baseline, {pc:.1f} ms candidate (95th percentile). "
                                          + ("Holds." if ok else "The candidate is much slower.")})
     # Is the split what was asked for? Sessions assigned since the last ramp, against its share.
     srm = None
@@ -393,11 +451,38 @@ def compute(ab: dict, got: dict, traffic: str | None = None) -> dict:
                             f"(asked for {share:.0%}).") if pv >= 0.001 else
                            (f"The split looks off: {cur['candidate'] / tot:.1%} of {tot:,} sessions went to the candidate, "
                             f"and {share:.0%} was asked for. Don't trust this readout until that is explained.")}
+    # The same comparison inside each segment, each with its own "not enough data yet". A win overall can hide a
+    # loss on the tail: say so when it does.
+    seg_rows = []
+    for g in [k for k in SEGMENTS if k in by_seg]:
+        sn = {a: len(by_seg[g][a]) for a in ("baseline", "candidate")}
+        row = {"segment": g, "label": SEGMENTS[g], "sessions": sn, **{k: v for k, v in stat(ab["primary"], by_seg[g]).items() if k not in ("metric", "label")}}
+        if min(sn.values()) < need:
+            row["enough"], row["verdict"] = False, "not enough data yet"
+            row["text"] = f"{SEGMENTS[g]}: not enough data yet ({sn['baseline']:,} baseline and {sn['candidate']:,} candidate sessions, each needs {need:,})."
+        else:
+            row["enough"] = True
+            row["verdict"] = "candidate ahead" if row["ci_low"] > 0 else "candidate behind" if row["ci_high"] < 0 else "no clear difference"
+            between = (f"${row['ci_low']:,.2f} and ${row['ci_high']:,.2f}" if p["metric"] == "revenue"
+                       else f"{row['ci_low'] * 100:+.1f} and {row['ci_high'] * 100:+.1f} points")
+            row["text"] = (f"{SEGMENTS[g]}: {_fmt(p['metric'], row['baseline'])} baseline, {_fmt(p['metric'], row['candidate'])} candidate, "
+                           f"difference between {between}. "
+                           + {"candidate ahead": "Ahead.", "candidate behind": "Behind.", "no clear difference": "No clear difference."}[row["verdict"]])
+        seg_rows.append(row)
+    behind = [r["label"].lower() for r in seg_rows if r["verdict"] == "candidate behind"]
+    seg_warning = (("The candidate is ahead overall but behind on " if p["verdict"] == "candidate ahead" else "The candidate is behind on ")
+                   + " and ".join(behind) + ".") if behind else None
+    # A "must not get worse" guardrail that fails is a hard stop for the ramp.
+    stops = [g for g in guards if not g["ok"] and g.get("mode") == "must"]
+    for g in guards:
+        g["text"] = f"{MODES[g.get('mode', 'watch')]}. {g['text']}"
     arms = {a: {"model_version": ab["arms"][a], "sessions": n[a], "searches": sum(s["searches"] for s in sess[a].values()),
                 "p95_ms": _p95(ms[a])} for a in sess}
     return {"experiment": ab["id"], "status": ab["status"], "mode": ab["mode"], "split": ab.get("split"),
             "traffic": kind, "evidence": evidence, "label": label, "arms": arms, "primary": p, "guardrails": guards,
             "enough": enough, "min_sessions": need, "srm": srm, "unmatched_outcomes": unmatched,
+            "segments": seg_rows, "segment_warning": seg_warning,
+            "hard_stop": ("The ramp is paused: " + " ".join(g["text"] for g in stops)) if stops else None,
             "other_traffic": {k: v for k, v in by_kind.items() if k != kind},
             "guardrails_ok": all(g["ok"] for g in guards) and (srm is None or srm["ok"]),
             "text": f"{label}. " + p["text"]}
@@ -422,12 +507,41 @@ def readout(ctx: Context, pid: str, traffic: str | None = None) -> dict:
             call(ctx, rec, "flush", {})
         except Exception:  # noqa: BLE001  the chunks already written are still read
             pass
-    out = compute(ab, L.read(ctx, pid, ab["env"], ab.get("stage")), traffic)
+    out = compute(ab, L.read(ctx, pid, ab["env"], ab.get("stage")), traffic, _segments(ctx, pid))
+    # A failed "must not get worse" guardrail pauses the ramp, and it is written down once, with why.
+    why = " ".join(g["text"] for g in out["guardrails"] if not g["ok"] and g.get("mode") == "must") or None
+    if ab["status"] == "running" and bool(why) != bool(ab.get("paused")):
+        _put(ctx, pid, lambda a: a.__setitem__("paused", {"at": _now(), "why": why} if why else None))
+        _note(ctx, pid, f"paused the A/B ramp: {why}" if why else "the A/B ramp can go on: the guardrail holds again")
+        ab = get(ctx, pid)
+        base["ab"] = ab
     summary = {"at": _now(), "sessions": {a: out["arms"][a]["sessions"] for a in out["arms"]}, "enough": out["enough"],
                "evidence": out["evidence"], "verdict": out["primary"]["verdict"], "text": out["text"]}
     if summary != {**(ab.get("last_readout") or {}), "at": summary["at"]}:
         _put(ctx, pid, lambda a: a.__setitem__("last_readout", summary))
     return {**base, **out}
+
+
+_seg_cache: dict[str, dict] = {}
+
+
+def _segments(ctx: Context, pid: str) -> dict | None:
+    """Query segments from the project's own events log, when it has one. Read once per version."""
+    from ..ops import rows_of
+
+    ev = PS.pinned(PS.get(ctx, pid), "events")
+    if not ev:
+        return None
+    k = f"{ctx.workspace.name}:{ev}"
+    if k not in _seg_cache:
+        try:
+            _, rows, _ = rows_of(ctx, ev)
+            _seg_cache[k] = query_segments(rows) if rows and "query" in rows[0] else None
+        except Exception:  # noqa: BLE001  events kept somewhere this computer can't read: no segments
+            _seg_cache[k] = None
+        if len(_seg_cache) > 8:
+            _seg_cache.pop(next(iter(_seg_cache)))
+    return _seg_cache[k]
 
 
 def bring(ctx: Context, pid: str, metric: str, baseline: float, candidate: float, source: str, traffic: str = "real",
@@ -531,6 +645,8 @@ def simulate(ctx: Context, pid: str, sessions: int = 1000, seed: int = 7, env: s
             progress(i / int(sessions))
     call(ctx, rec, "flush", {"publish": True})
     _note(ctx, pid, f"sent {int(sessions):,} simulated shoppers at staging (SIMULATED)")
+    if (get(ctx, pid) or {}).get("status") == "running":
+        readout(ctx, pid)  # so the project's steps and Next line know where the test stands now
     return {"project": pid, "sessions": int(sessions), "requests": n_req, "clicks": n_click, "purchases": n_buy,
             "traffic": "simulated", "evidence": "SIMULATED", "seed": seed,
             "text": f"Sent {int(sessions):,} simulated shoppers at staging: {n_req:,} searches, {n_click:,} clicks, "

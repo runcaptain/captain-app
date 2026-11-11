@@ -311,6 +311,14 @@ def stage(ctx: Context, target: dict, st: dict, progress=None) -> dict:
     return P.get(target, ctx).stage({**st, "container_env": stage_env(ctx, st) if st.get("bundle") else {}}, progress)
 
 
+def stage_preflight(ctx: Context, target: dict, st: dict) -> dict:
+    """What the serving role may do, checked without changing anything: {checked, can_delete, can_write, warnings, note}."""
+    prov = P.get(target, ctx)
+    if not callable(getattr(prov, "stage_preflight", None)):
+        return {"checked": False, "can_delete": None, "can_write": None, "warnings": [], "note": "Not checked on this kind of target."}
+    return prov.stage_preflight(st, ctx.workspace.storage_uri)
+
+
 def unstage(ctx: Context, target: dict, resources: list[dict]) -> list[dict]:
     """Remove these resources. Returns the ones that are still there."""
     return P.get(target, ctx).unstage(resources)

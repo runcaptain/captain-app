@@ -105,8 +105,23 @@ def servable(ctx: Context, pipeline: str) -> dict:
                     "point Captain can load. Use an endpoint you already run, or give a container image that serves it."}
 
 
-def cost(target: dict) -> dict:
-    """What a deploy on this target costs to keep up, in words a person reads before confirming."""
+def cost(target: dict, ctx: Context | None = None) -> dict:
+    """What a deploy on this target costs to keep up, in words a person reads before confirming. The shared cost
+    estimator (cost_estimates.py) answers when this build has it; the small table here is only the fallback."""
+    try:
+        from .. import cost_estimates as CE
+    except ImportError:
+        CE = None
+    if CE is not None and ctx is not None and target["kind"] != "local":
+        c = target.get("config") or {}
+        try:
+            est = CE.estimate(ctx, "staging", target, {"instances": int(c.get("instance_count") or 1),
+                                                       "instance_type": c.get("instance_type") or "ml.m5.large"})
+            return {"instance_type": c.get("instance_type") or "ml.m5.large", "instance_count": int(c.get("instance_count") or 1),
+                    "hourly_usd": est.get("low"), "billing": True, "estimate": est,
+                    "text": f"{est['text']} {KEEPS_BILLING}"}
+        except Exception:  # noqa: BLE001  no price: fall through to the table
+            pass
     if target["kind"] == "local":
         return {"instance_type": None, "instance_count": None, "hourly_usd": 0.0, "billing": False,
                 "text": "Runs on this computer. It costs nothing and stops when idle."}
@@ -308,15 +323,30 @@ def plan(ctx: Context, pid: str, candidate: str | None = None, baseline: bool = 
             s = servable(ctx, r)
             if not s["ok"]:
                 raise NotServable(s["text"])
-    c = cost(t)
+    c = cost(t, ctx)
     cur = state(ctx, pid, env)
+    pre = _preflight(ctx, t, pid, env)
     return {"project": pid, "env": env, "target": t["name"], "kind": t["kind"], "region": t.get("region"),
             "arms": arms, "serve": serve, "experiment": exp, "model_version": arms[serve], "cost": c,
-            "needs_confirm": bool(c["billing"]), "replaces": cur["model_version"] if cur and cur.get("status") == "running" else None,
+            "needs_confirm": bool(c["billing"]), "preflight": pre, "warnings": (pre or {}).get("warnings") or [], "replaces": cur["model_version"] if cur and cur.get("status") == "running" else None,
             "how": "endpoint" if endpoint else "image" if image else "captain",
             "text": (f"Stage {arms[serve]} on " + ("this computer" if t["kind"] == "local" else f"{t['name']} ({t['kind']})")
                      + (f", beside the baseline {arms['baseline']}" if serve == "candidate" and arms.get("baseline") else "")
-                     + ". " + c["text"])}
+                     + ". " + c["text"] + "".join(" " + w for w in (pre or {}).get("warnings") or []))}
+
+
+def _preflight(ctx: Context, target: dict, pid: str, env: str) -> dict | None:
+    """Before a cloud deploy: can the serving role write the workspace bucket (for the log) and delete its own
+    endpoint (to stop when idle)? Asked of the cloud without changing anything. None for this computer."""
+    from .. import compute as C
+
+    if target["kind"] == "local":
+        return None
+    try:
+        return C.stage_preflight(ctx, target, {"project": pid, "env": env, "id": "preflight"})
+    except Exception as e:  # noqa: BLE001
+        return {"checked": False, "can_delete": None, "can_write": None, "warnings": [],
+                "note": f"Captain couldn't check what the serving role is allowed to do ({str(e)[:160]})."}
 
 
 # ---- local processes -----------------------------------------------------------------------------
@@ -431,7 +461,10 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
     if dry_run:
         return {**p, "dry_run": True}
     if p["needs_confirm"] and not confirm:
-        raise NeedsConfirm("Confirm the cost first. " + p["cost"]["text"], p)
+        raise NeedsConfirm("Confirm the cost first. " + p["cost"]["text"] + "".join(" " + w for w in p["warnings"]), p)
+    running_test = (PS.get(ctx, pid).get("ab") or {})
+    if running_test.get("status") == "running" and running_test.get("mode") == "captain":
+        raise ValueError("An A/B test is running on this endpoint. Roll it back or end it before staging another version.")
     say = progress or (lambda _t: None)
     t = C.get(ctx, p["target"])
     idle = float(idle_minutes or (state(ctx, pid, env) or {}).get("idle_minutes") or IDLE_MINUTES)
@@ -445,6 +478,12 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
     # The endpoint key: generated here and kept in the keychain. A machine with no keychain (CI, a headless server)
     # sets it in the environment under the same name instead, and that value is used as is.
     given = os.environ.get(rec["key_secret"], "").strip()
+    old_key = None
+    if old and old.get("status") == "running" and old.get("key_secret") and not given:
+        try:
+            old_key = _key(old)  # kept, so a restage that fails can hand the endpoint its key back
+        except ValueError:
+            old_key = None
     key = given or _secrets.token_urlsafe(32)
     key_sha = hashlib.sha256(key.encode()).hexdigest()
 
@@ -486,8 +525,23 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
             rec.update(endpoint=out["endpoint"], resources=out["resources"], status="running")
     except BaseException as e:
         left = getattr(e, "left_behind", None) or []
-        _save(ctx, pid, env, rec, status="failed", error=str(e)[:600], resources=left, stopped_at=_now(),
-              stop_reason="it did not start")
+        # A restage that failed must not orphan the endpoint that was already up: it is still running, so the
+        # project keeps pointing at it, with its key, and says what went wrong.
+        was_up = bool(old and old.get("status") == "running")
+        still_up = was_up and (
+            (old.get("kind") == "local" and _alive((old.get("endpoint") or {}).get("pid")))
+            or (old.get("kind") != "local" and old.get("target") == t["name"] and bool(old.get("resources"))
+                and {r["name"] for r in old["resources"]} <= {r["name"] for r in left}))
+        if still_up:
+            if old_key and old.get("key_secret"):
+                set_secret(old["key_secret"], old_key)
+            if old.get("bundle"):
+                set_control(ctx, pid, env, stage=old["id"], serve=old.get("serve"), split=None, experiment=None, salt=old["id"])
+            _save(ctx, pid, env, {**old, "error": f"Restaging {p['model_version']} did not work, so {old['model_version']} "
+                                                  f"is still running. {str(e)[:400]}"})
+        else:
+            _save(ctx, pid, env, rec, status="failed", error=str(e)[:600], resources=left, stopped_at=_now(),
+                  stop_reason="it did not start")
         raise
     rec = _save(ctx, pid, env, rec)
     for arm_name, r in p["arms"].items():
@@ -532,6 +586,14 @@ def unstage(ctx: Context, pid: str, env: str = ENV, reason: str | None = None) -
                 error=("Captain could not remove: " + ", ".join(f"{r['type']} {r['name']}" for r in left)) if left else None)
     if was != "stopped":
         _note(ctx, pid, f"stopped staging ({rec['stop_reason']})")
+
+        def end(doc):  # a test cannot go on without its endpoint
+            ab = doc.get("ab") or {}
+            if ab.get("status") == "running" and ab.get("mode") == "captain":
+                ab["status"], ab["ended_at"] = "finished", _now()
+                doc["ab"] = ab
+
+        PS._update(ctx, pid, end)
     return public(rec)
 
 

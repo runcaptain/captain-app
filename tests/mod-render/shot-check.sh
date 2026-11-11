@@ -22,7 +22,8 @@ for m in "${MODS[@]}"; do
     captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:samplefiles" "captain-data:samplerow" "captain-data:pictures" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
     # needs SHOT_PROJECT=1: a project with pins and experiments. captain-project:list (the project cards, nothing picked):
     # SHOT_ONLY, as two cards leave the column the blank check measures nearly empty.
-    captain-project) EXTRA+=("captain-project:home") ;;
+    # captain-project:ship needs SHOT_STAGED=1 too: the Ship steps first on the page, with something staged.
+    captain-project) EXTRA+=("captain-project:home"); [[ -n "${SHOT_STAGED:-}" ]] && EXTRA+=("captain-project:ship") ;;
     captain-runs) EXTRA+=("captain-runs:jobs" "captain-runs:live") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
@@ -47,6 +48,7 @@ end_terminals() {
   done
 }
 cleanup() {
+  if [[ -n "${STAGED_PID:-}" ]]; then env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects unstage "$STAGED_PID" >/dev/null 2>&1 || true; fi
   # The window's terminals run in their own core session, under a server that outlives the window, and a window
   # that quits parks its live terminals in a holder that stays. So end them while the window still runs, then quit
   # it, then stop the server, and keep looking for a late holder for 15 s.
@@ -125,6 +127,20 @@ if [[ -n "${SHOT_PROJECT:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
   PID=$(CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-project.py | tail -1)
   printf '{"frame.welcomed":"skipped","captain.scope":{"kind":"project","id":"%s","label":"Shot Project"}}\n' "$PID" > "$HOME_DIR/shared.json"
   echo "Explorer pick: $PID"
+  # SHOT_STAGED=1: the tuned ranker staged on this computer beside the baseline, tried once, and an A/B test with
+  # simulated shoppers, so captain-project:ship shows the four Ship steps filled in. The endpoint's key comes from the
+  # environment (no keychain is touched), and the endpoint is stopped when the check ends.
+  if [[ -n "${SHOT_STAGED:-}" ]]; then
+    export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
+    KEYNAME="STAGING_$(echo "$PID" | tr 'a-z-' 'A-Z_')_STAGING_KEY"
+    export "$KEYNAME=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+    STAGED_PID=$PID
+    env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects stage "$PID" --candidate demo-tuned --target local >/dev/null
+    env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects staging-query "$PID" "wireless headphones" >/dev/null
+    env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects ab-start "$PID" --split 0.5 --primary clicks >/dev/null
+    env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects ab-simulate "$PID" --sessions 600 >/dev/null
+    echo "Staged on this computer, with an A/B test on simulated shoppers"
+  fi
 fi
 # SHOT_FORMS_PREVIEW=cloud: the audit's forms dialog opens on that form (captain-forms' test hook), e.g. to compare the
 # cloud marks before and after a change. A comma list (database,cloud) shoots one dialog per form:
@@ -203,6 +219,7 @@ props_of() {
     captain-project:choose) echo '{"chooseModels": true}' ;;
     captain-project:home) echo '{"openExperiment": true}' ;;
     captain-project:list) echo '{"allProjects": true}' ;;
+    captain-project:ship) echo '{"shipFirst": true}' ;;
     captain-data:models-attach) echo '{"tab": "models", "registryAttach": true}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;
     captain-data:import-run) echo '{"importWith": {"conn": "demo-store", "table": "products", "name": "hello", "autoImport": true}}' ;;

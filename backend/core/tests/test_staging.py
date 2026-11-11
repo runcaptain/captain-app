@@ -451,7 +451,9 @@ def test_ab_test_end_to_end_on_this_computer(ws):
     p = r["primary"]
     assert p["metric"] == "clicks" and p["ci_low"] <= p["diff"] <= p["ci_high"] and 0 < p["baseline"] < 1
     assert p["verdict"] in ("candidate ahead", "candidate behind", "no clear difference")
-    assert [g["metric"] for g in r["guardrails"]] == ["purchases", "revenue", "latency"]
+    assert [(g["metric"], g["mode"]) for g in r["guardrails"]] == [("purchases", "watch"), ("revenue", "watch"), ("latency", "must")]
+    assert {x["segment"] for x in r["segments"]} <= {"head", "torso", "tail", "new", "returning"} and r["segments"]
+    assert all(x["sessions"]["baseline"] + x["sessions"]["candidate"] <= 400 for x in r["segments"])
     assert r["srm"]["ok"] and r["srm"]["expected"] == 0.5 and r["unmatched_outcomes"] == 0
     assert AB.get(ws, "shop")["last_readout"]["evidence"] == "SIMULATED"
     # outcomes joined by request id: every logged outcome belongs to a request in the log
@@ -615,3 +617,106 @@ def test_ab_cli(ws):
     assert out.exit_code == 0 and "Rolled back to shop/keyword-baseline@v1" in out.output
     out = run.invoke(app, ["projects", "ab-ramp", "shop", "0.5"])
     assert out.exit_code == 1 and "Only a running test" in out.output
+
+
+def test_a_failed_restage_keeps_the_endpoint_that_was_running(ws, monkeypatch):
+    SG.stage(ws, "shop", baseline=True, target="local")
+    before = SG.state(ws, "shop")
+
+    def boom(*a, **kw):
+        raise ValueError("The staging endpoint did not start on this computer.")
+
+    monkeypatch.setattr(SG, "_start_local", boom)
+    with pytest.raises(ValueError, match="did not start"):
+        SG.stage(ws, "shop", candidate=ws.exp, target="local")
+    after = SG.state(ws, "shop")
+    assert after["status"] == "running" and after["id"] == before["id"] and after["model_version"] == ws.baseline
+    assert "is still running" in after["error"] and SG._alive(after["endpoint"]["pid"])
+    monkeypatch.undo()
+    # and it still answers, with the key it had
+    assert SG.query(ws, "shop", "jacket")["staged"]["model_version"] == ws.baseline
+
+
+def test_staging_and_a_running_ab_test_do_not_trip_over_each_other(ws):
+    from captain_search.staging import ab as AB
+
+    SG.stage(ws, "shop", target="local")
+    AB.start(ws, "shop", split=0.5)
+    with pytest.raises(ValueError, match="An A/B test is running on this endpoint"):
+        SG.stage(ws, "shop", baseline=True, target="local")
+    assert SG.state(ws, "shop")["model_version"] == ws.candidate  # nothing changed
+    SG.unstage(ws, "shop")
+    assert AB.get(ws, "shop")["status"] == "finished"  # the test ends with its endpoint
+    SG.stage(ws, "shop", baseline=True, target="local")  # and staging works again
+
+
+def test_readout_by_segment_shows_a_win_that_loses_on_the_tail():
+    from captain_search.staging import ab as AB
+
+    # the project's log: one query gets most searches, a few get some, many get one each
+    log = [{"query": "Jacket", "session_id": f"h{i}", "user_id": f"old{i % 50}"} for i in range(300)]
+    log += [{"query": f"torso {i % 6}", "session_id": f"t{i}", "user_id": f"old{i % 50}"} for i in range(300)]
+    log += [{"query": f"rare {i}", "session_id": f"r{i}", "user_id": f"old{i % 50}"} for i in range(300)]
+    seg = AB.query_segments(log)
+    assert seg["query"]["jacket"] == "head" and seg["query"]["torso 0"] == "torso" and seg["query"]["rare 7"] == "tail"
+    assert AB.segment_of(seg, {"query": "never seen before", "user_id": "old3"}) == ["tail", "returning"]
+    assert AB.segment_of(seg, {"query": "JACKET ", "user_id": "someone new"}) == ["head", "new"]
+    assert AB.segment_of(seg, {"query": "jacket"}) == ["head"]  # no user id: the logs can't tell
+
+    ab = {"id": "ab-1", "status": "running", "mode": "captain", "split": 0.5, "primary": "clicks", "guardrails": [],
+          "min_sessions": 100, "arms": {"baseline": "b@v1", "candidate": "c@v1"}, "ramps": []}
+    reqs, outs = [], []
+
+    def add(arm, n, query, rate, tag):
+        for i in range(n):
+            rid = f"{tag}-{arm}-{i}"
+            reqs.append({"request_id": rid, "ts": "2026-11-10T00:00:00.000Z", "query": query if "{" not in query else query.format(i),
+                         "session_id": rid, "user_id": f"old{i % 50}" if i % 2 else f"fresh{i}", "arm": arm, "traffic": "real",
+                         "experiment": "ab-1", "ms": 5.0, "ids": ["p"]})
+            if i % 100 < rate:
+                outs.append({"request_id": rid, "event": "click", "product_id": "p", "value": 0.0})
+
+    add("baseline", 1000, "jacket", 20, "h"); add("candidate", 1000, "jacket", 40, "h")       # head: a big win
+    add("baseline", 400, "rare {}", 30, "t"); add("candidate", 400, "rare {}", 12, "t")        # tail: a clear loss
+    add("baseline", 40, "torso 1", 20, "m"); add("candidate", 40, "torso 1", 20, "m")          # torso: too little to say
+    r = AB.compute(ab, {"requests": reqs, "outcomes": outs, "names": {}}, segments=seg)
+    assert r["primary"]["verdict"] == "candidate ahead"
+    by = {x["segment"]: x for x in r["segments"]}
+    assert by["head"]["verdict"] == "candidate ahead" and by["head"]["ci_low"] > 0
+    assert by["tail"]["verdict"] == "candidate behind" and by["tail"]["ci_high"] < 0 and "Behind." in by["tail"]["text"]
+    assert by["torso"]["verdict"] == "not enough data yet" and not by["torso"]["enough"] and "each needs 100" in by["torso"]["text"]
+    assert by["new"]["sessions"]["baseline"] == by["returning"]["sessions"]["baseline"] == 720
+    assert r["segment_warning"] == "The candidate is ahead overall but behind on tail queries."
+    assert AB.compute(ab, {"requests": reqs, "outcomes": outs, "names": {}})["segments"] == []  # no log to segment by
+
+
+def test_a_must_not_get_worse_guardrail_pauses_the_ramp(ws):
+    from captain_search.staging import ab as AB
+
+    assert AB.RAMP[0] == 0.01  # ramps start at 1%
+    SG.stage(ws, "shop", target="local")
+    with pytest.raises(ValueError, match="marked must"):
+        AB.start(ws, "shop", guardrails=["purchases:sometimes"])
+    ab = AB.start(ws, "shop", split=0.01, primary="clicks", guardrails=["purchases:must", "revenue"], min_sessions=20)
+    assert ab["guardrail_modes"] == {"latency": "must", "purchases": "must", "revenue": "watch"} and ab["split"] == 0.01
+    rec = SG.state(ws, "shop")
+    # real requests: baseline shoppers buy, candidate shoppers don't
+    got = 0
+    for i in range(4000):
+        r = SG.call(ws, rec, "rank", {"query": "jacket", "session_id": f"s{i}", "k": 3})
+        if r["arm"] == "baseline" and i % 2 == 0:
+            SG.call(ws, rec, "outcome", {"request_id": r["request_id"], "event": "purchase", "product_id": r["ids"][0], "value": 30.0})
+        got += r["arm"] == "candidate"
+        if got >= 25 and i > 1500:
+            break
+    out = AB.readout(ws, "shop")
+    bad = next(g for g in out["guardrails"] if g["metric"] == "purchases")
+    assert not bad["ok"] and bad["mode"] == "must" and bad["text"].startswith("Must not get worse. ")
+    assert next(g for g in out["guardrails"] if g["metric"] == "revenue")["text"].startswith("Watch. ")
+    assert out["hard_stop"].startswith("The ramp is paused: Must not get worse. Sessions with a purchase")
+    assert AB.get(ws, "shop")["paused"]["why"]
+    with pytest.raises(ValueError, match="The ramp is paused: .*Roll back, or ramp down"):
+        AB.ramp(ws, "shop", 0.05)
+    assert AB.get(ws, "shop")["split"] == 0.01 and SG.control(ws, "shop")["split"] == 0.01
+    assert "paused the A/B ramp" in " | ".join(h["what"] for h in PS.get(ws, "shop")["history"])
+    assert AB.rollback(ws, "shop")["rolled_back_to"] == ws.baseline  # rolling back is always allowed

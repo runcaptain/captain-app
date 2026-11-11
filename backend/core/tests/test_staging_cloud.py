@@ -33,6 +33,8 @@ class FakeAWS:
         self.fail_on = None       # a call name that raises
         self.endpoint_fails = False  # the endpoint is created, then goes Failed
         self.runtimes = {}
+        self.role_denies = set()   # actions the execution role lacks
+        self.iam_refuses = False   # Captain's own sign-in may not ask IAM
 
     def client(self, name):
         return self
@@ -89,6 +91,14 @@ class FakeSM:
     def delete_model(self, ModelName):
         self._delete("delete_model", self.w.models, ModelName)
 
+    # iam: what the execution role may do, asked without changing anything
+    def simulate_principal_policy(self, PolicySourceArn, ActionNames, ResourceArns):
+        self.w.calls.append(("simulate_principal_policy", {"action": ActionNames[0], "resource": ResourceArns[0]}))
+        if self.w.iam_refuses:
+            raise Boom("not authorized to perform iam:SimulatePrincipalPolicy", "SimulatePrincipalPolicy")
+        return {"EvaluationResults": [{"EvalActionName": ActionNames[0],
+                                       "EvalDecision": "implicitDeny" if ActionNames[0] in self.w.role_denies else "allowed"}]}
+
     def list_endpoints(self, **kw):
         return {"Endpoints": [{"EndpointName": n, "EndpointArn": f"endpoint/{n}"} for n in self.w.endpoints]}
 
@@ -141,7 +151,8 @@ def test_a_cloud_deploy_shows_its_cost_and_needs_a_confirm(ws, aws):  # noqa: F8
     with pytest.raises(SG.NeedsConfirm) as e:
         SG.stage(ws, "shop", target="sm")
     assert e.value.plan["cost"] == p["cost"]
-    assert not aws.calls and SG.state(ws, "shop") is None  # nothing was created or recorded
+    assert [c for c, _ in aws.calls] == ["simulate_principal_policy"] * 4 and SG.state(ws, "shop") is None  # only asked, nothing created
+    assert p["preflight"] == {"checked": True, "can_delete": True, "can_write": True, "warnings": [], "note": None}
 
 
 def test_stage_query_and_unstage_leave_nothing_behind(ws, aws):  # noqa: F811
@@ -243,4 +254,42 @@ def test_staging_needs_a_cloud_workspace_on_a_cloud_target(ws, aws):  # noqa: F8
     ws.workspace.storage_uri = "/tmp/on-disk"
     with pytest.raises(ValueError, match="needs a cloud workspace"):
         SG.stage(ws, "shop", target="sm", confirm=True)
-    assert not aws.calls
+    assert not [c for c, _ in aws.calls if c != "simulate_principal_policy"]
+
+
+def test_a_failed_cloud_restage_keeps_the_old_endpoint_and_removes_only_the_new_parts(ws, aws):  # noqa: F811
+    a = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    aws.fail_on = "update_endpoint"
+    with pytest.raises(ProviderError, match="not authorized"):
+        SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
+    aws.fail_on = None
+    rec = SG.state(ws, "shop")
+    assert rec["status"] == "running" and rec["model_version"] == ws.baseline and "is still running" in rec["error"]
+    assert {r["name"] for r in rec["resources"]} == {r["name"] for r in a["resources"]}
+    assert len(aws.models) == 1 and len(aws.configs) == 1 and len(aws.endpoints) == 1  # the new model and config are gone
+    assert SG.query(ws, "shop", "jacket")["staged"]["model_version"] == ws.baseline  # and its key still works
+    SG.unstage(ws, "shop")
+    assert not aws.models and not aws.configs and not aws.endpoints
+
+
+def test_a_role_that_cannot_stop_its_own_endpoint_is_warned_about_before_the_confirm(ws, aws):  # noqa: F811
+    aws.role_denies = {"sagemaker:DeleteEndpoint"}
+    p = SG.plan(ws, "shop", target="sm")
+    warn = "This endpoint can't stop itself when idle. It will keep billing until you stop it from Captain."
+    assert p["preflight"]["checked"] and p["preflight"]["can_delete"] is False and p["preflight"]["can_write"] is True
+    assert p["warnings"] == [warn] and p["text"].endswith(warn)
+    asked = {c[1]["action"]: c[1]["resource"] for c in aws.calls}
+    assert asked["sagemaker:DeleteEndpoint"].endswith(":endpoint/captain-search-test-shop-staging")
+    assert asked["s3:PutObject"] == "arn:aws:s3:::captain-test/cst/staging/preflight"
+    with pytest.raises(SG.NeedsConfirm, match="can't stop itself when idle") as e:
+        SG.stage(ws, "shop", target="sm")
+    assert e.value.plan["warnings"] == [warn] and not aws.endpoints
+    # the bucket: without it there is no log, and that is said too
+    aws.role_denies = {"s3:PutObject"}
+    assert "can't write the workspace bucket" in SG.plan(ws, "shop", target="sm")["warnings"][0]
+    # when IAM won't answer, Captain says it couldn't check, and does not guess either way
+    aws.role_denies, aws.iam_refuses = set(), True
+    p = SG.plan(ws, "shop", target="sm")
+    assert p["preflight"]["checked"] is False and p["preflight"]["can_delete"] is None and p["warnings"] == []
+    assert "couldn't check" in p["preflight"]["note"] and "keeps billing until you stop it from Captain" in p["preflight"]["note"]
+    assert SG.plan(ws, "shop", target="local")["preflight"] is None  # nothing to check on this computer

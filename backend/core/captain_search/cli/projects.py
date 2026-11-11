@@ -552,6 +552,8 @@ def stage(name: str,
             if S.json:
                 fail("Confirm the cost first with --yes. " + p["cost"]["text"])
             typer.echo(p["text"])
+            if (p.get("preflight") or {}).get("note"):
+                typer.echo(p["preflight"]["note"])
             if not typer.confirm("Start it?"):
                 raise typer.Exit(1)
         _by_hand(c, name, "stage a model version")
@@ -662,6 +664,11 @@ def _readout_text(r: dict) -> str:
             lines.append(f"  {a:9} {x['model_version']:40} {x['sessions']:>7,} sessions")
     for g in r.get("guardrails") or []:
         lines.append(("  ok   " if g["ok"] else "  FAIL ") + g["text"])
+    for x in r.get("segments") or []:
+        lines.append("  " + x["text"])
+    for k in ("segment_warning", "hard_stop"):
+        if r.get(k):
+            lines.append(r[k])
     if r.get("srm"):
         lines.append("  " + r["srm"]["text"])
     if r.get("split") is not None and r.get("status") == "running":
@@ -673,7 +680,7 @@ def _readout_text(r: dict) -> str:
 def ab_start(name: str,
              split: float = typer.Option(0.5, "--split", help="the candidate's share of traffic, such as 0.05"),
              primary: Optional[str] = typer.Option(None, "--primary", help="clicks, purchases or revenue; default purchases"),
-             guardrail: list[str] = typer.Option([], "--guardrail", help="a metric that must not get clearly worse. Repeat; default the others"),
+             guardrail: list[str] = typer.Option([], "--guardrail", help="a guardrail: a metric, or metric:must (a clear drop pauses the ramp) or metric:watch (shown only). Repeat; default the others as watch, and latency:must"),
              own: bool = typer.Option(False, "--own", help="your own A/B system splits the traffic: Captain gives each arm's address"),
              min_sessions: int = typer.Option(200, "--min-sessions", help="sessions each arm needs before the readout says anything")):
     """Start an A/B test between the baseline and the staged candidate."""
@@ -705,7 +712,7 @@ def ab_readout(name: str, traffic: Optional[str] = typer.Option(None, "--traffic
 
 
 @projects_app.command("ab-ramp")
-def ab_ramp(name: str, split: float = typer.Argument(..., help="the candidate's new share: 0.05, 0.25, 0.5 or 1")):
+def ab_ramp(name: str, split: float = typer.Argument(..., help="the candidate's new share: 0.01, 0.05, 0.25, 0.5 or 1")):
     """Give the candidate a larger (or smaller) share of traffic. No redeploy."""
     from ..staging import ab as AB
 

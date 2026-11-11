@@ -1142,7 +1142,9 @@ last project opened there. With no project it offers New project, which can pin 
   bring the readout in. The readout shows sessions per arm, the difference with its interval, the guardrails,
   "Not enough data yet" until each arm has enough sessions, and where the traffic came from: Real traffic,
   Simulated shoppers (SIMULATED) or Test traffic. "Send simulated shoppers at staging" shows the loop with no
-  traffic yet. Ramp (5%, 25%, 50%, 100%) and Roll back are one click with a confirmation, and are written to
+  traffic yet. It also breaks the result down by head, torso and tail queries and new or returning shoppers,
+  each with its own interval. Guardrails are marked "must not get worse" (a clear drop pauses the ramp, with the
+  reason) or "watch". Ramp (1%, 5%, 25%, 50%, 100%) and Roll back are one click with a confirmation, and are written to
   the project's history (`cst projects ab-start|ab|ab-ramp|ab-rollback|ab-simulate <project>`). **4 Launch
   review** is still the gate before production, and Captain deploys nothing itself. `cst docs staging` has the
   whole guide. Below the path: the registry place (asked once). The baseline is what MLflow and Unity Catalog
