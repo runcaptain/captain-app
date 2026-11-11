@@ -890,6 +890,18 @@ def _evaluation(ctx: Context, exp: dict, champion: str | None, index=None) -> di
     }
 
 
+def _feature_timing(ctx: Context, exp: dict) -> str | None:
+    """One line on how the candidate's training features were timed, from its training set's provenance."""
+    if not exp.get("training_set"):
+        return None
+    try:
+        name, _, v = exp["training_set"].partition("@v")
+        tm = ctx.registry.load("dataset", name, int(v))  # an exact version: no listing
+    except Exception:  # noqa: BLE001
+        return None
+    return ((tm.provenance.params or {}).get("feature_timing") or {}).get("text")
+
+
 def experiments(ctx: Context, pid: str) -> dict:
     from . import lineage_index as LI
 
@@ -898,7 +910,8 @@ def experiments(ctx: Context, pid: str) -> dict:
     rows = []
     for e in doc["experiments"]:
         ev = e.get("reported") or _evaluation(ctx, e, doc.get("champion"), index)
-        rows.append({**e, "is_champion": e["pipeline"] == doc.get("champion"), "evaluation": ev})
+        rows.append({**e, "is_champion": e["pipeline"] == doc.get("champion"), "evaluation": ev,
+                     "feature_timing": _feature_timing(ctx, e)})
     return {"project": pid, "champion": doc.get("champion"), "pins": doc["pins"], "experiments": rows,
             "evaluation": evaluation_plan(ctx, doc)}
 

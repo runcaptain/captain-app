@@ -105,7 +105,8 @@ or recorded nothing.
 
 `lightgbm-ltr` is a trainer like any other, kept in the package as a working example
 (`captain_search/trainers/lightgbm_ltr.py`). Its input is a training set from `cst data training-set`, given with
-role `training`: a parquet part with `query_id`, `grade`, `split` and one column per feature, plus `features.json`,
+role `training`: a parquet part with `query_id`, `grade`, `split`, `event_ts`, `request_id`, `label_kind` and one
+column per feature, plus `features.json`,
 which names the features and carries the lookup tables scoring needs. It trains LightGBM lambdarank, stops early on
 the validation queries, prints one JSON line per round (`{"type": "metric", "name": "ndcg@10", ...}`), and writes
 `model/` with the model, the unchanged `features.json` and a scorer that needs only numpy.
@@ -116,3 +117,9 @@ environment under Captain's home folder (`envs/train-ltr`), which needs the inte
 
 `cst projects starter-train <project>` runs all of it for a project: the keyword baseline if there is none, the
 training set, the trainer, and the new candidate.
+
+Each training row keeps the time and request id of the search it came from (`event_ts`, `request_id`), so features
+logged at serving time can be matched back to it. `label_kind` is `clicks`, `judgment` or `unshown`. Unshown rows
+are weak negatives: results the first stage finds that the old ranker never showed for the query, added as grade 0
+so the ranker trains on the same top 50 it reorders. The training set's provenance says how each feature is timed:
+click features are counted once, up to one cutoff, and the rest are computed per row.

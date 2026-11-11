@@ -46,6 +46,11 @@ const page = async () => {
   assert.ok(h.text().includes('Train and compare'), `the page loads: ${h.text().slice(0, 800)}`);
   return h;
 };
+// What the page tells agents (kit/view.js publishes on a timer, so wait for it).
+const published = async (h, ok) => {
+  for (let i = 0; i < 60 && !ok(globalThis.__shared['captain.view.project']); i++) { await h.layoutLists({}); await h.idle(150); }
+  return globalThis.__shared['captain.view.project'];
+};
 const clean = (t, where) => {
   for (const bad of [/\bengine\b/i, /\bdaemon\b/i, /\bcst /, /CST_[A-Z]/, /[\u2190-\u21ff\u27f0-\u27ff\u2900-\u297f]/, /\u2014/])
     assert.ok(!bad.test(t), `no ${bad} ${where}`);
@@ -70,6 +75,9 @@ clean(t, 'on the page');
 await post('/api/projects/outdoor/inputs/events', { source: { from: 'dataset', ref: 'logs/demo-search-sessions' }, mode: 'snapshot' });
 h = await page();
 assert.equal(h.byIdPrefix('start-train').length, 1, 'Train a starter ranker is offered');
+// The same steps, for agents: what `cst app context` reads from this page.
+let steps = (await published(h, (v) => v?.steps?.[1]?.action === 'starter-train'))?.steps;
+assert.deepEqual(steps?.map((x) => [x.label, x.done, x.action]), [['1 Set a baseline (keyword search)', false, 'baseline-start'], ['2 Train a starter ranker', false, 'starter-train']], `steps are published: ${JSON.stringify(globalThis.__shared['captain.view.project'])}`);
 assert.ok(h.text().includes('Next: Set a baseline to compare against.'), `the top line starts with the baseline: ${h.text().slice(0, 500)}`);
 assert.ok(h.text().includes('Start with keyword search'), 'and its button');
 
@@ -84,6 +92,8 @@ t = h.text();
 assert.equal(h.byIdPrefix('start-done-baseline').length, 1, 'a done tick on step 1');
 assert.ok(!t.includes('Start with keyword search as the baseline'), 'its button is gone');
 assert.ok(t.includes('Next: Train a starter ranker.'), `the top line moves on: ${t.slice(0, 600)}`);
+steps = (await published(h, (v) => v?.steps?.[0]?.done))?.steps;
+assert.deepEqual(steps?.map((x) => [x.done, x.action ?? null]), [[true, null], [false, 'starter-train']], 'step 1 reads done to an agent');
 assert.ok(t.includes('simulated'), 'the events read as simulated');
 clean(t, 'on the page');
 
@@ -99,7 +109,7 @@ for (let i = 0; i < 60 && !f.text().includes('kept back to judge'); i++) await f
 t = f.text();
 assert.ok(t.includes('How do you want to train?'), 'the question');
 for (const id of ['f-how-starter', 'f-how-agent', 'f-how-own']) assert.equal(f.byIdPrefix(id).length, 1, `${id} card`);
-assert.ok(t.includes('Starter ranker') && t.includes('Learns to rank from your clicks. Good first candidate.'), 'the starter card');
+assert.ok(t.includes('Starter ranker') && t.includes('A first trained candidate to judge against keyword search. It may not win.') && !t.includes('Good first candidate'), 'the starter card');
 assert.ok(t.includes('Write one with an agent') && t.includes('My own training command'), 'the other two cards');
 assert.equal(f.mod.values.how, 'starter', 'the starter card is chosen first');
 assert.ok(t.includes('What it will use') && t.includes('demo-catalog@v1') && t.includes('logs/demo-search-sessions@v1'), 'what it reads, from the pins');
@@ -158,6 +168,9 @@ h = await page();
 for (let i = 0; i < 40 && !h.text().includes('starter-ranker'); i++) await h.idle(150);
 t = h.text();
 assert.ok(t.includes('starter-ranker') && !h.byIdPrefix('exp-start').length, 'the candidate row replaces the guided start');
+assert.ok(!(await published(h, (v) => v && !v.steps))?.steps, 'no steps once a candidate exists');
+const row = (await get('/api/projects/outdoor/experiments')).experiments[0];
+assert.match(row.feature_timing, /^Click features: counted once, up to \d{4}-\d\d-\d\d\./, 'how the features were timed');
 assert.ok(/Agrees with its own labeler|Too few judged results to call/.test(t), `the honest verdict shows: ${t.slice(0, 1200)}`);
 clean(t, 'on the page');
 console.log('starter-ranker render test: ok');

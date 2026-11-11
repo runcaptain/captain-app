@@ -18,7 +18,11 @@ Three rules, each a refusal with a plain sentence rather than a warning:
 3. No training query is in the sealed test set. Queries the test set holds are dropped and counted. If one is
    still there when the set is written, the build is refused.
 
-Provenance records the label source, both windows, the cutoffs, and the fingerprint of every input. Its catalog,
+With click labels, the first stage's top 50 results that were never shown for a training query join as grade 0
+("unshown" rows): the ranker reorders that whole top 50, and clicks only grade what the old ranker showed. Every
+row carries the time and request id of the search it came from, so served features can be matched back to it.
+
+Provenance records how each feature is timed (click features once, up to the cutoff; the rest per row), the label source, both windows, the cutoffs, and the fingerprint of every input. Its catalog,
 logs and judgments refs are the lineage edges (lineage_index.derive reads them). A set built from simulated
 events is tagged synthetic, so everything trained and judged on it reads SIMULATED.
 """
@@ -33,7 +37,34 @@ from .eval import queries as Q
 from .model.entities import DatasetKind, FileEntry, Provenance
 from .storage.registry import check_name, sha256
 
-LABEL_COLUMNS = ["query_id", "query", "product_id", "grade", "split"]
+# event_ts and request_id tie a row to the search it came from, so features logged at serving time can later be
+# matched back to the training row (point-in-time checks).
+# label_kind says where the grade came from: "clicks", "judgment", or "unshown" for a weak negative.
+LABEL_COLUMNS = ["query_id", "query", "product_id", "grade", "split", "event_ts", "request_id", "label_kind"]
+NEGATIVES_K = 50  # how deep into the first stage's results unshown candidates are taken from: the depth reranked
+REQUEST_COLUMNS = ("request_id", "search_id", "impression_id")
+
+
+def _request_ids(rows: list[dict], col: str) -> tuple[dict, dict]:
+    """For each (query, product), the newest impression's timestamp and request id, plus how the id was found.
+    Events with a request id column use it. Without one, the id is a hash of the session, the time and the query:
+    the same search always gets the same id."""
+    import hashlib
+
+    have = next((c for c in REQUEST_COLUMNS if rows and c in rows[0]), None)
+    out: dict = {}
+    for r in rows:
+        ts = F.ts_key(r.get(col))
+        key = (F.norm_query(r["query"]), str(r["product_id"]))
+        if key in out and out[key][0] >= ts:
+            continue
+        rid = str(r[have]) if have and r.get(have) is not None else "req-" + hashlib.md5(
+            f"{r.get('session_id') or ''}|{ts}|{key[0]}".encode()).hexdigest()[:16]
+        out[key] = (ts, rid)
+    how = ({"source": "column", "column": have, "text": f"Request ids come from the events' {have} column."} if have else
+           {"source": "derived", "column": None,
+            "text": "The events have no request id, so each one is a hash of the session id, the timestamp and the query."})
+    return out, how
 MIN_QUERIES = 20
 
 
@@ -104,7 +135,7 @@ def plan(ctx, catalog: str, events: str | None = None, judgments: str | None = N
          holdout: str | None = None, as_of: str | None = None, train_until: str | None = None,
          title: str | None = None, labels: str = "auto", popularity: bool | None = None,
          min_impressions: int = 3, valid: float = 0.2, salt: str = "", min_queries: int = MIN_QUERIES,
-         tables: dict | None = None) -> dict:
+         tables: dict | None = None, negatives: int | None = None) -> dict:
     """Everything `build` will write, without writing it: the rows, the feature bundle and the provenance. Raises
     ValueError (features.Leak for a leak) with the sentence to show.
 
@@ -125,6 +156,10 @@ def plan(ctx, catalog: str, events: str | None = None, judgments: str | None = N
     label_window = None
     cut = None
     pairs: list[dict] = []
+    stamps: dict = {}
+    request_how = {"source": "derived", "column": None,
+                   "text": "Judgments carry no search, so each request id is a hash of the query id and the product, "
+                           "and there is no event time."}
     source = None
     simulated = False
 
@@ -182,6 +217,7 @@ def plan(ctx, catalog: str, events: str | None = None, judgments: str | None = N
         lab_rows = [r for r in erows if cut["as_of"] < F.ts_key(r.get(col)) <= cut["train_until"]]
         label_window = _window(lab_rows, col)
         graded, _ = H.grades(lab_rows, min_impressions)
+        stamps, request_how = _request_ids(lab_rows, col)
         pairs = [{"query_id": g["query_id"], "query": g["query"], "product_id": g["product_id"], "grade": g["grade"]}
                  for g in graded]
         source = "clicks"
@@ -224,9 +260,33 @@ def plan(ctx, catalog: str, events: str | None = None, judgments: str | None = N
     if unknown:
         notes.append(f"{unknown} labelled {'pair names a product' if unknown == 1 else 'pairs name products'} the "
                      "catalog doesn't hold, and were left out.")
+    kind = "judgment" if use == "judgments" else "clicks"
     by_q: dict[str, list[dict]] = {}
     for p in pairs:
-        by_q.setdefault(p["query_id"], []).append(p)
+        by_q.setdefault(p["query_id"], []).append({**p, "label_kind": kind})
+    # Weak negatives. Clicks only grade what the old ranker showed, but the trained ranker reorders the first
+    # stage's whole top K. So for each training query, the first-stage results that were never shown for it in the
+    # label window join as grade 0. They are guesses (not shown is not the same as not relevant), marked "unshown".
+    # They read no event, so no leak rule changes: their features come from the same frozen tables as every row.
+    neg_k = NEGATIVES_K if negatives is None else int(negatives)
+    added = 0
+    if use == "clicks" and neg_k > 0:
+        from .engines import LocalBM25
+
+        first = LocalBM25(products, F.retrieve_spec(spec))
+        shown: dict[str, set] = {}
+        for r in lab_rows:
+            shown.setdefault(F.norm_query(r["query"]), set()).add(str(r["product_id"]))
+        for qid, ps in by_q.items():
+            q = ps[0]["query"]
+            seen = shown.get(q, set()) | {p["product_id"] for p in ps}
+            for pid in first.search(q, neg_k):
+                if pid not in seen:
+                    ps.append({"query_id": qid, "query": q, "product_id": pid, "grade": 0, "label_kind": "unshown"})
+                    added += 1
+        if added:
+            notes.append(f"{added:,} products the keyword search finds but the old ranker never showed were added as "
+                         "grade 0. They are guesses, not judgments: not shown isn't the same as not relevant.")
     # A query whose products all got the same grade teaches a ranker nothing about order.
     flat = [q for q, ps in by_q.items() if len({p["grade"] for p in ps}) < 2]
     for q in flat:
@@ -244,8 +304,14 @@ def plan(ctx, catalog: str, events: str | None = None, judgments: str | None = N
         ps = sorted(by_q[qid], key=lambda p: p["product_id"])
         sp = "valid" if Q.split_of(qid, valid, split_salt) == "holdout" else "train"
         for p, fv in zip(ps, fz.features(ps[0]["query"], [p["product_id"] for p in ps])):
+            ts, rid = stamps.get((p["query"], p["product_id"]), (None, None))
+            if rid is None:
+                import hashlib
+
+                rid = "req-" + hashlib.md5(f"{qid}|{p['product_id']}".encode()).hexdigest()[:16]
             rows.append({"query_id": qid, "query": p["query"], "product_id": p["product_id"], "grade": p["grade"],
-                         "split": sp, **dict(zip(fz.names, fv))})
+                         "split": sp, "event_ts": ts, "request_id": rid, "label_kind": p["label_kind"],
+                         **dict(zip(fz.names, fv))})
     n_valid = len({r["query_id"] for r in rows if r["split"] == "valid"})
     n_train = len(by_q) - n_valid
     if not n_valid or not n_train:
@@ -260,6 +326,13 @@ def plan(ctx, catalog: str, events: str | None = None, judgments: str | None = N
                          else f"clicks over expected clicks (historic.grades), pairs with {min_impressions}+ impressions"),
         "as_of": cut["as_of"] if cut else None, "train_until": cut["train_until"] if cut and use == "clicks" else None,
         "feature_window": (tables or {}).get("window"), "label_window": label_window,
+        "feature_timing": F.feature_timing(fz.names, ((tables or {}).get("window") or {}).get("to") or (cut["as_of"] if cut else None)),
+        "negatives": {"top_k": neg_k if use == "clicks" else 0, "added": added,
+                      "method": "first-stage (keyword search) results never shown for the query in the label window, as grade 0",
+                      "text": (f"{added:,} unshown first-stage candidates were added as grade 0 (weak negatives)." if added
+                               else "No unshown candidates were added.")},
+        "row_keys": {"event_ts": "the newest impression of the pair in the label window" if use == "clicks" else None,
+                     "request_id": request_how},
         "evaluation_window": ({"after": cut["train_until"], "to": cut["last"]} if cut and use == "clicks" else None),
         "holdout": holdout, "holdout_queries_dropped": len(dropped),
         "split": {"by": "query", "valid": valid, "salt": split_salt, "train_queries": n_train, "valid_queries": n_valid},
@@ -275,6 +348,7 @@ def plan(ctx, catalog: str, events: str | None = None, judgments: str | None = N
                         "as_of": params["as_of"], "train_until": params["train_until"],
                         "feature_window": params["feature_window"], "label_window": label_window,
                         "popularity": tables is not None, "holdout_queries_dropped": len(dropped),
+                        "negatives_added": added, "labelled_rows": len(rows) - added,
                         "simulated": simulated, "catalog": ref(cm), "events": ref(em) if em else None,
                         "judgments": ref(jm) if use == "judgments" else None}}
 
@@ -287,7 +361,11 @@ def build(ctx, name: str, catalog: str, dry_run: bool = False, **kw):
     name = check_name(name)
     p = plan(ctx, catalog, **{"salt": name, **kw})
     cols = LABEL_COLUMNS + p["names"]
-    table = pa.Table.from_pylist(p["rows"]).select(cols)
+    table = pa.Table.from_pylist(p["rows"], schema=pa.schema(
+        [(c, pa.string()) for c in ("query_id", "query", "product_id")] + [("grade", pa.int64()), ("split", pa.string()),
+                                                                           ("event_ts", pa.string()), ("request_id", pa.string()),
+                                                                           ("label_kind", pa.string())]
+        + [(n, pa.float64()) for n in p["names"]])).select(cols)
     data = to_parquet(table)
     fbytes = json.dumps(p["bundle"], sort_keys=True, separators=(",", ":")).encode()
     s = p["summary"]

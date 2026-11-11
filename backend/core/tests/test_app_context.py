@@ -138,6 +138,22 @@ def test_the_project_page_with_what_the_services_know(app_home, ws):
     w.close()
 
 
+def test_the_guided_start_steps_reach_the_agent(app_home, ws):
+    """A project with nothing trained yet publishes its two steps: which are done and what each one's button does."""
+    v = view()
+    v["views"]["project"]["steps"] = [
+        {"label": "1 Set a baseline (keyword search)", "done": True, "action": None},
+        {"label": "2 Train a starter ranker", "done": False, "action": "starter-train"}]
+    w = Window(app_home, v)
+    r = CliRunner()
+    t = r.invoke(app, ["app", "context"]).output
+    assert "1 Set a baseline (keyword search): done" in t
+    assert "2 Train a starter ranker: to do  [action: starter-train]" in t
+    d = json.loads(r.invoke(app, ["--json", "app", "context"]).output)
+    assert [s["done"] for s in d["selected"]["steps"]] == [True, False]
+    w.close()
+
+
 def test_other_screens_a_dataset_an_evaluation_an_experiment(app_home, ws):
     inv = INV.create(ws, "Why do numeric queries regress?")
     v = view(section="data", scope=None, views={

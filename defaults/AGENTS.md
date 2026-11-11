@@ -1117,7 +1117,9 @@ last project opened there. With no project it offers New project, which can pin 
   the catalog, no training, `cst projects baseline-start <project>`), 2 Train a starter ranker. New candidate asks
   "How do you want to train?": Starter ranker (no code: Captain builds a leak-checked training set from the
   pinned clicks or judgments and trains LightGBM on it, `cst projects starter-train <project>`; the first run sets
-  the trainer up once in a private environment), Write one with an agent, or My own training command. A replay of
+  the trainer up once in a private environment), Write one with an agent, or My own training command. While
+  nothing is trained, the page also publishes the two steps for agents: `cst app context` lists each as done or to
+  do, with its action (`baseline-start`, `starter-train`). A replay of
   logged clicks where under half of a candidate's top 10 has grades reads "Too few judged results to call". Import
   a model version brings one from MLflow or a registry. Rows open to: the comparison, Rerun with changes, Judge against the baseline,
   Make it the baseline (with its evidence) and Publish to the registry.

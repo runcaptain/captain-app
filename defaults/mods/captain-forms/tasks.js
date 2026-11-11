@@ -331,7 +331,7 @@ export const TASKS = [
     fields: [
       { key: "how", label: "How do you want to train?", kind: "choice", cards: true, required: true, default: (v) => (v.base || v.command ? "own" : "starter"),
         options: [
-          { value: "starter", label: "Starter ranker", chip: "no code", icon: "sparkles", about: "Learns to rank from your clicks. Good first candidate." },
+          { value: "starter", label: "Starter ranker", chip: "no code", icon: "sparkles", about: "Learns to rank from your clicks. A first trained candidate to judge against keyword search. It may not win." },
           { value: "agent", label: "Write one with an agent", icon: "bot", about: "An agent reads this project and writes a training script that follows Captain's trainer contract." },
           { value: "own", label: "My own training command", icon: "terminal", about: "Run the training code you already have on the project's inputs." },
         ] },

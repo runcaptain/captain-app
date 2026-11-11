@@ -199,6 +199,67 @@ def test_the_training_set_is_deterministic_and_records_what_it_read(ws):
     assert {"dataset:shop-catalog@v1", "dataset:logs/sessions@v1"} <= up
 
 
+def test_every_training_row_carries_its_event_time_and_a_request_id(ws):
+    m, p = TS.build(ws, "shop/training", "shop-catalog", events="logs/sessions")
+    _, rows, _ = ops.rows_of(ws, ops.ref(m))
+    s = p["summary"]
+    seen = [r for r in rows if r["label_kind"] == "clicks"]
+    assert seen and all(s["as_of"] < r["event_ts"] <= s["train_until"] for r in seen)  # the newest impression in the label window
+    assert all(r["event_ts"] is None for r in rows if r["label_kind"] == "unshown")  # a weak negative has no event
+    assert all(r["request_id"].startswith("req-") for r in rows)
+    how = m.provenance.params["row_keys"]["request_id"]
+    assert how["source"] == "derived" and "hash of the session id" in how["text"]  # these events have no request id
+    again = TS.plan(ws, "shop-catalog", events="logs/sessions", salt="shop/training")["rows"]
+    assert [r["request_id"] for r in again] == [r["request_id"] for r in rows]  # stable
+    # Events that carry a request id keep it.
+    with_ids = [dict(r, request_id=f"search-{i // 10}") for i, r in enumerate(ws.rows)]
+    snapshot(ws, "logs/with-ids", pa.Table.from_pylist(with_ids), kind=DatasetKind.events, provenance=Provenance(source="generated"))
+    q = TS.plan(ws, "shop-catalog", events="logs/with-ids")
+    assert all(r["request_id"].startswith("search-") for r in q["rows"] if r["label_kind"] == "clicks")
+    assert q["params"]["row_keys"]["request_id"] == {"source": "column", "column": "request_id",
+                                                     "text": "Request ids come from the events' request_id column."}
+
+
+def test_provenance_says_how_each_feature_is_timed_and_the_candidate_shows_it(ws, monkeypatch, tmp_path):
+    _fake(monkeypatch, tmp_path)
+    r = ST.train(ws, "shop")
+    tm, _ = ws.registry.resolve("dataset", r["training_set"])
+    ft = tm.provenance.params["feature_timing"]
+    assert set(ft["one cutoff (as_of)"]) == {"pop_impressions_log", "pop_clicks_log", "pop_coec", "pop_purchase_rate",
+                                             "qp_impressions_log", "qp_coec"}
+    assert "bm25_title" in ft["per row"] and "price_log" in ft["per row"] and not set(ft["per row"]) & set(ft["one cutoff (as_of)"])
+    assert ft["as_of"] == r["summary"]["as_of"]
+    assert ft["text"].startswith(f"Click features: counted once, up to {r['summary']['as_of']}.")
+    row = PS.experiments(ws, "shop")["experiments"][0]
+    assert row["feature_timing"] == ft["text"]
+    # Without events there is nothing counted once.
+    assert F.feature_timing(["bm25_title", "title_overlap"], None)["text"].startswith("Text, brand and price features")
+
+
+def test_unshown_first_stage_candidates_join_as_weak_negatives(ws):
+    """Clicks only grade what the old ranker showed. The ranker reorders the first stage's top 50, so those join
+    training as grade 0, marked for what they are."""
+    p = TS.plan(ws, "shop-catalog", events="logs/sessions")
+    s, cut = p["summary"], TS.cutoffs(ws.rows)
+    neg = [r for r in p["rows"] if r["label_kind"] == "unshown"]
+    assert neg and len(neg) == s["negatives_added"] and s["labelled_rows"] == s["rows"] - len(neg)
+    assert all(r["grade"] == 0 for r in neg)
+    shown = {(F.norm_query(r["query"]), r["product_id"]) for r in ws.rows if cut["as_of"] < r["ts"] <= cut["train_until"]}
+    assert not {(r["query"], r["product_id"]) for r in neg} & shown  # never a product that was shown for the query
+    # every one is something the first stage finds for that query, within the depth that is reranked
+    from captain_search.engines import LocalBM25
+
+    first = LocalBM25(ops.products_of(ws, "shop-catalog"), F.retrieve_spec(p["bundle"]["spec"]))
+    for q in {r["query"] for r in neg}:
+        top = set(first.search(q, 50))
+        assert {r["product_id"] for r in neg if r["query"] == q} <= top
+    assert p["params"]["negatives"]["added"] == len(neg) and any("guesses, not judgments" in n for n in p["notes"])
+    # the leak rules still hold with negatives in: nothing from the label window or later is read for a feature
+    assert s["feature_window"]["to"] <= s["as_of"] < s["label_window"]["from"]
+    none = TS.plan(ws, "shop-catalog", events="logs/sessions", negatives=0)
+    assert not any(r["label_kind"] == "unshown" for r in none["rows"]) and none["summary"]["negatives_added"] == 0
+
+
 def test_real_events_are_not_marked_simulated(ws):
     cat, _ = ws.registry.resolve("dataset", "shop-catalog")
     _logs(ws, cat, "logs/real", sessions=6000, synthetic=False)

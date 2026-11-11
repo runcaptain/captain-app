@@ -44,7 +44,7 @@ def _catalog_spec(ctx: Context, catalog: str, title: str | None = None) -> tuple
 
 
 def _retrieve(spec: dict) -> dict:
-    return {"fields": F.bm25_fields(spec), "k1": 1.2, "b": 0.75}
+    return F.retrieve_spec(spec)
 
 
 def baseline_plan(ctx: Context, pid: str, title: str | None = None) -> dict:

@@ -83,7 +83,10 @@ export default class ProjectHome extends View {
     // What this page shows, for agents (cst app context): the project, the open candidate and the Next line.
     watchView(cx, "project", () => {
       const pid = this.pid(), n = pid && this.stages ? this.nextStep() : null;
-      return pid ? { project: { id: pid, name: this.project()?.name ?? null, kind: this.state?.kind ?? null }, candidate: this.open ?? null,
+      // With nothing trained yet, the guided start's steps: which are done, and what each one's button does.
+      const steps = pid && this.stages && this.exps && !(this.exps.experiments ?? []).length
+        ? this.startSteps().map((st) => ({ label: `${st.n} ${st.title}`, done: st.done, action: st.done ? null : st.can ? st.action : null, ...(st.done || st.can ? {} : { waiting_on: st.text }) })) : null;
+      return pid ? { project: { id: pid, name: this.project()?.name ?? null, kind: this.state?.kind ?? null }, candidate: this.open ?? null, steps,
         next: n ? { text: n.text, label: n.label ?? n.action?.label ?? null, action: n.action ?? null } : null } : { showing: "all projects" };
     });
     let rev = shared("captain.explorer.rev") ?? null;
@@ -543,6 +546,7 @@ export default class ProjectHome extends View {
       ind?.text ?? null,
       ind?.status === "shared" ? "So the higher score shows the model learned that labeler, not that it ranks better. Judge it on labels from another source to know." : null,
       ev?.evaluated_on ? `Judged on ${ev.evaluated_on}.` : null,
+      e.feature_timing ?? null,
       ...[...(e.inputs_read ?? []), ...(e.eval_inputs ?? [])].filter((x) => x.changed_since_pin).map((x) => `${x.slot} was read live and has changed since it was chosen${x.as_of ? ` (read ${day(x.as_of)})` : ""}, so a rerun may differ.`),
       ev?.coverage_note ?? (ev?.click_grades ? "Click grades only exist for products the old ranker showed, which favors the old ranker." : null),
       ev ? "Not yet confirmed online: an offline result until your team's own A/B or shadow readout agrees." : e.is_champion ? null : "Not judged against the baseline yet.",
@@ -562,24 +566,30 @@ export default class ProjectHome extends View {
   }
 
   /** Nothing trained yet: the two steps that get a first candidate judged, each with its button and a tick when done. */
-  guidedStart(c) {
+  /** The guided start's steps as plain data: the page draws them, and agents read them (cst app context). */
+  startSteps() {
     const start = this.stages?.start ?? {};
     const champ = this.exps?.champion;
     const baseDone = Boolean(champ ?? start.baseline?.done);
     const canBase = Boolean(start.baseline?.can);
     const canTrain = Boolean(start.starter?.can);
     const needs = (start.starter?.needs ?? []).map((n) => SLOTS[n]?.noun ?? n);
-    const steps = [
-      { n: 1, id: "baseline", done: baseDone, title: "Set a baseline (keyword search)",
+    return [
+      { n: 1, id: "baseline", done: baseDone, can: canBase && !baseDone, action: "baseline-start", title: "Set a baseline (keyword search)", button: "Start with keyword search as the baseline",
         text: baseDone ? `${parseRef(champ).name} is the baseline. Candidates are judged against it.`
           : canBase ? "Keyword search over your catalog needs no training. It gives every candidate something to beat."
-          : "Choose a catalog first. Keyword search needs products to search.",
-        button: baseDone || !canBase ? null : Button(c, "start-baseline", "Start with keyword search as the baseline", (_e, cx) => this.baselineStart(cx), { small: true, kind: "primary", disabled: this.busy }) },
-      { n: 2, id: "starter", done: Boolean(start.starter?.done), title: "Train a starter ranker",
+          : "Choose a catalog first. Keyword search needs products to search." },
+      { n: 2, id: "starter", done: Boolean(start.starter?.done), can: canTrain, action: "starter-train", title: "Train a starter ranker", button: "Train a starter ranker",
         text: canTrain ? "Learns to rank from your clicks or judgments, with no code. Captain builds the training set and trains it."
-          : `It learns from clicks or judgments. Choose ${needs.join(" and ") || "events"} first.`,
-        button: canTrain ? Button(c, "start-train", "Train a starter ranker", () => form("experiment", { ...this.values(), how: "starter" }), { small: true, kind: baseDone ? "primary" : "secondary" }) : null },
+          : `It learns from clicks or judgments. Choose ${needs.join(" and ") || "events"} first.` },
     ];
+  }
+
+  guidedStart(c) {
+    const baseDone = Boolean(this.exps?.champion ?? this.stages?.start?.baseline?.done);
+    const steps = this.startSteps().map((st) => ({ ...st, button: !st.can ? null
+      : st.id === "baseline" ? Button(c, "start-baseline", st.button, (_e, cx) => this.baselineStart(cx), { small: true, kind: "primary", disabled: this.busy })
+      : Button(c, "start-train", st.button, () => form("experiment", { ...this.values(), how: "starter" }), { small: true, kind: baseDone ? "primary" : "secondary" }) }));
     return v_flex().id("exp-start").w_full().border_1().border_color(c.rule).bg(c.surface)
       .children(steps.map((st, k) => h_flex().id(`start-row-${st.id}`).p(12).gap(12).items_center().when(k > 0, (e) => e.border_t(1).border_color(c.rule))
         .child(st.done

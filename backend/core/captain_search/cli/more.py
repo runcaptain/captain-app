@@ -971,6 +971,7 @@ def data_training_set(
     title: Optional[str] = typer.Option(None, "--title", help="the catalog column that holds the product title, when it can't be guessed"),
     popularity: Optional[bool] = typer.Option(None, "--popularity/--no-popularity", help="click-rate features from events before the cutoff. Default: on when there are events"),
     min_impressions: int = typer.Option(3, "--min-impressions"),
+    negatives: Optional[int] = typer.Option(None, "--negatives", help="with click labels: add first-stage results the old ranker never showed, down to this depth, as grade 0. Default 50; 0 adds none"),
     valid: float = typer.Option(0.2, "--valid", help="share of queries held for early stopping"),
 ):
     """Build a versioned training set: features and labels per (query, product), cut in time so no feature sees a label."""
@@ -980,7 +981,7 @@ def data_training_set(
     try:
         m, p = TS.build(c, name, catalog, dry_run=S.dry_run, events=events, judgments=judgments, queries=queries,
                         holdout=holdout, as_of=as_of, train_until=train_until, labels=labels, title=title,
-                        popularity=popularity, min_impressions=min_impressions, valid=valid)
+                        popularity=popularity, min_impressions=min_impressions, valid=valid, negatives=negatives)
     except (ValueError, NotFound) as e:
         fail(str(e))
     s = p["summary"]

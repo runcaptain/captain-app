@@ -329,7 +329,15 @@ def _text(rec: dict) -> str:
              if rec.get("explorer_pick") and not p else None),
             ("Screen", f"{rec.get('screen')}" + (f", tab {rec['tab']}" if rec.get("tab") else "") + (f"  [section id: {rec['section']}]" if rec.get("section") else "")
              if rec.get("screen") else None)]
-    rows += [(k[0].upper() + k[1:].replace("_", " "), _say(v)) for k, v in (rec.get("selected") or {}).items()]
+    sel = dict(rec.get("selected") or {})
+    steps = sel.pop("steps", None)
+    rows += [(k[0].upper() + k[1:].replace("_", " "), _say(v)) for k, v in sel.items()]
+    # A guided start on the page (a project with nothing trained yet): each step, whether it is done, and what does it.
+    for st in steps if isinstance(steps, list) else []:
+        if isinstance(st, dict):
+            rows.append(("Step", f"{st.get('label')}: " + ("done" if st.get("done") else "to do")
+                         + (f"  [action: {st['action']}]" if st.get("action") else "")
+                         + (f"  ({st['waiting_on']})" if st.get("waiting_on") else "")))
     d = rec.get("dialog")
     if d:
         rows.append(("Open form", f"{d.get('title') or d.get('form')}  [form id: {d.get('form')}]"))

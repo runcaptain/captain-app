@@ -90,6 +90,12 @@ def bm25_fields(spec: dict) -> dict:
     return out
 
 
+def retrieve_spec(spec: dict) -> dict:
+    """The first stage a starter ranker reorders: keyword search with these field weights. The training set draws
+    its unshown candidates from the same search, so training and serving see the same top K."""
+    return {"fields": bm25_fields(spec), "k1": K1, "b": B}
+
+
 def feature_names(spec: dict, popularity: bool) -> list[str]:
     fields = [spec["title"]] + list(spec.get("text") or [])
     names = [f"bm25_{f}" for f in fields] + ["bm25_all", "title_overlap", "title_partial", "title_phrase",
@@ -259,6 +265,20 @@ class Featurizer:
                         math.log1p(b[0]), (b[2] + PRIOR) / (b[1] + PRIOR)]
             out.append([round(float(x), 6) for x in row])
         return out
+
+
+POPULARITY = ("pop_", "qp_")
+
+
+def feature_timing(names: list[str], as_of: str | None) -> dict:
+    """How each feature is timed. Popularity features are counted once, from events up to one cutoff, and that
+    frozen table is used for every row. Everything else is computed from the row's own query and product."""
+    once = [n for n in names if n.startswith(POPULARITY)]
+    per_row = [n for n in names if not n.startswith(POPULARITY)]
+    text = "Text, brand and price features: computed per row, from the query and the product."
+    if once:
+        text = f"Click features: counted once, up to {as_of}. " + text
+    return {"one cutoff (as_of)": once, "per row": per_row, "as_of": as_of if once else None, "text": text}
 
 
 def bundle(spec: dict, tables: dict | None, extra: dict | None = None) -> dict:
