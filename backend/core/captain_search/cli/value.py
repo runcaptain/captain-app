@@ -59,6 +59,82 @@ def cost_ledger():
     emit(rows, "\n".join(lines) or "no pipelines")
 
 
+costs_app = typer.Typer(help="What work costs on your cloud: estimates before a run, and what runs did cost", no_args_is_help=True)
+app.add_typer(costs_app, name="costs")
+
+
+@costs_app.command("estimate")
+@cost_app.command("estimate", hidden=True)
+def costs_estimate(kind: str = typer.Argument(..., help="training, evaluation, synthetic-events, snapshot, judging, staging or workflow"),
+                   where: Optional[str] = typer.Option(None, "--where", help="compute target (local is this computer), a connection for a snapshot, a model for judging"),
+                   size: list[str] = typer.Option([], "--size", help="what decides the time, name=value: rows, queries, arms, sessions, pairs, depth, how, sql. Repeat"),
+                   project: Optional[str] = typer.Option(None, "--project", help="take the size from this project's starter ranker plan")):
+    """What this work would cost before it runs, with how the number was worked out."""
+    import json as _json
+
+    from .. import cost_estimates as CE
+
+    c = ctx()
+    sz: dict = {}
+    if project:
+        from .. import starter as ST
+
+        sz.update(_do(ST.plan, c, project).get("size") or {})
+    for kv in size:
+        k, sep, v = kv.partition("=")
+        if not sep:
+            fail(f"--size takes name=value, got {kv!r}")
+        try:
+            sz[k] = _json.loads(v)
+        except ValueError:
+            sz[k] = v
+    r = _do(CE.estimate, c, kind, where, sz)
+    emit(r, "\n".join([r["text"], "How this is estimated:", *[f"  {b}" for b in r["basis"]]]))
+
+
+@costs_app.command("runs")
+def costs_runs(project: Optional[str] = typer.Option(None, "--project", help="only this project's runs")):
+    """Recorded runs: what each was estimated at and what it then cost."""
+    from .. import cost_estimates as CE
+
+    rows = _do(CE.ledger, ctx(), project)
+    lines = []
+    for r in rows:
+        a, e = r.get("actual") or {}, r.get("estimate") or {}
+        lines.append(f"{str(r.get('id'))[-12:]:12} {str(r.get('kind')):16} {str(r.get('where')):16} "
+                     f"{a.get('text') or 'not finished'}" + (f"  (estimate: {e['text']})" if e.get("text") else ""))
+    emit(rows, "\n".join(lines) or "no runs recorded yet")
+
+
+@costs_app.command("project")
+def costs_project(name: str):
+    """What a project's runs on your cloud have cost so far."""
+    from .. import cost_estimates as CE
+    from .. import starter as ST
+
+    c = ctx()
+    if not S.dry_run:
+        try:
+            ST.settle_all(c, name)
+        except Exception:  # noqa: BLE001
+            pass
+    r = _do(CE.project_total, c, name)
+    emit(r, "\n".join([r["text"], *[f"  {x['text']}" for x in r["recent"] if x.get("text")]]))
+
+
+@costs_app.command("confirm-above")
+def costs_confirm_above(usd: Optional[float] = typer.Argument(None, help="dollars; leave out to show the current value")):
+    """Show or set the estimate above which a form asks again before starting work on a cloud."""
+    from .. import cost_estimates as CE
+    from .. import settings as ST
+
+    c = ctx()
+    if usd is not None and not S.dry_run:
+        _do(ST.set_costs, c, usd)
+    v = usd if usd is not None and S.dry_run else CE.threshold(c)
+    emit({"confirm_above_usd": v}, f"Forms ask again above ${v:,.2f}.")
+
+
 @cost_app.command("settings")
 def cost_settings(queries_per_day: Optional[int] = typer.Option(None, "--queries-per-day",
                                                                 help="traffic used to price serving cost per month")):

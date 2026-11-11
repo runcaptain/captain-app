@@ -16,6 +16,7 @@ import { Jobs } from "./jobs.js";
 import { Live } from "./live.js";
 import { metricWords } from "./kit/words.js";
 import { int } from "./kit/num.js";
+import { costState, loadPlaces, refreshEstimate, needsConfirm, costSlice, RunsOn, LOCAL } from "./kit/cost.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
 const enc = (name) => name.split("/").map(encodeURIComponent).join("/");
@@ -127,6 +128,10 @@ export default class CaptainRuns extends View {
     this.gradeNote = InputState.new({ placeholder: "Note, optional" });
     this.publishName = InputState.new({ placeholder: "judgments dataset name" });
     this.keys = cx.focus_handle();
+    // Where an offline evaluation or a workflow runs and what that costs (kit cost.js): the row over "Run".
+    this.cost = { backtests: costState(), workflows: costState() };
+    this.loadPlaces(cx);
+    cx.timer.every(500, (cx) => this.priceNow(cx));
     this.load(cx, "backtests");
     cx.timer.every(1000, (cx) => this.pollJob(cx));
     // Compute jobs: their list, and a running one's state and log lines.
@@ -176,15 +181,87 @@ export default class CaptainRuns extends View {
     // The Explorer's pick filters the lists: load this tab again.
     watchScope(cx, (cx) => { this.data = {}; this.load(cx, this.tab); cx.notify(); });
     // What this screen shows, for agents (cst app context): the tab and the run picked on it.
-    watchView(cx, "runs", () => ({ tab: this.tab, selected: this.sel[this.tab] ?? null, backtest: this.tab === "backtests" ? this.sel.backtests ?? null : null }));
+    watchView(cx, "runs", () => ({ tab: this.tab, selected: this.sel[this.tab] ?? null, backtest: this.tab === "backtests" ? this.sel.backtests ?? null : null,
+      ...(this.costWant() ? { runs_on: costSlice(this.cost[this.tab]) } : {}) }));
     // Another space, another workspace: drop what was shown and load this tab again.
     watchWorkspace(cx, (cx) => {
       this.data = {}; this.sel = {}; this.detail = {}; this.open = {}; this.grader = null; this.error = null;
       this.jobs = new Jobs(this);
       this.live = new Live(this);
+      this.cost = { backtests: costState(), workflows: costState() };
+      this.loadPlaces(cx);
       this.load(cx, this.tab);
       cx.notify();
     });
+  }
+
+  // ---- where it runs, and what that costs -----------------------------------------------------------------------
+
+  /** The places work can run, and the place offline evaluations use unless one names its own (Settings). */
+  loadPlaces(cx) {
+    const st = this.cost.backtests;
+    cx.spawn(async (cx) => {
+      const [, s, ds] = await Promise.all([loadPlaces(st), api("/api/settings", { scoped: false }), api("/api/datasets", { scoped: false })]);
+      if (st !== this.cost.backtests) return; // another workspace since
+      this.usual = s.ok ? s.data?.compute?.backtest ?? null : null;
+      // Rows of each dataset by name: a query set's size decides how long an offline evaluation takes.
+      this.rows = Object.fromEntries((ds.ok && Array.isArray(ds.data) ? ds.data : []).map((d) => [d.name, d.rows ?? 0]));
+      this.cost.workflows.places = st.places;
+      this.placeFor(this.detail.backtest);
+      cx.notify();
+    });
+  }
+
+  /** An offline evaluation opens on the place it would run without a pick: its own, else the one set in Settings. */
+  placeFor(b) {
+    const st = this.cost.backtests;
+    const want = b && !b.error ? b.compute ?? this.usual ?? LOCAL : this.usual ?? LOCAL;
+    st.where = (st.places ?? []).some((p) => p.value === want) ? want : LOCAL;
+    st.confirming = false;
+  }
+
+  /** What the open tab would start, for the estimate: {kind, size, where}, or null when nothing here runs. */
+  costWant() {
+    if (this.tab === "backtests") {
+      const b = this.detail.backtest;
+      if (!this.sel.backtests || !b || b.error || b.mode === "imported") return null;
+      // The query set is named "name@v2:split": its row count is the whole set's, so a split reads a little high.
+      const queries = this.rows?.[bare(String(b.queries ?? "").split(":")[0])] || undefined;
+      return { kind: "evaluation", size: { ...(queries ? { queries } : {}), arms: (b.arms ?? []).length || 2, mode: b.mode ?? undefined }, where: this.cost.backtests.where };
+    }
+    // A workflow's steps run from this computer; a step that names a place in your cloud is billed there.
+    if (this.tab === "workflows") return this.sel.workflows && this.detail.workflow && !this.detail.workflow.error ? { kind: "workflow", size: {}, where: LOCAL } : null;
+    return null;
+  }
+
+  /** From the timer, never from render: ask for the estimate when the place or the thing picked changed. */
+  priceNow(cx) {
+    const st = this.cost[this.tab];
+    if (!st) return;
+    const want = this.costWant();
+    cx.spawn(async (cx) => { if (await refreshEstimate(st, want)) cx.notify(); });
+  }
+
+  /** The "Runs on" row. An offline evaluation picks its place; a workflow shows where its steps start. */
+  runsOn(c, tab) {
+    const st = this.cost[tab];
+    return RunsOn(c, `runs-on-${tab}`, st, {
+      onPick: (p, _e, cx) => { if (st.where !== p.value) st.estimate = null; st.where = p.value; st.confirming = false; cx.notify(); this.priceNow(cx); },
+      onToggle: (_e, cx) => { st.open = !st.open; cx.notify(); },
+      onAdd: () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "compute" } }),
+    }, tab === "workflows" ? { fixed: true, note: "Each step starts from this computer. A step set to run in your cloud is billed there, and its cost shows in Jobs when it finishes." } : {});
+  }
+
+  /** Run the open offline evaluation where the row says. Above the amount set in Settings, the first click only
+   *  repeats the number. The second starts it. */
+  runBacktest(cx, name) {
+    const st = this.cost.backtests;
+    if (needsConfirm(st)) { st.confirming = true; cx.notify(); return; }
+    st.confirming = false;
+    // The place is sent whenever it is not this computer, and also when this computer was picked over the usual place.
+    const usual = this.detail.backtest?.compute ?? this.usual ?? LOCAL;
+    const body = st.where !== LOCAL || usual !== LOCAL ? { compute: st.where } : {};
+    this.start(cx, "Offline evaluation", `/api/backtests/${enc(name)}/run`, (cx) => this.pick(cx, "backtests", name), body);
   }
 
   // ---- data ---------------------------------------------------------------------------------------------------
@@ -216,6 +293,7 @@ export default class CaptainRuns extends View {
         const r = await api(`/api/backtests/${enc(name)}`);
         if (this.sel.backtests !== name) return;
         this.detail.backtest = r.ok ? r.data : { error: say(r, "Couldn't load this offline evaluation.") };
+        this.placeFor(this.detail.backtest);
         const v = r.ok ? r.data.runs?.at(-1)?.version : null;
         if (v) this.pickRun(cx, name, v);
         cx.notify();
@@ -246,10 +324,10 @@ export default class CaptainRuns extends View {
     });
   }
 
-  start(cx, label, path, after) {
+  start(cx, label, path, after, body = {}) {
     this.job = { label, status: "queued", message: null, after };
     cx.spawn(async (cx) => {
-      const r = await api(path, { method: "POST", body: {} });
+      const r = await api(path, { method: "POST", body });
       if (!r.ok) this.job = { label, status: "failed", message: say(r, "Couldn't start it.") };
       else {
         this.job.id = r.data?.job;
@@ -469,8 +547,9 @@ export default class CaptainRuns extends View {
         .child(div().flex_1())
         .when(!!this.live.running.find((x) => x.of === name), (e) => e.child(Button(c, "bt-watch", "Watch it live", (_e, cx) => {
           this.tab = "live"; this.live.load(cx, this.live.running.find((x) => x.of === name).id); cx.notify(); }, { small: true })))
-        .when(b.mode !== "imported", (e) => e.child(this.button(c, "run-backtest", running ? "Running" : "Run evaluation", "run", (_e, cx) => this.start(cx, "Offline evaluation", `/api/backtests/${enc(name)}/run`, (cx) => this.pick(cx, "backtests", name)), true, !!running))))
+        .when(b.mode !== "imported", (e) => e.child(this.button(c, "run-backtest", running ? "Running" : this.cost.backtests.confirming ? "Start anyway" : "Run evaluation", "run", (_e, cx) => this.runBacktest(cx, name), true, !!running))))
       .child(div().text_size(13).font_medium().child(b.preregistration?.hypothesis ?? ""))
+      .when(b.mode !== "imported", (e) => e.child(this.runsOn(c, "backtests")))
       .child(h_flex().gap(8)
         .child(Button(c, "bt-agent", "Open an agent in this space", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, backtestPrompt(name, b, r))), { small: true }))
         .child(Button(c, "bt-prompt", "Copy prompt", (_e, cx) => copyPrompt(cx, backtestPrompt(name, b, r)), { kind: "quiet", small: true }))
@@ -552,6 +631,7 @@ export default class CaptainRuns extends View {
         .child(div().flex_1())
         .child(this.button(c, "run-workflow", running ? "Running" : "Run now", "run", (_e, cx) => this.start(cx, "Workflow", `/api/workflows/${enc(name)}/run`, (cx) => this.pick(cx, "workflows", name)), true, !!running)))
       .when(!!w.description, (e) => e.child(div().text_size(12.5).text_color(c.grey900).child(w.description)))
+      .child(this.runsOn(c, "workflows"))
       .child(div().text_size(13).font_medium().child("Steps"))
       .child(v_flex().border_1().border_color(c.rule).children((w.steps ?? []).map((s) => h_flex().id(`step-${s.id}`).min_h(36).px(10).py(6).gap(10).items_center().border_b(1).border_color(c.rule)
         .child(this.commandIcon(s.command, c.navy))

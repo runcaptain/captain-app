@@ -406,6 +406,36 @@ gain_per_1k_usd, flag}`. Monthly extra cost is extra serving at `queries_per_day
 over 12 months. The flag is `retire` (costs more, no measured win), `worth-it`, `cheaper-and-better` or `unproven`.
 `BacktestRun.wall_s` is the run's wall time. CLI: `cst pipeline cost set|show`, `cst cost ledger`, `cst cost settings`.
 
+## What a run costs on a cloud (cost_estimates.py)
+
+Not the ledger above (which scores a model version's cost against its gain): this is what one piece of work costs
+where it runs, before and after.
+
+| Route | What |
+|---|---|
+| `POST /api/costs/estimate` `{kind, where?, size?}` | `{low, high, currency, unit: run\|hour, basis: [sentences], priced_as_of, price_source: live\|bundled, confidence: rough\|measured, free, available, text, confirm, threshold, minutes_low, minutes_high, machine, hourly}`. `low`/`high` are null and `text` says why where there is no estimate. |
+| `GET /api/costs/runs?project=` | recorded runs: `{id, kind, where, size, units, estimate, actual}` |
+| `GET /api/projects/{id}/costs` | `{usd, runs, text, recent}`: the project's running total on the cloud. Settles finished training jobs first. |
+| `PUT /api/settings/costs` `{confirm_above_usd}` | the estimate above which a form asks again (default 5) |
+| `POST /api/projects/{id}/starter/train` `{compute?}` | with a compute target: `{job, live, pending: true, estimate}` |
+
+- Kinds: `training` (`size.how`: `starter` or `command`, `rows`), `evaluation` (`queries`, `arms`), `synthetic-events`
+  (`sessions`), `snapshot` (`where` is a connection, `size.sql`), `judging` (`where` is a model, `pairs` or `queries`,
+  `depth`, `arms`), `staging` (per hour; `instances`, `instance_type`), `workflow`.
+- Prices: AWS only (the provider with live-tested jobs). Read from the AWS Price List API with the target's own
+  login, cached six hours. Without that permission, `price_table.py` answers and every text says its date. Other
+  providers answer "No estimate for <provider> yet."
+- Time: a rough model per kind (`ROUGH`), replaced by this workspace's own earlier runs of the same kind once there
+  are any on a cloud (`confidence: measured`).
+- Actuals: when a compute job reaches a final state, `jobs.refresh` adds `cost` to its record (`{usd, seconds,
+  billed_seconds, machine, hourly_usd, priced_as_of, text, provider_usd}`) and to `costs/runs/<job id>.yaml`. On ECS
+  the clock starts at the image pull, as Fargate bills. `provider_usd` stays null: AWS reports no cost per task.
+- Checked on a real account (2026-11-10, us-west-1, ECS Fargate, 1 vCPU and 2 GB): the demo store's starter ranker
+  trained as a job. Estimate: $0.0009 to $0.0013, 60 to 82 s. Actual: 50 s from image pull to stop, billed as 60 s,
+  $0.0009. The candidate, its cost, the history line, the project total and the live run (251 events through the
+  bucket) all landed. The data is simulated and it is one run, so read it as "the path works", not as a benchmark.
+- CLI: `cst costs estimate|runs|project|confirm-above`, `cst projects starter-train <p> --compute <target> [--wait]`.
+
 ## Monitor, retrain and gate
 
 `cst monitor record --env E --logs L [--since D] [--where SQL]` aggregates an events dataset in DuckDB where it

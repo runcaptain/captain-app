@@ -179,3 +179,20 @@ def ledger(ctx: Context) -> list[dict]:
                                   "delta": comp["delta"], "verdict": comp["verdict"], **r}
             out.append(row)
     return out
+
+
+# ---- what a run costs on a cloud (cost_estimates.py), under the name other modules already import ----------------
+
+
+def estimate(ctx: Context, kind: str, where=None, size: dict | None = None) -> dict:
+    """What `kind` of work costs on `where`, before it runs. See cost_estimates.estimate for the kinds and the answer:
+    {low, high, currency, unit: run|hour, basis: [sentences], priced_as_of, confidence, free, text, confirm, ...}."""
+    from . import cost_estimates as CE
+
+    return CE.estimate(ctx, kind, where, size)
+
+
+def project_total(ctx: Context, project: str) -> dict:
+    from . import cost_estimates as CE
+
+    return CE.project_total(ctx, project)

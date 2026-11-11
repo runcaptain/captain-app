@@ -36,13 +36,15 @@ def make_job(ctx: Context, args: list[str], label: str, backtest: str | None = N
     return P.Job(id=jid, argv=["-w", ctx.workspace.name, *args], label=label, env=env, backtest=backtest)
 
 
-def submit(ctx: Context, target: dict, job: P.Job, kind: str = "job") -> dict:
-    """Start the job on the target and record it. Recorded before and after, so a crash mid-submit leaves a trace."""
+def submit(ctx: Context, target: dict, job: P.Job, kind: str = "job", meta: dict | None = None) -> dict:
+    """Start the job on the target and record it. Recorded before and after, so a crash mid-submit leaves a trace.
+    `meta` is what the cost record needs later: {project?, cost_kind?, size?} (cost_estimates.job_cost)."""
     prov = P.get(target, ctx)
     rec = {"id": job.id, "kind": kind, "label": job.label, "argv": job.argv, "target": target["name"],
            "target_kind": target["kind"], "region": target.get("region"), "state": "queued", "reason": "submitting",
            "handle": None, "submitted_by": whoami(), "submitted_at": _now(), "updated_at": _now(),
-           "started_at": None, "finished_at": None, "exit_code": None, "backtest": job.backtest}
+           "started_at": None, "finished_at": None, "exit_code": None, "backtest": job.backtest,
+           **({"meta": meta} if meta else {})}
     ctx.store.put_new(_key(job.id), dump_yaml(rec))
     try:
         handle = prov.submit(job)
@@ -89,13 +91,27 @@ def refresh(ctx: Context, rec: dict) -> dict:
         s = P.get(_target(ctx, rec), ctx).status(rec["handle"])
     except Exception as e:  # noqa: BLE001
         return {**rec, "refresh_error": f"could not ask {rec['target_kind']} for the state: {str(e)[:300]}"}
-    new = {**rec, **{k: s.get(k, rec.get(k)) for k in ("state", "reason", "started_at", "finished_at", "exit_code")}}
+    new = {**rec, **{k: s.get(k, rec.get(k)) for k in ("state", "reason", "started_at", "finished_at", "exit_code", "billed_from")}}
     if new["state"] in P.TERMINAL and not new.get("finished_at"):
         new["finished_at"] = _now()
-    if any(new.get(k) != rec.get(k) for k in ("state", "reason", "started_at", "finished_at", "exit_code")):
+    if new["state"] in P.TERMINAL and not new.get("cost"):
+        new = _with_cost(ctx, new)
+    if any(new.get(k) != rec.get(k) for k in ("state", "reason", "started_at", "finished_at", "exit_code", "cost")):
         new["updated_at"] = _now()
         _save(ctx, new)
     return new
+
+
+def _with_cost(ctx: Context, rec: dict) -> dict:
+    """A finished job gets what it cost, once: run time, the machine and the computed dollars (cost_estimates.py).
+    A failure to price it never fails the job's own record."""
+    try:
+        from . import cost_estimates as CE
+
+        cost = CE.job_cost(ctx, rec)
+    except Exception:  # noqa: BLE001
+        cost = None
+    return {**rec, "cost": cost} if cost else rec
 
 
 def _result_key(job_id: str) -> str:
@@ -157,6 +173,8 @@ def cancel(ctx: Context, job_id: str) -> dict:
         raise _wrap(e, rec["target_kind"]) from e
     new = {**rec, **{k: s.get(k, rec.get(k)) for k in ("state", "reason", "started_at", "finished_at", "exit_code")},
            "cancelled_by": whoami(), "cancelled_at": _now(), "updated_at": _now()}
+    if new["state"] in P.TERMINAL and not new.get("cost"):
+        new = _with_cost(ctx, new)
     _save(ctx, new)
     return _with_duration(new)
 

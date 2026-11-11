@@ -58,6 +58,11 @@ async function byRole(role) {
     .filter((d) => (d.classes ?? []).some((c) => roles.get(c) === role))
     .map((d) => ({ value: `${d.name}@v${d.latest}`, label: d.name, chip: `v${d.latest}` }));
 }
+/** Rows of each dataset's newest version by its ref, for cost estimates (a query set's size decides the time). */
+async function rowsByRef() {
+  const ds = await api("/api/datasets", { scoped: false });
+  return Object.fromEntries((ds.ok && Array.isArray(ds.data) ? ds.data : []).map((d) => [`${d.name}@v${d.latest}`, d.rows ?? 0]));
+}
 const pipelines = () => list("/api/pipelines", (p) => ({ value: `${p.name}@v${p.latest}`, label: p.name, chip: `v${p.latest}` }));
 // What a project can be built for: each recipe decides the inputs it asks for (GET /api/recipes). The four built in
 // show while the services don't answer yet.
@@ -131,8 +136,16 @@ async function waitTraining(id) {
  *  The form stays open until it lands, then offers to judge it against the baseline. */
 async function trainStarter(v) {
   const project = encodeURIComponent(v.project);
-  const started = await api(`/api/projects/${project}/starter/train`, { body: {}, scoped: false });
+  const started = await api(`/api/projects/${project}/starter/train`, { body: v.compute ? { compute: v.compute } : {}, scoped: false });
   if (!started.ok) return ok(started, "");
+  if (started.data?.pending) {
+    // On your cloud: the job is on its way and the candidate lands when it finishes. Runs shows it live.
+    if (started.data.live) {
+      setShared("captain.open", { section: "runs", live: started.data.live, at: Date.now() });
+      runCommand("layout.select", { stack: "sections", child: "runs" });
+    }
+    return { ok: true, message: `Training on ${v.compute}. It's open in Runs, live, and joins the project's candidates when it lands, with what it cost.` };
+  }
   const job = await waitTraining(started.data?.job);
   if (!job.ok) return job;
   const r = job.result ?? {};
@@ -224,6 +237,7 @@ export const TASKS = [
     fields: [
       { key: "sessions", label: "Shopper sessions", required: true, default: "20000", help: "One visit with one or more searches. Expect about five rows a session." },
       { key: "days", label: "Days to spread them over", required: true, default: "30", help: "The range ends today." },
+      { key: "compute", kind: "runs-on", fixed: true, cost: (v) => ({ kind: "synthetic-events", where: "local", size: { sessions: Number(String(v.sessions ?? "").replace(/[,_\s]/g, "")) || 0, days: Number(v.days) || 0 } }) },
     ],
     submit: async (v) => {
       const whole = (x) => { const n = Number(String(x ?? "").replace(/[,_\s]/g, "")); return Number.isInteger(n) ? n : NaN; };
@@ -336,12 +350,18 @@ export const TASKS = [
           { value: "own", label: "My own training command", icon: "terminal", about: "Run the training code you already have on the project's inputs." },
         ] },
       { key: "starter_plan", kind: "note", label: "What it will use", when: (v) => v.how === "starter", lines: (ctx) => starterLines(ctx.starter) },
+      // Where it trains and what that costs. The agent card trains nothing itself, so it stays on this computer.
+      { key: "compute", kind: "runs-on", fixed: (v) => v.how === "agent",
+        cost: (v, ctx) => (v.how === "starter" ? (ctx.starter?.ready ? { kind: "training", size: ctx.starter.size ?? { how: "starter" } } : null)
+          : v.how === "agent" ? { kind: "training", where: "local", size: { how: "command" } } : { kind: "training", size: { how: "command" } }),
+        note: (v) => (v.how === "agent" ? "The agent writes the script in a terminal on this computer. Training it later shows its own estimate."
+          : v.how === "own" && v.compute ? "Your command runs in Captain's runner image on that place, with the inputs read from the workspace bucket." : null) },
       { key: "ask", label: "What should it train?", kind: "long", optional: true, when: (v) => v.how === "agent", placeholder: "a LightGBM ranker on clicks, with price features",
         help: "The agent gets this project's inputs and the trainer contract. It proposes a script, and nothing changes until you accept it on the project page." },
       { key: "base", label: "Ranker", kind: "choice", required: true, when: (v) => v.how === "own", options: () => list("/api/pipelines", (p) => ({ value: p.name, label: p.name, chip: `v${p.latest}` })),
         help: "The new version keeps its search setup and changes only what training changes." },
       { key: "command", label: "Training command", required: true, when: (v) => v.how === "own", placeholder: "python train.py",
-        help: "Runs on this computer, in a fresh folder. It gets the exact inputs, the params and a folder to write the trained model into." },
+        help: "Runs in a fresh folder. It gets the exact inputs, the params and a folder to write the trained model into." },
       { key: "labels", label: "Training labels", kind: "choice", required: true, when: (v) => v.how === "own", options: () => datasetsOf(["judgments"]),
         help: (_ctx, v) => (v.labels && v.labels === v.pins?.labels ? "These are the labels that grade the test set too, so the result can only say it agrees with its own labeler. Pick labels from another source to get a real verdict." : "Labels from another source than the test set's give a verdict you can trust.") },
       { key: "params", label: "Params", kind: "long", optional: true, when: (v) => v.how === "own", placeholder: "learning_rate = 0.05", help: "One per line, name = value." },
@@ -377,7 +397,7 @@ export const TASKS = [
         const m = line.match(/^\s*([^=\s]+)\s*=\s*(.*?)\s*$/);
         if (m) params[m[1]] = /^-?\d+(\.\d+)?$/.test(m[2]) ? Number(m[2]) : m[2];
       }
-      const started = await api(`/api/pipelines/${name.split("/").map(encodeURIComponent).join("/")}/retrain`, { body: { inputs, params, as_of: v.as_of || undefined, project: v.project }, scoped: false });
+      const started = await api(`/api/pipelines/${name.split("/").map(encodeURIComponent).join("/")}/retrain`, { body: { inputs, params, as_of: v.as_of || undefined, project: v.project, ...(v.compute ? { compute: v.compute } : {}) }, scoped: false });
       if (started.ok && started.data?.live) {
         setShared("captain.open", { section: "runs", live: started.data.live, at: Date.now() });
         runCommand("layout.select", { stack: "sections", child: "runs" });
@@ -632,6 +652,7 @@ export const TASKS = [
   {
     id: "backtest", label: "Run an offline evaluation", icon: "flask-conical",
     about: "Compare two versions of your search on the same queries, or try other settings of one version, and see whether the difference is real.",
+    load: async () => ({ rows: await rowsByRef() }),
     fields: [
       { key: "kind", label: "What to test", kind: "choice", default: "versions",
         options: [{ value: "versions", label: "Two versions" }, { value: "settings", label: "Other settings of one version" }] },
@@ -648,6 +669,8 @@ export const TASKS = [
       { key: "hypothesis", label: "What do you expect, and why", kind: "long", required: true, placeholder: "The tuned ranker finds more relevant products for long queries",
         help: "Written down before the run, so the result can't move the goalposts.", when: (v) => v.kind !== "settings" },
       { key: "mde", label: "Smallest gain worth acting on", default: "0.003", help: "In nDCG@10. Smaller differences count as noise.", when: (v) => v.kind !== "settings" },
+      { key: "compute", kind: "runs-on", when: (v) => v.kind !== "settings",
+        cost: (v, ctx) => ({ kind: "evaluation", size: { queries: ctx.rows?.[v.queries] ?? 0, arms: 2, mode: v.mode } }) },
     ],
     submit: async (v) => {
       if (v.kind === "settings") {
@@ -661,7 +684,7 @@ export const TASKS = [
       } });
       const planned = ok(plan, "");
       if (!planned.ok) return planned;
-      const started = await api(`/api/backtests/${v.name.trim().split("/").map(encodeURIComponent).join("/")}/run`, { body: {} });
+      const started = await api(`/api/backtests/${v.name.trim().split("/").map(encodeURIComponent).join("/")}/run`, { body: v.compute ? { compute: v.compute } : {} });
       // Watch it as it goes: Runs opens on its live view.
       if (started.ok && started.data?.live) {
         setShared("captain.open", { section: "runs", live: started.data.live, at: Date.now() });
@@ -674,7 +697,7 @@ export const TASKS = [
     id: "grading", label: "Start rating", icon: "square-check",
     about: "Rate the products your search returns, so offline evaluations have judgments people trust.",
     // The team's rubrics (captain/rubrics/<domain>.md): graders see the same words beside each pair.
-    load: async () => ({ rubrics: (await api("/api/rubrics")).data ?? [] }),
+    load: async () => ({ rubrics: (await api("/api/rubrics")).data ?? [], rows: await rowsByRef() }),
     fields: [
       { key: "name", label: "Name", placeholder: "spring-rating", required: true, help: "Letters, digits and dashes." },
       { key: "queries", label: "Queries", kind: "choice", required: true, options: () => byRole("queries"), empty: "No query sets yet. Import one first." },
@@ -686,6 +709,11 @@ export const TASKS = [
         options: (ctx) => (ctx.rubrics ?? []).map((r) => ({ value: r.name, label: r.name })),
         empty: "No rubrics yet. A rubric is captain/rubrics/<domain>.md in your project: what makes a result relevant here.",
         help: (ctx, v) => { const r = (ctx.rubrics ?? []).find((x) => x.name === v.rubric); return r ? `${String(r.preview ?? "").split("\n").find((l) => l.trim() && !l.startsWith("#")) ?? ""}` : null; } },
+      // People rate this queue, which costs nothing on a cloud. An LLM judge grading the same pairs bills tokens:
+      // the estimate is shown so the two can be weighed.
+      { key: "compute", kind: "runs-on", fixed: true,
+        cost: (v, ctx) => ({ kind: "judging", size: { queries: Number(v.sample) > 0 ? Number(v.sample) : ctx.rows?.[v.queries] ?? 0, depth: Number(v.depth) || 10, arms: v.b && v.b !== v.a ? 2 : 1 } }),
+        note: "People rate this queue, at no cloud cost. The estimate is what an LLM judge would bill in tokens for the same pairs." },
     ],
     submit: async (v) => ok(await api("/api/grading", { body: {
       name: v.name.trim(), queries: v.queries, pipelines: [v.a, v.b].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(","),

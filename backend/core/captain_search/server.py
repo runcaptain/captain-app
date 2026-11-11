@@ -591,6 +591,52 @@ def settings_compute(body: dict):
     return ST.set_compute(ctx(), body.get("backtest"), body.get("serve"), clear_serve="serve" in body and not body["serve"])
 
 
+@app.put("/api/settings/costs", dependencies=A)
+def settings_costs(body: dict):
+    """{confirm_above_usd}: the estimate above which a form asks again before starting work on a cloud."""
+    from . import settings as ST
+
+    return ST.set_costs(ctx(), body.get("confirm_above_usd"))
+
+
+@app.post("/api/costs/estimate", dependencies=A)
+def costs_estimate(body: dict):
+    """{kind, where?, size?}: what work costs before it runs. kind is training, evaluation, synthetic-events,
+    snapshot, judging, staging or workflow. where is a compute target's name ("local" is this computer), a
+    connection for a snapshot, a model for judging. Answers {low, high, currency, unit: run|hour, basis: [sentences],
+    priced_as_of, confidence: rough|measured, free, text, confirm, threshold, minutes_low, minutes_high}. low and
+    high are null, and text says why, where Captain has no estimate."""
+    from . import cost_estimates as CE
+
+    try:
+        return CE.estimate(ctx(), str(body.get("kind") or ""), body.get("where") or None, body.get("size") or {})
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.get("/api/costs/runs", dependencies=A)
+def costs_runs(project: str | None = None, limit: int = 100):
+    """Recorded runs with their estimate and what they then cost, newest first."""
+    from . import cost_estimates as CE
+
+    return CE.ledger(ctx(), project=project, limit=min(limit, 400))
+
+
+@app.get("/api/projects/{pid}/costs", dependencies=A)
+def project_costs(pid: str):
+    """{usd, runs, text, recent}: what this project's runs on the cloud have cost so far. Also settles training
+    jobs that finished since the last look, so their candidates carry their cost."""
+    from . import cost_estimates as CE
+    from . import starter as STR
+
+    c = ctx()
+    try:
+        STR.settle_all(c, pid)
+    except Exception:  # noqa: BLE001  the total still answers when a provider can't be asked
+        pass
+    return CE.project_total(c, pid)
+
+
 @app.get("/api/scope-model/suggested", dependencies=A)
 def scope_model_suggested():
     """A starting set of levels (Brand, then Site) to offer in Settings. The model itself starts empty."""
@@ -829,7 +875,8 @@ def project_starter_plan(pid: str):
 
 @app.post("/api/projects/{pid}/starter/train", dependencies=A)
 def project_starter_train(pid: str, body: dict | None = None):
-    """{params?}: train a starter ranker with no code, as a job with a live run. It sets keyword search as the
+    """{params?, compute?}: train a starter ranker with no code, as a job with a live run. With a compute target
+    it trains on that cloud and answers {job, live, pending: true, estimate}. It sets keyword search as the
     baseline when there is none, builds the training set, trains, and records the candidate. Returns {job, live};
     the job's result is {experiment, pipeline, training_set, baseline, baseline_set, metrics, simulated, next}."""
     from . import live as LV
@@ -839,6 +886,19 @@ def project_starter_train(pid: str, body: dict | None = None):
     p = STR.plan(c, pid)
     if not p["ready"]:
         raise HTTPException(400, p["text"])
+    compute = b.get("compute") or "local"
+    from . import compute as CMP
+
+    if CMP.get(c, compute)["kind"] != "local":
+        # On the person's cloud: the job is submitted now and this answers at once. The candidate lands when the
+        # job finishes, and the run streams to Runs through the workspace bucket.
+        try:
+            r = STR.train_on(c, pid, compute, params=b.get("params") or None)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        return {"job": r["job"], "live": r["live_id"], "pending": True, "compute": compute, "estimate": r["estimate"],
+                "simulated": p["simulated"], "baseline_will_be_set": bool((p.get("baseline") or {}).get("will_set")),
+                "text": r["text"]}
     lv = LV.start("training", f"Starter ranker for {pid}", of=pid)
 
     def go(_p):
@@ -1703,7 +1763,9 @@ def pipelines(project: str | None = None):
         train = (m.spec or {}).get("train")
         out.append({"name": n, "latest": m.version, "engine": m.engine, "repro_status": m.repro_status.value,
                     "by": m.created_by, "created": m.created_at.isoformat(), "description": m.description,
-                    "trains": isinstance(train, dict) and bool(train.get("command"))})
+                    "trains": isinstance(train, dict) and bool(train.get("command")),
+                    # the place its training command declares, so a retrain opens on it
+                    "train_compute": train.get("compute") if isinstance(train, dict) else None})
     return out
 
 

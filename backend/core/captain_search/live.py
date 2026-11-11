@@ -383,7 +383,7 @@ def _remote_header(ctx, rid: str) -> dict:
                 try:
                     from . import jobs as J
 
-                    j = J.get(ctx, h["job"])
+                    j = J.show(ctx, h["job"])
                     if j.get("state") in ("failed", "stopped", "succeeded"):
                         h["status"] = "done" if j["state"] == "succeeded" else "failed" if j["state"] == "failed" else "stopped"
                         h["note"] = j.get("reason") or h["note"]

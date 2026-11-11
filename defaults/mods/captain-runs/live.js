@@ -2,7 +2,8 @@
 // (GET /api/live/{id}?since=n, asked again every second while it runs). Every live run draws the same way, from
 // its events (backend/core/captain_search/live.py): the stages, a progress bar with the time left, the latest of each
 // metric per arm, a metric's line as it fills in, simulated shoppers side by side (the same shopper on each arm),
-// and the log. Captain's backtests stream here, and so does any tool a team wires up through `cst live`.
+// and the log. Captain's backtests stream here, and so does any tool a team wires up through `cst live`. A run that
+// went out as a job shows what the job cost once it has finished (GET /api/jobs/{id}, asked from the timer).
 import { div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { api } from "./kit/cst.js";
@@ -10,6 +11,7 @@ import { MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { metricWords } from "./kit/words.js";
 import { int } from "./kit/num.js";
+import { costText } from "./kit/cost.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
 const KIND = { backtest: ["backtest", "Offline evaluation"], training: ["pipeline", "Training"], sweep: ["sim", "Settings sweep"], custom: ["run", "Run"] };
@@ -109,8 +111,24 @@ export class Live {
   /** New events since the last ask. Called every second while the open run is going. */
   tick(cx) {
     if (!this.sel || this.busy) return;
-    if (this.run && !going(this.run.head.status)) return;
+    if (this.run && !this.run.error && !going(this.run.head.status)) { this.askCost(cx); return; }
     this.fetch(cx);
+  }
+
+  /** A finished run that went out as a job: what the job cost. The cost is written a moment after the job ends, so
+   *  this asks a few times, a few seconds apart, and then stops. */
+  askCost(cx) {
+    const run = this.run;
+    const job = run?.head?.job;
+    if (!job || run.cost || run.costAsking || (run.costTries ?? 0) >= 6 || Date.now() - (run.costAt ?? 0) < 4000) return;
+    run.costAsking = true;
+    run.costAt = Date.now();
+    run.costTries = (run.costTries ?? 0) + 1;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/jobs/${encodeURIComponent(job)}`, { timeout: 60 });
+      run.costAsking = false;
+      if (r.ok && costText(r.data?.cost)) { run.cost = r.data.cost; cx.notify(); }
+    });
   }
 
   fetch(cx) {
@@ -215,6 +233,8 @@ export class Live {
         .children(arms.map((a, i) => h_flex().gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(div().font_family(MONO).text_color(c.navy).child(a))))))
       .child(this.progress(c, h, pct))
       .when(!!h.error || !!h.note, (e) => e.child(div().text_size(12.5).text_color(h.error ? c.fail : c.grey900).child(h.error ?? h.note)))
+      .when(Boolean(costText(run.cost)), (e) => e.child(h_flex().id("live-cost").gap(6).items_center().text_size(12.5).text_color(c.navy)
+        .child(icon(run.cost.free ? "compute" : "cloud", 13, c.grey500)).child(div().child(costText(run.cost)))))
       .when(run.metrics.size > 0, (e) => e.child(this.metrics(c, run, arms)))
       .when(run.shoppers.length > 0, (e) => e.child(this.shoppers(c, run, arms, w)))
       .when(run.logs.length > 0, (e) => e.child(this.logs(c, run)))

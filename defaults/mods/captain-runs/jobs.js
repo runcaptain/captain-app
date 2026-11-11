@@ -1,12 +1,14 @@
 // CAPTAIN: Runs, Jobs tab: every job on every compute target (GET /api/jobs, newest first), with live state and time,
 // where it runs in words ("AWS ECS, us-west-1"), its log tail (GET /api/jobs/{id}/logs?since=, followed while it
 // runs) and Stop (POST /api/jobs/{id}/cancel, a second click confirms). A job's own command line never shows: its
-// name is said in words, and the command is behind Copy details.
+// name is said in words, and the command is behind Copy details. A finished job shows what it cost, in the services'
+// words ("Cost about $0.42 (12 min on aws-batch)"), with the machine and its price behind "How this was worked out".
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { api } from "./kit/cst.js";
 import { MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
+import { costText } from "./kit/cost.js";
 
 const enc = encodeURIComponent;
 const PLACES = {
@@ -66,6 +68,7 @@ export class Jobs {
     this.confirm = null;
     this.note = null;
     this.last = 0;
+    this.costOpen = false; // "How this was worked out", under a finished job's cost
   }
 
   load(cx, refresh = true) {
@@ -159,7 +162,8 @@ export class Jobs {
           .child(h_flex().gap(6).text_size(11).text_color(c.grey500)
             .child(this.host.icon(j.target_kind === "local" ? "compute" : "cloud", 11, c.grey500))
             .child(div().flex_1().min_w(0).truncate().child(`${place(j)}, ${when(j.submitted_at)}`))
-            .child(div().flex_none().font_family(MONO).child(took(j))));
+            .child(div().flex_none().font_family(MONO).child(took(j))))
+          .when(Boolean(costText(j.cost)), (e) => e.child(div().id(`job-cost-${j.id}`).truncate().text_size(11).text_color(c.grey500).child(costText(j.cost))));
       }));
   }
 
@@ -185,6 +189,15 @@ export class Jobs {
         .child(fact(live ? "Running for" : "Took", took(j)))
         .child(fact("By", j.submitted_by ?? ""))
         .when(j.exit_code != null && j.exit_code !== 0, (e) => e.child(fact("Exit code", String(j.exit_code)))))
+      .when(Boolean(costText(j.cost)), (e) => e.child(v_flex().id("job-cost").gap(4)
+        .child(h_flex().gap(6).items_center()
+          .child(this.host.icon(j.target_kind === "local" ? "compute" : "cloud", 13, c.grey500))
+          .child(div().id("job-cost-text").text_size(12.5).text_color(c.navy).child(costText(j.cost))))
+        .when(Boolean(j.cost.detail), (x) => x.child(h_flex().id("job-cost-how").gap(4).items_center().cursor_pointer().text_size(12).text_color(c.blue)
+          .on_click((_e, cx) => { this.costOpen = !this.costOpen; cx.notify(); })
+          .child(this.host.icon(this.costOpen ? "chevron-down" : "chevron-right", 12))
+          .child(div().child("How this was worked out"))))
+        .when(this.costOpen && Boolean(j.cost.detail), (x) => x.child(div().id("job-cost-detail").pl(16).text_size(12).line_height("17px").text_color(c.grey500).child(j.cost.detail)))))
       .child(v_flex().flex_1().min_h(0).border_1().border_color(c.rule)
         .child(h_flex().h(28).flex_none().px(10).gap(8).items_center().bg(c.surface2).border_b(1).border_color(c.rule).text_size(12)
           .child(div().font_medium().child("Log"))

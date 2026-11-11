@@ -435,7 +435,8 @@ def _exp(doc: dict, eid: str) -> dict:
 
 
 def experiment_record(ctx: Context, pid: str, eid: str, **fields) -> dict:
-    allowed = {"backtest", "run", "job", "status", "note", "error", "eval_inputs", "inputs_read", "reported"}
+    allowed = {"backtest", "run", "job", "status", "note", "error", "eval_inputs", "inputs_read", "reported",
+               "cost", "train_job"}
     if set(fields) - allowed:
         raise ValueError(f"a candidate records {', '.join(sorted(allowed))}")
 
