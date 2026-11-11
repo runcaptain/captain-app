@@ -6,6 +6,7 @@ docs/api.md "Compute providers" for which kinds have run on a real account.
 """
 import datetime as dt
 import os
+import re
 import sys
 import time
 import types
@@ -203,6 +204,12 @@ def _azure_modules(w):
             return self.r
 
     class ACAJobs:
+        def get(self, rg, job):
+            # the job as it was made: its container's size and its own environment
+            return NS(name=job, template=NS(containers=[NS(
+                name="runner", image="old:1", resources=NS(cpu=1.0, memory="2Gi"),
+                env=[NS(name="AZURE_CLIENT_ID", value="id-1"), NS(name="CST_USER", value="from-the-job")])]))
+
         def begin_start(self, rg, job, template):
             w.calls.append(("begin_start", {"rg": rg, "job": job, "template": template}))
             return Poller(NS(name="cst-job-abc12", id="/subs/x/jobs/cst-job/executions/cst-job-abc12"))
@@ -229,7 +236,16 @@ def _azure_modules(w):
 
         def query_workspace(self, wid, q, timespan):
             w.calls.append(("query_workspace", q))
-            return NS(tables=[NS(rows=[(T0 + dt.timedelta(seconds=i), m) for i, m in enumerate(w.lines)])])
+            if getattr(w, "no_log_table", False):
+                raise RuntimeError("(BadArgumentError) The request had some invalid properties\n(SemanticError) "
+                                   "'where' operator: Failed to resolve table or column expression named "
+                                   "'ContainerAppConsoleLogs_CL'")
+            # what the query projects: when the line was printed, the line, and that time as text (100 ns precision)
+            rows = [(T0 + dt.timedelta(microseconds=i), m, f"2026-11-06T10:00:00.{i:07d}Z") for i, m in enumerate(w.lines)]
+            m = re.search(r"todatetime\('([^']+)'\)", q)
+            if m:
+                rows = [r for r in rows if r[2] > m.group(1)]
+            return NS(tables=[NS(rows=rows)])
 
     mq = types.ModuleType("azure.monitor.query")
     mq.LogsQueryClient = LQ
@@ -514,3 +530,57 @@ def test_runner_attaches_to_the_workspace_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CST_WORKSPACE", "other")
     with pytest.raises(Exception):
         W.open_context("other")  # attaches only: an empty bucket is not made into a workspace
+
+
+# ---- Azure Container Apps: what the first run on a real account (2026-11-10) got wrong ------
+
+
+def test_container_apps_start_keeps_the_jobs_size_and_env(world, cloud_ctx):
+    """A start template replaces the job's container whole. Naming only image, args and env ran the job at
+    Container Apps' smallest size (0.5 CPU, 1 GB) and it was killed for memory (exit code 137)."""
+    t = _target(cloud_ctx, "azure-container-apps")
+    rec = C.submit_job(cloud_ctx, t, ["demo", "seed"], label="seed")
+    (c,) = next(sent for name, sent in world.calls if name == "begin_start")["template"]["containers"]
+    assert (c["resources"].cpu, c["resources"].memory) == (1.0, "2Gi")
+    env = {(e["name"] if isinstance(e, dict) else e.name): (e["value"] if isinstance(e, dict) else e.value) for e in c["env"]}
+    assert env["AZURE_CLIENT_ID"] == "id-1"  # the job's own variable survives
+    assert env["CST_JOB_ID"] == rec["id"] and env["CST_USER"] != "from-the-job"  # Captain's win on a clash
+    assert c["args"] == ["-w", "ws", "demo", "seed"]
+
+
+def test_container_apps_start_names_a_missing_container(world, cloud_ctx):
+    t = C.add(cloud_ctx, "aca-other", "azure-container-apps", "p", None,
+              {"resource_group": "rg", "job": "cst-job", "container": "main"})
+    with pytest.raises(ValueError, match="no container named 'main'"):
+        C.submit_job(cloud_ctx, t, ["demo", "seed"], label="seed")
+
+
+def test_container_apps_logs_order_by_print_time_and_keep_a_precise_cursor(world, cloud_ctx):
+    t = _target(cloud_ctx, "azure-container-apps")
+    rec = C.submit_job(cloud_ctx, t, ["demo", "seed"], label="seed")
+    first = J.logs(cloud_ctx, rec["id"])
+    q = next(sent for name, sent in world.calls if name == "query_workspace")
+    assert "column_ifexists('time_t', TimeGenerated)" in q and "order by t asc" in q
+    assert "startswith 'cst-job-abc12'" in q
+    # the cursor is the last line's time at full precision, so lines printed later in the same second still come
+    assert first["next"].endswith(f"{len(world.lines) - 1:07d}Z")
+    world.lines.append("late line, same second")
+    again = J.logs(cloud_ctx, rec["id"], first["next"])
+    assert [x["message"] for x in again["lines"]] == ["late line, same second"]
+
+
+def test_container_apps_logs_before_the_first_line_say_so(world, cloud_ctx):
+    t = _target(cloud_ctx, "azure-container-apps")
+    rec = C.submit_job(cloud_ctx, t, ["demo", "seed"], label="seed")
+    world.no_log_table = True  # Log Analytics makes the table on the environment's first line
+    r = J.logs(cloud_ctx, rec["id"])
+    assert r["lines"] == [] and "no lines yet" in r["note"]
+
+
+def test_container_apps_cancel_records_when_it_stopped(world, cloud_ctx):
+    """Container Apps gives a stopped execution no end time."""
+    t = _target(cloud_ctx, "azure-container-apps")
+    rec = C.submit_job(cloud_ctx, t, ["demo", "seed"], label="seed")
+    world.state = "running"
+    r = J.cancel(cloud_ctx, rec["id"])
+    assert r["state"] == "stopped" and r["finished_at"]
