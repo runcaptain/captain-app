@@ -430,6 +430,10 @@ where it runs, before and after.
 - Actuals: when a compute job reaches a final state, `jobs.refresh` adds `cost` to its record (`{usd, seconds,
   billed_seconds, machine, hourly_usd, priced_as_of, text, provider_usd}`) and to `costs/runs/<job id>.yaml`. On ECS
   the clock starts at the image pull, as Fargate bills. `provider_usd` stays null: AWS reports no cost per task.
+- Checked on a real account (2026-11-10, us-west-1, ECS Fargate, 1 vCPU and 2 GB): the demo store's starter ranker
+  trained as a job. Estimate: $0.0009 to $0.0013, 60 to 82 s. Actual: 50 s from image pull to stop, billed as 60 s,
+  $0.0009. The candidate, its cost, the history line, the project total and the live run (251 events through the
+  bucket) all landed. The data is simulated and it is one run, so read it as "the path works", not as a benchmark.
 - CLI: `cst costs estimate|runs|project|confirm-above`, `cst projects starter-train <p> --compute <target> [--wait]`.
 
 ## Monitor, retrain and gate

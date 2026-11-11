@@ -60,7 +60,9 @@ class _AWS(ComputeProvider):
 class ECSProvider(_AWS):
     kind, label = "aws-ecs", "AWS ECS (Fargate)"
     purposes = ["backtest", "serve"]
-    live_tested = "2026-11-06"  # Captain's AWS account, us-west-1: demo seed, backtest, cancel
+    # Captain's AWS account, us-west-1: demo seed, backtest, cancel (2026-11-06), and the starter ranker trained as a
+    # job with its cost recorded (2026-11-10).
+    live_tested = "2026-11-10"
     fields = [
         {"name": "cluster", "label": "Cluster", "required": True},
         {"name": "task_definition", "label": "Task definition (runner image)", "required": True},
