@@ -121,8 +121,9 @@ export class Ship {
     if (!pid || this.placesFor === pid) return;
     this.placesFor = pid;
     cx.spawn(async (cx) => {
-      const [t, cl] = await Promise.all([api("/api/compute", { scoped: false }), api("/api/cloud/summary", { scoped: false })]);
+      const [t, cl, su] = await Promise.all([api("/api/compute", { scoped: false }), api("/api/cloud/summary", { scoped: false }), api("/api/serving/setup", { scoped: false })]);
       if (this.pid() !== pid) return;
+      this.serving = su.ok ? su.data : null; // what Captain set up in the cloud account, so it can be listed and removed
       const targets = (t.ok && Array.isArray(t.data) ? t.data : []).filter((x) => x.kind !== "local" && (x.purposes ?? []).includes("serve") && x.kind === "aws-sagemaker");
       this.places = { cloud: cl.ok ? cl.data?.active ?? null : null, targets };
       const first = targets[0];
@@ -829,20 +830,96 @@ export class Ship {
     return div().id(id).h(22).px(8).flex().flex_none().items_center().text_size(11.5).font_medium().bg(col[0]).text_color(col[1]).child(text);
   }
 
-  /** What serving in the connected cloud needs, until Captain sets it up itself. */
+  /** Open the guided setup: ask the services what it would create in the connected account, and what it costs. */
+  openSetupSheet(cx) {
+    this.sheet = !this.sheet;
+    cx.notify();
+    if (!this.sheet) return;
+    const login = this.places?.cloud;
+    if (!login) return;
+    this.setupPlan = null; this.setupProblem = null; this.policy = null;
+    const region = login.region ?? "us-east-1";
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/serving/setup?profile=${enc(login.name)}&region=${enc(region)}`, { scoped: false, timeout: 60 });
+      if (r.ok && r.data?.plan) this.setupPlan = { ...r.data.plan, status: r.data.status };
+      else this.setupProblem = plainError(r.data?.plan_error ?? r.error, "Captain couldn't work out what to set up.");
+      cx.notify();
+    });
+  }
+
+  /** Create the serving setup with the connected login, after the person has read what it creates. */
+  runSetup(cx) {
+    const p = this.setupPlan;
+    if (!p || this.busy) return;
+    this.cx = cx;
+    this.busy = "Setting up serving in your account"; this.busyStep = "stage"; this.note = null; this.policy = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api("/api/serving/setup", { body: { profile: p.profile, region: p.region, confirm: true }, scoped: false });
+      let done = { ok: false, error: plainError(r.error, "The setup didn't start.") };
+      if (r.ok) {
+        done = await this.wait(r.data.job, 45);
+        if (!done.ok) { const j = await api(`/api/jobs/${enc(r.data.job)}`, { scoped: false }); this.policy = j.ok ? j.data?.policy ?? null : null; }
+      }
+      this.busy = null; this.busyFor = null;
+      this.note = done.ok ? { tone: "good", text: "Serving is set up in your account. You can stage there now." } : { tone: "fail", text: done.error };
+      if (done.ok) { this.sheet = false; this.placesFor = null; this.loadPlaces(cx); }
+      cx.notify();
+    });
+  }
+
+  /** Take the serving setup out of the cloud account again. Asks first. */
+  removeSetup(cx) {
+    if (this.busy) return;
+    this.cx = cx;
+    this.busy = "Removing the serving setup"; this.busyStep = "stage"; this.note = null; this.removeAsk = false;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api("/api/serving/setup", { method: "DELETE", scoped: false });
+      const done = r.ok ? await this.wait(r.data.job, 10) : { ok: false, error: plainError(r.error, "It couldn't be removed.") };
+      this.busy = null; this.busyFor = null;
+      this.note = done.ok ? { tone: done.result?.status === "removed" ? "good" : "fail", text: done.result?.text ?? "The serving setup is removed." } : { tone: "fail", text: done.error };
+      this.placesFor = null; this.loadPlaces(cx);
+      cx.notify();
+    });
+  }
+
+  /** What Captain created in the cloud account for serving, always listed, with the one action that removes it. */
+  servingLine(c) {
+    const s = this.serving;
+    if (!s || s.status === "none" || s.status === "removed" || !(s.created ?? []).length) return null;
+    return v_flex().id("ship-serving").gap(4)
+      .child(h_flex().gap(8).items_center().flex_wrap()
+        .child(div().flex_1().min_w(240).text_size(12).line_height("17px").text_color(c.grey900).child(s.text))
+        .when(!this.removeAsk, (e) => e.child(Button(c, "ship-serving-remove", "Remove serving setup", (_e, cx) => { this.removeAsk = true; cx.notify(); }, { small: true, kind: "quiet" }))))
+      .when(Boolean(this.removeAsk), (e) => e.child(h_flex().id("ship-serving-ask").p(8).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
+        .child(div().flex_1().min_w(0).text_size(12).text_color(c.grey900).child("Remove everything Captain created for serving in your account? You can set it up again later."))
+        .child(Button(c, "ship-serving-yes", "Remove it", (_e, cx) => this.removeSetup(cx), { small: true, kind: "primary" }))
+        .child(Button(c, "ship-serving-no", "Keep it", (_e, cx) => { this.removeAsk = false; cx.notify(); }, { small: true }))));
+  }
+
+  /** What "Set up serving" will create in the connected account, read from the services, with the cost and a
+   *  confirm. A login that lacks a permission gets the sentence and a button that copies the policy for an admin. */
   setupSheet(c) {
-    const cloud = this.cloudName() ?? "your cloud";
-    return v_flex().id("ship-setup-sheet").p(10).gap(4).bg(c.surface2).border_1().border_color(c.rule)
-      .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(`What serving in ${cloud} needs`))
-      .children(["A role the endpoint runs as, which can read the model bundle, write the request log, and delete its own endpoint so it can stop itself.",
-        "A place for Captain's serving image in your account's container registry.",
-        "A compute target in Captain that names both (Cloud and compute, kind SageMaker endpoint).",
-        "The workspace's data in a bucket, so the endpoint can read the bundle."]
-        .map((t, i) => div().id(`ship-setup-need-${i}`).text_size(12).line_height("17px").text_color(c.grey900).child(`${i + 1}. ${t}`)))
-      .child(div().text_size(12).line_height("17px").text_color(c.grey500).child("Captain does not create these for you yet. Once a SageMaker target exists, this button stages there."))
+    const cloud = this.cloudName() ?? "your cloud", p = this.setupPlan;
+    return v_flex().id("ship-setup-sheet").p(10).gap(5).bg(c.surface2).border_1().border_color(c.rule)
+      .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(`Set up serving in your ${cloud} account`))
+      .when(!p && !this.setupProblem, (e) => e.child(div().text_size(12).text_color(c.grey500).child("Working out what to create...")))
+      .when(Boolean(this.setupProblem), (e) => e.child(div().id("ship-setup-problem").text_size(12).text_color(c.fail).child(this.setupProblem)))
+      .when(Boolean(p), (e) => e
+        .child(div().text_size(12).text_color(c.grey900).child(`Captain will create these in ${p.region}, each tagged so it can be found and removed:`))
+        .children((p?.creates ?? []).map((r, i) => v_flex().id(`ship-setup-row-${i}`).py(2)
+          .child(h_flex().gap(8).child(div().w(150).flex_none().text_size(12).text_color(c.grey500).child(r.resource)).child(div().font_family(MONO).text_size(11.5).text_color(c.navy).child(r.name)))
+          .child(div().pl(158).text_size(12).line_height("17px").text_color(c.grey900).child(r.why))))
+        .child(div().id("ship-setup-cost").text_size(12).line_height("17px").font_medium().text_color(c.navy).child(p?.cost?.text ?? ""))
+        .child(div().text_size(12).line_height("17px").text_color(c.grey500).child("Nothing is created until you say so. Remove serving setup, under Details, takes all of it away again.")))
+      .when(Boolean(this.policy), (e) => e.child(h_flex().id("ship-setup-policy").gap(8).items_center()
+        .child(div().flex_1().min_w(0).text_size(12).text_color(c.grey900).child("Your login needs more permissions for this. The exact policy for an admin is ready to copy."))
+        .child(Button(c, "ship-setup-policy-copy", "Copy the policy", (_e, cx) => this.copy(cx, JSON.stringify(this.policy, null, 2), "The policy is on your clipboard. Send it to whoever manages your AWS account."), { small: true, kind: "primary" }))))
       .child(h_flex().gap(6)
+        .when(Boolean(p), (e) => e.child(Button(c, "ship-setup-go", "Create these", (_e, cx) => this.runSetup(cx), { small: true, kind: "primary", disabled: Boolean(this.busy) })))
         .child(Button(c, "ship-setup-open", "Open Cloud and compute", () => openOverlay({ mod: "captain-cloud", kind: "dialog", width: 760, height: 640 }), { small: true }))
-        .child(Button(c, "ship-setup-close", "Close", (_e, cx) => { this.sheet = false; cx.notify(); }, { small: true, kind: "quiet" })));
+        .child(Button(c, "ship-setup-close", "Not now", (_e, cx) => { this.sheet = false; cx.notify(); }, { small: true, kind: "quiet" })));
   }
 
   /** The two places a model can run, side by side with what each costs. This computer is free and only you can
@@ -862,7 +939,7 @@ export class Ship {
     const there = !cloud ? null : card("ship-choice-cloud", `In your ${cloud} account`, ["A site can reach it.",
       target ? est?.text ?? "Working out the cost..." : `Serving isn't set up in your ${cloud} account yet.`, target ? "This keeps billing until you stop it." : null],
       target ? Button(c, "ship-stage-cloud", `Stage in your ${cloud} account`, (_e, cx) => this.stageAt(cx, target.name), { small: true, kind: last === "cloud" ? "primary" : "secondary" })
-        : Button(c, "ship-setup-cloud", `Set up serving in your ${cloud}`, (_e, cx) => { this.sheet = !this.sheet; cx.notify(); }, { small: true }));
+        : Button(c, "ship-setup-cloud", `Set up serving in your ${cloud}`, (_e, cx) => this.openSetupSheet(cx), { small: true }));
     return v_flex().id("ship-choices").gap(8)
       .child(div().text_size(12.5).text_color(c.grey900).child(`Where should ${what} run?`))
       .child(h_flex().flex_wrap().items_stretch().gap(10).children(last === "cloud" && there ? [there, here] : [here, there].filter(Boolean)))
@@ -884,7 +961,7 @@ export class Ship {
       if (local && cloud && target) actions.child(v_flex().items_end().gap(2)
         .child(Button(c, "ship-stage-cloud", `Stage in your ${cloud} account`, (_e, cx) => this.stageAt(cx, target.name), { small: true, kind: "primary" }))
         .child(div().id("ship-stage-cloud-cost").text_size(11.5).text_color(c.grey500).child(this.cloudCost.estimate?.text ?? "")));
-      else if (local && cloud) actions.child(Button(c, "ship-setup-cloud", `Set up serving in your ${cloud}`, (_e, cx) => { this.sheet = !this.sheet; cx.notify(); }, { small: true }));
+      else if (local && cloud) actions.child(Button(c, "ship-setup-cloud", `Set up serving in your ${cloud}`, (_e, cx) => this.openSetupSheet(cx), { small: true }));
       if (cand && s.serve === "baseline" && !(s.arms ?? {}).candidate) actions.child(Button(c, "ship-stage", "Stage the candidate", (_e, cx) => this.stage(cx, { candidate: cand.id }), { small: true, kind: "primary" }));
       if (champ && s.serve !== "baseline") actions.child(Button(c, "ship-restage-baseline", "Restage with the baseline", (_e, cx) => this.stage(cx, { baseline: true }), { small: true }));
       actions.child(Button(c, "ship-stop", "Stop", (_e, cx) => { this.stopAsk = true; cx.notify(); }, { small: true }));
@@ -931,6 +1008,7 @@ export class Ship {
         .text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
       .when(Boolean(this.problem), (e) => e.child(div().id("ship-problem").text_size(12).text_color(c.fail).child(this.problem)))
       .when(this.sheet, (e) => e.child(this.setupSheet(c)))
+      .when(Boolean(this.servingLine(c)), (e) => e.child(this.servingLine(c)))
       .when(Boolean(this.confirm), (e) => e.child(this.confirmBox(c)))
       .when(Boolean(this.stopAsk) && on, (e) => e.child(this.stopBox(c)))
       .when(Boolean(s), (e) => e.child(this.detailsBox(c, s)));

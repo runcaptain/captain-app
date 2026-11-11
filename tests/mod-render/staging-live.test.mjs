@@ -411,7 +411,7 @@ assert.equal((await get('/api/projects/outdoor/staging')).status, 'running', 'no
 await h.click('ship-stop-yes');
 await until(h, () => h.text().includes('Staging is stopped. Nothing is left running.'), 'it says so');
 assert.equal((await get('/api/projects/outdoor/staging')).status, 'stopped');
-assert.ok(h.text().includes('Stopped') && h.byIdPrefix('ship-done-try').length === 0 && byId(h, 'ship-address').length === 0, 'the header says stopped, and the address is gone');
+await until(h, () => h.text().includes('Stopped') && h.byIdPrefix('ship-done-try').length === 0 && byId(h, 'ship-address').length === 0, 'the header says stopped, and the address is gone');
 assert.equal(h.byIdPrefix('ship-choice-local').length > 0, true, 'and it can be staged again from here');
 assert.equal(h.byIdPrefix('ship-try-box').length, 0, 'and the query box');
 assert.ok(h.text().includes('Last staged:'), 'what was staged last stays on the card');

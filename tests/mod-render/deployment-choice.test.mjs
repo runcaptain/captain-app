@@ -17,6 +17,7 @@ globalThis.localStorage = { getItem: (k) => store[k] ?? null, setItem: (k, v) =>
 
 const EST = { kind: 'staging', where: 'sm', free: false, available: true, low: 0.066, high: 0.066, unit: 'hour', basis: ['1 x ml.t2.medium'],
   text: 'About $0.07 an hour on sm, about $1.58 a day while it is up. Estimate, prices as of 2026-11-10.' };
+const POLICY = { Version: '2012-10-17', Statement: [{ Sid: 'ServingRoles', Effect: 'Allow', Action: ['iam:CreateRole'], Resource: ['arn:aws:iam::000000000000:role/captain-serving'] }] };
 let world, sent;
 const reply = (status, data) => ({ status, ok: status < 300, text: async () => JSON.stringify(data) });
 globalThis.fetch = async (url, opts = {}) => {
@@ -26,6 +27,15 @@ globalThis.fetch = async (url, opts = {}) => {
   if (p === '/api/compute') return reply(200, world.targets);
   if (p === '/api/cloud/summary') return reply(200, { active: world.cloud });
   if (p === '/api/costs/estimate') return reply(200, body.where === 'local' ? { free: true, available: true, text: 'Runs on this computer. No cloud cost.', basis: [] } : EST);
+  if (p === '/api/serving/setup' && opts.method === 'DELETE') return reply(200, { job: 'remove-1' });
+  if (p === '/api/jobs/remove-1') return reply(200, { status: 'done', result: { status: 'removed', text: "Serving setup is removed. Nothing of Captain's is left in the account." } });
+  if (p === '/api/serving/setup' && (opts.method ?? 'GET') === 'GET' && world.serving && !new URL(url).searchParams.get('profile')) return reply(200, world.serving);
+  if (p === '/api/serving/setup' && (opts.method ?? 'GET') === 'GET') return reply(200, { status: 'none', created: [], plan: { profile: 'aws-test', region: 'us-west-1',
+    creates: [{ resource: 'IAM role', name: 'captain-serving', why: 'The endpoint runs as this. It can read the serving bundle, write the request log, pull the serving image and delete its own endpoint. Nothing else.' },
+      { resource: 'ECR repository', name: 'captain-serving', why: "Holds Captain's serving image in your account." }],
+    cost: { text: 'Setting up costs about $0.03 once: the image build runs about 6 minutes in AWS CodeBuild.' }, login_policy: POLICY } });
+  if (p === '/api/serving/setup') return reply(200, { job: 'setup-1' });
+  if (p === '/api/jobs/setup-1') return reply(200, { status: 'failed', message: "Your AWS login can't create the role captain-serving: it lacks iam:CreateRole. Ask an admin to grant the policy below, then try again.", policy: POLICY });
   if (p.endsWith('/staging')) return reply(200, world.staging);
   if (p.endsWith('/staging/connect')) return reply(200, { reachable: false, connected: false, address: 'http://127.0.0.1:5001', text: 'Running on this computer. Only this computer can reach it.', live: 'Waiting for the first request.', real: 0, test: 0, simulated: 0, running: 0, evidence_label: null, snippets: {}, key_note: '', fallback: '', test_request: 'curl -s http://127.0.0.1:5001/rank' });
   if (p.endsWith('/ab')) return reply(200, { status: 'none', experiment: null, can_measure: ['clicks'] });
@@ -55,7 +65,7 @@ const open = async (w) => {
 const byId = (h, id) => h.byIdPrefix(id).filter((e) => e.call('id')?.[0] === id);
 const NONE = { status: 'none', staged: null, text: 'Nothing is staged.' };
 const SM = { name: 'sm', kind: 'aws-sagemaker', purposes: ['serve'], config: { instance_type: 'ml.t2.medium', instance_count: '1' } };
-const AWS = { provider: 'aws', label: 'aws-test', region: 'us-west-1' };
+const AWS = { name: 'aws-test', provider: 'aws', label: 'Amazon Web Services', region: 'us-west-1' };
 
 // A cloud login with serving set up: both places, side by side, each with what it costs.
 let h = await open({ targets: [{ name: 'local', kind: 'local' }, SM], cloud: AWS, staging: NONE });
@@ -85,9 +95,23 @@ h = await open({ targets: [{ name: 'batch', kind: 'aws-batch', purposes: ['backt
 t = h.text();
 assert.ok(t.includes("Serving isn't set up in your AWS account yet.") && byId(h, 'ship-setup-cloud').length === 1 && byId(h, 'ship-stage-cloud').length === 0, `set up first: ${t}`);
 await h.click('ship-setup-cloud');
+for (let i = 0; i < 30 && !byId(h, 'ship-setup-go').length; i++) await h.idle(30);
 t = h.text();
 assert.equal(byId(h, 'ship-setup-sheet').length, 1, 'a sheet, not nothing');
-assert.ok(t.includes('What serving in AWS needs') && t.includes('delete its own endpoint so it can stop itself') && t.includes("container registry") && t.includes('Open Cloud and compute'), `what is needed: ${t}`);
+assert.ok(sent.some((x) => x[0] === 'GET' && x[1] === '/api/serving/setup'), 'what it would create is asked of the services, for the connected login');
+assert.ok(t.includes('Set up serving in your AWS account') && t.includes('captain-serving') && t.includes('delete its own endpoint') && t.includes('about $0.03 once') && t.includes('Nothing is created until you say so.'), `what it creates and costs, before anything happens: ${t}`);
+assert.ok(!sent.some((x) => x[0] === 'POST' && x[1] === '/api/serving/setup'), 'nothing created yet');
+// The login lacks a permission: one sentence says which, and the policy for an admin is one click away.
+globalThis.__exec = async () => ({ code: 0, stdout: '', stderr: '' });
+let clip = null;
+h.cx.write_to_clipboard = (x) => { clip = x; };
+await h.click('ship-setup-go');
+for (let i = 0; i < 60 && !byId(h, 'ship-setup-policy-copy').length; i++) await h.idle(30);
+t = h.text();
+assert.deepEqual(sent.find((x) => x[0] === 'POST' && x[1] === '/api/serving/setup')[2], { profile: 'aws-test', region: 'us-west-1', confirm: true });
+assert.ok(t.includes("Your AWS login can't create the role captain-serving: it lacks iam:CreateRole."), `the step and the action: ${t}`);
+await h.click('ship-setup-policy-copy');
+assert.deepEqual(JSON.parse(clip), POLICY, 'the exact policy is copied for an admin');
 
 // No cloud login: this computer, and how to connect a cloud.
 h = await open({ targets: [], cloud: null, staging: NONE });
@@ -108,6 +132,14 @@ assert.ok(t.includes('Only this computer can reach it.') && t.includes('This com
 assert.equal(byId(h, 'ship-stage-cloud').length, 1, 'Stage in your AWS account');
 assert.equal(byId(h, 'ship-stage-cloud-cost')[0].kids.join(''), EST.text, 'with the hourly estimate beside it');
 assert.equal(h.byIdPrefix('ship-choices').length, 0, 'the choices give way to the running endpoint');
+// What Captain set up in the account is listed, and one action removes it, after a confirm.
+h = await open({ targets: [SM], cloud: AWS, staging: NONE, serving: { status: 'ready', created: [{ type: 'iam-role', name: 'captain-serving' }, { type: 'ecr-repository', name: 'captain-serving' }], text: 'Serving is set up: iam-role captain-serving, ecr-repository captain-serving.' } });
+assert.ok(h.text().includes('Serving is set up: iam-role captain-serving, ecr-repository captain-serving.'), 'listed on the card');
+await h.click('ship-serving-remove');
+assert.ok(h.text().includes('Remove everything Captain created for serving in your account?') && !sent.some((x) => x[0] === 'DELETE'), 'it asks first');
+await h.click('ship-serving-yes');
+for (let i = 0; i < 60 && !h.text().includes("Nothing of Captain's is left in the account."); i++) await h.idle(30);
+assert.ok(sent.some((x) => x[0] === 'DELETE' && x[1] === '/api/serving/setup') && h.text().includes("Nothing of Captain's is left in the account."), `removed, and it says so: ${h.text().slice(0, 600)}`);
 for (const bad of [/\bengine\b/i, /\bdaemon\b/i, /\bpipeline/i, /[←-⇿]/, /—/]) assert.ok(!bad.test(t), `no ${bad}`);
 console.log('deployment choice render test: ok');
 process.exit(0);
