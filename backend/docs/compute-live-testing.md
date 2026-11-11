@@ -63,6 +63,11 @@ There is no multipart path, so `put_new_chunks` joins the chunks in memory befor
 - Target fields: `job=<job>`, `image=<image>`.
 - Unproven assumptions: the execution name comes from the run operation's metadata, and logs are found by the
   `run.googleapis.com/execution_name` label.
+- Run on 2026-11-10, read-only calls only: `cst compute add` and `cst compute test` (it names a job that does
+  not exist, in Cloud Run's words), and the log query, which Cloud Logging accepts. No job ran: the runner image
+  could not be built that day. Signing in with application default credentials (`--auth adc`) works for these.
+- Turning the Cloud Run API on grants `roles/run.serviceAgent` on the project to Google's Cloud Run service
+  agent. Turning the API off again leaves that grant behind.
 
 ## Google Vertex AI custom jobs (`gcp-vertex`)
 
@@ -74,6 +79,8 @@ There is no multipart path, so `put_new_chunks` joins the chunks in memory befor
   `service_account`.
 - Unproven assumptions: logs are found by `resource.type="ml_job"` and the job id, and `container_spec.args`
   reaches the image's entrypoint (`tini -- cst`).
+- Run on 2026-11-10, read-only calls only: `cst compute test` (fixed that day: it passed `page_size` as a
+  keyword the client does not take) and the log query, which Cloud Logging accepts. No job ran.
 
 ## Azure Container Apps jobs (`azure-container-apps`)
 
