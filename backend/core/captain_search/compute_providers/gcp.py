@@ -178,7 +178,9 @@ class VertexProvider(_GCP):
     def test(self) -> dict:
         try:
             cl, project = self._client()
-            list(cl.list_custom_jobs(parent=f"projects/{project}/locations/{self.region}", page_size=1))
+            # A request, not keywords: the client's flattened arguments are parent only, so page_size= is a TypeError.
+            next(iter(cl.list_custom_jobs(request={"parent": f"projects/{project}/locations/{self.region}",
+                                                   "page_size": 1})), None)
             return {"ok": True, "detail": f"signed in to project {project}, Vertex answers in {self.region}"}
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "detail": str(e)[:400]}

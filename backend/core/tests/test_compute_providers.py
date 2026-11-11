@@ -177,6 +177,10 @@ def _gcp_modules(w):
             w.calls.append(("cancel_custom_job", name))
             w.state = "stopped"
 
+        def list_custom_jobs(self, request=None, *, parent=None):  # the real one takes no page_size keyword
+            w.calls.append(("list_custom_jobs", request))
+            return iter([])
+
     aip = types.ModuleType("google.cloud.aiplatform_v1")
     aip.JobServiceClient = JobSvc
 
@@ -695,3 +699,37 @@ def test_azure_ml_status_reads_the_enum_and_cancel_records_the_end(world, cloud_
     world.state = "running"
     r = J.cancel(cloud_ctx, rec["id"])
     assert r["state"] == "stopped" and r["finished_at"]
+
+
+# ---- Google Cloud: what the first run on a real account (2026-11-10) got wrong ------
+
+
+def test_vertex_target_test_asks_for_one_job_with_a_request(world, cloud_ctx):
+    """Live, 2026-11-10: `cst compute test` on Vertex failed with "JobServiceClient.list_custom_jobs() got an
+    unexpected keyword argument 'page_size'". The page size has to travel inside the request."""
+    r = P.get(_target(cloud_ctx, "gcp-vertex"), cloud_ctx).test()
+    assert r["ok"], r
+    assert world.calls[-1] == ("list_custom_jobs", {"parent": "projects/p1/locations/us-central1", "page_size": 1})
+
+
+def test_gcp_calls_bind_to_the_real_sdk_signatures():
+    """The fakes above accept whatever the provider sends, which is how a wrong keyword reached a real account.
+    Where the Google SDK is installed, bind each call the provider makes to the real method's signature."""
+    import inspect
+
+    run_v2 = pytest.importorskip("google.cloud.run_v2")
+    aip = pytest.importorskip("google.cloud.aiplatform_v1")
+
+    def binds(fn, **kw):
+        inspect.signature(fn).bind(None, **kw)
+
+    binds(run_v2.JobsClient.run_job, request=None)
+    binds(run_v2.JobsClient.get_job, name="n")
+    binds(run_v2.ExecutionsClient.get_execution, name="n")
+    binds(run_v2.ExecutionsClient.cancel_execution, name="n")
+    binds(aip.JobServiceClient.create_custom_job, parent="p", custom_job={})
+    binds(aip.JobServiceClient.get_custom_job, name="n")
+    binds(aip.JobServiceClient.cancel_custom_job, name="n")
+    binds(aip.JobServiceClient.list_custom_jobs, request={})
+    with pytest.raises(TypeError):
+        binds(aip.JobServiceClient.list_custom_jobs, parent="p", page_size=1)
