@@ -60,6 +60,31 @@ with no keychain, set that name in the environment before staging and that value
 `traffic` says where a request came from: `real` (the default), `simulated` or `test`. The Try it box sends `test`.
 Only `real` ever counts as REAL_TRAFFIC evidence.
 
+## Where it runs: this computer, or your cloud
+
+Before staging, Captain offers the places a model can run with what each costs: this computer (free, only you can
+reach it) and the connected cloud (an hourly estimate, a site can reach it). The last choice is remembered per
+project.
+
+**This computer is only offered when the model fits.** A local endpoint holds the catalog, a keyword index for
+each version and a trained ranker's feature tables in one process. Captain estimates that from the catalog's size
+and compares it with the memory and disk free right now. Measured 2026-11-11 on demo-shaped catalogs: about 8.0 KB
+a product for a trained ranker, 4.5 KB a product for a keyword version, 0.45 KB a product for the rows, 120 MB for
+the process, plus 30% headroom. A 200,000 product catalog with both versions needs about 3.4 GB, loads in about 7
+seconds, and answers a query in about 120 ms. If it won't fit, the choice is shown switched off with the reason
+("This catalog needs about 9 GB of memory to serve, and this computer has 3 GB free. Stage it in your cloud."). If
+it is tight, it is allowed with a warning. Staging is refused before anything starts when it won't fit, and an
+endpoint that runs out of memory while loading says so.
+
+**Set up serving in your AWS account** (`cst compute setup aws-serving --profile <login> --region <region>`, or
+the button on the deployment page) creates what a SageMaker staging target needs, after showing exactly what and
+a confirm: the role the endpoint runs as (it can read the serving bundle, write the request log, pull its image and
+delete its own endpoint, and nothing else), a repository for the serving image, the image, and the compute target.
+The image is built inside your account by AWS CodeBuild from the installed Captain (about 6 minutes, about $0.03),
+so no Docker is needed on your computer. Everything is named `<prefix>-serving...` and tagged `app=captain`.
+`--remove` takes it all away again and is refused while a model is staged there. `--policy` prints the exact
+policy your login needs, for an admin. A login that lacks a permission is told which step and which action.
+
 ## Cost, and stopping by itself
 
 Before any cloud deploy Captain shows the instance type, an hourly estimate and "This keeps billing until you stop

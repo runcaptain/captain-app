@@ -127,6 +127,12 @@ export class Ship {
       const targets = (t.ok && Array.isArray(t.data) ? t.data : []).filter((x) => x.kind !== "local" && (x.purposes ?? []).includes("serve") && x.kind === "aws-sagemaker");
       this.places = { cloud: cl.ok ? cl.data?.active ?? null : null, targets };
       const first = targets[0];
+      // Would it fit on this computer? The plan answers from the catalog's size and what is free right now.
+      const cand = this.pick();
+      if (cand || this.page.exps?.champion) {
+        const fp = await api(`/api/projects/${enc(pid)}/stage`, { body: { dry_run: true, target: "local", ...(cand ? { candidate: cand.id } : { baseline: true }) }, scoped: false });
+        this.fit = fp.ok ? fp.data?.local_fit ?? null : null;
+      }
       if (first) await refreshEstimate(this.cloudCost, { kind: "staging", where: first.name, size: { instances: Number(first.config?.instance_count ?? 1), instance_type: first.config?.instance_type ?? "ml.m5.large" } });
       cx.notify();
     });
@@ -934,8 +940,12 @@ export class Ship {
       .child(div().text_size(13).font_semibold().text_color(c.navy).child(title))
       .children(lines.filter(Boolean).map((t, i) => div().id(`${id}-l${i}`).text_size(12).line_height("17px").text_color(c.grey900).child(t)))
       .child(div().flex_1()).child(h_flex().child(button));
-    const here = card("ship-choice-local", "On this computer", ["Free. Only you can reach it.", "Good for trying a model. A site can't send it traffic."],
-      Button(c, "ship-stage", cand ? "Stage it" : "Stage the baseline", (_e, cx) => this.stageAt(cx, "local"), { small: true, kind: last === "cloud" && target ? "secondary" : "primary" }));
+    // This computer is only a normal choice when the model fits in what is free here right now.
+    const fit = this.fit, wont = fit?.outcome === "wont-fit";
+    const here = card("ship-choice-local", "On this computer", ["Free. Only you can reach it.", wont ? null : "Good for trying a model. A site can't send it traffic."],
+      Button(c, "ship-stage", cand ? "Stage it" : "Stage the baseline", (_e, cx) => this.stageAt(cx, "local"), { small: true, kind: last === "cloud" && target ? "secondary" : "primary", disabled: wont }))
+      .when(Boolean(fit?.text), (e) => e.child(div().id("ship-fit").text_size(12).line_height("17px")
+        .text_color(wont ? c.fail : fit.outcome === "tight" ? c.warn : c.grey500).child(fit.text)));
     const there = !cloud ? null : card("ship-choice-cloud", `In your ${cloud} account`, ["A site can reach it.",
       target ? est?.text ?? "Working out the cost..." : `Serving isn't set up in your ${cloud} account yet.`, target ? "This keeps billing until you stop it." : null],
       target ? Button(c, "ship-stage-cloud", `Stage in your ${cloud} account`, (_e, cx) => this.stageAt(cx, target.name), { small: true, kind: last === "cloud" ? "primary" : "secondary" })

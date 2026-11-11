@@ -39,6 +39,7 @@ globalThis.fetch = async (url, opts = {}) => {
   if (p.endsWith('/staging')) return reply(200, world.staging);
   if (p.endsWith('/staging/connect')) return reply(200, { reachable: false, connected: false, address: 'http://127.0.0.1:5001', text: 'Running on this computer. Only this computer can reach it.', live: 'Waiting for the first request.', real: 0, test: 0, simulated: 0, running: 0, evidence_label: null, snippets: {}, key_note: '', fallback: '', test_request: 'curl -s http://127.0.0.1:5001/rank' });
   if (p.endsWith('/ab')) return reply(200, { status: 'none', experiment: null, can_measure: ['clicks'] });
+  if (p.endsWith('/stage') && body.dry_run) return reply(200, { dry_run: true, local_fit: world.fit ?? { outcome: 'fits', text: 'Needs about 180 MB of memory, and this computer has 30 GB free. It loads in about 1 s.' } });
   if (p.endsWith('/stage')) return body.confirm ? reply(200, { job: 'j1', plan: { kind: 'aws-sagemaker' } })
     : reply(409, { needs_confirm: true, detail: 'Confirm the cost first.', plan: { target: 'sm', kind: 'aws-sagemaker', model_version: 'shop/starter-ranker@v2',
       cost: { instance_type: 'ml.t2.medium', instance_count: 1, estimate: EST, text: EST.text }, warnings: ["This endpoint can't stop itself when idle. It will keep billing until you stop it from Captain."], preflight: { note: null } } });
@@ -80,10 +81,10 @@ assert.ok(h.byIdPrefix('ship-choice-').findIndex((e) => e.call('id')[0] === 'shi
 await h.click('ship-stage-cloud');
 for (let i = 0; i < 20 && !byId(h, 'ship-confirm').length; i++) await h.idle(30);
 t = h.text();
-assert.deepEqual(sent.find((x) => x[1] === '/api/projects/shop/stage')[2], { candidate: 'exp-1', target: 'sm' });
+assert.deepEqual(sent.find((x) => x[1] === '/api/projects/shop/stage' && !x[2].dry_run)[2], { candidate: 'exp-1', target: 'sm' });
 assert.ok(t.includes('Start starter-ranker@v2 in your own cloud?') && t.includes(EST.text) && t.includes('This keeps billing until you stop it.'), `the confirm: ${t}`);
 assert.ok(t.includes("This endpoint can't stop itself when idle. It will keep billing until you stop it from Captain."), 'the warning before the yes');
-assert.equal(sent.filter((x) => x[1].endsWith('/stage')).length, 1, 'nothing started yet');
+assert.equal(sent.filter((x) => x[1].endsWith('/stage') && !x[2].dry_run).length, 1, 'nothing started yet');
 assert.equal(store['stage-where:shop'], 'cloud', 'the choice is remembered for this project');
 // Next time the cloud comes first.
 h = await open({ targets: [SM], cloud: AWS, staging: NONE });
@@ -118,7 +119,7 @@ h = await open({ targets: [], cloud: null, staging: NONE });
 t = h.text();
 assert.ok(byId(h, 'ship-stage').length === 1 && h.byIdPrefix('ship-choice-cloud').length === 0 && t.includes('connect a cloud login'), `this computer only: ${t}`);
 await h.click('ship-stage');
-assert.deepEqual(sent.find((x) => x[1] === '/api/projects/shop/stage')[2], { candidate: 'exp-1', target: 'local' }, 'staged here, by name');
+assert.deepEqual(sent.find((x) => x[1] === '/api/projects/shop/stage' && !x[2].dry_run)[2], { candidate: 'exp-1', target: 'local' }, 'staged here, by name');
 
 // Staged on this computer with a cloud connected: where it runs now, and the way online with its hourly estimate.
 const RUN = { status: 'running', text: 'shop/starter-ranker@v2 is running on this computer. Only this computer can reach it.', health: { stops_in_s: 14000 },
@@ -132,6 +133,16 @@ assert.ok(t.includes('Only this computer can reach it.') && t.includes('This com
 assert.equal(byId(h, 'ship-stage-cloud').length, 1, 'Stage in your AWS account');
 assert.equal(byId(h, 'ship-stage-cloud-cost')[0].kids.join(''), EST.text, 'with the hourly estimate beside it');
 assert.equal(h.byIdPrefix('ship-choices').length, 0, 'the choices give way to the running endpoint');
+// Will it fit here? Fits: said quietly. Tight: allowed, with a warning. Won't fit: not a normal choice, with the reason.
+h = await open({ targets: [SM], cloud: AWS, staging: NONE });
+assert.ok(h.text().includes('Needs about 180 MB of memory, and this computer has 30 GB free.'), 'what it needs, when it fits');
+h = await open({ targets: [SM], cloud: AWS, staging: NONE, fit: { outcome: 'tight', text: 'This catalog needs about 9.0 GB of memory to serve, and this computer has 12 GB free. It will run, but other work on this computer may slow down. Your cloud has more room.' } });
+assert.ok(h.text().includes('It will run, but other work on this computer may slow down.') && byId(h, 'ship-stage')[0].call('on_click'), 'tight: allowed, with the warning');
+h = await open({ targets: [SM], cloud: AWS, staging: NONE, fit: { outcome: 'wont-fit', text: 'This catalog needs about 9.0 GB of memory to serve, and this computer has 3.0 GB free. Stage it in your cloud.' } });
+assert.ok(h.text().includes('This catalog needs about 9.0 GB of memory to serve, and this computer has 3.0 GB free. Stage it in your cloud.'), 'the reason, in plain words');
+assert.equal(byId(h, 'ship-stage')[0].call('on_click'), undefined, "won't fit: the local button is switched off");
+assert.ok(byId(h, 'ship-stage-cloud')[0].call('on_click'), 'and the cloud is still offered');
+
 // What Captain set up in the account is listed, and one action removes it, after a confirm.
 h = await open({ targets: [SM], cloud: AWS, staging: NONE, serving: { status: 'ready', created: [{ type: 'iam-role', name: 'captain-serving' }, { type: 'ecr-repository', name: 'captain-serving' }], text: 'Serving is set up: iam-role captain-serving, ecr-repository captain-serving.' } });
 assert.ok(h.text().includes('Serving is set up: iam-role captain-serving, ecr-repository captain-serving.'), 'listed on the card');

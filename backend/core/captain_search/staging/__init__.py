@@ -305,9 +305,13 @@ def plan(ctx: Context, pid: str, candidate: str | None = None, baseline: bool = 
     c = cost(t, ctx)
     cur = state(ctx, pid, env)
     pre = _preflight(ctx, t, pid, env)
+    from . import fit as FT
+
+    # Would it fit on this computer? Always answered, so the choice can show "On this computer" as it is.
+    local_fit = FT.check(ctx, {k: v for k, v in arms.items() if not endpoint and not image}) if not image else None
     return {"project": pid, "env": env, "target": t["name"], "kind": t["kind"], "region": t.get("region"),
             "arms": arms, "serve": serve, "experiment": exp, "model_version": arms[serve], "cost": c,
-            "needs_confirm": bool(c["billing"]), "preflight": pre, "warnings": (pre or {}).get("warnings") or [], "replaces": cur["model_version"] if cur and cur.get("status") == "running" else None,
+            "needs_confirm": bool(c["billing"]), "local_fit": local_fit, "preflight": pre, "warnings": (pre or {}).get("warnings") or [], "replaces": cur["model_version"] if cur and cur.get("status") == "running" else None,
             "how": "endpoint" if endpoint else "image" if image else "captain",
             "text": (f"Stage {arms[serve]} on " + ("this computer" if t["kind"] == "local" else f"{t['name']} ({t['kind']})")
                      + (f", beside the baseline {arms['baseline']}" if serve == "candidate" and arms.get("baseline") else "")
@@ -385,6 +389,10 @@ def _start_local(ctx: Context, bundle_key: str, bid: str, key_sha: str) -> dict:
             tail = " ".join(fh.read().strip().splitlines()[-3:])[:400]
     except OSError:
         pass
+    if not tail or "MemoryError" in tail or "Killed" in tail:
+        # A process the system ends for using too much memory leaves no message of its own. Say what most likely happened.
+        raise ValueError("The staging endpoint ended while it was loading the catalog, most likely because this computer "
+                         "ran out of memory. Close other work and try again, or stage it in your cloud.")
     raise ValueError("The staging endpoint did not start on this computer." + (f" It said: {tail}" if tail else ""))
 
 
@@ -439,6 +447,8 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
     p = plan(ctx, pid, candidate, baseline, env, target, endpoint, image)
     if dry_run:
         return {**p, "dry_run": True}
+    if p["kind"] == "local" and (p.get("local_fit") or {}).get("outcome") == "wont-fit":
+        raise ValueError(p["local_fit"]["text"])  # refused before anything starts, in the sentence the choice shows
     if p["needs_confirm"] and not confirm:
         raise NeedsConfirm("Confirm the cost first. " + p["cost"]["text"] + "".join(" " + w for w in p["warnings"]), p)
     running_test = (PS.get(ctx, pid).get("ab") or {})

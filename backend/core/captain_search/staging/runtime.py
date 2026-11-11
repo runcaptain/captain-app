@@ -430,9 +430,14 @@ def serve(ctx, bundle_key: str, host: str = "127.0.0.1", port: int = 8080) -> No
             _self_delete_endpoint(reason)
         done.set()
 
-    rt = Runtime(ctx, bundle_key, key_sha256=os.environ.get("CST_STAGING_KEY_SHA256") or None,
-                 flush_s=float(os.environ.get("CST_STAGING_FLUSH_S") or 15),
-                 publish_minutes=float(os.environ.get("CST_STAGING_PUBLISH_MINUTES") or 5), on_stop=on_stop)
+    try:
+        rt = Runtime(ctx, bundle_key, key_sha256=os.environ.get("CST_STAGING_KEY_SHA256") or None,
+                     flush_s=float(os.environ.get("CST_STAGING_FLUSH_S") or 15),
+                     publish_minutes=float(os.environ.get("CST_STAGING_PUBLISH_MINUTES") or 5), on_stop=on_stop)
+    except MemoryError:
+        # Stop with a sentence, not a stack trace: the catalog and its indexes did not fit in memory.
+        print("MemoryError: the catalog and its indexes did not fit in this machine's memory while loading.", flush=True)
+        raise SystemExit(3) from None
     server = uvicorn.Server(uvicorn.Config(make_app(rt), host=host, port=port, log_level="warning"))
 
     def loop() -> None:

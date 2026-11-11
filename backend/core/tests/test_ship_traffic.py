@@ -331,3 +331,54 @@ def test_a_candidate_that_reproduces_keyword_search_is_called_that_with_the_reas
     assert live["mostly_same"] and live["queries"] == [] and "None of the" in live["none_differ"]
     # before training, the starter form warns when the events were simulated from keyword search
     assert any("generated from keyword search" in w and "mostly reproduces keyword search" in w for w in ST.plan(ws, "shop")["warnings"])
+
+
+# ---- will it fit on this computer ------------------------------------------------------------------
+
+
+def test_the_local_choice_is_checked_against_what_this_computer_has_free(ws, monkeypatch):  # noqa: F811
+    from captain_search.staging import fit as FT
+
+    arms = {"candidate": ws.candidate, "baseline": ws.baseline}
+    n = len(ops.products_of(ws, ws.registry.resolve("pipeline", ws.candidate)[0].catalog))
+    assert FT._products(ws, ws.candidate) == (n, "ranker") and FT._products(ws, ws.baseline) == (n, "keyword")
+    assert FT._products(ws, "https://our-own/search") == (0, "wrapped")
+    # fits: the demo store on a laptop with room
+    ok = FT.check(ws, arms, {"memory_mb": 16000, "disk_mb": 50000})
+    assert ok["outcome"] == "fits" and ok["need"]["memory_mb"] < 250 and ok["text"].startswith("Needs about ") and "this computer has 16 GB free" in ok["text"]
+    # tight: allowed, with a warning
+    tight = FT.check(ws, arms, {"memory_mb": ok["need"]["memory_mb"] * 1.2, "disk_mb": 50000})
+    assert tight["outcome"] == "tight" and "It will run, but other work on this computer may slow down." in tight["text"]
+    # won't fit: memory, then disk
+    no = FT.check(ws, arms, {"memory_mb": 64, "disk_mb": 50000})
+    assert no["outcome"] == "wont-fit" and no["text"].endswith("and this computer has 64 MB free. Stage it in your cloud.")
+    assert FT.check(ws, arms, {"memory_mb": 16000, "disk_mb": 10})["text"].endswith("of disk, and this computer has 10 MB free. Stage it in your cloud.")
+    # can't read the machine: say so, never guess
+    assert FT.check(ws, arms, {"memory_mb": None, "disk_mb": None})["outcome"] == "unknown"
+    # the measured figures: a 200,000 product catalog with both versions needs what was measured, plus headroom
+    big = FT.need([(200_000, "ranker"), (200_000, "keyword")])
+    assert 3300 < big["memory_mb"] < 3600 and 6 < big["load_s"] < 9 and 100 < big["query_ms"] < 130
+    assert FT.need([(900_000, "ranker"), (900_000, "keyword")])["memory_mb"] > 14_000
+    real = FT.free()
+    assert real["disk_mb"] > 0 and (real["memory_mb"] is None or real["memory_mb"] > 0)
+
+    # the plan carries it, and staging here is refused cleanly when it won't fit, before anything starts
+    monkeypatch.setattr(FT, "free", lambda: {"memory_mb": 64, "disk_mb": 50000})
+    p = SG.plan(ws, "shop", target="local")
+    assert p["local_fit"]["outcome"] == "wont-fit"
+    with pytest.raises(ValueError, match="this computer has 64 MB free. Stage it in your cloud."):
+        SG.stage(ws, "shop", target="local")
+    assert SG.state(ws, "shop") is None
+    monkeypatch.setattr(FT, "free", lambda: {"memory_mb": 16000, "disk_mb": 50000})
+    assert SG.stage(ws, "shop", target="local")["status"] == "running"
+
+
+def test_an_endpoint_that_dies_while_loading_says_it_ran_out_of_memory(ws, monkeypatch):  # noqa: F811
+    import subprocess as sp
+    import sys
+
+    real = sp.Popen
+    monkeypatch.setattr(SG.subprocess, "Popen", lambda argv, **kw: real([sys.executable, "-c", "import sys; sys.exit(137)"], **{k: v for k, v in kw.items() if k != "env"}))
+    with pytest.raises(ValueError, match="most likely because this computer ran out of memory"):
+        SG.stage(ws, "shop", target="local")
+    assert SG.state(ws, "shop")["status"] == "failed"
