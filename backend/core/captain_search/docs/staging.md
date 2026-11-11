@@ -8,10 +8,14 @@ Captain hosts nothing and never deploys to production: launch review is still th
     cst projects staging <project>                  # what runs, where, since when, and when it stops by itself
     cst projects staging-query <project> "<query>"  # the staged results beside the baseline's
     cst projects staging-check <project>            # did serving compute the features training computes?
+    cst projects ab-start <project> --split 0.5     # an A/B test between the baseline and the candidate
+    cst projects ab <project>                       # the readout
+    cst projects ab-ramp <project> 0.25             # change the candidate's share; ab-rollback sends everyone back
     cst projects unstage <project>                  # stop it and remove everything Captain created
 
-The app does the same from the project page (Ship: 1 Stage, 2 Try it), through `POST /api/projects/{id}/stage`,
-`/unstage`, `/staging/query`, `/staging/check` and `GET /api/projects/{id}/staging`.
+The app does the same from the project page (Ship: 1 Stage, 2 Try it, 3 A/B test, 4 Launch review), through
+`POST /api/projects/{id}/stage`, `/unstage`, `/staging/query`, `/staging/check`, `GET /api/projects/{id}/staging`,
+`GET /api/projects/{id}/ab` and `POST /api/projects/{id}/ab/start|ramp|rollback|stop|simulate|outcomes|result`.
 
 ## What can be staged
 
@@ -113,3 +117,64 @@ It passes at 99.9% or more (`--min-match`) with nothing missing or extra. A fail
 The pairs match on (query, product), which is right while a model's click tables are frozen at one cutoff. When
 serving starts refreshing click counts, the comparison has to be made as of each request's timestamp. The request
 id and timestamp are logged now so that it can be.
+
+## An A/B test between the baseline and the candidate
+
+Offline evaluation says a candidate is safe to try. The A/B test is the try. Staging always packs the baseline
+beside the candidate, so both are already on the endpoint when a test starts.
+
+    cst projects ab-start <project> [--split 0.5] [--primary clicks|purchases|revenue] [--guardrail <metric>]... [--min-sessions 200]
+    cst projects ab <project> [--traffic real|simulated|test]
+    cst projects ab-ramp <project> 0.05|0.25|0.5|1
+    cst projects ab-rollback <project>
+    cst projects ab-stop <project>
+    cst projects ab-simulate <project> [--sessions 1000]
+    cst projects ab-outcomes <project> <events dataset>
+    cst projects ab-result <project> --metric ... --baseline ... --candidate ... --source "..." [--traffic real|test]
+
+The metrics are chosen when the test starts: one primary, and the rest as guardrails. A project can measure
+sessions with a click, sessions with a purchase, and revenue per session when its catalog has a price column.
+Response time is always a guardrail.
+
+**Captain's endpoint splits the traffic** (the default). A hash of the session id (else the user id, else the
+request id) and the test's id picks the arm, so a shopper always sees one version, and raising the candidate's
+share only moves shoppers from the baseline to the candidate. The arm is logged on every request. The share lives
+in the endpoint's control document (`staging/<project>/<env>/control.json`), which the runtime re-reads every few
+seconds, so a ramp or a rollback needs no redeploy.
+
+**Your own A/B system splits the traffic** (`--own`). Captain gives the address of each arm on the endpoint
+(`/rank/baseline` and `/rank/candidate`, or `"arm"` in the SageMaker body) and records the readout you bring back
+with `ab-result`. It is recorded as REAL_TRAFFIC only when you say the traffic was real.
+
+**Outcomes** reach Captain through `POST /outcome` on the endpoint (`{request_id, event, product_id?, value?}`), or
+from an events dataset whose rows carry the `request_id` that `/rank` returned (`ab-outcomes`). Rows can be one per
+event (`request_id, event, product_id, value`) or one per result shown (`request_id, product_id, clicked,
+purchased, price`).
+
+**The readout** counts by session, the unit that was assigned: sessions per arm, the primary metric, the difference
+with a 95% interval (the normal interval for a difference of two means), each guardrail, and whether the split is
+what was asked for (a chi-square check on sessions assigned since the last ramp). It says "not enough data yet"
+until both arms have the minimum number of sessions, and names no winner before that. A guardrail fails only when
+the candidate is clearly worse (its interval lies below zero). The readout counts sessions from the start of the
+test, across ramps.
+
+**Where the numbers came from** is never guessed, and traffic of different kinds is never mixed in one readout:
+
+| The requests | Evidence | On screen |
+|---|---|---|
+| `traffic: real` (the default) | REAL_TRAFFIC | Real traffic |
+| `traffic: simulated` (`ab-simulate`) | SIMULATED | Simulated shoppers |
+| `traffic: test` (your own smoke tests) | TEST_TRAFFIC | Test traffic |
+
+Requests from the Try it box are sent to one named arm and never enter a readout.
+
+**Simulated shoppers** (`ab-simulate`, "Send simulated shoppers at staging") drive the endpoint with the shopper
+simulator Captain already uses for simulated events: they search the catalog, look down the page, click and
+sometimes buy. It shows the whole loop with no traffic yet. Everything read from it says SIMULATED, and it says
+nothing about what real shoppers will do.
+
+**Ramp and roll back** are one call each and are written to the project's history. Rolling back during a test
+sends every shopper to the baseline again and ends the test. With no test running, it restages the version that
+was on the endpoint before this one.
+
+Launch review stays the gate before production. Captain does not deploy to a production endpoint.

@@ -649,6 +649,144 @@ def staging_check(name: str, env: str = typer.Option("staging", "--env"),
         raise typer.Exit(1)
 
 
+# ---- A/B test on staging -----------------------------------------------------------------------------
+
+
+def _readout_text(r: dict) -> str:
+    if not r.get("experiment"):
+        return r["text"]
+    lines = [r["text"]]
+    for a in ("baseline", "candidate"):
+        x = (r.get("arms") or {}).get(a)
+        if x:
+            lines.append(f"  {a:9} {x['model_version']:40} {x['sessions']:>7,} sessions")
+    for g in r.get("guardrails") or []:
+        lines.append(("  ok   " if g["ok"] else "  FAIL ") + g["text"])
+    if r.get("srm"):
+        lines.append("  " + r["srm"]["text"])
+    if r.get("split") is not None and r.get("status") == "running":
+        lines.append(f"The candidate gets {r['split']:.0%} of traffic.")
+    return "\n".join(lines)
+
+
+@projects_app.command("ab-start")
+def ab_start(name: str,
+             split: float = typer.Option(0.5, "--split", help="the candidate's share of traffic, such as 0.05"),
+             primary: Optional[str] = typer.Option(None, "--primary", help="clicks, purchases or revenue; default purchases"),
+             guardrail: list[str] = typer.Option([], "--guardrail", help="a metric that must not get clearly worse. Repeat; default the others"),
+             own: bool = typer.Option(False, "--own", help="your own A/B system splits the traffic: Captain gives each arm's address"),
+             min_sessions: int = typer.Option(200, "--min-sessions", help="sessions each arm needs before the readout says anything")):
+    """Start an A/B test between the baseline and the staged candidate."""
+    from ..staging import ab as AB
+
+    c = ctx()
+    if not S.dry_run:
+        _by_hand(c, name, "start an A/B test")
+    try:
+        r = AB.start(c, name, split, primary, guardrail or None, "own" if own else "captain", min_sessions, dry_run=S.dry_run)
+    except _staging_errors() as e:
+        fail(str(e))
+    text = (f"A/B test {r['id']} started: the candidate gets {split:.0%} of traffic. Primary metric: {r['primary']}."
+            if not own else f"A/B test {r['id']} recorded. Send each arm's traffic to:\n"
+            + "\n".join(f"  {a}: {x.get('url') or x.get('endpoint')}" for a, x in (r.get("addresses") or {}).items()))
+    emit(r, text)
+
+
+@projects_app.command("ab")
+def ab_readout(name: str, traffic: Optional[str] = typer.Option(None, "--traffic", help="real, simulated or test; default the strongest there is")):
+    """The A/B readout: sessions per arm, the primary metric with its interval, and the guardrails."""
+    from ..staging import ab as AB
+
+    try:
+        r = AB.readout(ctx(), name, traffic)
+    except _staging_errors() as e:
+        fail(str(e))
+    emit(r, _readout_text(r))
+
+
+@projects_app.command("ab-ramp")
+def ab_ramp(name: str, split: float = typer.Argument(..., help="the candidate's new share: 0.05, 0.25, 0.5 or 1")):
+    """Give the candidate a larger (or smaller) share of traffic. No redeploy."""
+    from ..staging import ab as AB
+
+    c = ctx()
+    if not S.dry_run:
+        _by_hand(c, name, "ramp the A/B test")
+    try:
+        r = AB.ramp(c, name, split, dry_run=S.dry_run)
+    except _staging_errors() as e:
+        fail(str(e))
+    emit(r, f"The candidate now gets {r['split']:.0%} of traffic.")
+
+
+@projects_app.command("ab-rollback")
+def ab_rollback(name: str):
+    """Roll back: every shopper gets the baseline again. With no test running, restage the previous version."""
+    from ..staging import ab as AB
+
+    c = ctx()
+    if not S.dry_run:
+        _by_hand(c, name, "roll back staging")
+    try:
+        r = AB.rollback(c, name, dry_run=S.dry_run)
+    except _staging_errors() as e:
+        fail(str(e))
+    emit(r, f"Rolled back to {r['rolled_back_to']}.")
+
+
+@projects_app.command("ab-stop")
+def ab_stop(name: str):
+    """End the A/B test and keep the endpoint as it is, with no split."""
+    from ..staging import ab as AB
+
+    try:
+        r = AB.stop(ctx(), name)
+    except _staging_errors() as e:
+        fail(str(e))
+    emit(r, "The A/B test is ended.")
+
+
+@projects_app.command("ab-simulate")
+def ab_simulate(name: str, sessions: int = typer.Option(1000, "--sessions"), seed: int = typer.Option(7, "--seed")):
+    """Send simulated shoppers at staging, so the whole loop can be seen with no traffic yet. Everything reads SIMULATED."""
+    from ..staging import ab as AB
+
+    try:
+        r = AB.simulate(ctx(), name, sessions, seed)
+    except _staging_errors() as e:
+        fail(str(e))
+    emit(r, r["text"])
+
+
+@projects_app.command("ab-outcomes")
+def ab_outcomes(name: str, events: str = typer.Argument(..., help="an events dataset whose rows carry request_id")):
+    """Bring in outcomes (clicks, purchases) from an events dataset that carries the request_id /rank returned."""
+    from ..staging import ab as AB
+
+    try:
+        r = AB.import_outcomes(ctx(), name, events, dry_run=S.dry_run)
+    except _staging_errors() as e:
+        fail(str(e))
+    emit(r, f"{r['outcomes']:,} outcomes from {r['events']}: {r['matched']:,} match a request the endpoint served, {r['unmatched']:,} don't.")
+
+
+@projects_app.command("ab-result")
+def ab_result(name: str, metric: str = typer.Option(..., "--metric"), baseline: float = typer.Option(..., "--baseline"),
+              candidate: float = typer.Option(..., "--candidate"), source: str = typer.Option(..., "--source", help="the A/B system and its report"),
+              traffic: str = typer.Option("real", "--traffic", help="real, simulated or test"),
+              ci_low: Optional[float] = typer.Option(None, "--ci-low"), ci_high: Optional[float] = typer.Option(None, "--ci-high"),
+              sessions: Optional[int] = typer.Option(None, "--sessions"),
+              review: Optional[str] = typer.Option(None, "--review", help="a launch review id to attach the result to")):
+    """Record the readout from your own A/B system."""
+    from ..staging import ab as AB
+
+    try:
+        r = AB.bring(ctx(), name, metric, baseline, candidate, source, traffic, ci_low, ci_high, sessions, review)
+    except _staging_errors() as e:
+        fail(str(e))
+    emit(r, r["text"])
+
+
 @projects_app.command("staging-serve", hidden=True)
 def staging_serve(bundle: str, host: str = typer.Option("127.0.0.1", "--host"), port: int = typer.Option(8080, "--port")):
     """Run the staging runtime over a serving bundle. Staging starts this for you; the runner image runs it."""

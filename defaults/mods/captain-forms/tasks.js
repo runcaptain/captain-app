@@ -710,6 +710,27 @@ export const TASKS = [
       return ok(r, "Sent to launch review. Record the deployment once your process has run it.");
     },
   },
+  // Opened from a project's A/B step when the team splits traffic in its own system.
+  {
+    id: "ab-result", label: "Bring in an A/B readout", icon: "activity", hidden: true,
+    about: "The result from your own A/B system. It is recorded as real traffic only when you say the traffic was real.",
+    fields: [
+      { key: "metric", label: "Metric", required: true, help: "What the test measured, such as conversion or revenue per session." },
+      { key: "baseline", label: "Baseline value", required: true },
+      { key: "candidate", label: "Candidate value", required: true },
+      { key: "ci_low", label: "Difference, low end of the interval", optional: true },
+      { key: "ci_high", label: "Difference, high end of the interval", optional: true },
+      { key: "source", label: "Where the numbers come from", required: true, help: "The A/B system and its report." },
+      { key: "traffic", label: "The traffic was", kind: "choice", required: true, options: [{ value: "real", label: "Real shoppers" }, { value: "test", label: "Test traffic" }] },
+    ],
+    submit: async (v) => {
+      const num = (x) => (x === undefined || x === null || String(x).trim() === "" ? undefined : Number(x));
+      if (![v.baseline, v.candidate].every((x) => Number.isFinite(Number(x)))) return { ok: false, error: "The baseline and candidate values are numbers." };
+      const r = await api(`/api/projects/${encodeURIComponent(v.project)}/ab/result`, { scoped: false,
+        body: { metric: v.metric, baseline: Number(v.baseline), candidate: Number(v.candidate), ci_low: num(v.ci_low), ci_high: num(v.ci_high), source: v.source, traffic: v.traffic } });
+      return ok(r, "The readout is recorded on the project.");
+    },
+  },
   // Opened from a record (props.args.id), not listed in New.
   {
     id: "decision", label: "Record a decision", icon: "circle-check", hidden: true,

@@ -1,7 +1,8 @@
 // The Ship part of a project's page against a real backend, staged on this computer (no cloud): step 1 Stage with
 // one button, step 2 Try it with a query box that shows the staged results beside the baseline's, the plain words
-// (where it runs, what it costs, when it stops by itself), the details behind a disclosure, and Stop. The steps are
-// published for agents. With the starter trainer installed beside cst, a trained candidate is staged beside the
+// (where it runs, what it costs, when it stops by itself), the details behind a disclosure, step 3 the A/B test
+// (start, a readout labelled by where its traffic came from, simulated shoppers, ramp and roll back, each with a
+// confirmation), step 4 Launch review, and Stop. The steps are published for agents. With the starter trainer installed beside cst, a trained candidate is staged beside the
 // baseline; without it, the baseline alone.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/staging-live.test.mjs
 import fs from 'node:fs';
@@ -85,7 +86,11 @@ assert.ok(t.includes('After it is staged, type a query and see the results.'), '
 assert.ok(!t.includes('comes in a later release'), 'the placeholder card is gone');
 if (haveTrainer) assert.ok(/Next: Stage outdoor\/starter-ranker@v\d+ to try it live\./.test(t), `after a candidate is judged, the next step is to stage it: ${t.slice(0, 600)}`);
 let steps = (await published(h, (v) => v?.steps?.[0]?.label === '1 Stage'))?.steps;
-assert.deepEqual(steps?.map((x) => [x.label, x.done, x.action ?? null]), [['1 Stage', false, haveTrainer ? 'stage' : 'stage-baseline'], ['2 Try it', false, null]], `agents see the steps: ${JSON.stringify(steps)}`);
+assert.deepEqual(steps?.map((x) => [x.label, x.done, x.action ?? null]), [['1 Stage', false, haveTrainer ? 'stage' : 'stage-baseline'], ['2 Try it', false, null], ['3 A/B test', false, null], ['4 Launch review', false, 'handoff']], `agents see the steps: ${JSON.stringify(steps)}`);
+assert.equal(steps[2].waiting_on, 'Stage a candidate beside the baseline first.');
+assert.equal(byId(h, 'ship-handoff').length, 1, 'launch review stays the gate before production, as step 4');
+assert.ok(t.includes('Captain deploys nothing itself.'), 'and says Captain deploys nothing');
+assert.equal(byId(h, 'ship-ab-start').length, 0, 'no A/B test to start before a candidate is staged beside the baseline');
 assert.equal(steps[1].waiting_on, 'Stage a model version first.');
 clean(t, 'before staging');
 
@@ -128,7 +133,7 @@ if (haveTrainer) {
 assert.ok(t.includes('Queries typed here are test traffic. They never count as shoppers.'), 'console queries are labelled test traffic');
 assert.equal(h.byIdPrefix('ship-done-try').length, 1, 'step 2 is ticked once something was tried');
 steps = (await published(h, (v) => v?.steps?.[1]?.done))?.steps;
-assert.deepEqual(steps?.map((x) => x.done), [true, true], 'both steps read done to an agent');
+assert.deepEqual(steps?.map((x) => x.done), [true, true, false, false], 'steps 1 and 2 read done to an agent');
 clean(t, 'with results');
 
 // One line says whether serving computed the features training computes, for the pairs just served.
@@ -144,11 +149,81 @@ const shown = spawnSync(cst, ['context', 'show'], { env, encoding: 'utf8' }).std
 assert.ok(shown.includes('staging') && shown.includes(staged.model_version) && !shown.includes('render-test-key') && !/KEY/.test(shown), `agent context: ${shown.slice(0, 900)}`);
 
 if (haveTrainer) {
-  // Restage with the baseline: the same endpoint step, now serving the baseline alone.
-  await h.click('ship-restage-baseline');
-  await until(h, () => /keyword-baseline@v1 is running on this computer/.test(h.text()), 'the baseline is staged');
-  assert.equal((await get('/api/projects/outdoor/staging')).staged.serve, 'baseline');
-  assert.ok(h.text().includes('Stage the candidate'), 'and the candidate is one click away again');
+  // Step 3: an A/B test between the baseline and the candidate, on the endpoint that is already up.
+  h = await page();
+  await until(h, () => byId(h, 'ship-ab-start').length === 1, 'Start an A/B test is offered once both versions are staged');
+  assert.ok(h.text().includes('Next: Start an A/B test: split traffic between the baseline and the candidate.'), `the top line follows: ${h.text().slice(0, 500)}`);
+  await h.click('ship-ab-start');
+  assert.equal(byId(h, 'ship-ab-setup').length, 1, 'the setup: share, metric, who splits');
+  t = h.text();
+  for (const w of ["Captain's staging endpoint", 'My own A/B system', "The candidate's share of traffic", 'What decides it', 'Sessions with a click', 'Sessions with a purchase', 'Revenue per session', 'A shopper always sees the same version.'])
+    assert.ok(t.includes(w), `setup says: ${w}`);
+  await h.click('ship-ab-primary-clicks');
+  await h.click('ship-ab-start-go');
+  await until(h, () => byId(h, 'ship-ab-readout').length === 1, 'the readout appears');
+  t = h.text();
+  assert.ok(t.includes('The A/B test is running: the candidate gets 50% of traffic.'), 'it says what started');
+  assert.ok(/Not enough data yet: 0 baseline and 0 candidate sessions\. Each arm needs 200/.test(t), `no winner before there is data: ${t.slice(-1500)}`);
+  assert.equal(h.byIdPrefix('ship-done-ab').length, 0, 'step 3 is not ticked yet');
+  for (const id of ['ship-ab-ramp-5', 'ship-ab-ramp-25', 'ship-ab-ramp-50', 'ship-ab-ramp-100', 'ship-ab-rollback', 'ship-ab-simulate']) assert.equal(byId(h, id).length, 1, id);
+  assert.ok(t.includes('Ramp') && t.includes('Roll back') && t.includes('Baseline') && t.includes('Candidate') && t.includes('A/B test'), 'the words on screen');
+
+  // No traffic yet: simulated shoppers drive the endpoint, and everything they produce says so.
+  await h.click('ship-ab-simulate');
+  await until(h, () => h.byIdPrefix('ship-done-ab').length === 1, 'step 3 is ticked once both arms have enough sessions', 2400);
+  t = h.text();
+  assert.ok(t.includes('Simulated shoppers') && t.includes('SIMULATED: these shoppers are generated. Nothing here says what real shoppers will do.'), `the readout is labelled simulated: ${t.slice(-1800)}`);
+  assert.ok(!/Real traffic/.test(t), 'and never as real traffic');
+  const ro = await get('/api/projects/outdoor/ab');
+  assert.equal(ro.evidence, 'SIMULATED'); assert.equal(ro.traffic, 'simulated'); assert.ok(ro.enough);
+  assert.equal(ro.arms.baseline.sessions + ro.arms.candidate.sessions, 1000);
+  assert.ok(t.includes(`${ro.arms.baseline.sessions.toLocaleString('en-US')} sessions`) && t.includes(`${ro.arms.candidate.sessions.toLocaleString('en-US')} sessions`), 'sessions per arm');
+  assert.ok(t.includes(ro.primary.text), `the primary metric with its interval: ${ro.primary.text}`);
+  assert.ok(/between [+-]\d+\.\d and [+-]\d+\.\d points \(95% interval\)/.test(t), 'the difference comes with an interval');
+  assert.ok(t.includes('Response time:') && t.includes('The split is as asked:'), 'guardrails, and a check that the split is what was asked for');
+  assert.ok(/Next: Send outdoor\/starter-ranker@v\d+ to launch review\./.test((await page()).text()), 'the top line moves on to launch review');
+  clean(t, 'in the readout');
+
+  // Ramp: one click and a confirmation. Nothing changes until the yes.
+  await h.click('ship-ab-ramp-100');
+  assert.equal(byId(h, 'ship-ab-ask').length, 1, 'a confirmation');
+  assert.ok(h.text().includes('Give the candidate 100% of traffic? It gets 50% now.'));
+  assert.equal((await get('/api/projects/outdoor/ab')).ab.split, 0.5, 'not ramped yet');
+  await h.click('ship-ab-ask-yes');
+  await until(h, () => h.text().includes('The candidate now gets 100% of traffic.'), 'ramped');
+  assert.equal((await get('/api/projects/outdoor/ab')).ab.split, 1);
+
+  // Roll back: one click and a confirmation, then every shopper gets the baseline and the test ends.
+  await h.click('ship-ab-rollback');
+  assert.ok(h.text().includes('Roll back? Every shopper gets the baseline again, and this test ends.'));
+  await h.click('ship-ab-ask-yes');
+  await until(h, () => h.text().includes('Rolled back. Every shopper gets the baseline again.'), 'rolled back');
+  const after = await get('/api/projects/outdoor/ab');
+  assert.equal(after.ab.status, 'rolled_back');
+  assert.equal((await get('/api/projects/outdoor/staging')).staged.serve, 'baseline', 'the endpoint serves the baseline again');
+  const hist = (await get('/api/projects/outdoor/state')).history.map((x) => x.what).join(' | ');
+  for (const w of ['started an A/B test', 'simulated shoppers', 'ramped the A/B test', 'rolled back the A/B test']) assert.ok(hist.includes(w), `the project history has: ${w}`);
+  await until(h, () => byId(h, 'ship-ab-start').length === 1 && h.text().includes('Start another A/B test'), 'another test can be started');
+  assert.equal(byId(h, 'ship-ab-rollback').length, 0, 'no ramp or roll back on an ended test');
+  assert.ok(h.text().includes('Stage the candidate'), 'and the candidate is one click from serving again');
+  steps = (await published(h, (v) => v?.steps?.[2]?.done))?.steps;
+  assert.deepEqual(steps?.map((x) => [x.label, x.done]), [['1 Stage', true], ['2 Try it', true], ['3 A/B test', true], ['4 Launch review', false]], 'the four steps, for agents');
+
+  // My own A/B system: an address per version, and the readout the team brings back, labelled by what they say it was.
+  await h.click('ship-ab-start');
+  await h.click('ship-ab-mode-own');
+  assert.ok(h.text().includes('Split traffic in your system, then bring the readout in here.'));
+  await h.click('ship-ab-start-go');
+  await until(h, () => byId(h, 'ship-ab-own').length === 1, 'the own-system view');
+  t = h.text();
+  assert.ok(t.includes('/rank/baseline') && t.includes('/rank/candidate') && t.includes('Bring in the readout'), `each version's address: ${t.slice(-900)}`);
+  await post('/api/projects/outdoor/ab/result', { metric: 'conversion', baseline: 0.031, candidate: 0.034, ci_low: 0.001, ci_high: 0.005, source: 'our experiment system, test 12', traffic: 'real' });
+  h = await page();
+  await until(h, () => byId(h, 'ship-ab-brought').length === 1, 'the brought-in readout shows');
+  assert.ok(h.text().includes('Real traffic, from our experiment system, test 12.'), 'labelled real because the team said so');
+  await h.click('ship-ab-end');
+  await until(h, () => h.text().includes('The A/B test is ended.'), 'ended');
+  clean(h.text(), 'with a brought-in readout');
 }
 
 // Stop asks first, then nothing is left running.
@@ -158,7 +233,7 @@ assert.equal((await get('/api/projects/outdoor/staging')).status, 'running', 'no
 await h.click('ship-stop-yes');
 await until(h, () => h.text().includes('Staging is stopped. Nothing is left running.'), 'it says so');
 assert.equal((await get('/api/projects/outdoor/staging')).status, 'stopped');
-assert.equal(h.byIdPrefix('ship-done-').length, 0, 'the ticks are gone');
+assert.equal(h.byIdPrefix('ship-done-stage').length + h.byIdPrefix('ship-done-try').length, 0, 'the Stage and Try it ticks are gone');
 assert.equal(h.byIdPrefix('ship-try-box').length, 0, 'and the query box');
 assert.ok(h.text().includes('Last staged:'), 'what was staged last stays on the card');
 clean(h.text(), 'after stopping');

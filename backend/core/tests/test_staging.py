@@ -388,3 +388,230 @@ def test_a_failed_check_blocks_launch_review_until_overridden(ws):
         ops.promote(ws, ws.candidate, "prod", confirm=True)
     d = ops.promote(ws, ws.candidate, "prod", confirm=True, override_reason="the stale table is fixed in the next build")
     assert d.action == "handoff" and "served_features" in d.gate_results["overridden"] and d.override_reason
+
+
+# ---- the A/B test ----------------------------------------------------------------------------------
+
+
+def test_split_assignment_is_stable_per_session_and_matches_the_share():
+    arms = {"baseline": 1, "candidate": 1}
+    ctl = {"split": 0.25, "salt": "ab-1", "serve": "candidate"}
+    got = [RT.assign(ctl, arms, f"s{i}") for i in range(20_000)]
+    assert got == [RT.assign(ctl, arms, f"s{i}") for i in range(20_000)]  # the same shopper, the same arm
+    share = got.count("candidate") / len(got)
+    assert abs(share - 0.25) < 0.01
+    # raising the share only moves shoppers from baseline to candidate: nobody flips back
+    more = [RT.assign({**ctl, "split": 0.5}, arms, f"s{i}") for i in range(20_000)]
+    assert all(b == "candidate" for a, b in zip(got, more) if a == "candidate")
+    assert abs(more.count("candidate") / len(more) - 0.5) < 0.01
+    # another experiment deals the shoppers again
+    other = [RT.assign({**ctl, "salt": "ab-2"}, arms, f"s{i}") for i in range(20_000)]
+    assert other != got
+    # no split: the arm the endpoint serves. One arm loaded: that arm, whatever the control says
+    assert RT.assign({"split": None, "serve": "baseline"}, arms, "s1") == "baseline"
+    assert RT.assign(ctl, {"baseline": 1}, "s1") == "baseline"
+    assert {RT.assign({**ctl, "split": 1.0}, arms, f"s{i}") for i in range(500)} == {"candidate"}
+
+
+def test_ab_test_end_to_end_on_this_computer(ws):
+    from captain_search.staging import ab as AB
+
+    assert AB.readout(ws, "shop")["status"] == "none"
+    with pytest.raises(ValueError, match="Staging is not running"):
+        AB.start(ws, "shop")
+    SG.stage(ws, "shop", baseline=True, target="local")
+    with pytest.raises(ValueError, match="needs the candidate and the baseline"):
+        AB.start(ws, "shop")
+    SG.stage(ws, "shop", target="local")
+    assert AB.metrics_for(ws, "shop") == ["clicks", "purchases", "revenue"]  # the catalog has a price
+    with pytest.raises(ValueError, match="can't be measured"):
+        AB.start(ws, "shop", primary="happiness")
+    ab = AB.start(ws, "shop", split=0.5, primary="clicks", min_sessions=100)
+    assert ab["status"] == "running" and ab["guardrails"] == ["purchases", "revenue"] and ab["split"] == 0.5
+    assert SG.control(ws, "shop")["experiment"] == ab["id"]
+    with pytest.raises(ValueError, match="already running"):
+        AB.start(ws, "shop")
+
+    # nothing yet: the readout says so and names no winner
+    r = AB.readout(ws, "shop")
+    assert not r["enough"] and r["primary"]["verdict"] == "not enough data yet" and "Each arm needs 100" in r["primary"]["text"]
+
+    # console queries never enter the readout: they are forced to an arm and marked test traffic
+    SG.query(ws, "shop", "jacket")
+    assert AB.readout(ws, "shop")["arms"]["candidate"]["sessions"] == 0
+
+    sim = AB.simulate(ws, "shop", sessions=400, seed=3)
+    assert sim["evidence"] == "SIMULATED" and sim["requests"] >= 400 and "SIMULATED" in sim["text"]
+    r = AB.readout(ws, "shop")
+    assert r["traffic"] == "simulated" and r["evidence"] == "SIMULATED" and r["label"] == "Simulated shoppers"
+    assert r["text"].startswith("Simulated shoppers. ")
+    b, c = r["arms"]["baseline"], r["arms"]["candidate"]
+    assert b["sessions"] + c["sessions"] == 400 and min(b["sessions"], c["sessions"]) >= 150 and r["enough"]
+    assert b["model_version"] == ws.baseline and c["model_version"] == ws.candidate
+    p = r["primary"]
+    assert p["metric"] == "clicks" and p["ci_low"] <= p["diff"] <= p["ci_high"] and 0 < p["baseline"] < 1
+    assert p["verdict"] in ("candidate ahead", "candidate behind", "no clear difference")
+    assert [g["metric"] for g in r["guardrails"]] == ["purchases", "revenue", "latency"]
+    assert r["srm"]["ok"] and r["srm"]["expected"] == 0.5 and r["unmatched_outcomes"] == 0
+    assert AB.get(ws, "shop")["last_readout"]["evidence"] == "SIMULATED"
+    # outcomes joined by request id: every logged outcome belongs to a request in the log
+    got = L.read(ws, "shop", "staging", SG.state(ws, "shop")["id"])
+    ids = {x["request_id"] for x in got["requests"]}
+    assert got["outcomes"] and all(o["request_id"] in ids for o in got["outcomes"])
+    # the published log carries the arm and is tagged simulated, so nothing judged on it reads as real shoppers
+    m, rows, _ = ops.rows_of(ws, "shop/staging-logs")
+    assert m.tags["synthetic"] == "true" and {r_["arm"] for r_ in rows} == {"baseline", "candidate"}
+
+    # ramp: one call, recorded, and the endpoint follows without a redeploy
+    pid_before = SG.state(ws, "shop")["endpoint"]["pid"]
+    AB.ramp(ws, "shop", 1.0)
+    assert SG.call(ws, SG.state(ws, "shop"), "rank", {"query": "jacket", "session_id": "anyone"})["arm"] == "candidate"
+    AB.ramp(ws, "shop", 0.05)
+    arms = [SG.call(ws, SG.state(ws, "shop"), "rank", {"query": "jacket", "session_id": f"u{i}"})["arm"] for i in range(200)]
+    assert 0 < arms.count("candidate") < 40
+    assert SG.state(ws, "shop")["endpoint"]["pid"] == pid_before
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        AB.ramp(ws, "shop", 1.5)
+
+    # roll back: everyone gets the baseline again, the test ends, and the history has every step
+    out = AB.rollback(ws, "shop")
+    assert out["rolled_back_to"] == ws.baseline and AB.get(ws, "shop")["status"] == "rolled_back"
+    assert {SG.call(ws, SG.state(ws, "shop"), "rank", {"query": "jacket", "session_id": f"u{i}"})["arm"] for i in range(50)} == {"baseline"}
+    assert SG.state(ws, "shop")["model_version"] == ws.baseline
+    assert [x["action"] for x in AB.get(ws, "shop")["ramps"]] == ["start", "ramp", "ramp", "rollback"]
+    whats = " | ".join(h["what"] for h in PS.get(ws, "shop")["history"])
+    for word in ("started an A/B test", "ramped the A/B test", "rolled back the A/B test", "simulated shoppers"):
+        assert word in whats
+    with pytest.raises(ValueError, match="Only a running test"):
+        AB.ramp(ws, "shop", 0.5)
+
+
+def test_rollback_with_no_test_restores_the_previous_version(ws):
+    from captain_search.staging import ab as AB
+
+    SG.stage(ws, "shop", baseline=True, target="local")
+    with pytest.raises(ValueError, match="no earlier version"):
+        AB.rollback(ws, "shop")
+    SG.stage(ws, "shop", candidate=ws.exp, target="local")
+    out = AB.rollback(ws, "shop")
+    assert out["rolled_back_to"] == ws.baseline and SG.state(ws, "shop")["model_version"] == ws.baseline
+    assert SG.query(ws, "shop", "jacket")["staged"]["model_version"] == ws.baseline
+
+
+def _log(ab, sessions):
+    """A staging log made by hand: sessions is [(arm, session, traffic, clicked, purchase value)]."""
+    reqs, outs = [], []
+    for i, (arm, s, traffic, clicked, value) in enumerate(sessions):
+        rid = f"r{i}"
+        reqs.append({"request_id": rid, "ts": "2026-11-10T00:00:00.000Z", "query": "q", "session_id": s, "arm": arm,
+                     "traffic": traffic, "experiment": ab["id"], "ms": 5.0 if arm == "baseline" else 6.0, "ids": ["p1"]})
+        if clicked:
+            outs.append({"request_id": rid, "event": "click", "product_id": "p1", "value": 0.0})
+        if value:
+            outs.append({"request_id": rid, "event": "purchase", "product_id": "p1", "value": value})
+    return {"requests": reqs, "outcomes": outs, "names": {}}
+
+
+def test_readout_intervals_and_evidence_labels():
+    from captain_search.staging import ab as AB
+
+    ab = {"id": "ab-1", "status": "running", "mode": "captain", "split": 0.5, "primary": "clicks", "guardrails": ["purchases", "revenue"],
+          "min_sessions": 100, "arms": {"baseline": "b@v1", "candidate": "c@v1"}, "ramps": []}
+    # 1,000 sessions an arm: 20% click on the baseline, 30% on the candidate
+    rows = [("baseline", f"b{i}", "real", i % 5 == 0, 40.0 if i % 50 == 0 else 0) for i in range(1000)]
+    rows += [("candidate", f"c{i}", "real", i % 10 < 3, 40.0 if i % 50 == 0 else 0) for i in range(1000)]
+    r = AB.compute(ab, _log(ab, rows))
+    p = r["primary"]
+    assert r["evidence"] == "REAL_TRAFFIC" and r["label"] == "Real traffic" and r["enough"]
+    assert p["baseline"] == 0.2 and p["candidate"] == 0.3 and p["diff"] == 0.1 and p["lift"] == 0.5
+    # the textbook interval for two proportions: 0.1 +/- 1.96 * sqrt(.2*.8/1000 + .3*.7/1000), sample variance
+    half = 1.959964 * ((0.2 * 0.8 + 0.3 * 0.7) / 999) ** 0.5
+    assert abs(p["ci_low"] - (0.1 - half)) < 1e-4 and abs(p["ci_high"] - (0.1 + half)) < 1e-4
+    assert p["verdict"] == "candidate ahead" and "The candidate is ahead." in p["text"]
+    rev = next(g for g in r["guardrails"] if g["metric"] == "revenue")
+    assert rev["baseline"] == rev["candidate"] == 0.8 and rev["ok"] and rev["ci_low"] < 0 < rev["ci_high"]
+    assert next(g for g in r["guardrails"] if g["metric"] == "latency")["ok"]
+
+    # the same sessions with the arms swapped: behind, and a clearly worse guardrail fails
+    r2 = AB.compute({**ab, "primary": "purchases", "guardrails": ["clicks"]},
+                    _log(ab, [("candidate" if a == "baseline" else "baseline", s, t, c, v) for a, s, t, c, v in rows]))
+    assert r2["primary"]["verdict"] == "no clear difference"
+    g = r2["guardrails"][0]
+    assert g["metric"] == "clicks" and not g["ok"] and "clearly worse" in g["text"] and not r2["guardrails_ok"]
+
+    # too few sessions: no verdict, whatever the numbers look like
+    few = AB.compute(ab, _log(ab, rows[:60] + rows[1000:1060]))
+    assert not few["enough"] and few["primary"]["verdict"] == "not enough data yet" and "about 40 more" in few["primary"]["text"]
+    assert all(g["ok"] for g in few["guardrails"])
+
+    # traffic of different kinds is never mixed, and only real requests read REAL_TRAFFIC
+    mixed = rows[:300] + [(a, s + "-sim", "simulated", c, v) for a, s, t, c, v in rows[:1200]] + rows[1000:1300]
+    real = AB.compute(ab, _log(ab, mixed))
+    assert real["traffic"] == "real" and real["arms"]["baseline"]["sessions"] == 300 and real["other_traffic"] == {"simulated": 1200}
+    sim = AB.compute(ab, _log(ab, mixed), traffic="simulated")
+    assert sim["evidence"] == "SIMULATED" and sim["arms"]["baseline"]["sessions"] == 1000
+    only_test = AB.compute(ab, _log(ab, [(a, s, "test", c, v) for a, s, t, c, v in rows]))
+    assert only_test["evidence"] == "TEST_TRAFFIC" and only_test["label"] == "Test traffic" and only_test["text"].startswith("Test traffic. ")
+
+    # a split that is not what was asked for is called out
+    off = {**ab, "ramps": [{"at": "2026-11-09T00:00:00+00:00", "split": 0.5, "action": "start"}]}
+    r3 = AB.compute(off, _log(ab, rows[:900] + rows[1000:1300]))
+    assert not r3["srm"]["ok"] and "The split looks off" in r3["srm"]["text"] and not r3["guardrails_ok"]
+    assert AB.compute(off, _log(ab, rows))["srm"]["ok"]
+
+
+def test_outcomes_from_an_events_dataset_and_a_readout_from_the_teams_own_system(ws):
+    from captain_search.staging import ab as AB
+
+    SG.stage(ws, "shop", target="local")
+    ab = AB.start(ws, "shop", split=0.5, primary="purchases", min_sessions=1)
+    rec = SG.state(ws, "shop")
+    a = SG.call(ws, rec, "rank", {"query": "jacket", "session_id": "real-1"})
+    b = SG.call(ws, rec, "rank", {"query": "boots", "session_id": "real-2"})
+    ev = snapshot(ws, "shop-outcomes", pa.Table.from_pylist([
+        {"request_id": a["request_id"], "event": "purchase", "product_id": a["ids"][0], "value": 80.0},
+        {"request_id": b["request_id"], "event": "click", "product_id": b["ids"][0], "value": 0.0},
+        {"request_id": "not-ours", "event": "click", "product_id": "x", "value": 0.0}]),
+        kind=DatasetKind.events, provenance=Provenance(source="generated"))
+    out = AB.import_outcomes(ws, "shop", ops.ref(ev))
+    assert out == {"events": "shop-outcomes@v1", "outcomes": 3, "matched": 2, "unmatched": 1, "dry_run": False}
+    r = AB.readout(ws, "shop")
+    assert r["evidence"] == "REAL_TRAFFIC" and r["unmatched_outcomes"] == 1
+    assert sum(x["sessions"] for x in r["arms"].values()) == 2
+    bad = snapshot(ws, "no-ids", pa.Table.from_pylist([{"query": "q", "clicked": True}]), kind=DatasetKind.events,
+                   provenance=Provenance(source="generated"))
+    with pytest.raises(ValueError, match="no request_id column"):
+        AB.import_outcomes(ws, "shop", ops.ref(bad))
+    AB.stop(ws, "shop")
+    assert AB.get(ws, "shop")["status"] == "finished" and SG.control(ws, "shop")["split"] is None
+
+    # my own A/B system: Captain gives each arm's address and records the readout the team brings back
+    own = AB.start(ws, "shop", mode="own")
+    assert own["split"] is None and own["addresses"]["candidate"]["url"].endswith("/rank/candidate")
+    assert SG.control(ws, "shop")["split"] is None  # Captain's endpoint does not split
+    assert "Waiting for the readout" in AB.readout(ws, "shop")["text"]
+    with pytest.raises(ValueError, match="say where the number comes from"):
+        AB.bring(ws, "shop", "conversion", 0.031, 0.034, " ")
+    row = AB.bring(ws, "shop", "conversion", 0.031, 0.034, "Optimizely experiment 4411", ci_low=0.001, ci_high=0.005, sessions=48000)
+    assert row["evidence"] == "REAL_TRAFFIC" and row["verdict"] == "candidate ahead"
+    assert AB.bring(ws, "shop", "conversion", 0.031, 0.034, "a dry run on staging", traffic="test")["evidence"] == "TEST_TRAFFIC"
+    r = AB.readout(ws, "shop")
+    assert r["mode"] == "own" and r["label"] == "Test traffic" and r["brought"]["source"] == "a dry run on staging"
+    with pytest.raises(ValueError, match="Your own A/B system holds the split"):
+        AB.ramp(ws, "shop", 0.25)
+
+
+def test_ab_cli(ws):
+    run = CliRunner()
+    assert run.invoke(app, ["projects", "stage", "shop", "--target", "local"]).exit_code == 0
+    out = run.invoke(app, ["projects", "ab-start", "shop", "--split", "0.5", "--primary", "clicks", "--min-sessions", "50"])
+    assert out.exit_code == 0 and "the candidate gets 50% of traffic" in out.output, out.output
+    out = run.invoke(app, ["projects", "ab-simulate", "shop", "--sessions", "150"])
+    assert out.exit_code == 0 and "SIMULATED" in out.output
+    out = run.invoke(app, ["projects", "ab", "shop"])
+    assert out.exit_code == 0 and out.output.startswith("Simulated shoppers.") and "sessions" in out.output
+    assert run.invoke(app, ["projects", "ab-ramp", "shop", "0.25"]).exit_code == 0
+    out = run.invoke(app, ["projects", "ab-rollback", "shop"])
+    assert out.exit_code == 0 and "Rolled back to shop/keyword-baseline@v1" in out.output
+    out = run.invoke(app, ["projects", "ab-ramp", "shop", "0.5"])
+    assert out.exit_code == 1 and "Only a running test" in out.output

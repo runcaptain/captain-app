@@ -99,6 +99,7 @@ export default class ProjectHome extends View {
     // Until the first answer (the services may still be starting), ask again every 3 s.
     cx.timer.every(3000, (cx) => {
       const pid = this.pid();
+      if (this.inFlight) return; // an answer is on its way: asking again would only throw it away
       if ((!pid && this.projects === null && !this.listProblem) || (pid && !this.stages && (!this.problem || this.problem.starting))) this.load(cx);
     });
     // While something is staged: look again, so the status and the time left stay true.
@@ -132,11 +133,13 @@ export default class ProjectHome extends View {
     const pid = this.pid();
     const seq = (this.seq = (this.seq ?? 0) + 1);
     this.problem = null;
+    this.inFlight = true;
     if (!pid) {
       this.stages = null; this.exps = null; this.home = null;
       cx.spawn(async (cx) => {
         const r = await api("/api/projects", { scoped: false });
         if (seq !== this.seq) return;
+        this.inFlight = false;
         // Still starting is not "no projects": keep waiting (the retry timer asks again), and only an answer that
         // lists nothing shows the empty state. Home is the first screen, so it often asks before the services are up.
         if (r.ok) { this.projects = Array.isArray(r.data) ? r.data : r.data?.projects ?? []; this.listProblem = null; this.loadSummaries(cx, seq); }
@@ -163,6 +166,7 @@ export default class ProjectHome extends View {
         api(`/api/projects/${enc(pid)}/proposals`, { scoped: false }),
       ]);
       if (seq !== this.seq) return;
+      this.inFlight = false;
       if (sd?.ok) this.state = sd.data;
       const rl = rc?.ok ? (Array.isArray(rc.data) ? rc.data : rc.data?.recipes) : null;
       if (Array.isArray(rl)) this.recipes = rl;
@@ -190,9 +194,10 @@ export default class ProjectHome extends View {
       }
       if (st.ok && ex.ok) { this.stages = st.data; this.exps = ex.data; } else if (!(st.starting || ex.starting)) this.problem = st.ok ? ex : st;
       if (this.openFirst && this.exps) { this.open = this.exps.experiments.find((e) => !e.is_champion)?.id ?? null; this.openFirst = false; }
+      // Staging and the A/B test are asked for only when the project has one: most projects have neither.
+      if (this.stages) this.shipPath.sync(cx, this.stages.ship);
       cx.notify();
     });
-    this.shipPath.load(cx);
     if (this.everything) this.loadHome(cx);
   }
 
@@ -208,6 +213,8 @@ export default class ProjectHome extends View {
   }
 
   project() { return (this.projects ?? []).find((p) => p.id === this.pid()) ?? null; }
+
+  goTo(section) { go(section); }
 
   /** Read the project again (the Ship path asks for this after it stages or stops something). */
   reload(cx) { setShared("captain.explorer.rev", Date.now()); this.load(cx); }
@@ -658,17 +665,12 @@ export default class ProjectHome extends View {
     const st = this.stages, champ = this.exps?.champion;
     const reg = st.ship?.registry ?? {};
     const where = reg.arch && reg.brand ? `${reg.arch} / ${reg.brand}` : null;
-    return this.part(c, "ship", "Ship", "Try a model version live, then hand it to launch review. MLflow and Unity Catalog call the baseline the \"champion\" alias.", [],
+    return this.part(c, "ship", "Ship", "Try a model version live, test it against the baseline, then send it to launch review. MLflow and Unity Catalog call the baseline the \"champion\" alias.", [],
       v_flex().gap(10).child(this.shipPath.render(c)).child(h_flex().flex_wrap().items_start().gap(10)
         .child(this.tile(c, "ship-registry", "package", "Model registry",
           [where ? `Publishes to ${where}${reg.uri ? "" : " in the default registry"}.` : "Not set yet. Publishing asks where, once.", champ ? null : "Make a baseline first."],
           champ ? Button(c, "ship-publish", "Publish the baseline", () => form("publish", { ...this.values(), pipeline: champ }), { small: true }) : null))
-        .child(this.tile(c, "ship-live", "send", "Launch review",
-          ["Launch criteria, then a bundle for your deployment process. Captain deploys nothing itself."],
-          champ ? Button(c, "ship-handoff", "Send to launch review", () => form("handoff", { pipeline: champ }), { small: true }) : null))
-        .child(this.tile(c, "ship-online", "activity", "Online check",
-          ["Not yet confirmed online.", "Bring in your team's A/B or shadow readout from Launch review once it runs."],
-          Button(c, "ship-open-handoff", "Open Launch review", () => go("handoff"), { small: true, kind: "quiet" })))));
+));
   }
 
   // ---- everything in the project (the earlier home) --------------------------------------------------------------
@@ -936,7 +938,7 @@ export default class ProjectHome extends View {
     if (st?.next?.text) {
       const slot = (st.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === st.next.slot);
       const label = { "set-input": slot ? `Choose ${slot.noun}` : "Choose an input", "add-evaluation": "Add an evaluation set", "baseline-start": "Start with keyword search",
-        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New candidate", backtest: "Judge it", stage: "Stage it" }[st.next.action] ?? null;
+        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New candidate", backtest: "Judge it", stage: "Stage it", "ab-start": "Start an A/B test", "ab-wait": "Send simulated shoppers", handoff: "Send to launch review" }[st.next.action] ?? null;
       return { text: st.next.text, label, action: st.next };
     }
     const req = (st?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.required && i.empty);
@@ -971,6 +973,9 @@ export default class ProjectHome extends View {
     if (a.action === "new-experiment") return form("experiment", { ...this.values(), ...(firstCandidate(this.stages) ? { how: "starter" } : {}) });
     if (a.action === "assist") return this.startAssist(cx);
     if (a.action === "stage") return this.shipPath.stage(cx, a.baseline ? { baseline: true } : { candidate: a.experiment });
+    if (a.action === "ab-start") { this.shipPath.setup = { split: 0.5, primary: (this.shipPath.ab?.can_measure ?? []).includes("purchases") ? "purchases" : "clicks", mode: "captain" }; cx.notify(); return; }
+    if (a.action === "ab-wait") return this.shipPath.simulate(cx);
+    if (a.action === "handoff") return form("handoff", { pipeline: a.pipeline });
     const e = (this.exps?.experiments ?? []).find((x) => x.id === a.experiment);
     if (a.action === "backtest" && e) return this.backtest(cx, e);
     if (a.action === "make-champion" && e) { this.open = e.id; cx.notify(); }

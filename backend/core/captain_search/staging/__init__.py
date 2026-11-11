@@ -781,11 +781,47 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
          "status": "Tried." if on and rec.get("tried") else "Type a query and see the results." if on else "Waits for staging.",
          "action": {"action": "try"} if on and not rec.get("tried") else None},
     ]
+    ab = doc.get("ab") or None
+    both = on and {"baseline", "candidate"} <= set(rec.get("arms") or {}) and rec.get("how") != "image"
+    last = (ab or {}).get("last_readout") or {}
+    brought = ((ab or {}).get("brought") or [None])[-1]
+    ab_done = bool(ab and (last.get("enough") or brought))
+    if not ab:
+        ab_status = ("Split traffic between the baseline and the candidate." if both else
+                     "Waits for a candidate staged beside the baseline.")
+    elif ab["status"] == "running":
+        ab_status = ((f"The candidate gets {ab['split']:.0%} of traffic. " if ab.get("split") is not None else "Running in your own A/B system. ")
+                     + (last.get("text") or (brought or {}).get("text") or "No readout yet."))
+    else:
+        ab_status = ("Rolled back to the baseline. " if ab["status"] == "rolled_back" else "Ended. ") + (last.get("text") or (brought or {}).get("text") or "")
+    steps.append({"n": 3, "id": "ab", "title": "A/B test", "done": ab_done, "status": ab_status.strip(),
+                  "action": {"action": "ab-start"} if both and (not ab or ab["status"] != "running") else None})
+    review_of = (ab or {}).get("arms", {}).get("candidate") or (rec or {}).get("arms", {}).get("candidate") or champ
+    chk = (rec or {}).get("check") or {}
+    sent = False
+    if review_of and (rec or ab):
+        from .. import handoff as HO
+
+        try:
+            sent = bool(HO.listing(ctx, review_of))
+        except Exception:  # noqa: BLE001
+            sent = False
+    steps.append({"n": 4, "id": "launch-review", "title": "Launch review", "done": sent,
+                  "status": ("Sent to launch review." if sent else
+                             "Served features don't match training, so launch review will ask for a reason to go on." if chk.get("status") == "fail" else
+                             "Check it against your launch criteria and pass it to your own deployment process. Captain deploys nothing itself."),
+                  "action": {"action": "handoff", "pipeline": review_of} if review_of and not sent else None})
     nxt = None
-    if judged and not on:
+    if judged and not on and not ab_done:
         nxt = {"action": "stage", "experiment": judged[-1]["id"], "text": f"Stage {judged[-1]['pipeline']} to try it live."}
     elif on and not rec.get("tried"):
         nxt = {"action": "try", "text": "Try the staged model: type a query under Ship, step 2."}
+    elif both and not ab:
+        nxt = {"action": "ab-start", "text": "Start an A/B test: split traffic between the baseline and the candidate."}
+    elif ab and ab["status"] == "running" and not ab_done:
+        nxt = {"action": "ab-wait", "text": "The A/B test needs more sessions. With no traffic yet, send simulated shoppers at staging."}
+    elif ab_done and not sent and review_of:
+        nxt = {"action": "handoff", "pipeline": review_of, "text": f"Send {review_of} to launch review."}
     return {"staging": public(rec), "steps": steps, "next": nxt}
 
 
@@ -799,6 +835,9 @@ def agent_summary(ctx: Context, pid: str, env: str = ENV) -> dict:
             "endpoint": rec.get("endpoint"), "started_at": rec.get("started_at"), "cost": (rec.get("cost") or {}).get("text"),
             "stops_after_idle_minutes": rec.get("idle_minutes"), "stop_reason": rec.get("stop_reason"),
             "served_features_check": (rec.get("check") or {}).get("text"),
+            "ab_test": ({k: (doc.get("ab") or {}).get(k) for k in ("id", "status", "mode", "split", "primary", "guardrails", "arms")}
+                        | {"readout": ((doc.get("ab") or {}).get("last_readout") or {}).get("text")}) if doc.get("ab") else None,
             "steps": [{"label": f"{s['n']} {s['title']}", "done": s["done"], "status": s["status"]} for s in sh["steps"]],
             "next": sh["next"], "commands": {"stage": f"cst projects stage {pid} --target local", "status": f"cst projects staging {pid}",
-                                             "try": f"cst projects staging-query {pid} \"<query>\"", "stop": f"cst projects unstage {pid}"}}
+                                             "try": f"cst projects staging-query {pid} \"<query>\"", "check": f"cst projects staging-check {pid}",
+                                             "ab": f"cst projects ab {pid}", "stop": f"cst projects unstage {pid}"}}

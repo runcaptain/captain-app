@@ -168,7 +168,8 @@ h = await page();
 for (let i = 0; i < 40 && !h.text().includes('starter-ranker'); i++) await h.idle(150);
 t = h.text();
 assert.ok(t.includes('starter-ranker') && !h.byIdPrefix('exp-start').length, 'the candidate row replaces the guided start');
-assert.ok(!(await published(h, (v) => v && !v.steps))?.steps, 'no steps once a candidate exists');
+// Once a candidate exists the guided start is done, and the page publishes the Ship path's steps instead.
+assert.deepEqual((await published(h, (v) => v?.steps?.[0]?.label === '1 Stage'))?.steps?.map((x) => x.label), ['1 Stage', '2 Try it', '3 A/B test', '4 Launch review'], 'the Ship steps once a candidate exists');
 const row = (await get('/api/projects/outdoor/experiments')).experiments[0];
 assert.match(row.feature_timing, /^Click features: counted once, up to \d{4}-\d\d-\d\d\./, 'how the features were timed');
 assert.ok(/Agrees with its own labeler|Too few judged results to call/.test(t), `the honest verdict shows: ${t.slice(0, 1200)}`);

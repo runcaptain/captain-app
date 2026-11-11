@@ -1134,8 +1134,19 @@ last project opened there. With no project it offers New project, which can pin 
   `cst projects staging <project>` says where it stands. A team with its own serving stages `--endpoint <url>`
   (Captain's runtime sits in front of it) or `--image <uri>`. Once a candidate is judged, the page's Next line
   offers "Stage it", and the page publishes these steps for agents (`cst app context`). Staging is pinned for an
-  agent with "Send to agent" (`staging:<project>`). Below the path: the registry place (asked once), the launch
-  review, and the online check. The baseline is what MLflow and Unity Catalog users call the `champion` alias.
+  agent with "Send to agent" (`staging:<project>`). One line under Try it says whether serving computed the
+  features training computes ("Served features match training: 99.8% of 1,240 checked",
+  `cst projects staging-check <project>`); a failed check is a launch criterion. **3 A/B test** splits traffic
+  between the baseline and the candidate on the same endpoint: pick the candidate's share and the metric that
+  decides it (sessions with a click, with a purchase, or revenue per session), or choose "My own A/B system" and
+  bring the readout in. The readout shows sessions per arm, the difference with its interval, the guardrails,
+  "Not enough data yet" until each arm has enough sessions, and where the traffic came from: Real traffic,
+  Simulated shoppers (SIMULATED) or Test traffic. "Send simulated shoppers at staging" shows the loop with no
+  traffic yet. Ramp (5%, 25%, 50%, 100%) and Roll back are one click with a confirmation, and are written to
+  the project's history (`cst projects ab-start|ab|ab-ramp|ab-rollback|ab-simulate <project>`). **4 Launch
+  review** is still the gate before production, and Captain deploys nothing itself. `cst docs staging` has the
+  whole guide. Below the path: the registry place (asked once). The baseline is what MLflow and Unity Catalog
+  users call the `champion` alias.
 The page links to Workflows, which also opens from the palette ("Open workflows"). The forms are
 `captain-forms` tasks (`pin`, `generate-events`, `experiment`, `import-version`, `publish`, `champion`) opened with
 `props: {task, values}`; a failed launch criterion and a decision to go on offer their next step.

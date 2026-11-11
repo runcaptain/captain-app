@@ -1,4 +1,4 @@
-// CAPTAIN: the Ship part of a project's page as a path a person walks: 1 Stage, 2 Try it, then Launch review
+// CAPTAIN: the Ship part of a project's page as a path a person walks: 1 Stage, 2 Try it, 3 A/B test, 4 Launch review
 // (Edgar, 2026-11-10: "make it easier to stage ml models to be deployed ... business user friendly"). A staged model
 // runs in the team's own cloud, or on this computer; Captain hosts nothing. Each step has a status, one primary
 // action and a tick when it is done. Words stay plain: where it runs, what it costs, when it stops by itself. The
@@ -8,9 +8,11 @@
 //   POST /api/projects/{id}/unstage          stop it and remove what Captain made
 //   POST /api/projects/{id}/staging/query    the Try it box: the staged results beside the baseline's
 //   POST /api/projects/{id}/staging/check    did serving compute the features training computes? One line.
+//   GET  /api/projects/{id}/ab               the A/B readout: sessions per arm, the primary metric, guardrails
+//   POST /api/projects/{id}/ab/start|ramp|rollback|stop|simulate   each one click, with a confirmation, in history
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { exec, appHome } from "herdr";
+import { exec, appHome, openOverlay } from "herdr";
 import { MONO } from "./kit/tokens.js";
 import { api } from "./kit/cst.js";
 import { Badge, Button, plainError } from "./kit/ui.js";
@@ -20,6 +22,10 @@ import { SendToAgent } from "./kit/context.js";
 const enc = encodeURIComponent;
 const THUMB = 96;
 const short = (ref) => String(ref ?? "").replace(/^.*\//, "");
+const pct = (x) => `${Math.round(Number(x) * 100)}%`;
+const form = (task, values = {}) => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, values } });
+export const METRICS = { clicks: "Sessions with a click", purchases: "Sessions with a purchase", revenue: "Revenue per session" };
+const RAMP = [0.05, 0.25, 0.5, 1];
 
 /** "3 h 42 min", "12 min", "under a minute". */
 export function span(seconds) {
@@ -41,6 +47,9 @@ export class Ship {
     this.details = false;
     this.result = null; this.asking = false; this.askError = null;
     this.thumbs = new Map(); // image address -> file name | null (failed) | undefined (asked)
+    this.ab = null;        // GET /ab: the readout
+    this.setup = null;     // the A/B form while it is open: {split, primary, mode}
+    this.ask2 = null;      // a ramp or a rollback waiting for a yes: {kind, split?}
     this.box = InputState.new({ placeholder: "Type what a shopper would search for" });
     this.box.on("submit", (_e, cx) => this.ask(cx ?? this.cx));
   }
@@ -51,13 +60,30 @@ export class Ship {
     this.cx = cx;
     const pid = this.pid();
     if (!pid) return;
-    if (pid !== this.shown) { this.shown = pid; this.status = null; this.result = null; this.note = null; this.confirm = null; this.askError = null; }
+    if (pid !== this.shown) { this.shown = pid; this.status = null; this.result = null; this.note = null; this.confirm = null; this.askError = null; this.ab = null; this.setup = null; this.ask2 = null; }
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(pid)}/ab`, { scoped: false, timeout: 60 });
+      if (this.pid() !== pid) return;
+      if (r.ok) this.ab = r.data;
+      cx.notify();
+    });
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(pid)}/staging`, { scoped: false });
       if (this.pid() !== pid) return;
       if (r.ok) { this.status = r.data; this.problem = null; } else if (!r.starting) this.problem = plainError(r.error, "Captain couldn't read staging.");
       cx.notify();
     });
+  }
+
+  /** From the project's own answer (GET /stages): ask for the details only when something is staged or tested. */
+  sync(cx, ship) {
+    this.cx = cx;
+    if (ship?.staging || ship?.ab) return this.load(cx);
+    const pid = this.pid();
+    if (pid !== this.shown) { this.shown = pid; this.result = null; this.note = null; this.confirm = null; this.askError = null; this.setup = null; this.ask2 = null; }
+    this.status = { status: "none", staged: null, text: "Nothing is staged." };
+    this.ab = { status: "none", experiment: null, can_measure: [] };
+    this.problem = null;
   }
 
   /** Redraw the countdown, and look again while something is running or starting. */
@@ -136,6 +162,39 @@ export class Ship {
     });
   }
 
+  /** One A/B action (start, ramp, roll back, stop), then read everything again. */
+  abDo(cx, what, body, done) {
+    if (this.busy) return;
+    this.cx = cx;
+    this.busy = { start: "Starting the A/B test", ramp: "Changing the split", rollback: "Rolling back", stop: "Ending the test" }[what];
+    this.note = null; this.ask2 = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/ab/${what}`, { body: body ?? {}, scoped: false, timeout: 120 });
+      this.busy = null;
+      this.note = r.ok ? { tone: "good", text: done } : { tone: "fail", text: plainError(r.error, "That didn't work. Try again.") };
+      if (r.ok && what === "start") this.setup = null;
+      this.load(cx);
+      this.page.reload?.(cx);
+    });
+  }
+
+  /** Simulated shoppers at staging, so the loop can be seen with no traffic yet. Everything they produce reads SIMULATED. */
+  simulate(cx) {
+    if (this.busy) return;
+    this.cx = cx;
+    this.busy = "Sending simulated shoppers"; this.note = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/ab/simulate`, { body: { sessions: 1000 }, scoped: false });
+      const done = r.ok ? await this.wait(r.data.job, 30) : { ok: false, error: plainError(r.error, "The simulated shoppers didn't start.") };
+      this.busy = null;
+      this.note = done.ok ? { tone: "good", text: done.result?.text ?? "Simulated shoppers sent." } : { tone: "fail", text: done.error };
+      this.load(cx);
+      this.page.reload?.(cx);
+    });
+  }
+
   /** Compare what the endpoint served with what training computes, and show the answer as one line. */
   check(cx) {
     if (this.checking) return;
@@ -192,7 +251,40 @@ export class Ship {
       { n: 2, id: "try", title: "Try it", done: tried,
         text: on ? `Type a query and see what ${what} returns${st?.arms?.baseline && st.serve !== "baseline" ? ", beside the baseline" : ""}.` : "After it is staged, type a query and see the results.",
         action: on ? "try" : null, label: null, ...(on ? {} : { waiting_on: "Stage a model version first." }) },
+      this.abStepData(),
+      this.launchStepData(),
     ];
+  }
+
+  /** Both versions are on the endpoint, so traffic can be split between them. */
+  both() {
+    const st = this.staged();
+    return this.running() && Boolean(st?.arms?.baseline) && Boolean(st?.arms?.candidate) && st.how !== "image";
+  }
+
+  abStepData() {
+    const r = this.ab, a = r?.ab, live = a?.status === "running";
+    const done = Boolean(a && (r.enough || r.brought));
+    let text;
+    if (!a) text = this.both() ? "Split traffic between the baseline and the candidate, and see which one shoppers prefer." : "After a candidate is staged beside the baseline, split traffic between them.";
+    else if (a.mode === "own") text = r.text;
+    else if (live) text = `The candidate gets ${pct(a.split)} of traffic. ${r.primary?.text ?? ""}`;
+    else text = `${a.status === "rolled_back" ? "Rolled back to the baseline." : "Ended."} ${r.primary?.text ?? ""}`;
+    return { n: 3, id: "ab", title: "A/B test", done, text: text.trim(), action: this.both() && !live ? "ab-start" : null, label: this.both() && !live ? (a ? "Start another A/B test" : "Start an A/B test") : null,
+      ...(a || this.both() ? {} : { waiting_on: "Stage a candidate beside the baseline first." }) };
+  }
+
+  /** What launch review would be sent: the test's candidate, else the staged candidate, else the baseline. */
+  reviewOf() { return this.ab?.ab?.arms?.candidate ?? this.staged()?.arms?.candidate ?? this.page.exps?.champion ?? null; }
+
+  launchStepData() {
+    const of = this.reviewOf(), sent = Boolean((this.page.stages?.ship?.steps ?? []).find((x) => x.id === "launch-review")?.done);
+    const failed = this.staged()?.check?.status === "fail";
+    return { n: 4, id: "launch-review", title: "Launch review", done: sent,
+      text: sent ? `${short(of)} was sent to launch review. Your own deployment process takes it from there.`
+        : failed ? "Served features don't match training, so launch review will ask for a reason to go on."
+        : "Check it against your launch criteria and pass it to your own deployment process. Captain deploys nothing itself.",
+      action: of && !sent ? "handoff" : null, label: of && !sent ? "Send to launch review" : null, ...(of ? {} : { waiting_on: "Set a baseline or train a candidate first." }) };
   }
 
   // ---- drawing ---------------------------------------------------------------------------------------------------
@@ -333,10 +425,117 @@ export class Ship {
     return this.row(c, st, null, below);
   }
 
+  pick1(c, id, label, on, onPick) {
+    return div().id(id).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12).border_1()
+      .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy)
+      .on_click((_e, cx) => { onPick(); cx.notify(); }).child(label);
+  }
+
+  /** Before a test starts: the candidate's share, the metric that decides it, and who splits the traffic. */
+  setupBox(c) {
+    const f = this.setup, can = this.ab?.can_measure ?? ["clicks", "purchases"];
+    const line = (label, kids) => v_flex().gap(4).child(div().text_size(12).font_semibold().text_color(c.navy).child(label)).child(h_flex().flex_wrap().gap(6).children(kids));
+    return v_flex().id("ship-ab-setup").p(10).gap(10).bg(c.surface2).border_1().border_color(c.rule)
+      .child(line("Who splits the traffic", [
+        this.pick1(c, "ship-ab-mode-captain", "Captain's staging endpoint", f.mode === "captain", () => { f.mode = "captain"; }),
+        this.pick1(c, "ship-ab-mode-own", "My own A/B system", f.mode === "own", () => { f.mode = "own"; })]))
+      .when(f.mode === "captain", (e) => e.child(line("The candidate's share of traffic", [0.05, 0.25, 0.5].map((x) => this.pick1(c, `ship-ab-split-${Math.round(x * 100)}`, pct(x), f.split === x, () => { f.split = x; })))))
+      .child(line("What decides it", can.map((m) => this.pick1(c, `ship-ab-primary-${m}`, METRICS[m], f.primary === m, () => { f.primary = m; }))))
+      .child(div().id("ship-ab-setup-note").text_size(12).line_height("17px").text_color(c.grey900).child(f.mode === "captain"
+        ? `The other measures are guardrails: ${can.filter((m) => m !== f.primary).map((m) => METRICS[m].toLowerCase()).join(", ")} and response time. A shopper always sees the same version.`
+        : "Captain gives you an address for each version on the endpoint. Split traffic in your system, then bring the readout in here."))
+      .child(h_flex().gap(6)
+        .child(Button(c, "ship-ab-start-go", "Start the A/B test", (_e, cx) => this.abDo(cx, "start", { split: f.split, primary: f.primary, mode: f.mode },
+          f.mode === "captain" ? `The A/B test is running: the candidate gets ${pct(f.split)} of traffic.` : "The A/B test is recorded. Split the traffic in your own system."), { small: true, kind: "primary" }))
+        .child(Button(c, "ship-ab-start-no", "Not now", (_e, cx) => { this.setup = null; cx.notify(); }, { small: true })));
+  }
+
+  /** The readout: where the numbers came from, each arm, the primary metric with its interval, and the guardrails. */
+  readoutBox(c) {
+    const r = this.ab, a = r.ab;
+    const tone = r.evidence === "REAL_TRAFFIC" ? "good" : "warn";
+    const arm = (name, id) => {
+      const x = r.arms?.[name];
+      const v = r.primary?.[name];
+      return v_flex().id(id).flex_1().min_w(200).p(10).gap(2).bg(c.surface).border_1().border_color(c.rule)
+        .child(h_flex().gap(6).items_center().child(div().text_size(12.5).font_semibold().child(name === "baseline" ? "Baseline" : "Candidate")).child(Badge(c, short(x?.model_version))))
+        .child(div().id(`${id}-sessions`).text_size(12).text_color(c.grey900).child(`${Number(x?.sessions ?? 0).toLocaleString("en-US")} sessions`))
+        .when(v != null, (e) => e.child(div().id(`${id}-value`).text_size(16).font_semibold().text_color(c.navy).child(r.primary.metric === "revenue" ? `$${Number(v).toFixed(2)}` : `${(Number(v) * 100).toFixed(1)}%`))
+          .child(div().text_size(11.5).text_color(c.grey500).child(METRICS[r.primary.metric] ?? r.primary.metric)));
+    };
+    return v_flex().id("ship-ab-readout").gap(8)
+      .child(h_flex().gap(8).items_center().flex_wrap()
+        .child(Badge(c, r.label ?? "No traffic yet", tone))
+        .when(r.evidence !== "REAL_TRAFFIC", (e) => e.child(div().id("ship-ab-evidence").text_size(12).text_color(c.warn).child(r.evidence === "SIMULATED"
+          ? "SIMULATED: these shoppers are generated. Nothing here says what real shoppers will do."
+          : "Test traffic: these requests are not shoppers."))))
+      .child(h_flex().flex_wrap().items_start().gap(10).child(arm("baseline", "ship-ab-baseline")).child(arm("candidate", "ship-ab-candidate")))
+      .child(div().id("ship-ab-primary").text_size(12.5).line_height("18px").text_color(r.enough ? c.navy : c.grey900).child(r.primary?.text ?? r.text))
+      .children((r.guardrails ?? []).map((g, i) => h_flex().id(`ship-ab-guard-${i}`).gap(6).items_center()
+        .child(svg(icon(g.ok ? "circle-check" : "triangle-alert")).size(12).flex_none().text_color(g.ok ? c.good : c.fail))
+        .child(div().text_size(12).text_color(g.ok ? c.grey900 : c.fail).child(g.text))))
+      .when(Boolean(r.srm), (e) => e.child(div().id("ship-ab-srm").text_size(12).text_color(r.srm.ok ? c.grey500 : c.fail).child(r.srm.text)))
+      .when(a.status === "running", (e) => e.child(h_flex().id("ship-ab-actions").flex_wrap().gap(6).items_center()
+        .child(div().text_size(12).font_semibold().child("Ramp"))
+        .children(RAMP.map((x) => this.pick1(c, `ship-ab-ramp-${Math.round(x * 100)}`, pct(x), Math.abs((a.split ?? 0) - x) < 1e-9, () => { if (Math.abs((a.split ?? 0) - x) > 1e-9) this.ask2 = { kind: "ramp", split: x }; })))
+        .child(Button(c, "ship-ab-rollback", "Roll back", (_e, cx) => { this.ask2 = { kind: "rollback" }; cx.notify(); }, { small: true }))
+        .child(Button(c, "ship-ab-simulate", "Send simulated shoppers at staging", (_e, cx) => this.simulate(cx), { small: true, kind: "quiet", disabled: Boolean(this.busy) }))
+        .child(Button(c, "ship-ab-refresh", "Read again", (_e, cx) => this.load(cx), { small: true, kind: "quiet" }))));
+  }
+
+  /** A ramp or a rollback asks first: one click, one confirmation. */
+  askBox(c) {
+    const k = this.ask2, a = this.ab?.ab;
+    const text = k.kind === "ramp" ? `Give the candidate ${pct(k.split)} of traffic? It gets ${pct(a?.split ?? 0)} now.` : "Roll back? Every shopper gets the baseline again, and this test ends.";
+    return h_flex().id("ship-ab-ask").p(10).gap(10).items_center().bg(c.surface2).border_1().border_color(c.rule)
+      .child(div().flex_1().min_w(0).text_size(12).text_color(c.grey900).child(text))
+      .child(k.kind === "ramp"
+        ? Button(c, "ship-ab-ask-yes", `Ramp to ${pct(k.split)}`, (_e, cx) => this.abDo(cx, "ramp", { split: k.split }, `The candidate now gets ${pct(k.split)} of traffic.`), { small: true, kind: "primary" })
+        : Button(c, "ship-ab-ask-yes", "Roll back", (_e, cx) => this.abDo(cx, "rollback", {}, "Rolled back. Every shopper gets the baseline again."), { small: true, kind: "primary" }))
+      .child(Button(c, "ship-ab-ask-no", "Not now", (_e, cx) => { this.ask2 = null; cx.notify(); }, { small: true }));
+  }
+
+  /** A test the team runs in its own system: where each version answers, and the readout they bring back. */
+  ownBox(c) {
+    const r = this.ab, adr = r.addresses ?? r.ab?.addresses ?? {};
+    return v_flex().id("ship-ab-own").gap(6)
+      .children(Object.entries(adr).map(([name, x]) => h_flex().id(`ship-ab-address-${name}`).gap(10).text_size(12)
+        .child(div().w(80).flex_none().text_color(c.grey500).child(name === "baseline" ? "Baseline" : "Candidate"))
+        .child(div().flex_1().min_w(0).font_family(MONO).text_size(11.5).child(x.url ?? `${x.endpoint}${x.region ? ` in ${x.region}` : ""}, arm ${name}`))))
+      .when(Boolean(r.brought), (e) => e.child(h_flex().gap(8).items_center().child(Badge(c, r.label, r.evidence === "REAL_TRAFFIC" ? "good" : "warn"))
+        .child(div().id("ship-ab-brought").text_size(12.5).text_color(c.navy).child(r.brought.text))))
+      .child(h_flex().gap(6)
+        .child(Button(c, "ship-ab-bring", r.brought ? "Bring in a newer readout" : "Bring in the readout", () => form("ab-result", { project: this.pid(), traffic: "real" }), { small: true, kind: r.brought ? "secondary" : "primary" }))
+        .when(r.ab?.status === "running", (e) => e.child(Button(c, "ship-ab-end", "End the test", (_e, cx) => this.abDo(cx, "stop", {}, "The A/B test is ended."), { small: true }))));
+  }
+
+  abStep(c, st) {
+    const r = this.ab, a = r?.ab;
+    const btn = st.action === "ab-start" && !this.setup && !this.busy
+      ? Button(c, "ship-ab-start", st.label, (_e, cx) => { this.setup = { split: 0.5, primary: (r?.can_measure ?? []).includes("purchases") ? "purchases" : "clicks", mode: "captain" }; cx.notify(); }, { small: true, kind: a ? "secondary" : "primary" }) : null;
+    const body = [];
+    if (this.setup) body.push(this.setupBox(c));
+    if (a && a.mode === "own") body.push(this.ownBox(c));
+    else if (a && r.arms) body.push(this.readoutBox(c));
+    if (this.ask2 && a?.status === "running") body.push(this.askBox(c));
+    const below = body.length ? v_flex().pl(46).pr(12).pb(12).gap(8).children(body) : null;
+    return this.row(c, st, btn, below);
+  }
+
+  launchStep(c, st) {
+    const of = this.reviewOf();
+    const btn = h_flex().flex_none().gap(6).items_center()
+      .when(st.action === "handoff", (e) => e.child(Button(c, "ship-handoff", "Send to launch review", () => form("handoff", { pipeline: of }), { small: true, kind: this.ab?.enough ? "primary" : "secondary" })))
+      .child(Button(c, "ship-open-handoff", "Open Launch review", () => this.page.goTo?.("handoff"), { small: true, kind: "quiet" }));
+    return this.row(c, st, btn, null);
+  }
+
   render(c) {
-    const [stage, tryIt] = this.steps();
+    const [stage, tryIt, ab, launch] = this.steps();
     return v_flex().id("ship-path").w_full().bg(c.surface).border_1().border_color(c.rule)
       .child(this.stageStep(c, stage))
-      .child(div().border_t(1).border_color(c.rule).child(this.tryStep(c, tryIt)));
+      .child(div().border_t(1).border_color(c.rule).child(this.tryStep(c, tryIt)))
+      .child(div().border_t(1).border_color(c.rule).child(this.abStep(c, ab)))
+      .child(div().border_t(1).border_color(c.rule).child(this.launchStep(c, launch)));
   }
 }
