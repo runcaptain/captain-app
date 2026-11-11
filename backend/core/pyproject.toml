@@ -34,7 +34,9 @@ dependencies = [
 [project.optional-dependencies]
 s3 = ["boto3>=1.35"]
 gcs = ["google-cloud-storage>=2.18"]
-azure = ["azure-storage-blob>=12.20"]
+# azure-identity too: every Azure login but a connection string (service principal, az login, a job's managed
+# identity) goes through it, and the runner image installs only this extra.
+azure = ["azure-storage-blob>=12.20", "azure-identity>=1.17"]
 # SDKs the compute providers call (compute_providers/). AWS needs only boto3, which is a base dependency.
 compute-gcp = ["google-cloud-run>=0.10", "google-cloud-aiplatform>=1.60", "google-cloud-logging>=3.10"]
 compute-azure = ["azure-identity>=1.17", "azure-mgmt-appcontainers>=3.0", "azure-ai-ml>=1.18", "azure-monitor-query>=1.4"]
