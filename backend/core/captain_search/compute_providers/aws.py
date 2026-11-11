@@ -259,7 +259,8 @@ class SageMakerProvider(_AWS):
         {"name": "image", "label": "Serving image URI (ECR)", "required": True},
         {"name": "execution_role_arn", "label": "Execution role ARN", "required": True},
         {"name": "instance_type", "label": "Instance type", "required": False, "default": "ml.m5.large"},
-        {"name": "instance_count", "label": "Instance count", "required": False, "default": "1"}]
+        {"name": "instance_count", "label": "Instance count", "required": False, "default": "1"},
+        {"name": "name_prefix", "label": "Name prefix for staging resources", "required": False, "default": "captain"}]
 
     def plan(self, job: Job) -> list[dict]:
         raise ValueError("a SageMaker endpoint serves models and cannot run jobs. Use an ECS or Batch target.")
@@ -281,8 +282,183 @@ class SageMakerProvider(_AWS):
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "detail": str(e)[:400]}
 
+    # ---- staging endpoints (staging/): created, tagged, waited for and removed by Captain -------------
+
+    WAIT_S = 1500  # a new endpoint takes 4 to 10 minutes; SageMaker's own limit for a container to start is longer
+    POLL_S = 10
+
+    def _names(self, st: dict) -> dict:
+        import re
+
+        prefix = (self.config.get("name_prefix") or "captain").strip("-")
+        base = re.sub(r"[^A-Za-z0-9-]", "-", f"{prefix}-{st['project']}-{st['env']}").strip("-")[:50]
+        one = f"{base}-{st['id'][-8:]}"[:63]
+        return {"endpoint": base, "config": one, "model": one}
+
+    def _tags(self, st: dict) -> list[dict]:
+        return [{"Key": k, "Value": str(v)} for k, v in {"app": "captain", "project": st["project"], "env": st["env"],
+                                                         "captain:stage": st["id"], **TAGS}.items()]
+
+    def stage_plan(self, st: dict) -> list[dict]:
+        c, n, tags = self.config, self._names(st), self._tags(st)
+        env = dict(st.get("container_env") or {})
+        if env:
+            env.update({"CST_STAGING_ENDPOINT": n["endpoint"], "CST_STAGING_REGION": self.region or ""})
+        update = any(r["type"] == "endpoint" and r["name"] == n["endpoint"] for r in st.get("existing") or [])
+        return [
+            {"service": "sagemaker", "region": self.region, "call": "create_model", "args": {
+                "ModelName": n["model"], "ExecutionRoleArn": c["execution_role_arn"], "Tags": tags,
+                "PrimaryContainer": {"Image": st.get("image") or c["image"], "Environment": env}}},
+            {"service": "sagemaker", "region": self.region, "call": "create_endpoint_config", "args": {
+                "EndpointConfigName": n["config"], "Tags": tags, "ProductionVariants": [{
+                    "VariantName": "main", "ModelName": n["model"], "InstanceType": c.get("instance_type") or "ml.m5.large",
+                    "InitialInstanceCount": int(c.get("instance_count") or 1)}]}},
+            {"service": "sagemaker", "region": self.region, "call": "update_endpoint" if update else "create_endpoint",
+             "args": {"EndpointName": n["endpoint"], "EndpointConfigName": n["config"], **({} if update else {"Tags": tags})}},
+        ]
+
+    def stage(self, st: dict, progress=None) -> dict:
+        import time
+
+        say = progress or (lambda _t: None)
+        sm = self._client("sagemaker")
+        plan, n = self.stage_plan(st), self._names(st)
+        kinds = {"create_model": ("model", n["model"]), "create_endpoint_config": ("endpoint-config", n["config"]),
+                 "create_endpoint": ("endpoint", n["endpoint"])}
+        made: list[dict] = []
+        old = [r for r in st.get("existing") or [] if r["type"] != "endpoint"]
+        updating = plan[-1]["call"] == "update_endpoint"
+        try:
+            for step in plan:
+                say({"create_model": "Registering the model with SageMaker", "create_endpoint_config": "Describing the endpoint",
+                     "create_endpoint": "Starting the endpoint (this takes 4 to 10 minutes)",
+                     "update_endpoint": "Moving the endpoint to the new version (this takes 4 to 10 minutes)"}[step["call"]])
+                getattr(sm, step["call"])(**step["args"])
+                if step["call"] in kinds:
+                    made.append({"type": kinds[step["call"]][0], "name": kinds[step["call"]][1], "region": self.region})
+            deadline = time.time() + self.WAIT_S
+            while True:
+                d = sm.describe_endpoint(EndpointName=n["endpoint"])
+                s = d["EndpointStatus"]
+                if s == "InService" and d.get("EndpointConfigName") == n["config"]:
+                    break
+                if s in ("Failed", "OutOfService") or (s == "InService" and updating and time.time() > deadline):
+                    raise ProviderError(f"SageMaker could not start the endpoint: {d.get('FailureReason') or s}")
+                if time.time() > deadline:
+                    raise ProviderError(f"the endpoint was still {s} after {self.WAIT_S // 60} minutes")
+                time.sleep(self.POLL_S)
+        except BaseException as e:
+            say("Removing what was created, because the endpoint did not start")
+            # A failed update leaves the endpoint on its old version: keep it and its old model, remove only the new parts.
+            left = self.unstage(made)
+            if updating:
+                left = left + [r for r in st.get("existing") or []]
+            err = ProviderError(_aws_sentence(e)) if not isinstance(e, ProviderError) and isinstance(e, Exception) else e
+            err.left_behind = left
+            if err is e:
+                raise
+            raise err from None
+        if updating and old:
+            self.unstage(old)
+        ep = {"type": "endpoint", "name": n["endpoint"], "region": self.region}
+        return {"endpoint": {"name": n["endpoint"], "region": self.region},
+                "resources": [ep] + [r for r in made if r["type"] != "endpoint"]}
+
+    def unstage(self, resources: list[dict]) -> list[dict]:
+        """Delete these (endpoint first, then its config and model). Returns what is still there afterwards."""
+        import time
+
+        sm = self._client("sagemaker")
+        order = {"endpoint": 0, "endpoint-config": 1, "model": 2}
+        calls = {"endpoint": ("delete_endpoint", "EndpointName"), "endpoint-config": ("delete_endpoint_config", "EndpointConfigName"),
+                 "model": ("delete_model", "ModelName")}
+        left = []
+        for r in sorted(resources, key=lambda r: order.get(r["type"], 9)):
+            call, arg = calls[r["type"]]
+            try:
+                getattr(sm, call)(**{arg: r["name"]})
+            except Exception as e:  # noqa: BLE001
+                if not _missing(e):
+                    left.append({**r, "error": _aws_sentence(e)[:300]})
+        # An endpoint takes a little while to go. Wait for it, so "removed" means removed.
+        for r in resources:
+            if r["type"] != "endpoint" or any(x["name"] == r["name"] and x["type"] == "endpoint" for x in left):
+                continue
+            for _ in range(60):
+                try:
+                    sm.describe_endpoint(EndpointName=r["name"])
+                except Exception as e:  # noqa: BLE001
+                    if _missing(e):
+                        break
+                time.sleep(min(self.POLL_S, 5))
+            else:
+                left.append({**r, "error": "SageMaker is still deleting it"})
+        return left
+
+    def staged_status(self, rec: dict) -> dict:
+        name = (rec.get("endpoint") or {}).get("name")
+        try:
+            d = self._client("sagemaker").describe_endpoint(EndpointName=name)
+        except Exception as e:  # noqa: BLE001
+            if _missing(e):
+                return {"state": "gone", "reason": "the endpoint no longer exists"}
+            raise
+        s = d["EndpointStatus"]
+        if s == "InService":
+            return {"state": "running"}
+        if s in ("Creating", "Updating", "SystemUpdating", "RollingBack"):
+            return {"state": "starting", "reason": s}
+        if s == "Deleting":
+            return {"state": "gone", "reason": "the endpoint is being deleted"}
+        return {"state": "failed", "reason": d.get("FailureReason") or s}
+
+    def invoke(self, rec: dict, payload: dict) -> dict:
+        import json
+
+        rt = self._client("sagemaker-runtime")
+        try:
+            r = rt.invoke_endpoint(EndpointName=(rec.get("endpoint") or {}).get("name"), ContentType="application/json",
+                                   Accept="application/json", Body=json.dumps(payload).encode())
+        except Exception as e:  # noqa: BLE001
+            raise ProviderError("The staging endpoint refused the request: " + _aws_sentence(e)[:300]) from None
+        body = r["Body"].read() if hasattr(r["Body"], "read") else r["Body"]
+        return json.loads(body)
+
+    def tagged(self, project: str, env: str) -> list[dict]:
+        """Every SageMaker endpoint, endpoint config and model here that carries Captain's tags for this project."""
+        sm = self._client("sagemaker")
+        out = []
+        listers = (("endpoint", "list_endpoints", "Endpoints", "EndpointName", "EndpointArn"),
+                   ("endpoint-config", "list_endpoint_configs", "EndpointConfigs", "EndpointConfigName", "EndpointConfigArn"),
+                   ("model", "list_models", "Models", "ModelName", "ModelArn"))
+        for kind, call, key, name, arn in listers:
+            token = None
+            while True:
+                r = getattr(sm, call)(**({"NextToken": token} if token else {}), MaxResults=100)
+                for item in r.get(key, []):
+                    tags = {t["Key"]: t["Value"] for t in sm.list_tags(ResourceArn=item[arn]).get("Tags", [])}
+                    if tags.get("app") == "captain" and tags.get("project") == project and tags.get("env") == env:
+                        out.append({"type": kind, "name": item[name], "region": self.region})
+                token = r.get("NextToken")
+                if not token:
+                    break
+        return out
+
 
 def _job_name(job: Job) -> str:
     import re
 
     return re.sub(r"[^A-Za-z0-9_-]", "-", f"cst-{job.label}-{job.id[-6:]}")[:128]
+
+
+def _missing(e: Exception) -> bool:
+    """SageMaker says "not found" as a ValidationException with a sentence, never as its own error type."""
+    msg = str(getattr(e, "response", {}).get("Error", {}).get("Message") or e).lower()
+    return any(x in msg for x in ("could not find", "does not exist", "not found", "cannot find"))
+
+
+def _aws_sentence(e: BaseException) -> str:
+    resp = getattr(e, "response", None)
+    if isinstance(resp, dict) and resp.get("Error"):
+        return f"{getattr(e, 'operation_name', 'the call')}: {resp['Error'].get('Message') or resp['Error'].get('Code')}"
+    return str(e) or type(e).__name__

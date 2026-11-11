@@ -1123,8 +1123,19 @@ last project opened there. With no project it offers New project, which can pin 
   logged clicks where under half of a candidate's top 10 has grades reads "Too few judged results to call". Import
   a model version brings one from MLflow or a registry. Rows open to: the comparison, Rerun with changes, Judge against the baseline,
   Make it the baseline (with its evidence) and Publish to the registry.
-- **Ship**: the registry place (asked once), staging (not yet), the launch review, and the online check. The
-  baseline is what MLflow and Unity Catalog users call the `champion` alias.
+- **Ship**: a path of steps, each with its status, one button and a tick when done. **1 Stage** runs a model
+  version as a live endpoint, beside the baseline: in the team's own cloud (a SageMaker compute target, with the
+  instance, an hourly estimate and "this keeps billing until you stop it" to confirm first), or on this computer
+  with no cloud at all (`cst projects stage <project> [--candidate <id>|--baseline] [--target local]`). Captain
+  hosts nothing. It stops by itself after 4 hours with no requests, and Stop removes everything Captain created
+  (`cst projects unstage <project>`). **2 Try it** is a query box: the staged results beside the baseline's for
+  the same query, with pictures where the catalog has them (`cst projects staging-query <project> "<query>"`).
+  Queries typed there are test traffic, never shoppers. The endpoint, the instance and the log sit behind Details.
+  `cst projects staging <project>` says where it stands. A team with its own serving stages `--endpoint <url>`
+  (Captain's runtime sits in front of it) or `--image <uri>`. Once a candidate is judged, the page's Next line
+  offers "Stage it", and the page publishes these steps for agents (`cst app context`). Staging is pinned for an
+  agent with "Send to agent" (`staging:<project>`). Below the path: the registry place (asked once), the launch
+  review, and the online check. The baseline is what MLflow and Unity Catalog users call the `champion` alias.
 The page links to Workflows, which also opens from the palette ("Open workflows"). The forms are
 `captain-forms` tasks (`pin`, `generate-events`, `experiment`, `import-version`, `publish`, `champion`) opened with
 `props: {task, values}`; a failed launch criterion and a decision to go on offer their next step.

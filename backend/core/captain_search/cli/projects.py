@@ -512,3 +512,123 @@ def set_icon(name: str,
         p = _do(PR.set_icon, c, name, icon)
     ic = p.get("icon")
     emit(p, f"{p['name']}'s icon: " + ("the default" if not ic else ic.get("name") or ic.get("slug") or "your logo"))
+
+
+# ---- staging ---------------------------------------------------------------------------------------
+
+
+def _staging_errors():
+    from ..compute_providers import ProviderError
+    from ..staging import NeedsConfirm, NotServable
+
+    return (ValueError, NotFound, Conflict, NotServable, NeedsConfirm, ProviderError)
+
+
+@projects_app.command("stage")
+def stage(name: str,
+          candidate: Optional[str] = typer.Option(None, "--candidate", help="a candidate id or model version; default the newest judged candidate"),
+          baseline: bool = typer.Option(False, "--baseline", help="stage the baseline itself"),
+          env: str = typer.Option("staging", "--env"),
+          target: Optional[str] = typer.Option(None, "--target", help="compute target, or `local` for this computer; default the workspace's serving target"),
+          endpoint: Optional[str] = typer.Option(None, "--endpoint", help="an HTTP endpoint you already run (POST {query, k} -> {ids}); Captain wraps it"),
+          endpoint_auth_secret: Optional[str] = typer.Option(None, "--endpoint-auth-secret", help="name of a secret sent to your endpoint as a Bearer token"),
+          image: Optional[str] = typer.Option(None, "--image", help="a container image that serves the model (SageMaker contract), for a cloud target"),
+          idle_minutes: Optional[float] = typer.Option(None, "--idle-minutes", help="stop by itself after this long with no requests; default 240"),
+          yes: bool = typer.Option(False, "--yes", "-y", help="confirm the cost of a cloud deploy")):
+    """Run a model version as a live staging endpoint: on your compute target, or on this computer with --target local."""
+    from .. import staging as SG
+
+    c = ctx()
+    if S.dry_run:
+        try:
+            p = SG.plan(c, name, candidate, baseline, env, target, endpoint, image)
+        except _staging_errors() as e:
+            fail(str(e))
+        emit({**p, "dry_run": True}, "Would: " + p["text"])
+        return
+    try:
+        p = SG.plan(c, name, candidate, baseline, env, target, endpoint, image)
+        if p["needs_confirm"] and not yes:
+            if S.json:
+                fail("Confirm the cost first with --yes. " + p["cost"]["text"])
+            typer.echo(p["text"])
+            if not typer.confirm("Start it?"):
+                raise typer.Exit(1)
+        _by_hand(c, name, "stage a model version")
+        r = SG.stage(c, name, candidate, baseline, env, target, endpoint, endpoint_auth_secret, image, confirm=True,
+                     idle_minutes=idle_minutes, progress=None if S.json else lambda t: typer.echo(t, err=True))
+    except _staging_errors() as e:
+        fail(str(e))
+    ep = r.get("endpoint") or {}
+    emit(r, f"Staged {r['model_version']} " + ("on this computer" if r["kind"] == "local" else f"on {r['target']}")
+            + f"\nEndpoint: {ep.get('url') or ep.get('name')}\n{r['cost']['text']}"
+            + f"\nStops by itself after {r['idle_minutes']:g} minutes with no requests."
+            + f"\nTry it: cst projects staging-query {name} \"<a query>\"")
+
+
+@projects_app.command("unstage")
+def unstage(name: str, env: str = typer.Option("staging", "--env")):
+    """Stop the staging endpoint and remove every resource Captain created for it."""
+    from .. import staging as SG
+
+    c = ctx()
+    if S.dry_run:
+        rec = SG.public(_do(SG.state, c, name, env))
+        emit({"dry_run": True, "would_remove": (rec or {}).get("resources") or [], "staged": rec},
+             "Would stop staging" + (" and remove " + ", ".join(f"{r['type']} {r['name']}" for r in rec["resources"]) if rec and rec.get("resources") else ""))
+        return
+    _by_hand(c, name, "stop staging")
+    try:
+        r = SG.unstage(c, name, env)
+    except _staging_errors() as e:
+        fail(str(e))
+    emit(r, "Staging stopped." if r["status"] == "stopped" else f"Staging stopped, but {r['error']}")
+
+
+@projects_app.command("staging")
+def staging_status(name: str, env: str = typer.Option("staging", "--env"),
+                   no_sweep: bool = typer.Option(False, "--no-sweep", help="only look: don't stop an endpoint that is past its idle limit")):
+    """Where staging stands: what is running, where, since when, and when it stops by itself."""
+    from .. import staging as SG
+
+    try:
+        s = SG.status(ctx(), name, env, sweep=not no_sweep and not S.dry_run)
+    except _staging_errors() as e:
+        fail(str(e))
+    lines = [s["text"]]
+    st = s.get("staged") or {}
+    if st.get("endpoint"):
+        lines.append(f"Endpoint: {st['endpoint'].get('url') or st['endpoint'].get('name')}")
+    if st.get("status") == "running" and st.get("cost"):
+        lines.append(st["cost"]["text"])
+    if st.get("check"):
+        lines.append(st["check"]["text"])
+    for r in st.get("resources") or []:
+        lines.append(f"  {r['type']:16} {r['name']}")
+    emit(s, "\n".join(lines))
+
+
+@projects_app.command("staging-query")
+def staging_query(name: str, query: str, k: int = typer.Option(10, "-k"), env: str = typer.Option("staging", "--env")):
+    """Ask the staged endpoint for results, with the baseline's results beside them. Logged as test traffic."""
+    from .. import staging as SG
+
+    try:
+        r = SG.query(ctx(), name, query, k, env)
+    except _staging_errors() as e:
+        fail(str(e))
+    lines = []
+    for side in (r["staged"], r["baseline"]):
+        if not side:
+            continue
+        lines.append(f"{side['arm'].capitalize()} ({side['model_version']}), {side['ms']:.1f} ms")
+        lines += [f"  {x['position']:>2}. {x['title'][:70]}" for x in side["results"]]
+    emit(r, "\n".join(lines))
+
+
+@projects_app.command("staging-serve", hidden=True)
+def staging_serve(bundle: str, host: str = typer.Option("127.0.0.1", "--host"), port: int = typer.Option(8080, "--port")):
+    """Run the staging runtime over a serving bundle. Staging starts this for you; the runner image runs it."""
+    from ..staging import runtime as RT
+
+    RT.serve(ctx(), bundle, host=host, port=port)

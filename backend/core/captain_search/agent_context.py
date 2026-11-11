@@ -20,7 +20,7 @@ import re
 from .storage.backend import NotFound
 from .workspace import Context, whoami
 
-KINDS = ("dataset", "model", "run", "experiment", "candidate", "table", "project", "file")
+KINDS = ("dataset", "model", "run", "experiment", "candidate", "table", "project", "staging", "file")
 # What people call them, on screen and in the CLI: each maps to one kind.
 ALIASES = {"data": "dataset", "pipeline": "model", "version": "model", "backtest": "run", "evaluation": "run",
            "comparison": "run", "investigation": "experiment", "connection": "table", "path": "file"}
@@ -104,6 +104,9 @@ def resolve(ctx: Context, raw: str) -> dict:
     if kind == "project":
         p = project()
         return {"ref": f"project:{p['id']}", "kind": "project", "label": p["name"]}
+    if kind == "staging":
+        p = project()
+        return {"ref": f"staging:{p['id']}", "kind": "staging", "label": f"staging for {p['name']}"}
     if kind == "dataset":
         r = versioned("dataset", "dataset")
         return {"ref": f"dataset:{r}", "kind": "dataset", "label": r}
@@ -271,6 +274,10 @@ def _expand(ctx: Context, kind: str, rest: str) -> dict:
         return {"inputs": [{k: i.get(k) for k in ("slot", "label", "pinned", "required", "newest") if i.get(k) is not None} for i in st.get("inputs", [])],
                 "evaluation": (st.get("evaluation") or {}).get("text"), "candidates": (st.get("experiments") or {}).get("count"),
                 "baseline": PS.get(ctx, rest).get("champion"), "next": st.get("next")}
+    if kind == "staging":
+        from . import staging as SG
+
+        return SG.agent_summary(ctx, rest)
     if kind == "file":
         st = os.stat(rest)
         out = {"path": rest, "bytes": st.st_size, "modified": dt.datetime.fromtimestamp(st.st_mtime, dt.UTC).isoformat(timespec="seconds"),

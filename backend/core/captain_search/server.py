@@ -855,6 +855,81 @@ def project_starter_train(pid: str, body: dict | None = None):
     return {"job": jid, "live": lv.id, "simulated": p["simulated"], "baseline_will_be_set": bool((p.get("baseline") or {}).get("will_set"))}
 
 
+# ---- staging: a live endpoint for a model version, on the team's own compute or on this computer ------------
+
+
+def _staging_call(fn, *a, **kw):
+    """Staging's refusals are sentences for the person: 400 with the sentence, and the plan when a cost needs confirming."""
+    from .compute_providers import ProviderError
+    from .staging import NeedsConfirm, NotServable
+
+    try:
+        return fn(*a, **kw)
+    except NeedsConfirm as e:
+        return JSONResponse({"detail": str(e), "needs_confirm": True, "plan": e.plan}, status_code=409)
+    except (NotServable, ProviderError, ValueError) as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.get("/api/projects/{pid}/staging", dependencies=A)
+def project_staging(pid: str, env: str = "staging", sweep: bool = True):
+    """Where staging stands: {status: none|starting|running|stopped|failed, staged, health, stops_at, text}. With
+    sweep (the default) an endpoint past its idle limit is stopped here."""
+    from . import staging as SG
+
+    return _staging_call(SG.status, ctx(), pid, env, sweep)
+
+
+@app.post("/api/projects/{pid}/stage", dependencies=A)
+def project_stage(pid: str, body: dict | None = None):
+    """{candidate?, baseline?, env?, target?, endpoint?, endpoint_auth_secret?, image?, idle_minutes?, confirm?,
+    dry_run?}: stage a model version, as a job. dry_run returns the plan with its cost. A cloud deploy without
+    confirm is refused with 409 {needs_confirm, plan}: show the cost, then send confirm."""
+    from . import staging as SG
+
+    c, b = ctx(), body or {}
+    args = (b.get("candidate") or None, bool(b.get("baseline")), b.get("env") or "staging", b.get("target") or None,
+            b.get("endpoint") or None, b.get("image") or None)
+    p = _staging_call(SG.plan, c, pid, *args)
+    if isinstance(p, JSONResponse):
+        return p
+    if b.get("dry_run"):
+        return {**p, "dry_run": True}
+    if p["needs_confirm"] and not b.get("confirm"):
+        return JSONResponse({"detail": "Confirm the cost first. " + p["cost"]["text"], "needs_confirm": True, "plan": p},
+                            status_code=409)
+
+    def go(_p):
+        say = lambda t: JOBS[jid]["log"].append(str(t)) or JOBS[jid].__setitem__("message", str(t))  # noqa: E731
+        return SG.stage(c, pid, args[0], args[1], args[2], args[3], args[4], b.get("endpoint_auth_secret") or None,
+                        args[5], confirm=True, idle_minutes=b.get("idle_minutes") or None, progress=say)
+
+    jid = _job(go, f"staging {p['model_version']} for {pid}")
+    JOBS[jid]["compute"] = p["target"]
+    return {"job": jid, "plan": p}
+
+
+@app.post("/api/projects/{pid}/unstage", dependencies=A)
+def project_unstage(pid: str, body: dict | None = None):
+    """{env?}: stop staging and remove what Captain created, as a job. The result is the staging record."""
+    from . import staging as SG
+
+    c, env = ctx(), (body or {}).get("env") or "staging"
+    if not SG.state(c, pid, env):
+        raise HTTPException(400, f"Nothing is staged for {pid}.")
+    return {"job": _job(lambda _p: SG.unstage(c, pid, env), f"stopping staging for {pid}")}
+
+
+@app.post("/api/projects/{pid}/staging/query", dependencies=A)
+def project_staging_query(pid: str, body: dict):
+    """{query, k?, env?}: the staged endpoint's results joined with catalog titles and images, with the baseline's
+    results for the same query and each side's latency. Logged as test traffic."""
+    from . import staging as SG
+
+    return _staging_call(SG.query, ctx(), pid, str(body.get("query") or ""), int(body.get("k") or 10),
+                         body.get("env") or "staging")
+
+
 @app.get("/api/sources", dependencies=A)
 def sources_list():
     """What a project input can come from: connections and what each offers, datasets, and local folders that hold

@@ -21,6 +21,7 @@ import { Brand, engineTitle } from "./kit/brands.js";
 import { askAgent } from "./kit/agent.js";
 import { ProjectBadge } from "./kit/projecticon.js";
 import { int } from "./kit/num.js";
+import { Ship } from "./ship.js";
 
 const day = (iso) => (iso ? String(iso).slice(0, 10) : "");
 const go = (section, extra) => { setShared("captain.open", { section, ...extra, at: Date.now() }); run("layout.select", { stack: "sections", child: section }); };
@@ -73,6 +74,7 @@ export default class ProjectHome extends View {
     this.open = null; this.everything = false; this.note = null; this.busy = false;
     this.choosing = false; this.allModels = null; this.owners = {};
     try { this.last = localStorage.getItem("project") || null; } catch { this.last = null; }
+    this.shipPath = new Ship(this); // Stage, Try it: made here, because a text box can't be made while drawing
     this.load(cx);
     if ((layoutProps?.() ?? {}).chooseModels) { this.everything = true; this.toggleChoosing(cx); }
     this.openFirst = Boolean((layoutProps?.() ?? {}).openExperiment); // a layout, or the real-window check: open a row
@@ -84,8 +86,11 @@ export default class ProjectHome extends View {
     watchView(cx, "project", () => {
       const pid = this.pid(), n = pid && this.stages ? this.nextStep() : null;
       // With nothing trained yet, the guided start's steps: which are done, and what each one's button does.
+      // Once there is something to ship, the Ship path's steps instead.
       const steps = pid && this.stages && this.exps && !(this.exps.experiments ?? []).length
-        ? this.startSteps().map((st) => ({ label: `${st.n} ${st.title}`, done: st.done, action: st.done ? null : st.can ? st.action : null, ...(st.done || st.can ? {} : { waiting_on: st.text }) })) : null;
+        ? this.startSteps().map((st) => ({ label: `${st.n} ${st.title}`, done: st.done, action: st.done ? null : st.can ? st.action : null, ...(st.done || st.can ? {} : { waiting_on: st.text }) }))
+        : pid && this.stages && this.exps && this.shipPath.status
+          ? this.shipPath.steps().map((st) => ({ label: `${st.n} ${st.title}`, done: st.done, action: st.done ? null : st.action, status: st.text, ...(st.waiting_on ? { waiting_on: st.waiting_on } : {}) })) : null;
       return pid ? { project: { id: pid, name: this.project()?.name ?? null, kind: this.state?.kind ?? null }, candidate: this.open ?? null, steps,
         next: n ? { text: n.text, label: n.label ?? n.action?.label ?? null, action: n.action ?? null } : null } : { showing: "all projects" };
     });
@@ -96,6 +101,8 @@ export default class ProjectHome extends View {
       const pid = this.pid();
       if ((!pid && this.projects === null && !this.listProblem) || (pid && !this.stages && (!this.problem || this.problem.starting))) this.load(cx);
     });
+    // While something is staged: look again, so the status and the time left stay true.
+    cx.timer.every(5000, (cx) => this.shipPath.tick(cx));
     // While an experiment is being judged, read again until its run lands.
     cx.timer.every(4000, (cx) => { if ((this.exps?.experiments ?? []).some((e) => e.status === "backtesting")) this.load(cx); });
   }
@@ -185,6 +192,7 @@ export default class ProjectHome extends View {
       if (this.openFirst && this.exps) { this.open = this.exps.experiments.find((e) => !e.is_champion)?.id ?? null; this.openFirst = false; }
       cx.notify();
     });
+    this.shipPath.load(cx);
     if (this.everything) this.loadHome(cx);
   }
 
@@ -200,6 +208,9 @@ export default class ProjectHome extends View {
   }
 
   project() { return (this.projects ?? []).find((p) => p.id === this.pid()) ?? null; }
+
+  /** Read the project again (the Ship path asks for this after it stages or stops something). */
+  reload(cx) { setShared("captain.explorer.rev", Date.now()); this.load(cx); }
 
   /** One write, then read the project again. */
   act(cx, path, body, done, after) {
@@ -647,19 +658,17 @@ export default class ProjectHome extends View {
     const st = this.stages, champ = this.exps?.champion;
     const reg = st.ship?.registry ?? {};
     const where = reg.arch && reg.brand ? `${reg.arch} / ${reg.brand}` : null;
-    return this.part(c, "ship", "Ship", "Where the baseline goes next. MLflow and Unity Catalog call this version the \"champion\" alias.", [],
-      h_flex().flex_wrap().items_start().gap(10)
+    return this.part(c, "ship", "Ship", "Try a model version live, then hand it to launch review. MLflow and Unity Catalog call the baseline the \"champion\" alias.", [],
+      v_flex().gap(10).child(this.shipPath.render(c)).child(h_flex().flex_wrap().items_start().gap(10)
         .child(this.tile(c, "ship-registry", "package", "Model registry",
           [where ? `Publishes to ${where}${reg.uri ? "" : " in the default registry"}.` : "Not set yet. Publishing asks where, once.", champ ? null : "Make a baseline first."],
           champ ? Button(c, "ship-publish", "Publish the baseline", () => form("publish", { ...this.values(), pipeline: champ }), { small: true }) : null))
-        .child(this.tile(c, "ship-staging", "server", "Staging",
-          ["Serving a trained ranker on a staging endpoint comes in a later release.", "Until then, hand a candidate to your own staging."], null))
         .child(this.tile(c, "ship-live", "send", "Launch review",
           ["Launch criteria, then a bundle for your deployment process. Captain deploys nothing itself."],
           champ ? Button(c, "ship-handoff", "Send to launch review", () => form("handoff", { pipeline: champ }), { small: true }) : null))
         .child(this.tile(c, "ship-online", "activity", "Online check",
           ["Not yet confirmed online.", "Bring in your team's A/B or shadow readout from Launch review once it runs."],
-          Button(c, "ship-open-handoff", "Open Launch review", () => go("handoff"), { small: true, kind: "quiet" }))));
+          Button(c, "ship-open-handoff", "Open Launch review", () => go("handoff"), { small: true, kind: "quiet" })))));
   }
 
   // ---- everything in the project (the earlier home) --------------------------------------------------------------
@@ -927,7 +936,7 @@ export default class ProjectHome extends View {
     if (st?.next?.text) {
       const slot = (st.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === st.next.slot);
       const label = { "set-input": slot ? `Choose ${slot.noun}` : "Choose an input", "add-evaluation": "Add an evaluation set", "baseline-start": "Start with keyword search",
-        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New candidate", backtest: "Judge it" }[st.next.action] ?? null;
+        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New candidate", backtest: "Judge it", stage: "Stage it" }[st.next.action] ?? null;
       return { text: st.next.text, label, action: st.next };
     }
     const req = (st?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.required && i.empty);
@@ -961,6 +970,7 @@ export default class ProjectHome extends View {
     if (a.action === "baseline-start") return this.baselineStart(cx);
     if (a.action === "new-experiment") return form("experiment", { ...this.values(), ...(firstCandidate(this.stages) ? { how: "starter" } : {}) });
     if (a.action === "assist") return this.startAssist(cx);
+    if (a.action === "stage") return this.shipPath.stage(cx, a.baseline ? { baseline: true } : { candidate: a.experiment });
     const e = (this.exps?.experiments ?? []).find((x) => x.id === a.experiment);
     if (a.action === "backtest" && e) return this.backtest(cx, e);
     if (a.action === "make-champion" && e) { this.open = e.id; cx.notify(); }

@@ -282,3 +282,48 @@ def _execute_serve(ctx: Context, target: dict, plan: list[dict]) -> dict:
         else:
             raise ValueError(f"serving on {svc} is planned but not executable yet in this build. Run the plan by hand.")
     return out
+
+
+# ---- staging -------------------------------------------------------------------------------
+# A staging endpoint is a serving deploy Captain owns end to end: it names and tags every resource it creates,
+# waits until the endpoint answers, and removes all of it on unstage or on a failed start (staging/).
+
+
+def can_stage(ctx: Context, target: dict) -> bool:
+    return callable(getattr(P.get(target, ctx), "stage", None))
+
+
+def stage_env(ctx: Context, st: dict) -> dict:
+    """What the runtime container is told: where the workspace is, which bundle to load, and the key's hash."""
+    env = {**_env(ctx), "CST_STAGING_BUNDLE": st["bundle"], "CST_STAGING_KEY_SHA256": st["key_sha256"]}
+    return env
+
+
+def plan_stage(ctx: Context, target: dict, st: dict) -> list[dict]:
+    _check_cloud_workspace(ctx, target)
+    return P.get(target, ctx).stage_plan({**st, "container_env": stage_env(ctx, st) if st.get("bundle") else {}})
+
+
+def stage(ctx: Context, target: dict, st: dict, progress=None) -> dict:
+    """Create (or update) the staging endpoint. Returns {endpoint, resources}. On failure everything it created is
+    removed first; anything it could not remove rides on the error as `left_behind`."""
+    _check_cloud_workspace(ctx, target)
+    return P.get(target, ctx).stage({**st, "container_env": stage_env(ctx, st) if st.get("bundle") else {}}, progress)
+
+
+def unstage(ctx: Context, target: dict, resources: list[dict]) -> list[dict]:
+    """Remove these resources. Returns the ones that are still there."""
+    return P.get(target, ctx).unstage(resources)
+
+
+def staged_status(ctx: Context, target: dict, rec: dict) -> dict:
+    return P.get(target, ctx).staged_status(rec)
+
+
+def invoke_staged(ctx: Context, target: dict, rec: dict, payload: dict) -> dict:
+    return P.get(target, ctx).invoke(rec, payload)
+
+
+def tagged(ctx: Context, target: dict, project: str, env: str) -> list[dict]:
+    """Every resource on this target that carries Captain's tags for a project's staging environment."""
+    return P.get(target, ctx).tagged(project, env)

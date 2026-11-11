@@ -1021,6 +1021,12 @@ def stages(ctx: Context, pid: str) -> dict:
                  "make-champion": "Make a candidate the baseline.",
                  "backtest": "Compare the newest candidate with the baseline."}
         top = {**nxt, "text": words.get(nxt["action"], "")}
+    from . import staging as SG
+
+    shp = SG.ship_state(ctx, doc)
+    # Once every candidate is judged, the next thing is to try one live. Offline evaluation is the "safe to try" gate.
+    if shp["next"] and not first_missing and ev["ready"] and nxt["action"] == "new-experiment" and exps and champ:
+        top = shp["next"]
     return {
         "project": pid, "kind": doc.get("kind"), "recipe": doc.get("recipe"), "index_complete": idx.complete,
         "next": top, "notes": notes, "inputs": inputs, "evaluation": ev, "start": start,
@@ -1029,5 +1035,6 @@ def stages(ctx: Context, pid: str) -> dict:
                      "info": [{"code": "newer-version", "ref": newest_champ,
                                "text": f"Newer version available: {newest_champ}."}] if newest_champ else []},
         "ship": {"registry": {k: reg.get(k) for k in ("arch", "brand", "uri")},
-                 "ready": bool(champ and reg.get("arch") and reg.get("brand")), "online": NOT_ONLINE},
+                 "ready": bool(champ and reg.get("arch") and reg.get("brand")), "online": NOT_ONLINE,
+                 "staging": shp["staging"], "steps": shp["steps"]},
     }

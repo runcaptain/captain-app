@@ -167,15 +167,22 @@ class BM25Rerank(Engine):
                 raise ValueError("the model's features don't match its feature file. Train it again.")
 
     def search_scored(self, query: str, k: int = 50) -> list[tuple[str, float]]:
+        return self.search_detailed(query, k)[0]
+
+    def search_detailed(self, query: str, k: int = 50) -> tuple[list[tuple[str, float]], dict[str, list[float]]]:
+        """The ranked results, and the feature row the model was given for each reranked product. Serving logs
+        these rows, so what was served can be checked against what training computes (staging/consistency.py)."""
         found = self.bm25.search_scored(query, max(k, self.top_k))
         if self.model is None:
-            return found[:k]
+            return found[:k], {}
         head, tail = found[:self.top_k], found[self.top_k:]
-        scores = self.model.predict(self.feat.features(query, [p for p, _ in head]))
+        rows = self.feat.features(query, [p for p, _ in head])
+        scores = self.model.predict(rows)
         order = sorted(range(len(head)), key=lambda i: (-scores[i], i))
         low = min(scores) if scores else 0.0
         # the tail keeps its keyword order below every reranked result
-        return ([(head[i][0], scores[i]) for i in order] + [(p, low - 1 - n) for n, (p, _) in enumerate(tail)])[:k]
+        ranked = ([(head[i][0], scores[i]) for i in order] + [(p, low - 1 - n) for n, (p, _) in enumerate(tail)])[:k]
+        return ranked, {head[i][0]: rows[i] for i in range(len(head))}
 
     def search(self, query: str, k: int = 50) -> list[str]:
         return [p for p, _ in self.search_scored(query, k)]
