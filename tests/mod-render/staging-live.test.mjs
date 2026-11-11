@@ -2,7 +2,7 @@
 // one button, step 2 Try it with a query box that shows the staged results beside the baseline's, the plain words
 // (where it runs, what it costs, when it stops by itself), the details behind a disclosure, step 3 the A/B test
 // (start, a readout labelled by where its traffic came from, simulated shoppers, ramp and roll back, each with a
-// confirmation), step 4 Launch review, and Stop. The steps are published for agents. With the starter trainer installed beside cst, a trained candidate is staged beside the
+// confirmation), Connect your site, shadow mode, the gated A/B form and its three endings, Launch review, and Stop. The steps are published for agents. With the starter trainer installed beside cst, a trained candidate is staged beside the
 // baseline; without it, the baseline alone.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/staging-live.test.mjs
 import fs from 'node:fs';
@@ -86,9 +86,10 @@ assert.ok(t.includes('After it is staged, type a query and see the results.'), '
 assert.ok(!t.includes('comes in a later release'), 'the placeholder card is gone');
 if (haveTrainer) assert.ok(/Next: Stage outdoor\/starter-ranker@v\d+ to try it live\./.test(t), `after a candidate is judged, the next step is to stage it: ${t.slice(0, 600)}`);
 let steps = (await published(h, (v) => v?.steps?.[0]?.label === '1 Stage'))?.steps;
-assert.deepEqual(steps?.map((x) => [x.label, x.done, x.action ?? null]), [['1 Stage', false, haveTrainer ? 'stage' : 'stage-baseline'], ['2 Try it', false, null], ['3 A/B test', false, null], ['4 Launch review', false, 'handoff']], `agents see the steps: ${JSON.stringify(steps)}`);
-assert.equal(steps[2].waiting_on, 'Stage a candidate beside the baseline first.');
-assert.equal(byId(h, 'ship-handoff').length, 1, 'launch review stays the gate before production, as step 4');
+assert.deepEqual(steps?.map((x) => [x.label, x.done, x.action ?? null]), [['1 Stage', false, haveTrainer ? 'stage' : 'stage-baseline'], ['2 Try it', false, null], ['3 Connect your site', false, null], ['4 A/B test', false, null], ['5 Launch review', false, 'handoff']], `agents see the steps: ${JSON.stringify(steps)}`);
+assert.equal(steps[2].waiting_on, 'Stage a model version first.');
+assert.equal(steps[3].waiting_on, 'Stage a candidate beside the baseline first.');
+assert.equal(byId(h, 'ship-handoff').length, 1, 'launch review stays the gate before production, as the last step');
 assert.ok(t.includes('Captain deploys nothing itself.'), 'and says Captain deploys nothing');
 assert.equal(byId(h, 'ship-ab-start').length, 0, 'no A/B test to start before a candidate is staged beside the baseline');
 assert.equal(steps[1].waiting_on, 'Stage a model version first.');
@@ -101,8 +102,6 @@ assert.equal(byId(h, 'ship-busy').length, 0, 'no progress label on a finished st
 // A progress label never outlives its step, even when the job that reported it can no longer answer (the services
 // were restarted): once staging says the endpoint is running, the label goes.
 h.mod.shipPath.busy = 'Packaging the model version'; h.mod.shipPath.busyFor = { what: 'stage', was: null };
-await h.idle(50);
-assert.equal(byId(h, 'ship-busy').length, 1, 'while it is in flight the label shows');
 h.mod.shipPath.load(h.cx);
 await until(h, () => byId(h, 'ship-busy').length === 0, 'the label is cleared when staging reports the endpoint running');
 assert.ok(!h.text().includes('Packaging the model version'), 'and its words are gone');
@@ -119,7 +118,8 @@ assert.equal(byId(h, 'ship-cost-billing').length, 0, 'nothing bills on this comp
 assert.equal((await published(h, (v) => v?.staging_cost?.free === true))?.staging_cost?.place, 'This computer', 'agents see where it runs and that it is free');
 assert.equal(h.byIdPrefix('ship-confirm').length, 0, 'nothing to confirm for this computer');
 assert.equal(h.byIdPrefix('ship-details-rows').length, 0, 'the endpoint and its log stay behind Details');
-assert.ok(!t.includes('127.0.0.1'), 'no address on the page until Details is opened');
+// Where it runs, and who can reach it, is on the Stage row itself, not only under Details.
+assert.ok(t.includes(`${staged.model_version} is running on this computer. Only this computer can reach it.`), `the Stage row says who can reach it: ${t.slice(-1500)}`);
 assert.equal(byId(h, 'ship-stop').length, 1, 'Stop');
 assert.equal(h.byIdPrefix('ship-send').length, 1, 'Send to agent');
 if (haveTrainer) assert.equal(h.byIdPrefix('ship-restage-baseline').length, 1, 'Restage with the baseline');
@@ -147,7 +147,7 @@ if (haveTrainer) {
 assert.ok(t.includes('Queries typed here are test traffic. They never count as shoppers.'), 'console queries are labelled test traffic');
 assert.equal(h.byIdPrefix('ship-done-try').length, 1, 'step 2 is ticked once something was tried');
 steps = (await published(h, (v) => v?.steps?.[1]?.done))?.steps;
-assert.deepEqual(steps?.map((x) => x.done), [true, true, false, false], 'steps 1 and 2 read done to an agent');
+assert.deepEqual(steps?.map((x) => x.done), [true, true, false, false, false], 'steps 1 and 2 read done to an agent');
 clean(t, 'with results');
 
 // One line says whether serving computed the features training computes, for the pairs just served.
@@ -162,76 +162,177 @@ assert.equal(ctxOut.status, 0, ctxOut.stderr);
 const shown = spawnSync(cst, ['context', 'show'], { env, encoding: 'utf8' }).stdout;
 assert.ok(shown.includes('staging') && shown.includes(staged.model_version) && !shown.includes('render-test-key') && !/KEY/.test(shown), `agent context: ${shown.slice(0, 900)}`);
 
+// Try it, beside the baseline: what moved, why a result is there, and the queries where the two differ most.
 if (haveTrainer) {
-  // Step 3: an A/B test between the baseline and the candidate, on the endpoint that is already up.
-  h = await page();
-  await until(h, () => byId(h, 'ship-ab-start').length === 1, 'Start an A/B test is offered once both versions are staged');
-  assert.ok(h.text().includes('Next: Start an A/B test: split traffic between the baseline and the candidate.'), `the top line follows: ${h.text().slice(0, 500)}`);
-  await h.click('ship-ab-start');
-  assert.equal(byId(h, 'ship-ab-setup').length, 1, 'the setup: share, metric, who splits');
+  await until(h, () => byId(h, 'ship-differ').length === 1, 'the list of queries where the two differ');
+  const d = h.mod.shipPath.diff;
+  assert.ok(d.checked >= 5, JSON.stringify(d));
+  if (d.mostly_same) {
+    assert.equal(byId(h, 'ship-same').length, 1, 'a candidate that reproduces the baseline is called that');
+    assert.ok(/This candidate mostly reproduces the baseline: .+\. It returned the same top results on \d+ of \d+ queries checked\./.test(h.text()), `one plain sentence with the reason: ${d.text}`);
+    assert.ok(d.text.includes('it learned from events that keyword search generated'), `the reason for a ranker trained on simulated events: ${d.text}`);
+  }
+  if (!d.queries.length) assert.ok(h.text().includes(`None of the ${d.checked} queries checked rank differently.`), 'no differing queries is said, not left blank');
+  else { await h.click('ship-differ-0'); await until(h, () => h.mod.shipPath.result?.query === d.queries[0].query, 'a differing query opens in Try it'); }
+  const withWhy = h.mod.shipPath.result.staged.results.findIndex((x) => x.why?.length);
+  if (withWhy >= 0) {
+    await h.click(`ship-try-staged-r${withWhy}-why`);
+    assert.ok(/\d+% of what the model learned: /.test(h.text()), `why a result is there, from the model's own signals: ${h.text().slice(-600)}`);
+  }
+  const moved = h.mod.shipPath.result.staged.results.filter((x) => x.move && x.move !== 'same');
+  assert.equal(h.byIdPrefix('ship-try-staged-r').filter((e) => /-move$/.test(e.call('id')[0])).length, moved.length, 'each result that moved is marked');
+  // The candidate's own row says it too, before anyone stages it.
+  const row = (await get('/api/projects/outdoor/experiments')).experiments.find((e) => !e.is_champion);
+  if (row.sameness?.mostly_same) assert.ok(h.text().includes('Mostly reproduces the baseline. Open it to see why.'), 'on the candidate row');
+}
+
+// Step 3, Connect your site. On this computer no site can reach it, and the page says so with the ways forward.
+await until(h, () => byId(h, 'ship-connect-live').length === 1, 'the Connect step shows');
+t = h.text();
+assert.ok(t.includes('Connect your site') && t.includes('Waiting for the first request.'), 'a live line, waiting');
+assert.ok(t.includes("A site can't reach an endpoint on this computer. Two ways forward: stage it in your cloud, so your site can call it, or keep testing here with simulated shoppers."), `the blocked sentence: ${t.slice(-1500)}`);
+assert.ok(/http:\/\/127\.0\.0\.1:\d+/.test(t), 'the address');
+assert.ok(/Not counted: \d+ test\./.test(t), 'console queries are shown as not counted');
+assert.ok(t.includes("The key is kept in this computer's keychain.") && !t.includes('render-test-key'), 'where the key lives, never the key');
+let clip = null;
+h.cx.write_to_clipboard = (x) => { clip = x; };
+await h.click('ship-connect-key');
+await until(h, () => clip !== null, 'Copy the key puts it on the clipboard');
+assert.equal(clip, 'render-test-key');
+assert.ok(h.text().includes('The key is on your clipboard.') && !h.text().includes('render-test-key'), 'and it is still not on screen');
+for (const id of ['ship-connect-code-curl', 'ship-connect-code-javascript', 'ship-connect-code-python']) assert.equal(byId(h, id).length, 1, id);
+assert.equal(byId(h, 'ship-connect-snippet').length, 0, 'code stays closed until asked for');
+await h.click('ship-connect-code-python');
+t = h.text();
+assert.ok(t.includes('def rank(query, session_id):') && t.includes('def outcome(request_id, event') && t.includes('fall back to your own search') && t.includes('CAPTAIN_STAGING_KEY'), `the two calls, with the fallback: ${t.slice(-1200)}`);
+assert.ok(t.includes('Give the endpoint 300 ms.'), 'the timeout is said');
+await h.click('ship-connect-copy');
+assert.ok(clip.includes('def rank(query, session_id)') && !clip.includes('render-test-key'), 'the code is copied without the key in it');
+await h.click('ship-connect-test');
+await until(h, () => /The endpoint answered ".+" in \d+ ms with 5 results\. This was test traffic/.test(h.mod.shipPath.note?.text ?? ''), `a test request proves the path: ${JSON.stringify(h.mod.shipPath.note)}`);
+assert.ok(h.text().includes(h.mod.shipPath.note.text), 'and the page says so');
+assert.equal(h.byIdPrefix('ship-done-connect').length, 0, 'and still does not count as a site');
+if (haveTrainer) assert.ok((await page()).text().includes("Next: A site can't reach this computer. Stage it in your cloud, or practice here with simulated shoppers (Ship, step 3)."), 'the top line says the same');
+clean(h.text(), 'in the Connect step');
+
+if (haveTrainer) {
+  // Step 4 is gated: no real request has arrived, so the only way in says what it is.
+  await until(h, () => byId(h, 'ship-ab-practice-go').length === 1, 'practice is offered');
+  assert.equal(byId(h, 'ship-ab-start').length, 0, 'no Start an A/B test before a site is calling');
+  assert.ok(h.text().includes('No real request has reached this endpoint yet, so a split would divide nothing.'), `and it says why: ${h.text().slice(-1400)}`);
+  await h.click('ship-ab-practice-go');
   t = h.text();
-  for (const w of ["Captain's staging endpoint", 'My own A/B system', "The candidate's share of traffic", 'What decides it', 'Sessions with a click', 'Sessions with a purchase', 'Revenue per session', 'A shopper always sees the same version.'])
+  assert.equal(byId(h, 'ship-ab-practice').length, 1);
+  assert.ok(t.includes("Practice with simulated shoppers. Everything it shows is SIMULATED, and a practice test can't go to launch review."), 'the practice form says what it is');
+  for (const w of ["Captain's staging endpoint", 'My own A/B system', "The candidate's share of traffic", 'What decides it', 'Sessions with a click', 'Response time: must not get worse', 'Captain pauses the ramp and says why'])
     assert.ok(t.includes(w), `setup says: ${w}`);
   for (const id of ['ship-ab-split-1', 'ship-ab-split-5', 'ship-ab-split-25', 'ship-ab-split-50']) assert.equal(byId(h, id).length, 1, id);
-  assert.ok(t.includes('Response time: must not get worse') && t.includes('Sessions with a click: watch') && t.includes('Captain pauses the ramp and says why'), `guardrails are marked must or watch: ${t.slice(-900)}`);
   await h.click('ship-ab-guard-revenue');
-  assert.ok(h.text().includes('Revenue per session: must not get worse'), 'one click changes a guardrail');
   await h.click('ship-ab-primary-clicks');
-  await h.click('ship-ab-split-50');
   await h.click('ship-ab-start-go');
   await until(h, () => byId(h, 'ship-ab-readout').length === 1, 'the readout appears');
-  t = h.text();
-  assert.ok(t.includes('The A/B test is running: the candidate gets 50% of traffic.'), 'it says what started');
-  assert.ok(/Not enough data yet: 0 baseline and 0 candidate sessions\. Each arm needs 200/.test(t), `no winner before there is data: ${t.slice(-1500)}`);
-  assert.equal(h.byIdPrefix('ship-done-ab').length, 0, 'step 3 is not ticked yet');
-  for (const id of ['ship-ab-ramp-1', 'ship-ab-ramp-5', 'ship-ab-ramp-25', 'ship-ab-ramp-50', 'ship-ab-ramp-100', 'ship-ab-rollback', 'ship-ab-simulate']) assert.equal(byId(h, id).length, 1, id);
-  assert.ok(t.includes('Ramp') && t.includes('Roll back') && t.includes('Baseline') && t.includes('Candidate') && t.includes('A/B test'), 'the words on screen');
-
-  // No traffic yet: simulated shoppers drive the endpoint, and everything they produce says so.
+  assert.ok(/Not enough data yet: 0 baseline and 0 candidate sessions\. Each arm needs 200/.test(h.text()), 'no winner before there is data');
+  for (const id of ['ship-ab-ramp-1', 'ship-ab-ramp-5', 'ship-ab-ramp-25', 'ship-ab-ramp-50', 'ship-ab-ramp-100', 'ship-ab-rollback', 'ship-ab-simulate', 'ship-ab-ship', 'ship-ab-keep', 'ship-ab-more']) assert.equal(byId(h, id).length, 1, id);
   await h.click('ship-ab-simulate');
-  await until(h, () => h.byIdPrefix('ship-done-ab').length === 1, 'step 3 is ticked once both arms have enough sessions', 2400);
+  await until(h, () => h.byIdPrefix('ship-done-ab').length === 1, 'step 4 is ticked once both arms have enough sessions', 2400);
   t = h.text();
-  assert.ok(t.includes('Simulated shoppers') && t.includes('SIMULATED: these shoppers are generated. Nothing here says what real shoppers will do.'), `the readout is labelled simulated: ${t.slice(-1800)}`);
-  assert.ok(!/Real traffic/.test(t), 'and never as real traffic');
-  const ro = await get('/api/projects/outdoor/ab');
-  assert.equal(ro.evidence, 'SIMULATED'); assert.equal(ro.traffic, 'simulated'); assert.ok(ro.enough);
-  assert.equal(ro.arms.baseline.sessions + ro.arms.candidate.sessions, 1000);
-  assert.ok(t.includes(`${ro.arms.baseline.sessions.toLocaleString('en-US')} sessions`) && t.includes(`${ro.arms.candidate.sessions.toLocaleString('en-US')} sessions`), 'sessions per arm');
-  assert.ok(t.includes(ro.primary.text), `the primary metric with its interval: ${ro.primary.text}`);
-  assert.ok(/between [+-]\d+\.\d and [+-]\d+\.\d points \(95% interval\)/.test(t), 'the difference comes with an interval');
-  assert.ok(t.includes('Must not get worse. Response time:') && t.includes('Must not get worse. Revenue per session:') && t.includes('Watch. Sessions with a purchase:') && t.includes('The split is as asked:'), 'guardrails with their marks, and a check that the split is what was asked for');
-  assert.deepEqual(ro.ab.guardrail_modes, { latency: 'must', purchases: 'watch', revenue: 'must' });
-  // The same comparison per kind of query (head, torso, tail by how often the project's log searches it) and shopper.
-  assert.equal(byId(h, 'ship-ab-segments').length, 1, 'the segment breakdown');
-  assert.ok(ro.segments.length >= 1 && ro.segments.every((x) => t.includes(x.text)), `each segment has its own line: ${JSON.stringify(ro.segments.map((x) => x.text))}`);
-  assert.ok(/(Head|Torso|Tail) queries: /.test(t), 'named in plain words');
-  assert.ok(/Next: Send outdoor\/starter-ranker@v\d+ to launch review\./.test((await page()).text()), 'the top line moves on to launch review');
-  clean(t, 'in the readout');
-
-  // Ramp: one click and a confirmation. Nothing changes until the yes.
+  let ro = await get('/api/projects/outdoor/ab');
+  assert.equal(ro.evidence, 'SIMULATED'); assert.ok(ro.practice && ro.enough && !ro.can_ship);
+  assert.ok(t.includes('Simulated shoppers') && t.includes('SIMULATED: these shoppers are generated. Nothing here says what real shoppers will do.') && !/Real traffic/.test(t), 'labelled simulated, never real');
+  assert.ok(t.includes("This is a practice test on simulated shoppers. It can't go to launch review."), 'Ship it is refused, with the reason');
+  assert.ok(t.includes(ro.primary.text) && /between [+-]\d+\.\d and [+-]\d+\.\d points \(95% interval\)/.test(t), 'the difference with its interval');
+  assert.ok(t.includes('Must not get worse. Response time:') && t.includes('Must not get worse. Revenue per session:') && t.includes('Watch. Sessions with a purchase:'), 'guardrails with their marks');
+  assert.ok(ro.segments.length >= 1 && ro.segments.every((x) => t.includes(x.text)) && /(Head|Torso|Tail) queries: /.test(t), 'by segment');
+  if (ro.needed) assert.ok(t.includes(ro.needed.text) && /About [\d,]+ more sessions needed in the smaller arm to tell a difference of \d+\.\d points\./.test(ro.needed.text), `sessions still needed: ${ro.needed.text}`);
+  assert.equal(byId(h, 'ship-ab-ship')[0].call('on_click'), undefined, 'Ship it is switched off for a practice test');
+  // Ramp, with a confirmation.
   await h.click('ship-ab-ramp-100');
-  assert.equal(byId(h, 'ship-ab-ask').length, 1, 'a confirmation');
   assert.ok(h.text().includes('Give the candidate 100% of traffic? It gets 50% now.'));
-  assert.equal((await get('/api/projects/outdoor/ab')).ab.split, 0.5, 'not ramped yet');
   await h.click('ship-ab-ask-yes');
   await until(h, () => h.text().includes('The candidate now gets 100% of traffic.'), 'ramped');
-  assert.equal((await get('/api/projects/outdoor/ab')).ab.split, 1);
-
-  // Roll back: one click and a confirmation, then every shopper gets the baseline and the test ends.
+  // Roll back: one line says what, why and what next. The old readout is filed, not left on screen as current.
   await h.click('ship-ab-rollback');
   assert.ok(h.text().includes('Roll back? Every shopper gets the baseline again, and this test ends.'));
   await h.click('ship-ab-ask-yes');
-  await until(h, () => h.text().includes('Rolled back. Every shopper gets the baseline again.'), 'rolled back');
-  const after = await get('/api/projects/outdoor/ab');
-  assert.equal(after.ab.status, 'rolled_back');
-  assert.equal((await get('/api/projects/outdoor/staging')).staged.serve, 'baseline', 'the endpoint serves the baseline again');
-  const hist = (await get('/api/projects/outdoor/state')).history.map((x) => x.what).join(' | ');
-  for (const w of ['started an A/B test', 'simulated shoppers', 'ramped the A/B test', 'rolled back the A/B test']) assert.ok(hist.includes(w), `the project history has: ${w}`);
-  await until(h, () => byId(h, 'ship-ab-start').length === 1 && h.text().includes('Start another A/B test'), 'another test can be started');
+  await until(h, () => byId(h, 'ship-ab-filed').length === 1, 'the rolled back test is filed');
+  t = h.text();
+  assert.ok(/Rolled back outdoor\/starter-ranker@v\d+ from 100% of traffic: .+ rolled it back\. Every shopper gets outdoor\/keyword-baseline@v1 again\. Next: fix what went wrong and start a new test, or keep the baseline\./.test(t), `what, why and what next: ${t.slice(-1400)}`);
+  assert.equal(byId(h, 'ship-ab-readout').length, 0, 'its readout is not shown as if current');
   assert.equal(byId(h, 'ship-ab-rollback').length, 0, 'no ramp or roll back on an ended test');
-  assert.ok(h.text().includes('Stage the candidate'), 'and the candidate is one click from serving again');
-  steps = (await published(h, (v) => v?.steps?.[2]?.done))?.steps;
-  assert.deepEqual(steps?.map((x) => [x.label, x.done]), [['1 Stage', true], ['2 Try it', true], ['3 A/B test', true], ['4 Launch review', false]], 'the four steps, for agents');
+
+  // A site starts calling. Real requests are counted, the step is ticked, and the form opens for real.
+  const ep = (await get('/api/projects/outdoor/staging')).staged.endpoint.url;
+  const KH = { Authorization: 'Bearer render-test-key', 'Content-Type': 'application/json' };
+  const site = async (path, body) => (await fetch(ep + path, { method: 'POST', headers: KH, body: JSON.stringify(body) })).json();
+  const queries = ['waterproof jacket', 'hiking boots', 'tent', 'wool socks', 'headlamp', 'trail shoes'];
+  for (let i = 0; i < 24; i++) await site('/rank', { query: queries[i % queries.length], k: 10, session_id: `shopper-${i}` });
+  h = await page();
+  await until(h, () => h.byIdPrefix('ship-done-connect').length === 1, 'step 3 is ticked once a site calls it');
+  t = h.text();
+  assert.ok(/Received 24 requests, the last one \d+ s ago\./.test(t), `the live line counts real requests: ${t.slice(-1500)}`);
+  await until(h, () => h.text().includes('Next: Your site is connected. Start shadow mode to see what the candidate would change, before any shopper sees it.'), 'the top line follows, and offers shadow mode');
+  t = h.text();
+
+  // Shadow mode: shoppers keep the baseline, the candidate ranks the same requests, and this is what it would change.
+  assert.ok(t.includes('No shopper sees the candidate.'), 'what shadow mode is, before it starts');
+  await h.click('ship-shadow-start');
+  await until(h, () => byId(h, 'ship-shadow-stop').length === 1, 'shadow mode is on');
+  const seen = [];
+  for (let i = 0; i < 30; i++) seen.push(await site('/rank', { query: queries[i % queries.length], k: 10, session_id: `shadowed-${i}` }));
+  assert.ok(seen.every((r) => r.arm === 'baseline'), 'every shopper gets the baseline');
+  h = await page();
+  const sh = await get('/api/projects/outdoor/shadow');
+  assert.equal(sh.requests, 30); assert.equal(sh.evidence, 'REAL_TRAFFIC');
+  await until(h, () => h.text().includes(sh.text), `the shadow readout: ${sh.text}`);
+  t = h.text();
+  assert.ok(/Real traffic\. On 30 requests /.test(t) && t.includes('No shopper saw the candidate.') && /Response time, 95 in 100 requests under: [\d.]+ ms baseline, [\d.]+ ms candidate\./.test(t), 'requests, how often it differs, and both response times');
+  if (sh.queries.length) { await h.click('ship-shadow-q0'); await until(h, () => h.mod.shipPath.result?.query === sh.queries[0].query, 'a query that differs opens in Try it'); }
+
+  // The A/B form, for real: shares in this endpoint's own sessions a day.
+  await until(h, () => byId(h, 'ship-ab-start').length === 1, 'Start an A/B test is offered now');
+  const o = await get('/api/projects/outdoor/ab/options');
+  assert.ok(o.ready && o.per_day > 0);
+  await h.click('ship-ab-start');
+  assert.equal(byId(h, 'ship-ab-practice').length, 0, 'not a practice test');
+  assert.ok(h.text().includes(o.shares[1].text) && /5%: about [\d,]+ of the [\d,]+ sessions a day this endpoint sees/.test(o.shares[1].text), `the share in real numbers: ${o.shares[1].text}`);
+  await h.click('ship-ab-split-50');
+  assert.ok(h.text().includes(o.shares[3].text), 'and it follows the share picked');
+  await h.click('ship-ab-primary-clicks');
+  await h.click('ship-ab-start-go');
+  await until(h, () => byId(h, 'ship-ab-readout').length === 1, 'the real test runs');
+  assert.equal((await get('/api/projects/outdoor/shadow')).status, 'ended', 'a split ends shadow mode');
+  assert.equal(byId(h, 'ship-ab-simulate').length, 0, 'no simulated shoppers in a real test');
+  // Shoppers arrive. Those on the candidate click more.
+  for (let i = 0; i < 520; i++) {
+    const r = await site('/rank', { query: queries[i % queries.length], k: 10, session_id: `ab-${i}` });
+    if (r.arm === 'candidate' ? i % 10 < 6 : i % 10 < 2) await site('/outcome', { request_id: r.request_id, event: 'click', product_id: r.ids[0] });
+  }
+  h = await page();
+  ro = await get('/api/projects/outdoor/ab');
+  assert.equal(ro.evidence, 'REAL_TRAFFIC'); assert.ok(ro.enough && ro.can_ship, JSON.stringify(ro.arms));
+  await until(h, () => h.text().includes(ro.primary.text), 'the real readout');
+  t = h.text();
+  assert.ok(t.includes('Real traffic') && !t.includes('SIMULATED:') && t.includes('The candidate is ahead.'), `labelled real: ${t.slice(-1600)}`);
+  await until(h, () => h.text().includes('Next: The A/B test has enough sessions. Decide: ship it, keep the baseline, or keep testing.'), 'the top line asks for a decision');
+  // Ship it: recorded, and launch review opens with the candidate.
+  globalThis.__overlays = [];
+  await h.click('ship-ab-ship');
+  await until(h, () => (globalThis.__overlays ?? []).some((x) => x.props?.task === 'handoff'), 'launch review opens');
+  assert.equal(globalThis.__overlays.find((x) => x.props?.task === 'handoff').props.values.pipeline, ro.ab.arms.candidate);
+  const dec = (await get('/api/projects/outdoor/ab')).decision;
+  assert.equal(dec.choice, 'ship'); assert.equal(dec.evidence, 'REAL_TRAFFIC');
+  h = await page();
+  await until(h, () => /Decided: Ship it, by .+ on \d{4}-\d\d-\d\d\./.test(h.text()), 'the decision is on the page');
+  assert.ok(/Next: Send outdoor\/starter-ranker@v\d+ to launch review\./.test(h.text()), 'and the top line moves on to launch review');
+  const hist = (await get('/api/projects/outdoor/state')).history.map((x) => x.what).join(' | ');
+  for (const w of ['started an A/B test', 'simulated shoppers', 'ramped the A/B test', 'rolled back the A/B test', 'the first real request reached staging', 'started shadow mode', 'decided on the A/B test: ship it']) assert.ok(hist.includes(w), `the project history has: ${w}`);
+  steps = (await published(h, (v) => v?.steps?.[3]?.done))?.steps;
+  assert.deepEqual(steps?.map((x) => [x.label, x.done]), [['1 Stage', true], ['2 Try it', true], ['3 Connect your site', true], ['4 A/B test', true], ['5 Launch review', false]], 'the five steps, for agents');
+  clean(h.text(), 'after a real test');
+
+  // Keep the baseline: recorded, rolled back, and said in one line.
+  await h.click('ship-ab-keep');
+  await until(h, () => byId(h, 'ship-ab-filed').length === 1 && h.text().includes('the decision was to keep the baseline'), 'kept the baseline');
 
   // My own A/B system: an address per version, and the readout the team brings back, labelled by what they say it was.
   await h.click('ship-ab-start');

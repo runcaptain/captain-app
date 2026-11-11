@@ -115,6 +115,7 @@ assert.equal(f.mod.values.how, 'starter', 'the starter card is chosen first');
 assert.ok(t.includes('What it will use') && t.includes('demo-catalog@v1') && t.includes('logs/demo-search-sessions@v1'), 'what it reads, from the pins');
 assert.ok(/Labels come from clicks after that, up to \d{4}-\d\d-\d\d/.test(t) && t.includes('kept back to judge'), `the cutoff and why: ${t}`);
 assert.ok(/These events are simulated/.test(t), 'the simulated warning');
+assert.ok(t.includes('The simulated events were generated from keyword search, so a ranker trained on them mostly reproduces keyword search.'), 'and what that means for the ranker, before training');
 assert.ok(!t.includes('Training command'), 'no command to type for the starter ranker');
 assert.ok(/\bTrain\b/.test(t) && !t.includes('Start training'), 'one button: Train');
 clean(t, 'in the form');
@@ -169,7 +170,7 @@ for (let i = 0; i < 40 && !h.text().includes('starter-ranker'); i++) await h.idl
 t = h.text();
 assert.ok(t.includes('starter-ranker') && !h.byIdPrefix('exp-start').length, 'the candidate row replaces the guided start');
 // Once a candidate exists the guided start is done, and the page publishes the Ship path's steps instead.
-assert.deepEqual((await published(h, (v) => v?.steps?.[0]?.label === '1 Stage'))?.steps?.map((x) => x.label), ['1 Stage', '2 Try it', '3 A/B test', '4 Launch review'], 'the Ship steps once a candidate exists');
+assert.deepEqual((await published(h, (v) => v?.steps?.[0]?.label === '1 Stage'))?.steps?.map((x) => x.label), ['1 Stage', '2 Try it', '3 Connect your site', '4 A/B test', '5 Launch review'], 'the Ship steps once a candidate exists');
 const row = (await get('/api/projects/outdoor/experiments')).experiments[0];
 assert.match(row.feature_timing, /^Click features: counted once, up to \d{4}-\d\d-\d\d\./, 'how the features were timed');
 assert.ok(/Agrees with its own labeler|Too few judged results to call/.test(t), `the honest verdict shows: ${t.slice(0, 1200)}`);

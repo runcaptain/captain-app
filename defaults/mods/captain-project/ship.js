@@ -1,4 +1,6 @@
-// CAPTAIN: the Ship part of a project's page as a path a person walks: 1 Stage, 2 Try it, 3 A/B test, 4 Launch review
+// CAPTAIN: the Ship part of a project's page as a path a person walks: 1 Stage, 2 Try it, 3 Connect your site,
+// 4 A/B test, 5 Launch review. An A/B test means nothing until a site is calling the endpoint, so step 3 comes first:
+// where it runs and who can reach it, the code to call it, a live count of real requests, and shadow mode
 // (Edgar, 2026-11-10: "make it easier to stage ml models to be deployed ... business user friendly"). A staged model
 // runs in the team's own cloud, or on this computer; Captain hosts nothing. Each step has a status, one primary
 // action and a tick when it is done. Words stay plain: where it runs, what it costs, when it stops by itself. The
@@ -49,6 +51,12 @@ export class Ship {
     this.result = null; this.asking = false; this.askError = null;
     this.thumbs = new Map(); // image address -> file name | null (failed) | undefined (asked)
     this.cost = costState(); // what the staged endpoint costs to keep up (POST /api/costs/estimate, kit/cost.js)
+    this.conn = null;      // GET /staging/connect: the address, the snippets, how many real requests arrived
+    this.shadow = null;    // GET /shadow: what the candidate would change, with no shopper seeing it
+    this.opts = null;      // GET /ab/options: has a site sent anything, and what each share means in sessions a day
+    this.diff = null;      // GET /staging/differ: the queries where the two versions differ most
+    this.code = null;      // which snippet is open
+    this.whyOpen = new Set(); // results whose "Why is this here?" is open
     this.ab = null;        // GET /ab: the readout
     this.setup = null;     // the A/B form while it is open: {split, primary, mode}
     this.ask2 = null;      // a ramp or a rollback waiting for a yes: {kind, split?}
@@ -66,16 +74,67 @@ export class Ship {
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(pid)}/ab`, { scoped: false, timeout: 60 });
       if (this.pid() !== pid) return;
-      if (r.ok) this.ab = r.data;
+      if (r.ok) {
+        this.ab = r.data;
+        // The readout just crossed "enough": the page's own steps and Next line are one read behind. Read again, once.
+        const known = (this.page.stages?.ship?.steps ?? []).find((x) => x.id === "ab")?.done;
+        const key = `${r.data?.ab?.id}:${Boolean(r.data?.enough)}`;
+        if (r.data?.enough && known === false && this.abTold !== key) { this.abTold = key; this.page.reload?.(cx); }
+      }
       cx.notify();
     });
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(pid)}/staging`, { scoped: false });
       if (this.pid() !== pid) return;
-      if (r.ok) { this.status = r.data; this.problem = null; this.price(cx); this.settle(); } else if (!r.starting) this.problem = plainError(r.error, "Captain couldn't read staging.");
+      if (r.ok) { this.status = r.data; this.problem = null; this.price(cx); this.settle(); this.around(cx); } else if (!r.starting) this.problem = plainError(r.error, "Captain couldn't read staging.");
       cx.notify();
     });
   }
+
+  /** What sits around a running endpoint: who is calling it, shadow mode, what the A/B form may offer, and (once
+   *  per staged version) the queries where the two versions differ. Nothing is asked while nothing runs. */
+  around(cx) {
+    const pid = this.pid(), s = this.staged();
+    if (!this.running()) { this.conn = null; this.opts = null; this.diff = null; this.diffFor = null; return; }
+    const get = (path, set) => cx.spawn(async (cx) => { const r = await api(`/api/projects/${enc(pid)}${path}`, { scoped: false, timeout: 60 }); if (this.pid() === pid && r.ok) { set(r.data); cx.notify(); } });
+    get("/staging/connect", (d) => {
+      this.conn = d;
+      // The first real request just arrived: the page's own steps and Next line are one read behind. Read again.
+      const known = (this.page.stages?.ship?.steps ?? []).find((x) => x.id === "connect")?.done;
+      if (d.connected && known === false && this.toldFor !== s.id) { this.toldFor = s.id; this.page.reload?.(cx); }
+    });
+    if (this.both()) {
+      get("/shadow", (d) => { this.shadow = d; });
+      get("/ab/options", (d) => { this.opts = d; });
+      if (this.diffFor !== s.id) { this.diffFor = s.id; this.diff = null; get("/staging/differ", (d) => { this.diff = d; }); }
+    }
+  }
+
+  /** One small write (shadow on or off, a test request, a decision), then read everything again. */
+  act(cx, path, body, done, after) {
+    if (this.busy) return;
+    this.cx = cx; this.note = null;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}${path}`, { body: body ?? {}, scoped: false, timeout: 60 });
+      this.note = r.ok ? (done ? { tone: "good", text: typeof done === "function" ? done(r.data) : done } : null) : { tone: "fail", text: plainError(r.error, "That didn't work. Try again.") };
+      if (r.ok) after?.(r.data, cx);
+      this.load(cx);
+      this.page.reload?.(cx);
+    });
+  }
+
+  /** Copy without showing: the endpoint key goes from the services straight to the clipboard. */
+  copyKey(cx) {
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/key`, { scoped: false });
+      if (r.ok && r.data?.key) { cx.write_to_clipboard?.(r.data.key); this.note = { tone: "good", text: "The key is on your clipboard. Give it to your site as CAPTAIN_STAGING_KEY. It is not shown anywhere." }; }
+      else this.note = { tone: "fail", text: plainError(r.error, "Captain couldn't read the key on this computer.") };
+      cx.notify();
+    });
+  }
+
+  /** Put a query in the Try it box and ask it (from a list of queries that differ). */
+  tryQuery(cx, q) { this.box.set_value(q); this.ask(cx); }
 
   /** The estimate for where it runs (or is about to run). Asks the services only when the question changed. */
   price(cx, where, size) {
@@ -105,7 +164,7 @@ export class Ship {
   settle() {
     const b = this.busyFor, st = this.status?.status, id = this.staged()?.id ?? null;
     if (!b) return;
-    if ((b.what === "stage" && st === "running" && id !== b.was) || (b.what === "stop" && st === "stopped")) { this.busy = null; this.busyFor = null; }
+    if ((b.what === "stage" && st === "running" && id !== b.was) || (b.what === "stop" && st === "stopped")) { this.busy = null; this.busyFor = null; this.settled = b.what; }
   }
 
   /** Redraw the countdown, and look again while something is running, starting, or being staged or stopped. */
@@ -143,7 +202,7 @@ export class Ship {
     if (this.busy) return;
     this.cx = cx;
     this.busy = "Getting it ready"; this.note = null; this.confirm = null;
-    this.busyFor = { what: "stage", was: this.running() ? this.staged().id : null };
+    this.busyFor = { what: "stage", was: this.running() ? this.staged().id : null }; this.settled = null;
     cx.notify();
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(this.pid())}/stage`, { body: { ...body, ...(confirmed ? { confirm: true } : {}) }, scoped: false });
@@ -157,7 +216,10 @@ export class Ship {
       const cloud = r.data?.plan?.kind && r.data.plan.kind !== "local";
       const done = await this.wait(r.data.job, cloud ? 30 : 3);
       this.busy = null; this.busyFor = null; this.result = null;
-      this.note = !done.ok ? { tone: "fail", text: done.error } : done.result ? { tone: "good", text: `${short(done.result.model_version)} is staged. Try it below.` } : null;
+      // Staging itself may have said "running" before the job answered: the outcome is the same, so say it.
+      const mv = done.result?.model_version ?? (this.settled === "stage" ? this.staged()?.model_version : null);
+      this.note = !done.ok ? { tone: "fail", text: done.error } : mv ? { tone: "good", text: `${short(mv)} is staged. Try it below.` } : null;
+      this.settled = null;
       this.load(cx);
       this.page.reload?.(cx);
     });
@@ -167,14 +229,14 @@ export class Ship {
     if (this.busy) return;
     this.cx = cx;
     this.busy = "Stopping it"; this.note = null; this.stopAsk = false;
-    this.busyFor = { what: "stop" };
+    this.busyFor = { what: "stop" }; this.settled = null;
     cx.notify();
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(this.pid())}/unstage`, { body: {}, scoped: false });
       const done = r.ok ? await this.wait(r.data.job, 5) : { ok: false, error: plainError(r.error, "It didn't stop. Try again.") };
       this.busy = null; this.busyFor = null; this.result = null;
       this.note = done.ok && done.result?.status === "stopped" ? { tone: "good", text: "Staging is stopped. Nothing is left running." }
-        : done.ok && !done.result ? null
+        : done.ok && !done.result ? (this.settled === "stop" ? { tone: "good", text: "Staging is stopped. Nothing is left running." } : null)
         : { tone: "fail", text: done.ok ? plainError(done.result?.error, "It stopped, but something could not be removed.") : done.error };
       this.load(cx);
       this.page.reload?.(cx);
@@ -284,6 +346,7 @@ export class Ship {
       { n: 2, id: "try", title: "Try it", done: tried,
         text: on ? `Type a query and see what ${what} returns${st?.arms?.baseline && st.serve !== "baseline" ? ", beside the baseline" : ""}.` : "After it is staged, type a query and see the results.",
         action: on ? "try" : null, label: null, ...(on ? {} : { waiting_on: "Stage a model version first." }) },
+      this.connectStepData(),
       this.abStepData(),
       this.launchStepData(),
     ];
@@ -295,15 +358,31 @@ export class Ship {
     return this.running() && Boolean(st?.arms?.baseline) && Boolean(st?.arms?.candidate) && st.how !== "image";
   }
 
+  connectStepData() {
+    const on = this.running(), k = this.conn;
+    const text = !on ? "After it is staged, point your site at it and watch the first request arrive."
+      : !k ? "Looking for requests from your site..."
+      : k.connected ? k.live
+      : k.blocked ?? "Waiting for the first request. Copy a snippet below into your site.";
+    return { n: 3, id: "connect", title: "Connect your site", done: Boolean(on && k?.connected), text, action: on && !k?.connected ? "connect" : null, label: null,
+      ...(on ? {} : { waiting_on: "Stage a model version first." }) };
+  }
+
   abStepData() {
-    const r = this.ab, a = r?.ab, live = a?.status === "running";
+    const r = this.ab, a = r?.ab, live = a?.status === "running", o = this.opts;
     const done = Boolean(a && (r.enough || r.brought));
     let text;
-    if (!a) text = this.both() ? "Split traffic between the baseline and the candidate, and see which one shoppers prefer." : "After a candidate is staged beside the baseline, split traffic between them.";
+    if (a?.status === "rolled_back" && r.rolled_back) text = r.rolled_back.text;
+    else if (!a || !live) text = !this.both() ? "After a candidate is staged beside the baseline, split traffic between them."
+      : o && !o.ready ? o.text
+      : a ? `${a.status === "rolled_back" ? "Rolled back to the baseline." : "The last test ended."} Start another when you're ready.`
+      : "Your site is sending requests. Split them between the baseline and the candidate, and see which one shoppers prefer.";
     else if (a.mode === "own") text = r.text;
-    else if (live) text = `The candidate gets ${pct(a.split)} of traffic. ${r.primary?.text ?? ""}`;
-    else text = `${a.status === "rolled_back" ? "Rolled back to the baseline." : "Ended."} ${r.primary?.text ?? ""}`;
-    return { n: 3, id: "ab", title: "A/B test", done, text: text.trim(), action: this.both() && !live ? "ab-start" : null, label: this.both() && !live ? (a ? "Start another A/B test" : "Start an A/B test") : null,
+    // The result itself is in the readout below, once: here only what is running.
+    else text = `${a.practice ? "Practice on simulated shoppers. " : ""}The candidate gets ${pct(a.split)} of traffic.${r.enough ? "" : " Not enough data yet."}`;
+    const can = this.both() && !live;
+    return { n: 4, id: "ab", title: "A/B test", done, text: text.trim(), action: can ? (o?.ready ? "ab-start" : "ab-practice") : null,
+      label: can ? (o?.ready ? (a ? "Start another A/B test" : "Start an A/B test") : "Practice with simulated shoppers") : null,
       ...(a || this.both() ? {} : { waiting_on: "Stage a candidate beside the baseline first." }) };
   }
 
@@ -313,7 +392,7 @@ export class Ship {
   launchStepData() {
     const of = this.reviewOf(), sent = Boolean((this.page.stages?.ship?.steps ?? []).find((x) => x.id === "launch-review")?.done);
     const failed = this.staged()?.check?.status === "fail";
-    return { n: 4, id: "launch-review", title: "Launch review", done: sent,
+    return { n: 5, id: "launch-review", title: "Launch review", done: sent,
       text: sent ? `${short(of)} was sent to launch review. Your own deployment process takes it from there.`
         : failed ? "Served features don't match training, so launch review will ask for a reason to go on."
         : "Check it against your launch criteria and pass it to your own deployment process. Captain deploys nothing itself.",
@@ -430,7 +509,16 @@ export class Ship {
       .when(Boolean(x.image), (e) => e.child(pic))
       .child(v_flex().flex_1().min_w(0)
         .child(div().truncate().text_size(12.5).text_color(c.navy).child(x.title))
-        .when(x.price != null, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`$${Number(x.price).toFixed(2)}`))));
+        .when(x.price != null, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`$${Number(x.price).toFixed(2)}`)))
+        .when(Boolean(x.why), (e) => e.child(div().id(`${id}-why`).text_size(11.5).text_color(c.blue).cursor_pointer()
+          .on_click((_e, cx) => { if (this.whyOpen.has(id)) this.whyOpen.delete(id); else this.whyOpen.add(id); cx.notify(); }).child("Why is this here?")))
+        .when(Boolean(x.why) && this.whyOpen.has(id), (e) => e.child(v_flex().id(`${id}-signals`).gap(1).pt(2)
+          .children(x.why.map((w, k) => div().id(`${id}-signal-${k}`).text_size(11.5).line_height("16px").text_color(c.grey900)
+            .child(`${Math.round(w.weight * 100)}% of what the model learned: ${w.label} (${Number(w.value).toFixed(2)})`))))))
+      // Against the baseline: where it was. Words, so it reads the same in a screen reader and a picture.
+      .when(Boolean(x.move) && x.move !== "same", (e) => e.child(div().id(`${id}-move`).flex_none().px(6).h(18).flex().items_center().text_size(11)
+        .bg(x.move === "down" ? c.failLight : c.goodLight).text_color(x.move === "down" ? c.fail : c.good)
+        .child(x.move === "new" ? "new" : `${x.move} ${Math.abs(x.was - x.position)}`)));
   }
 
   side(c, side, name, id) {
@@ -461,8 +549,87 @@ export class Ship {
         .child(div().id("ship-try-summary").text_size(12).text_color(c.grey500).child(
           (r.baseline ? (r.same_order ? "Both return the same results in the same order for this query. " : `${r.moved} of the top ${r.staged.results.length} differ from the baseline. `) : "")
           + "Queries typed here are test traffic. They never count as shoppers.")))
+      .when(Boolean(r?.staged?.why_note) && !r.baseline, (e) => e.child(div().id("ship-try-why-note").text_size(12).text_color(c.grey500).child(r.staged.why_note)))
+      .when(Boolean(this.diff?.checked), (e) => e.child(this.differBox(c)))
       .when(Boolean(this.checkLine(c)), (e) => e.child(this.checkLine(c)));
     return this.row(c, st, null, below);
+  }
+
+  /** "Queries where these two differ most", from a sample of the project's own queries. When none differ it says
+   *  so, and why: a candidate that reproduces keyword search is called that. */
+  differBox(c) {
+    const d = this.diff;
+    return v_flex().id("ship-differ").gap(4)
+      .when(d.mostly_same, (e) => e.child(h_flex().id("ship-same").gap(6).items_start().p(8).bg(c.warnLight)
+        .child(svg(icon("triangle-alert")).size(13).mt(2).flex_none().text_color(c.warn))
+        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.navy).child(d.text))))
+      .child(div().text_size(12).font_semibold().text_color(c.navy).child("Queries where these two differ most"))
+      .when(!d.queries.length, (e) => e.child(div().id("ship-differ-none").text_size(12).line_height("17px").text_color(c.grey900)
+        .child(d.mostly_same ? `None of the ${d.checked} queries checked rank differently.` : d.none_differ ?? "None of the queries checked rank differently.")))
+      .children(d.queries.slice(0, 6).map((q, i) => h_flex().id(`ship-differ-${i}`).gap(8).items_center().cursor_pointer().hover((x) => x.bg(c.surface2))
+        .on_click((_e, cx) => this.tryQuery(cx, q.query))
+        .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.blue).child(q.query))
+        .child(div().flex_none().text_size(11.5).text_color(c.grey500).child(`${q.moved} of the top 10 in another place`))))
+      .when(!d.mostly_same && Boolean(d.text) && d.queries.length > 0, (e) => e.child(div().text_size(12).text_color(c.grey500).child(d.text)));
+  }
+
+  // ---- connect your site, and shadow mode -----------------------------------------------------------------------
+
+  connectStep(c, st) {
+    if (!this.running() || !this.conn) return this.row(c, st, null, null);
+    const k = this.conn, names = Object.keys(k.snippets ?? {});
+    const open = this.code && names.includes(this.code) ? this.code : null;
+    const below = v_flex().pl(46).pr(12).pb(12).gap(8)
+      .child(h_flex().gap(10).items_start().text_size(12)
+        .child(div().w(70).flex_none().text_color(c.grey500).child("Address"))
+        .child(div().id("ship-connect-address").flex_1().min_w(0).font_family(MONO).text_size(11.5).text_color(c.navy).child(String(k.address ?? ""))))
+      .child(div().id("ship-connect-where").text_size(12).line_height("17px").text_color(c.grey900).child(k.text))
+      .when(Boolean(k.blocked), (e) => e.child(h_flex().id("ship-connect-blocked").gap(6).items_start().p(8).bg(c.warnLight)
+        .child(svg(icon("triangle-alert")).size(13).mt(2).flex_none().text_color(c.warn))
+        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.navy).child(k.blocked))))
+      .child(h_flex().id("ship-connect-live").gap(6).items_center()
+        .child(svg(icon(k.connected ? "circle-check" : "clock")).size(13).flex_none().text_color(k.connected ? c.good : c.grey500))
+        .child(div().text_size(12.5).font_medium().text_color(k.connected ? c.good : c.grey900).child(k.live))
+        .when(k.test + k.simulated > 0, (e) => e.child(div().id("ship-connect-other").text_size(11.5).text_color(c.grey500)
+          .child(`Not counted: ${[k.test ? `${k.test} test` : null, k.simulated ? `${k.simulated} simulated` : null].filter(Boolean).join(", ")}.`))))
+      .child(h_flex().flex_wrap().gap(6).items_center()
+        .child(Button(c, "ship-connect-key", "Copy the key", (_e, cx) => this.copyKey(cx), { small: true }))
+        .child(Button(c, "ship-connect-test", "Send a test request", (_e, cx) => this.act(cx, "/staging/test", {}, (d) => d.text), { small: true }))
+        .children(names.map((n) => this.pick1(c, `ship-connect-code-${n.replace(/ /g, "-")}`, n === "javascript" ? "JavaScript" : n === "python" ? "Python" : n, open === n, () => { this.code = open === n ? null : n; }))))
+      .child(div().id("ship-connect-key-note").text_size(12).line_height("17px").text_color(c.grey500).child(k.key_note))
+      .when(Boolean(open), (e) => e.child(v_flex().id("ship-connect-snippet").gap(4)
+        .child(div().p(10).bg(c.surface2).border_1().border_color(c.rule).font_family(MONO).text_size(11).line_height("15px").text_color(c.navy)
+          .children(String(k.snippets[open]).split("\n").map((ln) => div().child(ln === "" ? " " : ln))))
+        .child(h_flex().gap(8).items_center()
+          .child(Button(c, "ship-connect-copy", "Copy this code", (_e, cx) => { cx.write_to_clipboard?.(k.snippets[open]); this.note = { tone: "good", text: "The code is on your clipboard. It reads the key from CAPTAIN_STAGING_KEY, so the key is never in your code." }; cx.notify(); }, { small: true, kind: "primary" }))
+          .child(div().id("ship-connect-fallback").flex_1().min_w(0).text_size(12).line_height("17px").text_color(c.grey900).child(k.fallback)))))
+      .when(this.both(), (e) => e.child(this.shadowBox(c)));
+    return this.row(c, st, null, below);
+  }
+
+  /** Shadow mode: shoppers keep the baseline, the candidate ranks the same requests silently, and this is what it
+   *  would have changed. Comes before any split. */
+  shadowBox(c) {
+    const r = this.shadow ?? { status: "none" }, on = r.status === "running";
+    const abLive = this.ab?.ab?.status === "running" && this.ab.ab.mode === "captain";
+    return v_flex().id("ship-shadow").p(10).gap(6).bg(c.surface2).border_1().border_color(c.rule)
+      .child(h_flex().gap(8).items_center()
+        .child(div().text_size(12.5).font_semibold().child("Shadow mode"))
+        .when(on, (e) => e.child(Badge(c, "on", "good")))
+        .when(Boolean(r.label) && r.status !== "none", (e) => e.child(Badge(c, r.label, r.evidence === "REAL_TRAFFIC" ? "good" : "warn")))
+        .child(div().flex_1())
+        .when(!on && !abLive, (e) => e.child(Button(c, "ship-shadow-start", r.status === "none" ? "Start shadow mode" : "Start shadow mode again", (_e, cx) => this.act(cx, "/shadow/start", {}, "Shadow mode is on. Shoppers keep getting the baseline's results."), { small: true, kind: "primary" })))
+        .when(on, (e) => e.child(Button(c, "ship-shadow-stop", "End shadow mode", (_e, cx) => this.act(cx, "/shadow/stop", {}, "Shadow mode is off."), { small: true }))))
+      .child(div().id("ship-shadow-text").text_size(12).line_height("17px").text_color(c.grey900)
+        .child(r.status === "none" ? "Your site keeps showing the baseline's results. The candidate ranks the same requests silently, and Captain shows what it would have changed. No shopper sees the candidate." : r.text))
+      .when(Boolean(r.ms), (e) => e.child(div().id("ship-shadow-ms").text_size(12).text_color(c.grey900)
+        .child(`Response time, 95 in 100 requests under: ${r.ms.baseline.p95} ms baseline, ${r.ms.candidate.p95} ms candidate.`)))
+      .when((r.queries ?? []).length > 0, (e) => e.child(v_flex().id("ship-shadow-queries").gap(2)
+        .child(div().text_size(12).font_semibold().text_color(c.navy).child("Queries that differ most. Click one to open it in Try it."))
+        .children(r.queries.slice(0, 6).map((q, i) => h_flex().id(`ship-shadow-q${i}`).gap(8).items_center().cursor_pointer().hover((x) => x.bg(c.surface))
+          .on_click((_e, cx) => this.tryQuery(cx, q.query))
+          .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.blue).child(q.query))
+          .child(div().flex_none().text_size(11.5).text_color(c.grey500).child(`${Math.round(q.differs * 100)}% of the top 10 differs, ${q.requests} request${q.requests === 1 ? "" : "s"}`))))));
   }
 
   pick1(c, id, label, on, onPick) {
@@ -479,7 +646,12 @@ export class Ship {
       .child(line("Who splits the traffic", [
         this.pick1(c, "ship-ab-mode-captain", "Captain's staging endpoint", f.mode === "captain", () => { f.mode = "captain"; }),
         this.pick1(c, "ship-ab-mode-own", "My own A/B system", f.mode === "own", () => { f.mode = "own"; })]))
-      .when(f.mode === "captain", (e) => e.child(line("The candidate's share of traffic", [0.01, 0.05, 0.25, 0.5].map((x) => this.pick1(c, `ship-ab-split-${Math.round(x * 100)}`, pct(x), f.split === x, () => { f.split = x; })))))
+      .when(Boolean(f.practice), (e) => e.child(div().id("ship-ab-practice").p(8).bg(c.warnLight).text_size(12.5).line_height("18px").text_color(c.navy)
+        .child("Practice with simulated shoppers. Everything it shows is SIMULATED, and a practice test can't go to launch review.")))
+      .when(f.mode === "captain", (e) => e.child(line("The candidate's share of traffic", [0.01, 0.05, 0.25, 0.5].map((x) => this.pick1(c, `ship-ab-split-${Math.round(x * 100)}`, pct(x), f.split === x, () => { f.split = x; }))))
+        // What the share means here, in this endpoint's own sessions a day.
+        .child(div().id("ship-ab-share-text").text_size(12).line_height("17px").text_color(c.grey900)
+          .child(f.practice ? `${pct(f.split)} of the simulated shoppers go to the candidate.` : (this.opts?.shares ?? []).find((x) => Math.abs(x.split - f.split) < 1e-9)?.text ?? `${pct(f.split)} of sessions`)))
       .child(line("What decides it", can.map((m) => this.pick1(c, `ship-ab-primary-${m}`, METRICS[m], f.primary === m, () => { f.primary = m; }))))
       .when(f.mode === "captain", (e) => e.child(line("Guardrails: click one to change it", [...can.filter((m) => m !== f.primary), "latency"].map((m) => {
         const must = (f.must ??= { latency: true })[m];
@@ -489,9 +661,10 @@ export class Ship {
         ? "If a guardrail marked must not get worse clearly drops, Captain pauses the ramp and says why. One marked watch is shown and never blocks. A shopper always sees the same version."
         : "Captain gives you an address for each version on the endpoint. Split traffic in your system, then bring the readout in here."))
       .child(h_flex().gap(6)
-        .child(Button(c, "ship-ab-start-go", "Start the A/B test", (_e, cx) => this.abDo(cx, "start", { split: f.split, primary: f.primary, mode: f.mode,
+        .child(Button(c, "ship-ab-start-go", "Start the A/B test", (_e, cx) => this.abDo(cx, "start", { split: f.split, primary: f.primary, mode: f.mode, practice: Boolean(f.practice),
           guardrails: [...can.filter((m) => m !== f.primary), "latency"].map((m) => `${m}:${(f.must ?? { latency: true })[m] ? "must" : "watch"}`) },
-          f.mode === "captain" ? `The A/B test is running: the candidate gets ${pct(f.split)} of traffic.` : "The A/B test is recorded. Split the traffic in your own system."), { small: true, kind: "primary" }))
+          f.practice ? `The practice test is running on simulated shoppers: the candidate gets ${pct(f.split)}. SIMULATED.`
+            : f.mode === "captain" ? `The A/B test is running: the candidate gets ${pct(f.split)} of traffic.` : "The A/B test is recorded. Split the traffic in your own system."), { small: true, kind: "primary" }))
         .child(Button(c, "ship-ab-start-no", "Not now", (_e, cx) => { this.setup = null; cx.notify(); }, { small: true })));
   }
 
@@ -518,7 +691,7 @@ export class Ship {
       .child(div().id("ship-ab-primary").text_size(12.5).line_height("18px").text_color(r.enough ? c.navy : c.grey900).child(r.primary?.text ?? r.text))
       .children((r.guardrails ?? []).map((g, i) => h_flex().id(`ship-ab-guard-${i}`).gap(6).items_center()
         .child(svg(icon(g.ok ? "circle-check" : "triangle-alert")).size(12).flex_none().text_color(g.ok ? c.good : c.fail))
-        .child(div().text_size(12).text_color(g.ok ? c.grey900 : c.fail).child(g.text))))
+        .child(div().flex_1().min_w(0).text_size(12).line_height("17px").text_color(g.ok ? c.grey900 : c.fail).child(g.text))))
       .when(Boolean(r.hard_stop), (e) => e.child(div().id("ship-ab-paused").px(10).py(6).text_size(12.5).bg(c.failLight).text_color(c.fail).child(`${r.hard_stop} Roll back, or ramp down.`)))
       .when((r.segments ?? []).length > 0, (e) => e.child(v_flex().id("ship-ab-segments").gap(3)
         .child(div().text_size(12).font_semibold().text_color(c.navy).child("By kind of query and shopper"))
@@ -526,12 +699,30 @@ export class Ship {
           .text_color(x.verdict === "candidate behind" ? c.fail : x.enough ? c.grey900 : c.grey500).child(x.text)))
         .when(Boolean(r.segment_warning), (y) => y.child(div().id("ship-ab-segment-warning").text_size(12.5).font_medium().text_color(c.fail).child(r.segment_warning)))))
       .when(Boolean(r.srm), (e) => e.child(div().id("ship-ab-srm").text_size(12).text_color(r.srm.ok ? c.grey500 : c.fail).child(r.srm.text)))
+      .when(Boolean(r.needed?.text) && a.status === "running", (e) => e.child(div().id("ship-ab-needed").text_size(12.5).line_height("18px").text_color(c.navy).child(r.needed.text)))
+      .when(a.status === "running", (e) => e.child(this.endings(c)))
+      .when(Boolean(r.decision), (e) => e.child(div().id("ship-ab-decision").text_size(12.5).text_color(c.navy)
+        .child(`Decided: ${r.decision.label}, by ${r.decision.by} on ${String(r.decision.at).slice(0, 10)}.${r.decision.note ? ` "${r.decision.note}"` : ""}`)))
       .when(a.status === "running", (e) => e.child(h_flex().id("ship-ab-actions").flex_wrap().gap(6).items_center()
         .child(div().text_size(12).font_semibold().child("Ramp"))
         .children(RAMP.map((x) => this.pick1(c, `ship-ab-ramp-${Math.round(x * 100)}`, pct(x), Math.abs((a.split ?? 0) - x) < 1e-9, () => { if (Math.abs((a.split ?? 0) - x) > 1e-9 && !(r.hard_stop && x > (a.split ?? 0))) this.ask2 = { kind: "ramp", split: x }; })))
         .child(Button(c, "ship-ab-rollback", "Roll back", (_e, cx) => { this.ask2 = { kind: "rollback" }; cx.notify(); }, { small: true }))
-        .child(Button(c, "ship-ab-simulate", "Send simulated shoppers at staging", (_e, cx) => this.simulate(cx), { small: true, kind: "quiet", disabled: Boolean(this.busy) }))
+        .when(Boolean(a.practice), (x) => x.child(Button(c, "ship-ab-simulate", "Send simulated shoppers at staging", (_e, cx) => this.simulate(cx), { small: true, kind: "quiet", disabled: Boolean(this.busy) })))
         .child(Button(c, "ship-ab-refresh", "Read again", (_e, cx) => this.load(cx), { small: true, kind: "quiet" }))));
+  }
+
+  /** How a test ends: three choices, each recorded. Ship it opens launch review with the readout attached, and is
+   *  only offered on enough real traffic. */
+  endings(c) {
+    const r = this.ab, cand = r.ab.arms.candidate;
+    return v_flex().id("ship-ab-endings").gap(4)
+      .child(h_flex().flex_wrap().gap(6).items_center()
+        .child(div().text_size(12).font_semibold().child("Decide"))
+        .child(Button(c, "ship-ab-ship", "Ship it", (_e, cx) => this.act(cx, "/ab/decide", { choice: "ship" }, "Recorded: ship it. Launch review opens with this readout attached.",
+          (d) => form("handoff", { pipeline: d.launch_review?.pipeline ?? cand })), { small: true, kind: "primary", disabled: !r.can_ship }))
+        .child(Button(c, "ship-ab-keep", "Keep the baseline", (_e, cx) => this.act(cx, "/ab/decide", { choice: "keep-baseline" }, "Recorded: keep the baseline. Every shopper gets the baseline again."), { small: true }))
+        .child(Button(c, "ship-ab-more", "Keep testing", (_e, cx) => this.act(cx, "/ab/decide", { choice: "keep-testing" }, "Recorded: keep testing."), { small: true })))
+      .when(!r.can_ship && Boolean(r.cannot_ship), (e) => e.child(div().id("ship-ab-cannot-ship").text_size(12).text_color(c.grey900).child(r.cannot_ship)));
   }
 
   /** A ramp or a rollback asks first: one click, one confirmation. */
@@ -560,13 +751,24 @@ export class Ship {
         .when(r.ab?.status === "running", (e) => e.child(Button(c, "ship-ab-end", "End the test", (_e, cx) => this.abDo(cx, "stop", {}, "The A/B test is ended."), { small: true }))));
   }
 
+  /** Open the A/B form. `practice`: on simulated shoppers, for an endpoint no site is calling. */
+  openSetup(practice) {
+    const can = this.opts?.can_measure ?? this.ab?.can_measure ?? [];
+    this.setup = { split: practice ? 0.5 : 0.05, primary: can.includes("purchases") ? "purchases" : "clicks", mode: "captain", must: { latency: true }, practice: Boolean(practice) };
+  }
+
   abStep(c, st) {
-    const r = this.ab, a = r?.ab;
-    const btn = st.action === "ab-start" && !this.setup && !this.busy
-      ? Button(c, "ship-ab-start", st.label, (_e, cx) => { this.setup = { split: 0.05, primary: (r?.can_measure ?? []).includes("purchases") ? "purchases" : "clicks", mode: "captain", must: { latency: true } }; cx.notify(); }, { small: true, kind: a ? "secondary" : "primary" }) : null;
+    const r = this.ab, a = r?.ab, o = this.opts;
+    const open = !this.setup && !this.busy;
+    // The form opens once a site is sending real requests. Before that, the only way in says what it is: practice.
+    const btn = h_flex().flex_none().flex_wrap().gap(6).items_center()
+      .when(open && st.action === "ab-start", (e) => e.child(Button(c, "ship-ab-start", st.label, (_e, cx) => { this.openSetup(false); cx.notify(); }, { small: true, kind: a ? "secondary" : "primary" })))
+      .when(open && this.both() && a?.status !== "running", (e) => e.child(Button(c, "ship-ab-practice-go", "Practice with simulated shoppers", (_e, cx) => { this.openSetup(true); cx.notify(); }, { small: true, kind: o?.ready ? "quiet" : "secondary" })));
     const body = [];
     if (this.setup) body.push(this.setupBox(c));
-    if (a && a.mode === "own") body.push(this.ownBox(c));
+    const filed = a?.status === "rolled_back" && r.rolled_back;
+    if (filed) body.push(div().id("ship-ab-filed").text_size(12).text_color(c.grey500).child("That test's readout is filed with the project. It is no longer current."));
+    else if (a && a.mode === "own") body.push(this.ownBox(c));
     else if (a && r.arms) body.push(this.readoutBox(c));
     if (this.ask2 && a?.status === "running") body.push(this.askBox(c));
     const below = body.length ? v_flex().pl(46).pr(12).pb(12).gap(8).children(body) : null;
@@ -582,10 +784,12 @@ export class Ship {
   }
 
   render(c) {
-    const [stage, tryIt, ab, launch] = this.steps();
+    const [stage, tryIt, connect, ab, launch] = this.steps();
+    const from = this.page.shipFrom; // the real-window check starts lower down, where a picture can't scroll
     return v_flex().id("ship-path").w_full().bg(c.surface).border_1().border_color(c.rule)
-      .child(this.stageStep(c, stage))
-      .child(div().border_t(1).border_color(c.rule).child(this.tryStep(c, tryIt)))
+      .when(!from, (e) => e.child(this.stageStep(c, stage))
+        .child(div().border_t(1).border_color(c.rule).child(this.tryStep(c, tryIt))))
+      .when(from !== "ab", (e) => e.child(div().border_t(1).border_color(c.rule).child(this.connectStep(c, connect))))
       .child(div().border_t(1).border_color(c.rule).child(this.abStep(c, ab)))
       .child(div().border_t(1).border_color(c.rule).child(this.launchStep(c, launch)));
   }

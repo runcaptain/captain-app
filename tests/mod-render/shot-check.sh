@@ -23,7 +23,7 @@ for m in "${MODS[@]}"; do
     # needs SHOT_PROJECT=1: a project with pins and experiments. captain-project:list (the project cards, nothing picked):
     # SHOT_ONLY, as two cards leave the column the blank check measures nearly empty.
     # captain-project:ship needs SHOT_STAGED=1 too: the Ship steps first on the page, with something staged.
-    captain-project) EXTRA+=("captain-project:home" "captain-project:pins"); [[ -n "${SHOT_STAGED:-}" ]] && EXTRA+=("captain-project:ship") ;;
+    captain-project) EXTRA+=("captain-project:home" "captain-project:pins"); [[ -n "${SHOT_STAGED:-}" ]] && EXTRA+=("captain-project:ship" "captain-project:connect" "captain-project:ab") ;;
     captain-runs) EXTRA+=("captain-runs:jobs" "captain-runs:live") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
@@ -127,8 +127,8 @@ if [[ -n "${SHOT_PROJECT:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
   PID=$(CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-project.py | tail -1)
   printf '{"frame.welcomed":"skipped","captain.scope":{"kind":"project","id":"%s","label":"Shot Project"}}\n' "$PID" > "$HOME_DIR/shared.json"
   echo "Explorer pick: $PID"
-  # SHOT_STAGED=1: the tuned ranker staged on this computer beside the baseline, tried once, and an A/B test with
-  # simulated shoppers, so captain-project:ship shows the four Ship steps filled in. The endpoint's key comes from the
+  # SHOT_STAGED=1: the tuned ranker staged on this computer beside the baseline, tried once, called by a "site" and
+  # shadowed, so captain-project:ship shows the Ship steps filled in. The endpoint's key comes from the
   # environment (no keychain is touched), and the endpoint is stopped when the check ends.
   if [[ -n "${SHOT_STAGED:-}" ]]; then
     export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
@@ -137,9 +137,21 @@ if [[ -n "${SHOT_PROJECT:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
     STAGED_PID=$PID
     env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects stage "$PID" --candidate demo-tuned --target local >/dev/null
     env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects staging-query "$PID" "wireless headphones" >/dev/null
-    env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects ab-start "$PID" --split 0.5 --primary clicks >/dev/null
-    env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects ab-simulate "$PID" --sessions 600 >/dev/null
-    echo "Staged on this computer, with an A/B test on simulated shoppers"
+    # A site calling it: real requests straight to the endpoint with its key, then shadow mode and more requests,
+    # so Connect your site shows a live count and the shadow readout has something to say.
+    EP=$(env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" --json projects staging "$PID" | python3 -c "import json,sys; print(json.load(sys.stdin)['staged']['endpoint']['url'])")
+    site() { for i in $(seq 1 "$1"); do for q in "wireless headphones" "running shoes" "coffee maker" "desk lamp"; do
+      curl -s -o /dev/null "$EP/rank" -H "Authorization: Bearer ${!KEYNAME}" -H "Content-Type: application/json" -d "{\"query\": \"$q\", \"k\": 10, \"session_id\": \"shot-$2-$i-$RANDOM\"}"; done; done; }
+    site 5 a
+    env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects staging-connect "$PID" >/dev/null
+    env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects shadow-start "$PID" >/dev/null
+    site 10 b
+    # SHOT_PRACTICE=1: a practice A/B test on simulated shoppers instead, to shoot the readout.
+    if [[ -n "${SHOT_PRACTICE:-}" ]]; then
+      env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects ab-start "$PID" --split 50% --primary clicks --practice >/dev/null
+      env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects ab-simulate "$PID" --sessions 600 >/dev/null
+    fi
+    echo "Staged on this computer, with real requests, shadow mode${SHOT_PRACTICE:+ and a practice A/B test}"
   fi
 fi
 # SHOT_FORMS_PREVIEW=cloud: the audit's forms dialog opens on that form (captain-forms' test hook), e.g. to compare the
@@ -221,6 +233,8 @@ props_of() {
     captain-project:list) echo '{"allProjects": true}' ;;
     captain-project:ship) echo '{"shipFirst": true}' ;;
     captain-project:pins) echo '{"pinCheck": true}' ;;
+    captain-project:connect) echo '{"shipFrom": "connect"}' ;;
+    captain-project:ab) echo '{"shipFrom": "ab"}' ;;
     captain-data:models-attach) echo '{"tab": "models", "registryAttach": true}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;
     captain-data:import-run) echo '{"importWith": {"conn": "demo-store", "table": "products", "name": "hello", "autoImport": true}}' ;;
@@ -307,6 +321,12 @@ EOF
   PREV_SUM=$(shasum "$OUT/${view/:/-}.png" | cut -d' ' -f1)
   errs=$(app status | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('errors', [])))")
   if [[ $ok == 1 && $errs == 0 ]]; then echo "$view: drawn ($OUT/${view/:/-}.png)"; else echo "$view: BLANK or errors ($errs) ($OUT/${view/:/-}.png)"; app status; fail=1; fi
+  # The Ship steps ask the services about the endpoint after the page is first drawn: give them a moment, then
+  # take the picture again, so it shows the steps filled in and not the frame before the answer.
+  if [[ "$view" == captain-project:ship || "$view" == captain-project:connect || "$view" == captain-project:ab ]]; then
+    for _ in 1 2 3; do sleep 2; app do layout.select "{\"stack\":\"sections\",\"child\":\"$block\"}" >/dev/null || true; sleep 0.5; app shot "$OUT/${view/:/-}.png" >/dev/null; done
+    PREV_SUM=$(shasum "$OUT/${view/:/-}.png" | cut -d' ' -f1)
+  fi
   # captain-project:pins: the page pins two things the way "Send to agent" does, one after the other, through the
   # app's own file write. Both must be in the context file: the second pin used to be refused, because the app
   # only replaces a file when told the text it replaces.

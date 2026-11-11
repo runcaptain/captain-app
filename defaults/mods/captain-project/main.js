@@ -84,7 +84,8 @@ export default class ProjectHome extends View {
     this.openFirst = Boolean((layoutProps?.() ?? {}).openExperiment); // a layout, or the real-window check: open a row
     if ((layoutProps?.() ?? {}).allProjects) this.allProjects(cx); // the real-window check: the card list, nothing picked
     this.pinCheck = Boolean((layoutProps?.() ?? {}).pinCheck); // the real-window check: pin twice, as Send to agent does
-    this.shipFirst = Boolean((layoutProps?.() ?? {}).shipFirst); // the real-window check: the Ship steps at the top
+    this.shipFrom = (layoutProps?.() ?? {}).shipFrom ?? null; // the real-window check: start the Ship steps at "connect" or "ab"
+    this.shipFirst = Boolean((layoutProps?.() ?? {}).shipFirst) || Boolean(this.shipFrom); // the real-window check: the Ship steps at the top
     watchScope(cx, (cx) => this.load(cx));
     watchWorkspace(cx, (cx) => { this.last = null; this.load(cx); });
     watchRecords(cx, (cx) => this.load(cx));
@@ -554,7 +555,7 @@ export default class ProjectHome extends View {
     const r = parseRef(e.pipeline);
     const ind = ev?.label_independence ? INDEPENDENCE[ev.label_independence.status] ?? INDEPENDENCE.unknown : null;
     const toneColor = { good: c.good, bad: c.fail, warn: c.warn, neutral: c.grey500 }[v.tone];
-    const sub = e.status === "backtesting" ? "Being judged against the baseline" : e.status === "failed" ? "Judging failed. Open it to try again." : e.trainer ? `Trained with ${e.trainer}` : `Added ${day(e.created_at)}`;
+    const sub = e.sameness?.mostly_same && !e.is_champion ? "Mostly reproduces the baseline. Open it to see why." : e.status === "backtesting" ? "Being judged against the baseline" : e.status === "failed" ? "Judging failed. Open it to try again." : e.trainer ? `Trained with ${e.trainer}` : `Added ${day(e.created_at)}`;
     // Two lines, so nothing spills at any width: who and the verdict, then the numbers and badges, which wrap.
     const head = v_flex().id(`exp-${i}`).px(14).py(8).gap(6).cursor_pointer().hover((s) => s.bg(c.surface2))
       .on_click((_e, cx) => { this.open = open ? null : e.id; cx.notify(); })
@@ -595,6 +596,7 @@ export default class ProjectHome extends View {
     const evWord = ev?.evidence ? EVIDENCE[ev.evidence] ?? String(ev.evidence).toLowerCase() : "not judged yet";
     const lines = [
       e.error ? plainError(e.error, "Judging it didn't finish.") : null,
+      e.sameness?.mostly_same ? e.sameness.text : null,
       ev?.against && !ev.against_is_champion ? `Judged against ${ev.against}, which is no longer the baseline. Judge it again to compare with today's.` : null,
       ind?.text ?? null,
       ind?.status === "shared" ? "So the higher score shows the model learned that labeler, not that it ranks better. Judge it on labels from another source to know." : null,
@@ -976,7 +978,7 @@ export default class ProjectHome extends View {
     if (st?.next?.text) {
       const slot = (st.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === st.next.slot);
       const label = { "set-input": slot ? `Choose ${slot.noun}` : "Choose an input", "add-evaluation": "Add an evaluation set", "baseline-start": "Start with keyword search",
-        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New candidate", backtest: "Judge it", stage: "Stage it", "ab-start": "Start an A/B test", "ab-wait": "Send simulated shoppers", handoff: "Send to launch review" }[st.next.action] ?? null;
+        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New candidate", backtest: "Judge it", stage: "Stage it", "ab-start": "Start an A/B test", "ab-wait": "Send simulated shoppers", "shadow-start": "Start shadow mode", handoff: "Send to launch review" }[st.next.action] ?? null;
       return { text: st.next.text, label, action: st.next };
     }
     const req = (st?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.required && i.empty);
@@ -1011,7 +1013,8 @@ export default class ProjectHome extends View {
     if (a.action === "new-experiment") return form("experiment", { ...this.values(), ...(firstCandidate(this.stages) ? { how: "starter" } : {}) });
     if (a.action === "assist") return this.startAssist(cx);
     if (a.action === "stage") return this.shipPath.stage(cx, a.baseline ? { baseline: true } : { candidate: a.experiment });
-    if (a.action === "ab-start") { this.shipPath.setup = { split: 0.05, must: { latency: true }, primary: (this.shipPath.ab?.can_measure ?? []).includes("purchases") ? "purchases" : "clicks", mode: "captain" }; cx.notify(); return; }
+    if (a.action === "ab-start") { this.shipPath.openSetup(false); cx.notify(); return; }
+    if (a.action === "shadow-start") return this.shipPath.act(cx, "/shadow/start", {}, "Shadow mode is on. Shoppers keep getting the baseline's results.");
     if (a.action === "ab-wait") return this.shipPath.simulate(cx);
     if (a.action === "handoff") return form("handoff", { pipeline: a.pipeline });
     const e = (this.exps?.experiments ?? []).find((x) => x.id === a.experiment);

@@ -1127,6 +1127,15 @@ last project opened there. With no project it offers New project, which can pin 
   logged clicks where under half of a candidate's top 10 has grades reads "Too few judged results to call". Import
   a model version brings one from MLflow or a registry. Rows open to: the comparison, Rerun with changes, Judge against the baseline,
   Make it the baseline (with its evidence) and Publish to the registry.
+- **Ship, in short**: 1 Stage, 2 Try it, 3 Connect your site, 4 A/B test, 5 Launch review. The Stage row says
+  where the model runs and who can reach it ("Running on this computer. Only this computer can reach it."). Step
+  3 shows the address, a Copy button for the key (never shown), snippets for the two calls a site makes
+  (`cst projects staging-connect <project> --code python`), a live count of real requests, a test request, and
+  shadow mode: shoppers keep the baseline while the candidate ranks the same requests silently
+  (`cst projects shadow-start|shadow|shadow-stop`). The A/B form opens only once real requests have arrived, or as
+  "Practice with simulated shoppers", which is SIMULATED throughout and can't go to launch review. A test ends in
+  Ship it, Keep the baseline or Keep testing (`cst projects ab-decide`). A candidate that returns what the
+  baseline returns is called that, with the reason. The rest of this entry has the detail.
 - **Ship**: a path of steps, each with its status, one button and a tick when done. **1 Stage** runs a model
   version as a live endpoint, beside the baseline: in the team's own cloud (a SageMaker compute target, with the
   instance, an hourly estimate and "this keeps billing until you stop it" to confirm first), or on this computer

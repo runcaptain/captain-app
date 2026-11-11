@@ -671,6 +671,8 @@ def _status_text(rec: dict, health: dict | None) -> str:
 
         w = _where(rec)["text"]
         t = f"{rec['model_version']} is {w[0].lower()}{w[1:]}"
+        if health and health.get("shadow"):
+            t += " Shadow mode is on: every request is answered with the baseline's results."
         if health:
             t += f" Up {_span(health['uptime_s'])}. Stops by itself in {_span(health['stops_in_s'])} if nobody uses it."
         return t
@@ -889,26 +891,30 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
                              "Served features don't match training, so launch review will ask for a reason to go on." if chk.get("status") == "fail" else
                              "Check it against your launch criteria and pass it to your own deployment process. Captain deploys nothing itself."),
                   "action": {"action": "handoff", "pipeline": review_of} if review_of and not sent else None})
+    # The next thing to do. A test that is running comes first; an ended one no longer decides anything.
+    live_ab = bool(ab and ab["status"] == "running")
+    shipped = bool(ab and (ab.get("decision") or {}).get("choice") == "ship")
+    real = not (ab or {}).get("practice") and last.get("evidence", "REAL_TRAFFIC") == "REAL_TRAFFIC"
     nxt = None
-    if judged and not on and not ab_done:
+    if shipped and not sent and review_of:
+        nxt = {"action": "handoff", "pipeline": review_of, "text": f"Send {review_of} to launch review."}
+    elif judged and not on:
         nxt = {"action": "stage", "experiment": judged[-1]["id"], "text": f"Stage {judged[-1]['pipeline']} to try it live."}
     elif on and not rec.get("tried"):
         nxt = {"action": "try", "text": "Try the staged model: type a query under Ship, step 2."}
-    elif on and not connected and not ab:
-        nxt = ({"action": "connect", "text": "A site can't reach this computer. Stage it in your cloud, or practice here with simulated shoppers (Ship, step 3)."}
-               if local else {"action": "connect", "text": "Connect your site: copy the snippet under Ship, step 3, and send the first request."})
-    elif both and not ab:
-        nxt = ({"action": "shadow-start", "text": "Your site is connected. Start shadow mode to see what the candidate would change, before any shopper sees it."}
-               if not sh else {"action": "ab-start", "text": "Start an A/B test: split traffic between the baseline and the candidate."})
-    elif ab and ab["status"] == "running" and not ab_done:
+    elif live_ab and not ab_done:
         nxt = ({"action": "ab-wait", "text": "The practice test needs more sessions. Send simulated shoppers at staging."} if ab.get("practice")
                else {"action": "ab-watch", "text": "The A/B test is collecting sessions. The readout under Ship says how many more it needs."})
-    elif ab_done and not sent and review_of and not ab.get("practice") and last.get("evidence", "REAL_TRAFFIC") == "REAL_TRAFFIC" and ab.get("status") == "running":
+    elif live_ab and real and not ab.get("decision"):
         nxt = {"action": "ab-decide", "text": "The A/B test has enough sessions. Decide: ship it, keep the baseline, or keep testing."}
-    elif ab_done and not sent and review_of and (ab.get("decision") or {}).get("choice") == "ship":
-        nxt = {"action": "handoff", "pipeline": review_of, "text": f"Send {review_of} to launch review."}
-    elif ab and ab.get("practice") and ab_done:
+    elif live_ab and ab.get("practice"):
         nxt = {"action": "connect", "text": "That was practice on simulated shoppers. To test for real, connect your site (Ship, step 3)."}
+    elif on and not connected and not live_ab:
+        nxt = ({"action": "connect", "text": "A site can't reach this computer. Stage it in your cloud, or practice here with simulated shoppers (Ship, step 3)."}
+               if local else {"action": "connect", "text": "Connect your site: copy the snippet under Ship, step 3, and send the first request."})
+    elif both and connected and not live_ab:
+        nxt = ({"action": "shadow-start", "text": "Your site is connected. Start shadow mode to see what the candidate would change, before any shopper sees it."}
+               if not sh else {"action": "ab-start", "text": "Start an A/B test: split traffic between the baseline and the candidate."})
     return {"staging": public(rec), "steps": steps, "next": nxt}
 
 

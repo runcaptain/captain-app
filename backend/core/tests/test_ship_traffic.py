@@ -67,6 +67,7 @@ def test_connect_counts_only_real_requests_and_never_shows_the_key(ws):  # noqa:
     # a real request: counted, with when
     _real(ws, 12)
     c = TF.connect(ws, "shop")
+    assert c["blocked"].startswith("These requests came from this computer.")
     assert c["connected"] and c["real"] == 12 and c["live"].startswith("Received 12 requests, the last one ") and c["live"].endswith(" s ago.")
     assert SG.state(ws, "shop")["connected_at"] and PS.stages(ws, "shop")["ship"]["steps"][2]["done"]
     assert "the first real request reached staging" in " | ".join(h["what"] for h in PS.get(ws, "shop")["history"])
@@ -98,6 +99,8 @@ def test_shadow_mode_answers_with_the_baseline_and_logs_what_the_candidate_would
     SG.stage(ws, "shop", target="local")
     sh = TF.shadow_start(ws, "shop")
     assert sh["status"] == "running" and SG.control(ws, "shop")["shadow"] == sh["id"]
+    assert SG.state(ws, "shop")["model_version"] == ws.candidate  # what is staged doesn't change, only who answers
+    assert "Shadow mode is on: every request is answered with the baseline's results." in SG.status(ws, "shop")["text"]
     assert TF.shadow(ws, "shop")["requests"] == 0 and "No shopper saw the candidate" not in TF.shadow(ws, "shop")["text"]
 
     # every shopper gets the baseline's ranking, exactly
@@ -162,6 +165,9 @@ def test_shadow_readout_numbers_and_labels():
     sim = TF.shadow_compute(sh, {"requests": mixed, "outcomes": [], "names": {}}, "simulated")
     assert sim["evidence"] == "SIMULATED" and sim["requests"] == 50 and sim["text"].startswith("Simulated shoppers. ")
     assert TF.shadow_compute(sh, {"requests": [], "outcomes": [], "names": {}})["text"].startswith("Real traffic. No requests yet.")
+    # two versions that both find nothing agree: an empty page is not a difference
+    empty = TF.shadow_compute(sh, {"requests": [req(1, "nothing here", [], [])], "outcomes": [], "names": {}})
+    assert empty["overlap"] == 1.0 and empty["top10_differs"] == 0
 
 
 # ---- the A/B form: gated, honest, and how it ends ------------------------------------------------

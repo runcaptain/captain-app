@@ -231,6 +231,9 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
     if not w["reachable"]:
         out["blocked"] = ("A site can't reach an endpoint on this computer. Two ways forward: stage it in your cloud, "
                           "so your site can call it, or keep testing here with simulated shoppers.")
+    if out["connected"] and not w["reachable"]:
+        out["blocked"] = ("These requests came from this computer. A site anywhere else can't reach this endpoint: stage "
+                          "it in your cloud for that.")
     if out["connected"] and not rec.get("connected_at"):
         _save(ctx, pid, env, connected_at=_now())
         _note(ctx, pid, "the first real request reached staging")
@@ -251,10 +254,13 @@ def key_for_copy(ctx: Context, pid: str, env: str = ENV) -> dict:
 def test_request(ctx: Context, pid: str, query: str | None = None, env: str = ENV) -> dict:
     """One request through the same door a site uses, marked as test traffic, to prove the path works."""
     rec = _running(ctx, pid, env)
-    q = query or "test"
+    # A query the project's shoppers really search, so the answer has results in it and proves something.
+    q = query or (sample_queries(ctx, pid, 1) or ["test"])[0]
     r = call(ctx, rec, "rank", {"query": q, "k": 5, "traffic": "test", "session_id": "test-" + new_id().lower()[-6:]})
-    return {"ok": True, "request_id": r["request_id"], "results": len(r["ids"]), "ms": r["ms"], "arm": r["arm"],
-            "text": f"The endpoint answered in {r['ms']:.0f} ms with {len(r['ids'])} results. This was test traffic: it isn't counted as a shopper."}
+    n = len(r["ids"])
+    return {"ok": True, "request_id": r["request_id"], "query": q, "results": n, "ms": r["ms"], "arm": r["arm"],
+            "text": f"The endpoint answered \"{q}\" in {r['ms']:.0f} ms with {n} result{'s' if n != 1 else ''}. "
+                    "This was test traffic: it isn't counted as a shopper."}
 
 
 # ---- shadow mode ---------------------------------------------------------------------------------
@@ -288,7 +294,7 @@ def shadow_start(ctx: Context, pid: str, env: str = ENV) -> dict:
           "started_at": _now(), "started_by": whoami(), "ended_at": None}
     set_control(ctx, pid, env, shadow=sh["id"], split=None, experiment=None, serve="baseline")
     call(ctx, rec, "reload", {})
-    _save(ctx, pid, env, serve="baseline", model_version=arms["baseline"])
+    # What is staged does not change: the candidate is still there, beside the baseline. Only who answers does.
     _shadow_put(ctx, pid, sh)
     _note(ctx, pid, f"started shadow mode: shoppers see {arms['baseline']}, and {arms['candidate']} ranks the same requests silently")
     return sh
@@ -302,7 +308,7 @@ def shadow_stop(ctx: Context, pid: str) -> dict:
         return sh
     rec = state(ctx, pid, sh["env"])
     if rec and rec.get("status") == "running" and rec.get("id") == sh["stage"]:
-        set_control(ctx, pid, sh["env"], shadow=None)
+        set_control(ctx, pid, sh["env"], shadow=None, serve=rec.get("serve") or "candidate")
         call(ctx, rec, "reload", {})
     sh = {**sh, "status": "ended", "ended_at": _now()}
     _shadow_put(ctx, pid, sh)
@@ -312,7 +318,9 @@ def shadow_stop(ctx: Context, pid: str) -> dict:
 
 def _overlap(a: list, b: list, k: int = 10) -> float:
     a, b = a[:k], b[:k]
-    return len(set(a) & set(b)) / max(1, max(len(a), len(b)))
+    if not a and not b:
+        return 1.0  # both found nothing: they agree
+    return len(set(a) & set(b)) / max(len(a), len(b))
 
 
 def _p95(xs: list[float]) -> float | None:

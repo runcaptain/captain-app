@@ -8,12 +8,17 @@ Captain hosts nothing and never deploys to production: launch review is still th
     cst projects staging <project>                  # what runs, where, since when, and when it stops by itself
     cst projects staging-query <project> "<query>"  # the staged results beside the baseline's
     cst projects staging-check <project>            # did serving compute the features training computes?
-    cst projects ab-start <project> --split 0.5     # an A/B test between the baseline and the candidate
-    cst projects ab <project>                       # the readout
-    cst projects ab-ramp <project> 0.25             # change the candidate's share; ab-rollback sends everyone back
+    cst projects staging-connect <project>          # how a site calls it, and how many real requests have arrived
+    cst projects shadow-start <project>             # shoppers keep the baseline; the candidate ranks silently
+    cst projects shadow <project>                   # what the candidate would have changed
+    cst projects ab-start <project> --split 5%      # an A/B test between the baseline and the candidate
+    cst projects ab-readout <project>               # the readout
+    cst projects ab-ramp <project> 25               # change the candidate's share; ab-rollback sends everyone back
+    cst projects ab-decide <project> ship           # or keep-baseline, or keep-testing
     cst projects unstage <project>                  # stop it and remove everything Captain created
 
-The app does the same from the project page (Ship: 1 Stage, 2 Try it, 3 A/B test, 4 Launch review), through
+The app does the same from the project page (Ship: 1 Stage, 2 Try it, 3 Connect your site, 4 A/B test, 5 Launch
+review), through
 `POST /api/projects/{id}/stage`, `/unstage`, `/staging/query`, `/staging/check`, `GET /api/projects/{id}/staging`,
 `GET /api/projects/{id}/ab` and `POST /api/projects/{id}/ab/start|ramp|rollback|stop|simulate|outcomes|result`.
 
@@ -128,6 +133,46 @@ The pairs match on (query, product), which is right while a model's click tables
 serving starts refreshing click counts, the comparison has to be made as of each request's timestamp. The request
 id and timestamp are logged now so that it can be.
 
+## Connect your site
+
+An A/B test means nothing until a site is calling the endpoint. `cst projects staging-connect <project>` (step 3 on
+the page) says where the endpoint is and who can reach it, gives the code for the two calls, and counts the real
+requests that have arrived: "Waiting for the first request", then "Received 12 requests, the last one 4 s ago".
+Only requests marked `real` count. The Try it box, `staging-test` and simulated shoppers are not a site.
+
+**An endpoint on this computer answers on 127.0.0.1 only. No site can reach it.** The two ways forward are to stage
+it in your cloud, or to keep testing here with simulated shoppers.
+
+The two calls, with the `request_id` carried between them (`--code curl|javascript|python`, or `aws cli` for
+SageMaker):
+
+1. Get a ranking: `POST /rank {query, k, session_id}` returns `{request_id, ids, scores, arm, model_version, ms}`.
+2. Report what the shopper did: `POST /outcome {request_id, event, product_id, value}`.
+
+**Your site must fall back to its own search.** The snippets give the endpoint 300 ms. If it doesn't answer in
+time, is unreachable, or answers with an error, show your own results. An error is a 4xx or 5xx status with the
+body `{"detail": "<a sentence>"}`. A staging endpoint stops by itself when idle and is not built for uptime: a slow
+or missing ranking must never hold up the page.
+
+**The key.** The snippets read it from `CAPTAIN_STAGING_KEY` in your site's own environment, so it is never in
+your code. The app's "Copy the key" button puts it on the clipboard. It is never shown on screen or written to a
+log, and `cst` never prints it.
+
+`cst projects staging-test <project>` sends one request through the same door, marked as test traffic, to prove
+the path.
+
+## Shadow mode, before any split
+
+    cst projects shadow-start <project>
+    cst projects shadow <project> [--traffic real|simulated|test]
+    cst projects shadow-stop <project>
+
+In shadow mode the endpoint answers every request with the baseline's ranking, exactly as before, and the candidate
+ranks the same request silently. Both rankings are logged. No shopper sees the candidate, and a candidate that
+fails never changes the answer the site gets. The readout says how many requests there were, how often the top
+result and the top 10 would have differed, the average overlap of the top 10, the queries that differ most, and
+both response times. It reads REAL_TRAFFIC only when the requests were real. Starting an A/B test ends shadow mode.
+
 ## An A/B test between the baseline and the candidate
 
 Offline evaluation says a candidate is safe to try. The A/B test is the try. Staging always packs the baseline
@@ -141,6 +186,11 @@ beside the candidate, so both are already on the endpoint when a test starts.
     cst projects ab-simulate <project> [--sessions 1000]
     cst projects ab-outcomes <project> <events dataset>
     cst projects ab-result <project> --metric ... --baseline ... --candidate ... --source "..." [--traffic real|test]
+
+**The test needs a site that is calling.** Captain's own split is refused until a real request has reached the
+endpoint, because there would be nothing to split. `--practice` runs it on simulated shoppers instead: everything
+it shows is SIMULATED and a practice test can't go to launch review. Shares can be written 5, 5% or 0.05, and the
+form says what a share means in the endpoint's own sessions a day.
 
 The metrics are chosen when the test starts: one primary, and the rest as guardrails. A project can measure
 sessions with a click, sessions with a purchase, and revenue per session when its catalog has a price column.
@@ -197,8 +247,30 @@ simulator Captain already uses for simulated events: they search the catalog, lo
 sometimes buy. It shows the whole loop with no traffic yet. Everything read from it says SIMULATED, and it says
 nothing about what real shoppers will do.
 
+**How many more sessions.** While the difference is not yet clear, the readout says how many more sessions the
+smaller arm needs to tell the difference seen so far from chance (80% power at the 95% level), and roughly how
+many days that is at the endpoint's current rate.
+
+**How a test ends.** `cst projects ab-decide <project> ship|keep-baseline|keep-testing` records one of three
+choices. Ship it needs enough real traffic, and the readout with its evidence label is attached to the launch
+review when the candidate is sent. Keep the baseline rolls the test back. After a rollback one line says what was
+rolled back, why (`ab-rollback --reason`), and what to do next. The readout is filed with the test, and a new test
+files the old one under the project.
+
 **Ramp and roll back** are one call each and are written to the project's history. Rolling back during a test
 sends every shopper to the baseline again and ends the test. With no test running, it restages the version that
 was on the endpoint before this one.
 
 Launch review stays the gate before production. Captain does not deploy to a production endpoint.
+
+## When a candidate returns what the baseline returns
+
+A first ranker often reproduces keyword search exactly. The usual cause: it was trained on simulated events, and
+those events were themselves generated from keyword search, so the strongest thing to learn is "what keyword search
+showed". For a query the logs never saw, the history signals are zero and the keyword score decides.
+
+Captain says so in one sentence when a candidate's top results match the baseline's on 80% or more of a sample of
+the project's own queries: on the candidate's row, in the Try it box ("Queries where these two differ most" is then
+empty, and says why), and before training in the starter ranker form when the events are simulated. The Try it box
+also marks what moved against the baseline and, under "Why is this here?", shows the signals the model leans on
+most with that product's values.
