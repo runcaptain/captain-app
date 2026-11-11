@@ -271,3 +271,120 @@ def test_captain_notices_an_endpoint_that_stopped_by_itself(ws):
             break
         time.sleep(0.2)
     assert s["status"] == "stopped" and "stopped by itself" in s["staged"]["stop_reason"]
+
+
+# ---- serve-time logging and the consistency check ---------------------------------------------------
+
+
+def test_every_request_is_logged_with_what_it_served(ws):
+    rt = _runtime(ws)
+    a = rt.rank({"query": "jacket", "k": 5, "session_id": "s1", "user_id": "u1", "request_id": "r-1", "traffic": "test"})
+    rt.rank({"query": "boots", "k": 3, "session_id": "s2"})
+    rt.outcome({"request_id": "r-1", "event": "click", "product_id": a["ids"][0]})
+    rt.outcome({"request_id": "r-1", "event": "purchase", "product_id": a["ids"][0], "value": 59.0})
+    with pytest.raises(ValueError, match="event is one of"):
+        rt.outcome({"request_id": "r-1", "event": "liked"})
+    assert rt.flush(publish=True)["published"] == "shop/staging-logs@v1"
+    got = L.read(ws, "shop", "staging", rt.stage)
+    r1 = next(r for r in got["requests"] if r["request_id"] == "r-1")
+    assert r1["query"] == "jacket" and r1["ids"] == a["ids"] and r1["model_version"] == ws.candidate
+    assert r1["arm"] == "candidate" and r1["traffic"] == "test" and r1["ms"] >= 0 and r1["ts"].endswith("Z")
+    names = got["names"]["candidate"]
+    assert set(r1["features"]) == set(a["ids"]) and all(len(v) == len(names) for v in r1["features"].values())
+    assert got["requests"][1]["traffic"] == "real" and got["requests"][1]["request_id"]  # an id is made when none is sent
+    assert [o["event"] for o in got["outcomes"]] == ["click", "purchase"]
+    # the published version is an events dataset monitor and replay can read, and it is never mistaken for shoppers
+    m, rows, _ = ops.rows_of(ws, "shop/staging-logs@v1")
+    assert m.dataset_kind == DatasetKind.events and m.tags["synthetic"] == "true" and m.tags["traffic"] == "real,test"
+    top = next(r for r in rows if r["request_id"] == "r-1" and r["position"] == 1)
+    assert top["clicked"] and top["purchased"] and top["value"] == 59.0 and top["arm"] == "candidate"
+    assert {"query", "product_id", "position", "clicked", "session_id", "ts", "request_id", "model_version"} <= set(top)
+    assert rt.flush(publish=True) == {"requests": 0, "outcomes": 0, "published": None}  # nothing new, no new version
+
+
+def test_the_log_is_written_on_a_timer(ws):
+    now = [0.0]
+    rt = _runtime(ws, flush_s=15, publish_minutes=5, clock=lambda: now[0])
+    rt.rank({"query": "jacket"})
+    rt.tick()
+    assert not L.read(ws, "shop", "staging", rt.stage)["requests"]  # still buffered
+    now[0] = 16
+    rt.tick()
+    assert len(L.read(ws, "shop", "staging", rt.stage)["requests"]) == 1
+    assert ws.registry.versions("dataset", "shop/staging-logs") == []
+    now[0] = 301
+    rt.tick()
+    assert ws.registry.versions("dataset", "shop/staging-logs") == [1]  # published after five minutes
+
+
+def test_staging_check_passes_when_serving_computes_what_training_computes(ws):
+    from captain_search.staging import consistency as SC
+
+    SG.stage(ws, "shop", target="local")
+    first = SC.check(ws, "shop")
+    assert first["status"] == "nothing-to-check" and "Try a query first" in first["text"]
+    for q in ("jacket", "boots under 50", "tent", "waterproof jacket"):
+        SG.query(ws, "shop", q, k=10)
+    r = SC.check(ws, "shop")
+    assert r["status"] == "pass" and r["checked"] == 40 and r["match_rate"] == 1.0
+    assert r["mismatch_rate"] == 0 and r["missing_rate"] == 0 and r["extra_rate"] == 0 and r["without_request_id"] == 0
+    assert r["text"] == "Served features match training: 100% of 40 checked"
+    assert SG.state(ws, "shop")["check"]["status"] == "pass"
+    assert SG.status(ws, "shop")["staged"]["check"]["text"] == r["text"]
+    out = CliRunner().invoke(app, ["projects", "staging-check", "shop"])
+    assert out.exit_code == 0 and "Served features match training" in out.output
+
+
+def test_staging_check_fails_on_a_planted_feature_difference(ws):
+    """A stale lookup table on the server: the click features it serves are not the ones training computed."""
+    from captain_search.staging import consistency as SC
+
+    rt = _runtime(ws)
+    feat = rt.arms["candidate"].engine.feat
+    assert "pop_coec" in feat.names
+    for q in ("jacket", "boots", "tent"):
+        rt.rank({"query": q, "k": 10})
+    feat.tables = {"window": feat.tables["window"], "pair": {},
+                   "product": {k: [v[0] + 500, v[1], v[2], v[3]] for k, v in feat.tables["product"].items()}}
+    for q in ("jacket", "boots", "tent"):
+        rt.rank({"query": q, "k": 10})
+    rt.flush()
+    m = SC.measure(ws, L.read(ws, "shop", "staging", rt.stage))
+    assert m["checked"] == 60 and m["matched"] <= 30 and m["missing_rate"] == 0 and m["extra_rate"] == 0
+    bad = {f["feature"] for f in m["features"]}
+    assert "pop_impressions_log" in bad and not any(n.startswith(("bm25_", "title_", "price_")) for n in bad)
+    assert m["relative_error"]["pop_impressions_log"] > 0 and m["examples"][0]["feature"] in bad
+    assert 0 < m["mismatch_rate"] < 0.5
+
+    # end to end: the same thing through a staged endpoint blocks launch review until someone overrides with a reason
+    SG.stage(ws, "shop", target="local")
+    rec = SG.state(ws, "shop")
+    SG.query(ws, "shop", "jacket", k=10)
+    SG.call(ws, rec, "flush", {})
+    good = L.read(ws, "shop", "staging", rec["id"])["requests"][0]
+    planted = {**good, "request_id": "planted", "features": {p: [x + 1 for x in row] for p, row in good["features"].items()}}
+    ws.store.put_new(L.prefix("shop", "staging", rec["id"]) + "requests-zz-planted.jsonl", json.dumps(planted).encode())
+    r = SC.check(ws, "shop")
+    assert r["status"] == "fail" and r["match_rate"] == 0.5 and "It needs 99.9%" in r["text"]
+    out = CliRunner().invoke(app, ["projects", "staging-check", "shop"])
+    assert out.exit_code == 1 and "mismatch rate" in out.output
+    gates = ops.gates_for(ws, ops.env_create(ws, "prod", "live", {"type": "record"}), ws.candidate)
+    if len(gates) > 1:  # the candidate has an offline evaluation: the served-features criterion sits beside the others
+        g = next(x for x in gates if x["gate"] == "served_features")
+        assert not g["ok"] and "Served features match training: 50%" in g["detail"]
+    assert SC.latest_for(ws, ws.candidate)["status"] == "fail"
+
+
+def test_a_failed_check_blocks_launch_review_until_overridden(ws):
+    from captain_search.staging import consistency as SC
+
+    PS.experiment_backtest(ws, "shop", ws.exp)
+    env = ops.env_create(ws, "prod", "live", {"type": "record"})
+    assert not any(g["gate"] == "served_features" for g in ops.gates_for(ws, env, ws.candidate))  # never staged: no such criterion
+    ws.store.put_new(SC.check_key(ws.candidate), json.dumps({"status": "fail", "text": "Served features match training: 50% of 20 checked. It needs 99.9%."}).encode())
+    g = next(x for x in ops.gates_for(ws, env, ws.candidate) if x["gate"] == "served_features")
+    assert not g["ok"]
+    with pytest.raises(ops.GateFailed, match="served_features"):
+        ops.promote(ws, ws.candidate, "prod", confirm=True)
+    d = ops.promote(ws, ws.candidate, "prod", confirm=True, override_reason="the stale table is fixed in the next build")
+    assert d.action == "handoff" and "served_features" in d.gate_results["overridden"] and d.override_reason

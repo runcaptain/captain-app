@@ -626,6 +626,29 @@ def staging_query(name: str, query: str, k: int = typer.Option(10, "-k"), env: s
     emit(r, "\n".join(lines))
 
 
+@projects_app.command("staging-check")
+def staging_check(name: str, env: str = typer.Option("staging", "--env"),
+                  sample: int = typer.Option(5000, "--sample", help="how many (query, product) pairs to compare at most"),
+                  min_match: float = typer.Option(0.999, "--min-match", help="the share of pairs that must match exactly")):
+    """Compare the features the staging endpoint served with the features training computes, for the same pairs."""
+    from ..staging import consistency as SC
+
+    try:
+        r = SC.check(ctx(), name, env, sample, min_match, dry_run=S.dry_run)
+    except _staging_errors() as e:
+        fail(str(e))
+    lines = [r["text"]]
+    if r.get("checked"):
+        lines.append(f"mismatch rate {r['mismatch_rate']:.4%}  missing rate {r['missing_rate']:.4%}  extra rate {r['extra_rate']:.4%}")
+        for f in r.get("features") or []:
+            lines.append(f"  {f['feature']:24} mismatch {f['mismatch_rate']:.2%}  relative error {f['relative_error']:.4f}")
+        for x in (r.get("examples") or [])[:3]:
+            lines.append(f"  e.g. request {x['request_id']} \"{x['query']}\" {x['product_id']} {x['feature']}: served {x['served']}, training {x['offline']}")
+    emit(r, "\n".join(lines))
+    if r["status"] == "fail":
+        raise typer.Exit(1)
+
+
 @projects_app.command("staging-serve", hidden=True)
 def staging_serve(bundle: str, host: str = typer.Option("127.0.0.1", "--host"), port: int = typer.Option(8080, "--port")):
     """Run the staging runtime over a serving bundle. Staging starts this for you; the runner image runs it."""

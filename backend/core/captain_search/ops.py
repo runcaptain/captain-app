@@ -884,6 +884,11 @@ def gates_for(ctx, env: Environment, pipeline_ref: str) -> list[dict]:
         floor = float(g.get("recall_floor", 0.98))
         ok = arm.offline["r@50"] >= floor * base.offline["r@50"]
         res.append({"gate": "recall", "ok": ok, "detail": f"R@50 {arm.offline['r@50']:.3f} vs floor {floor:.0%} of {base.offline['r@50']:.3f}"})
+    from .staging import consistency as SC
+
+    chk = SC.latest_for(ctx, pipeline_ref)  # only when this version was staged and checked
+    if chk is not None:
+        res.append({"gate": "served_features", "ok": chk["status"] == "pass", "detail": chk["text"]})
     from . import proposals as PR
 
     prop = PR.approval_for(ctx, pipeline_ref)

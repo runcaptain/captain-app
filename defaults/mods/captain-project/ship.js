@@ -7,6 +7,7 @@
 //   POST /api/projects/{id}/stage            start it (a job). 409 {needs_confirm, plan} when a cost needs a yes
 //   POST /api/projects/{id}/unstage          stop it and remove what Captain made
 //   POST /api/projects/{id}/staging/query    the Try it box: the staged results beside the baseline's
+//   POST /api/projects/{id}/staging/check    did serving compute the features training computes? One line.
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { exec, appHome } from "herdr";
@@ -133,6 +134,33 @@ export class Ship {
       if (r.ok) { this.result = r.data; this.pictures(cx); } else this.askError = plainError(r.error, "The staged model didn't answer. Try again.");
       cx.notify();
     });
+  }
+
+  /** Compare what the endpoint served with what training computes, and show the answer as one line. */
+  check(cx) {
+    if (this.checking) return;
+    this.checking = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/check`, { body: {}, scoped: false, timeout: 120 });
+      this.checking = false;
+      if (!r.ok) this.note = { tone: "fail", text: plainError(r.error, "The check didn't finish. Try again.") };
+      this.load(cx);
+      this.page.reload?.(cx);
+    });
+  }
+
+  /** The check's line under Try it: green when serving matches training, red when it doesn't, and what that blocks. */
+  checkLine(c) {
+    const k = this.staged()?.check, on = this.running();
+    if (!on && !k) return null;
+    const tone = k?.status === "pass" ? c.good : k?.status === "fail" ? c.fail : c.grey500;
+    const text = k?.text ?? "Not checked yet: does the endpoint compute the same features training did?";
+    return h_flex().id("ship-check").gap(8).items_center().flex_wrap()
+      .child(svg(icon(k?.status === "pass" ? "circle-check" : k?.status === "fail" ? "triangle-alert" : "clock")).size(13).flex_none().text_color(tone))
+      .child(div().id("ship-check-text").text_size(12).line_height("17px").text_color(k?.status === "fail" ? c.fail : c.grey900)
+        .child(k?.status === "fail" ? `${text} Launch review will ask for a reason to go on.` : text))
+      .when(on, (e) => e.child(Button(c, "ship-check-go", this.checking ? "Checking..." : k ? "Check again" : "Check now", (_e, cx) => this.check(cx), { small: true, kind: "quiet", disabled: Boolean(this.checking) })));
   }
 
   /** Thumbnails for the results that have a picture (POST /api/media/thumbs, as the data grid does). */
@@ -300,7 +328,8 @@ export class Ship {
           .when(Boolean(r.baseline), (x) => x.child(this.side(c, r.baseline, "Baseline", "ship-try-baseline"))))
         .child(div().id("ship-try-summary").text_size(12).text_color(c.grey500).child(
           (r.baseline ? (r.same_order ? "Both return the same results in the same order for this query. " : `${r.moved} of the top ${r.staged.results.length} differ from the baseline. `) : "")
-          + "Queries typed here are test traffic. They never count as shoppers.")));
+          + "Queries typed here are test traffic. They never count as shoppers.")))
+      .when(Boolean(this.checkLine(c)), (e) => e.child(this.checkLine(c)));
     return this.row(c, st, null, below);
   }
 

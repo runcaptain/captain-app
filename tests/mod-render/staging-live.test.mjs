@@ -131,6 +131,12 @@ steps = (await published(h, (v) => v?.steps?.[1]?.done))?.steps;
 assert.deepEqual(steps?.map((x) => x.done), [true, true], 'both steps read done to an agent');
 clean(t, 'with results');
 
+// One line says whether serving computed the features training computes, for the pairs just served.
+assert.ok(h.text().includes('Not checked yet: does the endpoint compute the same features training did?'), 'the check is offered');
+await h.click('ship-check-go');
+await until(h, () => /Served features match training: 100% of \d+ checked|Not checked: the staged version ranks without trained features/.test(h.text()), 'the check answers in one line');
+if (haveTrainer) assert.ok(/Served features match training: 100% of \d+ checked/.test(h.text()), `a trained ranker's features match: ${h.text().slice(-700)}`);
+
 // What an agent is told when staging is pinned: no key, no secret.
 const ctxOut = spawnSync(cst, ['--json', 'context', 'add', 'staging:outdoor'], { env, encoding: 'utf8' });
 assert.equal(ctxOut.status, 0, ctxOut.stderr);

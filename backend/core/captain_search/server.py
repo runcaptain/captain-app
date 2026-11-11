@@ -930,6 +930,18 @@ def project_staging_query(pid: str, body: dict):
                          body.get("env") or "staging")
 
 
+@app.post("/api/projects/{pid}/staging/check", dependencies=A)
+def project_staging_check(pid: str, body: dict | None = None):
+    """{env?, sample?, min_match?}: compare the features the endpoint served with the features training computes.
+    {status: pass|fail|nothing-to-check|unavailable, text, checked, match_rate, mismatch_rate, missing_rate,
+    extra_rate, features: [{feature, mismatch_rate, relative_error}], examples}. A fail blocks launch review."""
+    from .staging import consistency as SC
+
+    b = body or {}
+    return _staging_call(SC.check, ctx(), pid, b.get("env") or "staging", int(b.get("sample") or SC.SAMPLE),
+                         float(b.get("min_match") or SC.MIN_MATCH))
+
+
 @app.get("/api/sources", dependencies=A)
 def sources_list():
     """What a project input can come from: connections and what each offers, datasets, and local folders that hold
