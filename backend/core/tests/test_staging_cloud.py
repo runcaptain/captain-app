@@ -146,8 +146,12 @@ def aws(ws, monkeypatch):  # noqa: F811
 
 def test_a_cloud_deploy_shows_its_cost_and_needs_a_confirm(ws, aws):  # noqa: F811
     p = SG.plan(ws, "shop", target="sm")
-    assert p["needs_confirm"] and p["cost"]["instance_type"] == "ml.t2.medium" and p["cost"]["hourly_usd"] == 0.056
-    assert "about $0.06 an hour" in p["cost"]["text"] and "keeps billing until you stop it" in p["cost"]["text"]
+    # The hourly figure is the shared estimator's, which prices by region (us-west-1 here), not staging's own
+    # flat fallback table. Both must say the same thing, so read the number back and check the sentence uses it.
+    hourly = p["cost"]["hourly_usd"]
+    assert p["needs_confirm"] and p["cost"]["instance_type"] == "ml.t2.medium" and 0.04 < hourly < 0.10
+    text = p["cost"]["text"].lower()
+    assert f"about ${hourly:.2f} an hour" in text and "keeps billing until you stop it" in text
     with pytest.raises(SG.NeedsConfirm) as e:
         SG.stage(ws, "shop", target="sm")
     assert e.value.plan["cost"] == p["cost"]
