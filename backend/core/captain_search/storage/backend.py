@@ -343,13 +343,14 @@ class AzureStore(Store):
         from azure.core import MatchConditions  # type: ignore
         from azure.core.exceptions import ResourceExistsError, ResourceModifiedError  # type: ignore
 
+        # The blob client, not ContainerClient.upload_blob: that one returns a BlobClient, which has no ETag to
+        # hand back. BlobClient.upload_blob returns the response headers, with the new ETag.
+        blob = self.c.get_blob_client(self._k(key))
         try:
             if tag is None:
-                r = self.c.upload_blob(self._k(key), data, overwrite=False)
+                r = blob.upload_blob(data, overwrite=False)
             else:
-                r = self.c.upload_blob(
-                    self._k(key), data, overwrite=True, etag=tag, match_condition=MatchConditions.IfNotModified
-                )
+                r = blob.upload_blob(data, overwrite=True, etag=tag, match_condition=MatchConditions.IfNotModified)
         except (ResourceExistsError, ResourceModifiedError):
             raise Conflict(key) from None
         return r["etag"]
