@@ -1021,8 +1021,9 @@ def project_ab_start(pid: str, body: dict | None = None):
     from .staging import ab as AB
 
     b = body or {}
-    return _staging_call(AB.start, ctx(), pid, float(b.get("split") or 0.5), b.get("primary") or None, b.get("guardrails"),
-                         b.get("mode") or "captain", int(b.get("min_sessions") or AB.MIN_SESSIONS), dry_run=bool(b.get("dry_run")))
+    return _staging_call(AB.start, ctx(), pid, b.get("split") or 0.05, b.get("primary") or None, b.get("guardrails"),
+                         b.get("mode") or "captain", int(b.get("min_sessions") or AB.MIN_SESSIONS), dry_run=bool(b.get("dry_run")),
+                         practice=bool(b.get("practice")))
 
 
 @app.post("/api/projects/{pid}/ab/ramp", dependencies=A)
@@ -1030,7 +1031,7 @@ def project_ab_ramp(pid: str, body: dict):
     """{split}: the candidate's new share of traffic."""
     from .staging import ab as AB
 
-    return _staging_call(AB.ramp, ctx(), pid, float(body.get("split") or 0))
+    return _staging_call(AB.ramp, ctx(), pid, body.get("split") or 0)
 
 
 @app.post("/api/projects/{pid}/ab/rollback", dependencies=A)
@@ -1038,7 +1039,81 @@ def project_ab_rollback(pid: str, body: dict | None = None):
     """Every shopper gets the baseline again (or, with no test running, the previous version is staged again)."""
     from .staging import ab as AB
 
-    return _staging_call(AB.rollback, ctx(), pid)
+    return _staging_call(AB.rollback, ctx(), pid, reason=(body or {}).get("reason") or None)
+
+
+@app.get("/api/projects/{pid}/ab/options", dependencies=A)
+def project_ab_options(pid: str):
+    """What the A/B form needs before it opens: {ready, real, sessions, per_day, shares: [{split, label, text}],
+    can_measure, text}. ready is false until a real request has reached the endpoint."""
+    from .staging import ab as AB
+
+    return _staging_call(AB.options, ctx(), pid)
+
+
+@app.post("/api/projects/{pid}/ab/decide", dependencies=A)
+def project_ab_decide(pid: str, body: dict):
+    """{choice: ship | keep-baseline | keep-testing, note?}: how the test ends, recorded. ship returns
+    {launch_review: {pipeline, readout, evidence}} and is refused without enough real traffic."""
+    from .staging import ab as AB
+
+    return _staging_call(AB.decide, ctx(), pid, str(body.get("choice") or ""), str(body.get("note") or ""))
+
+
+@app.get("/api/projects/{pid}/staging/connect", dependencies=A)
+def project_staging_connect(pid: str, env: str = "staging"):
+    """Connect your site: {reachable, address, text, live, real, test, simulated, last_real_at, connected, snippets,
+    key_note, fallback, blocked?}. Only real requests count as a site calling."""
+    from .staging import traffic as TF
+
+    return _staging_call(TF.connect, ctx(), pid, env)
+
+
+@app.get("/api/projects/{pid}/staging/key", dependencies=A)
+def project_staging_key(pid: str, env: str = "staging"):
+    """The endpoint key, for the app's Copy button: it goes to the clipboard and is never drawn or logged."""
+    from .staging import traffic as TF
+
+    return _staging_call(TF.key_for_copy, ctx(), pid, env)
+
+
+@app.post("/api/projects/{pid}/staging/test", dependencies=A)
+def project_staging_test(pid: str, body: dict | None = None):
+    """{query?}: one test request through the door a site uses. Test traffic: never counted as a shopper."""
+    from .staging import traffic as TF
+
+    return _staging_call(TF.test_request, ctx(), pid, (body or {}).get("query") or None)
+
+
+@app.get("/api/projects/{pid}/staging/differ", dependencies=A)
+def project_staging_differ(pid: str, env: str = "staging"):
+    """Queries where the staged candidate and the baseline differ most, on a sample of the project's own queries:
+    {checked, same, same_share, mostly_same, text, queries: [{query, differs, moved}], none_differ}."""
+    from .staging import traffic as TF
+
+    return _staging_call(TF.differ, ctx(), pid, env)
+
+
+@app.get("/api/projects/{pid}/shadow", dependencies=A)
+def project_shadow(pid: str, traffic: str | None = None):
+    """The shadow readout: {status, requests, top1_differs, top10_differs, overlap, queries, ms, evidence, label, text}."""
+    from .staging import traffic as TF
+
+    return _staging_call(TF.shadow, ctx(), pid, traffic)
+
+
+@app.post("/api/projects/{pid}/shadow/start", dependencies=A)
+def project_shadow_start(pid: str, body: dict | None = None):
+    from .staging import traffic as TF
+
+    return _staging_call(TF.shadow_start, ctx(), pid)
+
+
+@app.post("/api/projects/{pid}/shadow/stop", dependencies=A)
+def project_shadow_stop(pid: str, body: dict | None = None):
+    from .staging import traffic as TF
+
+    return _staging_call(TF.shadow_stop, ctx(), pid)
 
 
 @app.post("/api/projects/{pid}/ab/stop", dependencies=A)

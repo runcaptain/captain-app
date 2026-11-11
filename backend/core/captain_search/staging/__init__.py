@@ -484,7 +484,7 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
                 raise ValueError("This computer has no keychain to keep the staging endpoint's key in "
                                  f"({type(e).__name__}). Set {rec['key_secret']} in the environment and stage again.") from None
         set_control(ctx, pid, env, stage=bundle["id"], serve=p["serve"], split=None, experiment=None, salt=bundle["id"],
-                    idle_minutes=idle)
+                    idle_minutes=idle, shadow=None)
     _save(ctx, pid, env, rec)
     try:
         if t["kind"] == "local":
@@ -667,7 +667,10 @@ def _status_text(rec: dict, health: dict | None) -> str:
     s = rec.get("status")
     where = "on this computer" if rec.get("kind") == "local" else f"on {rec.get('target')}"
     if s == "running":
-        t = f"{rec['model_version']} is running {where}."
+        from .traffic import where as _where
+
+        w = _where(rec)["text"]
+        t = f"{rec['model_version']} is {w[0].lower()}{w[1:]}"
         if health:
             t += f" Up {_span(health['uptime_s'])}. Stops by itself in {_span(health['stops_in_s'])} if nobody uses it."
         return t
@@ -789,11 +792,21 @@ def query(ctx: Context, pid: str, q: str, k: int = 10, env: str = ENV) -> dict:
     cat_of = next((r for r in (arms.get("baseline"), arms.get("candidate")) if r and servable_quiet(ctx, r) == "captain"), None)
 
     def side(arm: str) -> dict:
+        from .traffic import signal_label
+
         t0 = time.perf_counter()
-        res = call(ctx, rec, "rank", dict(body), arm=None if rec.get("how") == "image" else arm)
+        res = call(ctx, rec, "rank", {**body, "explain": True}, arm=None if rec.get("how") == "image" else arm)
+        rows = _joined(ctx, res, cat_of)
+        imp = res.get("importance") or {}
+        top = [n for n, _ in sorted(imp.items(), key=lambda kv: -kv[1])[:4]]
+        for x in rows:  # "Why is this here?": the signals the model leans on most, with this product's values
+            sig = (res.get("signals") or {}).get(x["id"])
+            x["why"] = ([{"signal": n, "label": signal_label(n), "value": sig.get(n), "weight": imp[n]} for n in top if n in sig]
+                        if sig else None)
         return {"arm": arm, "model_version": res["model_version"], "ms": res["ms"],
                 "round_trip_ms": round((time.perf_counter() - t0) * 1000, 1), "request_id": res["request_id"],
-                "results": _joined(ctx, res, cat_of)}
+                "results": rows,
+                "why_note": None if imp else "This version ranks by keyword match alone: there is no trained model to explain."}
 
     out = {"project": pid, "query": q, "k": int(k), "staged": side(serve), "baseline": None, "traffic": "test"}
     if not rec.get("tried"):
@@ -803,6 +816,10 @@ def query(ctx: Context, pid: str, q: str, k: int = 10, env: str = ENV) -> dict:
         a, b = [r["id"] for r in out["staged"]["results"]], [r["id"] for r in out["baseline"]["results"]]
         out["same_order"] = a == b
         out["moved"] = sum(1 for i, x in enumerate(a) if i >= len(b) or b[i] != x)
+        for i, x in enumerate(out["staged"]["results"]):  # against the baseline: up, down, new, or where it was
+            was = b.index(x["id"]) if x["id"] in b else None
+            x["move"] = "new" if was is None else "same" if was == i else "up" if was > i else "down"
+            x["was"] = None if was is None else was + 1
     return out
 
 
@@ -827,13 +844,21 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
     cand = (judged or exps or [None])[-1]
     steps = [
         {"n": 1, "id": "stage", "title": "Stage", "done": on,
-         "status": (f"{rec['model_version']} is running " + ("on this computer" if rec.get("kind") == "local" else f"on {rec.get('target')}") + ".") if on
+         "status": (f"{rec['model_version']} is running " + ("on this computer. Only this computer can reach it." if rec.get("kind") == "local" else f"on {rec.get('target')}. Your site can call it.")) if on
          else "Not staged." if not rec or rec.get("status") == "stopped" else f"Staging {rec.get('status')}.",
          "action": None if on else {"action": "stage", "experiment": cand["id"]} if cand else {"action": "stage", "baseline": True} if champ else None},
         {"n": 2, "id": "try", "title": "Try it", "done": on and bool(rec.get("tried")),
          "status": "Tried." if on and rec.get("tried") else "Type a query and see the results." if on else "Waits for staging.",
          "action": {"action": "try"} if on and not rec.get("tried") else None},
     ]
+    connected = on and bool(rec.get("connected_at"))
+    local = bool(rec and rec.get("kind") == "local")
+    sh = doc.get("shadow") or None
+    steps.append({"n": 3, "id": "connect", "title": "Connect your site", "done": connected,
+                  "status": ("Your site is sending requests." + (" Shadow mode is on: shoppers see the baseline." if sh and sh.get("status") == "running" else "")) if connected
+                  else "A site can't reach an endpoint on this computer. Stage it in your cloud, or keep testing here with simulated shoppers." if on and local
+                  else "Waiting for the first request from your site." if on else "Waits for staging.",
+                  "action": {"action": "connect"} if on and not connected else None})
     ab = doc.get("ab") or None
     both = on and {"baseline", "candidate"} <= set(rec.get("arms") or {}) and rec.get("how") != "image"
     last = (ab or {}).get("last_readout") or {}
@@ -847,7 +872,7 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
                      + (last.get("text") or (brought or {}).get("text") or "No readout yet."))
     else:
         ab_status = ("Rolled back to the baseline. " if ab["status"] == "rolled_back" else "Ended. ") + (last.get("text") or (brought or {}).get("text") or "")
-    steps.append({"n": 3, "id": "ab", "title": "A/B test", "done": ab_done, "status": ab_status.strip(),
+    steps.append({"n": 4, "id": "ab", "title": "A/B test", "done": ab_done, "status": ab_status.strip(),
                   "action": {"action": "ab-start"} if both and (not ab or ab["status"] != "running") else None})
     review_of = (ab or {}).get("arms", {}).get("candidate") or (rec or {}).get("arms", {}).get("candidate") or champ
     chk = (rec or {}).get("check") or {}
@@ -859,7 +884,7 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
             sent = bool(HO.listing(ctx, review_of))
         except Exception:  # noqa: BLE001
             sent = False
-    steps.append({"n": 4, "id": "launch-review", "title": "Launch review", "done": sent,
+    steps.append({"n": 5, "id": "launch-review", "title": "Launch review", "done": sent,
                   "status": ("Sent to launch review." if sent else
                              "Served features don't match training, so launch review will ask for a reason to go on." if chk.get("status") == "fail" else
                              "Check it against your launch criteria and pass it to your own deployment process. Captain deploys nothing itself."),
@@ -869,12 +894,21 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
         nxt = {"action": "stage", "experiment": judged[-1]["id"], "text": f"Stage {judged[-1]['pipeline']} to try it live."}
     elif on and not rec.get("tried"):
         nxt = {"action": "try", "text": "Try the staged model: type a query under Ship, step 2."}
+    elif on and not connected and not ab:
+        nxt = ({"action": "connect", "text": "A site can't reach this computer. Stage it in your cloud, or practice here with simulated shoppers (Ship, step 3)."}
+               if local else {"action": "connect", "text": "Connect your site: copy the snippet under Ship, step 3, and send the first request."})
     elif both and not ab:
-        nxt = {"action": "ab-start", "text": "Start an A/B test: split traffic between the baseline and the candidate."}
+        nxt = ({"action": "shadow-start", "text": "Your site is connected. Start shadow mode to see what the candidate would change, before any shopper sees it."}
+               if not sh else {"action": "ab-start", "text": "Start an A/B test: split traffic between the baseline and the candidate."})
     elif ab and ab["status"] == "running" and not ab_done:
-        nxt = {"action": "ab-wait", "text": "The A/B test needs more sessions. With no traffic yet, send simulated shoppers at staging."}
-    elif ab_done and not sent and review_of:
+        nxt = ({"action": "ab-wait", "text": "The practice test needs more sessions. Send simulated shoppers at staging."} if ab.get("practice")
+               else {"action": "ab-watch", "text": "The A/B test is collecting sessions. The readout under Ship says how many more it needs."})
+    elif ab_done and not sent and review_of and not ab.get("practice") and last.get("evidence", "REAL_TRAFFIC") == "REAL_TRAFFIC" and ab.get("status") == "running":
+        nxt = {"action": "ab-decide", "text": "The A/B test has enough sessions. Decide: ship it, keep the baseline, or keep testing."}
+    elif ab_done and not sent and review_of and (ab.get("decision") or {}).get("choice") == "ship":
         nxt = {"action": "handoff", "pipeline": review_of, "text": f"Send {review_of} to launch review."}
+    elif ab and ab.get("practice") and ab_done:
+        nxt = {"action": "connect", "text": "That was practice on simulated shoppers. To test for real, connect your site (Ship, step 3)."}
     return {"staging": public(rec), "steps": steps, "next": nxt}
 
 

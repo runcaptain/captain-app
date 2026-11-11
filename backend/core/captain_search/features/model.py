@@ -21,6 +21,20 @@ class TreeModel:
     def __init__(self, dump: dict):
         self.names = list(dump.get("feature_names") or [])
         self.trees = [self._flatten(t["tree_structure"]) for t in dump.get("tree_info") or []]
+        gain: dict[int, float] = {}
+
+        def walk(node: dict) -> None:
+            if "split_feature" in node:
+                f = int(node["split_feature"])
+                gain[f] = gain.get(f, 0.0) + (float(node.get("split_gain") or 0.0) or 1.0)
+                walk(node["left_child"])
+                walk(node["right_child"])
+
+        for t in dump.get("tree_info") or []:
+            walk(t["tree_structure"])
+        total = sum(gain.values()) or 1.0
+        name = lambda i: self.names[i] if i < len(self.names) else f"feature {i}"  # noqa: E731
+        self._importance = {name(i): round(g / total, 4) for i, g in sorted(gain.items(), key=lambda kv: -kv[1])}
 
     @staticmethod
     def _flatten(root: dict):
@@ -46,6 +60,11 @@ class TreeModel:
         add(root)
         return (np.array(feat), np.array(thr, dtype=float), np.array(left), np.array(right),
                 np.array(value, dtype=float), np.array(nan_left, dtype=bool))
+
+    def importance(self) -> dict[str, float]:
+        """How much the model leans on each feature: its share of the total gain of every split that uses it
+        (split counts when the dump has no gains). Sums to 1. Empty for a model with no splits."""
+        return dict(self._importance)
 
     def predict(self, rows) -> list[float]:
         x = np.asarray(rows, dtype=float)

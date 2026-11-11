@@ -425,12 +425,14 @@ def test_ab_test_end_to_end_on_this_computer(ws):
     SG.stage(ws, "shop", target="local")
     assert AB.metrics_for(ws, "shop") == ["clicks", "purchases", "revenue"]  # the catalog has a price
     with pytest.raises(ValueError, match="can't be measured"):
-        AB.start(ws, "shop", primary="happiness")
-    ab = AB.start(ws, "shop", split=0.5, primary="clicks", min_sessions=100)
+        AB.start(ws, "shop", primary="happiness", practice=True)
+    with pytest.raises(ValueError, match="No real request has reached this endpoint yet"):
+        AB.start(ws, "shop", split=0.5, primary="clicks")  # nothing to split until a site calls it
+    ab = AB.start(ws, "shop", split=0.5, primary="clicks", min_sessions=100, practice=True)
     assert ab["status"] == "running" and ab["guardrails"] == ["purchases", "revenue"] and ab["split"] == 0.5
     assert SG.control(ws, "shop")["experiment"] == ab["id"]
     with pytest.raises(ValueError, match="already running"):
-        AB.start(ws, "shop")
+        AB.start(ws, "shop", practice=True)
 
     # nothing yet: the readout says so and names no winner
     r = AB.readout(ws, "shop")
@@ -472,8 +474,8 @@ def test_ab_test_end_to_end_on_this_computer(ws):
     arms = [SG.call(ws, SG.state(ws, "shop"), "rank", {"query": "jacket", "session_id": f"u{i}"})["arm"] for i in range(200)]
     assert 0 < arms.count("candidate") < 40
     assert SG.state(ws, "shop")["endpoint"]["pid"] == pid_before
-    with pytest.raises(ValueError, match="between 0 and 1"):
-        AB.ramp(ws, "shop", 1.5)
+    with pytest.raises(ValueError, match="between 0 and 100%"):
+        AB.ramp(ws, "shop", 150)
 
     # roll back: everyone gets the baseline again, the test ends, and the history has every step
     out = AB.rollback(ws, "shop")
@@ -566,8 +568,9 @@ def test_outcomes_from_an_events_dataset_and_a_readout_from_the_teams_own_system
     from captain_search.staging import ab as AB
 
     SG.stage(ws, "shop", target="local")
-    ab = AB.start(ws, "shop", split=0.5, primary="purchases", min_sessions=1)
     rec = SG.state(ws, "shop")
+    SG.call(ws, rec, "rank", {"query": "tent", "session_id": "real-0"})  # a site is calling: a split means something
+    ab = AB.start(ws, "shop", split=0.5, primary="purchases", min_sessions=1)
     a = SG.call(ws, rec, "rank", {"query": "jacket", "session_id": "real-1"})
     b = SG.call(ws, rec, "rank", {"query": "boots", "session_id": "real-2"})
     ev = snapshot(ws, "shop-outcomes", pa.Table.from_pylist([
@@ -579,7 +582,7 @@ def test_outcomes_from_an_events_dataset_and_a_readout_from_the_teams_own_system
     assert out == {"events": "shop-outcomes@v1", "outcomes": 3, "matched": 2, "unmatched": 1, "dry_run": False}
     r = AB.readout(ws, "shop")
     assert r["evidence"] == "REAL_TRAFFIC" and r["unmatched_outcomes"] == 1
-    assert sum(x["sessions"] for x in r["arms"].values()) == 2
+    assert sum(x["sessions"] for x in r["arms"].values()) == 2  # the request before the test started is not in it
     bad = snapshot(ws, "no-ids", pa.Table.from_pylist([{"query": "q", "clicked": True}]), kind=DatasetKind.events,
                    provenance=Provenance(source="generated"))
     with pytest.raises(ValueError, match="no request_id column"):
@@ -588,7 +591,7 @@ def test_outcomes_from_an_events_dataset_and_a_readout_from_the_teams_own_system
     assert AB.get(ws, "shop")["status"] == "finished" and SG.control(ws, "shop")["split"] is None
 
     # my own A/B system: Captain gives each arm's address and records the readout the team brings back
-    own = AB.start(ws, "shop", mode="own")
+    own = AB.start(ws, "shop", mode="own")  # their own system splits: Captain's gate on real requests doesn't apply
     assert own["split"] is None and own["addresses"]["candidate"]["url"].endswith("/rank/candidate")
     assert SG.control(ws, "shop")["split"] is None  # Captain's endpoint does not split
     assert "Waiting for the readout" in AB.readout(ws, "shop")["text"]
@@ -604,15 +607,26 @@ def test_outcomes_from_an_events_dataset_and_a_readout_from_the_teams_own_system
 
 
 def test_ab_cli(ws):
+    import re
+
+    from captain_search.staging import ab as AB
+
     run = CliRunner()
     assert run.invoke(app, ["projects", "stage", "shop", "--target", "local"]).exit_code == 0
-    out = run.invoke(app, ["projects", "ab-start", "shop", "--split", "0.5", "--primary", "clicks", "--min-sessions", "50"])
+    out = run.invoke(app, ["projects", "ab-start", "shop", "--split", "50%", "--primary", "clicks", "--min-sessions", "50", "--practice"])
     assert out.exit_code == 0 and "the candidate gets 50% of traffic" in out.output, out.output
     out = run.invoke(app, ["projects", "ab-simulate", "shop", "--sessions", "150"])
     assert out.exit_code == 0 and "SIMULATED" in out.output
-    out = run.invoke(app, ["projects", "ab", "shop"])
+    out = run.invoke(app, ["projects", "ab-readout", "shop"])
     assert out.exit_code == 0 and out.output.startswith("Simulated shoppers.") and "sessions" in out.output
-    assert run.invoke(app, ["projects", "ab-ramp", "shop", "0.25"]).exit_code == 0
+    assert run.invoke(app, ["projects", "ab", "shop"]).output == out.output  # the earlier name still works, hidden
+    assert "ab-readout" in run.invoke(app, ["projects", "--help"]).output
+    assert not re.search(r"^.\s+ab\s", run.invoke(app, ["projects", "--help"]).output, re.M)
+    for given, want in (("25", 0.25), ("5%", 0.05), ("0.25", 0.25)):
+        assert run.invoke(app, ["projects", "ab-ramp", "shop", given]).exit_code == 0
+        assert AB.get(ws, "shop")["split"] == want
+    bad = run.invoke(app, ["projects", "ab-ramp", "shop", "lots"])
+    assert bad.exit_code == 1 and "Write 5, 5% or 0.05" in bad.output
     out = run.invoke(app, ["projects", "ab-rollback", "shop"])
     assert out.exit_code == 0 and "Rolled back to shop/keyword-baseline@v1" in out.output
     out = run.invoke(app, ["projects", "ab-ramp", "shop", "0.5"])
@@ -641,7 +655,7 @@ def test_staging_and_a_running_ab_test_do_not_trip_over_each_other(ws):
     from captain_search.staging import ab as AB
 
     SG.stage(ws, "shop", target="local")
-    AB.start(ws, "shop", split=0.5)
+    AB.start(ws, "shop", split=0.5, practice=True)
     with pytest.raises(ValueError, match="An A/B test is running on this endpoint"):
         SG.stage(ws, "shop", baseline=True, target="local")
     assert SG.state(ws, "shop")["model_version"] == ws.candidate  # nothing changed
@@ -696,8 +710,9 @@ def test_a_must_not_get_worse_guardrail_pauses_the_ramp(ws):
     assert AB.RAMP[0] == 0.01  # ramps start at 1%
     SG.stage(ws, "shop", target="local")
     with pytest.raises(ValueError, match="marked must"):
-        AB.start(ws, "shop", guardrails=["purchases:sometimes"])
-    ab = AB.start(ws, "shop", split=0.01, primary="clicks", guardrails=["purchases:must", "revenue"], min_sessions=20)
+        AB.start(ws, "shop", guardrails=["purchases:sometimes"], practice=True)
+    SG.call(ws, SG.state(ws, "shop"), "rank", {"query": "tent", "session_id": "before"})
+    ab = AB.start(ws, "shop", split="1%", primary="clicks", guardrails=["purchases:must", "revenue"], min_sessions=20)
     assert ab["guardrail_modes"] == {"latency": "must", "purchases": "must", "revenue": "watch"} and ab["split"] == 0.01
     rec = SG.state(ws, "shop")
     # real requests: baseline shoppers buy, candidate shoppers don't

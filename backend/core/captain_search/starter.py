@@ -156,6 +156,8 @@ def plan(ctx: Context, pid: str) -> dict:
     if out["simulated"]:
         out["warnings"].append("These events are simulated. The ranker will learn the simulator, not real shoppers, "
                                "and every result judged on them reads SIMULATED.")
+        out["warnings"].append("The simulated events were generated from keyword search, so a ranker trained on them "
+                               "mostly reproduces keyword search. Expect it to return the same results as the baseline.")
     if not doc.get("champion"):
         bp = baseline_plan(ctx, pid)
         out["baseline"] = {"will_set": bp["ready"], "name": bp["name"],
@@ -377,6 +379,17 @@ def train(ctx: Context, pid: str, live=None, params: dict | None = None, progres
                  "changed_since_pin": False, "read_at": PS._now()})
     exp = PS.experiment_add(ctx, pid, r["pipeline"], training_set=ts_ref, trainer=TRAINER,
                             note="Starter ranker" + (" (simulated events)" if s["simulated"] else ""), inputs_read=read)
+    same = None
+    try:  # does it rank differently from the baseline at all? Said on the candidate's row, before anyone stages it
+        from .staging import traffic as TF
+
+        same = TF.compare_offline(ctx, pid, exp["id"])
+        if same["checked"]:
+            PS.experiment_record(ctx, pid, exp["id"], sameness={k: same[k] for k in ("checked", "same", "same_share", "mostly_same", "text")})
+            if same["mostly_same"]:
+                say(same["text"])
+    except Exception:  # noqa: BLE001  never fail a finished training over the comparison
+        same = None
     doc = PS.get(ctx, pid)
     size = {**p["size"], "training_rows": s["rows"], "queries": s["queries"]}
     job_id = os.environ.get("CST_JOB_ID")
@@ -403,7 +416,7 @@ def train(ctx: Context, pid: str, live=None, params: dict | None = None, progres
             cost = None
     return {"project": pid, "experiment": exp["id"], "pipeline": r["pipeline"], "training_set": ts_ref, "cost": cost,
             "baseline": doc.get("champion"), "baseline_set": made_baseline, "metrics": r.get("metrics"),
-            "summary": s, "notes": tp["notes"], "simulated": s["simulated"],
+            "summary": s, "notes": tp["notes"], "simulated": s["simulated"], "sameness": same,
             "next": {"action": "backtest", "experiment": exp["id"], "text": "Judge it against the baseline."},
             "text": f"Trained {r['pipeline']} on {ts_ref}." + (" The events are simulated, so this is a SIMULATED result."
                                                               if s["simulated"] else "")}

@@ -966,6 +966,13 @@ def promote(ctx, pipeline: str, env_name: str, override_reason: str | None = Non
                        override_reason=override_reason if failed else None, rollback_to=prev["pipeline"] if prev else None)
         if not dry_run:
             HO.write(ctx, b)
+            from .staging import ab as AB
+
+            dec = AB.decision_for(ctx, pref)  # the A/B test that ended in "Ship it", with its evidence label
+            if dec:
+                HO._append(ctx, b["id"], {"kind": "ab_readout", "project": dec.get("project"), "experiment": dec.get("experiment"),
+                                          "readout": dec.get("readout"), "evidence": dec.get("evidence"),
+                                          "sessions": dec.get("sessions"), "decided_by": dec.get("by"), "decided_at": dec.get("at")})
             ctx.store.put_new(f"deployments/{d.environment}/{d.created_at:%Y%m%dT%H%M%SZ}-{d.id}.yaml", dump_yaml(d.model_dump(mode="json")))
         return d
     d = Deployment(**_base(ctx), environment=env_name, pipeline=pref, action="promote",

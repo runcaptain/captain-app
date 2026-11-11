@@ -47,6 +47,20 @@ LABELS = {"real": ("REAL_TRAFFIC", "Real traffic"), "simulated": ("SIMULATED", "
 Z = 1.959964
 
 
+def share(x) -> float:
+    """A share of traffic as a person writes it: 0.05, 5 or "5%" all mean five percent."""
+    t = str(x).strip()
+    try:
+        v = float(t.rstrip("%"))
+    except ValueError:
+        raise ValueError(f"{x!r} isn't a share of traffic. Write 5, 5% or 0.05.") from None
+    if t.endswith("%") or v > 1:
+        v = v / 100
+    if not 0 < v <= 1:
+        raise ValueError("the candidate's share of traffic is between 0 and 100%, for example 5%")
+    return v
+
+
 def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 
@@ -97,8 +111,50 @@ def addresses(rec: dict) -> dict:
                 "body": {"op": "rank", "arm": a, "key": "<the endpoint key>", "query": "...", "session_id": "..."}} for a in rec["arms"]}
 
 
-def start(ctx: Context, pid: str, split: float = 0.5, primary: str | None = None, guardrails: list[str] | None = None,
-          mode: str = "captain", min_sessions: int = MIN_SESSIONS, env: str = ENV, dry_run: bool = False) -> dict:
+def traffic_seen(ctx: Context, pid: str, env: str = ENV) -> dict:
+    """What has reached the endpoint so far: real requests and sessions, and the sessions a day that implies.
+    Only real traffic counts: the console and simulated shoppers are not a site."""
+    rec = state(ctx, pid, env)
+    if not rec:
+        return {"real": 0, "sessions": 0, "per_day": None}
+    if rec.get("status") == "running":
+        try:
+            call(ctx, rec, "flush", {})
+        except Exception:  # noqa: BLE001
+            pass
+    reqs = [r for r in L.read(ctx, pid, env, rec["id"])["requests"] if (r.get("traffic") or "real") == "real" and not r.get("forced")]
+    units = {str(r.get("session_id") or r.get("user_id") or r["request_id"]) for r in reqs}
+    per_day = None
+    if len(reqs) >= 2:
+        ts = sorted(str(r["ts"]) for r in reqs)
+        try:
+            span = (dt.datetime.fromisoformat(ts[-1].replace("Z", "+00:00")) - dt.datetime.fromisoformat(ts[0].replace("Z", "+00:00"))).total_seconds()
+            per_day = round(len(units) * 86400 / max(span, 3600.0))  # under an hour of traffic counts as an hour
+        except ValueError:
+            per_day = None
+    return {"real": len(reqs), "sessions": len(units), "per_day": per_day}
+
+
+def options(ctx: Context, pid: str, env: str = ENV) -> dict:
+    """What the A/B form needs before it opens: has a site sent anything, and what each share would mean in
+    sessions a day."""
+    seen = traffic_seen(ctx, pid, env)
+    rate = seen["per_day"]
+    shares = [{"split": x, "label": f"{x:.0%}",
+               "text": (f"{x:.0%}: about {max(1, round(rate * x)):,} of the {rate:,} sessions a day this endpoint sees" if rate
+                        else f"{x:.0%} of sessions")} for x in RAMP[:4]]
+    ready = seen["real"] > 0
+    return {"project": pid, **seen, "ready": ready, "shares": shares, "can_measure": metrics_for(ctx, pid),
+            "text": ("Your site is sending requests. A split now means something." if ready else
+                     "No real request has reached this endpoint yet, so a split would divide nothing. Connect your site "
+                     "first, or practice with simulated shoppers.")}
+
+
+def start(ctx: Context, pid: str, split: float = 0.05, primary: str | None = None, guardrails: list[str] | None = None,
+          mode: str = "captain", min_sessions: int = MIN_SESSIONS, env: str = ENV, dry_run: bool = False,
+          practice: bool = False) -> dict:
+    """`practice` runs the test on simulated shoppers only: labelled SIMULATED throughout, and it can't go to launch
+    review. Without it, Captain's own split needs a site that is already sending real requests."""
     rec = _running(ctx, pid, env)
     arms = rec.get("arms") or {}
     if not {"baseline", "candidate"} <= set(arms):
@@ -108,8 +164,11 @@ def start(ctx: Context, pid: str, split: float = 0.5, primary: str | None = None
         raise ValueError("Captain can't split traffic inside your own container. Run the test in your own A/B system.")
     if mode not in ("captain", "own"):
         raise ValueError("mode is captain (Captain's endpoint splits the traffic) or own (your A/B system does)")
-    if not 0 < float(split) <= 1:
-        raise ValueError("the split is the candidate's share of traffic, between 0 and 1, for example 0.05")
+    split = share(split)
+    if mode == "captain" and not practice and not dry_run and not traffic_seen(ctx, pid, env)["real"]:
+        raise ValueError("No real request has reached this endpoint yet, so there is nothing to split. Connect your "
+                         "site first. To see how a test works without traffic, practice with simulated shoppers "
+                         "(--practice): everything it shows is SIMULATED and it can't go to launch review.")
     cur = get(ctx, pid)
     if cur and cur.get("status") == "running":
         raise ValueError(f"An A/B test is already running ({cur['id']}). Roll it back or stop it first.")
@@ -138,13 +197,26 @@ def start(ctx: Context, pid: str, split: float = 0.5, primary: str | None = None
           "stage": rec["id"], "split": float(split) if mode == "captain" else None, "primary": primary,
           "guardrails": guardrails, "guardrail_modes": modes, "paused": None, "min_sessions": int(min_sessions), "started_at": _now(), "started_by": whoami(),
           "ended_at": None, "ramps": [{"at": _now(), "by": whoami(), "split": float(split), "action": "start"}] if mode == "captain" else [],
-          "brought": [], "last_readout": None, "addresses": addresses(rec) if mode == "own" else None}
+          "brought": [], "last_readout": None, "addresses": addresses(rec) if mode == "own" else None,
+          "practice": bool(practice), "decision": None, "rolled_back": None}
     if dry_run:
         return {**ab, "dry_run": True}
+    old = get(ctx, pid)
     if mode == "captain":
-        set_control(ctx, pid, env, split=float(split), experiment=ab["id"], salt=ab["id"], serve="candidate")
+        set_control(ctx, pid, env, split=float(split), experiment=ab["id"], salt=ab["id"], serve="candidate", shadow=None)
         call(ctx, rec, "reload", {})
-    _put(ctx, pid, lambda _old: ab)
+        from . import traffic as TF
+
+        sh = TF.shadow_get(ctx, pid)
+        if sh and sh.get("status") == "running":  # shadow mode comes before a split, and ends when one starts
+            TF._shadow_put(ctx, pid, {**sh, "status": "ended", "ended_at": _now()})
+
+    def ch(doc):
+        if old:  # the earlier test is filed, never left on screen as if it were current
+            doc["ab_history"] = ((doc.get("ab_history") or []) + [old])[-20:]
+        doc["ab"] = ab
+
+    PS._update(ctx, pid, ch)
     _note(ctx, pid, (f"started an A/B test: {arms['candidate']} gets {split:.0%} of traffic against {arms['baseline']}"
                      if mode == "captain" else f"started an A/B test in the team's own system: {arms['candidate']} against {arms['baseline']}"))
     return ab
@@ -163,8 +235,7 @@ def ramp(ctx: Context, pid: str, split: float, dry_run: bool = False) -> dict:
     if ab["status"] != "running" or ab["mode"] != "captain":
         raise ValueError("Only a running test that Captain's endpoint splits can be ramped." if ab["mode"] == "captain"
                          else "Your own A/B system holds the split. Ramp it there.")
-    if not 0 < float(split) <= 1:
-        raise ValueError("the split is the candidate's share of traffic, between 0 and 1")
+    split = share(split)
     if float(split) > float(ab.get("split") or 0):
         ab = readout(ctx, pid)["ab"]  # look at the guardrails now, not as of the last time someone looked
         if ab.get("paused"):
@@ -185,7 +256,7 @@ def ramp(ctx: Context, pid: str, split: float, dry_run: bool = False) -> dict:
     return out
 
 
-def rollback(ctx: Context, pid: str, env: str = ENV, dry_run: bool = False) -> dict:
+def rollback(ctx: Context, pid: str, env: str = ENV, dry_run: bool = False, reason: str | None = None) -> dict:
     """Send everyone back to the previous version. During a test: every shopper gets the baseline again, and the
     test ends as rolled back. With no test running: the version staged before this one is staged again."""
     from . import stage as _stage
@@ -200,10 +271,18 @@ def rollback(ctx: Context, pid: str, env: str = ENV, dry_run: bool = False) -> d
             call(ctx, rec, "reload", {})
             _save(ctx, pid, env, serve="baseline", model_version=ab["arms"]["baseline"])
 
+        why = (reason or "").strip() or ((ab.get("paused") or {}).get("why")) or f"{whoami()} rolled it back"
+        was = ab.get("split") or 0.0
+
         def ch(a):
             a["status"], a["ended_at"] = "rolled_back", _now()
             a["ramps"] = (a.get("ramps") or []) + [{"at": _now(), "by": whoami(), "split": 0.0, "action": "rollback", "from": a.get("split")}]
             a["split"] = 0.0
+            # One line for the page: what was rolled back, why, and what to do next. The readout itself is filed.
+            a["rolled_back"] = {"at": _now(), "by": whoami(), "why": why, "from_split": was,
+                                "text": f"Rolled back {a['arms']['candidate']} from {was:.0%} of traffic: {why.rstrip('.')}. "
+                                        f"Every shopper gets {a['arms']['baseline']} again. Next: fix what went wrong and "
+                                        "start a new test, or keep the baseline."}
 
         _put(ctx, pid, ch)
         _note(ctx, pid, f"rolled back the A/B test: every shopper gets the baseline {ab['arms']['baseline']} again")
@@ -515,6 +594,15 @@ def readout(ctx: Context, pid: str, traffic: str | None = None) -> dict:
         _note(ctx, pid, f"paused the A/B ramp: {why}" if why else "the A/B ramp can go on: the guardrail holds again")
         ab = get(ctx, pid)
         base["ab"] = ab
+    out["practice"] = bool(ab.get("practice"))
+    out["needed"] = needed(ab, out, traffic_seen(ctx, pid, ab["env"])["per_day"] if out["traffic"] == "real" else None)
+    out["decision"] = ab.get("decision")
+    out["rolled_back"] = ab.get("rolled_back")
+    out["can_ship"] = bool(out["enough"] and out["evidence"] == "REAL_TRAFFIC" and not ab.get("practice"))
+    out["cannot_ship"] = (None if out["can_ship"] else
+                          "This is a practice test on simulated shoppers. It can't go to launch review." if ab.get("practice") or out["evidence"] == "SIMULATED"
+                          else "These requests are test traffic, not shoppers. It can't go to launch review on them." if out["evidence"] == "TEST_TRAFFIC"
+                          else "Not enough data yet to send it to launch review.")
     summary = {"at": _now(), "sessions": {a: out["arms"][a]["sessions"] for a in out["arms"]}, "enough": out["enough"],
                "evidence": out["evidence"], "verdict": out["primary"]["verdict"], "text": out["text"]}
     if summary != {**(ab.get("last_readout") or {}), "at": summary["at"]}:
@@ -542,6 +630,88 @@ def _segments(ctx: Context, pid: str) -> dict | None:
         if len(_seg_cache) > 8:
             _seg_cache.pop(next(iter(_seg_cache)))
     return _seg_cache[k]
+
+
+def needed(ab: dict, out: dict, per_day: int | None) -> dict | None:
+    """"About N more sessions needed to tell a difference of X, roughly D days at this rate": the sessions each arm
+    needs for the difference seen so far to be told from chance (80% power at the 95% level), from the spread of
+    the primary metric across sessions."""
+    p = out["primary"]
+    nb, nc = out["arms"]["baseline"]["sessions"], out["arms"]["candidate"]["sessions"]
+    if min(nb, nc) < 2 or p.get("verdict") in ("candidate ahead", "candidate behind"):
+        return None
+    revenue = p["metric"] == "revenue"
+    delta = max(abs(p["diff"]), (0.01 * max(p["baseline"], 1.0)) if revenue else 0.005)  # never chase a zero difference
+    half = (p["ci_high"] - p["ci_low"]) / 2  # = 1.96 * sqrt(var_c/nc + var_b/nb)
+    if half <= 0:
+        return None
+    var = (half / Z) ** 2 / (1 / nc + 1 / nb)  # the per-session variance the interval implies
+    per_arm = math.ceil(2 * (Z + 0.8416) ** 2 * var / delta ** 2)
+    more = max(0, per_arm - min(nb, nc))
+    split = float(ab.get("split") or 0.5)
+    slow = min(split, 1 - split) if 0 < split < 1 else None
+    days = math.ceil(more / (per_day * slow)) if per_day and slow and more else None
+    x = f"${delta:,.2f}" if revenue else f"{delta * 100:.1f} points"
+    text = (f"About {more:,} more sessions needed in the smaller arm to tell a difference of {x}"
+            + (f", roughly {days:,} day{'s' if days != 1 else ''} at this rate." if days else "."))
+    if not more:
+        text = f"There are enough sessions to tell a difference of {x}. The two are that close."
+    return {"per_arm": per_arm, "more": more, "difference": round(delta, 6), "days": days, "per_day": per_day, "text": text}
+
+
+CHOICES = {"ship": "Ship it", "keep-baseline": "Keep the baseline", "keep-testing": "Keep testing"}
+
+
+def decision_key(pipeline: str) -> str:
+    return "staging/ab-decisions/" + pipeline.replace("/", "__").replace("@", "-") + ".json"
+
+
+def decide(ctx: Context, pid: str, choice: str, note: str = "") -> dict:
+    """How a test ends, recorded: ship it (opens launch review with the readout and its evidence label attached),
+    keep the baseline, or keep testing. Shipping needs real traffic and enough of it."""
+    ab = _need(ctx, pid)
+    if choice not in CHOICES:
+        raise ValueError(f"the choice is one of {', '.join(CHOICES)}")
+    r = readout(ctx, pid)
+    if choice == "ship" and ab["mode"] == "captain" and not r.get("can_ship"):
+        raise ValueError(r.get("cannot_ship") or "This test can't go to launch review yet.")
+    if choice == "ship" and ab["mode"] == "own" and not (r.get("brought") or {}).get("evidence") == "REAL_TRAFFIC":
+        raise ValueError("Bring in a readout on real traffic first. Only real traffic can go to launch review.")
+    text = r.get("text") or ""
+    d = {"choice": choice, "label": CHOICES[choice], "at": _now(), "by": whoami(), "note": note.strip() or None,
+         "evidence": r.get("evidence"), "readout": text, "experiment": ab["id"],
+         "sessions": {a: x["sessions"] for a, x in (r.get("arms") or {}).items()}}
+    _put(ctx, pid, lambda a: a.__setitem__("decision", d))
+    cand = ab["arms"]["candidate"]
+    out = {"decision": d, "ab": get(ctx, pid)}
+    if choice == "ship":
+        # launch review reads this when the candidate is sent: the readout rides with it, labelled
+        from ..storage.backend import NotFound
+
+        body = json.dumps({**d, "project": pid, "pipeline": cand, "baseline": ab["arms"]["baseline"]}).encode()
+        try:
+            _, tag = ctx.store.get_with_tag(decision_key(cand))
+        except NotFound:
+            tag = None
+        ctx.store.put_if(decision_key(cand), body, tag)
+        out["launch_review"] = {"pipeline": cand, "readout": text, "evidence": r.get("evidence")}
+    elif choice == "keep-baseline" and ab["status"] == "running":
+        if ab["mode"] == "captain":
+            rollback(ctx, pid, ab["env"], reason="the decision was to keep the baseline")
+        else:
+            stop(ctx, pid)
+        out["ab"] = get(ctx, pid)
+    _note(ctx, pid, f"decided on the A/B test: {CHOICES[choice].lower()}" + (f" ({note.strip()})" if note.strip() else ""))
+    return out
+
+
+def decision_for(ctx: Context, pipeline: str) -> dict | None:
+    from ..storage.backend import NotFound
+
+    try:
+        return json.loads(ctx.store.get(decision_key(pipeline)))
+    except NotFound:
+        return None
 
 
 def bring(ctx: Context, pid: str, metric: str, baseline: float, candidate: float, source: str, traffic: str = "real",

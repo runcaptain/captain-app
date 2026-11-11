@@ -9,6 +9,8 @@ staging endpoint and a cloud one serve exactly the same files.
                     top K with features from the module that built its training set (features/).
   POST /rank/<arm>  the same, from one named arm (baseline or candidate): for the Try it console's side by side
                     view, and for a team that splits traffic in its own A/B system.
+                    With "explain": true the answer also carries, for each result, the signals the model was
+                    given (`signals`), and how much the model leans on each one (`importance`).
   POST /outcome     {request_id, event: click | add-to-cart | purchase, product_id?, value?}
   POST /flush       write buffered log records now (and publish the logs dataset with {"publish": true})
   GET  /healthz     what is loaded, uptime, requests served, and when it stops by itself. No secrets.
@@ -23,6 +25,11 @@ to the candidate when a hash of its session id (else user id, else request id) f
 shopper always sees one arm, and raising the split only ever moves shoppers from baseline to candidate. The arm
 is logged on every request. The control document is re-read every few seconds, so a ramp or a rollback needs no
 redeploy.
+
+Shadow mode. With `shadow` set in the control document, every request is answered with the baseline's ranking,
+exactly as before, while the candidate ranks the same request silently. Both rankings are logged on the request.
+No shopper sees the candidate. It comes before any split: it shows how different the candidate is on the site's
+real queries, and what it costs in response time, at no risk.
 
 Logging. Every request is logged with the feature rows it served (logs.py). Records are buffered, written as
 write-once chunks, and published as a version of the project's staging-logs dataset every few minutes. In the
@@ -80,6 +87,8 @@ class Arm:
         self.name, self.pipeline, self.engine = name, spec["pipeline"], engine
         self.names = list(getattr(getattr(engine, "feat", None), "names", None) or [])
         self.kind = spec.get("kind") or "captain"
+        model = getattr(engine, "model", None)
+        self.importance = model.importance() if model is not None and hasattr(model, "importance") else {}
 
     def rank(self, query: str, k: int):
         if hasattr(self.engine, "search_detailed"):
@@ -126,6 +135,8 @@ class Runtime:
         self.started = self.last_used = self.last_flush = self.last_publish = clock()
         self.started_at = _now()
         self.requests = self.outcomes = 0
+        self.by_traffic = {k: 0 for k in L.TRAFFIC}  # how many requests of each kind: only "real" is a site calling
+        self.last_real_at: str | None = None
         self._lock = threading.Lock()
         self._req: list[dict] = []
         self._out: list[dict] = []
@@ -176,27 +187,48 @@ class Runtime:
         ctl = self.control()
         if arm is not None and arm not in self.arms:
             raise ValueError(f"this endpoint has no {arm} arm. Loaded: {', '.join(self.arms)}")
-        name = arm or assign(ctl, self.arms, str(session or user or rid))
+        shadowing = arm is None and bool(ctl.get("shadow")) and {"baseline", "candidate"} <= set(self.arms)
+        name = arm or ("baseline" if shadowing else assign(ctl, self.arms, str(session or user or rid)))
         a = self.arms[name]
         t0 = time.perf_counter()
         ranked, feats = a.rank(query, k)
         ms = round((time.perf_counter() - t0) * 1000, 3)
         ids = [str(p) for p, _ in ranked]
+        shadow = None
+        if shadowing:  # the candidate ranks the same request, and nobody sees it
+            c = self.arms["candidate"]
+            t1 = time.perf_counter()
+            try:
+                c_ranked, _ = c.rank(query, k)
+                shadow = {"arm": "candidate", "model_version": c.pipeline, "ids": [str(p) for p, _ in c_ranked],
+                          "ms": round((time.perf_counter() - t1) * 1000, 3), "id": ctl.get("shadow")}
+            except Exception as e:  # noqa: BLE001  a candidate that breaks must never break the answer the site gets
+                shadow = {"arm": "candidate", "model_version": c.pipeline, "ids": [], "ms": None, "id": ctl.get("shadow"),
+                          "error": str(e)[:200]}
         rec = {"request_id": rid, "ts": _now(), "query": query, "k": k, "user_id": user, "session_id": session,
                "arm": name, "model_version": a.pipeline, "ids": ids,
                "scores": [None if s is None else round(float(s), 6) for _, s in ranked],
                "features": {p: feats[p] for p in ids[:LOG_TOP] if p in feats}, "ms": ms, "traffic": traffic,
                "experiment": ctl.get("experiment") if arm is None and ctl.get("split") is not None else None,
                "forced": arm is not None}
+        if shadow:
+            rec["shadow"] = shadow
         with self._lock:
             self._req.append(rec)
             self.requests += 1
+            self.by_traffic[traffic] += 1
+            if traffic == "real":
+                self.last_real_at = rec["ts"]
             self.last_used = self.clock()
             self._seen[rid] = name
             if len(self._seen) > 50_000:
                 for old in list(self._seen)[:10_000]:
                     del self._seen[old]
-        return {"request_id": rid, "ids": ids, "scores": rec["scores"], "arm": name, "model_version": a.pipeline, "ms": ms}
+        out = {"request_id": rid, "ids": ids, "scores": rec["scores"], "arm": name, "model_version": a.pipeline, "ms": ms}
+        if body.get("explain"):
+            out["signals"] = {p: dict(zip(a.names, feats[p])) for p in ids if p in feats}
+            out["importance"] = a.importance
+        return out
 
     def outcome(self, body: dict) -> dict:
         rid, ev = str(body.get("request_id") or ""), body.get("event")
@@ -246,7 +278,8 @@ class Runtime:
         return {"ok": self.stopped is None, "project": self.pid, "env": self.env, "stage": self.stage,
                 "arms": {n: a.pipeline for n, a in self.arms.items()}, "serve": ctl.get("serve"), "split": ctl.get("split"),
                 "experiment": ctl.get("experiment"), "started_at": self.started_at, "uptime_s": round(now - self.started),
-                "requests": self.requests, "outcomes": self.outcomes, "idle_s": round(idle),
+                "requests": self.requests, "outcomes": self.outcomes, "traffic": dict(self.by_traffic),
+                "last_real_at": self.last_real_at, "shadow": ctl.get("shadow") or None, "idle_s": round(idle),
                 "idle_minutes": self.idle_minutes, "stops_in_s": max(0, round(self.idle_minutes * 60 - idle)),
                 "stopped": self.stopped}
 
