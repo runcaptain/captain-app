@@ -57,8 +57,11 @@ Only `real` ever counts as REAL_TRAFFIC evidence.
 
 ## Cost, and stopping by itself
 
-Before any cloud deploy Captain shows the instance type, an hourly estimate (US list price: your region and
-discounts change it) and "This keeps billing until you stop it", and starts nothing without a confirm (`--yes`).
+Before any cloud deploy Captain shows the instance type, an hourly estimate and "This keeps billing until you stop
+it", and starts nothing without a confirm (`--yes`). The estimate is the shared one every form uses
+(`POST /api/costs/estimate`, kind `staging`): the live AWS price for the target's region when it can be read, else
+the bundled table with its date. When an endpoint is stopped, what it cost while it was up is recorded on the
+project and counts in the project's running total.
 
 An endpoint stops by itself after 240 minutes with no `/rank` or `/outcome` (`--idle-minutes` changes it). A local
 process exits. In the cloud two things stop it, and one of them is enough:

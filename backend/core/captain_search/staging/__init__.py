@@ -48,11 +48,6 @@ ENV = "staging"
 IDLE_MINUTES = 240
 CAPTAIN_ENGINES = ("local-bm25", "bm25-ltr")
 WRAPPED_ENGINES = ("http", "elastic", "typesense", "algolia", "captain")
-# On-demand list prices for SageMaker real-time endpoints, US East, in dollars an hour. A rough guide only: the
-# team's region and discounts change it. Shown before every cloud deploy.
-PRICES = {"ml.t2.medium": 0.056, "ml.t2.large": 0.111, "ml.t2.xlarge": 0.223, "ml.m5.large": 0.115,
-          "ml.m5.xlarge": 0.23, "ml.m5.2xlarge": 0.461, "ml.c5.large": 0.102, "ml.c5.xlarge": 0.204,
-          "ml.c5.2xlarge": 0.408, "ml.c6i.large": 0.102, "ml.c6i.xlarge": 0.204, "ml.r5.large": 0.151}
 KEEPS_BILLING = "This keeps billing until you stop it."
 
 
@@ -105,34 +100,18 @@ def servable(ctx: Context, pipeline: str) -> dict:
                     "point Captain can load. Use an endpoint you already run, or give a container image that serves it."}
 
 
-def cost(target: dict, ctx: Context | None = None) -> dict:
-    """What a deploy on this target costs to keep up, in words a person reads before confirming. The shared cost
-    estimator (cost_estimates.py) answers when this build has it; the small table here is only the fallback."""
-    try:
-        from .. import cost_estimates as CE
-    except ImportError:
-        CE = None
-    if CE is not None and ctx is not None and target["kind"] != "local":
-        c = target.get("config") or {}
-        try:
-            est = CE.estimate(ctx, "staging", target, {"instances": int(c.get("instance_count") or 1),
-                                                       "instance_type": c.get("instance_type") or "ml.m5.large"})
-            return {"instance_type": c.get("instance_type") or "ml.m5.large", "instance_count": int(c.get("instance_count") or 1),
-                    "hourly_usd": est.get("low"), "billing": True, "estimate": est,
-                    "text": f"{est['text']} {KEEPS_BILLING}"}
-        except Exception:  # noqa: BLE001  no price: fall through to the table
-            pass
-    if target["kind"] == "local":
-        return {"instance_type": None, "instance_count": None, "hourly_usd": 0.0, "billing": False,
-                "text": "Runs on this computer. It costs nothing and stops when idle."}
+def cost(target: dict, ctx: Context) -> dict:
+    """What a deploy on this target costs to keep up, in words a person reads before confirming. The number and
+    its sentence come from the shared estimator (cost_estimates.py), so staging and every form agree."""
+    from .. import cost_estimates as CE
+
     c = target.get("config") or {}
-    it = c.get("instance_type") or "ml.m5.large"
-    n = int(c.get("instance_count") or 1)
-    p = PRICES.get(it)
-    each = f"about ${p * n:.2f} an hour" if p is not None else "a price Captain doesn't know"
-    return {"instance_type": it, "instance_count": n, "hourly_usd": round(p * n, 4) if p is not None else None,
-            "billing": True,
-            "text": f"{n} x {it} in your own AWS account: {each} (US list price, your region may differ). {KEEPS_BILLING}"}
+    local = target["kind"] == "local"
+    size = {} if local else {"instances": int(c.get("instance_count") or 1), "instance_type": c.get("instance_type") or "ml.m5.large"}
+    est = CE.estimate(ctx, "staging", target, size)
+    return {"instance_type": size.get("instance_type"), "instance_count": size.get("instances"),
+            "hourly_usd": est.get("low"), "billing": not local, "estimate": est,
+            "text": est["text"] + (" It stops when idle." if local else f" {KEEPS_BILLING}")}
 
 
 # ---- bundle --------------------------------------------------------------------------------------
@@ -586,6 +565,18 @@ def unstage(ctx: Context, pid: str, env: str = ENV, reason: str | None = None) -
                 error=("Captain could not remove: " + ", ".join(f"{r['type']} {r['name']}" for r in left)) if left else None)
     if was != "stopped":
         _note(ctx, pid, f"stopped staging ({rec['stop_reason']})")
+        up = _ago(rec.get("started_at"))
+        if rec.get("kind") != "local" and up is not None:
+            # What it cost while it was up, beside its estimate, and into the project's running total.
+            try:
+                from .. import compute as C2
+                from .. import cost_estimates as CE
+
+                spent = CE.note_actual(ctx, rec["id"], C2.get(ctx, rec["target"]), up, kind="staging", project=pid,
+                                       title=f"Staging {rec.get('model_version')}")
+                rec = _save(ctx, pid, env, spent={"usd": spent.get("usd"), "text": spent.get("text")})
+            except Exception:  # noqa: BLE001  a cost that can't be worked out never blocks a stop
+                pass
 
         def end(doc):  # a test cannot go on without its endpoint
             ab = doc.get("ab") or {}

@@ -87,7 +87,7 @@ def test_stage_on_this_computer_then_rank_then_stop(ws):
     assert r["status"] == "running" and r["kind"] == "local" and r["model_version"] == ws.candidate
     assert r["arms"] == {"candidate": ws.candidate, "baseline": ws.baseline}
     assert r["endpoint"]["url"].startswith("http://127.0.0.1:")  # loopback only
-    assert "key_secret" not in r and r["cost"]["hourly_usd"] == 0.0
+    assert "key_secret" not in r and r["cost"]["hourly_usd"] == 0.0 and r["cost"]["estimate"]["free"]
     rec = SG.state(ws, "shop")
     url, key = rec["endpoint"]["url"], SG._key(rec)
 

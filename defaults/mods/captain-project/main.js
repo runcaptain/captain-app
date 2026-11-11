@@ -96,7 +96,7 @@ export default class ProjectHome extends View {
         ? this.startSteps().map((st) => ({ label: `${st.n} ${st.title}`, done: st.done, action: st.done ? null : st.can ? st.action : null, ...(st.done || st.can ? {} : { waiting_on: st.text }) }))
         : pid && this.stages && this.exps && this.shipPath.status
           ? this.shipPath.steps().map((st) => ({ label: `${st.n} ${st.title}`, done: st.done, action: st.done ? null : st.action, status: st.text, ...(st.waiting_on ? { waiting_on: st.waiting_on } : {}) })) : null;
-      return pid ? { project: { id: pid, name: this.project()?.name ?? null, kind: this.state?.kind ?? null }, candidate: this.open ?? null, steps,
+      return pid ? { project: { id: pid, name: this.project()?.name ?? null, kind: this.state?.kind ?? null }, candidate: this.open ?? null, steps, ...(this.shipPath.costSlice() ? { staging_cost: this.shipPath.costSlice() } : {}),
         next: n ? { text: n.text, label: n.label ?? n.action?.label ?? null, action: n.action ?? null } : null,
         // What the project's runs on the cloud have cost so far, in the services' words.
         cloud_cost: this.costs?.project === pid ? { text: this.costs.text, usd: this.costs.usd ?? null, runs: this.costs.runs ?? 0 } : null } : { showing: "all projects" };

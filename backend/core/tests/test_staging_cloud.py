@@ -187,6 +187,9 @@ def test_stage_query_and_unstage_leave_nothing_behind(ws, aws):  # noqa: F811
 
     out = SG.unstage(ws, "shop")
     assert out["status"] == "stopped" and out["resources"] == []
+    assert out["spent"]["text"].startswith("Cost ") and out["spent"]["usd"] >= 0  # what it cost while it was up
+    from captain_search import cost_estimates as CE
+    assert CE.estimate(ws, "staging", "sm", {"instances": 1, "instance_type": "ml.t2.medium"})["low"] == r["cost"]["hourly_usd"]
     assert not aws.models and not aws.configs and not aws.endpoints
     assert C.tagged(ws, C.get(ws, "sm"), "shop", "staging") == []
 

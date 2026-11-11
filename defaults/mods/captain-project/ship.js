@@ -18,6 +18,7 @@ import { api } from "./kit/cst.js";
 import { Badge, Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { SendToAgent } from "./kit/context.js";
+import { costState, refreshEstimate, CostLine, costSlice } from "./kit/cost.js";
 
 const enc = encodeURIComponent;
 const THUMB = 96;
@@ -47,6 +48,7 @@ export class Ship {
     this.details = false;
     this.result = null; this.asking = false; this.askError = null;
     this.thumbs = new Map(); // image address -> file name | null (failed) | undefined (asked)
+    this.cost = costState(); // what the staged endpoint costs to keep up (POST /api/costs/estimate, kit/cost.js)
     this.ab = null;        // GET /ab: the readout
     this.setup = null;     // the A/B form while it is open: {split, primary, mode}
     this.ask2 = null;      // a ramp or a rollback waiting for a yes: {kind, split?}
@@ -70,10 +72,22 @@ export class Ship {
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(pid)}/staging`, { scoped: false });
       if (this.pid() !== pid) return;
-      if (r.ok) { this.status = r.data; this.problem = null; } else if (!r.starting) this.problem = plainError(r.error, "Captain couldn't read staging.");
+      if (r.ok) { this.status = r.data; this.problem = null; this.price(cx); } else if (!r.starting) this.problem = plainError(r.error, "Captain couldn't read staging.");
       cx.notify();
     });
   }
+
+  /** The estimate for where it runs (or is about to run). Asks the services only when the question changed. */
+  price(cx, where, size) {
+    const s = this.staged();
+    const at = where ?? (s?.status === "running" ? (s.kind === "local" ? "local" : s.target) : null);
+    if (!at) return;
+    const sz = size ?? (s?.cost?.instance_type ? { instances: s.cost.instance_count ?? 1, instance_type: s.cost.instance_type } : {});
+    cx.spawn(async (cx) => { if (await refreshEstimate(this.cost, { kind: "staging", where: at, size: sz })) cx.notify(); });
+  }
+
+  /** For agents: where it runs and the estimate. */
+  costSlice() { return this.running() ? costSlice({ ...this.cost, where: this.staged().kind === "local" ? "local" : this.staged().target }) : null; }
 
   /** From the project's own answer (GET /stages): ask for the details only when something is staged or tested. */
   sync(cx, ship) {
@@ -121,7 +135,12 @@ export class Ship {
     cx.notify();
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(this.pid())}/stage`, { body: { ...body, ...(confirmed ? { confirm: true } : {}) }, scoped: false });
-      if (r.status === 409 && r.data?.needs_confirm) { this.busy = null; this.confirm = { plan: r.data.plan, body }; cx.notify(); return; }
+      if (r.status === 409 && r.data?.needs_confirm) {
+        const p = r.data.plan;
+        this.busy = null; this.confirm = { plan: p, body };
+        this.price(cx, p.target, { instances: p.cost?.instance_count ?? 1, instance_type: p.cost?.instance_type });
+        cx.notify(); return;
+      }
       if (!r.ok) { this.busy = null; this.note = { tone: "fail", text: plainError(r.error, "Staging didn't start. Try again.") }; cx.notify(); return; }
       const cloud = r.data?.plan?.kind && r.data.plan.kind !== "local";
       const done = await this.wait(r.data.job, cloud ? 30 : 3);
@@ -321,11 +340,15 @@ export class Ship {
     if (s && !this.busy) buttons.child(SendToAgent(c, "ship-send", { ref: `staging:${this.pid()}`, kind: "staging", label: `staging for ${page.project()?.name ?? this.pid()}` }));
 
     const lines = [];
-    if (on && s?.cost?.text) lines.push(["cost", s.cost.text]);
+    const costLine = on && !this.confirm ? v_flex().id("ship-line-cost").gap(2)
+      .child(CostLine(c, "ship-cost", this.cost.estimate ?? s?.cost?.estimate ?? { text: s?.cost?.text ?? "", basis: [] }, this.cost, { onToggle: (_e, cx) => { this.cost.open = !this.cost.open; cx.notify(); } }))
+      .when(s?.kind !== "local", (e) => e.child(div().id("ship-cost-billing").text_size(12).text_color(c.grey900).child("This keeps billing until you stop it."))) : null;
+    if (!on && s?.spent?.text) lines.push(["spent", s.spent.text]);
     if (!on && !s) lines.push(["what", "Staging runs a model version as a live endpoint you can try before launch review. It runs in your own cloud, or on this computer."]);
     if (!on && s?.status === "stopped") lines.push(["stopped", `Last staged: ${short(s.model_version)}. ${this.status.text}`]);
     if (this.status?.warning) lines.push(["warning", this.status.warning]);
     const below = v_flex().pl(46).pr(12).pb(12).gap(6)
+      .when(Boolean(costLine), (e) => e.child(costLine))
       .children(lines.map(([k, t]) => div().id(`ship-line-${k}`).text_size(12).line_height("17px").text_color(c.grey900).child(t)))
       .when(Boolean(this.note), (e) => e.child(div().id("ship-note").px(10).py(6).text_size(12).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)
         .text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
@@ -341,7 +364,9 @@ export class Ship {
     const p = this.confirm.plan;
     return v_flex().id("ship-confirm").p(10).gap(6).bg(c.warnLight).border_1().border_color(c.warn)
       .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(`Start ${short(p.model_version)} in your own cloud?`))
-      .child(div().id("ship-confirm-cost").text_size(12).line_height("17px").text_color(c.grey900).child(p.cost?.text ?? "This starts a cloud endpoint that bills until you stop it."))
+      .child(div().id("ship-confirm-where").text_size(12).text_color(c.grey900).child(`${p.cost?.instance_count ?? 1} x ${p.cost?.instance_type ?? "an instance"} on ${p.target}, in your own cloud account.`))
+      .child(CostLine(c, "ship-confirm-cost", this.cost.estimate ?? p.cost?.estimate ?? { text: p.cost?.text ?? "", basis: [] }, this.cost, { onToggle: (_e, cx) => { this.cost.open = !this.cost.open; cx.notify(); } }))
+      .child(div().id("ship-confirm-billing").text_size(12).font_medium().text_color(c.navy).child("This keeps billing until you stop it."))
       .children([...(p.warnings ?? []), p.preflight?.note].filter(Boolean).map((w, i) => div().id(`ship-confirm-warning-${i}`).text_size(12).line_height("17px").font_medium().text_color(c.fail).child(w)))
       .child(div().text_size(12).line_height("17px").text_color(c.grey900).child(`Captain stops it after ${span((this.staged()?.idle_minutes ?? 240) * 60)} with no requests, as long as Captain or the endpoint itself can reach your cloud.`))
       .child(h_flex().gap(6)
