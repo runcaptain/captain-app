@@ -114,7 +114,9 @@ class ECSProvider(_AWS):
             return status("failed", "ECS no longer reports this task. It forgets stopped tasks after about an hour, "
                                     "so its last state was not recorded. The logs still show what it did.")
         t = r["tasks"][0]
-        times = {"started_at": _iso(t.get("startedAt")), "finished_at": _iso(t.get("stoppedAt"))}
+        # Fargate bills from the start of the image pull, a little before the container starts.
+        times = {"started_at": _iso(t.get("startedAt")), "finished_at": _iso(t.get("stoppedAt")),
+                 "billed_from": _iso(t.get("pullStartedAt"))}
         last = t.get("lastStatus")
         if last in ("PROVISIONING", "PENDING", "ACTIVATING"):
             return status("queued", f"Fargate is starting the task ({last.lower()})", **times)

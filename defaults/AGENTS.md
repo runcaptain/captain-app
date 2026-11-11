@@ -1129,6 +1129,31 @@ The page links to Workflows, which also opens from the palette ("Open workflows"
 `captain-forms` tasks (`pin`, `generate-events`, `experiment`, `import-version`, `publish`, `champion`) opened with
 `props: {task, values}`; a failed launch criterion and a decision to go on offer their next step.
 
+## What work costs on a cloud
+
+Every form that can run work on a cloud has one row, **Runs on**: "This computer" (free) or a place added in Cloud
+and compute, with the estimate beside it and "How this is estimated" under it (the machine, its price, where the
+price came from, how the time was worked out). New candidate, Run an offline evaluation, Generate synthetic events,
+Start rating, retrain, workflows and snapshots from a connection all show it (kit `cost.js`: `RunsOn`, `CostLine`).
+
+- `cst costs estimate <kind> --where <place> --size name=value` prints the same estimate and its basis. Kinds:
+  `training`, `evaluation`, `synthetic-events`, `snapshot`, `judging`, `staging`, `workflow`. `--project <id>` takes
+  the size from a project's starter ranker plan. The route is `POST /api/costs/estimate`.
+- This computer is free. AWS prices are read from AWS's own price list when the login allows, else from a bundled
+  table that says its date ("Estimate, prices as of 2026-11-10."). Places Captain has never run a real job on say
+  "No estimate for <provider> yet". A warehouse query says "Billed by your warehouse. Captain can't estimate it."
+  unless the warehouse can price it without running it (BigQuery: bytes scanned).
+- Above the amount in Settings ("Ask before starting work that costs more than", $5 at first,
+  `cst costs confirm-above 10`), a form repeats the number and asks again before it starts.
+- A finished run on a cloud keeps what it cost ("Cost about $0.42 (12 min on aws-batch)"): on its job in Runs, on
+  the candidate's row, in Recent changes, and in the project's running total (`cst costs project <id>`,
+  `cst costs runs`). The dollars are computed from the run time and the machine's price. They are not a bill.
+- The open form publishes the chosen place and the estimate (`runs_on` in `cst app context`), so say what a run
+  would cost before you start one for someone.
+- `cst projects starter-train <project> --compute <place>` trains the starter ranker on that place: the job reads
+  the inputs from the workspace bucket, and the candidate joins the project when it finishes (`--wait` to wait).
+  A workspace kept on this computer's disk can't train on a cloud, and says so.
+
 ## Synthetic shopper events
 
 A project with a catalog and no traffic yet can train on generated events. On the project page, an empty events

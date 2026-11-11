@@ -12,6 +12,7 @@ import { Brand } from "./kit/brands.js";
 import { TASKS } from "./tasks.js";
 import { recordsChanged } from "./kit/cst.js";
 import { watchView, publishView, safeFields } from "./kit/view.js";
+import { costState, loadPlaces, refreshEstimate, needsConfirm, costSlice, RunsOn, LOCAL } from "./kit/cost.js";
 
 const IMPORT = { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} };
 
@@ -44,6 +45,8 @@ export default class CaptainForms extends View {
     this.options = {};
     this.ctx = { args: props()?.args ?? {} };
     this.errors = {};
+    // Where the work runs and what it costs there (kit cost.js), for a task with a "runs-on" field.
+    this.cost = costState(this.values.compute || LOCAL);
     if (this.task) this.start(cx);
   }
 
@@ -53,7 +56,14 @@ export default class CaptainForms extends View {
     // The form open over the page and what is filled in, for agents (cst app context). A secret field reads
     // "(hidden)": its value never leaves this form.
     watchView(cx, "dialog", () => ({ mod: "captain-forms", form: this.task.id, title: this.task.label,
-      fields: safeFields(this.values, this.shown().filter((f) => f.kind === "secret").map((f) => f.key)) }));
+      fields: safeFields(this.values, this.shown().filter((f) => f.kind === "secret").map((f) => f.key)),
+      // The place the work is set to run and its estimate, so an agent can say what starting it would cost.
+      ...(this.runsOn() ? { runs_on: costSlice(this.cost) } : {}) }));
+    if (this.task.fields.some((f) => f.kind === "runs-on")) {
+      cx.spawn(async (cx) => { await loadPlaces(this.cost); cx.notify(); });
+      // The estimate follows what is filled in: asked again only when the place or the size changed.
+      cx.timer.every(500, (cx) => this.priceNow(cx));
+    }
     // A default can depend on what the caller preset (New candidate opens on your own command when a ranker is named).
     for (const f of this.task.fields) if (f.default !== undefined) this.values[f.key] ??= typeof f.default === "function" ? f.default(this.values) : f.default;
     // Text inputs keep state, which gpui-kit only lets a view create outside render.
@@ -69,6 +79,18 @@ export default class CaptainForms extends View {
       }
       await this.loadOptions(cx);
     });
+  }
+
+  /** The "runs-on" field shown now, if the task has one. */
+  runsOn() { return this.task ? this.shown().find((f) => f.kind === "runs-on") ?? null : null; }
+
+  priceNow(cx) {
+    const f = this.runsOn();
+    const want = f ? f.cost?.(this.values, this.ctx) ?? null : null;
+    const fixed = f && (typeof f.fixed === "function" ? f.fixed(this.values, this.ctx) : f.fixed);
+    if (fixed && this.cost.where !== LOCAL) this.cost.where = LOCAL;
+    this.values.compute = this.cost.where === LOCAL ? undefined : this.cost.where;
+    cx.spawn(async (cx) => { if (await refreshEstimate(this.cost, want ? { ...want, where: want.where ?? this.cost.where } : null)) cx.notify(); });
   }
 
   /** A choice clicked: show it now, then reload what depends on it. The click's cx is good only during the click, so
@@ -101,7 +123,7 @@ export default class CaptainForms extends View {
   /** Make the input state for every text field that's shown now. Never call it from render. */
   ensureStates() {
     for (const f of this.shown()) {
-      if (f.kind === "choice" || f.kind === "toggle" || f.kind === "note" || this.states[f.key]) continue;
+      if (f.kind === "choice" || f.kind === "toggle" || f.kind === "note" || f.kind === "runs-on" || this.states[f.key]) continue;
       const long = f.kind === "long";
       // "e.g." so an example never reads as a value that's already filled in.
       const hint = f.placeholder ? `e.g. ${f.placeholder}` : "";
@@ -189,6 +211,15 @@ export default class CaptainForms extends View {
       .child(div().text_size(13).font_medium().text_color(c.navy).child(f.label))
       .when(Boolean(f.optional), (e) => e.child(div().text_size(11.5).text_color(c.grey500).child("optional")));
     let control;
+    if (f.kind === "runs-on") {
+      const fixed = typeof f.fixed === "function" ? f.fixed(this.values, this.ctx) : f.fixed;
+      const note = typeof f.note === "function" ? f.note(this.values, this.ctx, this.cost) : f.note;
+      return RunsOn(c, `f-${f.key}`, this.cost, {
+        onPick: (p, _e, cx) => { if (this.cost.where !== p.value) this.cost.estimate = null; this.cost.where = p.value; this.cost.confirming = false; cx.notify(); this.priceNow(cx); },
+        onToggle: (_e, cx) => { this.cost.open = !this.cost.open; cx.notify(); },
+        onAdd: () => { this.close(); openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "compute" } }); },
+      }, { fixed: Boolean(fixed), note: note ?? null });
+    }
     if (f.kind === "note") {
       // What this choice will do, in lines the services wrote: nothing to fill in. A line can warn.
       const lines = (f.lines(this.ctx, this.values) ?? []).filter((l) => l?.text);
@@ -241,6 +272,8 @@ export default class CaptainForms extends View {
       if (f.required && (v === undefined || v === null || String(v).trim() === "")) this.errors[f.key] = `${f.label} is needed.`;
     }
     if (Object.keys(this.errors).length) { cx.notify(); return; }
+    // Above the amount set in Settings, the first click only repeats the number. The second starts it.
+    if (this.runsOn() && needsConfirm(this.cost)) { this.cost.confirming = true; cx.notify(); return; }
     this.busy = true; this.result = null;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -327,6 +360,6 @@ export default class CaptainForms extends View {
         .when(Boolean(this.result?.next ?? this.done?.next), (e) => e.child(this.nextStep(c, this.result?.next ?? this.done?.next))))
       .child(h_flex().h(60).flex_none().px(20).gap(8).items_center().justify_end().border_t(1).border_color(c.rule)
         .child(Button(c, "form-cancel", "Cancel", () => this.close()))
-        .child(this.done ? Button(c, "form-done", "Close", () => this.close()) : Button(c, "form-go", this.busy ? (t.busy?.(this.values) ?? "Working...") : (t.go?.(this.values, this.ctx) ?? t.label), (_e, cx) => this.submit(cx), { kind: "primary", disabled: Boolean(this.busy) || Boolean(t.blocked?.(this.values, this.ctx)) })));
+        .child(this.done ? Button(c, "form-done", "Close", () => this.close()) : Button(c, "form-go", this.busy ? (t.busy?.(this.values) ?? "Working...") : this.cost.confirming ? "Start anyway" : (t.go?.(this.values, this.ctx) ?? t.label), (_e, cx) => this.submit(cx), { kind: "primary", disabled: Boolean(this.busy) || Boolean(t.blocked?.(this.values, this.ctx)) })));
   }
 }

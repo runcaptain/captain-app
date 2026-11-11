@@ -436,8 +436,11 @@ def starter_plan(name: str):
 
 @projects_app.command("starter-train")
 def starter_train(name: str,
-                  param: list[str] = typer.Option([], "--param", help="trainer setting, name=value (rounds, learning_rate, num_leaves). Repeat")):
-    """Train a starter ranker with no code: build the training set, train LightGBM on it, record the candidate."""
+                  param: list[str] = typer.Option([], "--param", help="trainer setting, name=value (rounds, learning_rate, num_leaves). Repeat"),
+                  compute: Optional[str] = typer.Option(None, "--compute", help="compute target to train on; default this computer"),
+                  wait: bool = typer.Option(False, "--wait", help="with --compute: wait for the job and print the candidate and its cost")):
+    """Train a starter ranker with no code: build the training set, train LightGBM on it, record the candidate.
+    With --compute the same work runs as a job on that target, reading the inputs from the workspace bucket."""
     import json as _json
 
     from .. import live as LV
@@ -454,12 +457,30 @@ def starter_train(name: str,
             params[k] = _json.loads(v)
         except ValueError:
             params[k] = v
+    import os
+
+    cloud = bool(compute) and compute != "local" and not os.environ.get("CST_JOB_ID")
+    if cloud:
+        if not S.dry_run:
+            _by_hand(c, name, f"train a candidate on {compute}")
+        r = _do(ST.train_on, c, name, compute, params=params or None, dry_run=S.dry_run, wait=wait)
+        est = (r.get("estimate") or {}).get("text") or ""
+        if S.dry_run:
+            emit(r, f"Would train a starter ranker for {name} on {compute}. {est}".strip())
+        elif r.get("pending"):
+            emit(r, f"{r['text']}\n{r['detail']}")
+        else:
+            cost = (r.get("cost") or {}).get("text")
+            emit(r, f"Trained {r['pipeline']} on {compute}. Candidate {r['experiment']}."
+                    + (f"\nEstimate: {est}" if est else "") + (f"\n{cost}." if cost else ""))
+        return
     if S.dry_run:
         p = _do(ST.plan, c, name)
         emit({**p, "dry_run": True}, p["text"] if not p["ready"] else f"Would train a starter ranker on {p['catalog']}"
              + (f" and {p['events']}" if p["events"] else "") + ".")
         return
-    _by_hand(c, name, "train a candidate")
+    if not os.environ.get("CST_JOB_ID"):  # inside a submitted job the person's go-ahead was given at submit
+        _by_hand(c, name, "train a candidate")
     lv = LV.for_job(c, "training", f"Starter ranker for {name}", of=name)
     try:
         r = ST.train(c, name, live=lv, params=params, progress=None if S.json else lambda t: typer.echo(t, err=True))

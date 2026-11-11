@@ -2,8 +2,10 @@
 // GET /api/services (names and kinds only, never a secret): storage, database connections, compute (and which one
 // backtests and serving use by default, PUT /api/settings/compute), model registries, MLflow and model keys.
 // "Check all" asks each one whether it answers now (?check=true). Edit and Add open the designed forms (captain-forms).
+// Under Compute, Costs: the estimate above which Captain asks again before starting work on your cloud
+// (GET /api/settings, PUT /api/settings/costs).
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, props, openOverlay, run } from "herdr";
 import { api, watchWorkspace, watchConnections } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
@@ -23,8 +25,12 @@ export default class CaptainServices extends View {
     this.checked = false;
     this.saving = null;
     this.addOpen = Boolean(props()?.addCompute);
+    // The amount, in dollars, above which a form asks again before it starts work on your cloud.
+    this.askAbove = InputState.new({ placeholder: "5" });
+    this.askSaved = null; this.askNote = null; this.askSaving = false;
     this.load(cx, Boolean(props()?.check));
-    watchWorkspace(cx, (cx) => this.load(cx));
+    this.loadCosts(cx);
+    watchWorkspace(cx, (cx) => { this.load(cx); this.loadCosts(cx); });
     watchConnections?.(cx, (cx) => this.load(cx));
   }
 
@@ -37,6 +43,51 @@ export default class CaptainServices extends View {
       this.checking = false;
       cx.notify();
     });
+  }
+
+  loadCosts(cx) {
+    cx.spawn(async (cx) => {
+      const r = await api("/api/settings", { scoped: false });
+      if (!r.ok) return;
+      this.askSaved = r.data?.costs?.confirm_above_usd ?? 5;
+      this.askAbove.set_value(String(this.askSaved));
+      this.askNote = null;
+      cx.notify();
+    });
+  }
+
+  saveCosts(cx) {
+    const raw = this.askAbove.value().trim().replace(/^\$/, "").replace(/,/g, "");
+    const v = Number(raw);
+    if (raw === "" || !Number.isFinite(v) || v < 0) { this.askNote = { text: "Type an amount in dollars, like 5.", tone: "fail" }; cx.notify(); return; }
+    this.askSaving = true; this.askNote = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api("/api/settings/costs", { method: "PUT", body: { confirm_above_usd: v }, scoped: false });
+      this.askSaving = false;
+      if (r.ok) {
+        this.askSaved = r.data?.costs?.confirm_above_usd ?? v;
+        this.askAbove.set_value(String(this.askSaved));
+        this.askNote = { text: this.askSaved === 0 ? "Saved. Captain asks every time work would run on your cloud." : "Saved.", tone: "good" };
+      } else this.askNote = { text: r.status ? "Couldn't save that amount. Type a number of dollars, like 5." : "Couldn't save that amount. Try again in a moment.", tone: "fail" };
+      cx.notify();
+    });
+  }
+
+  costs(c) {
+    const note = this.askNote;
+    return v_flex().id("sec-costs").w_full().gap(6)
+      .child(v_flex()
+        .child(div().text_size(14).font_semibold().text_color(c.navy).child("Costs"))
+        .child(div().text_size(12).text_color(c.grey500).child("Applies to anything that runs on your cloud. Estimates under this start without asking.")))
+      .child(h_flex().w_full().flex_wrap().px(12).py(10).gap(8).items_center().border_1().border_color(c.rule).bg(c.surface)
+        .child(div().text_size(12.5).text_color(c.grey900).child("Ask before starting work that costs more than"))
+        .child(h_flex().id("ask-above").w(110).h(28).px(8).gap(4).items_center().border_1().border_color(c.grey300)
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .child(div().flex_none().text_size(12.5).text_color(c.grey500).child("$"))
+          .child(Input.new(this.askAbove).w_full().text_size(12.5).text_color(c.navy)))
+        .child(Button(c, "ask-above-save", this.askSaving ? "Saving..." : "Save", (_e, cx) => { if (!this.askSaving) this.saveCosts(cx); }, { small: true }))
+        .when(Boolean(note), (e) => e.child(div().id("ask-above-note").text_size(12).text_color(note.tone === "fail" ? c.fail : c.good).child(note.text))));
   }
 
   setDefault(cx, purpose, name) {
@@ -159,6 +210,7 @@ export default class CaptainServices extends View {
       .child(this.section(c, "connections", "Database connections", "Databases Captain reads from (and writes to, where allowed).", conns,
         Button(c, "add-database", "Connect a database", () => form("database"), { small: true })))
       .child(this.compute(c, d.compute ?? {}))
+      .child(this.costs(c))
       .child(this.section(c, "registries", "Model registries", "Where your trained models live, by brand.", (d.registries ?? []).map((r, i) => this.row(c, `reg-${i}`, {
         ic: r.provider ?? r.kind ?? "cloud", name: r.name ?? r.uri ?? `registry ${i + 1}`, sub: [r.kind, r.brand].filter(Boolean).join(", "),
         status: div().text_color(c.grey500).child(r.uri ?? ""),

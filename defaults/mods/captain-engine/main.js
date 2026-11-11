@@ -15,6 +15,7 @@ import { Button, Badge, Tabs, Empty, Skeleton, Problem } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { nodeName } from "./kit/scopes.js";
 import { int } from "./kit/num.js";
+import { costState, loadPlaces, refreshEstimate, needsConfirm, RunsOn, LOCAL } from "./kit/cost.js";
 
 const TABS = [["overview", "Overview"], ["investigations", "Experiments"], ["experiments", "Offline evaluations"], ["runs", "Runs"],
   ["evaluations", "Rating"], ["datasets", "Datasets"], ["signals", "Signals"], ["versions", "Versions"]];
@@ -26,6 +27,13 @@ export default class Engine extends View {
   init(_props, cx) {
     this.tab = "overview";
     this.engine = null; this.data = {}; this.where = [];
+    // Retrain asks first where it runs and what that costs (kit cost.js): the row opens under the version picked.
+    this.cost = costState();
+    this.asking = null; // the model version whose "Runs on" row is open
+    cx.timer.every(500, (cx) => {
+      if (!this.asking) return;
+      cx.spawn(async (cx) => { if (await refreshEstimate(this.cost, { kind: "training", size: { how: "command" } })) cx.notify(); });
+    });
     this.load(cx);
     watchScope(cx, (cx) => { this.tab = "overview"; this.load(cx); });
     watchWorkspace(cx, (cx) => this.load(cx));
@@ -58,13 +66,29 @@ export default class Engine extends View {
     cx.notify();
   }
 
-  /** Retrain a pipeline from its declared training command, then watch it in Runs, live. */
+  /** Retrain clicked: first show where it would run and what that costs. Nothing starts yet. */
+  askRetrain(cx, x) {
+    if (this.retraining) return;
+    if (this.asking === x.name) { this.asking = null; cx.notify(); return; }
+    this.asking = x.name;
+    this.cost.confirming = false; this.cost.estimate = null; this.cost.asked = null;
+    // It opens on the place the training command declares, else this computer. The place shown is the place sent.
+    this.cost.where = x.train_compute && (this.cost.places ?? []).some((p) => p.value === x.train_compute) ? x.train_compute : LOCAL;
+    cx.spawn(async (cx) => { if (!this.cost.places) await loadPlaces(this.cost); cx.notify(); });
+    cx.notify();
+  }
+
+  /** Retrain a pipeline from its declared training command, then watch it in Runs, live. Above the amount set in
+   *  Settings, the first click only repeats the number. The second starts it. */
   retrain(cx, x) {
     if (this.retraining) return;
+    if (needsConfirm(this.cost)) { this.cost.confirming = true; cx.notify(); return; }
     this.retraining = x.name;
+    const compute = this.cost.where === LOCAL ? "local" : this.cost.where;
     cx.spawn(async (cx) => {
-      const r = await api(`/api/pipelines/${x.name.split("/").map(encodeURIComponent).join("/")}/retrain`, { body: {} });
+      const r = await api(`/api/pipelines/${x.name.split("/").map(encodeURIComponent).join("/")}/retrain`, { body: { compute } });
       this.retraining = null;
+      this.asking = null; this.cost.confirming = false;
       if (r.ok && r.data?.live) {
         setShared("captain.open", { section: "runs", live: r.data.live, at: Date.now() });
         run("layout.select", { stack: "sections", child: "runs" });
@@ -164,12 +188,22 @@ export default class Engine extends View {
     const pipes = list(p), models = list(m) ?? [];
     return v_flex().w_full()
       .child(div().px(14).py(8).text_size(12).font_semibold().text_color(c.grey500).child("MODEL VERSIONS"))
-      .child(pipes.length ? v_flex().border_t(1).border_color(c.rule).children(pipes.map((x, i) => h_flex().child(div().flex_1().min_w(0).child(this.row(c, `eng-pl-${i}`, `${x.name}@v${x.latest ?? 1}`, x.description ?? "", [x.engine, x.repro_status && x.repro_status.replace(/-/g, " ")])))
+      .child(pipes.length ? v_flex().border_t(1).border_color(c.rule).children(pipes.map((x, i) => v_flex().child(h_flex().child(div().flex_1().min_w(0).child(this.row(c, `eng-pl-${i}`, `${x.name}@v${x.latest ?? 1}`, x.description ?? "", [x.engine, x.repro_status && x.repro_status.replace(/-/g, " ")])))
         // A pipeline that declares its training command can retrain from here; Runs opens on it, live.
         .when(!!x.trains, (e) => e.child(div().id(`eng-retrain-${i}`).px(10).text_size(12).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
-          .on_click((_e, cx) => this.retrain(cx, x)).child(this.retraining === x.name ? "Starting..." : "Retrain")))
+          .on_click((_e, cx) => this.askRetrain(cx, x)).child(this.retraining === x.name ? "Starting..." : "Retrain")))
         .child(div().id(`eng-whatif-${i}`).px(14).text_size(12).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
-          .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: x.name } })).child("Evaluation settings"))))
+          .on_click(() => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: x.name } })).child("Evaluation settings")))
+        // Before it starts: where it trains and what that costs, then the button that starts it.
+        .when(this.asking === x.name, (e) => e.child(v_flex().id(`eng-retrain-ask-${i}`).px(14).pb(12).gap(8)
+          .child(RunsOn(c, "eng-runs-on", this.cost, {
+            onPick: (p, _e, cx) => { if (this.cost.where !== p.value) this.cost.estimate = null; this.cost.where = p.value; this.cost.confirming = false; cx.notify(); },
+            onToggle: (_e, cx) => { this.cost.open = !this.cost.open; cx.notify(); },
+            onAdd: () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "compute" } }),
+          }, { note: "It retrains from the training command this model version declares. Runs opens on it, live." }))
+          .child(h_flex().gap(8)
+            .child(Button(c, "eng-retrain-go", this.retraining === x.name ? "Starting..." : this.cost.confirming ? "Start anyway" : "Start retraining", (_e, cx) => this.retrain(cx, x), { kind: "primary", small: true, disabled: Boolean(this.retraining) }))
+            .child(Button(c, "eng-retrain-cancel", "Not now", (_e, cx) => { this.asking = null; this.cost.confirming = false; cx.notify(); }, { small: true, kind: "quiet" })))))))
         : div().px(14).pb(8).text_size(12.5).text_color(c.grey500).child("No model versions here yet."))
       .child(div().px(14).pt(14).pb(8).text_size(12).font_semibold().text_color(c.grey500).child("MODELS"))
       .child(models.length ? v_flex().border_t(1).border_color(c.rule).children(models.map((x, i) => this.row(c, `eng-md-${i}`, x.name ?? x.id, [x.architecture, x.brand].filter(Boolean).join(", "), [x.version != null ? `v${x.version}` : null, when(x.created)])))

@@ -156,12 +156,13 @@ def plan_and_job(ctx: Context, target: dict, args: list[str], label: str, backte
 
 
 def submit_job(ctx: Context, target: dict, args: list[str], label: str, backtest: str | None = None,
-               kind: str = "job", job: P.Job | None = None) -> dict:
-    """Submit and record one job. Returns the job record (jobs.py)."""
+               kind: str = "job", job: P.Job | None = None, meta: dict | None = None) -> dict:
+    """Submit and record one job. Returns the job record (jobs.py). `meta` ({project?, cost_kind?, size?}) is kept
+    on the record so its cost lands on the right project when it finishes."""
     from . import jobs as J
 
     job = job or make_job(ctx, target, args, label, backtest=backtest)
-    return J.submit(ctx, target, job, kind=kind)
+    return J.submit(ctx, target, job, kind=kind, meta=meta)
 
 
 def provider_job(h: dict | None) -> str | None:

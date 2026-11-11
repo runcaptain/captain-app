@@ -161,15 +161,159 @@ def plan(ctx: Context, pid: str) -> dict:
         out["baseline"] = {"will_set": bp["ready"], "name": bp["name"],
                            "text": "No baseline yet, so keyword search is set as the baseline first." if bp["ready"] else bp["text"]}
     out["features"] = F.feature_names(spec, bool(cut))
+    out["size"] = _size(ctx, catalog, events, labels)
     return {**out, "ready": True,
             "text": "Learns to rank from your " + ("clicks" if out["labels_from"] == "clicks" else "judgments")
                     + ". Keyword search finds the candidates and the model reorders the top "
                     + f"{TOP_K}."}
 
 
+def _size(ctx: Context, catalog: str | None, events: str | None, labels: str | None) -> dict:
+    """What decides how long training takes, for the cost estimate: the rows it reads."""
+    def rows(ref_):
+        try:
+            return int(ctx.registry.resolve("dataset", ref_)[0].row_count or 0) if ref_ else 0
+        except Exception:  # noqa: BLE001
+            return 0
+
+    return {"how": "starter", "rows": rows(events) or rows(labels), "catalog_rows": rows(catalog)}
+
+
+CLOUD_WORKSPACE = ("Cloud training needs a cloud workspace. This workspace is kept on this computer's disk, and a "
+                   "cloud machine can't read it. Make the workspace in a bucket (s3://, gs:// or az://), or train on "
+                   "this computer.")
+
+
+def train_on(ctx: Context, pid: str, compute: str, params: dict | None = None, dry_run: bool = False,
+             live_id: str | None = None, wait: bool = False, wait_timeout_s: float | None = None) -> dict:
+    """Train the starter ranker as a job on a compute target. The job runs the same `projects starter-train` in the
+    runner image: it reads the inputs from the workspace bucket, builds the training set, trains, and records the
+    candidate there. Nothing large comes to this computer. Returns at once with {pending: true, job, live_id}: the
+    candidate does not exist until the job finishes. `wait` polls the job and returns what it recorded."""
+    import json
+
+    from . import compute as C
+    from . import cost_estimates as CE
+    from . import live as LV
+
+    target = C.get(ctx, compute)
+    if target["kind"] == "local":
+        raise ValueError("local is this computer. Leave the compute target out to train here.")
+    if ctx.workspace.storage_uri.split("://")[0] not in ("s3", "gs", "gcs", "az", "azure"):
+        raise ValueError(CLOUD_WORKSPACE)
+    p = plan(ctx, pid)
+    if not p["ready"]:
+        raise ValueError(p["text"])
+    args = ["projects", "starter-train", pid]
+    for k, v in (params or {}).items():
+        args += ["--param", f"{k}={json.dumps(v)}"]
+    est = CE.estimate(ctx, "training", target, p["size"])
+    plan_, job = C.plan_and_job(ctx, target, args, label=f"starter-{pid}"[:60])
+    if dry_run:
+        return {"pending": False, "dry_run": True, "project": pid, "compute": target["name"], "plan": plan_,
+                "estimate": est, "size": p["size"]}
+    live_id = live_id or LV.start_remote(ctx, "training", f"Starter ranker for {pid}", of=pid, where=target["name"])
+    job.env["CST_LIVE_ID"] = live_id
+    try:
+        rec = C.submit_job(ctx, target, job.argv, label=job.label, kind="starter-train", job=job,
+                           meta={"project": pid, "cost_kind": "training", "size": p["size"]})
+    except Exception as e:
+        LV.note_remote(ctx, live_id, status="failed", error=f"Couldn't submit the job: {e}")
+        raise
+    LV.note_remote(ctx, live_id, job=rec["id"])
+    CE.note_estimate(ctx, rec["id"], est, kind="training", size=p["size"], project=pid,
+                     title=f"Starter ranker for {pid}", target=target)
+    from . import project_state as PS_
+
+    PS_.record_change(ctx, pid, {"by": _who(), "what": f"started training a starter ranker on {target['name']}",
+                                 "job": rec["id"], "estimate": est.get("text")})
+    if wait:
+        return {**wait_job(ctx, pid, rec["id"], wait_timeout_s), "live_id": live_id, "estimate": est}
+    return {"pending": True, "project": pid, "job": rec["id"], "live_id": live_id, "compute": target["name"],
+            "estimate": est, "simulated": p["simulated"],
+            "submitted": {"provider_job": C.provider_job(rec["handle"]), "job": rec["id"]},
+            "text": f"Training on {target['name']}. The candidate joins the project when the job finishes. "
+                    f"{est.get('text') or ''}".strip(),
+            "detail": f"Follow it with `cst job show {rec['id']}`."}
+
+
+def _who() -> str:
+    from .workspace import whoami
+
+    return whoami()
+
+
+def wait_job(ctx: Context, pid: str, job_id: str, timeout_s: float | None = None) -> dict:
+    """Poll a starter-train job until it finishes and return the candidate it recorded, with what it cost. Fails if
+    the job failed, or finished without recording a candidate."""
+    import time
+
+    from . import compute_providers as P
+    from . import jobs as J
+    from . import retrain as RT
+
+    t0 = time.time()
+    while True:
+        r = J.show(ctx, job_id)
+        if r["state"] in P.TERMINAL:
+            break
+        if timeout_s is not None and time.time() - t0 > timeout_s:
+            raise TimeoutError(f"job {job_id} is still {r['state']} after {timeout_s:.0f} s. "
+                               f"Follow it with `cst job show {job_id} --wait`.")
+        time.sleep(RT.POLL_S)
+    if r["state"] != "succeeded":
+        raise ValueError(f"the training job {job_id} {r['state']}: {r.get('reason') or 'no reason given'}")
+    res = r.get("result")
+    if not res or not res.get("pipeline"):
+        raise ValueError(f"the training job {job_id} finished but recorded no candidate. Check `cst job logs {job_id}`.")
+    settle(ctx, pid, r)
+    return {"pending": False, "job": job_id, "compute": r.get("target"), "cost": r.get("cost"), **res}
+
+
+def settle(ctx: Context, pid: str, job: dict) -> None:
+    """Put a finished training job's cost on its candidate and in the project's history, once."""
+    from . import project_state as PS_
+
+    cost, res = job.get("cost"), job.get("result") or {}
+    if not cost or not res.get("experiment"):
+        return
+    try:
+        exp = PS_._exp(PS_.get(ctx, pid), res["experiment"])
+    except Exception:  # noqa: BLE001  the candidate was removed meanwhile
+        return
+    if exp.get("cost"):
+        return
+    PS_.experiment_record(ctx, pid, res["experiment"], cost=cost, train_job=job["id"])
+    PS_.record_change(ctx, pid, {"by": job.get("submitted_by") or _who(),
+                                 "what": f"trained {res.get('pipeline')} on {job.get('target')}", "job": job["id"],
+                                 "cost": cost.get("text")})
+
+
+def settle_all(ctx: Context, pid: str) -> int:
+    """Ask after this project's training jobs that were still running, and settle the ones that finished. The
+    project page calls this, so a candidate trained on a cloud gets its cost without anyone waiting on the job."""
+    from . import compute_providers as P
+    from . import jobs as J
+
+    n = 0
+    for rec in J.listing(ctx, limit=100):
+        if rec.get("kind") != "starter-train" or (rec.get("meta") or {}).get("project") != pid or rec.get("settled"):
+            continue
+        rec = J.show(ctx, rec["id"])
+        if rec["state"] not in P.TERMINAL:
+            continue
+        settle(ctx, pid, rec)
+        J._save(ctx, {**{k: v for k, v in rec.items() if k not in ("result", "run_seconds")}, "settled": True})
+        n += 1
+    return n
+
+
 def train(ctx: Context, pid: str, live=None, params: dict | None = None, progress=None) -> dict:
     """Set the keyword baseline if there is none, build the training set, train the starter ranker, and record it
     as a candidate. `live` is the live run its progress goes to (Runs, Live)."""
+    import os
+    import time
+
     from . import ops
     from . import project_inputs as PI
     from . import retrain as RT
@@ -186,6 +330,7 @@ def train(ctx: Context, pid: str, live=None, params: dict | None = None, progres
         if live:
             live.stage(name, i, 4)
 
+    t0 = time.time()
     p = plan(ctx, pid)
     if not p["ready"]:
         raise ValueError(p["text"])
@@ -233,7 +378,30 @@ def train(ctx: Context, pid: str, live=None, params: dict | None = None, progres
     exp = PS.experiment_add(ctx, pid, r["pipeline"], training_set=ts_ref, trainer=TRAINER,
                             note="Starter ranker" + (" (simulated events)" if s["simulated"] else ""), inputs_read=read)
     doc = PS.get(ctx, pid)
-    return {"project": pid, "experiment": exp["id"], "pipeline": r["pipeline"], "training_set": ts_ref,
+    size = {**p["size"], "training_rows": s["rows"], "queries": s["queries"]}
+    job_id = os.environ.get("CST_JOB_ID")
+    cost = None
+    if job_id:
+        # In a submitted job: say what was made and how big it was. Whoever submitted it reads this and prices the
+        # run from the provider's own start and stop times.
+        from . import jobs as J
+
+        J.save_result(ctx, job_id, {"experiment": exp["id"], "pipeline": r["pipeline"], "training_set": ts_ref,
+                                    "baseline": doc.get("champion"), "baseline_set": made_baseline,
+                                    "metrics": r.get("metrics"), "simulated": s["simulated"], "size": size,
+                                    "wall_s": round(time.time() - t0, 1)})
+    else:
+        # On this computer: free, and its time is kept so later estimates start from a real run.
+        try:
+            from . import compute as C
+            from . import cost_estimates as CE
+
+            cost = CE.note_actual(ctx, CE.new_run_id(), C.get(ctx, "local"), time.time() - t0, kind="training",
+                                  size=size, project=pid, title=f"Starter ranker for {pid}")
+            PS.experiment_record(ctx, pid, exp["id"], cost=cost)
+        except Exception:  # noqa: BLE001  the candidate stands without its timing
+            cost = None
+    return {"project": pid, "experiment": exp["id"], "pipeline": r["pipeline"], "training_set": ts_ref, "cost": cost,
             "baseline": doc.get("champion"), "baseline_set": made_baseline, "metrics": r.get("metrics"),
             "summary": s, "notes": tp["notes"], "simulated": s["simulated"],
             "next": {"action": "backtest", "experiment": exp["id"], "text": "Judge it against the baseline."},

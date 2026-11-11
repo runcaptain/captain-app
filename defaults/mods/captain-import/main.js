@@ -24,6 +24,7 @@ import { icon } from "./kit/icons.js";
 import { Brand, engineTitle } from "./kit/brands.js";
 import { ResultGrid } from "./kit/grid.js";
 import { int } from "./kit/num.js";
+import { costState, refreshEstimate, CostLine } from "./kit/cost.js";
 
 const enc = encodeURIComponent;
 const fmtInt = (n) => int(n ?? 0);
@@ -94,7 +95,10 @@ export default class CaptainImport extends View {
     // The import open over the page, for agents (cst app context): the step, the source and the input it fills.
     watchView(cx, "dialog", () => ({ mod: "captain-import", form: this.input ? "choose-input" : "import-dataset", title: this.input ? "Choose an input" : "Import a dataset",
       fields: { step: this.step, source: this.source?.kind ?? null, connection: typeof this.source?.conn === "string" ? this.source.conn : this.source?.conn?.name ?? null,
-        input: this.input?.slot ?? null, dataset: typeof this.picked === "string" ? this.picked : this.picked?.name ?? null } }));
+        input: this.input?.slot ?? null, dataset: typeof this.picked === "string" ? this.picked : this.picked?.name ?? null,
+        ...(this.snapCost?.estimate ? { snapshot_cost: this.snapCost.estimate.text ?? null } : {}) } }));
+    // What taking a snapshot costs, under the snapshot choice (kit cost.js): a warehouse bills its own query.
+    this.snapCost = costState("");
     this.input = props()?.input ?? null; // a project's input being chosen, not a plain import
     this.inTab = "connection";
     this.mode = "snapshot";
@@ -288,7 +292,23 @@ export default class CaptainImport extends View {
     });
   }
 
+  /** What a snapshot of the chosen source would cost, for the line under the snapshot choice. A connection is
+   *  billed by its warehouse; a file or folder is read on this computer. Null when no snapshot is on offer. */
+  snapshotWant() {
+    if (!this.input || this.mode !== "snapshot") return null;
+    if (this.inTab === "computer") return { kind: "snapshot", where: "", size: {} };
+    if (this.inTab !== "connection") return null;
+    const src = this.connSource();
+    if (!src?.connection) return null;
+    const sql = src.sql ?? (src.table ? `select * from ${src.table}` : null);
+    return { kind: "snapshot", where: src.connection, size: sql ? { sql } : {} };
+  }
+
   tick(cx) {
+    if (this.input) {
+      const want = this.snapshotWant();
+      cx.spawn(async (cx) => { if (await refreshEstimate(this.snapCost, want)) cx.notify(); });
+    }
     if (this.step === 3 && this.source?.kind === "db") this.checkName(cx);
     if (this.pullJob && !this.polling) {
       this.polling = true;
@@ -578,6 +598,12 @@ export default class CaptainImport extends View {
       .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).on_click((_e, cx) => { this.mode = id; cx.notify(); })
       .child(h_flex().gap(6).items_center().child(this.icon(on ? "circle-check" : "square", 13, on ? c.blue : c.grey500)).child(div().text_size(12.5).font_medium().text_color(on ? c.blue : c.navy).child(title)))
       .child(div().text_size(11.5).line_height("16px").text_color(c.grey900).child(line));
+    const st = this.snapCost;
+    return v_flex().gap(8).child(this.modeCards(c, card))
+      .when(this.mode === "snapshot" && (Boolean(st.estimate) || st.loading), (e) => e.child(CostLine(c, "input-cost", st.estimate, st, { onToggle: (_e, cx) => { st.open = !st.open; cx.notify(); } })));
+  }
+
+  modeCards(c, card) {
     return h_flex().id("input-mode").gap(8).items_start()
       .child(card("snapshot", "Take a snapshot now", "Saved once as a dataset. Every run uses exactly these rows until you take another.", this.mode === "snapshot"))
       .child(card("live", "Keep it live", "Each run reads it again and records what it read, so results can move as the data does.", this.mode === "live"))

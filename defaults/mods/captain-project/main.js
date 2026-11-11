@@ -21,11 +21,15 @@ import { Brand, engineTitle } from "./kit/brands.js";
 import { askAgent } from "./kit/agent.js";
 import { ProjectBadge } from "./kit/projecticon.js";
 import { int } from "./kit/num.js";
+import { costText } from "./kit/cost.js";
 
+const RUN_WORDS = { training: "Training", evaluation: "Offline evaluation", "synthetic-events": "Simulated events", snapshot: "Snapshot", judging: "Judging", staging: "Staging", workflow: "Workflow" };
 const day = (iso) => (iso ? String(iso).slice(0, 10) : "");
 const go = (section, extra) => { setShared("captain.open", { section, ...extra, at: Date.now() }); run("layout.select", { stack: "sections", child: section }); };
 const form = (task, values = {}, args) => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, values, ...(args ? { args } : {}) } });
 const enc = encodeURIComponent;
+// What a change cost, or was estimated at, as the services worded it (a sentence, or a cost record with one).
+const costWords = (x) => (typeof x === "string" && x ? x : costText(x));
 // The input picker: a project's input from a connection, this computer, or a dataset already in Captain.
 const pickInput = (project, inp) => openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640,
   props: { input: { project, slot: inp.slot, label: inp.label, kinds: (inp.accepts ?? inp.kinds ?? []).filter((k) => k !== "any") } } });
@@ -87,7 +91,9 @@ export default class ProjectHome extends View {
       const steps = pid && this.stages && this.exps && !(this.exps.experiments ?? []).length
         ? this.startSteps().map((st) => ({ label: `${st.n} ${st.title}`, done: st.done, action: st.done ? null : st.can ? st.action : null, ...(st.done || st.can ? {} : { waiting_on: st.text }) })) : null;
       return pid ? { project: { id: pid, name: this.project()?.name ?? null, kind: this.state?.kind ?? null }, candidate: this.open ?? null, steps,
-        next: n ? { text: n.text, label: n.label ?? n.action?.label ?? null, action: n.action ?? null } : null } : { showing: "all projects" };
+        next: n ? { text: n.text, label: n.label ?? n.action?.label ?? null, action: n.action ?? null } : null,
+        // What the project's runs on the cloud have cost so far, in the services' words.
+        cloud_cost: this.costs?.project === pid ? { text: this.costs.text, usd: this.costs.usd ?? null, runs: this.costs.runs ?? 0 } : null } : { showing: "all projects" };
     });
     let rev = shared("captain.explorer.rev") ?? null;
     cx.timer.every(1000, (cx) => { const r = shared("captain.explorer.rev") ?? null; if (r !== rev) { rev = r; this.load(cx); } });
@@ -143,7 +149,7 @@ export default class ProjectHome extends View {
       this.shown = pid; this.state = null; this.assist = null;
       try { localStorage.setItem("project", pid); } catch {}
       this.last = pid;
-      this.stages = null; this.exps = null; this.home = null; this.open = null; this.note = null;
+      this.stages = null; this.exps = null; this.home = null; this.open = null; this.note = null; this.costs = null;
     }
     cx.spawn(async (cx) => {
       const [st, ex, ps, sd, rc, cn, pr] = await Promise.all([
@@ -181,11 +187,29 @@ export default class ProjectHome extends View {
         this.allProjects(cx); // the remembered project is gone (another workspace, or removed)
         return;
       }
+      // Once the page has its answer: what the project has cost on the cloud so far (the More menu's line).
+      if (st.ok && ex.ok) this.loadCosts(cx, pid);
       if (st.ok && ex.ok) { this.stages = st.data; this.exps = ex.data; } else if (!(st.starting || ex.starting)) this.problem = st.ok ? ex : st;
       if (this.openFirst && this.exps) { this.open = this.exps.experiments.find((e) => !e.is_champion)?.id ?? null; this.openFirst = false; }
       cx.notify();
     });
     if (this.everything) this.loadHome(cx);
+  }
+
+  /** What this project's runs on the cloud have cost so far (GET /api/projects/{id}/costs): the More menu's line.
+   *  Asking also settles training that finished on a cloud, so when the count moves the candidates are read again. */
+  loadCosts(cx, pid) {
+    if (this.costsAsking === pid) return; // one ask at a time: the page reloads often while a candidate is judged
+    this.costsAsking = pid;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(pid)}/costs`, { scoped: false, timeout: 60 });
+      if (this.costsAsking === pid) this.costsAsking = null;
+      if (this.pid() !== pid || !r.ok) return;
+      const was = this.costs;
+      this.costs = { ...r.data, project: pid };
+      const settled = was?.project === pid && ((was.runs ?? 0) + (was.unpriced_runs ?? 0) + (was.local_runs ?? 0)) !== ((r.data.runs ?? 0) + (r.data.unpriced_runs ?? 0) + (r.data.local_runs ?? 0));
+      if (settled) this.load(cx); else cx.notify();
+    });
   }
 
   loadHome(cx) {
@@ -528,6 +552,9 @@ export default class ProjectHome extends View {
         .when(Boolean(ev?.evidence), (x) => x.child(Badge(c, EVIDENCE[ev.evidence] ?? String(ev.evidence).toLowerCase())))
         .when(Boolean(ind), (x) => x.child(Badge(c, ind[0], ind[1])))
         .when(Boolean(ev), (x) => x.child(div().text_size(11.5).text_color(c.grey500).child("not yet confirmed online")))
+        // What training it cost, in the services' words ("Cost about $0.42 (12 min on aws-batch)").
+        .when(Boolean(costText(e.cost)), (x) => x.child(h_flex().id(`exp-${i}-cost`).gap(4).items_center().text_size(11.5).text_color(c.grey500)
+          .child(svg(icon(e.cost.free ? "monitor" : "cloud")).size(12).flex_none()).child(div().child(costText(e.cost)))))
         .when(e.is_champion && !ev, (x) => x.child(div().text_size(12).text_color(c.grey500).child("The others are judged against this one."))));
     return v_flex().id(`exp-wrap-${i}`).w_full().border_b(1).border_color(c.rule)
       .when(own, (x) => x.bg(c.warnLight))
@@ -810,7 +837,10 @@ export default class ProjectHome extends View {
         .child(v_flex().flex_1().min_w(0).gap(1)
           .child(div().text_color(c.navy).child(`${who(h)}: ${what(h)}`))
           .when(Boolean(h.on_instruction), (e) => e.child(div().text_color(c.grey900).child(`On your instruction: "${h.on_instruction}"`)))
-          .when(Boolean(h.applied_by) && !h.on_instruction, (e) => e.child(div().text_color(c.grey500).child(`Run by an agent${h.user ? ` in ${h.user}'s session` : ""}`))))
+          .when(Boolean(h.applied_by) && !h.on_instruction, (e) => e.child(div().text_color(c.grey500).child(`Run by an agent${h.user ? ` in ${h.user}'s session` : ""}`)))
+          // What the change cost once it ran, else what it was estimated at before it started.
+          .when(Boolean(costWords(h.cost) ?? costWords(h.estimate)), (e) => e.child(div().id(`ph-history-${i}-cost`).text_color(c.grey500)
+            .child(costWords(h.cost) ?? `Estimated before it started: ${costWords(h.estimate)}`))))
         .child(div().flex_none().font_family(MONO).text_size(11).text_color(c.grey500).child(String(h.at ?? "").slice(0, 16).replace("T", " ")))));
   }
 
@@ -968,10 +998,19 @@ export default class ProjectHome extends View {
 
   /** The header's menu: what's rarely needed. */
   moreMenu(c) {
+    const costs = this.costs?.project === this.pid() ? this.costs : null;
+    const recent = (costs?.recent ?? []).filter((r) => r.text).slice(0, 3);
     const trigger = div().id("ph-more").h(26).px(10).flex().items_center().cursor_pointer().text_size(12).font_medium().text_color(c.navy).bg(c.surface).border_1().border_color(c.grey300)
       .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => { this.menuOpen = !this.menuOpen; cx.notify(); }).child("More");
     return Popup.new("ph-more-pop", trigger).anchor("bottom_right")
-      .when(Boolean(this.menuOpen), (e) => e.content(v_flex().id("ph-more-list").w(200).py(4).bg(c.surface).border_1().border_color(c.grey300)
+      .when(Boolean(this.menuOpen), (e) => e.content(v_flex().id("ph-more-list").w(280).py(4).bg(c.surface).border_1().border_color(c.grey300)
+        // Not a button: what this project has cost on the cloud so far, and its last few runs there.
+        .when(Boolean(costs), (x) => x.child(v_flex().id("ph-cost").px(10).py(6).gap(4).border_b(1).border_color(c.rule)
+          .child(h_flex().gap(8).items_start()
+            .child(svg(icon("cloud")).size(13).flex_none().mt(2).text_color(c.grey500))
+            .child(div().id("ph-cost-total").flex_1().min_w(0).text_size(12).line_height("17px").text_color(c.grey900).child(costs.text ?? "")))
+          .children(recent.map((r, k) => div().id(`ph-cost-run-${k}`).pl(21).text_size(11.5).line_height("16px").text_color(c.grey500)
+            .child([r.title ?? RUN_WORDS[r.kind] ?? "A run", r.text].filter(Boolean).join(": "))))))
         .child(h_flex().id("ph-icon").h(30).px(10).gap(8).items_center().cursor_pointer().text_size(12.5).text_color(c.navy).hover((s) => s.bg(c.surface2))
           .on_click((_e, cx) => { this.menuOpen = false; cx.notify(); const p = this.project(); openOverlay({ mod: "captain-project-icon", kind: "dialog", width: 560, height: 560, props: { project: { id: this.pid(), name: p?.name ?? this.pid(), icon: p?.icon ?? null } } }); })
           .child(svg(icon("star")).size(13)).child("Change icon"))

@@ -182,7 +182,7 @@ def retrain(ctx: Context, name: str, compute: str | None = None, local_exec: boo
         if own:
             live.end("failed", error=str(e) or "stopped")
         raise
-    if in_job:
+    if in_job and own:  # a caller with its own run (the starter ranker) records the job's result itself
         from . import jobs as J
 
         J.save_result(ctx, os.environ["CST_JOB_ID"],
