@@ -255,7 +255,10 @@ class S3Store(Store):
         return sorted(out)
 
 
-# ---- GCS (untested in v1: no emulator in CI yet) ------------------------------------------
+# ---- GCS ---------------------------------------------------------------------------------------
+# Run against a real bucket on 2026-11-10 (docs/compute-live-testing.md): create-only writes and compare-and-swap
+# held under 8 concurrent writers, and a workspace, the lineage index and a model registry prefix all worked.
+# No emulator in CI yet, so nothing here runs in the unit tests.
 
 
 class GCSStore(Store):

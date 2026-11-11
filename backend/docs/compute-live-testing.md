@@ -30,6 +30,25 @@ its output, and the cancelled job wrote nothing. Then set `live_tested` on the p
 Every kind runs the runner image (`runner/Dockerfile`). Build it with `runner/build.sh --push <registry>/<repo>:<version>`
 into a registry that cloud can pull from (Artifact Registry, Azure Container Registry, or a public one).
 
+## Google Cloud Storage workspaces (`gs://`)
+
+Run on a real bucket on 2026-11-10, signed in with application default credentials (`cst cloud add <login>
+--provider gcp --auth adc -f project=<project-id>`). No storage code needed a fix. What ran:
+
+- Create-only writes: a second write of an existing key is refused, and of 8 writers racing for one key exactly
+  one wins. Compare-and-swap: of 8 writers racing on one generation exactly one wins, and a stale generation is
+  refused, as is a generation on a key that does not exist.
+- Six concurrent publishers of one pipeline got six different version numbers, and the versions verify.
+  Six concurrent writers of one alias: one wins.
+- `cst init --storage gs://<bucket>/<prefix>`, `cst demo seed --legacy`, `cst sync`, `cst index`, `cst data import`
+  and `cst data browse` (the file is downloaded once into `$CST_HOME/blob-cache`), `cst lineage` and
+  `cst lineage reindex`.
+- `cst models publish --registry gs://<bucket>/registry` and `cst models pull`, with the files checked against
+  SHA256SUMS. A second publish makes a new version and leaves the first untouched.
+
+Known limits: listing is by key prefix, as on S3, so `list("a/b")` also returns `a/bc.txt`: pass a trailing slash.
+There is no multipart path, so `put_new_chunks` joins the chunks in memory before one create-only upload.
+
 ## Google Cloud Run jobs (`gcp-cloud-run`)
 
 - Install: `pip install 'captain-search[gcs,compute-gcp]'`.
