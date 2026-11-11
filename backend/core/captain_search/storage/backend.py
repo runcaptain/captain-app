@@ -300,7 +300,9 @@ class GCSStore(Store):
         return sorted(b.name[strip:] for b in self.b.client.list_blobs(self.b, prefix=pfx))
 
 
-# ---- Azure (untested in v1: no emulator in CI yet) ----------------------------------------
+# ---- Azure Blob --------------------------------------------------------------------------
+# Run against a real storage account on 2026-11-10 (docs/compute-live-testing.md). CI has no emulator: the unit
+# test uses a fake with the SDK's shapes.
 
 
 class AzureStore(Store):

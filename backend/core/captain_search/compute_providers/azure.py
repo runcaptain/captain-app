@@ -1,8 +1,14 @@
 """Azure: Container Apps jobs and Azure Machine Learning command jobs.
 
-Not tested on a real account (2026-11-06): Captain has no Azure service principal for this yet. The SDK calls
-match azure-mgmt-appcontainers 3.x, azure-ai-ml 1.x and azure-monitor-query 1.x, and are unit-tested against
-fakes with those shapes.
+Both ran real jobs on a real subscription on 2026-11-10, with the workspace in Azure Blob (az://): a demo seed, an
+offline evaluation with its live stream, a retrain, logs and cancel. docs/compute-live-testing.md has what was run
+and what it found. Serving on either is planned (compute.plan_serve) but not executable yet.
+
+Known limits, from that run:
+- Neither service reports a container's exit code, so a job's exit_code stays empty.
+- Container Apps logs come from Log Analytics, a minute or two behind the job.
+- An Azure ML job's started_at is when it was created, not when its container started. A cluster that scales
+  from zero adds about three minutes before the first line.
 """
 from __future__ import annotations
 
@@ -24,7 +30,9 @@ def _iso(t) -> str | None:
 
 class _Azure(ComputeProvider):
     provider = "azure"
-    live_tested = None
+    # Container Apps jobs and Azure ML command jobs, each on a real subscription with an az:// workspace: submit,
+    # status, logs, cancel, `demo seed --legacy`, `backtest run --compute` with its live stream, and a retrain.
+    live_tested = "2026-11-10"
 
     def _cred(self):
         from .. import cloud
@@ -203,7 +211,8 @@ class AzureMLProvider(_Azure):
 
     def status(self, h: dict) -> dict:
         j = self._ml().jobs.get(h["name"])
-        s = j.status or "NotStarted"
+        # azure-ai-ml hands the status back as an enum that prints as "JobStatus.QUEUED": use its value, "Queued"
+        s = str(getattr(j.status, "value", j.status) or "NotStarted")
         state = _AML.get(s, "running")
         reason = {"queued": f"Azure ML is preparing the job ({s})", "running": f"the job is {s.lower()}",
                   "succeeded": "the job completed", "stopped": "the job was cancelled",
@@ -225,7 +234,10 @@ class AzureMLProvider(_Azure):
 
     def cancel(self, h: dict) -> dict:
         self._ml().jobs.begin_cancel(h["name"]).result()
-        return self.status(h)
+        s = self.status(h)
+        if s["state"] == "stopped" and not s.get("finished_at"):
+            s["finished_at"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")  # the job has no end time
+        return s
 
     def test(self) -> dict:
         try:

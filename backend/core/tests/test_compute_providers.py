@@ -5,6 +5,7 @@ logging_v2, azure-mgmt-appcontainers, azure-ai-ml, azure-monitor-query, modal). 
 docs/api.md "Compute providers" for which kinds have run on a real account.
 """
 import datetime as dt
+import enum
 import os
 import re
 import sys
@@ -257,7 +258,8 @@ def _azure_modules(w):
 
         def get(self, name):
             st = {"queued": "Queued", "running": "Running", "succeeded": "Completed", "failed": "Failed", "stopped": "Canceled"}[w.state]
-            return NS(status=st, creation_context=NS(created_at=T0))
+            # azure-ai-ml 1.x returns the status as a str enum, which prints as "JobStatus.QUEUED"
+            return NS(status=enum.Enum("JobStatus", {st.upper(): st}, type=str)[st.upper()], creation_context=NS(created_at=T0))
 
         def begin_cancel(self, name):
             w.calls.append(("begin_cancel", name))
@@ -581,6 +583,19 @@ def test_container_apps_cancel_records_when_it_stopped(world, cloud_ctx):
     """Container Apps gives a stopped execution no end time."""
     t = _target(cloud_ctx, "azure-container-apps")
     rec = C.submit_job(cloud_ctx, t, ["demo", "seed"], label="seed")
+    world.state = "running"
+    r = J.cancel(cloud_ctx, rec["id"])
+    assert r["state"] == "stopped" and r["finished_at"]
+
+
+def test_azure_ml_status_reads_the_enum_and_cancel_records_the_end(world, cloud_ctx):
+    """On a real workspace the reason read "Azure ML is preparing the job (JobStatus.QUEUED)" and a cancelled job
+    had no finished_at."""
+    t = _target(cloud_ctx, "azure-ml")
+    rec = C.submit_job(cloud_ctx, t, ["demo", "seed"], label="seed")
+    world.state = "queued"
+    r = J.show(cloud_ctx, rec["id"])
+    assert r["state"] == "queued" and r["reason"] == "Azure ML is preparing the job (Queued)"
     world.state = "running"
     r = J.cancel(cloud_ctx, rec["id"])
     assert r["state"] == "stopped" and r["finished_at"]
