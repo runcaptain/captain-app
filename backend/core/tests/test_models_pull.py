@@ -58,3 +58,14 @@ def test_bare_brand_picks_current_and_mismatch_fails(setup):
         MD.pull(ctx, "acme@v10", str(tmp / "bad"))
     with pytest.raises(ValueError, match="unknown part"):
         MD.pull(ctx, "acme@v2", str(tmp / "x"), ["models"])
+
+
+def test_models_publish_help_renders():
+    """`cst models publish --help` crashed: "MarkupError: closing tag '[/prefix]' ... doesn't match any open tag".
+    The help text used square brackets, which the help renderer reads as markup."""
+    from typer.testing import CliRunner
+
+    from captain_search.cli.main import app
+
+    r = CliRunner().invoke(app, ["models", "publish", "--help"])
+    assert r.exit_code == 0 and "--registry" in r.output

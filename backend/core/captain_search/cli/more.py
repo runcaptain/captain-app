@@ -818,7 +818,7 @@ def models_pull(model_id: str = typer.Argument(..., help="brand@version, or a br
 def models_publish(pipeline: str = typer.Argument(..., help="the pipeline version to publish, name@vN"),
                    arch: str = typer.Option(..., "--arch", help="architecture folder, e.g. arch-v2"),
                    brand: str = typer.Option(..., "--brand", help="brand folder"),
-                   registry: Optional[str] = typer.Option(None, "--registry", help="s3://<bucket>[/prefix] or a folder. Default: $CST_MODEL_REGISTRY"),
+                   registry: Optional[str] = typer.Option(None, "--registry", help="s3://<bucket>/<prefix> (the prefix is optional) or a folder. Default: $CST_MODEL_REGISTRY"),
                    profile: Optional[str] = typer.Option(None, "--profile"),
                    status: str = typer.Option("candidate", "--status", help="the status written in MANIFEST.yaml")):
     """Write a pipeline version to the registry as a new write-once <arch>/<brand>/vN, then import the registry again."""
