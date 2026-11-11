@@ -1,8 +1,10 @@
 """Google Cloud: Cloud Run jobs and Vertex AI custom jobs. Logs come from Cloud Logging for both.
 
-Not tested on a real account (2026-11-06): Captain has no GCP service account for this yet. The SDK calls
-match google-cloud-run 0.10, google-cloud-aiplatform 1.x and google-cloud-logging 3.x, and are unit-tested
-against fakes with those shapes.
+No job has run on a real account yet, so `live_tested` stays None. On 2026-11-10, against a real project with
+google-cloud-run 0.16, google-cloud-aiplatform 2.7 and google-cloud-logging 3.17, only the read-only calls ran:
+`cst compute test` for both kinds (which found a wrong keyword in the Vertex one) and both log queries, which
+Cloud Logging accepts with and without a cursor. Submit, status, logs with lines in them and cancel are still
+only unit-tested against fakes: the runner image could not be built that day. See docs/compute-live-testing.md.
 """
 from __future__ import annotations
 
