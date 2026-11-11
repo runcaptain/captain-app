@@ -16,7 +16,8 @@ export const SCREENS = {
 
 // Field names that hold a secret, whatever the form calls them. The services' own list (commands.py SECRET_NAMES),
 // widened: a wrong guess here only hides a harmless value.
-const SECRET_KEY = /pass(word|phrase)?|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|bearer|cookie|session[_-]?id|\bdsn\b|\bpat\b/i;
+// A session id in a row of search events names a shopper's visit, not a login: it is shown.
+const SECRET_KEY = /pass(word|phrase)?|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|bearer|cookie|\bdsn\b|\bpat\b/i;
 // Values that are a secret by their shape: a long opaque string, a known key prefix, a PEM block.
 // The same pattern is in the services (cli/appctl.py SECRET_VALUE): change both.
 const SECRET_VALUE = /^(?:(?:sk|pk|rk)[-_][-_A-Za-z0-9]{16,}|gh[pous]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[-A-Za-z0-9]{10,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[-_A-Za-z0-9]{30,}|ya29\.[-_A-Za-z0-9.]{20,}|eyJ[-_A-Za-z0-9]{10,}\.[-_A-Za-z0-9.]{10,}|dapi[a-f0-9]{24,}|hf_[A-Za-z0-9]{20,}|glpat-[-_A-Za-z0-9]{16,}|shpat_[a-f0-9]{20,})$|-----BEGIN [A-Z ]*PRIVATE KEY-----/;

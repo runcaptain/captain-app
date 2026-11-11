@@ -98,7 +98,11 @@ first frame or during GPU recovery it reports an error instead of a PNG.
   Pins live per workspace in `context/<workspace>.json` in the app's folder, with who added each and when.
 
 These work in any terminal Captain opened: those carry `CAPTAIN_APP_HOME` (which window) and `CST_BIN` (which
-`cst`). Secrets never come out: a filled secret field reads `(hidden)`, a URL loses its login, a file named like
+`cst`). A packaged Captain runs the `cst` inside its own bundle and ignores an exported `CST_BIN`, unless
+`CAPTAIN_DEV_BACKEND=1` is set too. When it runs another backend, the sidebar footer shows "Development
+backend" and `cst app context` says so on its first line.
+
+Secrets never come out: a filled secret field reads `(hidden)`, a URL loses its login, a file named like
 a key file is refused, and a connection is named but never opened.
 
 **Show.** `cst app open <target>` shows the person something: a screen (`home`, `experiments`, `data`, `runs`,

@@ -23,7 +23,7 @@ for m in "${MODS[@]}"; do
     # needs SHOT_PROJECT=1: a project with pins and experiments. captain-project:list (the project cards, nothing picked):
     # SHOT_ONLY, as two cards leave the column the blank check measures nearly empty.
     # captain-project:ship needs SHOT_STAGED=1 too: the Ship steps first on the page, with something staged.
-    captain-project) EXTRA+=("captain-project:home"); [[ -n "${SHOT_STAGED:-}" ]] && EXTRA+=("captain-project:ship") ;;
+    captain-project) EXTRA+=("captain-project:home" "captain-project:pins"); [[ -n "${SHOT_STAGED:-}" ]] && EXTRA+=("captain-project:ship") ;;
     captain-runs) EXTRA+=("captain-runs:jobs" "captain-runs:live") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
@@ -220,6 +220,7 @@ props_of() {
     captain-project:home) echo '{"openExperiment": true}' ;;
     captain-project:list) echo '{"allProjects": true}' ;;
     captain-project:ship) echo '{"shipFirst": true}' ;;
+    captain-project:pins) echo '{"pinCheck": true}' ;;
     captain-data:models-attach) echo '{"tab": "models", "registryAttach": true}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;
     captain-data:import-run) echo '{"importWith": {"conn": "demo-store", "table": "products", "name": "hello", "autoImport": true}}' ;;
@@ -306,6 +307,14 @@ EOF
   PREV_SUM=$(shasum "$OUT/${view/:/-}.png" | cut -d' ' -f1)
   errs=$(app status | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('errors', [])))")
   if [[ $ok == 1 && $errs == 0 ]]; then echo "$view: drawn ($OUT/${view/:/-}.png)"; else echo "$view: BLANK or errors ($errs) ($OUT/${view/:/-}.png)"; app status; fail=1; fi
+  # captain-project:pins: the page pins two things the way "Send to agent" does, one after the other, through the
+  # app's own file write. Both must be in the context file: the second pin used to be refused, because the app
+  # only replaces a file when told the text it replaces.
+  if [[ "$view" == "captain-project:pins" ]]; then
+    n=0
+    for _ in $(seq 1 20); do n=$(cat "$HOME_DIR"/context/*.json 2>/dev/null | python3 -c "import json,sys; print(sum(1 for i in json.load(sys.stdin)['items'] if i['ref'].startswith(('project:','staging:'))))" 2>/dev/null || echo 0); [[ "$n" == 2 ]] && break; sleep 0.5; done
+    if [[ "$n" == 2 ]]; then echo "$view: two pins made from the window are in the context file"; else echo "$view: $n of 2 pins landed in $HOME_DIR/context"; ls -la "$HOME_DIR/context" 2>&1 || true; fail=1; fi
+  fi
   # What an agent sees of this view: `cst app context` asks this window and must name the section it shows.
   # (A dialog over the page, the import wizard, leaves the section under it as it was.) SHOT_CONTEXT=1 prints it.
   if ctx=$(cst_app --json app context 2>&1); then

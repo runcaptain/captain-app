@@ -431,6 +431,16 @@ export default class CaptainNav extends View {
 
   // Which cloud this workspace works with (GET /api/cloud/summary): provider, account,
   // region, and whether the last check of the login passed. Opens Cloud and compute.
+  /** A packaged Captain running a backend that is not its own says so, always in view. */
+  devBackend(c, rail) {
+    const dev = shared("captain.daemon")?.dev_backend;
+    if (!dev) return null;
+    return h_flex().id("dev-backend").mx(rail ? 0 : 14).my(4).h(26).gap(6).items_center().when(rail, (e) => e.w_full().justify_center()).when(!rail, (e) => e.px(8))
+      .bg(c.warnLight).text_color(c.warn).tooltip(`Development backend: Captain's services run from ${dev}, not from this app.`)
+      .child(svg(icon("triangle-alert")).size(13).flex_none())
+      .when(!rail, (e) => e.child(div().text_size(12).font_medium().truncate().child("Development backend")));
+  }
+
   cloudChip(c, rail) {
     const s = this.cloud;
     if (!s && this.state !== "ready") return null;
@@ -514,6 +524,7 @@ export default class CaptainNav extends View {
       .child(this.agentRows(c, rail) ?? div())
       .child(this.contextStrip(c, rail) ?? div())
       .child(v_flex().w_full().flex_none().py(8).border_t(1).border_color(c.rule)
+        .child(this.devBackend(c, rail) ?? div())
         .child(this.cloudChip(c, rail) ?? div())
         .child(this.themeSwitch(c, rail))
         .child(this.row(c, { id: "terminals", label: "Terminals", icon: "terminal" }, !find(layout(), "work")?.hidden, rail, () => run("layout.toggle", { id: "work" })))

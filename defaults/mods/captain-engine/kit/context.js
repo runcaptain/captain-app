@@ -15,40 +15,56 @@ const MAX = 40;
 const folder = () => `${appHome()}/context`;
 const file = () => `${folder()}/${String(shared("captain.workspace") ?? "default").replace(/[^A-Za-z0-9._-]/g, "_")}.json`;
 
-/** The pinned things for this window's workspace, oldest first. Never throws: no file is no pins. */
-export async function loadPins() {
-  try {
-    const text = await readTextFile(file());
-    const items = text ? JSON.parse(text)?.items : [];
-    return Array.isArray(items) ? items.filter((i) => i && typeof i.ref === "string") : [];
-  } catch { return []; }
+/** The file as it is now: its pins, and its exact text (null when there is no file yet). */
+async function readPins() {
+  let raw = null;
+  try { raw = await readTextFile(file()); } catch { raw = null; }
+  let items = [];
+  try { items = raw ? JSON.parse(raw)?.items : []; } catch { items = []; }
+  return { raw: raw ?? null, items: Array.isArray(items) ? items.filter((i) => i && typeof i.ref === "string") : [] };
 }
 
-async function savePins(items) {
+/** The pinned things for this window's workspace, oldest first. Never throws: no file is no pins. */
+export async function loadPins() {
+  return (await readPins()).items;
+}
+
+/** Change the list and save it. The app only replaces a file when told the text it replaces (so two writers
+ *  can't lose each other's change), which is why the file is read first and its text handed back. Without that
+ *  the first pin made the file and every later one was refused. If `cst context add` wrote in between, read
+ *  again and try once more. */
+async function changePins(change) {
   try { await exec("mkdir", ["-p", folder()]); } catch { /* it exists, or the write below says why not */ }
-  await writeTextFile(file(), JSON.stringify({ items: items.slice(-MAX) }, null, 2));
-  // Every open screen's strip reloads now, not at its next look.
-  setShared("captain.context.changed", Date.now());
+  let last = null;
+  for (let i = 0; i < 3; i++) {
+    const { raw, items } = await readPins();
+    const next = change(items).slice(-MAX);
+    try {
+      await writeTextFile(file(), JSON.stringify({ items: next }, null, 2), raw ?? undefined);
+      // Every open screen's strip reloads now, not at its next look.
+      setShared("captain.context.changed", Date.now());
+      return next;
+    } catch (e) { last = e; }
+  }
+  throw last ?? new Error("the file could not be written");
 }
 
 /** Pin {ref, kind, label} for the agent. Pinning it again moves it to the end. */
 export async function pin(item) {
-  const items = (await loadPins()).filter((i) => i.ref !== item.ref);
-  items.push({ ref: item.ref, kind: item.kind, label: item.label ?? item.ref, added_by: "you, in Captain", agent: null, added_at: new Date().toISOString() });
-  await savePins(items);
-  return items;
+  return changePins((items) => [...items.filter((i) => i.ref !== item.ref),
+    { ref: item.ref, kind: item.kind, label: item.label ?? item.ref, added_by: "you, in Captain", agent: null, added_at: new Date().toISOString() }]);
 }
 
 export async function unpin(ref) {
-  const items = (await loadPins()).filter((i) => i.ref !== ref);
-  await savePins(items);
-  return items;
+  return changePins((items) => items.filter((i) => i.ref !== ref));
 }
 
 export async function clearPins() {
-  await savePins([]);
-  return [];
+  return changePins(() => []);
 }
+
+/** Why a pin could not be saved, in a sentence: where the file is and what the app said. */
+export const pinProblem = (e) => `Captain couldn't save the pin to ${file()}: ${String(e?.message ?? e ?? "no reason given").replace(/\.$/, "")}.`;
 
 /** One line for the agent's input: what was pinned and how to read it. No newline: the person adds their ask. */
 export const referenceLine = (item) => `[Captain: ${item.kind} ${item.label ?? item.ref} is pinned for you. Run \`cst context show\` to read it.] `;
@@ -56,7 +72,7 @@ export const referenceLine = (item) => `[Captain: ${item.kind} ${item.label ?? i
 /** "Send to agent": pin the item and put a one-line reference in the open agent tab's input, for the person to
  *  finish and send. With no agent tab open, one opens with the reference as its first message. */
 export async function sendToAgent(cx, item) {
-  try { await pin(item); } catch { notify({ title: "Couldn't pin that", body: "Captain couldn't write its context file.", level: "error" }); return; }
+  try { await pin(item); } catch (e) { notify({ title: "Couldn't pin that", body: pinProblem(e), level: "error" }); return; }
   const list = agents();
   const open = list.find((a) => a.focused) ?? list[0];
   if (!open) {

@@ -14,7 +14,7 @@ import { theme, shared, setShared, run, openOverlay, props as layoutProps } from
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { api, watchScope, watchWorkspace, watchRecords } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
-import { SendToAgent } from "./kit/context.js";
+import { SendToAgent, pin } from "./kit/context.js";
 import { Badge, Button, Empty, Skeleton, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand, engineTitle } from "./kit/brands.js";
@@ -83,6 +83,7 @@ export default class ProjectHome extends View {
     if ((layoutProps?.() ?? {}).chooseModels) { this.everything = true; this.toggleChoosing(cx); }
     this.openFirst = Boolean((layoutProps?.() ?? {}).openExperiment); // a layout, or the real-window check: open a row
     if ((layoutProps?.() ?? {}).allProjects) this.allProjects(cx); // the real-window check: the card list, nothing picked
+    this.pinCheck = Boolean((layoutProps?.() ?? {}).pinCheck); // the real-window check: pin twice, as Send to agent does
     this.shipFirst = Boolean((layoutProps?.() ?? {}).shipFirst); // the real-window check: the Ship steps at the top
     watchScope(cx, (cx) => this.load(cx));
     watchWorkspace(cx, (cx) => { this.last = null; this.load(cx); });
@@ -205,6 +206,12 @@ export default class ProjectHome extends View {
       if (this.openFirst && this.exps) { this.open = this.exps.experiments.find((e) => !e.is_champion)?.id ?? null; this.openFirst = false; }
       // Staging and the A/B test are asked for only when the project has one: most projects have neither.
       if (this.stages) this.shipPath.sync(cx, this.stages.ship);
+      if (this.pinCheck && this.stages) {
+        this.pinCheck = false;
+        const name = this.project()?.name ?? pid;
+        try { await pin({ ref: `project:${pid}`, kind: "project", label: name }); await pin({ ref: `staging:${pid}`, kind: "staging", label: `staging for ${name}` }); }
+        catch (e) { this.note = { tone: "fail", text: `Pinning didn't work: ${String(e?.message ?? e)}` }; }
+      }
       cx.notify();
     });
     if (this.everything) this.loadHome(cx);

@@ -48,29 +48,61 @@ fn is_executable(p: &Path) -> bool {
     p.is_file() && p.metadata().map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
-/// $CST_BIN, then settings.json `cst` (for development), then the cst packaged inside
-/// Captain.app. A build without one (run from target/) uses its own repo's backend
-/// (backend/core/.venv/bin/cst) when that is set up, and only then ~/.local/bin and PATH:
-/// those can hold an older install, without the commands this build's screens and prompts use.
-pub fn find() -> Option<PathBuf> {
-    if let Some(b) = std::env::var_os("CST_BIN").map(PathBuf::from).filter(|b| is_executable(b)) {
-        return Some(b);
+/// The developer switch: with CAPTAIN_DEV_BACKEND=1 a packaged Captain.app may run a backend other than its own.
+pub const DEV_SWITCH: &str = "CAPTAIN_DEV_BACKEND";
+
+fn dev_switch() -> bool {
+    std::env::var(DEV_SWITCH).is_ok_and(|v| matches!(v.trim(), "1" | "true" | "yes"))
+}
+
+/// Which cst to run, from what is on offer. Pure, so the rule can be tested without a bundle.
+///
+/// A packaged build (one with a cst inside its .app) runs that cst. It ignores $CST_BIN, because `open` hands the
+/// app whatever the launching shell exported: a developer's CST_BIN once made the installed app run another
+/// checkout's backend for 13 hours with nothing on screen saying so. $CST_BIN counts there only together with
+/// CAPTAIN_DEV_BACKEND=1. settings.json `cst` is a person's own written choice and still counts. A build without
+/// a bundled cst (run from target/) takes $CST_BIN, then settings, then its own repo's backend, then PATH.
+///
+/// Returns the path and whether it is a development backend: a packaged build running anything but its own.
+pub fn choose(env_bin: Option<PathBuf>, dev: bool, setting: Option<PathBuf>, bundled: Option<PathBuf>, repo: Option<PathBuf>, path: Option<PathBuf>) -> Option<(PathBuf, bool)> {
+    let packaged = bundled.is_some();
+    if let Some(b) = env_bin.filter(|_| !packaged || dev) {
+        let other = packaged && Some(&b) != bundled.as_ref();
+        return Some((b, other));
     }
-    if let Some(b) = crate::settings::load_person().ok().and_then(|p| p.cst).filter(|c| !c.is_empty()) {
-        let b = match b.strip_prefix("~/") { Some(rest) => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(rest)).unwrap_or_else(|| PathBuf::from(&b)), None => PathBuf::from(&b) };
-        if is_executable(&b) {
-            return Some(b);
-        }
+    if let Some(b) = setting {
+        let other = packaged && Some(&b) != bundled.as_ref();
+        return Some((b, other));
     }
-    if let Some(b) = crate::brand::bundled("cst/bin/cst").filter(|b| is_executable(b)) {
-        return Some(b);
-    }
-    if let Some(b) = std::env::current_exe().ok().and_then(|exe| repo_cst(&exe)) {
-        return Some(b);
-    }
+    bundled.or(repo).or(path).map(|b| (b, false))
+}
+
+fn found() -> Option<(PathBuf, bool)> {
+    let env_bin = std::env::var_os("CST_BIN").map(PathBuf::from).filter(|b| is_executable(b));
+    let setting = crate::settings::load_person().ok().and_then(|p| p.cst).filter(|c| !c.is_empty()).map(|b| {
+        match b.strip_prefix("~/") { Some(rest) => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(rest)).unwrap_or_else(|| PathBuf::from(&b)), None => PathBuf::from(&b) }
+    }).filter(|b| is_executable(b));
+    let bundled = crate::brand::bundled("cst/bin/cst").filter(|b| is_executable(b));
+    let repo = std::env::current_exe().ok().and_then(|exe| repo_cst(&exe));
     let local = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/bin/cst"));
     let on_path = std::env::var_os("PATH").into_iter().flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).map(|d| d.join("cst"));
-    local.into_iter().chain(on_path).find(|c| is_executable(c))
+    let path = local.into_iter().chain(on_path).find(|c| is_executable(c));
+    if bundled.is_some() && std::env::var_os("CST_BIN").is_some() && !dev_switch() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| tracing::warn!("CST_BIN is set but ignored: this is a packaged Captain, which runs its own backend. Set {DEV_SWITCH}=1 as well to run another."));
+    }
+    choose(env_bin, dev_switch(), setting, bundled, repo, path)
+}
+
+/// The cst this app runs (see `choose` for the order).
+pub fn find() -> Option<PathBuf> {
+    found().map(|(b, _)| b)
+}
+
+/// The path of the backend when a packaged Captain is running one that is not its own, else None. Shown in the
+/// sidebar footer and in `cst app context`, so nobody uses the wrong backend without knowing.
+pub fn development_backend() -> Option<PathBuf> {
+    found().filter(|(_, other)| *other).map(|(b, _)| b)
 }
 
 /// The backend of the repo a development build was built in: <repo>/target/<profile>/captain-app
@@ -189,6 +221,7 @@ pub fn view_record(section: Option<String>, overlays: Vec<String>, agent: Option
         "terminals_shown": terminals_shown,
         "layout": layout,
         "views": crate::mods::shared_under("captain.view."),
+        "dev_backend": development_backend().map(|c| c.display().to_string()),
     })
 }
 
@@ -381,7 +414,9 @@ pub fn shared_value(state: &State) -> Value {
     match state {
         State::Ready { port, token } => serde_json::json!({ "state": "ready", "base": format!("http://127.0.0.1:{port}"), "token": token, "home": cst_home().map(|h| h.display().to_string()),
             // The cst the app runs, for prompts handed to agents (kit/agent.js): an older one can be first on their PATH.
-            "cst": find().map(|c| c.display().to_string()) }),
+            "cst": find().map(|c| c.display().to_string()),
+            // Set only when a packaged Captain runs a backend that is not its own: the sidebar says so.
+            "dev_backend": development_backend().map(|c| c.display().to_string()) }),
         State::Idle | State::Starting => serde_json::json!({ "state": "starting" }),
         State::Missing => serde_json::json!({ "state": "missing", "error": format!("Captain Search isn't installed. Install it with: {INSTALL}") }),
         State::Failed(e) => serde_json::json!({ "state": "failed", "error": e }),
@@ -451,6 +486,26 @@ mod tests {
         assert_eq!(parse_discovery("no config found"), None);
         assert_eq!(parse_discovery(r#"{"port": 0, "token": "t"}"#), None);
         assert_eq!(parse_discovery(r#"{"port": 70000, "token": "t"}"#), None);
+    }
+
+    #[test]
+    fn a_packaged_app_ignores_cst_bin_without_the_developer_switch() {
+        let p = |s: &str| Some(PathBuf::from(s));
+        let (own, env, set, repo, path) = ("/Applications/Captain.app/Contents/Resources/cst/bin/cst", "/Users/dev/checkout/.venv/bin/cst", "/Users/me/cst", "/repo/backend/core/.venv/bin/cst", "/usr/local/bin/cst");
+        // Packaged, CST_BIN exported by whatever shell ran `open`: its own backend, and nothing to warn about.
+        assert_eq!(choose(p(env), false, None, p(own), None, p(path)), Some((PathBuf::from(own), false)));
+        // Packaged, with the switch: the other backend runs, and it is marked as a development backend.
+        assert_eq!(choose(p(env), true, None, p(own), None, p(path)), Some((PathBuf::from(env), true)));
+        // The switch alone changes nothing, and CST_BIN pointing at the app's own cst is not "another backend".
+        assert_eq!(choose(None, true, None, p(own), None, p(path)), Some((PathBuf::from(own), false)));
+        assert_eq!(choose(p(own), true, None, p(own), None, None), Some((PathBuf::from(own), false)));
+        // A person's own settings.json choice still counts in a packaged app, and is marked.
+        assert_eq!(choose(p(env), false, p(set), p(own), None, None), Some((PathBuf::from(set), true)));
+        // A build run from target/ has no bundled cst: CST_BIN works as before, with no mark.
+        assert_eq!(choose(p(env), false, p(set), None, p(repo), p(path)), Some((PathBuf::from(env), false)));
+        assert_eq!(choose(None, false, None, None, p(repo), p(path)), Some((PathBuf::from(repo), false)));
+        assert_eq!(choose(None, false, None, None, None, p(path)), Some((PathBuf::from(path), false)));
+        assert_eq!(choose(None, false, None, None, None, None), None);
     }
 
     #[test]

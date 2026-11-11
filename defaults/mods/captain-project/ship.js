@@ -72,7 +72,7 @@ export class Ship {
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(pid)}/staging`, { scoped: false });
       if (this.pid() !== pid) return;
-      if (r.ok) { this.status = r.data; this.problem = null; this.price(cx); } else if (!r.starting) this.problem = plainError(r.error, "Captain couldn't read staging.");
+      if (r.ok) { this.status = r.data; this.problem = null; this.price(cx); this.settle(); } else if (!r.starting) this.problem = plainError(r.error, "Captain couldn't read staging.");
       cx.notify();
     });
   }
@@ -100,10 +100,18 @@ export class Ship {
     this.problem = null;
   }
 
-  /** Redraw the countdown, and look again while something is running or starting. */
+  /** A progress label describes work in flight, never a finished step. When staging itself says the work is over
+   *  (a new endpoint is running, or it is stopped), the label goes, whatever the job's own answer is doing. */
+  settle() {
+    const b = this.busyFor, st = this.status?.status, id = this.staged()?.id ?? null;
+    if (!b) return;
+    if ((b.what === "stage" && st === "running" && id !== b.was) || (b.what === "stop" && st === "stopped")) { this.busy = null; this.busyFor = null; }
+  }
+
+  /** Redraw the countdown, and look again while something is running, starting, or being staged or stopped. */
   tick(cx) {
     const s = this.status?.status;
-    if (this.pid() && !this.busy && (s === "running" || s === "starting")) this.load(cx);
+    if (this.pid() && (this.busyFor || (!this.busy && (s === "running" || s === "starting")))) this.load(cx);
   }
 
   running() { return this.status?.status === "running"; }
@@ -119,9 +127,12 @@ export class Ship {
   async wait(id, minutes) {
     for (let i = 0; i < minutes * 120; i++) {
       const r = await api(`/api/jobs/${enc(id)}`, { scoped: false });
+      // The services no longer know the job (they were restarted), or staging itself already said the work is
+      // over: stop waiting. What is true is read from the project, not from a job that can't answer.
+      if (r.status === 404 || (i > 0 && !this.busy)) return { ok: true, result: null };
       if (r.ok && r.data?.status === "done") return { ok: true, result: r.data.result };
       if (r.ok && r.data?.status === "failed") return { ok: false, error: plainError(r.data.message, "It didn't finish.") };
-      if (r.ok && r.data?.message && r.data.status === "running") { this.busy = r.data.message; this.cx?.notify(); }
+      if (r.ok && r.data?.message && r.data.status === "running" && this.busy) { this.busy = r.data.message; this.cx?.notify(); }
       try { await exec("sleep", ["0.5"]); } catch { break; }
     }
     return { ok: false, error: "It's still starting. Look again in a minute." };
@@ -132,20 +143,21 @@ export class Ship {
     if (this.busy) return;
     this.cx = cx;
     this.busy = "Getting it ready"; this.note = null; this.confirm = null;
+    this.busyFor = { what: "stage", was: this.running() ? this.staged().id : null };
     cx.notify();
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(this.pid())}/stage`, { body: { ...body, ...(confirmed ? { confirm: true } : {}) }, scoped: false });
       if (r.status === 409 && r.data?.needs_confirm) {
         const p = r.data.plan;
-        this.busy = null; this.confirm = { plan: p, body };
+        this.busy = null; this.busyFor = null; this.confirm = { plan: p, body };
         this.price(cx, p.target, { instances: p.cost?.instance_count ?? 1, instance_type: p.cost?.instance_type });
         cx.notify(); return;
       }
-      if (!r.ok) { this.busy = null; this.note = { tone: "fail", text: plainError(r.error, "Staging didn't start. Try again.") }; cx.notify(); return; }
+      if (!r.ok) { this.busy = null; this.busyFor = null; this.note = { tone: "fail", text: plainError(r.error, "Staging didn't start. Try again.") }; cx.notify(); return; }
       const cloud = r.data?.plan?.kind && r.data.plan.kind !== "local";
       const done = await this.wait(r.data.job, cloud ? 30 : 3);
-      this.busy = null; this.result = null;
-      this.note = done.ok ? { tone: "good", text: `${short(done.result?.model_version)} is staged. Try it below.` } : { tone: "fail", text: done.error };
+      this.busy = null; this.busyFor = null; this.result = null;
+      this.note = !done.ok ? { tone: "fail", text: done.error } : done.result ? { tone: "good", text: `${short(done.result.model_version)} is staged. Try it below.` } : null;
       this.load(cx);
       this.page.reload?.(cx);
     });
@@ -155,12 +167,14 @@ export class Ship {
     if (this.busy) return;
     this.cx = cx;
     this.busy = "Stopping it"; this.note = null; this.stopAsk = false;
+    this.busyFor = { what: "stop" };
     cx.notify();
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(this.pid())}/unstage`, { body: {}, scoped: false });
       const done = r.ok ? await this.wait(r.data.job, 5) : { ok: false, error: plainError(r.error, "It didn't stop. Try again.") };
-      this.busy = null; this.result = null;
+      this.busy = null; this.busyFor = null; this.result = null;
       this.note = done.ok && done.result?.status === "stopped" ? { tone: "good", text: "Staging is stopped. Nothing is left running." }
+        : done.ok && !done.result ? null
         : { tone: "fail", text: done.ok ? plainError(done.result?.error, "It stopped, but something could not be removed.") : done.error };
       this.load(cx);
       this.page.reload?.(cx);

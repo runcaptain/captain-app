@@ -14,7 +14,13 @@ export const notify = (n) => { (globalThis.__toasts ??= []).push(n); return Stri
 // A test that needs real programs (forms-e2e.mjs) sets globalThis.__exec.
 export const exec = async (...a) => (globalThis.__exec ? globalThis.__exec(...a) : { code: 1, stdout: '', stderr: 'no exec in tests' });
 export const readTextFile = async (p) => (globalThis.__files ?? {})[p] ?? null;
-export const writeTextFile = async (p, text) => { (globalThis.__files ??= {})[p] = text; (globalThis.__written ??= []).push(p); return null; };
+// As the app does (src/mod_files.rs): a file is only replaced when the caller says what text it replaces, and a
+// new file is only made when none is there. Anything else is refused, in the app's own words.
+export const writeTextFile = async (p, text, expected) => {
+  const now = (globalThis.__files ?? {})[p] ?? null;
+  if (now !== (expected ?? null)) throw new Error("The file changed while saving. Reload before saving.");
+  (globalThis.__files ??= {})[p] = text; (globalThis.__written ??= []).push(p); return null;
+};
 export const home = () => '/tmp';
 export const window = () => ({ platform: 'macos', fullscreen: false });
 export const focused = () => ({ space: globalThis.__space ?? "s1" });

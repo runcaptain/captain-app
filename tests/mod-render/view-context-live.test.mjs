@@ -181,6 +181,8 @@ for (let i = 0; i < 80 && hd.byIdPrefix('send-dataset').length === 0; i++) { awa
 assert.equal(hd.byIdPrefix('send-dataset').length, 1, 'the dataset page offers Send to agent');
 globalThis.__agentList = [{ address: 't7', status: 'idle', tab_name: 'Claude Code', focused: true }];
 globalThis.__runs = []; globalThis.__hc = [];
+// The data screen publishes the dataset's version on a timer: wait for it, so the expected ref isn't "@vundefined".
+for (let i = 0; i < 80 && shared('captain.view.data')?.version == null; i++) { await hd.layoutLists({}); await hd.idle(150); }
 await hd.click('send-dataset');
 await hd.idle(50);
 assert.deepEqual(pinned().map((i) => [i.ref, i.kind]), [[`dataset:${dv.dataset}@v${shared('captain.view.data').version}`, 'dataset']], 'pinned in the app home, per workspace');

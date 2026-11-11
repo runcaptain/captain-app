@@ -123,8 +123,9 @@ HIDDEN = "(hidden)"
 # Section ids, in the words the screens use (defaults/AGENTS.md, "Words"; kit/view.js SCREENS).
 SCREENS = {"project": "Home", "investigations": "Experiments", "data": "Data and signals", "runs": "Runs",
            "comparisons": "Compare", "handoff": "Launch review", "team": "Team"}
+# A session id in a row of search events names a shopper's visit, not a login, so it is not on this list.
 SECRET_KEY = re.compile(r"pass(word|phrase)?|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|"
-                        r"authorization|bearer|cookie|session[_-]?id|\bdsn\b|\bpat\b", re.I)
+                        r"authorization|bearer|cookie|\bdsn\b|\bpat\b", re.I)
 # The same pattern is in the screens (kit/view.js SECRET_VALUE): change both.
 SECRET_VALUE = re.compile(
     r"^(?:(?:sk|pk|rk)[-_][-_A-Za-z0-9]{16,}|gh[pous]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
@@ -233,6 +234,7 @@ def _record(raw: dict) -> dict:
     rec = {
         "at": datetime.datetime.fromtimestamp(at / 1000, datetime.timezone.utc).isoformat(timespec="seconds") if at else None,
         "workspace": ws,
+        "dev_backend": raw.get("dev_backend") or None,
         "project": project,
         "explorer_pick": {k: scope.get(k) for k in ("kind", "id", "label")} if scope and scope.get("id") else None,
         "screen": SCREENS.get(section, section),
@@ -322,7 +324,8 @@ def _say(v) -> str:
 
 def _text(rec: dict) -> str:
     p = rec.get("project") or {}
-    rows = [("Workspace", rec.get("workspace")),
+    rows = [("Development backend", f"Captain's services run from {rec['dev_backend']}, not from the installed app") if rec.get("dev_backend") else ("", None),
+            ("Workspace", rec.get("workspace")),
             ("Project", (f"{p.get('name') or p.get('id')}" + (f" (id {p['id']})" if p.get("id") and p.get("id") != p.get("name") else "")
                          + (f", {p['kind']}" if p.get("kind") else "")) if p else None),
             ("Explorer pick", f"{rec['explorer_pick']['kind']} {rec['explorer_pick'].get('label') or rec['explorer_pick']['id']}"

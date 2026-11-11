@@ -97,6 +97,15 @@ clean(t, 'before staging');
 // One click stages it on this computer (the workspace has no cloud target): no cost to confirm.
 await h.click('ship-stage');
 await until(h, () => h.byIdPrefix('ship-done-stage').length === 1, 'step 1 is ticked once it runs');
+assert.equal(byId(h, 'ship-busy').length, 0, 'no progress label on a finished step');
+// A progress label never outlives its step, even when the job that reported it can no longer answer (the services
+// were restarted): once staging says the endpoint is running, the label goes.
+h.mod.shipPath.busy = 'Packaging the model version'; h.mod.shipPath.busyFor = { what: 'stage', was: null };
+await h.idle(50);
+assert.equal(byId(h, 'ship-busy').length, 1, 'while it is in flight the label shows');
+h.mod.shipPath.load(h.cx);
+await until(h, () => byId(h, 'ship-busy').length === 0, 'the label is cleared when staging reports the endpoint running');
+assert.ok(!h.text().includes('Packaging the model version'), 'and its words are gone');
 t = h.text();
 const staged = (await get('/api/projects/outdoor/staging')).staged;
 assert.equal(staged.status, 'running'); assert.equal(staged.kind, 'local');
