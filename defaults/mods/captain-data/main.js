@@ -1,7 +1,10 @@
-// CAPTAIN: Data and signals, native. The datasets of the workspace with their classes, a data grid that pages
-// through any dataset where it lives (GET /api/datasets/{name}/rows: the backend sorts, searches and filters), and
-// labels as code with a preview over logs. It replaces the web view of the Captain Search desktop app's Datasets
-// screen, in the same look (its index.css tokens).
+// CAPTAIN: Data, native. Two submenus and no more (Edgar, 2026-11-12):
+// - Tables: every table of the workspace in one list (catalog.js): the datasets Captain keeps versions of and each
+//   connected database's tables. A row opens that table's page in place: a dataset's (dataset-page.js: Rows, About,
+//   and a "Where this came from" button) or a database table's (tables.js: Rows, About).
+// - Sources: where the data and the models come from: each database connection, with the button that reads its
+//   tables, and each model registry (models.js).
+// Labels left the screen (`cst labels` still defines and previews them). Notebooks is its own view.
 //
 // The mod never holds or sorts a whole dataset: gpui-kit stops a render after 50 ms (docs/captain/RISKS.md). The
 // grid keeps a few pages of 200 rows around what is on screen and drops the rest.
@@ -12,11 +15,12 @@ import { api, retry, details, watchWorkspace, watchScope, watchConnections } fro
 import { watchView } from "./kit/view.js";
 import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
-import { Loading, Skeleton, Button, Badge } from "./kit/ui.js";
-import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
+import { Loading, Skeleton, Button, Submenus } from "./kit/ui.js";
+import { askAgent, openForm } from "./kit/agent.js";
 import { Library } from "./library.js";
 import { Models } from "./models.js";
 import { Tables } from "./tables.js";
+import { Catalog } from "./catalog.js";
 import { DatasetPage } from "./dataset-page.js";
 import { openOverlay } from "herdr";
 import { int } from "./kit/num.js";
@@ -27,17 +31,9 @@ const openImport = (folder) => openOverlay({ mod: "captain-import", kind: "dialo
 const ROW = 26;
 const ICON = (n) => `mods/captain-data/icons/${n}.svg`;
 const enc = (name) => name.split("/").map(encodeURIComponent).join("/");
-const stripAnsi = (s) => String(s ?? "").replace(/\u001b\[[0-9;]*m/g, "");
 const numeric = (t) => /int|double|float|decimal|numeric|real|bigint|hugeint|number/i.test(t ?? "");
 const fmtInt = (n) => int(n);
 const typeIcon = (t) => (numeric(t) ? "number" : /bool/i.test(t) ? "bool" : /date|time/i.test(t) ? "date" : /json|struct|map|list/i.test(t) ? "json" : "text");
-
-function cellText(v) {
-  if (v === null || v === undefined) return "null";
-  if (typeof v === "number") return Number.isInteger(v) ? int(v) : String(+v.toFixed(6));
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
-}
 
 /** A failed call in words for people: the backend's own sentence when it answered, else a plain one. Transport
  *  details (hosts, ports, tool output) never show: they go behind Copy details. */
@@ -83,54 +79,50 @@ function datasetPrompt(d) {
   ].join(" ");
 }
 
-const LABEL_PROMPT = "In Captain, help me define a label: a rule that turns logged search events into relevance judgments " +
-  "(for example, a purchase within 30 minutes of a search counts as relevant). Look at the event datasets in this workspace, " +
-  "propose a label that fits them, preview it on a sample, and define it with the cst CLI once I agree.";
+/** The submenus, and the earlier tab names that still open one (a layout, `cst app open`, an older link). */
+const SUBMENUS = [{ id: "tables", label: "Tables" }, { id: "sources", label: "Sources" }];
+const EARLIER_TAB = { datasets: "tables", tables: "tables", models: "sources", sources: "sources", labels: "tables" };
 
 export default class CaptainData extends View {
   init(_props, cx) {
-    this.tab = "datasets";
+    this.tab = "tables"; // "tables" | "sources"
     this.width = 1000;
     this.classes = [];
     this.cls = null;
     this.list = null;
     this.listError = null;
-    this.sel = null;
+    this.sel = null; // the dataset on the page
     this.detail = null;
-    this.labels = null;
-    this.labelSel = null;
-    this.preview = null;
-    this.previewLogs = null;
-    this.previewError = null;
+    this.shown = null; // what the Tables submenu shows over the list: null (the list), "dataset" or "table"
     this.lib = new Library(this);
     this.lib.load(cx);
     this.models = new Models(this);
     this.tables = new Tables(this);
+    this.catalog = new Catalog(this);
+    this.catalog.load(cx);
     this.page = new DatasetPage(this);
-    // Layout props (a layout, or the real-window check): {tab, dataset, pageTab, ...}.
+    // Layout props (a layout, or the real-window check): {tab, dataset, pageTab, tablesPick, tablesTab, ...}.
     const p = layoutProps?.() ?? {};
-    if (p.tab === "models" || p.tab === "labels" || p.tab === "tables") this.tab = p.tab;
-    if (p.pageTab) this.page.tab = p.pageTab;
+    if (p.tab) this.tab = EARLIER_TAB[p.tab] ?? "tables";
+    if (p.pageTab) this.page.open(cx, p.pageTab);
     if (Number.isInteger(p.openRow)) this.page.openRow = p.openRow; // a sample row to open, for screenshots
-    if (p.dataset) this.wanted = String(p.dataset); // a dataset to open instead of the first
-    if (p.find) this.lib.find.set_value(String(p.find)); // a search to start with
-    if (p.flatAll) this.lib.flatAll = true;
-    if (p.tablesTab) this.tables.tab = p.tablesTab; // "rows": the first table's rows, once it's picked
-    if (p.tablesPick) this.tables.want = p.tablesPick; // a table by name instead of the first
+    if (p.dataset) this.wanted = String(p.dataset); // a dataset to open on its page
+    if (p.find) this.catalog.find.set_value(String(p.find)); // a search to start with
+    if (p.tablesTab) this.tables.tab = p.tablesTab === "rows" ? "rows" : "about";
+    if (p.tablesPick) this.tables.want = p.tablesPick; // a database table to open on its page, by name
     // {importWith: {conn, sql, name}}: the import wizard, open on that query (a layout, or the real-window check).
     if (p.importWith) cx.timer.after(1500, () => openOverlay({ mod: "captain-import", kind: "dialog", width: 900, height: 640, props: { start: p.importWith } }));
-    if (p.tab === "tables") this.tables.load(cx);
-    if (p.tab === "labels") this.loadLabels(cx);
-    if (p.tab === "models") this.models.load(cx);
-    if (p.tab === "models" && p.registryAttach) this.models.toggleAttach(cx); // the attach form, open on the bucket list
+    this.tables.load(cx);
+    if (this.tab === "sources") this.models.load(cx);
+    if (p.registryAttach) { this.tab = "sources"; this.models.load(cx); this.models.toggleAttach(cx); } // the attach form, open on the bucket list
     this.load(cx);
-    cx.timer.every(500, (cx) => { this.lib.tick(cx); if (this.models.job) this.models.tick(cx); if (this.tables.jobs.size) this.tables.tick(cx); });
+    cx.timer.every(500, (cx) => { const busy = !!this.lib.job; this.lib.tick(cx); this.catalog.tick(cx); if (busy && !this.lib.job) this.catalog.load(cx); if (this.models.job) this.models.tick(cx); if (this.tables.jobs.size) this.tables.tick(cx); });
     // Pages the grid asked for while drawing are fetched here, outside render.
     // Until the backend answers, ask again every 3 s: the screen never stays on "starting" by itself.
     cx.timer.every(3000, (cx) => {
       if (this.starting || (this.list === null && this.loadedOnce) || (this.listError && !this.listR?.status)) this.load(cx);
-      // The folder tree, until it loads (while the services start, or after a failure that wasn't an answer).
-      if (this.lib.tree === null || (this.lib.error && !this.lib.error.status)) this.lib.load(cx);
+      // The one list, until it loads (while the services start, or after a failure that wasn't an answer).
+      if (this.catalog.rows === null || (this.catalog.error && !this.catalog.error.status)) this.catalog.load(cx);
     });
     // "Open <dataset>" from the palette: captain-go sets shared "captain.open" {section: "data", dataset, tab?, at}.
     // tab (a dataset page tab: health, insights, quality...) opens once that dataset is on the page.
@@ -140,57 +132,92 @@ export default class CaptainData extends View {
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
       if (this.wantTab && this.detail?.name === this.wantTab.dataset) { const t = this.wantTab.tab; this.wantTab = null; this.page.open(cx, t); }
-      // {section: "data", view: models | tables | labels}: that tab of Data (a project's home).
+      // {section: "data", view: tables | sources (or an earlier tab's name)}: that submenu of Data.
       if (o?.section === "data" && o.view && !o.dataset && o.at !== this.opened) {
         this.opened = o.at;
-        this.tab = o.view;
-        if (o.view === "models") this.models.load(cx);
-        if (o.view === "tables") this.tables.show(cx);
-        if (o.view === "labels") this.loadLabels(cx);
-        cx.notify();
+        this.showTab(cx, EARLIER_TAB[o.view] ?? "tables");
       }
       if (o?.section === "data" && o.dataset && o.at !== this.opened) {
         this.opened = o.at;
         this.wantTab = o.tab ? { dataset: o.dataset, tab: o.tab } : null;
-        this.tab = "datasets";
-        // Just imported, or opened from elsewhere: reload the folders and open them down to it.
-        this.lib.revealing = o.dataset;
+        // Just imported, or opened from elsewhere: list it, and open its page.
+        this.catalog.load(cx);
         this.lib.load(cx);
-        if (this.list?.some((d) => d.name === o.dataset) && !o.fresh) this.select(cx, o.dataset);
+        if (this.list?.some((d) => d.name === o.dataset) && !o.fresh) this.openDataset(cx, o.dataset);
         else { this.wanted = o.dataset; this.load(cx); }
         cx.notify();
       }
     });
     // What this screen shows, for agents (cst app context): the tab, the dataset open and its tab.
-    watchView(cx, "data", () => ({ tab: this.tab, dataset: this.tab === "datasets" ? this.sel ?? null : null,
-      version: this.tab === "datasets" ? this.detail?.version ?? null : null, dataset_tab: this.tab === "datasets" && this.sel ? this.page?.tab ?? null : null }));
+    watchView(cx, "data", () => ({ tab: this.tab, dataset: this.shown === "dataset" ? this.sel ?? null : null,
+      version: this.shown === "dataset" ? this.detail?.version ?? null : null, dataset_tab: this.shown === "dataset" && this.sel ? this.page?.tab ?? null : null,
+      table: this.shown === "table" && this.tables.sel ? `${this.tables.sel.conn}.${this.tables.sel.name}` : null }));
     // The Explorer's pick (a brand, site, engine or project) filters every list: reload what's shown.
     watchScope(cx, (cx) => {
       this.load(cx);
       this.lib.load(cx);
+      this.catalog.load(cx);
       if (this.models.regs !== null) this.models.load(cx);
-      if (this.tables.conns !== null) this.tables.load(cx);
+      this.tables.load(cx);
       cx.notify();
     });
     // A database connected or removed anywhere in the app: relist it here.
-    watchConnections(cx, (cx) => {
-      if (this.tables.conns !== null || this.tab === "tables") this.tables.load(cx);
-      cx.notify();
-    });
-    // Another space, another workspace: start over on its datasets and labels.
+    watchConnections(cx, (cx) => { this.tables.load(cx); this.catalog.load(cx); cx.notify(); });
+    // Another space, another workspace: start over on its tables.
     watchWorkspace(cx, (cx) => {
-      this.list = null; this.sel = null; this.detail = null; this.labels = null; this.labelSel = null; this.preview = null;
+      this.list = null; this.sel = null; this.detail = null; this.shown = null;
       this.cls = null; this.classes = [];
       this.lib = new Library(this);
       this.lib.load(cx);
       this.models = new Models(this);
-      if (this.tab === "models") this.models.load(cx);
+      if (this.tab === "sources") this.models.load(cx);
       this.tables = new Tables(this);
-      if (this.tab === "tables") this.tables.load(cx);
+      this.tables.load(cx);
+      this.catalog = new Catalog(this);
+      this.catalog.load(cx);
       this.load(cx);
       cx.notify();
     });
   }
+
+  // ---- going places --------------------------------------------------------------------------------------------
+
+  showTab(cx, id) {
+    this.tab = id;
+    if (id === "sources") { this.tables.show(cx); if (this.models.regs === null) this.models.load(cx); }
+    else this.catalog.load(cx);
+    cx.notify();
+  }
+
+  /** A dataset's page, over the list. */
+  openDataset(cx, name) { this.select(cx, name); }
+
+  /** A database table's page, over the list. */
+  openTable(cx, conn, schema, name) {
+    this.tab = "tables";
+    this.shown = "table";
+    this.tables.pick(cx, conn, schema, name);
+  }
+
+  /** Back to the one list. */
+  backToList(cx) {
+    this.shown = null;
+    this.catalog.load(cx);
+    cx.notify();
+  }
+
+  /** Sources, from the list's "its tables haven't been read yet" line. */
+  showSources(cx) { this.showTab(cx, "sources"); }
+
+  /** The one list, searched for a database's name: "See its tables" on a source's card. */
+  showTablesOf(cx, conn) {
+    this.shown = null;
+    this.catalog.kind = "table";
+    this.catalog.find.set_value(conn);
+    this.showTab(cx, "tables");
+  }
+
+  importDataset(folder) { openImport(folder); }
 
   // ---- data ---------------------------------------------------------------------------------------------------
 
@@ -202,18 +229,16 @@ export default class CaptainData extends View {
         this.list = ds.data ?? [];
         this.listError = null;
         if (this.wanted && this.list.some((d) => d.name === this.wanted)) {
-          this.select(cx, this.wanted);
+          this.openDataset(cx, this.wanted);
           this.wanted = null;
         } else if (this.wanted) {
           // The Explorer's pick hides it: say so rather than leave the import nowhere to be seen.
           const pick = shared("captain.scope");
           this.lib.note = { text: `${this.wanted} isn't shown because the Explorer has ${pick?.label ?? "a brand or project"} picked. Clear the Explorer's pick (under Explorer in the sidebar) to see it.`, tone: "muted" };
-          this.lib.revealing = null;
           this.wanted = null;
-          if (!this.sel || !this.list.some((d) => d.name === this.sel)) { if (this.list[0]) this.select(cx, this.list[0].name); }
-        } else if (!this.sel || !this.list.some((d) => d.name === this.sel)) {
-          if (this.list[0]) this.select(cx, this.list[0].name);
         }
+        // The dataset on the page is gone (another scope, or removed): back to the list.
+        if (this.shown === "dataset" && this.sel && !this.list.some((d) => d.name === this.sel)) { this.sel = null; this.detail = null; this.shown = null; }
       } else {
         this.starting = !!ds.starting;
         this.listError = ds.starting ? null : say(ds, "Couldn't load datasets.");
@@ -225,17 +250,10 @@ export default class CaptainData extends View {
     });
   }
 
-  loadLabels(cx) {
-    cx.spawn(async (cx) => {
-      const r = await api("/api/labels");
-      this.labels = r.ok ? r.data ?? [] : [];
-      this.labelsError = r.ok ? null : say(r, "Couldn't load labels.");
-      if (!this.labelSel && this.labels[0]) this.labelSel = this.labels[0].name;
-      cx.notify();
-    });
-  }
-
+  /** Open a dataset's page, over the list. */
   select(cx, name) {
+    this.tab = "tables";
+    this.shown = "dataset";
     this.sel = name;
     this.detail = null;
     this.page?.reset();
@@ -244,21 +262,6 @@ export default class CaptainData extends View {
       if (this.sel !== name) return;
       this.detail = r.ok ? r.data : { error: say(r, "Couldn't load this dataset.", "This dataset's record is missing from the workspace.") };
       if (r.ok) this.page.open(cx, this.page.tab);
-      cx.notify();
-    });
-    cx.notify();
-  }
-
-  loadPreview(cx, logs) {
-    const l = this.labels?.find((x) => x.name === this.labelSel);
-    if (!l) return;
-    this.previewLogs = logs;
-    this.preview = null;
-    this.previewError = null;
-    cx.spawn(async (cx) => {
-      const r = await api(`/api/labels/${encodeURIComponent(l.name)}/preview?logs=${encodeURIComponent(logs)}&v=${l.version}&limit=20`, { timeout: 60 });
-      this.preview = r.ok ? r.data : null;
-      this.previewError = r.ok ? null : stripAnsi(say(r, "Couldn't load the preview."));
       cx.notify();
     });
     cx.notify();
@@ -280,46 +283,22 @@ export default class CaptainData extends View {
       .when(count !== undefined, (e) => e.child(div().text_size(10.5).font_family(MONO).text_color(c.grey500).child(String(count))));
   }
 
-  tabs(c) {
-    const t = (id, label, icon) => h_flex().id(`tab-${id}`).h(28).px(12).gap(6).items_center().cursor_pointer()
-      .border_r(1).border_color(c.grey300).text_size(12.5)
-      .bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
-      .on_click((_e, cx) => { this.tab = id; if (id === "labels" && !this.labels) this.loadLabels(cx); if (id === "models" && this.models.regs === null) this.models.load(cx); if (id === "tables") this.tables.show(cx); cx.notify(); })
-      .child(this.icon(icon, 13)).child(div().child(label));
-    return h_flex().flex_none().border_1().border_color(c.grey300)
-      .child(t("datasets", "Datasets", "table")).child(t("labels", "Labels", "tag")).child(t("tables", "Tables", "database")).child(t("models", "Models", "lineage"));
-  }
-
   header(c) {
     // Wraps in a narrow pane: the buttons go to a second line rather than out of view.
     return h_flex().min_h(52).flex_none().flex_wrap().px(20).py(8).gap(14).items_center().border_b(1).border_color(c.rule)
-      .child(div().flex_none().text_size(18).font_semibold().text_color(c.navy).child("Data and signals"))
-      .child(this.tabs(c))
-      // What the tab holds, only when there's room: in a narrow pane it would push the buttons out of view.
-      .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.grey900)
-        .when((this.width ?? 0) < 1180, (e) => e.invisible())
-        .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your evaluations read." : this.tab === "models" ? "Trained models from your registries, and what each was built from." : this.tab === "tables" ? "Your databases' tables, their columns and rows, and how they're queried." : "Rules that turn logged events into judgments."))
-      .when(this.tab === "datasets", (e) => e
+      .child(div().flex_none().text_size(18).font_semibold().text_color(c.navy).child("Data"))
+      .child(Submenus(c, SUBMENUS, this.tab, (id, cx) => this.showTab(cx, id)))
+      .child(div().flex_1())
+      // One filled button: bringing data in. On a table's page the page has its own actions.
+      .when(this.tab === "tables" && !this.shown, (e) => e
         .child(Button(c, "new-class", "New class", () => openForm("dataset-class"), { small: true }))
         .child(Button(c, "import-dataset", "Import a dataset", () => openImport(), { kind: "primary", small: true })))
-      .when(this.tab === "labels", (e) => e
-        .child(Button(c, "label-agent", "Ask an agent to define a label", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, LABEL_PROMPT)), { small: true })))
+      .when(this.tab === "sources", (e) => e
+        .child(Button(c, "tables-connect", "Connect a database", () => openForm("database"), { kind: "primary", small: true })))
       .child(div().id("data-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()
         .border_1().border_color(c.grey300).text_color(c.grey900).hover((s) => s.text_color(c.blue).border_color(c.blue))
-        .tooltip("Refresh").on_click((_e, cx) => { if (this.tab === "labels") this.loadLabels(cx); else if (this.tab === "models") this.models.load(cx); else if (this.tab === "tables") this.tables.load(cx); else { this.load(cx); this.lib.load(cx); } })
+        .tooltip("Refresh").on_click((_e, cx) => { if (this.tab === "sources") { this.tables.load(cx); this.models.load(cx); } else { this.load(cx); this.lib.load(cx); this.catalog.load(cx); } })
         .child(this.icon("refresh", 14)));
-  }
-
-  /** No datasets in this workspace yet: what they are for, and the ways in. */
-  firstDataset(c) {
-    return v_flex().flex_1().items_center().justify_center().gap(10).p(24)
-      .child(this.icon("table", 22, c.grey500))
-      .child(div().text_size(15).font_medium().child("Bring in your data"))
-      .child(div().max_w(460).text_center().text_size(12.5).line_height("19px").text_color(c.grey900)
-        .child("Evaluations read four kinds of data: your catalog, the queries people search, judgments of what is relevant, and logs of what shoppers did. Import a file, save a SQL query, or start from the demo store."))
-      .child(h_flex().gap(8)
-        .child(Button(c, "first-import", "Import a dataset", () => openImport(), { kind: "primary" }))
-        .child(Button(c, "first-demo", "Load Sample North Pole", () => openForm("demo"))));
   }
 
   /** The plain failure panel (sentence, Retry, Copy details), for the library to show. */
@@ -329,30 +308,6 @@ export default class CaptainData extends View {
 
   classColor(name) {
     return this.classes.find((x) => x.name === name)?.color ?? "#64748b";
-  }
-
-  datasetList(c, w) {
-    const rows = this.list ?? [];
-    return v_flex().w(w).h_full().flex_none().border_r(1).border_color(c.rule)
-      .child(h_flex().flex_none().flex_wrap().gap(6).p(10).border_b(1).border_color(c.rule)
-        .child(this.chip(c, "All", null, !this.cls, (_e, cx) => { this.cls = null; this.load(cx); }))
-        .children(this.classes.map((k) => this.chip(c, k.name, k.color, this.cls === k.name, (_e, cx) => { this.cls = this.cls === k.name ? null : k.name; this.load(cx); }, k.datasets))))
-      .child(v_flex().id("data-list").flex_1().min_h(0).overflow_y_scrollbar()
-        .when(!!this.listError, (e) => e.child(div().p(10).child(trouble(c, "datasets-list", this.listR, this.listError, (cx) => this.load(cx)))))
-        .when(this.list !== null && rows.length === 0 && !this.listError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child(this.cls ? "No datasets in this class." : "No datasets yet.")))
-        .when(this.list === null && !this.listError, (e) => e.child(div().child(Skeleton(c, 8))))
-        .children(rows.map((d) => {
-          const active = d.name === this.sel;
-          return h_flex().id(`ds-${d.name}`).w_full().h(34).flex_none().px(10).gap(8).items_center().cursor_pointer()
-            .border_l(2).border_color(active ? c.blue : "#00000000").bg(active ? c.blueLight : c.surface)
-            .hover((s) => (active ? s : s.bg(c.surface2)))
-            .tooltip(`${d.name}@v${d.latest}${d.description ? `\n${d.description}` : ""}`)
-            .on_click((_e, cx) => this.select(cx, d.name))
-            .child(this.icon("table", 14, active ? c.blue : c.grey500))
-            .child(named(c, d.name, d.latest, { color: active ? c.blue : c.navy }))
-            .child(h_flex().flex_none().gap(3).children((d.classes ?? []).slice(0, 3).map((k) => div().size(7).bg(this.classColor(k)).tooltip(k))))
-            .child(div().flex_none().w(54).text_right().text_size(11).font_family(MONO).text_color(c.grey500).child(d.rows ? fmtInt(d.rows) : ""));
-        })));
   }
 
   facts(c, d) {
@@ -383,23 +338,35 @@ export default class CaptainData extends View {
       .when(fields.length > shown.length, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`+${fields.length - shown.length} more`)));
   }
 
+  /** The crumb over a table's page: back to the one list. */
+  crumb(c, name) {
+    return h_flex().id("data-crumb").flex_none().h(34).px(20).gap(6).items_center().border_b(1).border_color(c.rule).text_size(12.5)
+      .child(div().id("crumb-tables").text_color(c.blue).cursor_pointer().hover((s) => s.underline()).on_click((_e, cx) => this.backToList(cx)).child("Tables"))
+      .child(this.icon("chevron-right", 11, c.grey500))
+      .child(div().min_w(0).truncate().text_color(c.navy).child(name ?? ""));
+  }
+
   detailPane(c, w) {
     const d = this.detail;
-    if (!this.sel) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick a dataset on the left.");
     if (!d) return v_flex().flex_1().child(Skeleton(c, 8));
     if (d.error) return v_flex().flex_1().p(24).text_size(13).text_color(c.fail).child(d.error);
-    return v_flex().flex_1().min_w(0).h_full()
-      .child(h_flex().flex_none().flex_wrap().gap(8).px(20).pt(14).pb(8).items_center()
+    const latest = (this.list ?? []).find((x) => x.name === d.name)?.latest ?? d.version;
+    return v_flex().id("dataset-page").flex_1().min_w(0).min_h(0)
+      // A file dropped on its page lands in its folder: the same name there is a new version of it.
+      .on_drop((e, cx) => this.lib.importPaths(cx, e.paths ?? [], this.page.folder()))
+      .when(!!this.lib.job, (e) => e.child(this.lib.progress(c)))
+      .when(!!this.lib.summary, (e) => e.child(this.lib.summaryPanel(c)))
+      .child(h_flex().flex_none().flex_wrap().gap(8).px(20).pt(14).pb(6).items_center()
         .child(this.icon("table", 16, c.navy))
-        .child(div().flex_none().max_w(420).child(named(c, d.name, d.version, { size: 15 })))
+        .child(div().flex_none().max_w(420).child(named(c, d.name, d.version, { size: 15, mono: false })))
         .children((d.classes ?? []).map((k) => h_flex().h(20).px(6).gap(5).items_center().border_1().border_color(c.grey300).text_size(11)
           .child(div().size(7).bg(this.classColor(k))).child(div().text_color(c.navy).child(k))))
-        .when(!!d.external?.length, (e) => e.child(div().text_size(11).text_color(c.grey500).child("by reference"))))
-      .when(!!d.description, (e) => e.child(div().flex_none().px(20).pb(8).text_size(12.5).text_color(c.grey900).child(d.description)))
-      .child(h_flex().flex_none().gap(8).px(20).pb(8)
-        .child(Button(c, "agent-dataset", "Open an agent in this space", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, datasetPrompt(d))), { small: true }))
-        .child(Button(c, "prompt-dataset", "Copy prompt", (_e, cx) => copyPrompt(cx, datasetPrompt(d)), { kind: "quiet", small: true }))
-        .child(SendToAgent(c, "send-dataset", { ref: `dataset:${d.name}@v${d.version}`, kind: "dataset", label: `${d.name}@v${d.version}` })))
+        .child(div().flex_1())
+        .child(SendToAgent(c, "send-dataset", { ref: `dataset:${d.name}@v${d.version}`, kind: "dataset", label: `${d.name}@v${d.version}` }))
+        .child(Button(c, "agent-dataset", "Ask an agent about it", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, datasetPrompt(d))), { small: true })))
+      // One line saying what it is: a table Captain keeps versions of, and which one this is.
+      .child(div().id("ds-what").flex_none().px(20).pb(8).text_size(12).text_color(c.grey500)
+        .child(`A table Captain keeps versions of. This is version ${d.version} of ${latest}${d.external?.length ? ", kept by reference" : ""}.${d.description ? ` ${d.description}` : ""}`))
       .child(this.page.tabs(c))
       .child(this.page.body(c, w, d));
   }
@@ -419,87 +386,38 @@ export default class CaptainData extends View {
     cx.notify();
   }
 
-  labelsPane(c, w) {
-    const ls = this.labels;
-    const l = ls?.find((x) => x.name === this.labelSel) ?? null;
-    const events = (this.list ?? []).filter((d) => (d.classes ?? []).some((k) => this.classes.find((x) => x.name === k)?.role === "events"));
-    const listW = Math.max(200, Math.min(280, Math.floor(w * 0.26)));
-    // What a label is, always in view (Edgar didn't know what labels do).
-    const about = div().id("labels-about").flex_none().px(16).py(8).border_b(1).border_color(c.rule).text_size(12.5).line_height("18px").text_color(c.grey900)
-      .child("A label grades each search from what shoppers did, so you can train and judge without rating by hand. For example, deep-search is 1 when a shopper clicked one of the top 3 results.");
-    return v_flex().flex_1().min_h(0).child(about).child(h_flex().flex_1().min_h(0)
-      .child(v_flex().id("label-list").w(listW).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
-        .when(ls === null, (e) => e.child(div().child(Skeleton(c, 8))))
-        .when(!!this.labelsError, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child(this.labelsError)))
-        .when(ls !== null && !ls.length, (e) => e.child(div().p(12).text_size(12.5).text_color(c.grey500).child("No labels yet. A label turns logged events into judgments, such as a click or a purchase counting as relevant. Ask an agent in this space to define one.")))
-        .children((ls ?? []).map((x) => {
-          const active = x.name === this.labelSel;
-          return h_flex().id(`label-${x.name}`).w_full().h(40).flex_none().px(10).gap(8).items_center().cursor_pointer()
-            .border_l(2).border_color(active ? c.blue : "#00000000").bg(active ? c.blueLight : c.surface).hover((s) => (active ? s : s.bg(c.surface2)))
-            .tooltip(x.description ?? x.name)
-            .on_click((_e, cx) => { this.labelSel = x.name; this.preview = null; this.previewError = null; cx.notify(); })
-            .child(this.icon("tag", 14, active ? c.blue : c.grey500))
-            .child(v_flex().flex_1().min_w(0)
-              .child(named(c, x.name, x.version, { color: active ? c.blue : c.navy }))
-              .child(div().truncate().text_size(11).text_color(c.grey500).child(`${x.grain} · ${x.dtype}`)));
-        })))
-      .child(!l ? v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child(ls?.length ? "Pick a label." : "")
-        : v_flex().id("label-detail").flex_1().min_w(0).h_full().overflow_y_scrollbar().px(20).py(14).gap(12)
-          .child(h_flex().gap(8).items_center().flex_wrap()
-            .child(this.icon("tag", 16, c.navy))
-            .child(div().flex_none().max_w(420).child(named(c, l.name, l.version, { size: 15 })))
-            .child(div().h(20).px(6).border_1().border_color(c.grey300).text_size(11).text_color(c.navy).flex().items_center().child(l.grain))
-            .child(div().text_size(11.5).text_color(c.grey500).child(`versions ${(l.versions ?? [l.version]).map((v) => `v${v}`).join(", ")}`)))
-          .when(!!l.description, (e) => e.child(div().text_size(12.5).text_color(c.grey900).child(l.description)))
-          .child(v_flex().border_1().border_color(c.rule).bg(c.surface2).p(12).gap(6)
-            .child(div().text_size(10.5).text_color(c.grey500).child("SQL, PER " + String(l.grain).toUpperCase()))
-            .child(div().text_size(12.5).font_family(MONO).text_color(c.navy).child(l.sql))
-            .when(!!l.where, (e) => e.child(div().text_size(12).font_family(MONO).text_color(c.grey900).child(`where ${l.where}`))))
-          .child(v_flex().gap(8)
-            .child(div().text_size(13).font_medium().text_color(c.navy).child("Preview over logs"))
-            .child(h_flex().flex_wrap().gap(6)
-              .when(!events.length, (e) => e.child(div().text_size(12).text_color(c.grey500).child("No events datasets in this workspace.")))
-              .children(events.slice(0, 12).map((d) => this.chip(c, `${d.name}@v${d.latest}`, null, this.previewLogs === `${d.name}@v${d.latest}`, (_e, cx) => this.loadPreview(cx, `${d.name}@v${d.latest}`)))))
-            .when(!!this.previewError, (e) => e.child(div().text_size(12.5).text_color(c.fail).child(this.previewError)))
-            .when(!!this.preview, (e) => e.child(this.previewTable(c, this.preview))))));
-  }
-
-  previewTable(c, p) {
-    return v_flex().gap(6)
-      .child(h_flex().gap(16).text_size(12.5).text_color(c.navy)
-        .child(div().child(`${fmtInt(p.groups)} ${p.grain} groups`))
-        .child(div().child(`mean ${p.mean === null ? "none" : Number(p.mean).toFixed(4)}`))
-        .child(div().text_color(c.grey500).child(`${fmtInt(p.non_null)} with a value`)))
-      .child(v_flex().border_1().border_color(c.rule)
-        .child(h_flex().h(26).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium()
-          .children(p.columns.map((x) => div().flex_1().min_w(0).px(8).truncate().text_color(c.navy).child(x))))
-        .children(p.rows.slice(0, 20).map((r, i) => h_flex().id(`pv-${i}`).h(24).border_b(1).border_color(c.rule).text_size(12)
-          .children(r.map((v) => div().flex_1().min_w(0).px(8).truncate().text_color(c.navy).child(cellText(v)))))));
+  /** Sources: the databases Captain reads tables from, then the registries it reads models from. */
+  sources(c, w) {
+    return v_flex().id("sources").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(18)
+      .child(v_flex().gap(8)
+        .child(div().text_size(14).font_semibold().child("Databases"))
+        .child(this.tables.cards(c)))
+      .child(this.models.render(c, w));
   }
 
   render() {
     const c = palette(isDark(theme()));
     const w = this.width;
-    const listW = this.tab === "datasets" ? Math.max(300, Math.min(460, Math.floor(w * 0.42))) : Math.max(220, Math.min(320, Math.floor(w * 0.24)));
+    const none = Array.isArray(this.catalog.rows) && !this.catalog.rows.length && !this.catalog.find.value().trim() && !this.catalog.connections.length;
     // Never blank: the header always shows, and the body says what is happening.
-    const body = this.starting
+    const body = this.starting || this.catalog.starting
       ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true))
-      : this.tab === "models"
-        ? this.models.render(c, w)
-      : this.tab === "tables"
-        ? this.tables.render(c, w)
-      : !this.loadedOnce && this.list === null
-        ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true))
-      : this.listError && this.list === null
-        ? v_flex().flex_1().p(24).child(trouble(c, "datasets", this.listR, "Couldn't load datasets.", (cx) => this.load(cx)))
-        : this.tab === "datasets" && Array.isArray(this.list) && this.list.length === 0 && !this.cls && this.lib.tree && !(this.lib.tree.folders ?? []).length
-          ? this.lib.empty(c)
-        : this.tab === "datasets"
-          ? h_flex().flex_1().min_h(0).child(this.lib.render(c, listW)).child(this.detailPane(c, w - listW))
-          : this.labelsPane(c, w);
+      : this.tab === "sources"
+        ? this.sources(c, w)
+      : this.shown === "dataset"
+        ? v_flex().flex_1().min_h(0).child(this.crumb(c, this.sel)).child(this.detailPane(c, w))
+      : this.shown === "table"
+        ? v_flex().flex_1().min_h(0).child(this.crumb(c, this.tables.sel?.name)).child(this.tables.body(c, w))
+      : none
+        ? this.lib.empty(c)
+        : this.catalog.render(c, w);
     return v_flex().id("root").size_full().bg(c.surface).font_family(FONT).text_color(c.navy)
       .on_size_change((size, cx) => { this.width = size.width; cx.notify(); })
       .child(this.header(c))
+      .when(!!this.lib.note && this.tab === "tables", (e) => e.child(h_flex().id("data-note").flex_none().px(20).py(6).gap(8).items_start().border_b(1).border_color(c.rule).text_size(12)
+        .text_color(this.lib.note.tone === "fail" ? c.fail : this.lib.note.tone === "good" ? c.good : c.grey900)
+        .child(div().flex_1().min_w(0).child(this.lib.note.text))
+        .child(div().id("data-note-x").cursor_pointer().on_click((_e, cx) => { this.lib.note = null; cx.notify(); }).child(this.icon("x", 11)))))
       .child(body);
   }
 }

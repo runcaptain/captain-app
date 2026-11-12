@@ -31,7 +31,7 @@ def test_what_uses_a_catalog(ctx):
     pipes = [e["label"] for e in r["used_by"]["pipeline"]]
     assert "demo-bm25@v1" in pipes and "demo-tuned@v1" in pipes
     assert {e["label"] for e in r["used_by"]["run"]} >= {"demo-tuned-vs-bm25@v1"}
-    # A run opens in Runs: the Compare screen is leaving the app.
+    # A run opens in Runs, with its comparison in place: the Compare screen left the app.
     assert all(e["section"] == "runs" for e in r["used_by"]["run"])
     assert not any(e["name"] == "demo-catalog" for es in r["used_by"].values() for e in es), "not itself"
     assert r["notebooks"] == [{"name": "reads-catalog", "cells": 2}]

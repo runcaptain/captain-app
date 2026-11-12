@@ -89,13 +89,6 @@
           }
         },
         {
-          "id": "comparisons",
-          "type": "block",
-          "content": {
-            "mod": "captain-compare"
-          }
-        },
-        {
           "id": "engine",
           "type": "block",
           "content": {

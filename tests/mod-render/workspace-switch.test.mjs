@@ -12,13 +12,13 @@ import { tidy } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
-const LIST = { 'captain-data': /^\/api\/datasets(\?|$)/, 'captain-runs': /^\/api\/backtests$/, 'captain-compare': /^\/api\/backtests$/ };
+const LIST = { 'captain-data': /^\/api\/data\/tables/, 'captain-runs': /^\/api\/backtests$/ };
 // Each screen's own fixtures (tests/mod-render/fixtures/<mod>), enough to draw its list and first detail.
 const ROUTES = {
-  'captain-data': [[/^\/api\/dataset-classes/, 'classes'], [/\/rows\?/, 'rows0'], [/^\/api\/datasets\/tree$/, 'tree'],
-  [/^\/api\/datasets(\?|$)/, 'datasets'], [/^\/api\/datasets\/[^?]+$/, 'detail'], [/^\/api\/labels$/, 'labels']],
-  'captain-runs': [[/^\/api\/backtests$/, 'backtests'], [/^\/api\/backtests\/[^?]+$/, 'backtest'], [/^\/api\/runs\//, 'run']],
-  'captain-compare': [[/^\/api\/backtests$/, 'backtests'], [/\/compatibility$/, 'compat'], [/\/histogram/, 'hist'], [/\/queries\?/, 'queries0'], [/^\/api\/runs\/[^?]+\?v=/, 'run']],
+  'captain-data': [[/^\/api\/dataset-classes/, 'classes'], [/\/rows\?/, 'rows0'], [/^\/api\/data\/tables/, 'data-tables'],
+  [/^\/api\/datasets(\?|$)/, 'datasets'], [/^\/api\/datasets\/[^?]+$/, 'detail']],
+  'captain-runs': [[/^\/api\/backtests$/, 'backtests'], [/^\/api\/backtests\/[^?]+$/, 'backtest'], [/^\/api\/runs\//, 'run'],
+  [/^\/api\/(workflows|grading|replays)$/, 'empty'], [/^\/api\/(jobs|live)\?/, 'empty'], [/\/(compatibility|histogram)/, 'empty']],
 };
 for (const [mod, list] of Object.entries(LIST)) {
   globalThis.__fixtures = path.join(here, `fixtures/${mod}`);

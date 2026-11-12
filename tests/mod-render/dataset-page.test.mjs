@@ -15,17 +15,17 @@ globalThis.__fixtures = path.join(here, 'fixtures/captain-data');
 const routes = (profile) => [
   [/^\/api\/dataset-classes/, 'classes'],
   [/\/rows\?/, 'rows0'],
-  [/^\/api\/datasets\/tree$/, 'tree'],
+  [/^\/api\/data\/tables/, 'data-tables'],
   [/^\/api\/datasets(\?|$)/, 'datasets'],
   [/^\/api\/datasets\/[^?]+(\?v=\d+)?$/, 'detail'],
   [/^\/api\/lineage\/graph/, 'no-route'],
   [/^\/api\/lineage$/, 'lineage'],
   [/^\/api\/profile/, profile],
-  [/^\/api\/labels$/, 'labels'],
 ];
 async function mount(profile) {
   globalThis.__routes = routes(profile);
   globalThis.__asked = [];
+  globalThis.__props = { dataset: 'demo-catalog' }; // its page, opened by name: the screen starts on the list of tables
   const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-page-')));
   fs.cpSync(path.join(root, 'defaults/mods/captain-data'), work, { recursive: true });
   fs.copyFileSync(path.join(root, 'defaults/captain/kit/cst.js'), path.join(work, 'kit/real-cst.js'));
@@ -39,31 +39,50 @@ async function mount(profile) {
 
 const h = await mount('profile');
 let t = h.text();
-for (const tab of ['Overview', 'Sample data', 'Details', 'Lineage', 'Quality']) assert.ok(t.includes(tab), `tab ${tab}`);
-assert.ok(t.includes('ROWS') && t.includes('price'), 'overview: facts and schema');
+// Two views and a button: no strip of six tabs.
+assert.deepEqual(h.byIdPrefix('dtab-').map((e) => e.call('id')[0]), ['dtab-sample', 'dtab-about']);
+for (const gone of ['Overview', 'Sample data', 'Details', 'Insights']) assert.ok(!t.split(' | ').includes(gone), `no ${gone} tab`);
+assert.ok(t.includes('Where this came from'), 'lineage is a button');
 
-await h.click('dtab-details');
+// About: what was Overview and Details, on one page.
+await h.click('dtab-about');
 t = h.text();
+assert.ok(t.includes('ROWS') && t.includes('price'), 'about: facts and schema');
 assert.ok(t.includes('Versions') && t.includes('v1 latest'), 'versions');
-assert.ok(t.includes('A SQL query') && t.includes('demo-store') && t.includes('select * from products') && t.includes('Copy SQL'), 'provenance and its SQL');
+assert.ok(t.includes('A SQL query') && t.includes('demo-store') && t.includes('select * from products') && t.includes('Copy SQL'), 'what made it, and its SQL');
 assert.ok(/Files 1/.test(t) && t.includes('data/part-0.parquet'), 'files');
 
-await h.click('dtab-lineage');
-await h.idle();
-t = h.text();
-assert.ok(globalThis.__asked.some((p) => p.startsWith('/api/lineage/graph')) && globalThis.__asked.includes('/api/lineage'), 'falls back to /api/lineage');
-for (const n of ['demo-store', 'demo-catalog', 'demo-tuned', 'demo-tuned-vs-bm25']) assert.ok(t.includes(n), `lineage node ${n}`);
-assert.ok(t.includes('Upstream') && t.includes('Trace a column') && !/demo-catalog@v1/.test(t), 'controls; versions as chips, not @v');
-
-await h.click('dtab-quality');
+// Quality is a section of About: it loads when opened.
+assert.ok(!globalThis.__asked.some((p) => p.startsWith('/api/profile')), 'not asked for yet');
+await h.click('dsec-quality');
 await h.idle();
 t = h.text();
 assert.ok(t.includes('480 rows profiled') && t.includes('25%') && t.includes('402') && t.includes('499'), `quality: ${t.slice(-400)}`);
 
+// "Where this came from" opens the graph, and "Back to the table" leaves it.
+await h.click('ds-lineage-open');
+await h.idle();
+t = h.text();
+assert.ok(globalThis.__asked.some((p) => p.startsWith('/api/lineage/graph')) && globalThis.__asked.includes('/api/lineage'), 'falls back to /api/lineage');
+for (const n of ['demo-store', 'demo-catalog', 'demo-tuned', 'demo-tuned-vs-bm25']) assert.ok(t.includes(n), `lineage node ${n}`);
+assert.ok(!/demo-catalog@v1/.test(t), 'versions as chips, not @v');
+await h.click('ds-lineage-close');
+assert.ok(h.byIdPrefix('ds-lineage-open').length === 1, 'back on the table');
+
+// An earlier tab's name still opens the right place (`cst app open dataset:<name> --tab insights`, an older link).
+h.mod.page.open(h.cx, 'insights');
+assert.equal(h.mod.page.tab, 'about');
+assert.ok(h.mod.page.sections.has('insights'), 'the section is open');
+h.mod.page.open(h.cx, 'overview');
+assert.equal(h.mod.page.tab, 'about');
+h.mod.page.open(h.cx, 'sample');
+assert.equal(h.mod.page.tab, 'sample');
+
 const h2 = await mount('no-route');
-await h2.click('dtab-quality');
+await h2.click('dtab-about');
+await h2.click('dsec-quality');
 await h2.idle();
-assert.ok(!h2.text().includes('Quality') || h2.text().includes('Quality needs a newer Captain backend.'), 'no profile route: says so');
-await h2.click('dtab-overview');
-assert.ok(!h2.text().split(' | ').includes('Quality'), 'and the tab hides');
+assert.ok(h2.text().includes('Quality needs a newer Captain backend.') || h2.byIdPrefix('dsec-quality').length === 0, 'no profile route: says so, then the section hides');
+await h2.idle();
+assert.equal(h2.byIdPrefix('dsec-quality').length, 0, 'and the section is gone');
 console.log('dataset-page render test: ok');

@@ -1,0 +1,161 @@
+{
+ "rows": [
+  {
+   "kind": "dataset",
+   "name": "demo-catalog",
+   "where": "Captain, a saved query on demo-store",
+   "folder": "",
+   "rows": 480,
+   "versions": 1,
+   "version": 1,
+   "last_read": "2026-11-11",
+   "columns": 8,
+   "classes": [
+    "catalog"
+   ],
+   "dataset_kind": "catalog",
+   "description": "synthetic outdoor store catalog (generated)",
+   "by_reference": false
+  },
+  {
+   "kind": "dataset",
+   "name": "demo-historic-replay/judgments",
+   "where": "Captain, folder demo-historic-replay",
+   "folder": "demo-historic-replay",
+   "rows": 480,
+   "versions": 1,
+   "version": 1,
+   "last_read": null,
+   "columns": 11,
+   "classes": [
+    "judgments"
+   ],
+   "dataset_kind": "judgments",
+   "description": "480 grades from logged clicks in logs/demo-search-sessions@v1",
+   "by_reference": false
+  },
+  {
+   "kind": "dataset",
+   "name": "demo-historic-replay/queries",
+   "where": "Captain, folder demo-historic-replay",
+   "folder": "demo-historic-replay",
+   "rows": 48,
+   "versions": 2,
+   "version": 2,
+   "last_read": null,
+   "columns": 4,
+   "classes": [
+    "queries"
+   ],
+   "dataset_kind": "queries",
+   "description": "48 logged queries from logs/demo-search-sessions@v1 | sealed, holdout 50%",
+   "by_reference": false
+  },
+  {
+   "kind": "dataset",
+   "name": "demo-judgments",
+   "where": "Captain",
+   "folder": "",
+   "rows": 1328,
+   "versions": 1,
+   "version": 1,
+   "last_read": null,
+   "columns": 6,
+   "classes": [
+    "judgments"
+   ],
+   "dataset_kind": "judgments",
+   "description": "1328 grades (1328 new) by heuristic",
+   "by_reference": false
+  },
+  {
+   "kind": "dataset",
+   "name": "demo-queries",
+   "where": "Captain",
+   "folder": "",
+   "rows": 259,
+   "versions": 2,
+   "version": 2,
+   "last_read": null,
+   "columns": 4,
+   "classes": [
+    "queries"
+   ],
+   "dataset_kind": "queries",
+   "description": "259 generated queries from demo-catalog@v1 | sealed, holdout 50%",
+   "by_reference": false
+  },
+  {
+   "kind": "dataset",
+   "name": "logs/demo-search-sessions",
+   "where": "Captain, folder logs",
+   "folder": "logs",
+   "rows": 60000,
+   "versions": 1,
+   "version": 1,
+   "last_read": null,
+   "columns": 8,
+   "classes": [
+    "events"
+   ],
+   "dataset_kind": "events",
+   "description": "SYNTHETIC search sessions: impressions, clicks and purchases from the old ranker",
+   "by_reference": false
+  },
+  {
+   "kind": "dataset",
+   "name": "logs/shopping-trigger-holdout",
+   "where": "Captain, folder logs",
+   "folder": "logs",
+   "rows": 20000,
+   "versions": 1,
+   "version": 1,
+   "last_read": null,
+   "columns": 6,
+   "classes": [
+    "events"
+   ],
+   "dataset_kind": "events",
+   "description": "synthetic randomized holdout: is the shopping source called, and did the request engage",
+   "by_reference": false
+  },
+  {
+   "kind": "table",
+   "name": "products",
+   "where": "demo-store, demo-store.main",
+   "connection": "demo-store",
+   "schema": "\"demo-store\".main",
+   "engine": "duckdb",
+   "rows": null,
+   "versions": null,
+   "version": null,
+   "last_read": "2026-11-10T09:30:00+00:00",
+   "columns": 8,
+   "type": "table",
+   "description": null
+  },
+  {
+   "kind": "table",
+   "name": "search_log",
+   "where": "demo-store, demo-store.main",
+   "connection": "demo-store",
+   "schema": "\"demo-store\".main",
+   "engine": "duckdb",
+   "rows": null,
+   "versions": null,
+   "version": null,
+   "last_read": "2026-11-10T09:30:00+00:00",
+   "columns": 4,
+   "type": "table",
+   "description": null
+  }
+ ],
+ "connections": [
+  {
+   "connection": "demo-store",
+   "engine": "duckdb",
+   "pulled_at": "2026-11-10T09:30:00+00:00",
+   "tables": 2
+  }
+ ]
+}

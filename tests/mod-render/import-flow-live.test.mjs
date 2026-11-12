@@ -39,8 +39,8 @@ const until = async (h, ok, what, others = []) => {
   assert.ok(ok(h.text()), `${typeof what === 'function' ? what() : what}: ${h.text().slice(0, 900)}`);
 };
 
-// ---- 1. Tables, opened with nothing connected ----------------------------------------------------------------------
-globalThis.__props = { tab: 'tables' };
+// ---- 1. Sources, opened with nothing connected ---------------------------------------------------------------------
+globalThis.__props = { tab: 'sources' };
 const data = harness(Data);
 await data.start();
 await until(data, (t) => t.includes('No database connected'), 'nothing connected yet');
@@ -54,8 +54,8 @@ spawnSync(path.join(path.dirname(cst), 'python'), ['-c', `import duckdb; c=duckd
 spawnSync(cst, ['conn', 'add', 'second-db', '--engine', 'duckdb', '--url', `duckdb:///${db2}`], { env });
 const listed = await get('/api/connections');
 if (listed.some((k) => k.name === 'second-db')) {
-  await data.click('tab-datasets');
-  await data.click('tab-tables');
+  await data.click('submenu-tables');
+  await data.click('submenu-sources');
   await until(data, (t) => t.includes('second-db'), 'opening the tab relists');
 } else assert.fail(`second-db wasn't added: ${JSON.stringify(listed)}`);
 
@@ -92,8 +92,9 @@ assert.equal(toast.title, 'Imported hello-world, version 1');
 assert.match(toast.body, /^480 rows in, 480 kept: .*Ready for training as catalog [^.]*\.$/, toast.body);
 assert.equal(toast.action.name, 'layout.select');
 assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections', child: 'data' }], 'Data and signals comes forward');
-// Data opens on it: the Datasets tab, the dataset selected, its folder open and current.
-await until(data, () => data.mod.tab === 'datasets' && data.mod.sel === 'hello-world' && data.mod.lib.cur === '', 'selected at the top level, where it shows under All datasets');
+// Data opens on it: Tables, on the new dataset's page, and it is in the one list at the top level.
+await until(data, () => data.mod.tab === 'tables' && data.mod.shown === 'dataset' && data.mod.sel === 'hello-world', 'its page is open');
+await until(data, () => (data.mod.catalog.rows ?? []).some((r) => r.name === 'hello-world' && r.folder === '' && r.versions === 1), 'and it is in the list, at the top level');
 
 // ---- 3. The same name for other data: said, with a fresh name offered ---------------------------------------------
 w = await wizard();

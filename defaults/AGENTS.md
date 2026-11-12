@@ -1147,9 +1147,9 @@ The owner walked the whole app on 2026-11-12 and asked for far fewer screens. Th
 | View | Section id, mod | What it holds |
 |---|---|---|
 | Projects | `project`, `captain-project` | Home. The app opens on **All projects**, and so do the sidebar's Projects and the logo. A project's page opens from there or from the Explorer |
-| Data | `data`, `captain-data` | The workspace's sources and every table Captain reads |
+| Data | `data`, `captain-data` | Two submenus. **Tables**: every table in one list, a dataset or a database's table alike, with where it lives, its rows, whether Captain keeps versions of it and when it was last read (`GET /api/data/tables`). **Sources**: the databases and model registries they come from |
 | Notebooks | `notebooks`, `captain-notebooks` | SQL, Python, notes and charts, saved as versions. `cst app open notebook:<name>` opens one |
-| Runs | `runs`, `captain-runs` | Jobs and offline evaluations, and how a model compares with the one it is judged against |
+| Runs | `runs`, `captain-runs` | Two submenus. **Runs**: everything that runs in one list with a Kind column and filters (offline evaluations, jobs, rating, workflows, off-policy evaluations), what is running now first. **Compare**: regression testing, every evaluation run with the change against the model it is compared with (`GET /api/regression`) |
 | Deployments | `deployments` | Every model that is running somewhere, across projects |
 | Team | `team`, `captain-team` | Shared records, drafts and review |
 
@@ -1158,6 +1158,45 @@ The owner walked the whole app on 2026-11-12 and asked for far fewer screens. Th
 comparison shows in Runs. `cst app open compare` and `comparison:<evaluation>` open Runs. `cst app open
 experiments` and `launch-review` say the screen is gone and name the command. Don't send a person to
 Experiments, Compare or Launch review: say what to do in Runs, or run the command for them.
+
+### Data: one list of tables
+
+A dataset is a table Captain keeps versions of. A database's table is one Captain reads where it lives. They are
+one list, and the **Versions** column says which is which ("Captain keeps 3 versions", "Read where it lives").
+There is no Datasets screen and no Labels screen. `cst labels` still defines and previews labels.
+
+- A row opens the table's page in place, with a crumb back to the list. A page has two views, **Rows** and
+  **About**, and one button, **Where this came from**, which opens the lineage graph. About is one page: the
+  facts, the schema, every version, what made it and its files, then sections that load when opened ("What uses
+  it", "Quality of each column", "Health of this test set").
+- `cst app open dataset:<name> --tab sample|about|insights|quality|health|lineage` still opens the right place:
+  an earlier tab's name opens About with that section open.
+- Searching the list asks the services, so a column's name finds its table.
+- Folders are not drawn as a tree any more. A dataset's folder is part of "Where it lives", and
+  `cst data mkdir | move | rename-folder | rmdir` still arrange them.
+- With a project picked in the Explorer the list shows that project's datasets only: a database's tables belong
+  to no project.
+
+### Runs: one list, the comparison in place, and regression testing
+
+- An offline evaluation opens beside the list with its **comparison in place**. There is no Compare screen to go
+  to. It reads top to bottom: what limits the result, the verdict, what to do next, the arms, every measure, the
+  per-query change, then four sections that open in place and load when opened: "Query by query", "By slice",
+  "By surface" and "Where the time goes".
+- **The verdict is one of three words: Better, No clear difference, Worse**, and one sentence
+  ("ranker is better than keyword-baseline on nDCG@10. Human graded."). Say those words to a person, never
+  win, noise or loss: those stay in the records and the CLI. The sentence always ends with where the evidence
+  comes from. A model that agrees with its own labeler is never Better. Too few judged results is never Better
+  or Worse. When both are true, both are said. `kit/verdict.js` writes it, and `tests/mod-render/regression.test.mjs`
+  holds it to those rules.
+- **Compare** is the regression table: one row per run, newest first, with the model, the model it is compared
+  with, the change with its interval and the verdict word. Pick a model to see only its runs. Tick two rows to
+  put those two runs side by side: what stops them being compared comes first (`GET /api/compare-runs`), and a
+  difference across two runs is said to have no interval, because they were scored separately.
+- `cst app open run:<evaluation>` and `comparison:<evaluation>[@vN]` open the same page. `--tab queries |
+  segments | surfaces | profile` opens that section. `cst app open runs --tab jobs | workflows | grading |
+  replays | live | compare` filters the list to that kind, or opens Compare.
+- One filled button: **New evaluation**.
 
 ## Captain project page (Projects)
 

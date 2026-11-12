@@ -110,12 +110,12 @@ const clean = (t, where) => {
   assert.equal(view().cloud_cost.runs, 1);
 }
 
-// ---- Runs: Jobs, Live, and "Runs on" ------------------------------------------------------------------------------
+// ---- Runs: a job, a live run, and "Runs on" ------------------------------------------------------------------------------
 {
   globalThis.__shared['captain.scope'] = null;
   const h = harness(await load('captain-runs'));
   await h.start();
-  await h.click('tab-jobs');
+  await h.click('runs-kind-jobs'); // the one list, filtered to jobs
   await until(h, (t) => t.includes('Retrain outdoor-starter') && t.includes(seed.cost), 'the job with its cost');
   assert.equal(textOf(h, `job-cost-${seed.job}`), seed.cost, "the cost is on the job's row");
   await h.click(`job-${seed.job}`);
@@ -127,14 +127,14 @@ const clean = (t, where) => {
   assert.ok(h.text().includes('How this was worked out'));
 
   // Live: the finished run names its job, and shows what the job cost.
-  await h.click('tab-live');
+  await h.click('runs-kind-live'); // running now, and what just ran
   await until(h, () => h.byIdPrefix(`live-${seed.live}`).length > 0, 'the live run is listed');
   await h.click(`live-${seed.live}`);
   h.mod.live.tick(h.cx);
   await until(h, () => textOf(h, 'live-cost') === seed.cost, "the live run shows its job's cost");
 
   // An offline evaluation: this computer first, free. Then the place in AWS, with its estimate and the place sent.
-  await h.click('tab-backtests');
+  h.mod.showKind(h.cx, 'backtests'); // the first evaluation, beside the list
   await until(h, (t) => t.includes('Run evaluation') && t.includes('Runs on') && t.includes('Runs on this computer. No cloud cost.'), 'Runs on, this computer');
   assert.ok(h.byIdPrefix('runs-on-backtests-aws-batch').length, 'the place in AWS is offered');
   await h.click('runs-on-backtests-aws-batch');
@@ -164,7 +164,7 @@ const clean = (t, where) => {
   assert.deepEqual(sent[1].body, {}, 'this computer sends no place');
   h.mod.start = start;
   // A workflow: its steps start from this computer, so the row names no other place and says where a step's cost shows.
-  await h.click('tab-workflows');
+  h.mod.showKind(h.cx, 'workflows');
   await until(h, () => Array.isArray(h.mod.data.workflows), 'the workflows');
   if (h.mod.data.workflows.length) {
     await until(h, () => textOf(h, 'runs-on-workflows-cost-text') === 'Runs on this computer. No cloud cost.', 'a workflow starts from this computer');

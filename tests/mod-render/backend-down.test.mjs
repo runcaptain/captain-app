@@ -25,9 +25,8 @@ const MODES = {
   transport: { ok: false, error: RAW },
 };
 const SCREENS = {
-  'captain-data': ['tab-labels', 'tab-tables', 'tab-models', 'tab-datasets'],
-  'captain-runs': ['tab-workflows', 'tab-grading', 'tab-replays', 'tab-jobs', 'tab-backtests'],
-  'captain-compare': ['tab-queries', 'tab-segments', 'tab-surfaces', 'tab-overview'],
+  'captain-data': ['submenu-sources', 'submenu-tables'],
+  'captain-runs': ['submenu-compare', 'submenu-runs'],
 };
 
 let checked = 0;

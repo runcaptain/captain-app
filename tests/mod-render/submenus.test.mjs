@@ -23,9 +23,9 @@ InputState.new = (options) => { const state = makeInput(options); state.set_mask
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
 
-// Views still being cut down on this branch. Each must really be over the limit, so the list can only shrink:
-// a view that now passes and is still listed fails the test.
-const NOT_YET = new Set(['captain-data', 'captain-runs', 'captain-compare']);
+// No view is over the limit. A view being cut down on a branch can be listed here for a while; it must then really
+// be over the limit, so the list can only shrink: a view that passes and is still listed fails the test.
+const NOT_YET = new Set([]);
 
 const find = (n, id) => (n?.id === id ? n : (n?.children ?? []).map((k) => find(k, id)).find(Boolean) ?? (n?.root ? find(n.root, id) : null));
 const layout = JSON.parse(fs.readFileSync(path.join(root, 'defaults/layouts/captain.json'), 'utf8'));
@@ -97,5 +97,5 @@ for (const mod of views) {
 }
 assert.deepEqual(over, [], `views with more than two submenus:\n${over.join('\n')}`);
 for (const m of NOT_YET) assert.ok(views.includes(m), `${m} is on NOT_YET but is not a view: take it off`);
-console.log(`submenus render test: ok (${views.length} views, ${NOT_YET.size} still to cut down)`);
+console.log(`submenus render test: ok (${views.length} views${NOT_YET.size ? `, ${NOT_YET.size} still to cut down` : ''})`);
 process.exit(0);

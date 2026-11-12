@@ -41,12 +41,12 @@ const until = async (ok, what, n = 160) => {
   assert.ok(ok(h.text()), `${what}: ${h.text().slice(0, 1200)}`);
 };
 
-// Run backtest: Runs switches to Live, on this run.
+// Run evaluation: the run that just started opens beside the list, live.
 await until((t) => t.includes('demo-tuned-vs-bm25'), 'backtests listed');
 await h.click('backtests-demo-tuned-vs-bm25');
 await until(() => !!h.mod.detail.backtest, 'backtest open');
 await h.click('run-backtest');
-await until(() => h.mod.tab === 'live' && !!h.mod.live.run, 'switched to the live view');
+await until(() => h.mod.kind === 'live' && !!h.mod.live.run, 'switched to the live view');
 const id = h.mod.live.sel;
 await until((t) => t.includes('Simulated shoppers'), 'shoppers stream in');
 let t = h.text();
@@ -61,10 +61,10 @@ await until(() => h.mod.live.run?.head.status === 'done', 'run finishes');
 await until((t) => t.includes('Open the result'), 'link to the result');
 assert.ok([...run.metrics.values()].some((m) => m.name === 'conversion' && m.points.length > 3), 'conversion line fills in');
 await h.click('live-open-result');
-assert.equal(h.mod.tab, 'backtests');
+assert.equal(h.mod.kind, 'backtests', 'the result: the evaluation, with its comparison');
 
 // The team's trainer, from cst live pipe: in the list, its loss and its log.
-await h.click('tab-live');
+await h.click('runs-kind-live'); // running now, and what just ran
 await until((t) => t.includes('house-trainer'), 'piped run listed');
 const piped = h.mod.live.list.find((x) => x.title === 'house-trainer');
 await h.click(`live-${piped.id}`);

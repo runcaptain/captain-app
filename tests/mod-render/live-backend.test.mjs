@@ -62,12 +62,10 @@ const until = async (h, ok, what) => {
 };
 
 // 1. The real lists, from the real backend.
-const cmp = await mount('captain-compare');
-await until(cmp, (t) => t.includes('demo-historic-replay') && t.includes('demos/shot/imported-readout'), 'Comparisons lists the backtests');
-assert.ok(!/Couldn't load offline evaluations/.test(cmp.text()), 'Comparisons: no load error');
-await until(cmp, (t) => /B minus A/.test(t), 'Comparisons opens the first run');
 const runs = await mount('captain-runs');
-await until(runs, (t) => t.includes('demo-tuned-vs-bm25'), 'Runs lists the backtests');
+await until(runs, (t) => t.includes('demo-historic-replay') && t.includes('demos/shot/imported-readout') && t.includes('demo-tuned-vs-bm25'), 'Runs lists the evaluations');
+assert.ok(!/Couldn't load your runs/.test(runs.text()), 'Runs: no load error');
+await until(runs, (t) => /B minus A/.test(t), 'Runs opens the first evaluation with its comparison in place');
 const data = await mount('captain-data');
 await until(data, (t) => t.includes('demo-catalog'), 'Data lists the datasets');
 
@@ -77,12 +75,10 @@ const realNow = Date.now;
 Date.now = () => realNow() + 60000;
 stopServe();
 await new Promise((r) => setTimeout(r, 800));
-cmp.mod.error = null; cmp.mod.backtests = null; cmp.mod.loadBacktests(cmp.cx);
 runs.mod.load(runs.cx, 'backtests');
-data.mod.load(data.cx);
-for (const h of [cmp, runs, data]) await h.idle(300);
-if (process.env.SHOW) console.log('CMP', cmp.mod.error, JSON.stringify(cmp.mod.errorR), cmp.mod.starting, (cmp.mod.backtests ?? []).length);
-for (const [name, h] of [['Comparisons', cmp], ['Runs', runs], ['Data', data]]) {
+data.mod.load(data.cx); data.mod.catalog.load(data.cx);
+for (const h of [runs, data]) await h.idle(300);
+for (const [name, h] of [['Runs', runs], ['Data', data]]) {
   const t = h.text();
   const bad = t.match(FORBIDDEN);
   assert.ok(!bad, `${name} shows "${bad?.[0]}": ${t.slice(Math.max(0, t.search(FORBIDDEN) - 100), t.search(FORBIDDEN) + 100)}`);
@@ -92,7 +88,6 @@ for (const [name, h] of [['Comparisons', cmp], ['Runs', runs], ['Data', data]]) 
 
 // 3. A new backend comes up: each screen recovers on its own.
 await startServe();
-await until(cmp, (t) => t.includes('demo-historic-replay') && !t.includes("services stopped"), 'Comparisons recovers by itself');
 await until(runs, (t) => t.includes('demo-tuned-vs-bm25') && !t.includes("services stopped"), 'Runs recovers by itself');
 await until(data, (t) => t.includes('demo-catalog') && !t.includes("services stopped"), 'Data recovers by itself');
 

@@ -66,7 +66,7 @@ test('the sidebar has only the agreed views, and the removed screens are nowhere
   const stack = find(layout, 'sections');
   const slots = stack.children.map((k) => k.id);
   for (const it of ITEMS) assert.ok(slots.includes(it.id), `${it.label} has a slot in the layout`);
-  for (const gone of ['investigations', 'handoff']) assert.ok(!slots.includes(gone), `${gone} is not a screen any more`);
+  for (const gone of ['investigations', 'handoff', 'comparisons']) assert.ok(!slots.includes(gone), `${gone} is not a screen any more`);
   assert.equal(stack.active, 'project', 'the app opens on Projects');
   assert.equal(stack.children.find((k) => k.id === 'project').content.props.allProjects, true, 'and on every project, not the last one');
   for (const k of stack.children) assert.ok(fs.existsSync(new URL(`../../defaults/mods/${k.content.mod}/main.js`, import.meta.url)), `${k.content.mod} exists`);

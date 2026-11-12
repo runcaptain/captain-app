@@ -1,22 +1,28 @@
-// CAPTAIN: Runs, native. Backtests and their runs, workflows and their run history, human grading, and replays
-// over randomized logs, in the Captain Search desktop app's look. It replaces the web view of those screens.
-// Every list here is short (backtests, workflows, queues, replays); anything long (a run's per-query numbers) is
-// for Comparisons, which pages it from the backend.
+// CAPTAIN: Runs, native. Two submenus and no more (Edgar, 2026-11-12):
+// - Runs: everything that runs, in one list with a kind column and filters: offline evaluations, jobs on any
+//   compute target, rating queues, workflows and off-policy evaluations, with what is running now at the top. A row
+//   opens it beside the list. An offline evaluation opens with its comparison in place (comparison.js, which was the
+//   Compare screen): the verdict in one of three words, Better, No clear difference or Worse, then the numbers.
+// - Compare: regression testing (regression.js). Every evaluation run, newest first, with the change against the
+//   model it is compared with; one model's runs alone; and any two runs side by side.
+// Every list here is short; anything long (a run's per-query numbers) is paged from the services.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { theme, run, setShared, shared, openOverlay, props as layoutProps } from "herdr";
+import { theme, run, shared, openOverlay, props as layoutProps } from "herdr";
 import { Curve } from "./kit/chart.js";
 import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
 import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
-import { Loading, Skeleton, Button } from "./kit/ui.js";
+import { Loading, Skeleton, Button, Submenus } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
-import { Jobs } from "./jobs.js";
-import { Live } from "./live.js";
+import { Jobs, jobWords, jobState, place } from "./jobs.js";
+import { Live, liveKind, going } from "./live.js";
+import { Comparison } from "./comparison.js";
+import { Regression } from "./regression.js";
 import { metricWords } from "./kit/words.js";
 import { int } from "./kit/num.js";
-import { costState, loadPlaces, refreshEstimate, needsConfirm, costSlice, RunsOn, LOCAL } from "./kit/cost.js";
+import { costState, loadPlaces, refreshEstimate, needsConfirm, costSlice, costText, RunsOn, LOCAL } from "./kit/cost.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
 const enc = (name) => name.split("/").map(encodeURIComponent).join("/");
@@ -107,6 +113,20 @@ function backtestPrompt(name, b, r) {
   ].filter(Boolean).join(" ");
 }
 
+/** The submenus. */
+const SUBMENUS = [{ id: "runs", label: "Runs" }, { id: "compare", label: "Compare" }];
+/** The kinds of thing the one list holds: [the state key, the word in the Kind column, the filter's label, the icon]. */
+export const KINDS = [
+  ["backtests", "Offline evaluation", "Offline evaluations", "backtest"],
+  ["jobs", "Job", "Jobs", "compute"],
+  ["grading", "Rating", "Rating", "grade"],
+  ["workflows", "Workflow", "Workflows", "workflow"],
+  ["replays", "Off-policy evaluation", "Off-policy", "replay"],
+];
+const KIND_WORD = Object.fromEntries(KINDS.map(([k, word]) => [k, word]));
+/** Earlier tab names that still open something (a layout, `cst app open runs --tab jobs`, an older link). */
+const EARLIER_TAB = { live: "live", backtests: "backtests", workflows: "workflows", grading: "grading", replays: "replays", jobs: "jobs" };
+
 const EMPTY = {
   backtests: ["No offline evaluations yet", "An offline evaluation runs two versions of your search on the same queries and tells you whether the difference is real.", "Run an offline evaluation", "backtest"],
   workflows: ["No workflows yet", "A workflow runs steps on a schedule, such as importing fresh logs and re-running an offline evaluation each night. Ask an agent to set one up.", null, null],
@@ -116,7 +136,9 @@ const EMPTY = {
 
 export default class CaptainRuns extends View {
   init(_props, cx) {
-    this.tab = "backtests";
+    this.tab = "runs"; // "runs" | "compare"
+    this.kind = null; // what the right side shows: backtests | workflows | grading | replays | jobs | live
+    this.filter = null; // the list's filter: a kind, "live" (running now), or null for everything
     this.width = 1000;
     this.data = {};
     this.sel = {};
@@ -132,67 +154,107 @@ export default class CaptainRuns extends View {
     this.cost = { backtests: costState(), workflows: costState() };
     this.loadPlaces(cx);
     cx.timer.every(500, (cx) => this.priceNow(cx));
-    this.load(cx, "backtests");
     cx.timer.every(1000, (cx) => this.pollJob(cx));
-    // Compute jobs: their list, and a running one's state and log lines.
+    // Compute jobs: their state and log lines. Live runs: what's running now, drawn as it goes (live.js).
     this.jobs = new Jobs(this);
-    // Live runs: what's running now, drawn as it goes (live.js). The tab shows how many are running wherever Runs is.
     this.live = new Live(this);
-    this.live.count(cx);
-    cx.timer.every(1000, (cx) => { if (this.tab === "live") this.live.tick(cx); });
-    cx.timer.every(4000, (cx) => { if (this.tab === "live") this.live.load(cx); else this.live.count(cx); });
-    cx.timer.every(1000, (cx) => { if (this.tab === "live" && this.live.list === null) this.live.load(cx); }); // until the backend answers
-    // Layout props (a layout, or the real-window check): {tab: "jobs" | "grading" | "live", live?: id} opens on that tab.
-    const startTab = layoutProps?.()?.tab;
-    if (startTab === "live") { this.tab = "live"; this.live.load(cx, layoutProps?.()?.live ?? null); }
-    else if (startTab === "jobs") { this.tab = "jobs"; this.jobs.load(cx); }
-    else if (["workflows", "grading", "replays"].includes(startTab)) { this.tab = startTab; this.load(cx, startTab); }
-    cx.timer.every(2000, (cx) => { if (this.tab === "jobs") this.jobs.tick(cx); });
+    // An evaluation's comparison, in place (comparison.js), and regression testing (regression.js).
+    this.cmp = new Comparison(this);
+    this.reg = new Regression(this);
+    cx.timer.every(150, (cx) => { if (this.tab === "runs" && this.kind === "backtests") this.cmp.tick(cx); });
+    this.loadAll(cx);
+    cx.timer.every(1000, (cx) => { if (this.kind === "live") this.live.tick(cx); });
+    cx.timer.every(4000, (cx) => this.live.load(cx)); // what is running now leads the list wherever Runs is
+    cx.timer.every(2000, (cx) => this.jobs.tick(cx));
+    // Layout props (a layout, or the real-window check): {tab: "jobs" | "grading" | "live" | "compare", live?: id,
+    // backtest?, version?, section?, query?} opens on that.
+    const p = layoutProps?.() ?? {};
+    if (p.tab === "compare") this.showTab(cx, "compare");
+    else if (p.tab === "live") { this.kind = "live"; this.filter = "live"; this.live.load(cx, p.live ?? null); }
+    else if (EARLIER_TAB[p.tab]) { this.kind = p.tab; this.filter = p.tab; }
+    if (p.backtest) { this.wantRun = { name: String(p.backtest), version: p.version ?? null }; this.pick(cx, "backtests", String(p.backtest)); }
+    if (p.section ?? p.cmpTab) this.cmp.show(cx, p.section ?? p.cmpTab);
+    if (p.query) this.cmp.wantQuery = p.query;
+    if (p.autoProfile) { this.cmp.autoProfile = true; this.cmp.sections.add("profile"); }
     // Until the backend answers, ask again every 3 s.
     // Until the list loads, ask again every 3 s: while the services start, and after any failure that wasn't the
     // backend answering (they stopped or restarted).
-    cx.timer.every(3000, (cx) => { if (this.starting || (this.error && !this.errorR?.status)) this.load(cx, this.tab); });
-    // Opened by name (palette): shared "captain.open" {section: "runs", backtest | replay, at}.
+    cx.timer.every(3000, (cx) => { if (this.starting || (this.error && !this.errorR?.status)) this.loadAll(cx); });
+    // Opened by name (the palette, the Explorer, a project page, `cst app open`): shared "captain.open"
+    // {section: "runs", backtest | replay | live | tab, version?, at}. An evaluation opens with its comparison in
+    // place; `tab` on an evaluation opens that section of it (queries, segments, surfaces, profile).
+    const stale = shared("captain.open");
+    if (stale?.at && Date.now() - stale.at > 10000) this.opened = stale.at;
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
-      if (o?.section === "runs" && o.live && o.at !== this.opened) {
-        this.opened = o.at;
-        this.tab = "live"; this.grader = null;
-        this.live.load(cx, o.live);
-        cx.notify();
-        return;
-      }
-      if (o?.section === "runs" && o.tab && !o.backtest && !o.replay && o.at !== this.opened) {
-        this.opened = o.at;
-        this.tab = o.tab; this.grader = null;
-        if (o.tab === "jobs") this.jobs.load(cx); else if (o.tab === "live") this.live.load(cx); else this.load(cx, o.tab);
-        cx.notify();
-        return;
-      }
-      if (o?.section === "runs" && (o.backtest || o.replay) && o.at !== this.opened) {
-        this.opened = o.at;
-        const [tab, name] = o.replay ? ["replays", o.replay] : ["backtests", o.backtest];
-        this.tab = tab; this.grader = null;
-        if (!this.data[tab]) this.load(cx, tab);
-        this.pick(cx, tab, name);
-        cx.notify();
-      }
-    });
-    // The Explorer's pick filters the lists: load this tab again.
-    watchScope(cx, (cx) => { this.data = {}; this.load(cx, this.tab); cx.notify(); });
-    // What this screen shows, for agents (cst app context): the tab and the run picked on it.
-    watchView(cx, "runs", () => ({ tab: this.tab, selected: this.sel[this.tab] ?? null, backtest: this.tab === "backtests" ? this.sel.backtests ?? null : null,
-      ...(this.costWant() ? { runs_on: costSlice(this.cost[this.tab]) } : {}) }));
-    // Another space, another workspace: drop what was shown and load this tab again.
-    watchWorkspace(cx, (cx) => {
-      this.data = {}; this.sel = {}; this.detail = {}; this.open = {}; this.grader = null; this.error = null;
-      this.jobs = new Jobs(this);
-      this.live = new Live(this);
-      this.cost = { backtests: costState(), workflows: costState() };
-      this.loadPlaces(cx);
-      this.load(cx, this.tab);
+      // A link written for the Compare screen (section "comparisons") lands here: Runs comes forward and opens it.
+      const old = o?.section === "comparisons";
+      if ((o?.section !== "runs" && !old) || o.at === this.opened) return;
+      this.opened = o.at;
+      this.grader = null;
+      if (old) run("layout.select", { stack: "sections", child: "runs" });
+      if (o.live) { this.tab = "runs"; this.kind = "live"; this.live.load(cx, o.live); }
+      else if (o.backtest || o.replay) {
+        const [kind, name] = o.replay ? ["replays", o.replay] : ["backtests", o.backtest];
+        if (!this.data[kind]) this.load(cx, kind);
+        if (o.backtest) this.wantRun = { name, version: o.version ?? null };
+        this.pick(cx, kind, name);
+        if (o.backtest && o.tab) this.cmp.show(cx, o.tab);
+        if (o.profile) { this.cmp.autoProfile = true; this.cmp.sections.add("profile"); }
+      } else if (o.tab === "compare") this.showTab(cx, "compare");
+      else if (EARLIER_TAB[o.tab]) this.showKind(cx, o.tab);
       cx.notify();
     });
+    // The Explorer's pick filters the lists: load them again.
+    watchScope(cx, (cx) => { this.data = {}; this.loadAll(cx); if (this.tab === "compare") this.reg.load(cx); cx.notify(); });
+    // What this screen shows, for agents (cst app context): the submenu, the kind of thing open and which one.
+    watchView(cx, "runs", () => ({ tab: this.tab, kind: this.tab === "runs" ? this.kind : null, selected: this.tab === "runs" ? this.selected() : null,
+      backtest: this.tab === "runs" && this.kind === "backtests" ? this.sel.backtests ?? null : null,
+      run_version: this.tab === "runs" && this.kind === "backtests" ? this.detail.runV ?? null : null,
+      ...(this.tab === "compare" ? this.reg.slice() : {}),
+      ...(this.costWant() ? { runs_on: costSlice(this.cost[this.kind]) } : {}) }));
+    // Another space, another workspace: drop what was shown and load again.
+    watchWorkspace(cx, (cx) => {
+      this.data = {}; this.sel = {}; this.detail = {}; this.open = {}; this.grader = null; this.error = null; this.kind = null;
+      this.jobs = new Jobs(this);
+      this.live = new Live(this);
+      this.cmp = new Comparison(this);
+      this.reg = new Regression(this);
+      this.cost = { backtests: costState(), workflows: costState() };
+      this.loadPlaces(cx);
+      this.loadAll(cx);
+      if (this.tab === "compare") this.reg.load(cx);
+      cx.notify();
+    });
+  }
+
+  // ---- going places --------------------------------------------------------------------------------------------
+
+  showTab(cx, id) {
+    this.tab = id;
+    this.grader = null;
+    if (id === "compare") this.reg.load(cx);
+    // Something was loaded while Compare was shown: it is what Runs opens on.
+    else if (!this.kind) this.kind = ["backtests", "workflows", "grading", "replays"].find((k) => this.sel[k]) ?? null;
+    cx.notify();
+  }
+
+  /** The list filtered to one kind, with its first row open (an earlier tab's name, "Open workflows"). */
+  showKind(cx, kind) {
+    this.tab = "runs";
+    this.filter = kind;
+    this.grader = null;
+    if (kind === "live") { this.kind = "live"; this.live.load(cx); }
+    else if (kind === "jobs") { this.kind = "jobs"; this.jobs.load(cx); }
+    else { this.kind = kind; if (!this.data[kind]) this.load(cx, kind); else if (!this.sel[kind] && this.data[kind][0]) this.pick(cx, kind, this.data[kind][0].name); }
+    cx.notify();
+  }
+
+  /** The name of what the right side shows. */
+  selected() {
+    if (this.kind === "jobs") return this.jobs.sel ?? null;
+    if (this.kind === "live") return this.live.sel ?? null;
+    return this.kind ? this.sel[this.kind] ?? null : null;
   }
 
   // ---- where it runs, and what that costs -----------------------------------------------------------------------
@@ -222,7 +284,8 @@ export default class CaptainRuns extends View {
 
   /** What the open tab would start, for the estimate: {kind, size, where}, or null when nothing here runs. */
   costWant() {
-    if (this.tab === "backtests") {
+    if (this.tab !== "runs") return null;
+    if (this.kind === "backtests") {
       const b = this.detail.backtest;
       if (!this.sel.backtests || !b || b.error || b.mode === "imported") return null;
       // The query set is named "name@v2:split": its row count is the whole set's, so a split reads a little high.
@@ -230,13 +293,13 @@ export default class CaptainRuns extends View {
       return { kind: "evaluation", size: { ...(queries ? { queries } : {}), arms: (b.arms ?? []).length || 2, mode: b.mode ?? undefined }, where: this.cost.backtests.where };
     }
     // A workflow's steps run from this computer; a step that names a place in your cloud is billed there.
-    if (this.tab === "workflows") return this.sel.workflows && this.detail.workflow && !this.detail.workflow.error ? { kind: "workflow", size: {}, where: LOCAL } : null;
+    if (this.kind === "workflows") return this.sel.workflows && this.detail.workflow && !this.detail.workflow.error ? { kind: "workflow", size: {}, where: LOCAL } : null;
     return null;
   }
 
   /** From the timer, never from render: ask for the estimate when the place or the thing picked changed. */
   priceNow(cx) {
-    const st = this.cost[this.tab];
+    const st = this.cost[this.kind];
     if (!st) return;
     const want = this.costWant();
     cx.spawn(async (cx) => { if (await refreshEstimate(st, want)) cx.notify(); });
@@ -261,30 +324,46 @@ export default class CaptainRuns extends View {
     // The place is sent whenever it is not this computer, and also when this computer was picked over the usual place.
     const usual = this.detail.backtest?.compute ?? this.usual ?? LOCAL;
     const body = st.where !== LOCAL || usual !== LOCAL ? { compute: st.where } : {};
-    this.start(cx, "Offline evaluation", `/api/backtests/${enc(name)}/run`, (cx) => this.pick(cx, "backtests", name), body);
+    // When it finishes its result loads; a person watching it live stays there, with "Open the result".
+    this.start(cx, "Offline evaluation", `/api/backtests/${enc(name)}/run`, (cx) => { this.cmp.sel = null; this.pick(cx, "backtests", name, { show: this.kind !== "live" }); }, body);
   }
 
   // ---- data ---------------------------------------------------------------------------------------------------
+
+  /** Every list the one list is made of. */
+  loadAll(cx) {
+    for (const k of ["backtests", "workflows", "grading", "replays"]) this.load(cx, k);
+    this.jobs.load(cx); // asks each place for its jobs' state, so a row's status is true now, not as of the last look
+    this.live.load(cx);
+  }
 
   load(cx, tab) {
     if (tab === "jobs") { this.jobs.load(cx); return; }
     if (tab === "live") { this.live.load(cx); return; }
     const path = { backtests: "/api/backtests", workflows: "/api/workflows", grading: "/api/grading", replays: "/api/replays" }[tab];
+    if (!path) return;
     cx.spawn(async (cx) => {
       const r = await api(path);
-      this.starting = !r.ok && !!r.starting;
-      if (this.starting) { cx.notify(); return; }
+      // Offline evaluations decide whether the screen is still starting, or failed: they are asked for first.
+      if (tab === "backtests") {
+        this.starting = !r.ok && !!r.starting;
+        if (this.starting) { cx.notify(); return; }
+        this.error = r.ok ? null : say(r, "Couldn't load your runs.");
+        this.errorR = r;
+      }
       if (r.ok) this.data[tab] = r.data ?? [];
-      this.error = r.ok ? null : say(r, `Couldn't load ${tab}.`);
-      this.errorR = r;
       const list = this.data[tab] ?? [];
-      const key = (x) => x.name;
-      if (list.length && !list.some((x) => key(x) === this.sel[tab])) this.pick(cx, tab, key(list[0]));
+      // Nothing open yet: open the first of this kind when it is the kind asked for, or the first evaluation.
+      const want = this.kind === tab || (!this.kind && tab === "backtests");
+      if (want && list.length && !list.some((x) => x.name === this.sel[tab])) this.pick(cx, tab, list[0].name, { show: this.tab === "runs" });
       cx.notify();
     });
   }
 
-  pick(cx, tab, name) {
+  /** Open something beside the list. `show: false` loads it without bringing it forward: a first row opened by
+   *  itself while Compare is shown, or a result that came in while its run is being watched live. */
+  pick(cx, tab, name, { show = true } = {}) {
+    if (show) { this.tab = "runs"; this.kind = tab; this.grader = null; }
     this.sel[tab] = name;
     if (tab === "backtests") {
       this.detail.backtest = null;
@@ -294,8 +373,13 @@ export default class CaptainRuns extends View {
         if (this.sel.backtests !== name) return;
         this.detail.backtest = r.ok ? r.data : { error: say(r, "Couldn't load this offline evaluation.") };
         this.placeFor(this.detail.backtest);
-        const v = r.ok ? r.data.runs?.at(-1)?.version : null;
-        if (v) this.pickRun(cx, name, v);
+        // The run asked for with it (the palette, a project page), else its newest.
+        const asked = this.wantRun?.name === name ? this.wantRun.version : null;
+        this.wantRun = null;
+        const v = r.ok ? (asked != null && r.data.runs?.some((x) => x.version === asked) ? asked : r.data.runs?.at(-1)?.version) : null;
+        // An imported run's version is 0: still a run.
+        if (v !== null && v !== undefined) this.pickRun(cx, name, v);
+        else this.cmp.sel = null;
         cx.notify();
       });
     }
@@ -316,6 +400,7 @@ export default class CaptainRuns extends View {
   pickRun(cx, name, v) {
     this.detail.runV = v;
     this.detail.run = null;
+    this.cmp.open(cx, name, v); // its comparison, in place
     cx.spawn(async (cx) => {
       const r = await api(`/api/runs/${enc(name)}?v=${v}`);
       if (this.sel.backtests !== name || this.detail.runV !== v) return;
@@ -332,7 +417,7 @@ export default class CaptainRuns extends View {
       else {
         this.job.id = r.data?.job;
         // A run that streams: watch it in Live.
-        if (r.data?.live) { this.tab = "live"; this.grader = null; this.live.load(cx, r.data.live); }
+        if (r.data?.live) { this.kind = "live"; this.grader = null; this.live.load(cx, r.data.live); }
       }
       cx.notify();
     });
@@ -357,7 +442,7 @@ export default class CaptainRuns extends View {
 
   /** From a finished live run to its result. */
   openBacktest(cx, name) {
-    this.tab = "backtests";
+    this.cmp.sel = null; // a finished run: read its result afresh
     this.load(cx, "backtests");
     this.pick(cx, "backtests", name);
     cx.notify();
@@ -461,23 +546,20 @@ export default class CaptainRuns extends View {
   }
 
   header(c) {
-    const tabs = [["live", "Live", "running"], ["backtests", "Offline evaluations", "backtest"], ["workflows", "Workflows", "workflow"], ["grading", "Rating", "grade"], ["replays", "Off-policy", "replay"], ["jobs", "Jobs", "compute"]];
-    // The tabs' names are long ("Offline evaluations"): beside an open terminal column the row wraps instead of clipping Jobs.
     return h_flex().min_h(52).py(8).flex_wrap().flex_none().px(20).gap(14).items_center().border_b(1).border_color(c.rule)
       .child(div().flex_none().text_size(18).font_semibold().child("Runs"))
-      .child(h_flex().flex_none().border_1().border_color(c.grey300).children(tabs.map(([id, label, icon]) =>
-        h_flex().id(`tab-${id}`).h(28).px(12).gap(6).items_center().cursor_pointer().border_r(1).border_color(c.grey300).text_size(12.5)
-          .bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
-          .on_click((_e, cx) => { this.tab = id; this.grader = null; if (id === "jobs") { if (this.jobs.list === null) this.jobs.load(cx); } else if (id === "live") this.live.load(cx); else if (!this.data[id]) this.load(cx, id); cx.notify(); })
-          .child(this.icon(icon, 13)).child(div().child(label))
-          .when(id === "live" && this.live.active > 0, (e) => e.child(div().px(5).h(16).flex().items_center().text_size(10.5).font_family(MONO)
-            .bg(this.tab === id ? c.surface : c.blue).text_color(this.tab === id ? c.navy : c.surface).child(String(this.live.active)))))))
+      .child(Submenus(c, SUBMENUS, this.tab, (id, cx) => this.showTab(cx, id)))
       .child(div().flex_1())
-      .when(this.tab === "backtests", (e) => e.child(Button(c, "new-backtest", "Run an offline evaluation", () => openForm("backtest"), { kind: "primary", small: true })))
-      .when(this.tab === "grading", (e) => e.child(Button(c, "new-grading", "Start rating", () => openForm("grading"), { kind: "primary", small: true })))
+      // One filled button: setting up an evaluation.
+      .child(Button(c, "new-grading", "Start rating", () => openForm("grading"), { small: true }))
+      .child(Button(c, "new-backtest", "New evaluation", () => openForm("backtest"), { kind: "primary", small: true }))
       .child(div().id("runs-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()
         .border_1().border_color(c.grey300).text_color(c.grey900).hover((s) => s.text_color(c.blue).border_color(c.blue))
-        .tooltip("Refresh").on_click((_e, cx) => { this.load(cx, this.tab); if (this.sel[this.tab]) this.pick(cx, this.tab, this.sel[this.tab]); })
+        .tooltip("Refresh").on_click((_e, cx) => {
+          if (this.tab === "compare") { this.reg.load(cx); return; }
+          this.loadAll(cx);
+          if (this.kind && this.sel[this.kind]) { if (this.kind === "backtests") this.cmp.sel = null; this.pick(cx, this.kind, this.sel[this.kind]); }
+        })
         .child(this.icon("refresh", 14)));
   }
 
@@ -493,47 +575,109 @@ export default class CaptainRuns extends View {
         .on_click((_e, cx) => { this.job = null; cx.notify(); }).child(this.icon("x", 13))));
   }
 
-  /** The left list of a tab: an icon on every row, the name, a second line, and a status at the right. */
-  list(c, w, tab, rows, icon, sub, right) {
-    return v_flex().id(`${tab}-list`).w(w).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
-      .when(!!this.error, (e) => e.child(div().p(10).child(trouble(c, `${tab}-load`, this.errorR, this.error, (cx) => this.load(cx, tab)))))
-      .when(this.data[tab] === undefined && !this.error, (e) => e.child(div().child(Skeleton(c, 8))))
-      .when(Array.isArray(this.data[tab]) && !rows.length, (e) => {
-        const [title, body, action, task] = EMPTY[tab] ?? ["Nothing here yet", "", null, null];
-        return e.child(v_flex().p(14).gap(8)
-          .child(div().text_size(13).font_medium().child(title))
-          .child(div().text_size(12).line_height("18px").text_color(c.grey900).child(body))
-          .when(!!action, (e) => e.child(Button(c, `empty-${tab}`, action, () => openForm(task), { small: true })))
-          // Results from your own system compare the same way (captain-rankings).
-          .when(tab === "backtests", (e) => e.child(Button(c, "empty-rankings", "Compare your own rankings", () => openOverlay({ mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }), { small: true, kind: "quiet" }))));
-      })
-      .children(rows.map((x) => {
-        const active = x.name === this.sel[tab];
-        return h_flex().id(`${tab}-${x.name}`).w_full().h(48).flex_none().px(10).gap(8).items_center().cursor_pointer()
-          .border_l(2).border_color(active ? c.blue : "#00000000").bg(active ? c.blueLight : c.surface).hover((s) => (active ? s : s.bg(c.surface2)))
-          .tooltip(x.description ?? x.name)
-          .on_click((_e, cx) => this.pick(cx, tab, x.name))
-          .child(this.icon(icon, 15, active ? c.blue : c.grey500))
-          .child(v_flex().flex_1().min_w(0)
-            .child(div().truncate().text_size(12.5).font_family(MONO).text_color(active ? c.blue : c.navy).child(x.name))
-            .child(div().truncate().text_size(11).text_color(c.grey500).child(sub(x))))
-          .child(right ? right(x) : div());
-      }));
+  /** Every row of the one list: [{kind, id, title, word, sub, status, tone, at, running}]. What is running now comes
+   *  first, then the newest. `word` is the Kind column; `status` is one status, in words. */
+  rowsAll() {
+    const out = [];
+    const ms = (iso) => { const t = Date.parse(iso ?? ""); return Number.isFinite(t) ? t : 0; };
+    // What is running now (live.js), whatever its kind: it leads the list.
+    for (const x of this.live.list ?? this.live.running ?? []) {
+      const on = going(x.status);
+      if (!on && this.filter !== "live") continue; // finished live runs show under "Running now" only: their results are the rows below
+      const pct = typeof x.progress === "number" ? `, ${Math.round(x.progress * 100)}%` : "";
+      out.push({ kind: "live", id: x.id, title: x.title, word: liveKind(x), icon: "running", running: on, at: ms(x.started_at ?? x.created_at),
+        status: x.status === "queued" ? "Waiting to start" : on ? `Running${pct}` : x.status === "failed" ? "Failed" : "Finished", tone: x.status === "failed" ? "fail" : on ? "blue" : null,
+        sub: on ? [x.stage, x.where && x.where !== "local" ? `on ${x.where}` : null].filter(Boolean).join(", ") : "" });
+    }
+    for (const x of this.data.backtests ?? []) out.push({ kind: "backtests", id: x.name, title: x.name, word: KIND_WORD.backtests, icon: "backtest", at: ms(x.last_run ?? x.created),
+      status: x.runs ? plural(x.runs, "run") : "Not run yet", sub: (x.arms ?? []).map(bare).join(" against "), tip: x.description });
+    for (const j of this.jobs.list ?? []) { const [word, tone, on] = jobState(j); out.push({ kind: "jobs", id: j.id, title: jobWords(j), word: KIND_WORD.jobs, icon: j.target_kind === "local" ? "compute" : "cloud", at: ms(j.submitted_at), status: word, tone, running: on,
+      // Where it ran, and what it cost once it has finished (the services' own sentence).
+      sub: costText(j.cost) || place(j), subId: costText(j.cost) ? `job-cost-${j.id}` : null }); }
+    for (const q of this.data.grading ?? []) out.push({ kind: "grading", id: q.name, title: q.name, word: KIND_WORD.grading, icon: "grade", at: ms(q.created_at),
+      status: `${int(q.graded ?? 0)} of ${int(q.pairs ?? 0)} rated`, sub: "" });
+    for (const x of this.data.workflows ?? []) out.push({ kind: "workflows", id: x.name, title: x.name, word: KIND_WORD.workflows, icon: "workflow", at: ms(x.last_run),
+      status: x.last_status === "failed" ? "Last run failed" : x.last_status ? `Last run ${STATUS[x.last_status] ?? x.last_status}` : "Not run yet", tone: x.last_status === "failed" ? "fail" : null,
+      sub: [plural(x.steps ?? 0, "step"), x.schedule ? cronEnglish(x.schedule) : null].filter(Boolean).join(", "), tip: x.description });
+    for (const x of this.data.replays ?? []) out.push({ kind: "replays", id: x.name, title: x.name, word: KIND_WORD.replays, icon: "replay", at: ms(x.created_at),
+      status: `${(x.curve ?? []).length} points`, sub: "", tip: x.description });
+    const shown = out.filter((r) => !this.filter || r.kind === this.filter);
+    return shown.sort((a, b) => (Number(!!b.running) - Number(!!a.running)) || (b.at - a.at) || a.title.localeCompare(b.title));
   }
 
-  // ---- backtests ----------------------------------------------------------------------------------------------
-
-  backtests(c, w) {
-    const rows = this.data.backtests ?? [];
-    const lw = Math.max(220, Math.min(320, Math.floor(w * 0.26)));
-    return h_flex().flex_1().min_h(0)
-      .child(this.list(c, lw, "backtests", rows, "backtest", (x) => `${(x.arms ?? []).map(bare).join(" vs ")} · ${plural(x.runs ?? 0, "run")}`))
-      .child(this.backtestDetail(c));
+  /** The one list: filters, then Name, Kind and Status. */
+  runList(c, w) {
+    const rows = this.rowsAll();
+    const loaded = Array.isArray(this.data.backtests);
+    const counts = { live: this.live.active, ...Object.fromEntries(KINDS.map(([k]) => [k, k === "jobs" ? (this.jobs.list ?? []).length : (this.data[k] ?? []).length])) };
+    const chip = (id, label, n) => h_flex().id(`runs-kind-${id ?? "all"}`).h(26).px(8).gap(5).flex_none().items_center().cursor_pointer().text_size(12)
+      .border_1().border_color(this.filter === id ? c.blue : c.grey300).bg(this.filter === id ? c.blueLight : c.surface).text_color(this.filter === id ? c.blue : c.grey900)
+      .on_click((_e, cx) => { this.filter = id; if (id === "live") this.live.load(cx); if (id === "jobs") this.jobs.load(cx); cx.notify(); })
+      .child(div().child(label)).when(!!n, (e) => e.child(div().text_size(10.5).text_color(c.grey500).child(String(n))));
+    const active = (r) => r.kind === this.kind && r.id === this.selected();
+    const open = (cx, r) => {
+      this.grader = null;
+      if (r.kind === "live") { this.kind = "live"; this.live.select(cx, r.id); }
+      else if (r.kind === "jobs") { this.kind = "jobs"; this.jobs.pick(cx, r.id); }
+      else this.pick(cx, r.kind, r.id);
+      cx.notify();
+    };
+    return v_flex().id("runs-list").w(w).h_full().flex_none().border_r(1).border_color(c.rule)
+      .child(h_flex().id("runs-filters").flex_none().flex_wrap().gap(6).p(10).border_b(1).border_color(c.rule)
+        .child(chip(null, "All"))
+        .child(chip("live", "Running now", counts.live))
+        .children(KINDS.map(([k, , label]) => chip(k, label, counts[k]))))
+      .child(h_flex().flex_none().h(28).px(10).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().text_color(c.grey900).items_center()
+        .child(div().flex_1().min_w(0).px(4).child("Name"))
+        .child(div().w(140).flex_none().px(4).child("Kind"))
+        .child(div().w(120).flex_none().px(4).child("Status")))
+      .child(v_flex().id("runs-rows").flex_1().min_h(0).overflow_y_scrollbar()
+        .when(!!this.error, (e) => e.child(div().p(10).child(trouble(c, "runs-load", this.errorR, this.error, (cx) => this.loadAll(cx)))))
+        .when(!loaded && !this.error, (e) => e.child(div().child(Skeleton(c, 8))))
+        .when(loaded && !rows.length && !this.error, (e) => {
+          const [title, body, action, task] = EMPTY[this.filter] ?? (this.filter === "live" ? ["Nothing is running", "", null, null] : this.filter === "jobs" ? ["No jobs yet", "A job is work Captain runs once on a compute target: this computer or your cloud.", null, null]
+            : ["No runs yet", "An offline evaluation runs two versions of your search on the same queries and tells you whether the difference is real.", "New evaluation", "backtest"]);
+          return e.child(v_flex().id("runs-empty").p(14).gap(8)
+            .child(div().text_size(13).font_medium().child(title))
+            .when(!!body, (x) => x.child(div().text_size(12).line_height("18px").text_color(c.grey900).child(body)))
+            .when(!!action, (x) => x.child(Button(c, `empty-${this.filter ?? "all"}`, action, () => openForm(task), { small: true })))
+            // Results from your own system compare the same way (captain-rankings).
+            .when(!this.filter || this.filter === "backtests", (x) => x.child(Button(c, "empty-rankings", "Compare your own rankings", () => openOverlay({ mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }), { small: true, kind: "quiet" }))));
+        })
+        .children(rows.map((r) => {
+          const on = active(r);
+          const tone = r.tone === "fail" ? c.fail : r.tone === "blue" ? c.blue : r.tone === "good" ? c.good : c.grey900;
+          return h_flex().id(`${r.kind === "jobs" ? "job" : r.kind}-${r.id}`).w_full().min_h(44).flex_none().px(10).py(4).items_center().cursor_pointer()
+            .border_l(2).border_color(on ? c.blue : "#00000000").bg(on ? c.blueLight : c.surface).hover((st) => (on ? st : st.bg(c.surface2)))
+            .tooltip(r.tip ?? r.title)
+            .on_click((_e, cx) => open(cx, r))
+            .child(h_flex().flex_1().min_w(0).px(4).gap(8).items_center()
+              .child(this.icon(r.icon, 15, on ? c.blue : c.grey500))
+              .child(v_flex().flex_1().min_w(0)
+                .child(div().truncate().text_size(12.5).text_color(on ? c.blue : c.navy).child(r.title))
+                .when(!!r.sub, (e) => e.child(div().when(!!r.subId, (d) => d.id(r.subId)).truncate().text_size(11).text_color(c.grey500).child(r.sub)))))
+            .child(div().w(140).flex_none().px(4).truncate().text_size(12).text_color(c.grey900).child(r.word))
+            .child(div().w(120).flex_none().px(4).truncate().text_size(12).text_color(tone).child(r.status));
+        })));
   }
 
-  backtestDetail(c) {
+  /** What is open, beside the list. */
+  detailPane(c, w) {
+    if (this.grader) return this.graderView(c);
+    if (this.kind === "backtests") return this.backtestDetail(c, w);
+    if (this.kind === "workflows") return this.workflowDetail(c);
+    if (this.kind === "grading") return this.grading(c);
+    if (this.kind === "replays") { const r = (this.data.replays ?? []).find((x) => x.name === this.sel.replays) ?? null; return r ? this.replayDetail(c, r, w) : v_flex().flex_1(); }
+    if (this.kind === "jobs") return this.jobs.detail(c);
+    if (this.kind === "live") return this.live.detail(c, w);
+    return v_flex().id("runs-none").flex_1().p(24).text_size(13).text_color(c.grey500).child(Array.isArray(this.data.backtests) && this.rowsAll().length ? "Pick a row to open it." : "");
+  }
+
+  // ---- offline evaluations ------------------------------------------------------------------------------------
+
+  backtestDetail(c, w) {
     const b = this.detail.backtest;
-    if (!this.sel.backtests) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick an offline evaluation.");
+    if (!this.sel.backtests) return v_flex().flex_1();
     if (!b) return v_flex().flex_1().child(Skeleton(c, 8));
     if (b.error) return v_flex().flex_1().p(24).text_size(13).text_color(c.fail).child(b.error);
     const name = this.sel.backtests;
@@ -546,14 +690,10 @@ export default class CaptainRuns extends View {
         .when(!!b.mode, (e) => e.child(this.badge(c, b.mode === "historic" ? "historic replay" : b.mode)))
         .child(div().flex_1())
         .when(!!this.live.running.find((x) => x.of === name), (e) => e.child(Button(c, "bt-watch", "Watch it live", (_e, cx) => {
-          this.tab = "live"; this.live.load(cx, this.live.running.find((x) => x.of === name).id); cx.notify(); }, { small: true })))
-        .when(b.mode !== "imported", (e) => e.child(this.button(c, "run-backtest", running ? "Running" : this.cost.backtests.confirming ? "Start anyway" : "Run evaluation", "run", (_e, cx) => this.runBacktest(cx, name), true, !!running))))
+          this.kind = "live"; this.live.load(cx, this.live.running.find((x) => x.of === name).id); cx.notify(); }, { small: true })))
+        .when(b.mode !== "imported", (e) => e.child(this.button(c, "run-backtest", running ? "Running" : this.cost.backtests.confirming ? "Start anyway" : "Run evaluation", "run", (_e, cx) => this.runBacktest(cx, name), false, !!running))))
       .child(div().text_size(13).font_medium().child(b.preregistration?.hypothesis ?? ""))
       .when(b.mode !== "imported", (e) => e.child(this.runsOn(c, "backtests")))
-      .child(h_flex().gap(8)
-        .child(Button(c, "bt-agent", "Open an agent in this space", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, backtestPrompt(name, b, r))), { small: true }))
-        .child(Button(c, "bt-prompt", "Copy prompt", (_e, cx) => copyPrompt(cx, backtestPrompt(name, b, r)), { kind: "quiet", small: true }))
-        .child(SendToAgent(c, "send-run", { ref: `run:${name}`, kind: "run", label: name })))
       .child(h_flex().flex_wrap().gap(16).text_size(12).text_color(c.grey900)
         .children((b.arms ?? []).map((a, i) => h_flex().gap(6).items_center().child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(named(c, a))
           // Backtest settings (captain-sandbox): try other settings of this arm's pipeline.
@@ -570,54 +710,15 @@ export default class CaptainRuns extends View {
           .when(x.independent === false, (e) => e.child(div().text_color(c.fail).child("not independent")))
           .when(x.complete === false, (e) => e.child(div().text_color(c.fail).child("incomplete")));
       })))
-      .child(!r ? ((b.runs ?? []).length ? Skeleton(c, 4) : div().text_size(12.5).text_color(c.grey500).child("No runs yet.")) : r.error ? div().text_size(12.5).text_color(c.fail).child(r.error) : this.runSummary(c, name, r));
-  }
-
-  runSummary(c, name, r) {
-    const p = (r.comparisons ?? []).find((x) => x.primary) ?? r.comparisons?.[0];
-    const metrics = ["ndcg@10", "p@10", "mrr"].filter((m) => (r.arms ?? []).some((a) => a.offline?.[m] !== undefined));
-    const cols = [...metrics, "judged@10", "per 1k"];
-    return v_flex().gap(10)
-      .when(!!p, (e) => e.child(h_flex().flex_wrap().gap(10).items_center().p(12).border_1().border_color(c.rule)
-        .child(this.icon(p.delta > 0 ? "up" : p.delta < 0 ? "down" : "flat", 16, p.verdict === "win" ? c.blue : p.verdict === "loss" ? c.fail : c.grey500))
-        .child(div().id("bt-primary").text_size(13).font_medium().tooltip(p.metric).child(`${metricWords(p.metric)}, B minus A`))
-        .child(div().text_size(14).font_family(MONO).child(fmtD(p.delta)))
-        .child(div().text_size(12).font_family(MONO).text_color(c.grey900).child(`[${fmtD(p.ci_low)}, ${fmtD(p.ci_high)}]`))
-        .child(this.badge(c, p.verdict, p.verdict))
-        .when(!!p.evidence, (e) => e.child(this.badge(c, p.evidence)))
-        .child(div().flex_1())
-        .child(div().text_size(12).text_color(c.grey500).child([r.wall_s != null ? `ran in ${Math.round(r.wall_s)} s` : null, r.cost_usd != null ? `cost $${Number(r.cost_usd).toFixed(2)}` : null].filter(Boolean).join(" · ")))))
-      .child(div().id("arm-table-x").w_full().overflow_x_scrollbar().child(v_flex().min_w(200 + metrics.length * 104 + 2 * 112).border_1().border_color(c.rule)
-        .child(h_flex().h(28).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().whitespace_nowrap()
-          .child(div().flex_1().min_w(200).px(10).child("Arm"))
-          .children(cols.map((m, j) => div().id(`armh-${m}`).w(j < metrics.length ? 104 : 112).flex_none().px(8).text_right().truncate().tooltip(m).child(metricWords(m)))))
-        .children((r.arms ?? []).map((a, i) => h_flex().id(`arm-${i}`).h(30).border_b(1).border_color(c.rule).text_size(12.5).items_center().whitespace_nowrap()
-          .child(h_flex().flex_1().min_w(200).px(10).gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(named(c, a.arm)))
-          .children(metrics.map((m) => div().w(104).flex_none().px(8).text_right().font_family(MONO).child(a.offline?.[m] !== undefined ? Number(a.offline[m]).toFixed(4) : "")))
-          .child(div().w(112).flex_none().px(8).text_right().font_family(MONO).text_color((a.judged_at_10 ?? 1) < 0.9 ? c.fail : c.navy).child(a.judged_at_10 != null ? `${Math.round(a.judged_at_10 * 100)}%` : "not measured"))
-          .child(div().w(112).flex_none().px(8).text_right().truncate().font_family(MONO).text_color(a.cost?.serve_usd_per_1k != null ? c.navy : c.grey500).child(a.cost?.serve_usd_per_1k != null ? `$${Number(a.cost.serve_usd_per_1k).toFixed(4)}` : "not measured"))))))
-      .child(h_flex().gap(8)
-        .child(this.button(c, "open-compare", "Compare in detail", "compare", () => {
-          setShared("captain.compare", { backtest: name, version: r.version });
-          run("layout.select", { stack: "sections", child: "comparisons" });
-        })));
+      // The comparison, in place: the verdict in one of three words, then the numbers and what is behind them.
+      .child((b.runs ?? []).length ? this.cmp.render(c, Math.max(320, (w ?? 800) - 40)) : div().id("bt-no-runs").text_size(12.5).text_color(c.grey500).child("Not run yet."));
   }
 
   // ---- workflows ----------------------------------------------------------------------------------------------
 
-  workflows(c, w) {
-    const rows = this.data.workflows ?? [];
-    const lw = Math.max(220, Math.min(320, Math.floor(w * 0.26)));
-    return h_flex().flex_1().min_h(0)
-      .child(this.list(c, lw, "workflows", rows, "workflow",
-        (x) => [plural(x.steps ?? 0, "step"), x.schedule ? cronEnglish(x.schedule) : null].filter(Boolean).join(" · "),
-        (x) => (x.last_status ? this.statusIcon(c, x.last_status) : div())))
-      .child(this.workflowDetail(c));
-  }
-
   workflowDetail(c) {
     const w = this.detail.workflow;
-    if (!this.sel.workflows) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick a workflow. Make one with New, Workflow.");
+    if (!this.sel.workflows) return v_flex().flex_1();
     if (!w) return v_flex().flex_1().child(Skeleton(c, 8));
     if (w.error) return v_flex().flex_1().p(24).text_size(13).text_color(c.fail).child(w.error);
     const name = this.sel.workflows;
@@ -629,7 +730,7 @@ export default class CaptainRuns extends View {
         .child(named(c, name, w.version, { size: 15 }))
         .when(!!w.schedule, (e) => e.child(h_flex().gap(4).items_center().text_size(12).text_color(c.grey900).child(this.icon("schedule", 12)).child(div().child(cronEnglish(w.schedule)))))
         .child(div().flex_1())
-        .child(this.button(c, "run-workflow", running ? "Running" : "Run now", "run", (_e, cx) => this.start(cx, "Workflow", `/api/workflows/${enc(name)}/run`, (cx) => this.pick(cx, "workflows", name)), true, !!running)))
+        .child(this.button(c, "run-workflow", running ? "Running" : "Run now", "run", (_e, cx) => this.start(cx, "Workflow", `/api/workflows/${enc(name)}/run`, (cx) => this.pick(cx, "workflows", name)), false, !!running)))
       .when(!!w.description, (e) => e.child(div().text_size(12.5).text_color(c.grey900).child(w.description)))
       .child(this.runsOn(c, "workflows"))
       .child(div().text_size(13).font_medium().child("Steps"))
@@ -667,12 +768,11 @@ export default class CaptainRuns extends View {
 
   // ---- grading ------------------------------------------------------------------------------------------------
 
+  /** The rating queue picked in the list: how far it is, who rated, Rate and Publish. */
   grading(c) {
     if (this.grader) return this.graderView(c);
-    const qs = this.data.grading ?? [];
-    return v_flex().id("grading").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(10)
-      .when(!!this.error, (e) => e.child(div().text_size(12.5).text_color(c.fail).child(this.error)))
-      .when(Array.isArray(this.data.grading) && !qs.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("No rating queues yet. Start one from New, Start rating.")))
+    const qs = (this.data.grading ?? []).filter((q) => q.name === this.sel.grading);
+    return v_flex().id("grading").flex_1().min_w(0).min_h(0).overflow_y_scrollbar().px(20).py(14).gap(10)
       .children(qs.map((q) => {
         const pub = this.published?.queue === q.name ? this.published : null;
         return v_flex().id(`queue-${q.name}`).border_1().border_color(c.rule).p(14).gap(8)
@@ -680,7 +780,7 @@ export default class CaptainRuns extends View {
             .child(this.icon("grade", 15, c.navy))
             .child(div().flex_1().min_w(0).truncate().font_family(MONO).text_size(13).font_medium().child(q.name))
             .child(this.button(c, `publish-${q.name}`, "Publish", "publish", (_e, cx) => this.publish(cx, q), false, !q.graded))
-            .child(this.button(c, `grade-${q.name}`, "Rate", "grade", (_e, cx) => this.openGrader(cx, q.name), true)))
+            .child(this.button(c, `grade-${q.name}`, "Rate", "grade", (_e, cx) => this.openGrader(cx, q.name))))
           .child(h_flex().gap(10).items_center()
             .child(div().flex_1().h(8).bg(c.grey300).child(div().h_full().bg(c.blue).w(`${Math.round((q.share ?? 0) * 100)}%`)))
             .child(div().flex_none().font_family(MONO).text_size(12).child(`${int(q.graded)} of ${int(q.pairs)} pairs`)))
@@ -697,7 +797,7 @@ export default class CaptainRuns extends View {
               .child(pub.status === "done" ? `Published ${pub.ref}: judgments graded by people.` : pub.status === "failed" ? pub.error : "Publishing"))
             // Carry them on: these grades become the labels that judge a project's experiments.
             .when(pub.status === "done", (x) => x.child(Button(c, `use-labels-${q.name}`, "Use as a project's labels", () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "pin", args: { pickProject: true },
-              values: { slot: "labels", ref: pub.ref, project: shared("captain.scope")?.kind === "project" ? shared("captain.scope").id : undefined } } }), { small: true, kind: "primary" })))))
+              values: { slot: "labels", ref: pub.ref, project: shared("captain.scope")?.kind === "project" ? shared("captain.scope").id : undefined } } }), { small: true })))))
           .when(q.graded > 0 && !pub, (e) => e.child(h_flex().gap(8).items_center().text_size(12)
             .child(div().text_color(c.grey900).child("Publish as"))
             .child(div().id(`pubname-${q.name}`).w(240).h(28).px(8).flex().items_center().border_1().border_color(c.grey300)
@@ -716,14 +816,14 @@ export default class CaptainRuns extends View {
         if (/^[0-3]$/.test(e.key)) this.grade(cx, Number(e.key));
       })
       .child(h_flex().h(44).flex_none().px(20).gap(10).items_center().border_b(1).border_color(c.rule)
-        .child(this.button(c, "grader-back", "All queues", "chevron-left", (_e, cx) => { this.grader = null; this.load(cx, "grading"); }))
+        .child(this.button(c, "grader-back", "Back to the queue", "chevron-left", (_e, cx) => { this.grader = null; this.load(cx, "grading"); }))
         .child(div().font_family(MONO).text_size(13).child(g.name))
         .child(div().flex_1())
         .child(div().text_size(12.5).text_color(c.grey900).child(n ? (n.done ? "All rated" : `${n.remaining} left`) : "").when(g.count > 0, (e) => e.child(`, ${g.count} rated now`))))
       .child(v_flex().id("grader-body").flex_1().min_h(0).overflow_y_scrollbar().px(28).py(20).gap(16).max_w(900)
         .when(!!g.error, (e) => e.child(div().text_size(12.5).text_color(c.fail).child(g.error)))
         .when(!n && !g.error, (e) => e.child(Skeleton(c, 6)))
-        .when(!!n?.done, (e) => e.child(div().text_size(14).child("You rated every pair in this queue. Publish it from the list.")))
+        .when(!!n?.done, (e) => e.child(div().text_size(14).child("You rated every pair in this queue. Go back to it to publish.")))
         .when(!!n?.pair, (e) => e
           .child(v_flex().gap(2)
             .child(div().text_size(11).text_color(c.grey500).child("QUERY"))
@@ -752,15 +852,6 @@ export default class CaptainRuns extends View {
   }
 
   // ---- replays ------------------------------------------------------------------------------------------------
-
-  replays(c, w) {
-    const rows = this.data.replays ?? [];
-    const lw = Math.max(220, Math.min(300, Math.floor(w * 0.24)));
-    const r = rows.find((x) => x.name === this.sel.replays) ?? null;
-    return h_flex().flex_1().min_h(0)
-      .child(this.list(c, lw, "replays", rows, "replay", (x) => `${(x.curve ?? []).length} points · ${x.evidence ?? ""}`))
-      .child(!r ? v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child("Pick an off-policy evaluation.") : this.replayDetail(c, r, w - lw));
-  }
 
   replayDetail(c, r, w) {
     const pts = [...(r.curve ?? [])].sort((a, b) => a.trigger_rate - b.trigger_rate);
@@ -809,8 +900,13 @@ export default class CaptainRuns extends View {
   render() {
     const c = palette(isDark(theme()));
     const w = this.width;
+    const lw = Math.max(380, Math.min(520, Math.floor(w * 0.4)));
     // Never blank: the header always shows, and the body says what is happening.
-    const body = this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true)) : this.tab === "backtests" ? this.backtests(c, w) : this.tab === "workflows" ? this.workflows(c, w) : this.tab === "grading" ? this.grading(c) : this.tab === "jobs" ? this.jobs.render(c, w) : this.tab === "live" ? this.live.render(c, w) : this.replays(c, w);
+    const body = this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true))
+      : this.tab === "compare" ? this.reg.render(c, w)
+      // Rating a pair takes the whole width: the list steps aside until "Back to the queue".
+      : this.grader ? this.graderView(c)
+      : h_flex().flex_1().min_h(0).child(this.runList(c, lw)).child(this.detailPane(c, w - lw));
     return v_flex().id("root").size_full().bg(c.surface).font_family(FONT).text_color(c.navy)
       .on_size_change((size, cx) => { this.width = size.width; cx.notify(); })
       .child(this.header(c))

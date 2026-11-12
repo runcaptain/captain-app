@@ -190,6 +190,46 @@ def compare_runs(ctx: Context, a_ref: str, b_ref: str) -> dict:
     return {"a": f"{ra.name}@v{ra.version}", "b": f"{rb.name}@v{rb.version}", "comparable": not issues, "issues": issues}
 
 
+def regression(ctx: Context, member=None, model: str | None = None, limit: int = 50) -> dict:
+    """Regression testing: every evaluation run, newest first, one row each with the model judged, the model it
+    is compared with and the change on the primary metric. {rows, models}.
+
+    A row: {name, version, created, mode, model, against, metric, delta, ci_low, ci_high, comparison (win | noise |
+    loss, as the run recorded it), evidence, value, against_value, too_few_judged, own_labeler, independent}.
+    The model judged is the primary comparison's B arm; `value` and `against_value` are the two arms' scores on
+    that metric. `too_few_judged` (an arm has under 90% of its top 10 judged) and `own_labeler` (the model learned
+    from the labeler that grades the test set) change what the result means, so they come with every row.
+    `model` keeps one model's rows (its name without the version). `models` lists every model that has a row.
+    `member` is the list routes' name predicate for evaluations (a project or the Explorer's pick)."""
+    bare = lambda ref: str(ref or "").split("@")[0]
+    rows: list[dict] = []
+    for n in ctx.registry.names("backtest-run"):
+        if member is not None and not member(n):
+            continue
+        try:
+            bt = ctx.registry.load("backtest", n)
+        except Exception:  # noqa: BLE001  a run whose evaluation is gone still lists, without what the plan said
+            bt = None
+        own = bool(bt and (bt.tags or {}).get("label_independence") == "shared")
+        for v in ctx.registry.versions("backtest-run", n):
+            r = ctx.registry.load("backtest-run", n, v)
+            p = next((c for c in r.comparisons if c.get("primary")), r.comparisons[0] if r.comparisons else None)
+            if p is None:
+                continue
+            metric = p.get("metric")
+            score = {a.arm: (a.offline or {}).get(metric) for a in r.arms}
+            rows.append({"name": n, "version": v, "created": r.created_at.isoformat(), "mode": r.mode,
+                         "model": p.get("b"), "against": p.get("a"), "metric": metric, "delta": p.get("delta"),
+                         "ci_low": p.get("ci_low"), "ci_high": p.get("ci_high"), "comparison": p.get("verdict"),
+                         "evidence": p.get("evidence"), "value": score.get(p.get("b")), "against_value": score.get(p.get("a")),
+                         "too_few_judged": not r.complete, "own_labeler": own, "independent": r.independent})
+    models = sorted({bare(r["model"]) for r in rows if r["model"]})
+    if model:
+        rows = [r for r in rows if bare(r["model"]) == bare(model)]
+    rows.sort(key=lambda r: r["created"], reverse=True)
+    return {"rows": rows[: max(1, min(int(limit), 500))], "models": models}
+
+
 def histogram(ctx: Context, run_ref: str, a: str | None = None, b: str | None = None, bins: int = 21) -> dict:
     """The per-query nDCG@10 delta distribution, binned on [-1, 1], for a chart that never sees raw rows."""
     first = queries(ctx, run_ref, a, b, limit=500)

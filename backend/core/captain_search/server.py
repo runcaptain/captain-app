@@ -1669,6 +1669,21 @@ def connection_test(name: str):
     return {"name": name, **verify(ctx().load_connection(name))}
 
 
+@app.get("/api/data/tables", dependencies=A)
+def data_tables(q: str | None = None, kind: str | None = None, project: str | None = None):
+    """Every table in one list: the datasets Captain keeps versions of and each connected database's tables.
+    {rows: [{kind: dataset | table, name, where, rows, versions, last_read, columns, ...}], connections: [...]}.
+    q: every word in the name, where it lives, the description or a column's name. kind: dataset or table.
+    ?project= and the Explorer's X-CST-Scope filter the datasets; a database's tables belong to no project, so
+    they are left out while something is picked."""
+    from .data import catalog as CAT
+
+    c = ctx()
+    pick = (_req_scope.get() or "").partition(":")
+    scoped = bool(project) or (bool(pick[2]) and pick[0] != "view")
+    return CAT.tables(c, _member(c, project, "dataset"), q, kind if kind in ("dataset", "table") else None, scoped)
+
+
 @app.get("/api/tables", dependencies=A)
 def tables_overview():
     """Each connection, and what's been read of its tables."""
@@ -2828,6 +2843,16 @@ def run_histogram(name: str, a: str | None = None, b: str | None = None, bins: i
     from . import compare as CP
 
     return CP.histogram(ctx(), name, a, b, bins)
+
+
+@app.get("/api/regression", dependencies=A)
+def regression(model: str | None = None, project: str | None = None, limit: int = 50):
+    """Regression testing: every evaluation run, newest first, with the model judged, the model it is compared
+    with and the change on the primary metric. ?model= keeps one model's runs. See compare.regression."""
+    from . import compare as CP
+
+    c = ctx()
+    return CP.regression(c, _member(c, project, "backtest"), model, limit)
 
 
 @app.get("/api/compare-runs", dependencies=A)

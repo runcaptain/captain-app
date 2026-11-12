@@ -43,12 +43,15 @@ const until = async (ok, what) => {
 await until(() => (h.mod.list ?? []).some((d) => d.name === 'demo-catalog'), 'datasets');
 h.mod.select(h.cx, 'demo-catalog');
 await until(() => h.mod.detail?.name === 'demo-catalog', 'the catalog open');
-await h.click('dtab-insights');
+// "What uses it" is a section of About (it was the Insights tab).
+const openInsights = async () => { h.mod.page.open(h.cx, 'insights'); await h.idle(50); };
+await openInsights();
+assert.equal(h.mod.page.tab, 'about');
 // Reads: the page's own Sample data (the app), and an agent at the CLI.
 spawnSync(cst, ['data', 'head', 'demo-catalog'], { env: { ...env, CST_AGENT: 'claude' } });
 await h.click('dtab-sample');
 await until(() => h.mod.page.rows && !h.mod.page.rows.loading && h.mod.page.rows.table.rows.length > 0, 'sample rows read');
-await h.click('dtab-insights');
+await openInsights();
 h.mod.page.insights.reset();
 h.mod.page.insights.load(h.cx, h.mod.detail);
 await until((t) => t.includes('Used by 2 model versions, 2 runs, 1 environment, 3 datasets. Named in 1 notebook. Read 2 times in the last 90 days.'), 'the summary');
@@ -69,7 +72,7 @@ await until(() => h.mod.sel === ds, 'the derived dataset open');
 // Back to the catalog: a notebook opens in Notebooks.
 h.mod.select(h.cx, 'demo-catalog');
 await until(() => h.mod.detail?.name === 'demo-catalog', 'the catalog again');
-await h.click('dtab-insights');
+await openInsights();
 await until((t) => t.includes('catalog-checks'), 'insights again');
 await h.click('ins-nb-0');
 // Notebooks is its own view: the row asks it to open that notebook.
@@ -77,17 +80,16 @@ assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections'
 assert.equal(globalThis.__shared['captain.open'].section, 'notebooks');
 assert.equal(globalThis.__shared['captain.open'].notebook, 'catalog-checks');
 
-// Search across folders: a column finds its dataset and says so; Show all lists foldered datasets flat.
-h.mod.tab = 'datasets';
-h.mod.lib.find.set_value('price');
-await until((t) => t.includes('across every folder') && t.includes('column price'), 'search by a column');
-assert.ok(h.mod.lib.found().some((x) => x.row.name === 'demo-catalog' && x.col === 'price'), 'demo-catalog, by its price column');
-h.mod.lib.find.set_value('historic judgments');
-await until((t) => t.includes('in demo-historic-replay'), 'a foldered dataset found, with its folder');
-h.mod.lib.find.set_value('');
-await h.click('lib-flat');
-await until((t) => t.includes('folders aside') && t.includes('in logs'), 'every dataset flat');
-assert.equal(h.mod.lib.found().length, h.mod.list.length, 'all of them');
+// The one list: a column's name finds its table and says which column; a folder's name finds what is in it.
+await h.click('crumb-tables');
+const search = async (q) => { h.mod.catalog.find.set_value(q); h.mod.catalog.load(h.cx); await h.idle(100); };
+await search('price');
+await until((t) => t.includes('column price') && (h.mod.catalog.rows ?? []).some((r) => r.name === 'demo-catalog' && r.matched_column === 'price'), 'demo-catalog, by its price column');
+await search('historic judgments');
+await until((t) => t.includes('Captain, folder demo-historic-replay') && h.mod.catalog.rows.length === 1, 'a foldered dataset found, with its folder');
+await search('');
+await until(() => h.mod.catalog.rows.filter((r) => r.kind === 'dataset').length === h.mod.list.length, 'every dataset, folders aside');
+assert.ok(h.text().includes('Captain, folder logs'), 'each says where it lives');
 
 stop();
 console.log('insights-live render test: ok');

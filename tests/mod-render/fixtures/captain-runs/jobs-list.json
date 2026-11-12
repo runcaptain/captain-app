@@ -1,0 +1,39 @@
+[
+ {
+  "id": "job-eval-1",
+  "argv": [
+   "backtest",
+   "run",
+   "demo-tuned-vs-bm25"
+  ],
+  "state": "succeeded",
+  "target": "local",
+  "target_kind": "local",
+  "region": null,
+  "submitted_at": "2026-11-06T21:49:00+00:00",
+  "started_at": "2026-11-06T21:49:01+00:00",
+  "finished_at": "2026-11-06T21:50:10+00:00",
+  "submitted_by": "ana@example.com",
+  "exit_code": 0,
+  "cost": null
+ },
+ {
+  "id": "job-train-2",
+  "argv": [
+   "pipeline",
+   "train",
+   "demo-tuned"
+  ],
+  "state": "failed",
+  "target": "aws-batch",
+  "target_kind": "aws-batch",
+  "region": "us-west-1",
+  "submitted_at": "2026-11-06T22:10:00+00:00",
+  "started_at": "2026-11-06T22:10:30+00:00",
+  "finished_at": "2026-11-06T22:14:00+00:00",
+  "submitted_by": "ana@example.com",
+  "exit_code": 1,
+  "reason": "The training command exited with code 1.",
+  "cost": null
+ }
+]

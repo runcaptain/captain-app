@@ -1,4 +1,4 @@
-// Data and signals, Models tab, against fixtures: attached registries with Sync and Detach (a second click confirms),
+// Data, Sources, the model registries, against fixtures: attached registries with Sync and Detach (a second click confirms),
 // attaching a new one (address, login, name) as a job, and every model by architecture with what it was built from.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/models.test.mjs
 import fs from 'node:fs';
@@ -33,7 +33,7 @@ fs.copyFileSync(path.join(here, 'fixture-cst.js'), path.join(work, 'kit/cst.js')
 const { default: Mod } = await import(path.join(work, 'main.js'));
 const h = harness(Mod);
 await h.start();
-await h.click('tab-models');
+await h.click('submenu-sources'); // registries sit under Sources, with the databases
 await h.idle();
 
 let t = h.text();

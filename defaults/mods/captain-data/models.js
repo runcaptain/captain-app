@@ -241,11 +241,11 @@ export class Models {
 
   render(c, w) {
     const regs = this.regs ?? [];
-    return v_flex().id("models").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(14)
+    return v_flex().id("models").flex_none().gap(14)
       .child(h_flex().gap(10).items_center()
         .child(div().text_size(14).font_semibold().child("Model registries"))
-        .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.grey900).child("Where your trained models live. Captain reads them for lineage and never writes to them."))
-        .child(Button(c, "reg-attach", "Attach a registry", (_e, cx) => this.toggleAttach(cx), { kind: "primary", small: true })))
+        .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.grey900).child("Where your trained models live. Captain reads them and never writes to them."))
+        .child(Button(c, "reg-attach", "Attach a registry", (_e, cx) => this.toggleAttach(cx), { small: true })))
       .when(this.attaching, (e) => e.child(this.form(c)))
       .when(!!this.job, (e) => e.child(v_flex().gap(6).p(10).border_1().border_color(c.rule)
         .child(h_flex().text_size(12).child(div().flex_1().child(this.job.label)).child(div().font_family(MONO).text_color(c.grey500).child(`${Math.round((this.job.progress ?? 0) * 100)}%`)))

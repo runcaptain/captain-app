@@ -5,28 +5,27 @@
 # is drawn, and fails if the section stays blank. Everything it starts is stopped by pid.
 #
 #   tests/mod-render/shot-check.sh [captain-app binary] [mod ...]
-#   defaults: target/release/captain-app; captain-data captain-notebooks captain-runs captain-compare (those present)
+#   defaults: target/release/captain-app; captain-data captain-notebooks captain-runs (those present)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 BIN=${1:-target/release/captain-app}
 shift || true
 MODS=("$@")
 if [[ ${#MODS[@]} -eq 0 ]]; then
-  for m in captain-data captain-notebooks captain-runs captain-compare; do [[ -d defaults/mods/$m ]] && MODS+=("$m"); done
+  for m in captain-data captain-notebooks captain-runs; do [[ -d defaults/mods/$m ]] && MODS+=("$m"); done
 fi
-block_of() { case "$1" in captain-project) echo project ;; captain-team) echo team ;; captain-nav) echo project ;; captain-data) echo data ;; captain-runs) echo runs ;; captain-compare) echo comparisons ;; captain-notebooks) echo notebooks ;; *) echo "" ;; esac; }
+block_of() { case "$1" in captain-project) echo project ;; captain-team) echo team ;; captain-nav) echo project ;; captain-data) echo data ;; captain-runs) echo runs ;; captain-notebooks) echo notebooks ;; *) echo "" ;; esac; }
 # Extra views after the plain ones (the two that open the import wizard last, so it covers nothing after them): a query side by side (props the mods read at init).
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:sample" "captain-data:samplefiles" "captain-data:samplerow" "captain-data:pictures" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
+    captain-data) EXTRA+=("captain-data:sample" "captain-data:samplefiles" "captain-data:samplerow" "captain-data:pictures" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:sources" "captain-data:about" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
     # needs SHOT_PROJECT=1: a project with pins and experiments. captain-project:list (the project cards, nothing picked):
     # SHOT_ONLY, as two cards leave the column the blank check measures nearly empty.
     # captain-project:ship needs SHOT_STAGED=1 too: the Ship steps first on the page, with something staged.
     captain-project) EXTRA+=("captain-project:home" "captain-project:pins"); [[ -n "${SHOT_STAGED:-}" ]] && EXTRA+=("captain-project:ship" "captain-project:connect" "captain-project:ab" "captain-project:dep-copies" "captain-project:dep-metrics" "captain-project:dep-logs" "captain-project:dep-settings" "captain-project:dep-cost") ;;  # captain-project:dep-list: SHOT_ONLY (one card reads as too empty for the check)
     captain-notebooks) EXTRA+=("captain-notebooks:notebook" "captain-notebooks:chart" "captain-notebooks:bignotebook" "captain-notebooks:sqltools") ;;
-    captain-runs) EXTRA+=("captain-runs:jobs" "captain-runs:live") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
-    captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
+    captain-runs) EXTRA+=("captain-runs:jobs" "captain-runs:live" "captain-runs:compare" "captain-runs:side" "captain-runs:imported" "captain-runs:imported-queries" "captain-runs:profile") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
   esac
 done
 
@@ -280,9 +279,10 @@ covered && { echo "an overlay still covers the window: $(app status | python3 -c
 # Props for a view: the scratch workspace's first query of the seeded replay, read from its own serve.
 props_of() {
   case "$1" in
-    captain-compare:side) python3 tests/mod-render/first-query.py "$CSTH" ;;
+    captain-runs:side) python3 tests/mod-render/first-query.py "$CSTH" ;;
+    captain-runs:compare) echo '{"tab": "compare"}' ;;
     captain-notebooks:notebook) echo '{"notebook": "shot-notebook", "runAll": true}' ;;
-    captain-data:models) echo '{"tab": "models"}' ;;
+    captain-data:sources) echo '{"tab": "sources"}' ;;
     captain-data:samplerow) echo '{"pageTab":"sample","dataset":"shot-multifile","openRow":2}' ;;
     captain-data:pictures) echo '{"pageTab":"sample","dataset":"shot-pictures","openRow":1}' ;;
     captain-project:choose) echo '{"chooseModels": true}' ;;
@@ -302,31 +302,29 @@ props_of() {
     captain-project:deployed-more-*) echo "{\"depMore\": \"${1#captain-project:deployed-more-}\"}" ;;
     captain-project:dep-*) echo "{\"depTab\": \"${1#captain-project:dep-}\"}" ;;  # any tab: requests, try, traffic, copies, metrics, versions, logs, settings, cost
     captain-project:ab) echo '{"shipFrom": "ab"}' ;;
-    captain-data:models-attach) echo '{"tab": "models", "registryAttach": true}' ;;
-    captain-data:tables) echo '{"tab": "tables"}' ;;
+    captain-data:models-attach) echo '{"tab": "sources", "registryAttach": true}' ;;
+    captain-data:about) echo '{"dataset": "demo-catalog", "pageTab": "about"}' ;;
     captain-data:import-run) echo '{"importWith": {"conn": "demo-store", "table": "products", "name": "hello", "autoImport": true}}' ;;
-    captain-data:quality) echo '{"pageTab": "quality"}' ;;
-    captain-data:insights) echo '{"pageTab": "insights"}' ;;
-    captain-data:lineage) echo '{"pageTab": "lineage"}' ;;
-    captain-data:labels) echo '{"tab": "labels"}' ;;
+    captain-data:quality) echo '{"dataset": "demo-catalog", "pageTab": "quality"}' ;;
+    captain-data:insights) echo '{"dataset": "demo-catalog", "pageTab": "insights"}' ;;
+    captain-data:lineage) echo '{"dataset": "demo-catalog", "pageTab": "lineage"}' ;;
     captain-data:search) echo '{"find": "price"}' ;;
-    captain-data:flat) echo '{"flatAll": true}' ;;
     captain-runs:grading) echo '{"tab": "grading"}' ;;
     captain-runs:jobs) echo '{"tab": "jobs"}' ;;
     captain-runs:live) echo '{"tab": "live"}' ;;
     captain-notebooks:chart) echo '{"notebook": "shot-chart", "runAll": true}' ;;
     captain-data:import) echo '{"importWith": {"conn": "demo-store", "sql": "select * from products limit 1000", "name": "Hello World"}}' ;;
     captain-data:import-table) echo '{"importWith": {"conn": "demo-store", "table": "products", "name": "Products"}}' ;;
-    captain-data:sample) echo '{"pageTab": "sample"}' ;;
+    captain-data:sample) echo '{"dataset": "demo-catalog", "pageTab": "sample"}' ;;
     captain-data:samplefiles) echo '{"pageTab": "sample", "dataset": "shot-multifile"}' ;;
     captain-data:wide40) echo '{"tab": "tables", "tablesTab": "rows", "tablesPick": "usage"}' ;;
     captain-data:wide13) echo '{"tab": "tables", "tablesTab": "rows", "tablesPick": "spend"}' ;;
-    captain-data:tablerows) echo '{"tab": "tables", "tablesTab": "rows"}' ;;
+    captain-data:tablerows) echo '{"tab": "tables", "tablesTab": "rows", "tablesPick": "products"}' ;;
     captain-notebooks:bignotebook) echo '{"notebook": "shot-big", "runAll": true}' ;;
     captain-notebooks:sqltools) echo '{"notebook": "shot-sql-tools", "sqlTools": {"panel": "filled"}}' ;;
-    captain-compare:profile) echo '{"backtest": "demo-tuned-vs-bm25", "version": 1, "tab": "profile", "autoProfile": true}' ;;
-    captain-compare:imported) echo '{"backtest": "demos/shot/imported-readout", "version": 1}' ;;
-    captain-compare:imported-queries) echo '{"backtest": "demos/shot/imported-readout", "version": 1, "tab": "queries"}' ;;
+    captain-runs:profile) echo '{"backtest": "demo-tuned-vs-bm25", "version": 1, "section": "profile", "autoProfile": true}' ;;
+    captain-runs:imported) echo '{"backtest": "demos/shot/imported-readout", "version": 1}' ;;
+    captain-runs:imported-queries) echo '{"backtest": "demos/shot/imported-readout", "version": 1, "section": "queries"}' ;;
     *) echo '{}' ;;
   esac
 }
@@ -369,7 +367,7 @@ EOF
   ok=0
   # The notebook view runs every cell on a fresh Python first: give it time to finish before judging.
   [[ "$view" == captain-notebooks:notebook || "$view" == captain-notebooks:chart || "$view" == captain-notebooks:bignotebook ]] && sleep 25
-  [[ "$view" == captain-data:import* || "$view" == captain-compare:profile || "$view" == captain-data:quality ]] && sleep 8
+  [[ "$view" == captain-data:import* || "$view" == captain-runs:profile || "$view" == captain-data:quality ]] && sleep 8
   [[ "$view" == captain-data:import-run ]] && sleep 14
   [[ "$view" == captain-data:models-attach ]] && sleep 25  # it lists every bucket of the login first
   [[ "$view" == captain-data:pictures ]] && sleep 20  # the rows, then their thumbnails
@@ -437,7 +435,9 @@ opened() { # opened <what was asked> <pattern the context must match>
 }
 cst_app app open runs >/dev/null && opened runs 'runs|*'
 cst_app app open dataset:demo-queries >/dev/null && opened dataset:demo-queries 'data|demo-queries|*'
-cst_app app open compare >/dev/null && opened compare 'comparisons|*'
+# Compare is inside Runs: `cst app open compare` opens Runs. Experiments has no screen: the command says so and exits 1.
+cst_app app open compare >/dev/null && opened compare 'runs|*'
+if cst_app app open experiments >/dev/null 2>&1; then echo "cst app open experiments: opened something, expected it to say the screen is gone"; fail=1; else echo "cst app open experiments: says the screen is gone"; fi
 cst_app app open form:investigation --value "title=Opened by an agent" >/dev/null && opened form:investigation '*|investigation|Opened by an agent'
 app shot "$OUT/cst-app-open-form.png" >/dev/null || true
 app do overlay.close '{}' >/dev/null 2>&1 || true
@@ -483,7 +483,7 @@ if [[ -n "${SHOT_AUDIT:-}" ]]; then
   # A full-colour mark (AWS, Azure) is loaded after the first frame, and a window in the background may not draw
   # another by itself: ask for the section again, which draws one, then take the picture.
   shoot() { sleep "${2:-4}"; app do layout.select '{"stack":"sections","child":"data"}' >/dev/null 2>&1 || true; sleep 0.7; app shot "$OUT/audit-$1.png" >/dev/null && echo "audit: $1"; }
-  for child in investigations data runs comparisons handoff engine; do
+  for child in project data notebooks runs engine team; do
     app do layout.select "{\"stack\":\"sections\",\"child\":\"$child\"}" >/dev/null || true
     shoot "$child" 5
   done

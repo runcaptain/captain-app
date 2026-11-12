@@ -5,7 +5,7 @@
 //   2. The check: POST /api/rankings/validate, run on every change. Stats, errors (red, Import off), warnings (amber),
 //      what the data supports, the baseline arm, and where labels come from when there are labels (it sets the
 //      evidence label). Optional: a judgments dataset, a catalog for titles, a hypothesis.
-//   3. Import: POST /api/rankings/import as a job, a toast, then the new run opens in Comparisons.
+//   3. Import: POST /api/rankings/import as a job, a toast, then the new run opens in Runs, with its comparison.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, props, closeOverlay, notify, run, setShared } from "herdr";
@@ -98,8 +98,9 @@ export default class Rankings extends View {
           const res = j.data?.result ?? {};
           const [backtest, v] = String(res.run ?? `${name}@v1`).split("@v");
           notify({ title: `Imported ${name}`, body: "It opens in Compare, like any offline evaluation.", level: "info" });
-          setShared("captain.open", { section: "comparisons", backtest: res.backtest ? String(res.backtest).split("@")[0] : backtest, version: Number(v) || 1, at: Date.now() });
-          run("layout.select", { stack: "sections", child: "comparisons" });
+          // The result opens in Runs, with its comparison in place.
+          setShared("captain.open", { section: "runs", backtest: res.backtest ? String(res.backtest).split("@")[0] : backtest, version: Number(v) || 1, at: Date.now() });
+          run("layout.select", { stack: "sections", child: "runs" });
           this.busy = false; this.done = res;
           closeOverlay(props()?.overlay);
           return;

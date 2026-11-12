@@ -1,4 +1,4 @@
-// Tables: "Read lineage from Snowflake" on a Snowflake connection (and not on Postgres), with 30 or 90 days, and the
+// Data, Sources: "Read lineage from Snowflake" on a Snowflake connection's card (and not on Postgres), with 30 or 90 days, and the
 // result in words: "Read 12 table links and 40 column links from Snowflake, as of ...".
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/tables-lineage.test.mjs
 import fs from 'node:fs';
@@ -19,7 +19,7 @@ globalThis.__routes = [
   [/^\/api\/tables\/wh\/.+/, 'table'],
 ];
 globalThis.__shared = {};
-globalThis.__props = { tab: 'tables' };
+globalThis.__props = { tab: 'sources' };
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-tl-')));
 fs.cpSync(path.join(root, 'defaults/mods/captain-data'), work, { recursive: true });
 fs.copyFileSync(path.join(root, 'defaults/captain/kit/cst.js'), path.join(work, 'kit/real-cst.js'));
@@ -39,4 +39,5 @@ await h.layoutLists({});
 await h.idle();
 t = h.text();
 assert.ok(/Read 12 table links and 40 column links from Snowflake, as of /.test(t), `summary: ${t.slice(0, 400)}`);
+assert.ok(t.includes('They show in "Where this came from" on every table.'), 'and where to see them, now that Lineage is not a tab');
 console.log('tables-lineage render test: ok');

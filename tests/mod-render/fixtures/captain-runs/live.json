@@ -1,0 +1,17 @@
+[
+ {
+  "id": "live-1",
+  "kind": "backtest",
+  "title": "demo-tuned-vs-bm25",
+  "status": "running",
+  "progress": 0.42,
+  "stage": "Scoring the queries",
+  "where": "local",
+  "of": "demo-tuned-vs-bm25",
+  "started_at": "2026-11-06T22:20:00+00:00",
+  "arms": [
+   "demo-bm25@v1",
+   "demo-tuned@v1"
+  ]
+ }
+]

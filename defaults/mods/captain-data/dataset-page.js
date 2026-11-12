@@ -1,14 +1,12 @@
-// CAPTAIN: one page for a dataset, in the shape of Databricks Unity Catalog's table page. Tabs:
-// - Overview: description, who made it and when, rows, role, classes and tags, the schema.
-// - Sample data: every row, a page at a time, in the kit grid every screen uses (GET /api/datasets/{name}/rows:
-//   search, WHERE and sort on the backend), so it reads the same as the table it came from.
-// - Details: every version (open any), its files, and its provenance: the source, connection, and the SQL that made it.
-// - Lineage: a drawn graph upstream and downstream (GET /api/lineage/graph when the backend has it, else /api/lineage,
-//   cut to the chosen depth here), with column-level lineage for a picked column (GET /api/lineage/columns).
-// - Insights: what uses it (pipelines, runs, environments, datasets made from it), the notebooks that name it, who works
-//   with it, and recent activity (insights.js, GET /api/datasets/{name}/insights).
-// - Quality: per column, the share of empty values, distinct count, min and max, plus freshness (GET /api/profile).
-//   Hidden while the backend has no profile route.
+// CAPTAIN: one page for a dataset (a table Captain keeps versions of). Two views and no more (screen rule 8):
+// - Rows: every row, a page at a time, in the kit grid every screen uses (GET /api/datasets/{name}/rows: search,
+//   WHERE and sort on the backend), so it reads the same as the table it came from.
+// - About: one page of sections. Its facts and schema, every version (open any), where it came from (the source,
+//   connection and the SQL that made it) and its files, always shown. Then three sections that load when opened:
+//   what uses it (insights.js, GET /api/datasets/{name}/insights), the quality of each column (GET /api/profile),
+//   and, for a queries or judgments set, its health (kit/evals.js).
+// "Where this came from" is a button, not a view: it opens the lineage graph (GET /api/lineage/graph when the
+// backend has it, else /api/lineage), with column-level lineage for a picked column (GET /api/lineage/columns).
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { api, query } from "./kit/cst.js";
@@ -36,12 +34,18 @@ function ago(iso) {
 /** "name@v3" as {label: name, version: 3}, for graph nodes. */
 const split = (label) => { const m = /^(.*)@v(\d+)$/.exec(String(label ?? "")); return m ? { label: m[1], version: Number(m[2]) } : { label: String(label ?? "") }; };
 
-export const TABS = [["overview", "Overview"], ["sample", "Sample data"], ["details", "Details"], ["lineage", "Lineage"], ["insights", "Insights"], ["quality", "Quality"]];
+/** The page's two views. Lineage is a button; everything else that was a tab is a section of About. */
+export const VIEWS = [["sample", "Rows"], ["about", "About"]];
+/** Sections of About that load when opened, and the earlier tab names that still open them (`cst app open
+ *  dataset:<name> --tab insights`, an older link). */
+const SECTIONS = ["insights", "quality", "health"];
+const EARLIER = { overview: "about", details: "about", rows: "sample" };
 
 export class DatasetPage {
   constructor(host) {
     this.host = host;
-    this.tab = "overview";
+    this.tab = "sample"; // "sample" | "about" | "lineage" (the graph, opened by its button)
+    this.sections = new Set(); // sections of About that are open
     this.lineage = new LineageGraph({ id: "ds-lineage", onFocus: (id, cx) => this.refocus(cx, id), onColumn: (col, cx) => this.traceColumn(cx, col) });
     this.graphFor = null;
     this.graphError = null;
@@ -57,7 +61,13 @@ export class DatasetPage {
     this.where.on("submit", (_e, cx) => this.saveWhere(cx));
     this.whereNote = null;
     this.locate = null; // {state: "looking" | "found" | "missing" | "manual", progress, how, suggestions}
-    this.health = new EvalHealth(); // the Health tab (kit/evals.js)
+    // Moving it to another folder (About, "Where it lives"): the folders there are, and a box for a new one.
+    this.moving = false;
+    this.folders = null;
+    this.moveNote = null;
+    this.newFolder = InputState.new({ placeholder: "A new folder's name" });
+    this.newFolder.on("submit", (_e, cx) => this.moveTo(cx, this.newFolder.value().trim().replace(/^\/+|\/+$/g, ""), true));
+    this.health = new EvalHealth(); // About's health section (kit/evals.js)
     this.insights = new DatasetInsights(host); // the Insights tab (insights.js)
   }
 
@@ -72,16 +82,63 @@ export class DatasetPage {
     this.media = null;
     this.whereNote = null;
     this.locate = null;
+    this.moving = false;
+    this.moveNote = null;
     this.insights?.reset();
   }
 
+  /** Show a view. A section's name ("insights", "quality", "health") shows About with that section open. */
   open(cx, tab) {
-    this.tab = tab;
-    if (tab === "lineage") this.loadLineage(cx);
-    if (tab === "quality") this.loadProfile(cx);
-    if (tab === "sample") this.loadRows(cx);
-    if (tab === "insights") this.insights.load(cx, this.host.detail);
-    if (tab === "health" && this.host.detail) this.health.open(cx, this.host.detail);
+    tab = EARLIER[tab] ?? tab ?? "sample";
+    if (SECTIONS.includes(tab)) { this.sections.add(tab); this.tab = "about"; }
+    else this.tab = tab;
+    if (this.tab === "lineage") this.loadLineage(cx);
+    if (this.tab === "sample") this.loadRows(cx);
+    if (this.tab === "about") for (const s of this.sections) this.loadSection(cx, s);
+    cx.notify();
+  }
+
+  /** The folder the dataset on the page is in ("" at the top level), from the one list. */
+  folder() {
+    const name = this.host.detail?.name;
+    return (this.host.catalog.rows ?? []).find((r) => r.kind === "dataset" && r.name === name)?.folder ?? "";
+  }
+
+  toggleMove(cx) {
+    this.moving = !this.moving;
+    this.moveNote = null;
+    if (this.moving) cx.spawn(async (cx) => {
+      const r = await api("/api/datasets/tree", { scoped: false });
+      const out = [];
+      const walk = (n) => { for (const f of n?.folders ?? []) { out.push(f.path); walk(f); } };
+      if (r.ok) walk(r.data);
+      this.folders = out;
+      cx.notify();
+    });
+    cx.notify();
+  }
+
+  /** Move the dataset on the page to a folder ("" is the top level). Moving copies nothing and changes no version. */
+  moveTo(cx, folder, make = false) {
+    const name = this.host.detail?.name;
+    if (!name || (make && !folder)) return;
+    cx.spawn(async (cx) => {
+      if (make) await api("/api/library/folders", { body: { path: folder } });
+      const r = await api("/api/library/move", { body: { names: [name], folder } });
+      if (r.ok) { this.moving = false; this.newFolder.set_value(""); this.moveNote = { text: `Moved to ${folder || "the top level"}.`, tone: "good" }; this.host.catalog.load(cx); }
+      else this.moveNote = { text: String(r.data?.detail ?? r.data?.error ?? r.error ?? "Couldn't move it."), tone: "fail" };
+      cx.notify();
+    });
+  }
+
+  loadSection(cx, s) {
+    if (s === "quality") this.loadProfile(cx);
+    if (s === "insights") this.insights.load(cx, this.host.detail);
+    if (s === "health" && this.host.detail && EvalHealth.applies(this.host.detail)) this.health.open(cx, this.host.detail);
+  }
+
+  toggle(cx, s) {
+    if (this.sections.has(s)) this.sections.delete(s); else { this.sections.add(s); this.loadSection(cx, s); }
     cx.notify();
   }
 
@@ -89,9 +146,11 @@ export class DatasetPage {
     return `dataset:${d.name}@v${d.version}`;
   }
 
+  /** The graph around a node. `focus` names one that isn't the dataset on the page (a database table, a model);
+   *  without it, the dataset on the page. */
   loadLineage(cx, focus) {
-    const d = this.host.detail;
-    if (!d || d.error) return;
+    const d = focus ? this.host.detail ?? {} : this.host.detail;
+    if (!focus && (!d || d.error)) return;
     const id = focus ?? this.nodeId(d);
     if (this.graphFor === id) return;
     this.graphFor = id;
@@ -101,8 +160,17 @@ export class DatasetPage {
       let r = await api(`/api/lineage/graph?node=${encodeURIComponent(id)}&up=${Math.max(up, 4)}&down=${Math.max(down, 4)}`);
       if (!r.ok && r.status === 404) r = await api("/api/lineage");
       if (this.graphFor !== id) return;
-      if (!r.ok) { this.graphError = "Couldn't load its lineage."; cx.notify(); return; }
-      const nodes = (r.data.nodes ?? []).map((n) => ({ ...n, ...split(n.label ?? n.id), columns: n.id === this.nodeId(d) ? (d.schema_fields ?? []).map((f) => f.name) : n.columns }));
+      if (!r.ok) { this.graphError = "Couldn't load where this came from."; cx.notify(); return; }
+      const mine = d?.name ? this.nodeId(d) : null;
+      const nodes = (r.data.nodes ?? []).map((n) => ({ ...n, ...split(n.label ?? n.id), columns: n.id === mine ? (d.schema_fields ?? []).map((f) => f.name) : n.columns }));
+      // Nothing recorded about it: say so instead of drawing one box on an empty canvas.
+      if (!nodes.some((n) => n.id === id) || (nodes.length <= 1 && !(r.data.edges ?? []).length)) {
+        this.graphError = "Captain has nothing recorded yet about where this came from or what uses it.";
+        this.graphEmpty = true;
+        cx.notify();
+        return;
+      }
+      this.graphEmpty = false;
       // MLflow runs and model versions upstream of the pipelines they serve, when MLflow is connected and linked.
       const g = await withMlflow({ nodes, edges: r.data.edges ?? [] });
       if (this.graphFor !== id) return;
@@ -287,22 +355,41 @@ export class DatasetPage {
   // ---- drawing ---------------------------------------------------------------------------------------------------
 
   tabs(c) {
-    const tabs = [...TABS.filter(([id]) => id !== "quality" || this.hasProfile), ...(EvalHealth.applies(this.host.detail) ? [["health", "Health"]] : [])];
-    return h_flex().flex_none().flex_wrap().gap(4).px(20).pb(10).children(tabs.map(([id, label]) =>
-      div().id(`dtab-${id}`).h(26).px(10).flex().items_center().cursor_pointer().text_size(12)
-        .border_1().border_color(this.tab === id ? c.navy : c.grey300).bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
-        .on_click((_e, cx) => this.open(cx, id)).child(label)));
+    return h_flex().flex_none().gap(4).px(20).pb(10).items_center()
+      .children(VIEWS.map(([id, label]) =>
+        div().id(`dtab-${id}`).h(26).px(10).flex().items_center().cursor_pointer().text_size(12)
+          .border_1().border_color(this.tab === id ? c.navy : c.grey300).bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
+          .on_click((_e, cx) => this.open(cx, id)).child(label)))
+      .child(div().flex_1())
+      .child(this.tab === "lineage"
+        ? Button(c, "ds-lineage-close", "Back to the table", (_e, cx) => this.open(cx, "sample"), { small: true })
+        : Button(c, "ds-lineage-open", "Where this came from", (_e, cx) => this.open(cx, "lineage"), { small: true }));
   }
 
   body(c, w, d) {
-    const h = this.host;
-    if (this.tab === "sample") return this.sample(c);
-    if (this.tab === "details") return this.details(c, d);
     if (this.tab === "lineage") return this.lineageView(c, w);
-    if (this.tab === "insights") return this.insights.render(c);
-    if (this.tab === "quality") return this.quality(c, d);
-    if (this.tab === "health") return v_flex().id("ds-health").flex_1().min_h(0).overflow_y_scrollbar().child(this.health.render(c));
-    return v_flex().id("ds-overview").flex_1().min_h(0).overflow_y_scrollbar().pb(12).child(h.facts(c, d)).child(h.schema(c, d));
+    if (this.tab === "about") return this.about(c, d);
+    return this.sample(c);
+  }
+
+  /** About: the facts, the schema and the details, then the sections that load when opened. */
+  about(c, d) {
+    const h = this.host;
+    const section = (id, title, body) => {
+      const open = this.sections.has(id);
+      return v_flex().id(`dsec-${id}-wrap`).flex_none().border_t(1).border_color(c.rule)
+        .child(h_flex().id(`dsec-${id}`).h(40).px(20).gap(8).items_center().cursor_pointer().hover((s) => s.bg(c.surface2))
+          .on_click((_e, cx) => this.toggle(cx, id))
+          .child(svg(icon(open ? "chevron-down" : "chevron-right")).size(12).flex_none().text_color(c.grey500))
+          .child(div().text_size(13).font_medium().child(title)))
+        .when(open, (e) => e.child(body()));
+    };
+    return v_flex().id("ds-about").flex_1().min_h(0).overflow_y_scrollbar().pb(16)
+      .child(h.facts(c, d)).child(h.schema(c, d))
+      .child(this.details(c, d))
+      .child(section("insights", "What uses it", () => this.insights.render(c)))
+      .when(this.hasProfile, (e) => e.child(section("quality", "Quality of each column", () => this.quality(c, d))))
+      .when(EvalHealth.applies(d), (e) => e.child(section("health", "Health of this test set", () => div().id("ds-health").child(this.health.render(c)))));
   }
 
   sample(c) {
@@ -328,15 +415,28 @@ export class DatasetPage {
     const versions = Array.from({ length: latest }, (_, i) => latest - i);
     const row = (k, v) => v ? h_flex().gap(10).text_size(12.5).child(div().w(110).flex_none().text_color(c.grey500).child(k)).child(div().flex_1().min_w(0).child(v)) : null;
     const source = { sql: "A SQL query", file: "A file", notebook: "A notebook", label: "A label", grading: "Rating", import: "An import" }[p.source] ?? p.source ?? "";
-    return v_flex().id("ds-details").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(10).gap(14)
+    return v_flex().id("ds-details").flex_none().px(20).py(12).gap(14)
       .child(v_flex().gap(6)
         .child(div().text_size(13).font_medium().child("Versions"))
         .child(h_flex().flex_wrap().gap(6).children(versions.map((v) => div().id(`ver-${v}`).h(24).px(8).flex().items_center().cursor_pointer().font_family(MONO).text_size(12)
           .border_1().border_color(v === d.version ? c.blue : c.grey300).bg(v === d.version ? c.blueLight : c.surface).text_color(v === d.version ? c.blue : c.navy)
           .on_click((_e, cx) => this.host.selectVersion(cx, d.name, v)).child(`v${v}${v === latest ? " latest" : ""}`))))
         .child(div().text_size(11.5).text_color(c.grey500).child("Versions are write-once: a new import is a new version, and old ones stay readable.")))
+      .child(v_flex().id("ds-where").gap(6)
+        .child(div().text_size(13).font_medium().child("Where it lives"))
+        .child(h_flex().gap(10).items_center().text_size(12.5)
+          .child(div().child(this.folder() ? `Captain keeps it, in the folder ${this.folder()}.` : "Captain keeps it, at the top level."))
+          .child(Button(c, "ds-move", this.moving ? "Cancel" : "Move to a folder", (_e, cx) => this.toggleMove(cx), { small: true })))
+        .when(this.moving, (e) => e.child(h_flex().id("ds-move-to").flex_wrap().gap(6).items_center()
+          .children(["", ...(this.folders ?? [])].filter((p) => p !== this.folder()).map((p, i) => div().id(`move-to-${i}`).h(24).px(8).flex().items_center().cursor_pointer()
+            .border_1().border_color(c.grey300).text_size(12).text_color(c.navy).hover((st) => st.border_color(c.blue).text_color(c.blue))
+            .on_click((_e, cx) => this.moveTo(cx, p)).child(p || "Top level")))
+          .child(div().id("ds-move-new").w(200).h(26).px(8).flex().items_center().border_1().border_color(c.grey300)
+            .child(Input.new(this.newFolder).w_full().text_size(12).text_color(c.navy)))
+          .child(Button(c, "ds-move-new-go", "Move to a new folder", (_e, cx) => this.moveTo(cx, this.newFolder.value().trim().replace(/^\/+|\/+$/g, ""), true), { small: true }))))
+        .when(!!this.moveNote, (e) => e.child(div().id("ds-move-note").text_size(12).text_color(this.moveNote.tone === "fail" ? c.fail : c.good).child(this.moveNote.text))))
       .child(v_flex().gap(6)
-        .child(div().text_size(13).font_medium().child("Where it came from"))
+        .child(div().text_size(13).font_medium().child("What made it"))
         .child(row("Source", source))
         .child(row("Connection", p.connection))
         .child(row("File", p.file))
@@ -356,23 +456,23 @@ export class DatasetPage {
   }
 
   lineageView(c, w) {
-    if (this.graphError) return v_flex().flex_1().p(20).child(div().text_size(12.5).text_color(c.fail).child(this.graphError));
+    if (this.graphError) return v_flex().id("ds-lineage-none").flex_1().p(20).child(div().text_size(12.5).text_color(this.graphEmpty ? c.grey900 : c.fail).child(this.graphError));
     if (!this.lineage.graph.nodes?.length) return v_flex().flex_1().child(Skeleton(c, 6));
     return v_flex().id("ds-lineage-view").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(10).gap(8)
-      .child(div().text_size(12).text_color(c.grey900).child("Where this dataset comes from and what uses it. Double-click a box to center on it."))
+      .child(div().text_size(12).text_color(c.grey900).child("What this table was made from, and what uses it."))
       .child(this.lineage.render(c, { width: w ? w - 40 - 2 - 12 : 0 })) // the view's padding, the canvas's border, a scrollbar
       .when(!!this.columnNote, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(this.columnNote)));
   }
 
   quality(c, d) {
     const p = this.profile;
-    if (!p) return v_flex().flex_1().child(Skeleton(c, 6));
-    if (p.error) return v_flex().flex_1().p(20).child(div().text_size(12.5).text_color(c.fail).child(p.error));
-    if (p.missing) return v_flex().flex_1().p(20).child(div().text_size(12.5).text_color(c.grey900).child("Quality needs a newer Captain backend."));
+    if (!p) return v_flex().flex_none().child(Skeleton(c, 6));
+    if (p.error) return v_flex().flex_none().p(20).child(div().text_size(12.5).text_color(c.fail).child(p.error));
+    if (p.missing) return v_flex().flex_none().p(20).child(div().text_size(12.5).text_color(c.grey900).child("Quality needs a newer Captain backend."));
     const cols = p.columns ?? [];
     const range = (x) => (x.min == null && x.max == null ? "" : String(x.min) === String(x.max) ? String(x.min) : `${x.min ?? ""} to ${x.max ?? ""}`);
     const head = (t, w) => div().w(w).flex_none().px(8).text_right().child(t);
-    return v_flex().id("ds-quality").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(10).gap(10)
+    return v_flex().id("ds-quality").flex_none().px(20).pb(14).gap(10)
       .child(h_flex().gap(16).text_size(12.5)
         .when(!!(p.created ?? p.freshness?.updated_at), (e) => e.child(div().child(`This version was made ${ago(p.created ?? p.freshness.updated_at)}`)))
         .when(p.rows != null, (e) => e.child(div().child(`${fmtInt(p.rows)} rows profiled`))))

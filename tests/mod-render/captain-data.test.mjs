@@ -1,7 +1,8 @@
 // Render test for the captain-data mod, in Node, against fixtures captured from a real `cst serve` (cst demo seed).
 // `captain-app check` renders a mod once, before any data arrives; this drives the populated states: the dataset
-// list, the first page of the grid, scrolling into page 2, a sort, a broken filter, and the labels tab. It also
-// times every render against gpui-kit's 50 ms limit.
+// one list of tables (datasets and database tables together), a dataset's page with its two views, the first page
+// of the grid, page 2, a sort, a broken filter, and Sources. It also times every render against gpui-kit's 50 ms
+// limit.
 //
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/captain-data.test.mjs
 import fs from 'node:fs';
@@ -19,11 +20,9 @@ globalThis.__routes = [
   [/\/rows\?.*where=/, 'bad-where'],
   [/\/rows\?.*offset=200(&|$)/, 'rows1'],
   [/\/rows\?/, 'rows0'],
-  [/^\/api\/datasets\/tree$/, 'tree'],
+  [/^\/api\/data\/tables/, 'data-tables'],
   [/^\/api\/datasets(\?|$)/, 'datasets'],
   [/^\/api\/datasets\/[^?]+$/, 'detail'],
-  [/^\/api\/labels\/[^/]+\/preview/, 'preview'],
-  [/^\/api\/labels$/, 'labels'],
 ];
 
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-')));
@@ -45,25 +44,69 @@ const rows0 = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'rows0
 const rows1 = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'rows1.json'), 'utf8'));
 const datasets = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'datasets.json'), 'utf8'));
 
-// The list, the classes, the first dataset's detail.
+const { readWords, versionWords } = await import(path.join(work, 'catalog.js'));
+const merged = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'data-tables.json'), 'utf8'));
+
+// Two submenus, Tables first, and no Labels, Datasets, Notebooks or Models tab.
+assert.deepEqual(h.byIdPrefix('submenu-').map((e) => e.call('id')[0]), ['submenu-tables', 'submenu-sources']);
+assert.equal(h.byIdPrefix('tab-').length, 0, 'no strip of tabs besides the two submenus');
 let text = h.text();
 if (process.env.SHOW) console.log(text.slice(0, 1500));
-// Versioned names show as the name plus a version chip, never "name@v1".
-// A directory: folders (expanded at first), each dataset by its own name inside its folder, with its version chip.
-for (const d of datasets) assert.ok(text.includes(`${d.name.split('/').pop()} | v${d.latest}`), `list shows ${d.name}`);
-for (const f of ['All datasets', 'demo-historic-replay', 'logs']) assert.ok(text.includes(f), `folder ${f}`);
-assert.ok(text.includes('Import files') && text.includes('New folder'), 'directory actions');
-assert.ok(!/@v\d/.test(text), 'no raw name@v ref anywhere');
-assert.ok(text.includes('catalog'), 'class chips');
-assert.ok(text.includes('demo-catalog | v1'), 'detail header');
-assert.ok(text.includes('Import a dataset') && text.includes('Open an agent in this space') && text.includes('Copy prompt'), 'tasks and agent actions');
-assert.ok(text.includes('price'), 'schema');
-// An icon on every dataset row.
-for (const row of h.byIdPrefix('ds-')) assert.ok(h.has(row, 'svg'), `icon on ${row.call('id')[0]}`);
+assert.ok(!/\bLabels\b/.test(text), 'Labels left the screen');
+assert.ok(!h.asked().some((p) => p.startsWith('/api/labels')), 'and nothing asks for labels');
 
-// The page opens on Overview (facts and schema). Sample data is the kit grid every screen uses, paged by the services.
-await h.click('dtab-sample');
+// Tables: one row per dataset and per database table, in one list, with the five columns.
+for (const col of ['Name', 'Where it lives', 'Rows', 'Versions', 'Last read']) assert.ok(text.includes(col), `column ${col}`);
+assert.equal(h.byIdPrefix('cat-row-').length, merged.rows.length, 'every dataset and every database table has a row');
+for (const d of datasets) assert.ok(text.includes(d.name), `the list shows the dataset ${d.name}`);
+for (const t of merged.rows.filter((r) => r.kind === 'table')) assert.ok(text.includes(t.name) && text.includes(t.where), `the list shows the database table ${t.name}`);
+// A dataset is a table Captain keeps versions of: the Versions column says so. A database table says it is read
+// where it lives. There is no separate Datasets screen.
+assert.ok(text.includes('Captain keeps 1 version') && text.includes('Captain keeps 2 versions') && text.includes('Read where it lives'), 'the Versions column tells the two apart');
+assert.equal(versionWords({ kind: 'dataset', versions: 3 }), 'Captain keeps 3 versions');
+assert.equal(versionWords({ kind: 'table', versions: null }), 'Read where it lives');
+assert.ok(text.includes('Captain, folder logs') && text.includes('Captain, a saved query on demo-store'), 'where it lives, in words');
+assert.ok(text.includes('60,000'), 'rows');
+assert.ok(text.includes(`${merged.rows.length} tables`), 'the count');
+// Last read, in words.
+const now = Date.parse('2026-11-12T12:00:00Z');
+assert.equal(readWords('2026-11-12', now), 'Today');
+assert.equal(readWords('2026-11-11', now), 'Yesterday');
+assert.equal(readWords('2026-11-05T08:00:00+00:00', now), '7 days ago');
+assert.equal(readWords('2026-08-01', now), 'Aug 1, 2026');
+assert.equal(readWords(null, now), 'Not read yet');
+assert.ok(!/@v\d/.test(text), 'no raw name@v ref anywhere');
+assert.ok(text.includes('Import a dataset'), 'the one filled button brings data in');
+// An icon on every row.
+for (const row of h.byIdPrefix('cat-row-')) assert.ok(h.has(row, 'svg') || h.has(row, 'image'), `icon on ${row.call('id')[0]}`);
+
+// The kind filter keeps one of the two.
+await h.click('cat-kind-table');
+assert.equal(h.byIdPrefix('cat-row-').length, merged.rows.filter((r) => r.kind === 'table').length, 'only the database tables');
+await h.click('cat-kind-dataset');
+assert.equal(h.byIdPrefix('cat-row-').length, datasets.length, 'only the tables Captain keeps versions of');
+await h.click('cat-kind-all');
+
+// A search asks the services (so a column's name finds its table).
+h.mod.catalog.find.set_value('price');
+h.mod.catalog.find.handlers?.submit?.({}, h.cx);
+await h.idle(30);
+assert.ok(h.asked().some((p) => p === '/api/data/tables?q=price'), `the search is asked of the services: ${h.asked().filter((p) => p.includes('data/tables'))}`);
+h.mod.catalog.find.set_value('');
+
+// A row opens that table's page in place: a crumb back to the list, one line saying what it is, and two views.
+const at = merged.rows.findIndex((r) => r.name === 'demo-catalog');
+await h.click(`cat-row-${at}`);
 await h.idle(50);
+text = h.text({ 'grid-ds-rows': [0, 30] });
+assert.ok(h.byIdPrefix('crumb-tables').length === 1, 'a crumb back to Tables');
+assert.ok(text.includes('demo-catalog | v1'), 'the page header');
+assert.ok(text.includes('A table Captain keeps versions of. This is version 1 of 1.'), `what it is, in one line: ${text.slice(0, 400)}`);
+assert.deepEqual(h.byIdPrefix('dtab-').map((e) => e.call('id')[0]), ['dtab-sample', 'dtab-about'], 'two views: Rows and About');
+assert.ok(text.includes('Rows') && text.includes('About') && text.includes('Where this came from'), 'Rows, About, and the lineage button');
+assert.ok(text.includes('Ask an agent about it'), 'the agent action');
+
+// The page opens on Rows: the kit grid every screen uses, paged by the services.
 text = h.text({ 'grid-ds-rows': [0, 30] });
 assert.ok(text.includes(String(rows0.rows[0][1])), 'first row shows');
 assert.ok(/1 to 200 of 480/.test(text), `pager: ${text.match(/\d+ to [^|]*/)?.[0]}`);
@@ -94,17 +137,27 @@ text = h.text();
 assert.ok(text.includes('The filter is not valid SQL'), 'filter error shows');
 assert.ok(!text.includes('\u001b['), 'no ANSI codes');
 
-// Labels: the list, the SQL, and a preview over an events dataset.
-await h.click('tab-labels');
+// About: the facts, the schema and the details on one page, then sections that load only when opened.
+await h.click('dtab-about');
 text = h.text();
-assert.ok(text.includes('deep-search | v1'), 'label listed');
-assert.ok(text.includes('max(case when clicked'), 'label SQL');
-const chip = h.byIdPrefix('chip-logs/demo-search-sessions')[0];
-assert.ok(chip, 'events chip for the preview');
-await h.click(chip.call('id')[0]);
+assert.ok(text.includes('price') && text.includes('Versions') && text.includes('What made it'), `About holds the schema and the details: ${text.slice(0, 300)}`);
+for (const sec of ['What uses it', 'Quality of each column']) assert.ok(text.includes(sec), `section ${sec}`);
+const beforeQuality = h.asked().length;
+assert.ok(!h.asked().some((p) => p.startsWith('/api/profile')), 'quality is not asked for until its section opens');
+await h.click('dsec-quality');
+await h.idle(30);
+assert.ok(h.asked().slice(beforeQuality).some((p) => p.startsWith('/api/profile')), 'opening the section asks for it');
+
+// Back to the one list.
+await h.click('crumb-tables');
+assert.equal(h.byIdPrefix('cat-row-').length, merged.rows.length, 'the list again');
+
+// Sources: the databases Captain reads tables from, and the model registries.
+await h.click('submenu-sources');
+await h.idle(30);
 text = h.text();
-assert.ok(/mean 0\.\d+/.test(text), 'preview mean');
-assert.ok(text.includes('session_id'), 'preview columns');
+assert.ok(text.includes('Databases') && text.includes('Model registries'), `Sources: ${text.slice(0, 300)}`);
+assert.ok(text.includes('Connect a database'), 'the one filled button connects one');
 
 // Every render stayed far under gpui-kit's 50 ms limit.
 const sorted = [...h.timings].sort((a, b) => a - b);
