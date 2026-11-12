@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime as dt
 
 from ..workspace import Context
-from . import ENV, _ago, _awake, _span, call, set_control, state, status
+from . import ENV, _ago, _span, call, read_flush, set_control, state, status
 from . import logs as L
 
 RANGES = {"15m": (15 * 60, "the last 15 minutes"), "1h": (3600, "the last hour"), "24h": (86400, "the last 24 hours"),
@@ -47,13 +47,7 @@ def _ms(x: float | None) -> str:
 
 
 def _flush(ctx: Context, rec: dict) -> None:
-    if rec.get("status") == "running" and rec.get("how") != "image":
-        if rec.get("scale_to_zero") and not _awake(ctx, rec):
-            return  # asleep: nothing is buffered, and asking would wake it
-        try:
-            call(ctx, rec, "flush", {})
-        except Exception:  # noqa: BLE001  a log a few seconds old is still a log
-            pass
+    read_flush(ctx, rec)  # never wakes a host that sleeps, never raises
 
 
 def _read(ctx: Context, pid: str, env: str, rec: dict, every_stage: bool = False) -> dict:
@@ -299,17 +293,21 @@ def cost(ctx: Context, pid: str, env: str = ENV) -> dict:
         return "$0.00" if x == 0 else "under $0.01" if x < 0.01 else CE.money(x)
 
     month, day = within(month_start), within(day_start)
+    # On a host that sleeps, Captain knows how long it was staged, not how long a copy was awake: every figure is
+    # the most it can have cost, and is said that way wherever it is shown.
+    ceiling = bool(rec.get("scale_to_zero")) and not local_only
     out = {"project": pid, "free": bool(local_only), "month_usd": month, "day_usd": day, "hourly_usd": None if local_only else hourly,
-           "month_text": say(month), "day_text": say(day), "rows": rows, "running": rec.get("status") == "running",
+           "month_text": ("at most " if ceiling and month else "") + say(month), "day_text": ("at most " if ceiling and day else "") + say(day),
+           "ceiling": ceiling, "rate_label": "While a copy is awake" if ceiling else "While it is up", "rows": rows, "running": rec.get("status") == "running",
            "rate_text": ("Runs on this computer. No cloud cost." if rec.get("kind") == "local" else
-                         f"About ${hourly:.2f} an hour while a copy is awake, and nothing while it sleeps. What is shown is the most it can have cost." if hourly and rec.get("scale_to_zero") else
+                         f"About ${hourly:.2f} an hour while a copy is awake, and nothing while it sleeps. Captain can't see how long it slept, so each figure is the most it can have cost." if hourly and rec.get("scale_to_zero") else
                          f"About ${hourly:.2f} an hour while it is up, about ${hourly * 24:.2f} a day." if hourly else
                          "Captain can't price this target.") if rec.get("status") == "running" else
                         "Stopped. It costs nothing now.",
            "estimate": (c.get("estimate") or {}).get("text") or c.get("text"),
            "note": "Worked out from how long each endpoint was up, at the list price. Your cloud's bill is the final word."}
     out["text"] = ("Runs on this computer. No cloud cost." if local_only else
-                   f"{out['month_text']} so far this month, {out['day_text']} in the last 24 hours. {out['rate_text']}")
+                   f"{out['month_text'][0].upper()}{out['month_text'][1:]} so far this month, {out['day_text']} in the last 24 hours. {out['rate_text']}")
     return out
 
 

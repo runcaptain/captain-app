@@ -153,7 +153,9 @@ Fixed on the way (each has a unit test):
    the same second.
 6. A cancelled job had no end time, and Azure ML's status sentence read `JobStatus.QUEUED`.
 
-Not tested: serving on either kind (`cst deploy` plans it, and execution raises "planned but not executable yet"),
+Not tested: serving on either kind. `cst deploy` plans it, and execution raises "planned but not executable yet".
+Staging a model on Container Apps (`cst projects stage`) is built since 2026-11-11 and tested against a stand-in
+only: see "Hosts" in `cst docs staging`. Also not tested:
 a service-principal login (the run used `az login`), a user-assigned identity, the starter ranker's cloud training
 (no `--compute` on `cst projects starter-train` yet), and reading a dataset in place: large datasets download whole.
 

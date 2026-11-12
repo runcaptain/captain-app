@@ -80,13 +80,14 @@ export default class ProjectHome extends View {
     try { this.last = localStorage.getItem("project") || null; } catch { this.last = null; }
     this.shipPath = new Ship(this); // Stage, Try it: made here, because a text box can't be made while drawing
     if ((layoutProps?.() ?? {}).shipFrom) this.shipPath.tab = "traffic"; // the real-window check: open on Traffic
+    if ((layoutProps?.() ?? {}).hostSheet) this.shipPath.openHostFirst = (layoutProps?.() ?? {}).hostSheet; // the real-window check: open that host's setup sheet
     if ((layoutProps?.() ?? {}).depTab) this.shipPath.tab = (layoutProps?.() ?? {}).depTab; // the real-window check: open on that tab
     if ((layoutProps?.() ?? {}).depList) { this.shipPath.listOpen = true; this.shipPath.loadList(cx); } // the real-window check: the list of deployments
     this.load(cx);
     if ((layoutProps?.() ?? {}).chooseModels) { this.everything = true; this.toggleChoosing(cx); }
     this.openFirst = Boolean((layoutProps?.() ?? {}).openExperiment); // a layout, or the real-window check: open a row
     if ((layoutProps?.() ?? {}).allProjects) this.allProjects(cx); // the real-window check: the card list, nothing picked
-    this.deployOpen = ["deployment", "shipFrom", "shipFirst", "depTab", "depList"].some((k) => Boolean((layoutProps?.() ?? {})[k])); // the staged model's own page
+    this.deployOpen = ["deployment", "shipFrom", "shipFirst", "depTab", "depList", "hostSheet"].some((k) => Boolean((layoutProps?.() ?? {})[k])); // the staged model's own page
     this.pinCheck = Boolean((layoutProps?.() ?? {}).pinCheck); // the real-window check: pin twice, as Send to agent does
     this.shipFrom = (layoutProps?.() ?? {}).shipFrom ?? null; // the real-window check: start the Ship steps at "connect" or "ab"
     this.shipFirst = Boolean((layoutProps?.() ?? {}).shipFirst) || Boolean(this.shipFrom); // the real-window check: the Ship steps at the top

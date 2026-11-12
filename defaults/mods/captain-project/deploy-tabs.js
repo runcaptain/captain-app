@@ -188,7 +188,7 @@ export function CostTab(ship, c) {
       .child(h_flex().gap(10).flex_wrap()
         .child(fig("dep-cost-month", "So far this month", d.month_text))
         .child(fig("dep-cost-day", "Last 24 hours", d.day_text))
-        .child(fig("dep-cost-rate", "While it is up", d.hourly_usd ? `$${Number(d.hourly_usd).toFixed(2)} an hour` : d.running ? "Not priced" : "Stopped")))
+        .child(fig("dep-cost-rate", d.rate_label ?? "While it is up", d.hourly_usd ? `$${Number(d.hourly_usd).toFixed(2)} an hour` : d.running ? "Not priced" : "Stopped")))
       .child(div().id("dep-cost-rate-text").text_size(12).text_color(c.grey900).child(d.rate_text))
       .when((d.rows ?? []).length > 0, (x) => x.child(v_flex().id("dep-cost-machines").pt(4).gap(2)
         .child(div().text_size(12.5).font_semibold().text_color(c.navy).child("By machine, this month"))

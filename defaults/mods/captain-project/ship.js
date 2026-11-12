@@ -21,7 +21,7 @@ import { Badge, Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { SendToAgent } from "./kit/context.js";
 import { costState, refreshEstimate, CostLine, costSlice } from "./kit/cost.js";
-import { loadHosts, HostCards, HostSheet, HostLines, whereWords, hasCloud } from "./hosts.js";
+import { loadHosts, HostCards, HostSheet, HostLines, whereWords, hasCloud, openHostSheet } from "./hosts.js";
 import { HeaderChart, CopiesTab, MetricsTab, LogsTab, SettingsTab, CostTab, DeploymentsList } from "./deploy-tabs.js";
 
 const enc = encodeURIComponent;
@@ -149,6 +149,7 @@ export class Ship {
       // The other hosts (Modal, Google Cloud, Azure): what the services offer, and what is set up on each.
       await loadHosts(this, t.ok && Array.isArray(t.data) ? t.data : [], cl.ok ? cl.data?.profiles ?? [] : []);
       if (this.pid() !== pid) return;
+      if (this.openHostFirst) { const h = this.openHostFirst; this.openHostFirst = null; openHostSheet(this, cx, h); } // the real-window check
       const first = targets[0];
       // Would it fit on this computer? The plan answers from the catalog's size and what is free right now.
       const cand = this.pick();
@@ -1050,7 +1051,8 @@ export class Ship {
         .child(actions))
       .when(on, (e) => e.child(v_flex().id("ship-reach").gap(3)
         .child(h_flex().gap(8).items_center().flex_wrap()
-          .child(div().id("ship-address").font_family(MONO).text_size(12.5).text_color(c.navy).child(address))
+          // A cloud's address is long: it is cut with an ellipsis rather than run off the page, and Copy gives all of it.
+          .child(div().id("ship-address").min_w(0).max_w_full().truncate().font_family(MONO).text_size(12.5).text_color(c.navy).child(address))
           .child(Button(c, "ship-copy-address", "Copy", (_e, cx) => this.copy(cx, address, "The address is on your clipboard."), { small: true }))
           .child(Button(c, "ship-copy-key", "Copy the key", (_e, cx) => this.copyKey(cx), { small: true }))
           .when(Boolean(k?.test_request), (x) => x.child(Button(c, "ship-copy-test", "Copy a test request", (_e, cx) => this.copy(cx, k.test_request, "A test request is on your clipboard. Set CAPTAIN_STAGING_KEY in that shell first: Copy the key gives it to you."), { small: true })))
@@ -1070,7 +1072,9 @@ export class Ship {
       .when(!on && Boolean(s?.spent?.text), (e) => e.child(div().id("ship-line-spent").text_size(12).text_color(c.grey900).child(s.spent.text)))
       .when(!on && !s, (e) => e.child(div().id("ship-line-what").text_size(12).line_height("17px").text_color(c.grey900)
         .child("Staging runs a model version as a live endpoint you can try before launch review. It runs in your own cloud, or on this computer.")))
-      .when(!on && !this.busy && !this.confirm, (e) => e.child(this.choices(c)))
+      // An open setup sheet takes the cards' place, so what it will create and its button are in view, not below
+      // four cards. "Not now" brings the cards back.
+      .when(!on && !this.busy && !this.confirm && !this.hostSheet, (e) => e.child(this.choices(c)))
       // What it costs stays in view when it bills. On this computer it costs nothing, which the chip already says.
       .when(Boolean(costLine) && (!on || !local || this.details), (e) => e.child(costLine))
       .when(Boolean(s) && this.page.deployOpen, (e) => e.child(HeaderChart(this, c)))

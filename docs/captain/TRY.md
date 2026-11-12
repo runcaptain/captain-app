@@ -42,6 +42,9 @@ Quit Captain first, then copy over the old one.
 
 - Snowflake, Databricks and BigQuery haven't been tested against live accounts. Postgres, MySQL, ClickHouse and Trino
   have (`pytest -m docker` in backend/core).
-- Cloud compute: AWS ECS and Batch work. Google Cloud, Azure and Modal are tested against fakes only.
+- Cloud compute, jobs: AWS ECS and Batch, Modal, Azure Container Apps and Azure ML have run real jobs. Google Cloud Run
+  and Vertex are tested against fakes only.
+- Hosting a staged model: this computer, AWS SageMaker and Modal have run on real accounts (2026-11-11). Google Cloud
+  Run and Azure Container Apps are tested against stand-ins only, and say so on their cards.
 - The Explorer tree (Brand > Site > Engine), projects and the lineage graph have their backend in place. Their screens
   are being built.

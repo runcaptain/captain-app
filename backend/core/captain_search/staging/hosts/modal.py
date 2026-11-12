@@ -68,8 +68,8 @@ class ModalHost(Host):
             {"resource": "Captain compute target", "name": n["target"],
              "why": f"Modal web endpoint, {o['cpu']:g} CPU and {o['memory_mb'] / 1024:g} GB a copy, at most {o['max_copies']}, in {where}. Staging uses it."}]
         later = [
-            {"resource": "Modal app", "name": f"{n['apps']}-<project>-staging", "why": "The endpoint. Made when you stage a model, stopped when you unstage it."},
-            {"resource": "Modal secret", "name": f"{n['apps']}-<project>-staging", "why": "What the endpoint is told: which bundle, and the SHA-256 of the endpoint key. "
+            {"resource": "Modal app", "name": f"{n['apps']}-{{project}}-staging", "why": "The endpoint. Made when you stage a model, stopped when you unstage it."},
+            {"resource": "Modal secret", "name": f"{n['apps']}-{{project}}-staging", "why": "What the endpoint is told: which bundle, and the SHA-256 of the endpoint key. "
                                                                                            "Never the key itself. Deleted with the app."}]
         return {"cloud": "modal", "environment": o["environment"], "names": n, "storage": n["storage"], "options": o, "creates": rows, "each_deploy": later,
                 "cost": {"setup_usd": 0.0, "hourly_awake_usd": round(hourly, 4),
