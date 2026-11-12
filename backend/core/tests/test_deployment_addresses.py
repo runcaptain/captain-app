@@ -5,9 +5,6 @@ address the page uses, which another route had taken. Each test here goes throug
 in the page's code, and checks the fields that tab reads."""
 from __future__ import annotations
 
-import re
-from pathlib import Path
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -16,7 +13,8 @@ from captain_search import staging as SG
 
 from test_staging import keychain, ws  # noqa: F401  (fixtures)
 
-PAGE = Path(__file__).resolve().parents[3] / "defaults" / "mods" / "captain-project"
+# Whether every address the page's code names is served, and whether any is registered twice, is checked for all
+# screens at once in test_screen_addresses.py.
 P = "/api/projects/shop"
 
 
@@ -138,39 +136,3 @@ def test_the_list_of_staged_models_and_the_deploy_history_each_answer_on_their_o
     assert page("/api/staging/deployments", which="stopped")["rows"] == []
     hist = page("/api/deployments")
     assert isinstance(hist, list) and hist[0]["pipeline"] == SG.state(server.ctx(), "shop")["model_version"]  # the deploy history
-
-
-def test_every_address_in_the_pages_code_is_one_the_app_serves():
-    """The page's code names its addresses as text. Each one must match a route, with the method it is called with:
-    an address nothing serves, or one another route answers first, is how a tab breaks while its own tests pass."""
-    # each route as (method, an example of its address): /api/projects/{pid}/staging becomes /api/projects/x/staging
-    routes = [(m, re.sub(r"\{[^}]+\}", "x", r.path)) for r in server.app.routes for m in (getattr(r, "methods", None) or [])]
-    asked = set()
-    for name in ("ship.js", "deploy-tabs.js", "main.js"):
-        src = (PAGE / name).read_text()
-        for m in re.finditer(r"api\(\s*`([^`]+)`|api\(\s*\"([^\"]+)\"", src):
-            path = (m.group(1) or m.group(2)).split("?")[0]
-            tail = src[m.end():m.end() + 260].split("\n")[0]
-            method = (re.search(r'method:\s*"([A-Z]+)"', tail) or [None, "POST" if re.search(r"\bbody\s*[:,}]", tail) else "GET"])[1]
-            asked.add((method, path))
-        # the tabs read through a helper that is given only the end of the address: get("/staging/copies", ...)
-        tails = set(re.findall(r"\bget\(\s*[`\"](/[a-z][^`\"?$]*)", src))
-        asked |= {("GET", "/api/projects/${pid}" + t) for t in tails}
-        if name == "ship.js":
-            assert {"/staging/copies", "/staging/logs", "/staging/settings", "/staging/cost", "/staging/live", "/staging/versions"} <= tails, sorted(tails)
-    assert len(asked) > 30, f"the page's addresses were not found: {len(asked)}"
-
-    def served(method: str, path: str) -> bool:
-        # a value filled in at run time (${...}) stands for any text: a project id, or the rest of the address
-        pat = re.compile("^" + ".+".join(re.escape(part) for part in re.split(r"\$\{[^}]*\}", path)) + "$")
-        return any(rm == method and pat.match(example) for rm, example in routes)
-
-    lost = sorted(f"{m} {p}" for m, p in asked if p.startswith("/api/") and not served(m, p))
-    assert not lost, lost
-
-
-def test_no_method_and_address_is_registered_twice_anywhere_in_the_app():
-    from collections import Counter
-
-    seen = Counter((m, r.path) for r in server.app.routes for m in (getattr(r, "methods", None) or []) if m != "HEAD")
-    assert not [k for k, n in seen.items() if n > 1], [k for k, n in seen.items() if n > 1]
