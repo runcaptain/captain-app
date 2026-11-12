@@ -351,7 +351,9 @@ export default class CaptainForms extends View {
       .child(h_flex().h(56).flex_none().px(20).gap(12).items_center().border_b(1).border_color(c.rule)
         .child(div().size(30).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon(t.icon)).size(16)))
         .child(div().flex_1().text_size(16).font_semibold().child(t.label))
-        .child(div().id("form-close").cursor_pointer().text_size(13).text_color(c.grey500).hover((s) => s.text_color(c.navy)).on_click(() => this.close()).child("Cancel")))
+        // One Cancel, at the bottom beside the main button. Up here only a close mark, named for screen readers.
+        .child(div().id("form-close").size(28).flex_none().flex().items_center().justify_center().cursor_pointer().text_color(c.grey500)
+          .hover((s) => s.text_color(c.navy)).accessibility_label("Close").tooltip("Close").on_click(() => this.close()).child(svg(icon("x")).size(16))))
       .child(v_flex().id("form-body").flex_1().min_h(0).overflow_y_scroll().p(20).gap(16)
         .child(div().text_size(13).line_height("19px").text_color(c.grey900).child(t.about))
         .children(this.shown().map((f) => this.field(c, f)))
