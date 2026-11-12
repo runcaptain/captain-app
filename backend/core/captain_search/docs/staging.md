@@ -138,6 +138,29 @@ no cloud.
 above, with the lines under each. `GET /api/projects/{id}/deploy` says where the last deploy stands (each step, the
 one that failed, what exists now, `can: [retry, remove]`), and `DELETE` removes it.
 
+### How long it takes
+
+Measured on a real AWS account on 2026-11-12 (us-west-1, ml.t2.medium, the demo store's starter ranker beside its
+baseline): one command, from an account with nothing of Captain's in it to an endpoint that answers, took
+**3 minutes 50 seconds**.
+
+| Step | Seconds |
+|---|---|
+| Checking your account | under 1 |
+| Creating permissions (the bucket and the serving role) | 1.8 |
+| Building the model's image (repository, build role, build project, the build) | 91.9 |
+| Starting the model (package, register, start the endpoint) | 133.8 |
+| Checking it answers (5 test requests) | 0.9 |
+
+Right after it: 20 queries beside the baseline all answered, a median of 2.75 ms inside the endpoint, the served
+features matched training on 100% of 260 checked, and the copy used 205 MB.
+
+These numbers live in one table, `staging/timings.py`. The confirm ("About 4 minutes: about a minute and a half to
+build the image and about 2 minutes to start the model"), each step of the plan (`typical_s`, `typical`) and the
+lines a run prints ("Starting the endpoint (about 2 minutes)") all read it, and a test checks that the steps add
+up to the confirm's total. A step that has not been timed on a real account says so instead of guessing. Moving a
+running endpoint to a new version has not been timed yet.
+
 ### Which machine it runs on
 
 A deploy runs on the smallest machine the model fits on. Nobody has to choose one.
@@ -317,7 +340,40 @@ if the group holds anything Captain did not make.
 
 `--fewest 1` keeps one copy up, so no request waits for a cold start, and it bills while it is up. On Modal
 `--idle-seconds` sets how long an idle copy stays (2 to 1200). The app reads and sets the same through
-`GET` and `POST /api/projects/{id}/staging/scale`. On this computer and on SageMaker there is one copy.
+`GET` and `POST /api/projects/{id}/staging/scale`. On this computer there is one copy.
+
+**On SageMaker** an endpoint never sleeps, so the fewest is at least 1 and each copy bills by the hour. With the
+most above the fewest, Captain turns on SageMaker's own scaling: it adds a copy when one copy takes more than
+`requests_per_copy` requests a minute (3,000 unless the compute target says otherwise), waits 60 seconds before
+adding another, and 5 minutes before taking one away. A new copy takes a few minutes to arrive, so this follows a
+rise over minutes, not a spike. The target's `min_copies`, `max_copies` and `requests_per_copy` are what a deploy
+starts with. `staging-copies` changes a running endpoint, and a redeploy goes back to the target's settings.
+Written against a stand-in. Not run on a real account yet.
+
+A redeploy onto an endpoint that load has scaled out starts the new version on as many copies as are up, so a busy
+endpoint is not cut back in the middle of the switch. Scaling is taken off for the move and put back after it,
+because SageMaker does not move an endpoint while its scaling is on.
+
+The login needs a few more permissions for this (`MoreThanOneCopy` and `ScalingServiceRole` in the policy
+`cst compute setup serving aws --policy` prints). Without them the model still starts, on its fewest copies, and
+the run says scaling could not be turned on. The first time scaling is used in an account, AWS itself creates one
+role there, `AWSServiceRoleForApplicationAutoScaling_SageMakerEndpoint`. It is AWS's, shared by every endpoint in
+the account, and Captain does not remove it.
+
+**What does not depend on one copy** (tested with two copies over one store):
+
+- The request log. Each copy writes its own chunks under the same folder with create-only writes, so two copies
+  never overwrite each other. Each request row says which copy answered it (`copy`).
+- The split. A session's version is a hash of the experiment's salt and the session id, so every copy gives the
+  same session the same version.
+- Shadow mode. Every copy serves the baseline and logs the candidate's answer beside it.
+- Stopping when idle. A copy that has had no request for the idle limit asks the other copies when they were last
+  used before it stops the endpoint. Each copy leaves that in `staging/<project>/<env>/copies/<deployment>/`.
+  Before this, one quiet copy could delete an endpoint another copy was busy on.
+
+**What is per copy.** A change of traffic (the split, shadow mode, the idle limit) reaches the copy that was told at
+once and the others within 3 seconds. `flush` and `status` reach one copy, whichever the host picks, so the newest
+15 seconds of another copy's requests can be missing from a readout taken right after a flush.
 
 ## Cost, and stopping by itself
 
