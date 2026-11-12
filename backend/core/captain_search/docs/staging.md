@@ -8,30 +8,30 @@ Captain hosts nothing and never deploys to production: launch review is still th
     cst projects staging <project>                  # what runs, where, since when, and when it stops by itself
     cst projects staging-query <project> "<query>"  # the staged results beside the baseline's
     cst projects staging-check <project>            # did serving compute the features training computes?
-    cst projects staging-connect <project>          # how a site calls it, and how many real requests have arrived
+    cst projects staging-connect <project>          # the code a site pastes, an address a model, and real requests so far
     cst projects shadow-start <project>             # shoppers keep the baseline; the candidate ranks silently
     cst projects shadow <project>                   # what the candidate would have changed
-    cst projects ab-start <project> --split 5%      # an A/B test between the baseline and the candidate
-    cst projects ab-readout <project>               # the readout
-    cst projects ab-ramp <project> 25               # change the candidate's share; ab-rollback sends everyone back
-    cst projects ab-decide <project> ship           # or keep-baseline, or keep-testing
     cst projects unstage <project>                  # stop it and remove everything Captain created
 
-The app does the same from the project page (Ship: 1 Stage, 2 Try it, 3 Connect your site, 4 A/B test, 5 Launch
-review), through
-`POST /api/projects/{id}/stage`, `/unstage`, `/staging/query`, `/staging/check`, `GET /api/projects/{id}/staging`,
-`GET /api/projects/{id}/ab` and `POST /api/projects/{id}/ab/start|ramp|rollback|stop|simulate|outcomes|result`.
+The app does the same from the project page (Ship: 1 Deploy, 2 Try it, 3 Use it from your site),
+through `POST /api/projects/{id}/stage`, `/unstage`, `/staging/query`, `/staging/check` and
+`GET /api/projects/{id}/staging`.
+
+**Captain runs no A/B tests.** It does not assign shoppers to models and does not collect what they click or buy.
+To compare models on real shoppers, split traffic in your own testing tool and send each group to its model's
+address (see "Use it from your site"). The old `cst projects ab-*` commands print one line saying so and exit 2.
+A record of a test left in a project by an older version is ignored, and nothing about a test can stop a deploy.
 
 ## What can be staged
 
 | The version | What happens |
 |---|---|
 | A keyword-search version, or a starter ranker (`local-bm25`, `bm25-ltr`) | Captain's runtime serves it: keyword search finds the candidates, the trained model reorders the top K with features from the module that built its training set |
-| A version that ranks by calling a service you run (`http`, `elastic`, ...) | Wrapped: Captain's runtime sits in front of your service and does the logging and the split |
+| A version that ranks by calling a service you run (`http`, `elastic`, ...) | Wrapped: Captain's runtime sits in front of your service and does the logging |
 | A model trained elsewhere with no serving entry point | Refused in a sentence. Bring `--endpoint <url>` (any service that answers `POST {query, k}` with `{ids}`) or `--image <uri>` (a container that follows SageMaker's serving contract) |
 
 `--endpoint` runs Captain's runtime on this computer in front of your service. `--image` deploys your container to
-the SageMaker target as it is: Captain can query it, but it logs nothing and cannot split traffic inside it.
+the SageMaker target as it is: Captain can query it, but it logs nothing.
 
 ## The serving bundle
 
@@ -45,19 +45,19 @@ A local endpoint and a cloud endpoint load the same bundle, so what you try here
 | Route | What it does |
 |---|---|
 | `POST /rank` | `{query, k?, user_id?, session_id?, request_id?, traffic?}` gives `{request_id, ids, scores, arm, model_version, ms}` |
-| `POST /rank/<arm>` | The same from one arm, `baseline` or `candidate` |
-| `POST /outcome` | `{request_id, event: click or add-to-cart or purchase, product_id?, value?}` |
+| `POST /rank/<model>` | The same from one named model, `baseline` or `candidate`: the address your own testing tool gives a group of shoppers |
+| `POST /timing` | `{request_id, ms}`: how long the request took as your site saw it. Optional, and the only thing a site reports back |
 | `POST /flush` | Write buffered log records now. `{"publish": true}` also publishes the logs dataset |
 | `GET /healthz` | What is loaded, uptime, requests served, seconds until it stops by itself. No secrets |
 
 Every route but `/ping` and `/healthz` needs the endpoint key: `Authorization: Bearer <key>` on a local endpoint.
 SageMaker exposes one route, so there the body carries it: `{"op": "rank", "key": "<key>", "query": ...}` to
-`InvokeEndpoint` (ops: `rank`, `outcome`, `flush`, `status`, `reload`). The key is generated at stage time and kept
+`InvokeEndpoint` (ops: `rank`, `timing`, `flush`, `status`, `reload`). The key is generated at stage time and kept
 in this computer's keychain as `STAGING_<PROJECT>_<ENV>_KEY`; the endpoint only ever holds its SHA-256. On a machine
 with no keychain, set that name in the environment before staging and that value is used. A local endpoint binds to
 127.0.0.1 only.
 
-`traffic` says where a request came from: `real` (the default), `simulated` or `test`. The Try it box sends `test`.
+`traffic` says where a request came from: `real`, `test`, or nothing (unlabelled). The Try it box sends `test`.
 Only `real` ever counts as REAL_TRAFFIC evidence.
 
 ## Where it runs: this computer, or your cloud
@@ -219,7 +219,7 @@ scripts. They take the size they are given and do not pick one.
 
 ## Hosts: every place a staged model can run
 
-Every host has the same shape, so staging, the request log, shadow mode, the split, the served-features check and
+Every host has the same shape, so staging, the request log, the quiet test, the served-features check and
 unstage work the same everywhere. `cst compute setup serving <host> --options` lists what one asks, and
 `GET /api/serving/hosts` returns them all as cards.
 
@@ -502,7 +502,7 @@ it", and starts nothing without a confirm (`--yes`). The estimate is the shared 
 the bundled table with its date. When an endpoint is stopped, what it cost while it was up is recorded on the
 project and counts in the project's running total.
 
-An endpoint stops by itself after 240 minutes with no `/rank` or `/outcome` (`--idle-minutes` changes it). A local
+An endpoint stops by itself after 240 minutes with no `/rank` (`--idle-minutes` changes it). A local
 process exits. In the cloud two things stop it, and one of them is enough:
 - the container asks SageMaker to delete its own endpoint, which needs `sagemaker:DeleteEndpoint` on the execution
   role;
@@ -543,8 +543,8 @@ Every request is logged with its request id, timestamp, query, the ids returned 
 was given for each of the first 10 results, the model version, the arm and the latency. Records are buffered, written
 as write-once chunks under `staging/<project>/<env>/logs/<stage>/` every 15 seconds, and published as a new version
 of the dataset `<project>/staging-logs` every 5 minutes (and when the endpoint stops). The dataset has one row per
-result shown, in the columns events datasets use (`query, product_id, position, clicked, purchased, session_id, ts`)
-plus `request_id, arm, model_version, traffic, value, features`. A version that holds anything but real traffic is
+result served: `query, product_id, position, session_id, ts, request_id, arm, model_version, traffic, ms, features`.
+It is a log of what was served, with nothing about what a shopper did. A version that holds anything but real traffic is
 tagged simulated, so nothing judged on it reads as real shoppers.
 
 ## Served features match training
@@ -567,135 +567,62 @@ The pairs match on (query, product), which is right while a model's click tables
 serving starts refreshing click counts, the comparison has to be made as of each request's timestamp. The request
 id and timestamp are logged now so that it can be.
 
-## Connect your site
+## Use it from your site
 
-An A/B test means nothing until a site is calling the endpoint. `cst projects staging-connect <project>` (step 3 on
-the page) says where the endpoint is and who can reach it, gives the code for the two calls, and counts the real
-requests that have arrived: "Waiting for the first request", then "Received 12 requests, the last one 4 s ago".
-Only requests marked `real` count. The Try it box, `staging-test` and simulated shoppers are not a site.
+`cst projects staging-connect <project>` (step 3 on the page) says where the model is and who can reach it, gives
+the code a site pastes, the address of each model, and counts the real requests that have arrived: "Waiting for
+the first request", then "Received 12 requests, the last one 4 s ago". Only requests marked `real` count. The Try
+it box and `staging-test` are not a site.
 
-**An endpoint on this computer answers on 127.0.0.1 only. No site can reach it.** The two ways forward are to stage
-it in your cloud, or to keep testing here with simulated shoppers.
+**A model on this computer answers on 127.0.0.1 only. No site can reach it.** Deploy it to a cloud for that.
 
-The two calls, with the `request_id` carried between them (`--code curl|javascript|python`, or `aws cli` for
-SageMaker):
+**The one call** (`--code curl|javascript|python`, or `aws cli` for SageMaker):
+`POST /rank {query, k, session_id, traffic: "real"}` returns `{request_id, ids, scores, arm, model_version, ms}`.
+The code can also tell Captain how long the request took as your site saw it (`POST /timing {request_id, ms}`), so
+the response time on the Metrics chart includes the network. It sends nothing about what the shopper did.
 
-1. Get a ranking: `POST /rank {query, k, session_id}` returns `{request_id, ids, scores, arm, model_version, ms}`.
-2. Report what the shopper did: `POST /outcome {request_id, event, product_id, value}`.
+**An address a model.** To compare models on real shoppers, split traffic in your own testing tool and send each
+group to its model's address:
 
-**Your site must fall back to its own search.** The snippets give the endpoint 300 ms. If it doesn't answer in
+| Model | Address |
+|---|---|
+| The deployed model | `<address>/rank` |
+| The compared model | `<address>/rank/baseline` |
+
+On SageMaker there is one endpoint: send `"op": "rank"`, and `"arm": "baseline"` for the compared model. What
+shoppers click or buy stays in your tool. A site that still posts to `/outcome` gets 410 and a sentence.
+
+**Your site must fall back to its own search.** The code gives the endpoint 300 ms. If it doesn't answer in
 time, is unreachable, or answers with an error, show your own results. An error is a 4xx or 5xx status with the
-body `{"detail": "<a sentence>"}`. A staging endpoint stops by itself when idle and is not built for uptime: a slow
-or missing ranking must never hold up the page.
+body `{"detail": "<a sentence>"}`. A slow or missing ranking must never hold up the page.
 
-**The key.** The snippets read it from `CAPTAIN_STAGING_KEY` in your site's own environment, so it is never in
+**The key.** The code reads it from `CAPTAIN_STAGING_KEY` in your site's own environment, so it is never in
 your code. The app's "Copy the key" button puts it on the clipboard. It is never shown on screen or written to a
-log, and `cst` never prints it.
+log.
 
 `cst projects staging-test <project>` sends one request through the same door, marked as test traffic, to prove
 the path.
 
-## Shadow mode, before any split
+## Test quietly with a copy of your site's requests
 
     cst projects shadow-start <project>
-    cst projects shadow <project> [--traffic real|simulated|test]
+    cst projects shadow <project> [--traffic real|test]
     cst projects shadow-stop <project>
 
-In shadow mode the endpoint answers every request with the baseline's ranking, exactly as before, and the candidate
-ranks the same request silently. Both rankings are logged. No shopper sees the candidate, and a candidate that
-fails never changes the answer the site gets. The readout says how many requests there were, how often the top
-result and the top 10 would have differed, the average overlap of the top 10, the queries that differ most, and
-both response times. It reads REAL_TRAFFIC only when the requests were real. Starting an A/B test ends shadow mode.
+The endpoint answers every request with the compared model's ranking, exactly as before, and this model ranks a
+copy of the same request silently. Both rankings are logged. No shopper sees this model, nobody is assigned to
+anything, nothing a shopper does is collected, and a model that fails never changes the answer the site gets. The
+readout says how many requests there were, how often the top result and the top 10 would have differed, the
+average overlap of the top 10, the queries that differ most, and both response times. It reads REAL_TRAFFIC only
+when the requests were real. It ends when the model stops. (The commands and the API still call it `shadow`.)
 
-## An A/B test between the baseline and the candidate
+## Launch review, and where its evidence comes from
 
-Offline evaluation says a candidate is safe to try. The A/B test is the try. Staging always packs the baseline
-beside the candidate, so both are already on the endpoint when a test starts.
-
-    cst projects ab-start <project> [--split 0.01] [--primary clicks|purchases|revenue] [--guardrail <metric>[:must|watch]]... [--min-sessions 200]
-    cst projects ab <project> [--traffic real|simulated|test]
-    cst projects ab-ramp <project> 0.01|0.05|0.25|0.5|1
-    cst projects ab-rollback <project>
-    cst projects ab-stop <project>
-    cst projects ab-simulate <project> [--sessions 1000]
-    cst projects ab-outcomes <project> <events dataset>
-    cst projects ab-result <project> --metric ... --baseline ... --candidate ... --source "..." [--traffic real|test]
-
-**The test needs a site that is calling.** Captain's own split is refused until a real request has reached the
-endpoint, because there would be nothing to split. `--practice` runs it on simulated shoppers instead: everything
-it shows is SIMULATED and a practice test can't go to launch review. Shares can be written 5, 5% or 0.05, and the
-form says what a share means in the endpoint's own sessions a day.
-
-The metrics are chosen when the test starts: one primary, and the rest as guardrails. A project can measure
-sessions with a click, sessions with a purchase, and revenue per session when its catalog has a price column.
-Response time is always a guardrail.
-
-Each guardrail is marked **must not get worse** or **watch**. When a "must" guardrail clearly drops, Captain pauses
-the ramp and says why: the share can go down or be rolled back, and cannot go up until the guardrail holds again.
-A "watch" guardrail is shown and never blocks. Response time is "must" unless told otherwise; the others are
-"watch" unless marked (`--guardrail purchases:must`).
-
-Ramp steps start at 1%: 1%, 5%, 25%, 50%, 100%. A new or expensive model goes to 1% first.
-
-**Captain's endpoint splits the traffic** (the default). A hash of the session id (else the user id, else the
-request id) and the test's id picks the arm, so a shopper always sees one version, and raising the candidate's
-share only moves shoppers from the baseline to the candidate. The arm is logged on every request. The share lives
-in the endpoint's control document (`staging/<project>/<env>/control.json`), which the runtime re-reads every few
-seconds, so a ramp or a rollback needs no redeploy.
-
-**Your own A/B system splits the traffic** (`--own`). Captain gives the address of each arm on the endpoint
-(`/rank/baseline` and `/rank/candidate`, or `"arm"` in the SageMaker body) and records the readout you bring back
-with `ab-result`. It is recorded as REAL_TRAFFIC only when you say the traffic was real.
-
-**Outcomes** reach Captain through `POST /outcome` on the endpoint (`{request_id, event, product_id?, value?}`), or
-from an events dataset whose rows carry the `request_id` that `/rank` returned (`ab-outcomes`). Rows can be one per
-event (`request_id, event, product_id, value`) or one per result shown (`request_id, product_id, clicked,
-purchased, price`).
-
-**The readout** counts by session, the unit that was assigned: sessions per arm, the primary metric, the difference
-with a 95% interval (the normal interval for a difference of two means), each guardrail, and whether the split is
-what was asked for (a chi-square check on sessions assigned since the last ramp). It says "not enough data yet"
-until both arms have the minimum number of sessions, and names no winner before that. A guardrail fails only when
-the candidate is clearly worse (its interval lies below zero). The readout counts sessions from the start of the
-test, across ramps.
-
-**By segment.** The readout repeats the comparison for head, torso and tail queries, and for new and returning
-shoppers. Head, torso and tail come from the project's own events log: queries are ranked by how many searches
-they get and cut where the running share of searches passes one third and two thirds. A query the log never saw is
-tail. New or returning needs a user id on the request and in the log. Each segment has its own difference and
-interval and its own "not enough data yet", and a candidate that is ahead overall but behind on a segment is
-called out in one sentence.
-
-**Where the numbers came from** is never guessed, and traffic of different kinds is never mixed in one readout:
-
-| The requests | Evidence | On screen |
-|---|---|---|
-| `traffic: real` (the default) | REAL_TRAFFIC | Real traffic |
-| `traffic: simulated` (`ab-simulate`) | SIMULATED | Simulated shoppers |
-| `traffic: test` (your own smoke tests) | TEST_TRAFFIC | Test traffic |
-
-Requests from the Try it box are sent to one named arm and never enter a readout.
-
-**Simulated shoppers** (`ab-simulate`, "Send simulated shoppers at staging") drive the endpoint with the shopper
-simulator Captain already uses for simulated events: they search the catalog, look down the page, click and
-sometimes buy. It shows the whole loop with no traffic yet. Everything read from it says SIMULATED, and it says
-nothing about what real shoppers will do.
-
-**How many more sessions.** While the difference is not yet clear, the readout says how many more sessions the
-smaller arm needs to tell the difference seen so far from chance (80% power at the 95% level), and roughly how
-many days that is at the endpoint's current rate.
-
-**How a test ends.** `cst projects ab-decide <project> ship|keep-baseline|keep-testing` records one of three
-choices. Ship it needs enough real traffic, and the readout with its evidence label is attached to the launch
-review when the candidate is sent. Keep the baseline rolls the test back. After a rollback one line says what was
-rolled back, why (`ab-rollback --reason`), and what to do next. The readout is filed with the test, and a new test
-files the old one under the project.
-
-**Ramp and roll back** are one call each and are written to the project's history. Rolling back during a test
-sends every shopper to the baseline again and ends the test. With no test running, it restages the version that
-was on the endpoint before this one.
-
-Launch review stays the gate before production. Captain does not deploy to a production endpoint.
+A launch needs HUMAN_GRADED or REAL_TRAFFIC evidence. That rule is unchanged. Captain no longer produces
+REAL_TRAFFIC evidence itself, because it runs no A/B tests: it comes from your own testing tool, and you bring the
+result in on the launch review (`cst handoff outcome <id> --metric ... --value ... --source "<the tool and its
+report>"`). It is recorded with where it came from. Launch review is on no screen in the app: it runs from the
+terminal (`cst handoff`), for a team that wants a recorded check before production.
 
 ## When a candidate returns what the baseline returns
 
@@ -712,10 +639,10 @@ most with that product's values.
 ## Which requests count as shoppers
 
 A request counts as a real shopper only when the site says so: it sends `"traffic": "real"`, as the code under
-Connect your site does. A request with no label is **Unlabelled**. It may be a shopper, a script or this computer,
-and Captain doesn't guess. Unlabelled requests are answered and logged like any other, but they don't open the A/B
-form, they are never REAL_TRAFFIC evidence, and a readout made of them can't go to launch review. `simulated` is the
-shopper simulator and `test` is the console and test requests.
+Use it from your site does. A request with no label is **Unlabelled**. It may be a shopper, a script or this computer,
+and Captain doesn't guess. Unlabelled requests are answered and logged like any other, but they are never
+REAL_TRAFFIC evidence. `test` is the console and test requests. `simulated` appears only in logs written by older
+versions.
 
 ## The deployment page, tab by tab
 
@@ -728,7 +655,7 @@ the endpoint is in: **stopped**, **idle** (up, ready, nothing to do, which is fi
 |---|---|---|
 | Requests | Newest first. A row opens beside the list: the results, the signals served, both response times, and that request's own log lines. | |
 | Try it | A query against both versions. | `cst projects staging-query` |
-| Traffic | Connect your site, shadow mode, the A/B test. | `staging-connect`, `shadow`, `ab-*` |
+| Use it from your site | The code a site pastes, an address a model, the quiet test. | `staging-connect`, `shadow` |
 | Copies | The running copy: where, version, startup time, requests handled, peak memory, its state. Staging runs one copy, and none when idle. | |
 | Metrics | Requests, response time (median and 95th percentile), errors, copies, memory, requests being answered. | |
 | Versions | Every deploy, the live one marked, Roll back on recent ones. | `cst deployments history`, `rollback` |
@@ -738,7 +665,7 @@ the endpoint is in: **stopped**, **idle** (up, ready, nothing to do, which is fi
 
 **Two response times.** "At the endpoint" is the time the ranking took inside it. Captain measures it on every
 request. "As your site sees it" includes the network, and only the site can know it, so the site reports it:
-`client_ms` with an outcome, or the event `timing` with `ms`. The Connect your site code does this. Measured on
+`POST /timing` with the request id and `ms`. The code under Use it from your site does this. Measured on
 2026-11-11 from a laptop to a SageMaker endpoint in us-west-1: a median of 0.2 ms at the endpoint and 111 ms as the
 caller saw it. The network is nearly all of it, which is why both are shown.
 

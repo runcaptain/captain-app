@@ -1195,15 +1195,17 @@ Explorer, opens its page. With no project it offers New project, which can pin a
   logged clicks where under half of a candidate's top 10 has grades reads "Too few judged results to call". Import
   a model version brings one from MLflow or a registry. Rows open to: the comparison, Rerun with changes, Judge against the baseline,
   Make it the baseline (with its evidence) and Publish to the registry.
-- **Ship, in short**: 1 Stage, 2 Try it, 3 Connect your site, 4 A/B test, 5 Launch review. The Stage row says
+- **Ship, in short**: 1 Deploy, 2 Try it, 3 Use it from your site. It ends at a running endpoint with its address. The Deploy row says
   where the model runs and who can reach it ("Running on this computer. Only this computer can reach it."). Step
-  3 shows the address, a Copy button for the key (never shown), snippets for the two calls a site makes
-  (`cst projects staging-connect <project> --code python`), a live count of real requests, a test request, and
-  shadow mode: shoppers keep the baseline while the candidate ranks the same requests silently
-  (`cst projects shadow-start|shadow|shadow-stop`). The A/B form opens only once real requests have arrived, or as
-  "Practice with simulated shoppers", which is SIMULATED throughout and can't go to launch review. A test ends in
-  Ship it, Keep the baseline or Keep testing (`cst projects ab-decide`). A candidate that returns what the
-  baseline returns is called that, with the reason. The rest of this entry has the detail.
+  3 shows the code a site pastes (`cst projects staging-connect <project> --code python`), a Copy button for the
+  key (never shown), the address of each model, a live count of real requests, a test request, and a quiet test
+  on a copy of the site's requests: shoppers keep the compared model's results while this model ranks the same
+  requests silently (`cst projects shadow-start|shadow|shadow-stop`). **Captain runs no A/B tests.** It does not
+  assign shoppers to models and does not collect clicks or purchases. To compare models on real shoppers, a team
+  splits traffic in its own testing tool and sends each group to its model's address: `/rank` for the deployed
+  model, `/rank/<model>` for the compared one. The old `cst projects ab-*` commands print one line and exit 2.
+  A model that returns what the compared model returns is called that, with the reason. The rest of this entry
+  has the detail.
 - **Ship**: a path of steps, each with its status, one button and a tick when done. **1 Stage** runs a model
   version as a live endpoint, beside the baseline: in the team's own cloud (a SageMaker compute target, with the
   instance, an hourly estimate and "this keeps billing until you stop it" to confirm first), or on this computer
@@ -1227,20 +1229,15 @@ Explorer, opens its page. With no project it offers New project, which can pin a
   and the cloud logins connected in Captain are offered (`GET /api/projects/<id>/deploy/hosts`).
   A team with its own serving stages `--endpoint <url>`
   (Captain's runtime sits in front of it) or `--image <uri>`. Once a candidate is judged, the page's Next line
-  offers "Stage it", and the page publishes these steps for agents (`cst app context`). Staging is pinned for an
+  offers "Deploy", and the page publishes these steps for agents (`cst app context`). Staging is pinned for an
   agent with "Send to agent" (`staging:<project>`). One line under Try it says whether serving computed the
   features training computes ("Served features match training: 99.8% of 1,240 checked",
-  `cst projects staging-check <project>`); a failed check is a launch criterion. **3 A/B test** splits traffic
-  between the baseline and the candidate on the same endpoint: pick the candidate's share and the metric that
-  decides it (sessions with a click, with a purchase, or revenue per session), or choose "My own A/B system" and
-  bring the readout in. The readout shows sessions per arm, the difference with its interval, the guardrails,
-  "Not enough data yet" until each arm has enough sessions, and where the traffic came from: Real traffic,
-  Simulated shoppers (SIMULATED) or Test traffic. "Send simulated shoppers at staging" shows the loop with no
-  traffic yet. It also breaks the result down by head, torso and tail queries and new or returning shoppers,
-  each with its own interval. Guardrails are marked "must not get worse" (a clear drop pauses the ramp, with the
-  reason) or "watch". Ramp (1%, 5%, 25%, 50%, 100%) and Roll back are one click with a confirmation, and are written to
-  the project's history (`cst projects ab-start|ab|ab-ramp|ab-rollback|ab-simulate <project>`). **4 Launch
-  review** is still the gate before production, and Captain deploys nothing itself. `cst docs staging` has the
+  `cst projects staging-check <project>`); a failed check is a launch criterion. **3 Use it from your site** is the code a site
+  pastes, the key and one address a model. The site reports nothing about what a shopper did. It may report how
+  long a request took as the site saw it (`POST /timing`). A site that still posts to `/outcome` is told, with
+  410, that Captain no longer collects that. An A/B test record left in a project by an older version is ignored
+  and shown nowhere, and nothing about a test can stop or delay a deploy. The path ends there, at a running endpoint with
+  its address. Launch review is on no screen: it still works from the terminal (`cst handoff`). `cst docs staging` has the
   whole guide. Below the path: the registry place (asked once). The baseline is what MLflow and Unity Catalog
   users call the `champion` alias.
 The page links to Workflows, which also opens from the palette ("Open workflows"). The forms are
@@ -1305,9 +1302,11 @@ word to a person, and type the CLI word.
 | Offline evaluation | `backtest` (`cst backtest`, `/api/backtests`, the `backtests` tab id) | Two or more versions scored on the same queries |
 | Evaluation settings | the `captain-sandbox` mod, `/api/sandbox` | Other settings of one version, tried offline |
 | Model (on the project page) | a project `experiment` (`/api/projects/<id>/experiments`, form task `experiment`) | One trained version in a project, compared with the baseline. Earlier screens said "candidate" |
+| Use it from your site | `connect` (`cst projects staging-connect`, `/staging/connect`) | The code a site pastes, the key, and one address a model. Never "Send it real traffic" or "Connect your site" |
+| Test quietly with a copy of your site's requests | `shadow` (`cst projects shadow-start`, `/shadow`) | The site keeps showing the compared model's results while this model ranks the same requests silently. Never "shadow mode" on a screen |
+| Your own testing tool | (nothing in Captain) | Where a team splits shoppers between models and measures what they do. Captain runs no A/B tests: the screens never offer a split, a ramp or a readout |
 | Deploy, Deployed, Stop | `stage`, `staging`, `unstage` (`cst deploy`, `cst projects stage`, `/api/projects/<id>/deploy`, `/staging`) | Running a model version where it can answer searches. The screens never say "staging" or "Stage it" |
 | Compared with `<name>` | the `baseline` arm, the project's `champion` | The model another is compared with, shown by its own name. Never "today's search": it is often keyword search or a model nobody runs in production |
-| Review before launch | `handoff` on the deployed model's screen (More) | Launch review, offered only once there is real traffic or a test result |
 | Check it uses the same numbers it was trained on | the served-features check (`cst projects staging-check`, `/staging/check`) | Compares the features the deployed model computes with the ones training computed. A launch gate |
 | Baseline | `champion` (`/api/projects/<id>/champion`, form task `champion`) | The version a project ships and judges candidates against |
 | Experiment (terminal only: no screen since 2026-11-12) | `investigation` (`cst investigate`, `/api/investigations`, `CST_INVESTIGATION`) | A hypothesis, its evaluations and a decision |

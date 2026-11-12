@@ -155,7 +155,7 @@ await home.click('ph-ds-0');
 assert.equal(globalThis.__shared['captain.open']?.section, 'data');
 assert.equal(globalThis.__shared['captain.open']?.dataset, 'demo-catalog', 'a dataset opens in Data');
 await home.click('ph-run-0');
-assert.equal(globalThis.__shared['captain.open']?.section, 'comparisons');
+assert.equal(globalThis.__shared['captain.open']?.section, 'runs'); // Compare is folded into Runs
 assert.equal(globalThis.__shared['captain.open']?.backtest, 'demo-tuned-vs-bm25', 'a run opens in Comparisons');
 globalThis.__overlays = [];
 await home.click('ph-pl-0');

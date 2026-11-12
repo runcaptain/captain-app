@@ -1,18 +1,19 @@
-"""Getting real traffic to a staged model, and seeing what it would change before any shopper does.
+"""Using a deployed model from a site, and seeing what it would change before any shopper does.
 
-An A/B test means nothing until a site is calling the endpoint. These are the steps between "it runs" and "split
-the traffic":
-
-  connect   where the endpoint is and whether a site can reach it at all, how to call it (snippets for the two
-            calls: get a ranking, report what the shopper did), and how many real requests have arrived.
-  shadow    the site keeps showing the baseline's results while the candidate ranks the same requests silently.
-            The readout says how often the two differ, on which queries, and what the candidate costs in
-            response time. No shopper sees the candidate.
+  connect   where the model is and whether a site can reach it at all, the code a site pastes to get a ranking,
+            the address of each model, and how many real requests have arrived.
+  shadow    a quiet test with a copy of the site's requests: the site keeps showing the compared model's results
+            while this model ranks the same requests silently. The readout says how often the two differ, on
+            which queries, and what this model costs in response time. No shopper sees it, nobody is assigned to
+            anything, and nothing a shopper does is collected.
   differ    the same comparison on a sample of the project's own queries, for the Try it box, with one plain
-            sentence when a candidate mostly reproduces the baseline and why.
+            sentence when a model mostly reproduces the compared one and why.
 
-An endpoint on this computer answers on 127.0.0.1 only, so no site can call it. That is said plainly, with the two
-ways forward: deploy it to a cloud, or keep testing here with simulated shoppers.
+Captain does not run A/B tests. To compare models on real shoppers, a team splits traffic in its own testing tool
+and sends each group to its model's address (`addresses`). What shoppers click or buy stays in that tool.
+
+A model on this computer answers on 127.0.0.1 only, so no site can call it. That is said plainly, with the way
+forward: deploy it to a cloud.
 """
 from __future__ import annotations
 
@@ -91,45 +92,59 @@ def _http(rec: dict) -> bool:
     return rec.get("kind") == "local" or (rec.get("kind") != "aws-sagemaker" and bool((rec.get("endpoint") or {}).get("url")))
 
 
+OWN_TESTS = ("To compare models on real shoppers, split traffic in your own testing tool and send each group to "
+             "its model's address.")
+
+
+def addresses(rec: dict) -> list[dict]:
+    """Where each model on this deployment answers, so a team's own testing tool can send each group of shoppers
+    to its model: [{model, model_version, role, address, how}]. The deployed model first."""
+    ep, arms = rec.get("endpoint") or {}, rec.get("arms") or {}
+    serve = rec.get("serve") or ("candidate" if "candidate" in arms else next(iter(arms), None))
+    out = []
+    for name in sorted(arms, key=lambda n: n != serve):
+        deployed = name == serve
+        if _http(rec):
+            adr = f"{ep.get('url')}/rank" if deployed else f"{ep.get('url')}/rank/{name}"
+            how = "POST, with the key as a bearer token"
+        else:
+            adr = f"{ep.get('name')}" + (f" in {ep.get('region')}" if ep.get("region") else "")
+            how = 'invoke the endpoint with "op": "rank"' + ("" if deployed else f' and "arm": "{name}"')
+        out.append({"model": name, "model_version": arms[name], "role": "The deployed model" if deployed else "The compared model",
+                    "address": adr, "how": how})
+    return out
+
+
 def snippets(rec: dict) -> dict:
-    """Copy-paste code for the two calls a site makes: get a ranking, then report what the shopper did, with the
-    request_id carried between them. The key is never in them: each reads it from the site's own environment."""
+    """Copy-paste code for the call a site makes: get a ranking. It can also report how long the request took as
+    the site saw it. Nothing about what the shopper did is sent: Captain does not collect that. The key is never
+    in the code: each reads it from the site's own environment."""
     ep = rec.get("endpoint") or {}
     fallback = ("If the endpoint doesn't answer in time, or answers with an error, show your own search results. "
                 "A slow ranking must never hold up the page.")
     if _http(rec):
         url = ep.get("url")
-        curl = f"""# Get a ranking. Keep the request_id it returns.
+        curl = f"""# Get a ranking.
 curl -s --max-time {TIMEOUT_MS / 1000:g} {url}/rank \\
   -H "Authorization: Bearer $CAPTAIN_STAGING_KEY" -H "Content-Type: application/json" \\
-  -d '{{"query": "waterproof jacket", "k": 10, "session_id": "the-shopper-session", "traffic": "real"}}'
-
-# Report what the shopper did: click, add-to-cart or purchase.
-curl -s {url}/outcome \\
-  -H "Authorization: Bearer $CAPTAIN_STAGING_KEY" -H "Content-Type: application/json" \\
-  -d '{{"request_id": "<from /rank>", "event": "purchase", "product_id": "<the product>", "value": 59.00}}'"""
+  -d '{{"query": "waterproof jacket", "k": 10, "session_id": "the-shopper-session", "traffic": "real"}}'"""
         js = f"""// {fallback}
+const HEADERS = {{ Authorization: `Bearer ${{process.env.CAPTAIN_STAGING_KEY}}`, "Content-Type": "application/json" }};
+
 async function rank(query, sessionId) {{
   const t0 = Date.now();
   try {{
     const r = await fetch("{url}/rank", {{
-      method: "POST", signal: AbortSignal.timeout({TIMEOUT_MS}),
-      headers: {{ Authorization: `Bearer ${{process.env.CAPTAIN_STAGING_KEY}}`, "Content-Type": "application/json" }},
+      method: "POST", signal: AbortSignal.timeout({TIMEOUT_MS}), headers: HEADERS,
       body: JSON.stringify({{ query, k: 10, session_id: sessionId, traffic: "real" }}),   // "real": these are your shoppers
     }});
     if (!r.ok) return null;            // an error body is {{"detail": "..."}}: fall back to your own search
     const out = await r.json();        // {{ request_id, ids, scores, arm, model_version, ms }}
-    out.client_ms = Date.now() - t0;   // how long it took as your site saw it: pass it to outcome()
+    // Optional: tell Captain how long it took as your site saw it, so its response time includes the network.
+    fetch("{url}/timing", {{ method: "POST", headers: HEADERS,
+      body: JSON.stringify({{ request_id: out.request_id, ms: Date.now() - t0 }}) }}).catch(() => {{}});
     return out;
   }} catch {{ return null; }}            // too slow or unreachable: fall back to your own search
-}}
-
-function outcome(requestId, event, productId, value, clientMs) {{   // event: "click" | "add-to-cart" | "purchase"
-  return fetch("{url}/outcome", {{
-    method: "POST",
-    headers: {{ Authorization: `Bearer ${{process.env.CAPTAIN_STAGING_KEY}}`, "Content-Type": "application/json" }},
-    body: JSON.stringify({{ request_id: requestId, event, product_id: productId, value, client_ms: clientMs }}),
-  }}).catch(() => {{}});
 }}"""
         py = f"""# {fallback}
 import os, time, requests
@@ -145,28 +160,20 @@ def rank(query, session_id):
         if not r.ok:
             return None                     # an error body is {{"detail": "..."}}: fall back to your own search
         out = r.json()
-        out["client_ms"] = (time.monotonic() - t0) * 1000   # as your site saw it: pass it to outcome()
-        return out
     except requests.RequestException:
         return None                         # too slow or unreachable: fall back to your own search
-
-def outcome(request_id, event, product_id=None, value=0.0, client_ms=None):   # event: click, add-to-cart or purchase
-    try:
-        requests.post(f"{{URL}}/outcome", json={{"request_id": request_id, "event": event, "product_id": product_id,
-                                               "value": value, "client_ms": client_ms}}, headers=HEADERS, timeout=2)
+    try:   # optional: how long it took as your site saw it, so Captain's response time includes the network
+        requests.post(f"{{URL}}/timing", json={{"request_id": out["request_id"], "ms": (time.monotonic() - t0) * 1000}},
+                      headers=HEADERS, timeout=2)
     except requests.RequestException:
-        pass"""
+        pass
+    return out"""
         return {"curl": curl, "javascript": js, "python": py}
     name, region = ep.get("name"), ep.get("region") or "us-east-1"
-    cli = f"""# Get a ranking. Keep the request_id it returns. SageMaker signs the call with your AWS credentials.
+    cli = f"""# Get a ranking. SageMaker signs the call with your AWS credentials.
 aws sagemaker-runtime invoke-endpoint --region {region} --endpoint-name {name} \\
   --content-type application/json --cli-read-timeout 1 --cli-binary-format raw-in-base64-out \\
-  --body '{{"op": "rank", "key": "'"$CAPTAIN_STAGING_KEY"'", "query": "waterproof jacket", "k": 10, "session_id": "the-shopper-session", "traffic": "real"}}' /dev/stdout
-
-# Report what the shopper did: click, add-to-cart or purchase.
-aws sagemaker-runtime invoke-endpoint --region {region} --endpoint-name {name} \\
-  --content-type application/json --cli-binary-format raw-in-base64-out \\
-  --body '{{"op": "outcome", "key": "'"$CAPTAIN_STAGING_KEY"'", "request_id": "<from rank>", "event": "purchase", "product_id": "<the product>", "value": 59.00}}' /dev/stdout"""
+  --body '{{"op": "rank", "key": "'"$CAPTAIN_STAGING_KEY"'", "query": "waterproof jacket", "k": 10, "session_id": "the-shopper-session", "traffic": "real"}}' /dev/stdout"""
     js = f"""// {fallback}
 import {{ SageMakerRuntimeClient, InvokeEndpointCommand }} from "@aws-sdk/client-sagemaker-runtime";
 const client = new SageMakerRuntimeClient({{ region: "{region}" }});
@@ -180,13 +187,10 @@ async function rank(query, sessionId) {{
   const t0 = Date.now();
   try {{
     const out = await call({{ op: "rank", query, k: 10, session_id: sessionId, traffic: "real" }}, {TIMEOUT_MS});   // {{ request_id, ids, ... }}
-    out.client_ms = Date.now() - t0;   // how long it took as your site saw it: pass it to outcome()
+    // Optional: tell Captain how long it took as your site saw it, so its response time includes the network.
+    call({{ op: "timing", request_id: out.request_id, ms: Date.now() - t0 }}, 2000).catch(() => {{}});
     return out;
   }} catch {{ return null; }}   // too slow, unreachable or refused: fall back to your own search
-}}
-
-function outcome(requestId, event, productId, value, clientMs) {{   // event: "click" | "add-to-cart" | "purchase"
-  return call({{ op: "outcome", request_id: requestId, event, product_id: productId, value, client_ms: clientMs }}, 2000).catch(() => {{}});
 }}"""
     py = f"""# {fallback}
 import json, os, time, boto3
@@ -204,17 +208,13 @@ def rank(query, session_id):
     t0 = time.monotonic()
     try:
         out = _call({{"op": "rank", "query": query, "k": 10, "session_id": session_id, "traffic": "real"}})   # request_id, ids, ...
-        out["client_ms"] = (time.monotonic() - t0) * 1000   # as your site saw it: pass it to outcome()
-        return out
     except Exception:
         return None   # too slow, unreachable or refused: fall back to your own search
-
-def outcome(request_id, event, product_id=None, value=0.0, client_ms=None):   # event: click, add-to-cart or purchase
-    try:
-        _call({{"op": "outcome", "request_id": request_id, "event": event, "product_id": product_id, "value": value,
-               "client_ms": client_ms}})
+    try:   # optional: how long it took as your site saw it, so Captain's response time includes the network
+        _call({{"op": "timing", "request_id": out["request_id"], "ms": (time.monotonic() - t0) * 1000}})
     except Exception:
-        pass"""
+        pass
+    return out"""
     return {"aws cli": cli, "javascript": js, "python": py}
 
 
@@ -235,8 +235,9 @@ def _since(seconds: float) -> str:
 
 
 def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
-    """What "Connect your site" shows: the address, whether a site can reach it, the snippets, and how many real
-    requests have arrived. Counts real traffic only: the console and simulated shoppers are not a site."""
+    """What "Use it from your site" shows: whether a site can reach it, the code a site pastes, the address of each
+    model for a team's own testing tool, and how many real requests have arrived. Counts real traffic only: the
+    console is not a site."""
     rec = _running(ctx, pid, env)
     w = where(rec)
     out = {"project": pid, "env": env, **w, "kind": rec.get("kind"), "key_name": key_name(pid, env),
@@ -245,7 +246,9 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
            "timeout_ms": TIMEOUT_MS,
            "fallback": (f"Give the endpoint {TIMEOUT_MS} ms. If it doesn't answer in time, or answers with an error, "
                         "show your own search results. An error body is {\"detail\": \"...\"} with a 4xx or 5xx status."),
-           "snippets": snippets(rec) if rec.get("how") != "image" else {}, "real": 0, "unlabelled": 0, "test": 0, "simulated": 0,
+           "snippets": snippets(rec) if rec.get("how") != "image" else {},
+           # One address a model, so a team's own testing tool can send each group of shoppers to its model.
+           "addresses": addresses(rec) if rec.get("how") != "image" else [], "own_tests": OWN_TESTS, "real": 0, "unlabelled": 0, "test": 0, "simulated": 0,
            "last_real_at": None}
     h: dict = {}
     try:
@@ -287,14 +290,13 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
     if out.get("asleep") and rec.get("connected_at"):
         out["connected"] = True  # it was connected before it slept
     if not w["reachable"]:
-        out["blocked"] = ("A site can't reach an endpoint on this computer. Two ways forward: deploy it to a cloud, "
-                          "so your site can call it, or keep testing here with simulated shoppers.")
+        out["blocked"] = "A site can't reach a model on this computer. Deploy it to a cloud, so your site can call it."
     if out["connected"] and not w["reachable"]:
-        out["blocked"] = ("These requests came from this computer. A site anywhere else can't reach this endpoint: stage "
-                          "it in your cloud for that.")
+        out["blocked"] = ("These requests came from this computer. A site anywhere else can't reach this model: deploy "
+                          "it to a cloud for that.")
     if out["connected"] and not rec.get("connected_at"):
         _save(ctx, pid, env, connected_at=_now())
-        _note(ctx, pid, "the first real request reached staging")
+        _note(ctx, pid, "the first real request reached the deployed model")
     return out
 
 
@@ -340,28 +342,25 @@ def shadow_start(ctx: Context, pid: str, env: str = ENV) -> dict:
     rec = _running(ctx, pid, env)
     arms = rec.get("arms") or {}
     if not {"baseline", "candidate"} <= set(arms) or rec.get("how") == "image":
-        raise ValueError("Shadow mode needs the candidate and the baseline on the endpoint. Stage a candidate while "
+        raise ValueError("A quiet test needs this model and the one it is compared with on the endpoint. Deploy a model while "
                          "the project has a baseline.")
-    ab = PS.get(ctx, pid).get("ab") or {}
-    if ab.get("status") == "running" and ab.get("mode") == "captain":
-        raise ValueError("An A/B test is running. Shadow mode comes before a split: end or roll back the test first.")
     cur = shadow_get(ctx, pid)
     if cur and cur.get("status") == "running" and cur.get("stage") == rec["id"]:
         return cur
     sh = {"id": "sh-" + new_id().lower()[-10:], "status": "running", "env": env, "stage": rec["id"], "arms": dict(arms),
           "started_at": _now(), "started_by": whoami(), "ended_at": None}
-    set_control(ctx, pid, env, shadow=sh["id"], split=None, experiment=None, serve="baseline")
+    set_control(ctx, pid, env, shadow=sh["id"], serve="baseline")
     call(ctx, rec, "reload", {})
     # What is staged does not change: the candidate is still there, beside the baseline. Only who answers does.
     _shadow_put(ctx, pid, sh)
-    _note(ctx, pid, f"started shadow mode: shoppers see {arms['baseline']}, and {arms['candidate']} ranks the same requests silently")
+    _note(ctx, pid, f"started a quiet test: shoppers see {arms['baseline']}, and {arms['candidate']} ranks the same requests silently")
     return sh
 
 
 def shadow_stop(ctx: Context, pid: str) -> dict:
     sh = shadow_get(ctx, pid)
     if not sh:
-        raise ValueError("Shadow mode was never started for this project.")
+        raise ValueError("A quiet test was never started for this project.")
     if sh["status"] != "running":
         return sh
     rec = state(ctx, pid, sh["env"])
@@ -370,7 +369,7 @@ def shadow_stop(ctx: Context, pid: str) -> dict:
         call(ctx, rec, "reload", {})
     sh = {**sh, "status": "ended", "ended_at": _now()}
     _shadow_put(ctx, pid, sh)
-    _note(ctx, pid, "ended shadow mode")
+    _note(ctx, pid, "ended the quiet test")
     return sh
 
 
@@ -443,7 +442,7 @@ def shadow(ctx: Context, pid: str, traffic: str | None = None) -> dict:
     sh = shadow_get(ctx, pid)
     if not sh:
         return {"project": pid, "status": "none", "shadow": None,
-                "text": "Shadow mode is off. In shadow mode your site keeps showing the baseline's results while the "
+                "text": "The quiet test is off. In a quiet test your site keeps showing the baseline's results while the "
                         "candidate ranks the same requests silently."}
     rec = state(ctx, pid, sh["env"])
     read_flush(ctx, rec)  # not on a sleeping host: reading a page must not wake a copy
@@ -614,14 +613,12 @@ def request(ctx: Context, pid: str, request_id: str, env: str = ENV) -> dict:
     from . import _joined
 
     joined = _joined(ctx, {"ids": r.get("ids") or [], "scores": r.get("scores") or []}, r.get("model_version"))
-    outs = [o for o in got["outcomes"] if str(o["request_id"]) == str(request_id)]
     for x in joined:
         row = (r.get("features") or {}).get(x["id"])
         x["signals"] = [{"signal": n, "label": signal_label(n), "value": v} for n, v in zip(names, row)] if row else None
-        x["events"] = [o["event"] for o in outs if str(o.get("product_id")) == x["id"]]
     return {"request_id": r["request_id"], "ts": r.get("ts"), "query": r.get("query"), "arm": r.get("arm"),
             "model_version": r.get("model_version"), "ms": r.get("ms"), "traffic": r.get("traffic") or "unlabelled",
-            "session_id": r.get("session_id"), "results": joined, "outcomes": outs,
+            "session_id": r.get("session_id"), "results": joined,
             "lines": [{"ts": x["ts"], "text": x["text"], "level": x.get("level", "info")} for x in lines], "site_ms": seen,
             "time_text": f"{r.get('ms'):g} ms at the endpoint" + (f", {seen:g} ms as your site saw it." if seen is not None else
                                                               ". Your site didn't report how long it took."),
@@ -643,7 +640,7 @@ def versions(ctx: Context, pid: str, env: str = ENV) -> dict:
     rows = [{"n": i + 1, "model_version": d.pipeline, "at": d.created_at.isoformat(timespec="seconds"), "by": d.created_by,
              "action": d.action, "live": False} for i, d in enumerate(hist)]
     if rows and rec and rec.get("status") == "running":
-        # The newest deploy is what is on the endpoint. (During shadow mode or after a test is rolled back the
+        # The newest deploy is what is on the endpoint. (During a quiet test the
         # baseline beside it answers, but the deployed bundle is still this one.)
         rows[-1]["live"] = True
     rows.reverse()

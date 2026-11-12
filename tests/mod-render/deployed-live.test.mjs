@@ -109,7 +109,7 @@ await h.click('ship-copy-key');
 await until(h, () => copied === 'render-test-key', 'Copy its key reads it from the keychain');
 assert.ok(!h.text().includes('render-test-key'), 'and never draws it');
 const labels = () => h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]);
-assert.deepEqual(labels(), [...['Requests it has answered'], ...(haveTrainer ? ['Where the two models disagree'] : []), 'Is it healthy?', 'Check it uses the same numbers it was trained on', 'Send it real traffic', 'Earlier versions', 'Logs', 'Settings'], 'More: labels that say what each is for, and no review before there is traffic');
+assert.deepEqual(labels(), [...['Requests it has answered'], ...(haveTrainer ? ['Where the two models disagree'] : []), 'Is it healthy?', 'Check it uses the same numbers it was trained on', 'Use it from your site', 'Earlier versions', 'Logs', 'Settings'], 'More: labels that say what each is for, and no review before there is traffic');
 clean(t, 'on the deployed screen');
 
 // Try a search: the results, beside the model it is compared with, by that model's own name.
@@ -140,9 +140,9 @@ await until(h, () => h.mod.shipPath.healthD?.target?.p95_ms === 200, 'the target
 assert.equal((await get('/api/projects/outdoor/staging/health')).target.set, true);
 await h.click('dep-open-close');
 
-// The check that it uses the numbers it was trained on: a launch gate, behind More with its last result.
+// The check that it uses the numbers it was trained on: behind More with its last result.
 await more(h, 'check');
-assert.ok(h.text().includes('It must pass before launch.'), 'it opens with what it is for');
+assert.ok(h.text().includes('It should pass before you put it in production.'), 'it opens with what it is for');
 await h.click('dep-check-now');
 await until(h, () => Boolean(h.mod.shipPath.checkResult), 'the check answers');
 t = h.text();
@@ -174,16 +174,18 @@ await until(h, () => byId(h, 'dep-request-id').length === 1 && byId(h, 'dep-requ
 assert.ok(/Ranked '.+' with the (candidate|baseline) in [\d.]+ ms: \d+ results\./.test(h.text()), 'what the model wrote for that request');
 await h.click('dep-open-close');
 
-// Send it real traffic: connecting a site comes first, and on this computer the page says a site can't reach it.
+// Use it from your site: on this computer the page says a site can't reach it, and gives an address a model.
 await more(h, 'traffic', (s) => Boolean(s.conn));
 t = h.text();
-assert.ok(t.includes('Connect your site') && t.includes("A site can't reach an endpoint on this computer. Two ways forward: deploy it to a cloud, so your site can call it, or keep testing here with simulated shoppers."), `the honest line: ${t.slice(-900)}`);
+assert.ok(t.includes('Use it from your site') && t.includes("A site can't reach a model on this computer. Deploy it to a cloud, so your site can call it."), `the honest line: ${t.slice(-900)}`);
+assert.ok(t.includes("To compare models on real shoppers, split traffic in your own testing tool and send each group to its model's address.") && t.includes('The deployed model') && /http:\/\/127\.0\.0\.1:\d+\/rank/.test(t), `an address a model, and the paragraph: ${t.slice(-900)}`);
+assert.ok(!t.includes('A/B') && !t.includes('simulated shoppers'), 'nothing about an A/B test');
 assert.ok(/Not counted: \d+ test\./.test(t), 'searches typed here are shown as not counted');
 assert.ok(!t.includes('render-test-key'), 'the key is never on screen');
 for (const id of ['ship-connect-code-curl', 'ship-connect-code-javascript', 'ship-connect-code-python']) assert.equal(byId(h, id).length, 1, id);
 await h.click('ship-connect-code-python');
 t = h.text();
-assert.ok(t.includes('def rank(query, session_id):') && t.includes('"traffic": "real"') && t.includes('client_ms') && t.includes('CAPTAIN_STAGING_KEY'), 'the code a site uses: it labels its shoppers and reports its own time');
+assert.ok(t.includes('def rank(query, session_id):') && t.includes('"traffic": "real"') && t.includes('/timing') && !t.includes('/outcome') && t.includes('CAPTAIN_STAGING_KEY'), 'the code a site uses: it labels its shoppers and reports its own time, and nothing a shopper did');
 await h.click('dep-open-close');
 
 // Earlier versions, the log and the settings, each opening with what it is for.

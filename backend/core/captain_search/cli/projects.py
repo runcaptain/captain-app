@@ -695,178 +695,20 @@ def staging_check(name: str, env: str = typer.Option("staging", "--env"),
         raise typer.Exit(1)
 
 
-# ---- A/B test on staging -----------------------------------------------------------------------------
+# ---- A/B tests: Captain runs none. The old commands say so. ----------------------------------------
 
 
-def _readout_text(r: dict) -> str:
-    if not r.get("experiment"):
-        return r["text"]
-    lines = [r["text"]]
-    for a in ("baseline", "candidate"):
-        x = (r.get("arms") or {}).get(a)
-        if x:
-            lines.append(f"  {a:9} {x['model_version']:40} {x['sessions']:>7,} sessions")
-    for g in r.get("guardrails") or []:
-        lines.append(("  ok   " if g["ok"] else "  FAIL ") + g["text"])
-    for x in r.get("segments") or []:
-        lines.append("  " + x["text"])
-    for k in ("segment_warning", "hard_stop"):
-        if r.get(k):
-            lines.append(r[k])
-    if (r.get("needed") or {}).get("text"):
-        lines.append(r["needed"]["text"])
-    if (r.get("rolled_back") or {}).get("text"):
-        lines = [r["rolled_back"]["text"], "The readout below is filed with the test, not current."] + lines
-    if r.get("decision"):
-        lines.append(f"Decided: {r['decision']['label']} ({r['decision']['by']}, {r['decision']['at'][:10]}).")
-    if r.get("srm"):
-        lines.append("  " + r["srm"]["text"])
-    if r.get("split") is not None and r.get("status") == "running":
-        lines.append(f"The candidate gets {r['split']:.0%} of traffic.")
-    return "\n".join(lines)
+NO_AB = "Captain no longer runs A/B tests. Give your own testing tool each model's address."
 
 
-@projects_app.command("ab-start")
-def ab_start(name: str,
-             split: str = typer.Option("5%", "--split", help="the candidate's share of traffic: 5, 5% or 0.05"),
-             practice: bool = typer.Option(False, "--practice", help="practice on simulated shoppers, with no site sending traffic. SIMULATED throughout; it can't go to launch review"),
-             primary: Optional[str] = typer.Option(None, "--primary", help="clicks, purchases or revenue; default purchases"),
-             guardrail: list[str] = typer.Option([], "--guardrail", help="a guardrail: a metric, or metric:must (a clear drop pauses the ramp) or metric:watch (shown only). Repeat; default the others as watch, and latency:must"),
-             own: bool = typer.Option(False, "--own", help="your own A/B system splits the traffic: Captain gives each arm's address"),
-             min_sessions: int = typer.Option(200, "--min-sessions", help="sessions each arm needs before the readout says anything")):
-    """Start an A/B test between the baseline and the staged candidate."""
-    from ..staging import ab as AB
-
-    c = ctx()
-    if not S.dry_run:
-        _by_hand(c, name, "start an A/B test")
-    try:
-        r = AB.start(c, name, AB.share(split), primary, guardrail or None, "own" if own else "captain", min_sessions,
-                     dry_run=S.dry_run, practice=practice)
-    except _staging_errors() as e:
-        fail(str(e))
-    text = (f"A/B test {r['id']} started: the candidate gets {r['split']:.0%} of traffic. Primary metric: {r['primary']}."
-            + (" Practice on simulated shoppers: SIMULATED, and it can't go to launch review." if practice else "")
-            if not own else f"A/B test {r['id']} recorded. Send each arm's traffic to:\n"
-            + "\n".join(f"  {a}: {x.get('url') or x.get('endpoint')}" for a, x in (r.get("addresses") or {}).items()))
-    emit(r, text)
+def _no_ab() -> None:
+    """What every former `ab-*` command does now: say where A/B testing lives, and exit 2."""
+    typer.echo(NO_AB, err=True)
+    raise typer.Exit(2)
 
 
-@projects_app.command("ab", hidden=True)
-def ab_old_name(name: str, traffic: Optional[str] = typer.Option(None, "--traffic")):
-    """The earlier name of `ab-readout`."""
-    ab_readout(name, traffic)
-
-
-@projects_app.command("ab-readout")
-def ab_readout(name: str, traffic: Optional[str] = typer.Option(None, "--traffic", help="real, simulated or test; default the strongest there is")):
-    """The A/B readout: sessions per arm, the primary metric with its interval, and the guardrails."""
-    from ..staging import ab as AB
-
-    try:
-        r = AB.readout(ctx(), name, traffic)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, _readout_text(r))
-
-
-@projects_app.command("ab-ramp")
-def ab_ramp(name: str, split: str = typer.Argument(..., help="the candidate's new share: 1, 5, 25, 50 or 100 (also 5% or 0.05)")):
-    """Give the candidate a larger (or smaller) share of traffic. No redeploy."""
-    from ..staging import ab as AB
-
-    c = ctx()
-    if not S.dry_run:
-        _by_hand(c, name, "ramp the A/B test")
-    try:
-        r = AB.ramp(c, name, AB.share(split), dry_run=S.dry_run)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, f"The candidate now gets {r['split']:.0%} of traffic.")
-
-
-@projects_app.command("ab-rollback")
-def ab_rollback(name: str, reason: Optional[str] = typer.Option(None, "--reason", help="why, in a sentence: it is kept with the test")):
-    """Roll back: every shopper gets the baseline again. With no test running, restage the previous version."""
-    from ..staging import ab as AB
-
-    c = ctx()
-    if not S.dry_run:
-        _by_hand(c, name, "roll back staging")
-    try:
-        r = AB.rollback(c, name, dry_run=S.dry_run, reason=reason)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, f"Rolled back to {r['rolled_back_to']}.")
-
-
-@projects_app.command("ab-stop")
-def ab_stop(name: str):
-    """End the A/B test and keep the endpoint as it is, with no split."""
-    from ..staging import ab as AB
-
-    try:
-        r = AB.stop(ctx(), name)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, "The A/B test is ended.")
-
-
-@projects_app.command("ab-simulate")
-def ab_simulate(name: str, sessions: int = typer.Option(1000, "--sessions"), seed: int = typer.Option(7, "--seed")):
-    """Send simulated shoppers at staging, so the whole loop can be seen with no traffic yet. Everything reads SIMULATED."""
-    from ..staging import ab as AB
-
-    try:
-        r = AB.simulate(ctx(), name, sessions, seed)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, r["text"])
-
-
-@projects_app.command("ab-outcomes")
-def ab_outcomes(name: str, events: str = typer.Argument(..., help="an events dataset whose rows carry request_id")):
-    """Bring in outcomes (clicks, purchases) from an events dataset that carries the request_id /rank returned."""
-    from ..staging import ab as AB
-
-    try:
-        r = AB.import_outcomes(ctx(), name, events, dry_run=S.dry_run)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, f"{r['outcomes']:,} outcomes from {r['events']}: {r['matched']:,} match a request the endpoint served, {r['unmatched']:,} don't.")
-
-
-@projects_app.command("ab-result")
-def ab_result(name: str, metric: str = typer.Option(..., "--metric"), baseline: float = typer.Option(..., "--baseline"),
-              candidate: float = typer.Option(..., "--candidate"), source: str = typer.Option(..., "--source", help="the A/B system and its report"),
-              traffic: str = typer.Option("real", "--traffic", help="real, simulated or test"),
-              ci_low: Optional[float] = typer.Option(None, "--ci-low"), ci_high: Optional[float] = typer.Option(None, "--ci-high"),
-              sessions: Optional[int] = typer.Option(None, "--sessions"),
-              review: Optional[str] = typer.Option(None, "--review", help="a launch review id to attach the result to")):
-    """Record the readout from your own A/B system."""
-    from ..staging import ab as AB
-
-    try:
-        r = AB.bring(ctx(), name, metric, baseline, candidate, source, traffic, ci_low, ci_high, sessions, review)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, r["text"])
-
-
-@projects_app.command("ab-decide")
-def ab_decide(name: str, choice: str = typer.Argument(..., help="ship, keep-baseline or keep-testing"),
-              note: str = typer.Option("", "--note")):
-    """End the A/B test with a recorded choice: ship it (to launch review, with the readout), keep the baseline, or keep testing."""
-    from ..staging import ab as AB
-
-    c = ctx()
-    _by_hand(c, name, "decide on the A/B test")
-    try:
-        r = AB.decide(c, name, choice, note)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, f"Recorded: {r['decision']['label']}."
-            + (f"\nNext: send {r['launch_review']['pipeline']} to launch review. The readout goes with it ({r['launch_review']['evidence']})." if r.get("launch_review") else ""))
+for _name in ("ab", "ab-start", "ab-readout", "ab-ramp", "ab-rollback", "ab-stop", "ab-simulate", "ab-outcomes", "ab-result", "ab-decide"):
+    projects_app.command(_name, hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_no_ab)
 
 
 @projects_app.command("staging-connect")
@@ -923,7 +765,7 @@ def shadow_start(name: str):
         r = TF.shadow_start(c, name)
     except _staging_errors() as e:
         fail(str(e))
-    emit(r, f"Shadow mode is on. Shoppers see {r['arms']['baseline']}. {r['arms']['candidate']} ranks the same requests, and nobody sees it.")
+    emit(r, f"The quiet test is on. Shoppers see {r['arms']['baseline']}. {r['arms']['candidate']} ranks the same requests, and nobody sees it.")
 
 
 @projects_app.command("shadow")
@@ -947,7 +789,7 @@ def shadow_stop(name: str):
         r = TF.shadow_stop(ctx(), name)
     except _staging_errors() as e:
         fail(str(e))
-    emit(r, "Shadow mode is off.")
+    emit(r, "The quiet test is off.")
 
 
 @projects_app.command("staging-serve", hidden=True)

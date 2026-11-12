@@ -5,7 +5,7 @@
 //   Experiments  each trained version judged against the champion on the sealed holdout: nDCG@10 with its interval,
 //                recall, judged share, evidence, label independence and the verdict. A model trained on the labeler
 //                that grades the holdout reads "agrees with its own labeler", never as a win.
-//   Ship         the registry place, staging, the live handoff and the online check.
+//   Ship         where the model can be deployed, and what is deployed: a running endpoint with its address.
 // Below them, everything in the project (GET /api/projects/{id}/home): datasets, runs, pipelines, models, notebooks.
 // The project is the Explorer's pick (shared "captain.scope" {kind: "project"}), else the last one opened here.
 import { View, div, svg } from "gpui-kit";
@@ -126,6 +126,15 @@ export default class ProjectHome extends View {
     this.shipFrom = (layoutProps?.() ?? {}).shipFrom ?? null; // the real-window check: start the Ship steps at "connect" or "ab"
     this.shipFirst = Boolean((layoutProps?.() ?? {}).shipFirst) || Boolean(this.shipFrom); // the real-window check: the Ship steps at the top
     watchScope(cx, (cx) => this.load(cx));
+    // The sidebar's Projects and the logo ask for the list of every project (captain-nav).
+    cx.timer.every(300, (cx) => {
+      const o = shared("captain.open");
+      if (o?.section !== "project" || !o.all || o.at === this.openedAll) return;
+      this.openedAll = o.at;
+      if (Date.now() - o.at > 10000) return; // from an earlier session
+      this.deployOpen = false; this.shipPath.listOpen = false;
+      this.allProjects(cx);
+    });
     watchWorkspace(cx, (cx) => { this.last = null; this.load(cx); });
     watchRecords(cx, (cx) => this.load(cx));
     // What this page shows, for agents (cst app context): the project, the open candidate and the Next line.
@@ -244,7 +253,7 @@ export default class ProjectHome extends View {
       if (st.ok && ex.ok) this.loadCosts(cx, pid);
       if (st.ok && ex.ok) { this.stages = st.data; this.exps = ex.data; } else if (!(st.starting || ex.starting)) this.problem = st.ok ? ex : st;
       if (this.openFirst && this.exps) { this.open = this.exps.experiments.find((e) => !e.is_champion)?.id ?? null; this.openFirst = false; }
-      // Staging and the A/B test are asked for only when the project has one: most projects have neither.
+      // What is deployed is asked for only when the project has something deployed: most projects don't.
       if (this.stages) this.shipPath.sync(cx, this.stages.ship);
       if (this.pinCheck && this.stages) {
         this.pinCheck = false;
@@ -629,7 +638,7 @@ export default class ProjectHome extends View {
       e.feature_timing ?? null,
       ...[...(e.inputs_read ?? []), ...(e.eval_inputs ?? [])].filter((x) => x.changed_since_pin).map((x) => `${x.slot} was read live and has changed since it was chosen${x.as_of ? ` (read ${day(x.as_of)})` : ""}, so a rerun may differ.`),
       ev?.coverage_note ?? (ev?.click_grades ? "Click grades only exist for products the old ranker showed, which favors the old ranker." : null),
-      ev ? "Not yet confirmed online: an offline result until your team's own A/B or shadow readout agrees." : e.is_champion ? null : "Not judged against the baseline yet.",
+      ev ? "Not yet confirmed online: an offline result until a result from your own testing tool agrees." : e.is_champion ? null : "Not judged against the baseline yet.",
     ].filter(Boolean);
     return v_flex().px(12).pb(12).gap(8)
       .child(div().id(`exp-${i}-full`).text_size(12.5).text_color(c.grey500).child(`Full name: ${e.pipeline}`))
@@ -637,7 +646,7 @@ export default class ProjectHome extends View {
       .child(h_flex().flex_wrap().gap(6)
         .when(Boolean(ev?.run), (x) => x.child(Button(c, `exp-${i}-open`, "Open the comparison", () => {
           const r = parseRef(ev.run);
-          go("comparisons", { backtest: r.name, version: r.version ?? undefined });
+          go("runs", { backtest: r.name, version: r.version ?? undefined });
         }, { small: true })))
         .child(Button(c, `exp-${i}-rerun`, "Rerun with changes", () => form("experiment", { ...this.values(), how: e.trainer === "lightgbm-ltr" ? "starter" : "own", base: name, labels: e.labels ?? undefined }), { small: true }))
         .when(Boolean(champ) && !e.is_champion, (x) => x.child(Button(c, `exp-${i}-judge`, ev ? "Judge again against the baseline" : "Judge against the baseline", (_e, cx) => this.backtest(cx, e), { small: true, disabled: this.busy || e.status === "backtesting" })))
@@ -723,7 +732,7 @@ export default class ProjectHome extends View {
   }
 
   /** Ship: only where to deploy, or what is deployed. Publishing to the model registry happens inside Deploy when
-   *  a registry is configured, and the review before launch sits behind the deployed model's screen. */
+   *  a registry is configured. Ship ends at a running endpoint with its address. */
   ship(c) {
     return this.part(c, "ship", "Ship", null, [], this.shipPath.section(c));
   }
@@ -837,7 +846,7 @@ export default class ProjectHome extends View {
         `No datasets yet. ${joins}`))
       .child(this.section(c, "runs", "Recent runs", h.runs ?? [],
         (r, i) => this.row(c, `ph-run-${i}`, r.backtest, `${(r.arms ?? []).join(" vs ")}, ${day(r.created_at)}`, [String(r.run ?? "").split("@")[1] ?? null], "git-compare",
-          () => go("comparisons", { backtest: r.backtest, version: Number(String(r.run ?? "").split("@v")[1]) || undefined })),
+          () => go("runs", { backtest: r.backtest, version: Number(String(r.run ?? "").split("@v")[1]) || undefined })),
         "No runs yet. Judge a candidate against the baseline."))
       .child(this.section(c, "pipelines", "Model versions", h.pipelines ?? [],
         (p, i) => this.row(c, `ph-pl-${i}`, `${p.name}@v${p.version ?? 1}`, `Evaluate other settings (by ${p.created_by ?? "?"} ${day(p.created_at)})`, [], "layers",
@@ -996,7 +1005,7 @@ export default class ProjectHome extends View {
     if (st?.next?.text) {
       const slot = (st.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === st.next.slot);
       const label = { "set-input": slot ? `Choose ${slot.noun}` : "Choose an input", "add-evaluation": "Add an evaluation set", "baseline-start": "Start with keyword search",
-        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New model", backtest: "Compare it", stage: "Deploy", try: "Open it", connect: "Open the deployment", "ab-decide": "Open the deployment", "ab-start": "Start an A/B test", "ab-wait": "Send simulated shoppers", "shadow-start": "Start shadow mode", handoff: "Send to launch review" }[st.next.action] ?? null;
+        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New model", backtest: "Compare it", stage: "Deploy", try: "Open it", connect: "Open the deployment", "shadow-start": "Start the quiet test" }[st.next.action] ?? null;
       return { text: st.next.text, label, action: st.next };
     }
     const req = (st?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.required && i.empty);
@@ -1032,11 +1041,7 @@ export default class ProjectHome extends View {
     if (a.action === "assist") return this.startAssist(cx);
     // Staging asks where first (this computer, or the connected cloud), so the Next button opens the deployment page.
     if (a.action === "stage" || a.action === "try" || a.action === "connect") { this.shipPath.more = a.action === "connect" ? "traffic" : null; return this.openDeployment(cx); }
-    if (a.action === "ab-start") { this.shipPath.more = "traffic"; this.shipPath.openSetup(false); return this.openDeployment(cx); }
-    if (a.action === "ab-decide" || a.action === "ab-watch") { this.shipPath.more = "traffic"; return this.openDeployment(cx); }
-    if (a.action === "shadow-start") return this.shipPath.act(cx, "/shadow/start", {}, "Shadow mode is on. Shoppers keep getting the baseline's results.");
-    if (a.action === "ab-wait") return this.shipPath.simulate(cx);
-    if (a.action === "handoff") return form("handoff", { pipeline: a.pipeline });
+    if (a.action === "shadow-start") return this.shipPath.act(cx, "/shadow/start", {}, this.shipPath.w("The quiet test is on. Shoppers keep getting the baseline's results."));
     const e = (this.exps?.experiments ?? []).find((x) => x.id === a.experiment);
     if (a.action === "backtest" && e) return this.backtest(cx, e);
     if (a.action === "make-champion" && e) { this.open = e.id; cx.notify(); }
