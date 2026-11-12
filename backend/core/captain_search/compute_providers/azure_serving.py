@@ -18,7 +18,7 @@ import hashlib
 import time
 
 from . import ProviderError
-from .serving import HttpServing, clean_name
+from .serving import HttpServing, clean_name, deployed_base, kept_name
 
 ARM = "https://management.azure.com"
 APP_API = "2024-03-01"
@@ -97,7 +97,7 @@ class Arm:
 
 def app_name(prefix: str, project: str, env: str) -> str:
     """A container app's name: at most 32 characters. A long one keeps its start and gains a short hash."""
-    full = clean_name(f"{prefix}-{project}-{env}", 200)
+    full = clean_name(deployed_base(prefix, project, env), 200)
     if len(full) <= 32:
         return full
     return clean_name(full[:25], 25) + "-" + hashlib.sha256(full.encode()).hexdigest()[:6]
@@ -122,7 +122,7 @@ class ContainerAppsServing(HttpServing):
         return f"{self._group(arm)}/providers/Microsoft.App/containerApps/{name}"
 
     def _names(self, st: dict) -> dict:
-        return {"app": app_name((self.config.get("name_prefix") or "captain").strip("-"), st["project"], st["env"])}
+        return {"app": kept_name(st, "container-app") or app_name((self.config.get("name_prefix") or "captain").strip("-"), st["project"], st["env"])}
 
     def _size(self) -> dict:
         c = self.config

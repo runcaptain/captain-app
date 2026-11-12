@@ -20,7 +20,7 @@ import time
 
 from . import ComputeProvider, Job, ProviderError
 from ..staging import timings as TM
-from .serving import HttpServing, clean_name
+from .serving import HttpServing, clean_name, deployed_base, kept_name
 
 APP_TAGS = {"app": "captain", "captain-purpose": "serving"}
 CLASS = "Endpoint"
@@ -104,7 +104,7 @@ class ModalServingProvider(HttpServing, ComputeProvider):
 
     def _names(self, st: dict) -> dict:
         prefix = (self.config.get("name_prefix") or "captain").strip("-")
-        name = clean_name(f"{prefix}-{st['project']}-{st['env']}", 60)
+        name = kept_name(st, "modal-app") or clean_name(deployed_base(prefix, st["project"], st["env"]), 60)
         return {"app": name, "secret": name}
 
     def _size(self) -> dict:

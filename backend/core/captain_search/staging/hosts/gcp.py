@@ -138,7 +138,7 @@ class GcpHost(Host):
             {"resource": "Cloud Build build", "name": f"{n['repo']} image", "why": "Builds the serving image inside your project. It runs once. Not timed on a real account yet."},
             {"resource": "Captain compute target", "name": n["target"],
              "why": f"Cloud Run service, {o['cpu']:g} vCPU and {o['memory_mb'] / 1024:g} GB a copy, at most {o['max_copies']}, in {o['region']}. Staging uses it."}]
-        later = [{"resource": "Cloud Run service", "name": f"{n['services']}-{{project}}-staging", "why": "The endpoint. Made when you stage a model, deleted when you unstage it."}]
+        later = [{"resource": "Cloud Run service", "name": f"{n['services']}-{{project}}", "why": "The endpoint. Made when you stage a model, deleted when you unstage it."}]
         build = BUILD_MINUTES * PT.CLOUD_RUN["build_minute"]
         return {"cloud": "gcp", "profile": o["profile"], "region": o["region"], "project": rest.project, "names": n, "storage": n["storage"], "options": o,
                 "apis_off": off, "creates": rows, "each_deploy": later,

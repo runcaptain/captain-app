@@ -41,19 +41,18 @@ export function Spark(c, id, values, { width = 96, height = 22, color } = {}) {
 }
 
 /** The same, large, with the highest value said beside it. `values` may hold nulls: a gap, not a zero. */
-export function BarChart(c, id, values, { height = 80, color, format = (v) => String(v) } = {}) {
+export function BarChart(c, id, values, { height = 44, color, format = (v) => String(v) } = {}) {
   const nums = values.map((v) => (v == null ? null : Number(v)));
   const known = nums.filter((v) => v != null && isFinite(v));
   const top = Math.max(1e-9, ...known);
-  // At most 96 bars: more than that and each is under a pixel wide.
-  const step = Math.max(1, Math.ceil(nums.length / 96));
+  // At most 60 bars: a chart is half a column wide, and more than that leaves each under a pixel.
+  const step = Math.max(1, Math.ceil(nums.length / 60));
   const bars = [];
   for (let i = 0; i < nums.length; i += step) {
     const part = nums.slice(i, i + step).filter((v) => v != null);
     bars.push(part.length ? Math.max(...part) : null);
   }
-  return h_flex().id(id).w_full().gap(8).items_end()
-    .child(h_flex().flex_1().h(height).gap(1).items_end().border_b(1).border_color(c.rule)
-      .children(bars.map((v) => div().flex_1().h(v == null ? 0 : Math.max(1, Math.round((v / top) * (height - 2)))).bg(color ?? c.blue))))
-    .child(div().w(120).flex_none().text_size(12).text_color(c.grey500).child(known.length ? `up to ${format(top)}` : "no numbers"));
+  // The highest value is said in the chart's own line of words, so the chart takes the full width it is given.
+  return h_flex().id(id).w_full().h(height).gap(1).items_end().border_b(1).border_color(c.rule)
+    .children(bars.map((v) => div().flex_1().h(v == null ? 0 : Math.max(1, Math.round((v / top) * (height - 2)))).bg(color ?? c.blue)));
 }

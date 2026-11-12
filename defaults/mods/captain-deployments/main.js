@@ -30,6 +30,8 @@ export default class CaptainDeployments extends View {
     this.note = null;         // what the last action said
     this.projects = null;     // for "Link to a project"
     this.page = null;         // the model page, when a row is open
+    this.menu = null;         // which picker is open: "cloud", "project" or none
+    this.wanted = props()?.open ?? null;  // "<project>:<env>": open that model's page once the list is read
     // The picture check hands the screen its rows (props.demo), so every state can be drawn with nothing deployed
     // and no cloud asked. A screen drawn this way does nothing: its buttons reach no service.
     this.demo = props()?.demo ?? null;
@@ -51,6 +53,11 @@ export default class CaptainDeployments extends View {
     cx.spawn(async (cx) => {
       const r = await api(`/api/deployed${fresh ? "?fresh=true" : ""}`, { timeout: 60 });
       if (r.ok) { this.d = r.data; this.problem = null; } else if (!this.d) this.problem = r;
+      if (r.ok && this.wanted) {  // asked for by another screen ("Open in Deployments" on a project's page)
+        const row = r.data.rows.find((x) => x.id === this.wanted);
+        this.wanted = null;
+        if (row) this.openRow(row, cx);
+      }
       cx.notify();
       if (!r.ok) return;
       const made = await api("/api/deployed/created");
@@ -157,7 +164,7 @@ export default class CaptainDeployments extends View {
         : r.link === "unknown" ? [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true })]
           : up ? [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true }),
             Button(c, `dep-stop-${r.id}`, "Stop", (_e, cx) => this.stop(r, cx), { small: true }),
-            Button(c, `dep-back-${r.id}`, "Go back to an earlier version", (_e, cx) => this.openRow(r, cx, "versions"), { small: true })]
+            Button(c, `dep-back-${r.id}`, "Go back to an earlier version", (_e, cx) => this.openRow(r, cx, "details"), { small: true })]
             : [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true }),
               ...(r.model_version ? [Button(c, `dep-start-${r.id}`, "Start again", (_e, cx) => this.start(r, cx), { small: true })] : []),
               Button(c, `dep-remove-${r.id}`, "Remove from the cloud", (_e, cx) => this.remove(r, cx), { small: true })];
@@ -212,21 +219,30 @@ export default class CaptainDeployments extends View {
         : Button(c, `dep-setup-remove-${place.cloud}`, "Remove everything", (_e, cx) => this.removeSetup(place, cx), { small: true }))));
   }
 
+  // One row above the list. The state as three chips. The cloud and the project as two small pickers at the right,
+  // each shown only when there is more than one to pick from. An open picker lists its choices on a line below.
   filters(c, rows) {
-    const clouds = [...new Set(rows.map((r) => r.cloud))];
+    const clouds = [...new Map(rows.map((r) => [r.cloud, r.cloud_label])).entries()];
     const projects = [...new Map(rows.filter((r) => r.project && r.link !== "unlinked").map((r) => [r.project, r.project_name ?? r.project])).entries()];
-    const pick = (id, label, on, click) => div().id(id).h(26).px(10).flex().items_center().text_size(12.5).cursor_pointer()
+    const chip = (id, label, on, click) => div().id(id).h(26).px(10).flex().items_center().text_size(12.5).cursor_pointer()
       .border_1().border_color(on ? c.navy : c.rule).text_color(on ? c.navy : c.grey500).when(on, (e) => e.font_semibold())
-      .hover((s) => s.text_color(c.navy)).on_click(click).child(label);
-    const set = (k, v) => (_e, cx) => { this[k] = v; cx.notify(); };
-    // One line for each question: which state, which cloud, which project. A line with one answer is left out.
-    const line = (...kids) => h_flex().gap(6).flex_wrap().items_center().children(kids);
+      .hover((x) => x.text_color(c.navy)).on_click(click).child(label);
+    const set = (k, v) => (_e, cx) => { this[k] = v; this.menu = null; cx.notify(); };
+    const picker = (key, every, list) => div().id(`dep-pick-${key}`).h(26).px(10).flex().items_center().gap(6).text_size(12.5).cursor_pointer()
+      .border_1().border_color(this.menu === key || this[key] ? c.navy : c.rule).text_color(c.navy)
+      .on_click((_e, cx) => { this.menu = this.menu === key ? null : key; cx.notify(); })
+      .child(div().child(this[key] ? (list.find(([id]) => id === this[key])?.[1] ?? every) : every))
+      .child(svg(icon(this.menu === key ? "chevron-up" : "chevron-down")).size(12).text_color(c.grey500));
+    const open = this.menu === "cloud" ? ["cloud", "Every cloud", clouds] : this.menu === "project" ? ["project", "Every project", projects] : null;
     return v_flex().id("dep-filters").gap(6)
-      .child(line(...SHOW.map(([id, label]) => pick(`dep-show-${id}`, label, this.show === id, set("show", id)))))
-      .when(clouds.length > 1, (e) => e.child(line(pick("dep-cloud-all", "Every cloud", this.cloud === null, set("cloud", null)),
-        ...clouds.map((k) => pick(`dep-cloud-${k}`, rows.find((r) => r.cloud === k).cloud_label, this.cloud === k, set("cloud", k))))))
-      .when(projects.length > 1, (e) => e.child(line(pick("dep-project-all", "Every project", this.project === null, set("project", null)),
-        ...projects.map(([id, name]) => pick(`dep-project-${id}`, name, this.project === id, set("project", id))))));
+      .child(h_flex().gap(6).items_center()
+        .children(SHOW.map(([id, label]) => chip(`dep-show-${id}`, label, this.show === id, set("show", id))))
+        .child(div().flex_1())
+        .when(clouds.length > 1, (e) => e.child(picker("cloud", "Every cloud", clouds)))
+        .when(projects.length > 1, (e) => e.child(picker("project", "Every project", projects))))
+      .when(Boolean(open), (e) => e.child(h_flex().id("dep-pick-list").gap(6).flex_wrap().justify_end()
+        .child(chip(`dep-${open[0]}-all`, open[1], this[open[0]] === null, set(open[0], null)))
+        .children(open[2].map(([id, name]) => chip(`dep-${open[0]}-${id}`, name, this[open[0]] === id, set(open[0], id))))));
   }
 
   render(cx) {

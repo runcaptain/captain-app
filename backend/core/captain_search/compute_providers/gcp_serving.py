@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 
 from . import ProviderError
-from .serving import HttpServing, clean_name
+from .serving import HttpServing, clean_name, deployed_base, kept_name
 
 RUN = "https://run.googleapis.com/v2"
 LABELS = {"app": "captain", "captain-purpose": "serving"}
@@ -103,7 +103,7 @@ class CloudRunServing(HttpServing):
 
     def _names(self, st: dict) -> dict:
         prefix = (self.config.get("name_prefix") or "captain").strip("-")
-        return {"service": clean_name(f"{prefix}-{st['project']}-{st['env']}", 49)}
+        return {"service": kept_name(st, "cloud-run-service") or clean_name(deployed_base(prefix, st["project"], st["env"]), 49)}
 
     def _parent(self, rest: Rest) -> str:
         return f"projects/{rest.project}/locations/{self.region}"
