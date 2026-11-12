@@ -102,6 +102,8 @@ export class Explorer {
    *  guard, and reads MLflow the first time it opens. */
   toggleMlflow(cx) {
     if (!this.meant()) return;
+    // Read and found not connected: the one line leads to connecting it. There is nothing to open.
+    if (this.mlflowEmpty() && !this.mlflow.status?.configured) { openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "mlflow" } }); return; }
     this.toggle("mlflow");
     if (this.isOpen("mlflow")) this.openMlflow(cx);
     cx.notify();
@@ -132,7 +134,8 @@ export class Explorer {
         .child(Brand(c, "mlflow", 13))
         // One line when there is nothing in it: said once it has been read, never guessed.
         .child(div().id("ex-mlflow-label").flex_1().min_w(0).truncate().child(this.mlflowEmpty() ? "MLflow: nothing yet" : "MLflow")))
-      .when(open, (e) => e.child(div().pl(10).child(this.mlflow.render(c, 220))));
+      // Empty, it is one line and stays closed: there is nothing under it to show.
+      .when(open && !this.mlflowEmpty(), (e) => e.child(div().pl(10).child(this.mlflow.render(c, 220))));
   }
 
   // Whether an engine page or a project home is the section on show (the sections stack's active child).

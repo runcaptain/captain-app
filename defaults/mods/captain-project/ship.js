@@ -86,6 +86,22 @@ export class Ship {
 
   pid() { return this.page.pid(); }
 
+  /** A sentence in the page's words. The services and older code say "the candidate" and "the baseline". A person
+   *  sees "this model" and the other model's own name ("keyword-baseline"), never a role they have to learn. A
+   *  model's name that happens to contain one of those words is left alone. */
+  w(text) {
+    const s = this.staged();
+    const other = s?.arms?.baseline ? short(s.arms.baseline).replace(/@v\d+$/, "") : "the model it's compared with";
+    const Other = other.replace(/^t/, "T");
+    const b = "(?<![-/\\w@])", e = "(?![-\\w@/])";
+    const sub = (t, from, to) => t.replace(new RegExp(`${b}${from}${e}`, "g"), to);
+    let t = String(text ?? "");
+    for (const [from, to] of [["The candidate's", "This model's"], ["the candidate's", "this model's"], ["The baseline's", `${Other}'s`], ["the baseline's", `${other}'s`],
+      ["The candidate", "This model"], ["the candidate", "this model"], ["The baseline", Other], ["the baseline", other],
+      ["a candidate", "a model"], ["Candidate", "This model"], ["candidate", "this model"], ["Baseline", Other], ["baseline", other]]) t = sub(t, from, to);
+    return t;
+  }
+
   load(cx) {
     this.cx = cx;
     const pid = this.pid();
@@ -382,7 +398,7 @@ export class Ship {
         .child(this.mark(c, st))
         .child(v_flex().flex_1().min_w(280).gap(1)
           .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(st.title))
-          .child(div().id(`ship-text-${st.id}`).text_size(12.5).line_height("18px").text_color(c.grey500).child(st.text)))
+          .child(div().id(`ship-text-${st.id}`).text_size(12.5).line_height("18px").text_color(c.grey500).child(this.w(st.text))))
         .when(Boolean(action), (e) => e.child(h_flex().flex_none().gap(6).items_center().child(action))))
       .when(Boolean(below), (e) => e.child(below));
   }
@@ -390,7 +406,7 @@ export class Ship {
   stopBox(c) {
     return h_flex().id("ship-stop-ask").p(10).gap(10).items_center().bg(c.surface2).border_1().border_color(c.rule)
       .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child("Stop it? The address goes away. What it answered is kept."))
-      .child(Button(c, "ship-stop-yes", "Stop it", (_e, cx) => this.stop(cx), { small: true, kind: "primary" }))
+      .child(Button(c, "ship-stop-yes", "Stop it", (_e, cx) => this.stop(cx), { small: true }))
       .child(Button(c, "ship-stop-no", "Keep it running", (_e, cx) => { this.stopAsk = false; cx.notify(); }, { small: true }));
   }
 
@@ -453,7 +469,7 @@ export class Ship {
         .child(div().p(10).bg(c.surface2).border_1().border_color(c.rule).font_family(MONO).text_size(12.5).line_height("18px").text_color(c.navy)
           .children(String(k.snippets[open]).split("\n").map((ln) => div().child(ln === "" ? " " : ln))))
         .child(h_flex().gap(8).items_center()
-          .child(Button(c, "ship-connect-copy", "Copy this code", (_e, cx) => { cx.write_to_clipboard?.(k.snippets[open]); this.note = { tone: "good", text: "The code is on your clipboard. It reads the key from CAPTAIN_STAGING_KEY, so the key is never in your code." }; cx.notify(); }, { small: true, kind: "primary" }))
+          .child(Button(c, "ship-connect-copy", "Copy this code", (_e, cx) => { cx.write_to_clipboard?.(k.snippets[open]); this.note = { tone: "good", text: "The code is on your clipboard. It reads the key from CAPTAIN_STAGING_KEY, so the key is never in your code." }; cx.notify(); }, { small: true }))
           .child(div().id("ship-connect-fallback").flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey900).child(k.fallback)))))
       .when(this.both(), (e) => e.child(this.shadowBox(c)));
     return this.row(c, st, null, below);
@@ -470,10 +486,10 @@ export class Ship {
         .when(on, (e) => e.child(Badge(c, "on", "good")))
         .when(Boolean(r.label) && r.status !== "none", (e) => e.child(Badge(c, r.label, r.evidence === "REAL_TRAFFIC" ? "good" : "warn")))
         .child(div().flex_1())
-        .when(!on && !abLive, (e) => e.child(Button(c, "ship-shadow-start", r.status === "none" ? "Start shadow mode" : "Start shadow mode again", (_e, cx) => this.act(cx, "/shadow/start", {}, "Shadow mode is on. Shoppers keep getting the baseline's results."), { small: true, kind: "primary" })))
+        .when(!on && !abLive, (e) => e.child(Button(c, "ship-shadow-start", r.status === "none" ? "Start shadow mode" : "Start shadow mode again", (_e, cx) => this.act(cx, "/shadow/start", {}, "Shadow mode is on. Shoppers keep getting the baseline's results."), { small: true })))
         .when(on, (e) => e.child(Button(c, "ship-shadow-stop", "End shadow mode", (_e, cx) => this.act(cx, "/shadow/stop", {}, "Shadow mode is off."), { small: true }))))
       .child(div().id("ship-shadow-text").text_size(12.5).line_height("18px").text_color(c.grey900)
-        .child(r.status === "none" ? "Your site keeps showing the baseline's results. The candidate ranks the same requests silently, and Captain shows what it would have changed. No shopper sees the candidate." : r.text))
+        .child(this.w(r.status === "none" ? "Your site keeps showing the baseline's results. The candidate ranks the same requests silently, and Captain shows what it would have changed. No shopper sees the candidate." : r.text)))
       .when(Boolean(r.ms), (e) => e.child(div().id("ship-shadow-ms").text_size(12.5).text_color(c.grey900)
         .child(`Response time, 95 in 100 requests under: ${r.ms.baseline.p95} ms baseline, ${r.ms.candidate.p95} ms candidate.`)))
       .when((r.queries ?? []).length > 0, (e) => e.child(v_flex().id("ship-shadow-queries").gap(2)
@@ -481,7 +497,7 @@ export class Ship {
         .children(r.queries.slice(0, 6).map((q, i) => h_flex().id(`ship-shadow-q${i}`).gap(8).items_center().cursor_pointer().hover((x) => x.bg(c.surface))
           .on_click((_e, cx) => this.tryQuery(cx, q.query))
           .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.blue).child(q.query))
-          .child(div().flex_none().text_size(12.5).text_color(c.grey500).child(`${q.text ?? `${q.moved} of the top 10 in another place.`} ${q.requests} request${q.requests === 1 ? "" : "s"}.`))))));
+          .child(div().flex_none().text_size(12.5).text_color(c.grey500).child(`${this.w(q.text ?? `${q.moved} of the top 10 in another place.`)} ${q.requests} request${q.requests === 1 ? "" : "s"}.`))))));
   }
 
   pick1(c, id, label, on, onPick) {
@@ -500,10 +516,10 @@ export class Ship {
         this.pick1(c, "ship-ab-mode-own", "My own A/B system", f.mode === "own", () => { f.mode = "own"; })]))
       .when(Boolean(f.practice), (e) => e.child(div().id("ship-ab-practice").p(8).bg(c.warnLight).text_size(12.5).line_height("18px").text_color(c.navy)
         .child("Practice with simulated shoppers. Everything it shows is SIMULATED, and a practice test can't go to launch review.")))
-      .when(f.mode === "captain", (e) => e.child(line("The candidate's share of traffic", [0.01, 0.05, 0.25, 0.5].map((x) => this.pick1(c, `ship-ab-split-${Math.round(x * 100)}`, pct(x), f.split === x, () => { f.split = x; }))))
+      .when(f.mode === "captain", (e) => e.child(line("This model's share of traffic", [0.01, 0.05, 0.25, 0.5].map((x) => this.pick1(c, `ship-ab-split-${Math.round(x * 100)}`, pct(x), f.split === x, () => { f.split = x; }))))
         // What the share means here, in this endpoint's own sessions a day.
         .child(div().id("ship-ab-share-text").text_size(12.5).line_height("18px").text_color(c.grey900)
-          .child(f.practice ? `${pct(f.split)} of the simulated shoppers go to the candidate.` : (this.opts?.shares ?? []).find((x) => Math.abs(x.split - f.split) < 1e-9)?.text ?? `${pct(f.split)} of sessions`)))
+          .child(this.w(f.practice ? `${pct(f.split)} of the simulated shoppers go to the candidate.` : (this.opts?.shares ?? []).find((x) => Math.abs(x.split - f.split) < 1e-9)?.text ?? `${pct(f.split)} of sessions`))))
       .child(line("What decides it", can.map((m) => this.pick1(c, `ship-ab-primary-${m}`, METRICS[m], f.primary === m, () => { f.primary = m; }))))
       .when(f.mode === "captain", (e) => e.child(line("Guardrails: click one to change it", [...can.filter((m) => m !== f.primary), "latency"].map((m) => {
         const must = (f.must ??= { latency: true })[m];
@@ -515,8 +531,8 @@ export class Ship {
       .child(h_flex().gap(6)
         .child(Button(c, "ship-ab-start-go", "Start the A/B test", (_e, cx) => this.abDo(cx, "start", { split: f.split, primary: f.primary, mode: f.mode, practice: Boolean(f.practice),
           guardrails: [...can.filter((m) => m !== f.primary), "latency"].map((m) => `${m}:${(f.must ?? { latency: true })[m] ? "must" : "watch"}`) },
-          f.practice ? `The practice test is running on simulated shoppers: the candidate gets ${pct(f.split)}. SIMULATED.`
-            : f.mode === "captain" ? `The A/B test is running: the candidate gets ${pct(f.split)} of traffic.` : "The A/B test is recorded. Split the traffic in your own system."), { small: true, kind: "primary" }))
+          this.w(f.practice ? `The practice test is running on simulated shoppers: the candidate gets ${pct(f.split)}. SIMULATED.`
+            : f.mode === "captain" ? `The A/B test is running: the candidate gets ${pct(f.split)} of traffic.` : "The A/B test is recorded. Split the traffic in your own system.")), { small: true }))
         .child(Button(c, "ship-ab-start-no", "Not now", (_e, cx) => { this.setup = null; cx.notify(); }, { small: true })));
   }
 
@@ -543,17 +559,17 @@ export class Ship {
       .when(!r.evidence && this.conn?.reachable === false, (e) => e.child(div().id("ship-ab-unreachable").text_size(12.5).text_color(c.grey900)
         .child("A site can't reach this endpoint, so no shopper will arrive. Only this computer can send it requests.")))
       .child(h_flex().flex_wrap().items_start().gap(10).child(arm("baseline", "ship-ab-baseline")).child(arm("candidate", "ship-ab-candidate")))
-      .child(div().id("ship-ab-primary").text_size(12.5).line_height("18px").text_color(r.enough ? c.navy : c.grey900).child(r.primary?.text ?? r.text))
+      .child(div().id("ship-ab-primary").text_size(12.5).line_height("18px").text_color(r.enough ? c.navy : c.grey900).child(this.w(r.primary?.text ?? r.text)))
       .children((r.guardrails ?? []).map((g, i) => h_flex().id(`ship-ab-guard-${i}`).gap(6).items_center()
         .child(svg(icon(g.ok ? "circle-check" : "triangle-alert")).size(12).flex_none().text_color(g.ok ? c.good : c.fail))
-        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(g.ok ? c.grey900 : c.fail).child(g.text))))
+        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(g.ok ? c.grey900 : c.fail).child(this.w(g.text)))))
       .when(Boolean(r.hard_stop), (e) => e.child(div().id("ship-ab-paused").px(10).py(6).text_size(12.5).bg(c.failLight).text_color(c.fail).child(`${r.hard_stop} Roll back, or ramp down.`)))
       .when((r.segments ?? []).length > 0, (e) => e.child(v_flex().id("ship-ab-segments").gap(3)
         .child(div().text_size(12.5).font_semibold().text_color(c.navy).child("By kind of query and shopper"))
         .children(r.segments.map((x) => div().id(`ship-ab-segment-${x.segment}`).text_size(12.5).line_height("18px")
-          .text_color(x.verdict === "candidate behind" ? c.fail : x.enough ? c.grey900 : c.grey500).child(x.text)))
+          .text_color(x.verdict === "candidate behind" ? c.fail : x.enough ? c.grey900 : c.grey500).child(this.w(x.text))))
         .when(Boolean(r.segment_warning), (y) => y.child(div().id("ship-ab-segment-warning").text_size(12.5).font_medium().text_color(c.fail).child(r.segment_warning)))))
-      .when(Boolean(r.srm), (e) => e.child(div().id("ship-ab-srm").text_size(12.5).text_color(r.srm.ok ? c.grey500 : c.fail).child(r.srm.text)))
+      .when(Boolean(r.srm), (e) => e.child(div().id("ship-ab-srm").text_size(12.5).text_color(r.srm.ok ? c.grey500 : c.fail).child(this.w(r.srm.text))))
       .when(Boolean(r.needed?.text) && a.status === "running", (e) => e.child(div().id("ship-ab-needed").text_size(12.5).line_height("18px").text_color(c.navy).child(r.needed.text)))
       .when(a.status === "running", (e) => e.child(this.endings(c)))
       .when(Boolean(r.decision), (e) => e.child(div().id("ship-ab-decision").text_size(12.5).text_color(c.navy)
@@ -563,7 +579,7 @@ export class Ship {
         .children(RAMP.map((x) => this.pick1(c, `ship-ab-ramp-${Math.round(x * 100)}`, pct(x), Math.abs((a.split ?? 0) - x) < 1e-9, () => { if (Math.abs((a.split ?? 0) - x) > 1e-9 && !(r.hard_stop && x > (a.split ?? 0))) this.ask2 = { kind: "ramp", split: x }; })))
         .child(Button(c, "ship-ab-rollback", "Roll back", (_e, cx) => { this.ask2 = { kind: "rollback" }; cx.notify(); }, { small: true }))
         .when(Boolean(a.practice), (x) => x.child(Button(c, "ship-ab-simulate", "Send simulated shoppers at it", (_e, cx) => this.simulate(cx), { small: true, kind: "quiet", disabled: Boolean(this.busy) })))
-        .child(Button(c, "ship-ab-refresh", "Read again", (_e, cx) => this.load(cx), { small: true, kind: "quiet" }))));
+        .child(Button(c, "ship-ab-refresh", "Read again", (_e, cx) => this.load(cx), { small: true }))));
   }
 
   /** How a test ends: three choices, each recorded. Ship it opens launch review with the readout attached, and is
@@ -574,21 +590,21 @@ export class Ship {
       .child(h_flex().flex_wrap().gap(6).items_center()
         .child(div().text_size(12.5).font_semibold().child("Decide"))
         .child(Button(c, "ship-ab-ship", "Ship it", (_e, cx) => this.act(cx, "/ab/decide", { choice: "ship" }, "Recorded: ship it. Launch review opens with this readout attached.",
-          (d) => form("handoff", { pipeline: d.launch_review?.pipeline ?? cand })), { small: true, kind: "primary", disabled: !r.can_ship }))
-        .child(Button(c, "ship-ab-keep", "Keep the baseline", (_e, cx) => this.act(cx, "/ab/decide", { choice: "keep-baseline" }, "Recorded: keep the baseline. Every shopper gets the baseline again."), { small: true }))
+          (d) => form("handoff", { pipeline: d.launch_review?.pipeline ?? cand })), { small: true, disabled: !r.can_ship }))
+        .child(Button(c, "ship-ab-keep", this.w("Keep the baseline"), (_e, cx) => this.act(cx, "/ab/decide", { choice: "keep-baseline" }, this.w("Recorded: keep the baseline. Every shopper gets the baseline again.")), { small: true }))
         .child(Button(c, "ship-ab-more", "Keep testing", (_e, cx) => this.act(cx, "/ab/decide", { choice: "keep-testing" }, "Recorded: keep testing."), { small: true })))
-      .when(!r.can_ship && Boolean(r.cannot_ship), (e) => e.child(div().id("ship-ab-cannot-ship").text_size(12.5).text_color(c.grey900).child(r.cannot_ship)));
+      .when(!r.can_ship && Boolean(r.cannot_ship), (e) => e.child(div().id("ship-ab-cannot-ship").text_size(12.5).text_color(c.grey900).child(this.w(r.cannot_ship))));
   }
 
   /** A ramp or a rollback asks first: one click, one confirmation. */
   askBox(c) {
     const k = this.ask2, a = this.ab?.ab;
-    const text = k.kind === "ramp" ? `Give the candidate ${pct(k.split)} of traffic? It gets ${pct(a?.split ?? 0)} now.` : "Roll back? Every shopper gets the baseline again, and this test ends.";
+    const text = this.w(k.kind === "ramp" ? `Give the candidate ${pct(k.split)} of traffic? It gets ${pct(a?.split ?? 0)} now.` : "Roll back? Every shopper gets the baseline again, and this test ends.");
     return h_flex().id("ship-ab-ask").p(10).gap(10).items_center().bg(c.surface2).border_1().border_color(c.rule)
       .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child(text))
       .child(k.kind === "ramp"
-        ? Button(c, "ship-ab-ask-yes", `Ramp to ${pct(k.split)}`, (_e, cx) => this.abDo(cx, "ramp", { split: k.split }, `The candidate now gets ${pct(k.split)} of traffic.`), { small: true, kind: "primary" })
-        : Button(c, "ship-ab-ask-yes", "Roll back", (_e, cx) => this.abDo(cx, "rollback", {}, "Rolled back. Every shopper gets the baseline again."), { small: true, kind: "primary" }))
+        ? Button(c, "ship-ab-ask-yes", `Ramp to ${pct(k.split)}`, (_e, cx) => this.abDo(cx, "ramp", { split: k.split }, this.w(`The candidate now gets ${pct(k.split)} of traffic.`)), { small: true })
+        : Button(c, "ship-ab-ask-yes", "Roll back", (_e, cx) => this.abDo(cx, "rollback", {}, this.w("Rolled back. Every shopper gets the baseline again.")), { small: true }))
       .child(Button(c, "ship-ab-ask-no", "Not now", (_e, cx) => { this.ask2 = null; cx.notify(); }, { small: true }));
   }
 
@@ -600,7 +616,7 @@ export class Ship {
         .child(div().w(80).flex_none().text_color(c.grey500).child(name === "baseline" ? "Baseline" : "Candidate"))
         .child(div().flex_1().min_w(0).font_family(MONO).text_size(12.5).child(x.url ?? `${x.endpoint}${x.region ? ` in ${x.region}` : ""}, arm ${name}`))))
       .when(Boolean(r.brought), (e) => e.child(h_flex().gap(8).items_center().child(Badge(c, r.label, r.evidence === "REAL_TRAFFIC" ? "good" : "warn"))
-        .child(div().id("ship-ab-brought").text_size(12.5).text_color(c.navy).child(r.brought.text))))
+        .child(div().id("ship-ab-brought").text_size(12.5).text_color(c.navy).child(this.w(r.brought.text)))))
       .child(h_flex().gap(6)
         .child(Button(c, "ship-ab-bring", r.brought ? "Bring in a newer readout" : "Bring in the readout", () => form("ab-result", { project: this.pid(), traffic: "real" }), { small: true, kind: r.brought ? "secondary" : "primary" }))
         .when(r.ab?.status === "running", (e) => e.child(Button(c, "ship-ab-end", "End the test", (_e, cx) => this.abDo(cx, "stop", {}, "The A/B test is ended."), { small: true }))));
@@ -634,7 +650,7 @@ export class Ship {
   launchStep(c, st) {
     const of = this.reviewOf();
     const btn = h_flex().flex_none().gap(6).items_center()
-      .when(st.action === "handoff", (e) => e.child(Button(c, "ship-handoff", "Send to launch review", () => form("handoff", { pipeline: of }), { small: true, kind: this.ab?.enough ? "primary" : "secondary" })))
+      .when(st.action === "handoff", (e) => e.child(Button(c, "ship-handoff", "Send to launch review", () => form("handoff", { pipeline: of }), { small: true })))
       .child(Button(c, "ship-open-handoff", "Open Launch review", () => this.page.goTo?.("handoff"), { small: true, kind: "quiet" }));
     return this.row(c, st, btn, null);
   }
@@ -701,7 +717,7 @@ export class Ship {
   /** Requests, newest first, and the one that is open beside them. */
   requestsTab(c) {
     const d = this.reqs, open = this.reqOpen;
-    const cell = (w, t, mono) => div().w(w).flex_none().truncate().text_size(12.5).when(Boolean(mono), (e) => e.font_family(MONO).text_size(12.5)).child(String(t ?? ""));
+    const cell = (w, t, mono) => div().w(w).flex_none().truncate().text_size(12.5).child(String(t ?? ""));
     const list = v_flex().id("dep-requests").flex_1().min_w(360)
       .child(div().id("dep-requests-text").pb(6).text_size(12.5).text_color(c.grey500).child(d ? d.text : "Reading the request log..."))
       .when(Boolean(d?.rows?.length), (e) => e
@@ -717,7 +733,7 @@ export class Ship {
     const panel = !open ? null : v_flex().id("dep-request-panel").w(360).flex_none().p(10).gap(6).bg(c.surface2).border_1().border_color(c.rule)
       .child(h_flex().gap(6).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().child(x?.query ?? "Opening..."))
-        .child(Button(c, "dep-request-close", "Close", (_e, cx) => { this.reqOpen = null; cx.notify(); }, { small: true, kind: "quiet" })))
+        .child(Button(c, "dep-request-close", "Close", (_e, cx) => { this.reqOpen = null; cx.notify(); }, { small: true })))
       .when(Boolean(open.problem), (e) => e.child(div().text_size(12.5).text_color(c.fail).child(open.problem)))
       .when(Boolean(x), (e) => e
         .child(div().id("dep-request-meta").text_size(12.5).line_height("18px").text_color(c.grey900)
@@ -729,7 +745,7 @@ export class Ship {
           .when(Boolean(p.signals), (y) => y.child(div().pl(24).text_size(12.5).line_height("18px").text_color(c.grey500)
             .child(p.signals.filter((g) => g.value).slice(0, 4).map((g) => `${g.label} ${Number(g.value).toFixed(2)}`).join(", "))))))
         .when(Boolean(x.shadow), (e2) => e2.child(div().id("dep-request-shadow").text_size(12.5).text_color(c.grey900)
-          .child(x.shadow.same ? "Shadowed: the candidate would have returned the same top 10." : "Shadowed: the candidate would have returned a different top 10.")))
+          .child(this.w(x.shadow.same ? "Shadowed: the candidate would have returned the same top 10." : "Shadowed: the candidate would have returned a different top 10."))))
         .when((x.lines ?? []).length > 0, (e2) => e2.child(v_flex().id("dep-request-lines").pt(6).gap(1).border_t(1).border_color(c.rule)
           .child(div().pb(2).text_size(12.5).text_color(c.grey500).child("Log lines of this request"))
           .children(x.lines.map((ln, i) => h_flex().id(`dep-request-line-${i}`).gap(8).items_start()
@@ -763,13 +779,13 @@ export class Ship {
       .children((d?.rows ?? []).map((r) => v_flex().id(`dep-version-${r.n}`).py(6).border_t(1).border_color(c.rule)
         .child(h_flex().gap(10).items_center().flex_wrap()
           .child(div().w(36).flex_none().text_size(12.5).font_semibold().child(`v${r.n}`))
-          .child(div().flex_1().min_w(160).truncate().font_family(MONO).text_size(12.5).text_color(c.navy).child(short(r.model_version)))
+          .child(div().flex_1().min_w(160).truncate().text_size(12.5).text_color(c.navy).child(short(r.model_version)))
           .when(r.live, (e) => e.child(Badge(c, "Live", "good")))
           .child(div().flex_none().text_size(12.5).text_color(c.grey500).child(`${String(r.at).slice(0, 16).replace("T", " ")} by ${r.by ?? "someone"}`))
           .when(Boolean(r.can_roll_back) && !this.busy, (e) => e.child(Button(c, `dep-version-${r.n}-back`, "Roll back", (_e, cx) => { this.verAsk = r.n; cx.notify(); }, { small: true }))))
         .when(this.verAsk === r.n, (e) => e.child(h_flex().id("dep-version-ask").mt(6).p(8).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
           .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child(`Put ${short(r.model_version)} back on the endpoint? What runs now is replaced.`))
-          .child(Button(c, "dep-version-yes", "Roll back", (_e, cx) => this.rollBackTo(cx, r.n), { small: true, kind: "primary" }))
+          .child(Button(c, "dep-version-yes", "Roll back", (_e, cx) => this.rollBackTo(cx, r.n), { small: true }))
           .child(Button(c, "dep-version-no", "Not now", (_e, cx) => { this.verAsk = null; cx.notify(); }, { small: true }))))));
   }
 

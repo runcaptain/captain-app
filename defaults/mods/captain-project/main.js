@@ -68,6 +68,10 @@ const EVIDENCE_SENTENCE = { SIMULATED: "Simulated events.", LLM_GRADED: "LLM gra
  *  model the others are compared with (by that model's own name), then where the evidence comes from. Two things
  *  are in it whenever they apply, because they change what the result means: the evidence word, and that it
  *  agrees with its own labeler. The numbers are under Details. */
+/** A model's name as it is said inside its own project: without the project's prefix ("north-pole/starter-ranker"
+ *  is "starter-ranker" on the North Pole page). The full name stays under Details and wherever a person copies it. */
+export const inProject = (name) => String(name ?? "").replace(/^.*\//, "");
+
 export function verdictSentence(e, champ) {
   const ev = e.evaluation, other = champ ?? "the model it's compared with";
   if (e.is_champion) return ev ? `The model the others are compared with. ${EVIDENCE_SENTENCE[ev.evidence] ?? ""}`.trim() : "The model the others are compared with.";
@@ -106,6 +110,11 @@ export default class ProjectHome extends View {
     try { this.last = localStorage.getItem("project") || null; } catch { this.last = null; }
     this.shipPath = new Ship(this); // Stage, Try it: made here, because a text box can't be made while drawing
     if ((layoutProps?.() ?? {}).shipFrom) this.shipPath.more = "traffic"; // the real-window check: open on "Send it real traffic"
+    // The real-window check: draw the confirm, or a deploy in progress, from the plan or steps it hands over, so
+    // those two moments can be looked at without deploying to anyone's cloud.
+    const demo = (layoutProps?.() ?? {}).shipDemo;
+    if (demo?.confirm) this.shipPath.dconfirm = { ...demo.confirm, all: false };
+    if (demo?.deploying) this.shipPath.djob = { ...demo.deploying, started: Date.now() - 121000 };
     if ((layoutProps?.() ?? {}).depMore) this.shipPath.more = (layoutProps?.() ?? {}).depMore; // the real-window check: open that "More" item
     if ((layoutProps?.() ?? {}).depList) { this.shipPath.listOpen = true; this.shipPath.loadList(cx); } // the real-window check: the list of deployments
     this.load(cx);
@@ -352,7 +361,7 @@ export default class ProjectHome extends View {
     const raw = inp.source ?? (inp.pinned ? { from: "dataset", ref: inp.pinned } : null);
     const src = raw ? { ...raw, kind: raw.from ?? raw.kind, dataset: raw.ref ?? raw.dataset, events: raw.event ? [raw.event] : raw.events, engine: raw.engine ?? (this.sources?.[raw.connection]) } : null;
     if (!src) return div().min_w(0).truncate().text_size(12.5).text_color(c.grey500)
-      .child(`${inp.required ? "Needed before a model can train." : "Optional."} ${inp.about || ""}`.trim());
+      .child(/^optional\b/i.test(inp.about || "") ? inp.about : `${inp.required ? "Needed before a model can train." : "Optional."} ${inp.about || ""}`.trim());
     const what = src.kind === "connection" ? (src.table ? String(src.table).split(".").pop() : src.event ? `${src.event.name} events` : src.report ? "a report" : "your query")
       : src.kind === "local" ? String(src.path ?? "").replace(/^\/Users\/[^/]+/, "~")
       : parseRef(src.dataset ?? inp.pinned).name;
@@ -380,8 +389,16 @@ export default class ProjectHome extends View {
     const generate = missing && hasCatalog && ((inp.role ?? inp.slot) === "events" || (inp.accepts ?? []).includes("events"))
       ? div().id(`${id}-gen-tip`).flex_none().tooltip("Simulated shoppers search your catalog. Results judged on these events are simulated.")
         .child(Button(c, `${id}-generate`, "Generate simulated events", () => form("generate-events", { project: this.pid(), slot: inp.slot }), { small: true })) : null;
-    const older = !missing && !live && r.version > 1
-      ? Button(c, `${id}-older`, "Older version", () => form("pin", { ...this.values(), slot: inp.slot }), { small: true }) : null;
+    // What else can be done with an input sits under one More on its row: an older version, taking it off the project.
+    const extra = [
+      !missing && !live && r.version > 1 ? [`${id}-older`, "Use an older version", () => form("pin", { ...this.values(), slot: inp.slot })] : null,
+      !inp.required ? [`${id}-remove`, "Remove from this project", (cx) => this.removeInput(cx, inp)] : null,
+    ].filter(Boolean);
+    const openMore = this.inputMenu === inp.slot;
+    const moreBtn = extra.length ? Popup.new(`${id}-more-pop`, Button(c, `${id}-more`, "More", (_e, cx) => { this.inputMenu = openMore ? null : inp.slot; cx.notify(); }, { small: true })).anchor("bottom_right")
+      .when(openMore, (e) => e.content(v_flex().id(`${id}-more-list`).w(220).py(4).bg(c.surface).border_1().border_color(c.grey300)
+        .children(extra.map(([eid, label, act]) => h_flex().id(eid).h(30).px(10).items_center().cursor_pointer().text_size(12.5).text_color(c.navy).hover((s) => s.bg(c.surface2))
+          .on_click((_e, cx) => { this.inputMenu = null; cx.notify(); act(cx); }).child(label))))) : null;
     const when = inp.last_read_at ? `last read ${day(inp.last_read_at)}` : inp.as_of ? `${live ? "chosen" : "taken"} ${day(inp.as_of)}` : live ? "read on the next run" : "";
     // One status, in words: how much is there and when it was read. "Simulated" is said only when it is true.
     const status = missing ? (inp.required ? "Needed before a model can train." : "Not chosen. Optional.")
@@ -398,10 +415,8 @@ export default class ProjectHome extends View {
             .when(Boolean(inp.simulated), (x) => x.tooltip("Made by a generator, not by real shoppers. Results judged on it are simulated.")).child(status))))
         .when(Boolean(info), (e) => e.child(div().id(`${id}-info-0`).min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(info.text))))
       .when(Boolean(generate), (e) => e.child(generate))
-      .when(Boolean(older), (e) => e.child(older))
-      // An input the project doesn't require can be taken off it. Its data is kept.
-      .when(!inp.required, (e) => e.child(Button(c, `${id}-remove`, "Remove", (_e, cx) => this.removeInput(cx, inp), { small: true, disabled: this.busy })))
-      .child(div().flex_none().child(action));
+      .child(div().flex_none().child(action))
+      .when(Boolean(moreBtn), (e) => e.child(moreBtn));
   }
 
   addCard(c) {
@@ -570,12 +585,12 @@ export default class ProjectHome extends View {
     const ev = e.evaluation;
     const open = this.open === e.id;
     const r = parseRef(e.pipeline);
-    const champ = this.exps?.champion ? parseRef(this.exps.champion).name : null;
+    const champ = this.exps?.champion ? inProject(parseRef(this.exps.champion).name) : null;
     const head = h_flex().id(`exp-${i}`).px(12).py(9).gap(12).items_center().cursor_pointer().hover((s) => s.bg(c.surface2))
       .on_click((_e, cx) => { this.open = open ? null : e.id; cx.notify(); })
       // Two lines, so the sentence has the row's width at any size: the model's name, then its verdict.
       .child(v_flex().flex_1().min_w(0).gap(1)
-        .child(div().truncate().text_size(12.5).font_medium().child(r.version != null ? `${r.name}, version ${r.version}` : r.name))
+        .child(div().truncate().text_size(12.5).font_medium().child(r.version != null ? `${inProject(r.name)}, version ${r.version}` : inProject(r.name)))
         .child(div().id(`exp-${i}-verdict`).text_size(12.5).line_height("18px").text_color(c.grey500).child(verdictSentence(e, champ))))
       // Opening the numbers in place is not going anywhere, so it is not blue: a plain word and a chevron.
       .child(h_flex().id(`exp-${i}-details`).flex_none().gap(4).items_center().text_size(12.5).text_color(c.grey900)
@@ -617,6 +632,7 @@ export default class ProjectHome extends View {
       ev ? "Not yet confirmed online: an offline result until your team's own A/B or shadow readout agrees." : e.is_champion ? null : "Not judged against the baseline yet.",
     ].filter(Boolean);
     return v_flex().px(12).pb(12).gap(8)
+      .child(div().id(`exp-${i}-full`).text_size(12.5).text_color(c.grey500).child(`Full name: ${e.pipeline}`))
       .children(lines.map((t, k) => div().id(`exp-${i}-line-${k}`).text_size(12.5).line_height("18px").text_color(c.grey900).child(t)))
       .child(h_flex().flex_wrap().gap(6)
         .when(Boolean(ev?.run), (x) => x.child(Button(c, `exp-${i}-open`, "Open the comparison", () => {
@@ -965,7 +981,17 @@ export default class ProjectHome extends View {
   }
 
     /** What to do next, in one line with its button: the services' own next step, else worked out from the stages. */
+  /** The next step, in the page's words: what the page shows and what agents are told are the same sentence. */
   nextStep() {
+    const n = this.nextStepRaw();
+    if (!n?.text) return n;
+    // "The candidate" and "the baseline" become this model and the other model's own name, once a model is
+    // deployed beside another. Before that the sentence stands as it is. A model is named without its project.
+    const both = Boolean(this.shipPath.staged()?.arms?.baseline);
+    return { ...n, text: (both ? this.shipPath.w(n.text) : n.text).split(`${this.pid()}/`).join("") };
+  }
+
+  nextStepRaw() {
     const st = this.stages, ex = this.exps;
     if (st?.next?.text) {
       const slot = (st.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === st.next.slot);
@@ -1100,7 +1126,8 @@ export default class ProjectHome extends View {
         .child(div().text_color(c.navy).font_medium().child("Deployment"))
         .child(div().flex_1())
         .child(div().id("dep-all").text_color(c.blue).cursor_pointer().on_click((_e, cx) => this.shipPath.openList(cx)).child("All deployments")))
-      .child(this.nextLine(c))
+      // An open question (the confirm) or a deploy in progress takes the banner's place: one filled button.
+      .when(!this.shipPath.dconfirm && !this.shipPath.djob, (e) => e.child(this.nextLine(c)))
       .child(this.shipPath.deployed(c));
     else body = v_flex().gap(22)
       .when(Boolean(this.note), (e) => e.child(div().id("ph-note").px(12).py(8).text_size(12.5).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)

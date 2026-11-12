@@ -62,8 +62,11 @@ assert.ok(/Next: .*catalog/i.test(t), 'next names the first required input');
 const slots = h.mod.stages.inputs.map((i) => h.mod.slotOf(i));
 const req = slots.filter((s) => s.required).map((s) => s.label);
 assert.ok(req.length >= 2 && t.indexOf(req[0]) < t.indexOf('Embeddings'), 'required inputs come first');
-assert.equal(h.byIdPrefix('in-embeddings-remove').length, 1, 'an optional input can be removed');
-assert.equal(h.byIdPrefix(`in-${slots.find((s) => s.required).slot}-remove`).length, 0, 'a required one cannot');
+// A row shows one action. Taking an optional input off the project is under its More.
+assert.equal(h.byIdPrefix('in-embeddings-remove').length, 0, 'not on the row');
+assert.equal(h.byIdPrefix(`in-${slots.find((s) => s.required).slot}-more`).length, 0, 'a required input with one version has nothing more to offer');
+await h.click('in-embeddings-more');
+assert.equal(h.byIdPrefix('in-embeddings-remove').length, 1, 'an optional input can be removed, from More');
 assert.equal(h.byIdPrefix('in-add').length, 1, 'Add an input');
 // No evaluation set: Train and compare says so and offers to add one.
 // This recipe judges by replaying logged searches: it needs the events input, and the button says so.

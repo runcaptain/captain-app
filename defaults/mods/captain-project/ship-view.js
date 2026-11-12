@@ -33,11 +33,16 @@ const count = (n, one, many = `${one}s`) => `${Number(n ?? 0).toLocaleString("en
 
 // ---- what the services say --------------------------------------------------------------------------------------
 
-/** One place a model can run, as the cards read it, from one entry of GET /deploy/hosts. */
-function place(h) {
+/** One place a model can run, as the cards read it, from one entry of GET /deploy/hosts. `twice` is whether the
+ *  same cloud has more than one login connected. */
+function place(h, twice = false) {
   const local = h.host === "local";
+  // The login's name is shown only when it says something the cloud's name doesn't: "AWS  aws" says it twice.
+  const same = (a, b) => String(a ?? "").toLowerCase().replace(/[^a-z0-9]/g, "") === String(b ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const login = h.login && (twice || !(same(h.login, h.label) || same(h.login, h.host) || same(h.login, h.login_label))) ? h.login : null;
   return { id: h.id ?? (h.login ? `${h.host}:${h.login}` : h.host), host: h.host, login: h.login ?? null, kind: local ? "local" : "cloud",
-    provider: local ? null : h.host, label: h.label, sub: local ? "" : [h.login, h.region].filter(Boolean).join(" \u00b7 "),
+    provider: local ? null : h.host, label: h.label, sub: local ? "" : [login, h.region].filter(Boolean).join(" \u00b7 "),
+    machine: h.estimate?.machine ?? null,
     can_deploy: Boolean(h.can_deploy), why_not: h.why_not ?? null, why_not_action: h.fit?.outcome === "over-limit" ? "settings" : null,
     reach: h.reachable ? "A site can reach it." : "Only you can reach it.",
     cost: h.estimate?.text ?? (local ? "Free." : ""),
@@ -54,7 +59,9 @@ export function loadPlaces(ship, cx) {
   cx.spawn(async (cx) => {
     const r = await api(`/api/projects/${enc(pid)}/deploy/hosts`, { scoped: false, timeout: 60 });
     if (ship.pid() !== pid) return;
-    ship.dp = r.ok ? { places: (r.data.hosts ?? []).map(place), model_version: r.data.model_version ?? null, beside: r.data.beside ?? null }
+    const hosts = r.ok ? r.data.hosts ?? [] : [];
+    const count = (host) => hosts.filter((x) => x.host === host).length;
+    ship.dp = r.ok ? { places: hosts.map((x) => place(x, count(x.host) > 1)), model_version: r.data.model_version ?? null, beside: r.data.beside ?? null }
       : { places: [], problem: plainError(r.error, "Captain couldn't read where this can run.") };
     cx.notify();
   });
@@ -110,7 +117,16 @@ async function follow(ship, cx, place, planned) {
     if (r.ok && r.data) {
       const d = r.data;
       if ((d.steps ?? []).length) ship.djob = { ...ship.djob, steps: d.steps };
-      if (d.status === "done" || (d.status === "none" && i > 2)) { ship.djob = null; if (d.status === "done") ship.dnote = { tone: "good", text: `Deployed to ${place.label}.` }; break; }
+      if (d.status === "done" || (d.status === "none" && i > 2)) {
+        ship.djob = null;
+        // It is deployed. A step after that (the trained-numbers check, saving to the registry) may not have
+        // finished: that is said, with its reason, and the model stays up.
+        const soft = d.soft_failed ?? [];
+        if (d.status === "done") ship.dnote = soft.length
+          ? { tone: "fail", text: `Deployed to ${place.label}, but one step didn't finish. ${soft.map((x) => `${x.title}: ${x.error}`).join(" ")}` }
+          : { tone: "good", text: `Deployed to ${place.label}.` };
+        break;
+      }
       if (d.status === "failed") { ship.djob = { ...ship.djob, failed: { text: plainError(d.error, "It didn't finish."), step: d.failed_step?.title ?? null, policy: d.policy ?? null } }; break; }
       cx.notify();
     }
@@ -214,6 +230,7 @@ function confirmBox(ship, c) {
         .child(div().flex_none().text_size(12.5).text_color(c.navy).child(it.name ?? ""))
         .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey500).child([it.resource, it.why].filter(Boolean).join(". "))))))))
     .when(n > 0, (e) => e.child(h_flex().child(Button(c, "ship-confirm-all", all ? "Show less" : `Show everything (${count(n, "thing")})`, (_e, cx) => { ship.dconfirm.all = !all; cx.notify(); }, { small: true }))))
+    .when(all && Boolean(plan.machine ?? place.machine), (e) => e.child(line(c, "ship-confirm-machine", `Machine: ${plan.machine ?? place.machine}. The price is for this machine in this region.`, "grey500")))
     .when(all && (plan.exists ?? []).length > 0, (e) => e.child(line(c, "ship-confirm-exists", `Already there, and used as it is: ${plan.exists.map((x) => x.name).join(", ")}.`, "grey500")))
     .child(line(c, "ship-confirm-cost", `${plan.cost?.text ?? ""}${plan.cost?.sleeps ? "" : " It bills until you stop it."}`.trim(), "navy"))
     .when(Boolean(plan.minutes?.text), (e) => e.child(line(c, "ship-confirm-minutes", plan.minutes.text)))
@@ -266,7 +283,7 @@ export function ShipSection(ship, c) {
         .child(Button(c, "ship-open", "Open it", (_e, cx) => ship.page.openDeployment(cx), { small: true })))
       .child(h_flex().gap(8).items_center().child(dot(c, w.tone)).child(line(c, "ship-deployed-state", w.text)))
       .when(Boolean(address), (e) => e.child(h_flex().gap(8).items_center().flex_wrap()
-        .child(div().id("ship-deployed-address").font_family(MONO).text_size(12.5).text_color(c.navy).child(address))
+        .child(div().id("ship-deployed-address").min_w(0).max_w_full().truncate().font_family(MONO).text_size(12.5).text_color(c.navy).child(address))
         .child(Button(c, "ship-deployed-copy", "Copy", (_e, cx) => ship.copy(cx, address, "The address is on your clipboard."), { small: true })))))
       .when(Boolean(ship.dnote), (e) => e.child(note(c, ship.dnote)));
   }
@@ -280,7 +297,7 @@ export function ShipSection(ship, c) {
     .when(Boolean(d), (e) => e.child(h_flex().id("ship-places").flex_wrap().items_stretch().gap(10)
       .children(places.map((p) => placeCard(ship, c, p)))
       .child(connectCard(c, clouds.length === 0))))
-    .when(Boolean(s) && !on, (e) => e.child(line(c, "ship-last", `Last deployed: ${short(s.model_version)}. ${stateWords(ship).text}${s.spent?.text ? ` ${s.spent.text}.` : ""}`, "grey500")))
+    .when(Boolean(s) && !on && !ship.page.deployOpen, (e) => e.child(line(c, "ship-last", `Last deployed: ${short(s.model_version)}. ${stateWords(ship).text}${s.spent?.text ? ` ${s.spent.text}.` : ""}`, "grey500")))
     .when(Boolean(ship.dnote), (e) => e.child(note(c, ship.dnote)));
 }
 
@@ -364,7 +381,8 @@ function costLine(ship, c) {
   const d = ship.costD, s = ship.staged();
   if (!d) return line(c, "dep-cost-line", s?.kind === "local" ? "Runs on this computer. No cloud cost." : "Working out the cost...", "grey500");
   if (d.free) return line(c, "dep-cost-line", "Runs on this computer. No cloud cost.");
-  return line(c, "dep-cost-line", `${d.rate_text ?? ""} ${d.month_text ?? "$0.00"} so far this month.`.trim());
+  const month = String(d.month_text ?? "$0.00");
+  return line(c, "dep-cost-line", `${d.rate_text ?? ""} ${month.charAt(0).toUpperCase()}${month.slice(1)} so far this month.`.trim());
 }
 
 /** The deployed model, top to bottom. */
@@ -380,8 +398,6 @@ export function DeployedView(ship, c) {
       .child(div().id("ship-name").text_size(15).font_semibold().text_color(c.navy).child(short(s.model_version)))
       .when(on && Boolean(s.arms?.baseline) && s.serve !== "baseline", (e) => e.child(div().id("ship-beside").text_size(12.5).text_color(c.grey500).child(`compared with ${short(s.arms.baseline)}`)))
       .child(div().flex_1().min_w(0))
-      // Hand what is deployed to a coding agent, as the other screens do.
-      .when(!ship.busy, (e) => e.child(SendToAgent(c, "ship-send", { ref: `staging:${ship.pid()}`, kind: "staging", label: `what is deployed for ${ship.page.project()?.name ?? ship.pid()}` })))
       .when(on && !ship.busy, (e) => e.child(Button(c, "ship-stop", "Stop", (_e, cx) => { ship.stopAsk = true; cx.notify(); }, { small: true })))
       .when(Boolean(ship.busy), (e) => e.child(div().id("ship-busy").text_size(12.5).text_color(c.grey500).child(`${ship.busy}...`))))
     .child(h_flex().gap(8).items_center().child(dot(c, w.tone)).child(line(c, "dep-state", w.text, "navy")))
@@ -396,7 +412,8 @@ export function DeployedView(ship, c) {
       .child(Button(c, "ship-stop-no", "Keep it running", (_e, cx) => { ship.stopAsk = false; cx.notify(); }, { small: true }))))
     .when(on, (e) => e
       .child(h_flex().id("ship-reach").gap(8).items_center().flex_wrap()
-        .child(div().id("ship-address").font_family(MONO).text_size(12.5).text_color(c.navy).child(address))
+        // A long address is cut with an ellipsis, never run off the card. Copy takes the whole of it.
+        .child(div().id("ship-address").min_w(0).max_w_full().truncate().font_family(MONO).text_size(12.5).text_color(c.navy).tooltip(address).child(address))
         .child(Button(c, "ship-copy-address", "Copy", (_e, cx) => ship.copy(cx, address, "The address is on your clipboard."), { small: true }))
         .when(Boolean(k?.test_request), (x) => x.child(Button(c, "ship-copy-test", "Copy a test request", (_e, cx) => ship.copy(cx, k.test_request, "A test request is on your clipboard. Paste it in a terminal."), { small: true })))
         .when(Boolean(s.needs_key), (x) => x.child(Button(c, "ship-copy-key", "Copy its key", (_e, cx) => ship.copyKey(cx), { small: true })))
@@ -421,7 +438,7 @@ export function DeployedView(ship, c) {
     .child(numbers(ship, c))
     .child(costLine(ship, c))
     .when(Boolean(ship.status?.warning), (e) => e.child(line(c, "ship-line-warning", ship.status.warning, "fail")))
-    .when(Boolean(ship.note), (e) => e.child(note(c, ship.note)))
+    .when(Boolean(ship.note), (e) => e.child(note(c, { ...ship.note, text: ship.w(ship.note.text) })))
     .when(Boolean(ship.problem), (e) => e.child(line(c, "ship-problem", ship.problem, "fail")));
   const more = v_flex().id("dep-more").w_full().gap(0).bg(c.surface).border_1().border_color(c.rule)
     .child(div().px(14).pt(10).pb(4).text_size(12.5).font_medium().text_color(c.grey500).child("More"))
@@ -433,10 +450,12 @@ export function DeployedView(ship, c) {
   return v_flex().id("deployed-view").w_full().gap(12)
     .child(top)
     .child(more)
+    // Hand what is deployed to a coding agent, as the other screens do.
+    .when(!ship.busy, (e) => e.child(h_flex().child(SendToAgent(c, "ship-send", { ref: `staging:${ship.pid()}`, kind: "staging", label: `what is deployed for ${ship.page.project()?.name ?? ship.pid()}` }))))
     .when(Boolean(open), (e) => e.child(v_flex().id(`dep-open-${open.id}`).w_full().gap(6)
       .child(h_flex().gap(8).items_center()
         .child(div().flex_1().text_size(15).font_semibold().text_color(c.navy).child(open.label))
-        .child(Button(c, "dep-open-close", "Close", (_e, cx) => { ship.more = null; cx.notify(); }, { small: true, kind: "quiet" })))
+        .child(Button(c, "dep-open-close", "Close", (_e, cx) => { ship.more = null; cx.notify(); }, { small: true })))
       .child(line(c, "dep-open-text", open.text, "grey500"))
       .child(moreBody(ship, c, open.id))))
     .when(!on && !ship.busy, (e) => e.child(ShipSection(ship, c)));

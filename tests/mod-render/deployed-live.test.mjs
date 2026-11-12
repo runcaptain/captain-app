@@ -72,7 +72,7 @@ let t = h.text();
 assert.ok(mine.test(t.match(/Where should (\S+) run\?/)?.[1] ?? ''), `the question names the model: ${t.slice(-700)}`);
 assert.ok(t.includes('This computer') && t.includes('Only you can reach it.') && t.includes('Connect a cloud to deploy where a site can reach it'), 'this computer, and the prompt to connect a cloud');
 assert.deepEqual(h.byIdPrefix('ship-deploy-').map((e) => e.call('id')[0]), ['ship-deploy-local'], 'no card for a cloud that is not connected');
-if (haveTrainer) assert.ok(/Next: Deploy outdoor\/starter-ranker@v\d+ to try it live\./.test(t), `the next step is to deploy it: ${t.slice(0, 500)}`);
+if (haveTrainer) assert.ok(/Next: Deploy starter-ranker@v\d+ to try it live\./.test(t), `the next step is to deploy it, named without its project: ${t.slice(0, 500)}`);
 clean(t.split('Ship').slice(-1)[0], 'in the Ship section');
 
 // One button. On this computer there is nothing to confirm: it runs, and then the page says what is deployed.
@@ -94,7 +94,8 @@ assert.ok(/Running on this computer\. (Answering requests|Ready, with nothing to
 assert.match(byId(h, 'ship-address')[0].kids.join(''), /^http:\/\/127\.0\.0\.1:\d+$/, 'the address');
 assert.equal(byId(h, 'ship-address')[0].call('font_family')?.[0], MONO, 'the address is in the code font: a person copies it');
 assert.equal(byId(h, 'ship-name')[0].call('font_family'), undefined, 'a name is not');
-assert.ok(t.includes('Only this computer can reach it.') && t.includes('Runs on this computer. No cloud cost.') && t.includes('It has answered no requests in the last hour.'), 'who can reach it, the cost, and how much it has answered');
+// The deploy's own last steps sent five test searches through it, so it has already answered those.
+assert.ok(t.includes('Only this computer can reach it.') && t.includes('Runs on this computer. No cloud cost.') && /It has answered 5 requests in the last hour\./.test(t), `who can reach it, the cost, and how much it has answered: ${t.slice(0, 900)}`);
 for (const id of ['ship-copy-address', 'ship-copy-test', 'ship-copy-key', 'ship-stop']) assert.equal(byId(h, id).length, 1, id);
 assert.equal(h.byIdPrefix('ship-send').length, 1, 'Send to agent');
 assert.equal(h.byIdPrefix('dep-tab-').length, 0, 'no tabs');

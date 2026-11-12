@@ -28,7 +28,7 @@ export function Bars(c, id, values, { height = 56, color, over = [], marks = [],
   box.children(marks.filter((m) => m !== null && m !== undefined).map((m) => div().absolute().top(0).bottom(0).left(`${((m + 0.5) / n) * 100}%`).w(1).bg(c.grey500)));
   return v_flex().w_full().gap(2)
     .child(box)
-    .child(h_flex().text_size(12.5).font_family(MONO).text_color(c.grey500)
+    .child(h_flex().text_size(12.5).text_color(c.grey500)
       .child(div().child(from)).child(div().flex_1())
       .child(div().id(`${id}-max`).child(hi > 0 ? `highest ${unit === "ms" ? ms(hi) : hi.toLocaleString("en-US")}` : "nothing in this range"))
       .child(div().flex_1()).child(div().child(to)));
@@ -46,7 +46,7 @@ export function CopiesTab(ship, c) {
     .child(lead(c, "dep-copies-text", d ? d.text : "Looking at the endpoint..."))
     .children((d?.rows ?? []).map((r, i) => v_flex().id(`dep-copy-${i}`).py(8).gap(8).border_t(1).border_color(c.rule)
       .child(h_flex().gap(10).items_center().flex_wrap()
-        .child(div().font_family(MONO).text_size(12.5).font_semibold().text_color(c.navy).child(r.copy))
+        .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(`Copy ${r.copy}`))
         .child(Badge(c, r.status, TONE[r.state] ?? "neutral"))
         .child(div().flex_1().min_w(0))
         .when(Boolean(r.can_stop) && !ship.busy, (e) => e.child(Button(c, `dep-copy-${i}-stop`, "Stop", (_e, cx) => { ship.stopAsk = true; cx.notify(); }, { small: true }))))
@@ -71,7 +71,7 @@ export function LogsTab(ship, c) {
       .child(h_flex().id("dep-logs-filter").w(260).h(28).px(8).items_center().border_1().border_color(c.grey300)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(ship.logBox).w_full().text_size(12.5).text_color(c.navy)))
       .child(Button(c, "dep-logs-apply", "Filter", (_e, cx) => { ship.logsD = null; ship.loadTab(cx); cx.notify(); }, { small: true }))
-      .when(Boolean(ship.logBox.value().trim()), (e) => e.child(Button(c, "dep-logs-clear", "Show all", (_e, cx) => { ship.logBox.set_value(""); ship.logsD = null; ship.loadTab(cx); cx.notify(); }, { small: true, kind: "quiet" })))
+      .when(Boolean(ship.logBox.value().trim()), (e) => e.child(Button(c, "dep-logs-clear", "Show all", (_e, cx) => { ship.logBox.set_value(""); ship.logsD = null; ship.loadTab(cx); cx.notify(); }, { small: true })))
       .child(div().flex_1().min_w(0))
       .when(Boolean(d?.streaming), (e) => e.child(h_flex().id("dep-logs-streaming").gap(6).items_center()
         .child(div().size(7).rounded_full().bg(c.good)).child(div().text_size(12.5).text_color(c.good).child("Streaming")))))
@@ -102,7 +102,7 @@ export function SettingsTab(ship, c) {
           .children((d.idle_choices ?? []).map((m) => div().id(`dep-set-idle-${m}`).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
             .border_color(d.idle_minutes === m ? c.blue : c.grey300).bg(d.idle_minutes === m ? c.blueLight : c.surface).text_color(d.idle_minutes === m ? c.blue : c.navy)
             .on_click((_e, cx) => ship.saveIdle(cx, m)).child(span(m))))
-          .child(Button(c, "dep-set-done", "Done", (_e, cx) => { ship.setEdit = false; cx.notify(); }, { small: true, kind: "quiet" })))))))
+          .child(Button(c, "dep-set-done", "Done", (_e, cx) => { ship.setEdit = false; cx.notify(); }, { small: true })))))))
     .when(Boolean(ship.setNote), (e) => e.child(div().id("dep-set-note").text_size(12.5).text_color(ship.setNote.tone === "fail" ? c.fail : c.good).child(ship.setNote.text)));
 }
 
@@ -122,7 +122,7 @@ export function DeploymentsList(ship, c) {
       .child(h_flex().gap(8).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().text_color(c.navy).child(r.name))
         .child(Badge(c, r.status, TONE[r.state] ?? "neutral")))
-      .child(div().font_family(MONO).text_size(12.5).text_color(c.grey900).truncate().child(short(r.model_version)))
+      .child(div().text_size(12.5).text_color(c.grey900).truncate().child(short(r.model_version)))
       .child(div().id(`deps-card-${i}-where`).text_size(12.5).text_color(c.grey900).child(r.where))
       .child(div().id(`deps-card-${i}-since`).text_size(12.5).text_color(c.grey500).child(r.since_text))
       .child(Bars(c, `deps-card-${i}-bars`, r.series ?? [], { over: r.errors ?? [], height: 34, from: "24 h ago", to: "now" }))

@@ -23,7 +23,7 @@ const LOCAL = { host: 'local', id: 'local', label: 'This computer', login: null,
   estimate: { free: true, text: 'Free.' }, fit: { outcome: 'fits', text: 'Needs about 180 MB of memory.' } };
 const AWS = { host: 'aws', id: 'aws:aws-main', label: 'AWS', login: 'aws-main', login_label: 'Amazon Web Services', region: 'us-west-1', can_deploy: true, why_not: null, first_time: true,
   proven: '2026-11-11', proven_text: 'Ran on a real account on 2026-11-11.', sleeps: false, reachable: true,
-  estimate: { text: 'About $0.07 an hour, about $48 a month if it runs all the time.' }, minutes_text: 'About 4 minutes the first time, 2 after.' };
+  estimate: { text: 'About $0.07 an hour, about $48 a month if it runs all the time.', machine: 'ml.m5.large' }, minutes_text: 'About 4 minutes the first time, 2 after.' };
 // The plan is the host's own. This one has two groups and five things: the page must not assume a number.
 const PLAN = { project: 'shop', host: 'aws', login: 'aws-main', label: 'AWS', model_version: 'shop/starter-ranker@v2', beside: 'shop/keyword-baseline@v1', first_time: true,
   creates: { short: 'Two roles, an image repository, an image build and the endpoint.', count: 5, groups: [
@@ -114,6 +114,15 @@ assert.deepEqual(h.byIdPrefix('ship-deploy-').map((e) => e.call('id')[0]), ['shi
 assert.ok(t.includes('Connect a cloud') && !t.includes('Connect a cloud to deploy where a site can reach it'), 'connecting another is a small card now');
 assert.ok(!t.includes("isn't set up"), 'a connected cloud never says it is not set up');
 
+// A login named after its cloud isn't said twice: "AWS  aws" is just "AWS", with the region. Two logins of one
+// cloud are told apart by name.
+{
+  const one = await open({ places: [LOCAL, { ...AWS, id: 'aws:aws', login: 'aws' }] });
+  assert.ok(one.text().includes('us-west-1') && !/\baws \u00b7/.test(one.text()), `the login name is not repeated: ${one.text()}`);
+  const two = await open({ places: [LOCAL, { ...AWS, id: 'aws:aws', login: 'aws' }, { ...AWS, id: 'aws:aws-eu', login: 'aws-eu', region: 'eu-west-1' }] });
+  assert.ok(two.text().includes('aws \u00b7 us-west-1') && two.text().includes('aws-eu \u00b7 eu-west-1'), `two logins of one cloud are named: ${two.text()}`);
+}
+
 // Deploy on the cloud: one confirm, and nothing starts without a yes.
 await h.click('ship-deploy-aws:aws-main');
 await wait(h, () => byId(h, 'ship-confirm').length === 1, 'the confirm opens');
@@ -125,6 +134,7 @@ assert.ok(t.includes('About $0.07 an hour, about $48 a month if it runs all the 
 assert.equal(sent.filter((x) => x[0] === 'POST' && x[1].endsWith('/deploy') && x[2].confirm).length, 0, 'nothing was started');
 await h.click('ship-confirm-all');
 assert.ok(h.text().includes('captain-serving-build') && h.text().includes('Show less'), 'Show everything lists each thing by name');
+assert.ok(h.text().includes('Machine: ml.m5.large. The price is for this machine in this region.'), 'and names the machine the price is for');
 assert.equal(h.byIdPrefix('ship-place-').length, 0, 'the confirm stands alone: one question at a time');
 
 // Yes: one progress view, each step named.
@@ -151,6 +161,18 @@ await h.click('ship-confirm-yes');
 await wait(h, () => Boolean(h.mod.ship.djob?.failed), 'the failure is shown');
 t = h.text();
 assert.ok(t.includes('Deploying to AWS stopped') && t.includes("it lacks iam:CreateRole") && t.includes('iam:CreateRole') && t.includes('Copy the policy') && t.includes('Deploy again'), `the failure: ${t}`);
+
+// The deploy finished, but a step after it did not (saving to the registry): said in words, and it is still deployed.
+h = await open({ places: [LOCAL, AWS], job: () => ({ status: 'done', steps: [...STEPS.map((x) => ({ ...x, status: 'done' })), { id: 'match', title: 'Checking it matches training', status: 'done', lines: ['Served features match training: 100% of 40 checked'] },
+  { id: 'publish', title: 'Saving this version to your model registry', status: 'failed' }], soft_failed: [{ id: 'publish', title: 'Saving this version to your model registry', error: "Captain can't write to s3://registry-bucket with this login." }] }) });
+await h.click('ship-deploy-aws:aws-main');
+await wait(h, () => byId(h, 'ship-confirm').length === 1, 'confirm');
+world.staging = RUN;
+await h.click('ship-confirm-yes');
+await wait(h, () => !h.mod.ship.djob && Boolean(h.mod.ship.dnote), 'the run ends');
+t = h.text();
+assert.ok(t.includes("Deployed to AWS, but one step didn't finish. Saving this version to your model registry: Captain can't write to s3://registry-bucket with this login."), `a step that didn't finish is said: ${t}`);
+assert.ok(t.includes('Running on AWS.'), 'and the model is up');
 
 // This computer needs no confirm.
 h = await open({ places: [LOCAL, AWS], job: () => ({ status: 'done', steps: [] }) });
@@ -230,6 +252,46 @@ assert.ok(h.text().includes('Stop it? The address goes away. What it answered is
 h = await open({ places: [LOCAL, AWS], staging: RUN, real: 12 }, true);
 await wait(h, () => Boolean(h.mod.ship.conn), 'traffic is read');
 assert.equal(h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]).at(-1), 'Review before launch', 'the review appears once there is real traffic');
+
+// The screen rules on the deployed screen and on everything behind More: no filled button (the next step's is
+// the banner above this screen), and the code font only on what a person copies: the address, a request's id,
+// the code a site pastes, and log lines.
+{
+  const { palette, MONO } = await import(path.join(dir, 'kit/tokens.js'));
+  const solid = palette(false).solid;
+  const COPIED = /^(ship-address|ship-connect-address|ship-connect-snippet|dep-request-id|dep-log-\d+|dep-request-line-\d+)$/;
+  const idOf = (e) => e.call('id')?.[0] ?? '';
+  const counts = (hh) => {
+    const all = hh.byIdPrefix('');
+    const filled = all.filter((e) => e.call('bg')?.[0] === solid && e.call('on_click')).map(idOf);
+    // a code-font element counts by the nearest id at or above it
+    const mono = [];
+    const walk = (e, near) => { if (!e || typeof e !== 'object' || typeof e.call !== 'function') return; const id = idOf(e) || near; if (e.call('font_family')?.[0] === MONO) mono.push(id); for (const k of e.kids ?? []) walk(k, id); };
+    walk(hh.mod.render(), '');
+    return { filled, stray: mono.filter((id) => !COPIED.test(id)) };
+  };
+  const hh = await open({ places: [LOCAL, AWS], staging: RUN, real: 12 }, true);
+  await wait(hh, () => Boolean(hh.mod.ship.conn) && Boolean(hh.mod.ship.met), 'the screen is read');
+  const seen = {};
+  seen.screen = counts(hh);
+  for (const id of ['requests', 'differ', 'check', 'traffic', 'versions', 'logs', 'settings', 'review']) {
+    await hh.click(`dep-more-${id}`);
+    await hh.idle(120);
+    seen[id] = counts(hh);
+    await hh.click('dep-open-close');
+  }
+  for (const [where, k] of Object.entries(seen)) {
+    assert.deepEqual(k.filled, [], `no filled button on ${where}`);
+    assert.deepEqual(k.stray, [], `the code font only on what a person copies, on ${where}`);
+  }
+  console.log(`  counted on ${Object.keys(seen).length} views: 0 filled buttons, code font only on copied text`);
+  // Inside "Send it real traffic" the words are the page's: this model, and the other model by its own name.
+  await hh.click('dep-more-traffic');
+  await hh.idle(120);
+  const tt = hh.text();
+  assert.ok(!/\b(the |The |a )?(candidate|baseline)\b(?!-)/.test(tt.replace(/keyword-baseline/g, '')), `no "candidate" or "baseline" inside Send it real traffic: ${tt.match(/.{60}\b(candidate|baseline)\b.{40}/)?.[0]}`);
+  assert.ok(tt.includes("Your site keeps showing keyword-baseline's results. This model ranks the same requests silently"), `shadow mode in the page's words: ${tt.slice(-900)}`);
+}
 
 // Asleep, and stopped: said in words.
 h = await open({ places: [LOCAL, AWS], staging: { ...RUN, asleep: true }, live: { state: 'asleep', label: 'Asleep' } }, true);
