@@ -305,3 +305,18 @@ def test_deploy_again_is_offered_only_when_it_can_work(ws, logins, modal):  # no
     st = DP.status(ws, "shop")
     assert "retry" not in st["can"] and "not connected in Captain any more" in st["fix_text"]
     assert ("remove" in st["can"]) == bool(st["exists_now"])
+
+
+def test_what_the_first_deploy_created_is_listed_with_what_each_is_for(ws, logins, modal):  # noqa: F811
+    assert FL.created(ws) == {"places": [], "text": "Captain has created nothing in your cloud accounts."}
+    logins.append(LOGINS["modal"])
+    DP.run(ws, "shop", "modal", confirm=True)
+    FL.forget()
+    p = FL.created(ws)["places"]
+    assert [x["cloud_label"] for x in p] == ["Modal"] and p[0]["in_use_by"] and not p[0]["can_remove"] and "stop that first" in p[0]["text"]
+    kinds = {t["kind"]: t["what_for"] for t in p[0]["things"]}
+    assert kinds["modal-volume"] == "Holds the model's files and its request log." and all(t["what_for"] and t["name"] for t in p[0]["things"])
+    SG.unstage(ws, "shop")
+    FL.forget()
+    p = FL.created(ws)["places"]
+    assert p[0]["can_remove"] and p[0]["in_use_by"] == [] and "can be removed" in p[0]["text"]

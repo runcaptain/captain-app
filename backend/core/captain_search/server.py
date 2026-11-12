@@ -1561,6 +1561,16 @@ def deployed_remove(body: dict):
         raise HTTPException(409 if str(e).startswith("Confirm first") else 400, str(e)) from None
 
 
+@app.get("/api/deployed/created", dependencies=A)
+def deployed_created():
+    """What Captain created in each cloud account the first time a model was deployed there, with what each thing
+    is for: {places: [{cloud, cloud_label, login, region, things: [{kind, name, what_for}], in_use_by, can_remove,
+    text}], text}. `DELETE /api/serving/setup?cloud=` removes one place's."""
+    from .staging import fleet as FL
+
+    return FL.created(ctx())
+
+
 @app.get("/api/deployed/differences", dependencies=A)
 def deployed_differences():
     """What differs between Captain's records and the cloud, after correcting it: {corrected, unlinked, not_asked,
