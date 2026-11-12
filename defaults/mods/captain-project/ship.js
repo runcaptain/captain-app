@@ -21,7 +21,7 @@ import { Badge, Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { SendToAgent } from "./kit/context.js";
 import { costState, refreshEstimate, CostLine, costSlice } from "./kit/cost.js";
-import { HeaderChart, LiveCard, CopiesTab, MetricsTab, LogsTab, SettingsTab, CostTab, DeploymentsList } from "./deploy-tabs.js";
+import { HeaderChart, CopiesTab, MetricsTab, LogsTab, SettingsTab, CostTab, DeploymentsList } from "./deploy-tabs.js";
 
 const enc = encodeURIComponent;
 const THUMB = 96;
@@ -539,7 +539,7 @@ export class Ship {
   }
 
   /** What an engineer asks for: the endpoint, where it runs, the instance, the log, and every resource Captain made. */
-  detailsBox(c, s) {
+  detailsBox(c, s, part = null) {
     const ep = s.endpoint ?? {};
     const rows = [
       ["Model version", s.model_version],
@@ -554,11 +554,13 @@ export class Ship {
       ...(s.resources ?? []).map((r) => [`Created: ${r.type}`, r.name]),
       s.error ? ["Problem", s.error] : null,
     ].filter(Boolean);
+    const toggle = h_flex().id("ship-details-toggle").flex_none().gap(4).items_center().cursor_pointer().text_size(12).text_color(c.blue)
+      .on_click((_e, cx) => { this.details = !this.details; cx.notify(); })
+      .child(svg(icon(this.details ? "chevron-down" : "chevron-right")).size(11).flex_none())
+      .child("Details");
+    if (part === "toggle") return toggle;
     return v_flex().id("ship-details").gap(4)
-      .child(h_flex().id("ship-details-toggle").gap(4).items_center().cursor_pointer().text_size(12).text_color(c.blue)
-        .on_click((_e, cx) => { this.details = !this.details; cx.notify(); })
-        .child(svg(icon(this.details ? "chevron-down" : "chevron-right")).size(11).flex_none())
-        .child("Details"))
+      .when(part !== "rows", (e) => e.child(toggle))
       .when(this.details, (e) => e.child(v_flex().id("ship-details-rows").p(10).gap(3).bg(c.surface2).border_1().border_color(c.rule)
         .children(rows.map(([k, v], i) => h_flex().id(`ship-detail-${i}`).gap(10).items_start().text_size(12)
           .child(div().w(150).flex_none().text_color(c.grey500).child(k))
@@ -1006,31 +1008,37 @@ export class Ship {
     const costLine = on && !this.confirm ? v_flex().id("ship-line-cost").gap(2)
       .child(CostLine(c, "ship-cost", this.cost.estimate ?? s?.cost?.estimate ?? { text: s?.cost?.text ?? "", basis: [] }, this.cost, { onToggle: (_e, cx) => { this.cost.open = !this.cost.open; cx.notify(); } }))
       .when(!local, (e) => e.child(div().id("ship-cost-billing").text_size(12).text_color(c.grey900).child("This keeps billing until you stop it."))) : null;
-    return v_flex().id("ship-header").w_full().p(14).gap(10).bg(c.surface).border_1().border_color(c.rule)
-      .child(h_flex().gap(10).items_start().flex_wrap()
-        .child(v_flex().flex_1().min_w(260).gap(6)
-          .child(h_flex().gap(8).items_center().flex_wrap()
-            .child(div().id("ship-name").font_family(MONO).text_size(16).font_semibold().text_color(c.navy).child(name))
-            .when(on && Boolean(s.arms?.baseline) && s.serve !== "baseline", (e) => e.child(div().id("ship-beside").text_size(12).text_color(c.grey500).child(`beside the baseline ${short(s.arms.baseline)}`))))
-          .child(h_flex().id("ship-chips").gap(6).flex_wrap()
-            .child(this.chip(c, "ship-chip-state", state[0], state[1]))
-            .when(on, (e) => e
-              .child(this.chip(c, "ship-chip-running", `${k?.running ?? 0} request${(k?.running ?? 0) === 1 ? "" : "s"} running`))
-              .child(this.chip(c, "ship-chip-where", local ? "This computer" : `Your ${cloud ?? "cloud"} account`))
-              .when(Boolean(s.needs_key), (x) => x.child(this.chip(c, "ship-chip-key", "Key required")))
-              // What the traffic is, only once there is some. Never "real" before a real request.
-              .when(Boolean(k?.evidence_label), (x) => x.child(this.chip(c, "ship-chip-traffic", k.evidence_label, k.real ? "good" : k.unlabelled ? "neutral" : "warn"))))))
+    // Compact, so a tab's content is in view without scrolling on a laptop window: one row for the name, the chips
+    // and the actions, then one for the address. What is said once in a chip is not said again in a sentence.
+    return v_flex().id("ship-header").w_full().px(12).py(10).gap(6).bg(c.surface).border_1().border_color(c.rule)
+      .child(h_flex().id("ship-chips").gap(6).items_center().flex_wrap()
+        .child(div().id("ship-name").font_family(MONO).text_size(15).font_semibold().text_color(c.navy).child(name))
+        .when(on && Boolean(s.arms?.baseline) && s.serve !== "baseline", (e) => e.child(div().id("ship-beside").text_size(12).text_color(c.grey500).child(`beside the baseline ${short(s.arms.baseline)}`)))
+        .child(this.chip(c, "ship-chip-state", state[0], state[1]))
+        .when(on, (e) => e
+          // Which of the three states: idle is a state, in plain colour, never a fault. The header keeps its
+          // place on every tab, so these chips are the live card.
+          .when(Boolean(this.liveD) && this.liveD.state !== "stopped", (x) => x.child(this.chip(c, "dep-live-state", this.liveD.label, this.liveD.state === "handling" ? "good" : "neutral")))
+          .child(this.chip(c, "ship-chip-running", `${k?.running ?? this.liveD?.running ?? 0} request${(k?.running ?? this.liveD?.running ?? 0) === 1 ? "" : "s"} running`))
+          .when(Boolean(this.status?.health?.shadow), (x) => x.child(this.chip(c, "ship-chip-shadow", "Shadow mode", "warn")))
+          .child(this.chip(c, "ship-chip-where", local ? "This computer" : `Your ${cloud ?? "cloud"} account`))
+          .when(Boolean(s.needs_key), (x) => x.child(this.chip(c, "ship-chip-key", "Key required")))
+          // What the traffic is, only once there is some. Never "real" before a real request.
+          .when(Boolean(k?.evidence_label), (x) => x.child(this.chip(c, "ship-chip-traffic", k.evidence_label, k.real ? "good" : k.unlabelled ? "neutral" : "warn"))))
+        .child(div().flex_1().min_w(0))
         .child(actions))
-      .when(on, (e) => e.child(v_flex().id("ship-reach").gap(4)
+      .when(on, (e) => e.child(v_flex().id("ship-reach").gap(3)
         .child(h_flex().gap(8).items_center().flex_wrap()
           .child(div().id("ship-address").font_family(MONO).text_size(12.5).text_color(c.navy).child(address))
           .child(Button(c, "ship-copy-address", "Copy", (_e, cx) => this.copy(cx, address, "The address is on your clipboard."), { small: true }))
           .child(Button(c, "ship-copy-key", "Copy the key", (_e, cx) => this.copyKey(cx), { small: true }))
-          .when(Boolean(k?.test_request), (x) => x.child(Button(c, "ship-copy-test", "Copy a test request", (_e, cx) => this.copy(cx, k.test_request, "A test request is on your clipboard. Set CAPTAIN_STAGING_KEY in that shell first: Copy the key gives it to you."), { small: true }))))
-        .child(div().id("ship-where").text_size(12).line_height("17px").text_color(c.grey900)
-          .child(local ? "Only this computer can reach it." : `It runs in your ${cloud ?? "cloud"} account. Your site can call it.`))
-        // How long it has been up and when it stops by itself. Where it runs is already said above, once.
-        .when(Boolean(this.status.health), (x) => x.child(div().id("ship-status").text_size(12).line_height("17px").text_color(c.grey500)
+          .when(Boolean(k?.test_request), (x) => x.child(Button(c, "ship-copy-test", "Copy a test request", (_e, cx) => this.copy(cx, k.test_request, "A test request is on your clipboard. Set CAPTAIN_STAGING_KEY in that shell first: Copy the key gives it to you."), { small: true })))
+          .child(div().id("ship-where").text_size(12).text_color(c.grey900)
+            .child(local ? "Only this computer can reach it." : `It runs in your ${cloud ?? "cloud"} account. Your site can call it.`))
+          .child(div().flex_1().min_w(0))
+          .child(this.detailsBox(c, s, "toggle")))
+        // Folded by default, so the tab's content has the room: how long it has been up and when it stops.
+        .when(this.details && Boolean(this.status.health), (x) => x.child(div().id("ship-status").w_full().text_size(12).line_height("17px").text_color(c.grey500)
           .child(`${this.status.health.shadow ? "Shadow mode is on: every request is answered with the baseline's results. " : ""}Up ${span(this.status.health.uptime_s)}. Stops by itself in ${span(this.status.health.stops_in_s)} if nobody uses it.`)))))
       .when(!on && Boolean(s) && !this.busy, (e) => e.child(div().id("ship-line-stopped").text_size(12).line_height("17px").text_color(c.grey900)
         .child(s.status === "stopped" ? `Last staged: ${short(s.model_version)}. ${this.status.text}` : this.status.text)))
@@ -1038,7 +1046,8 @@ export class Ship {
       .when(!on && !s, (e) => e.child(div().id("ship-line-what").text_size(12).line_height("17px").text_color(c.grey900)
         .child("Staging runs a model version as a live endpoint you can try before launch review. It runs in your own cloud, or on this computer.")))
       .when(!on && !this.busy && !this.confirm, (e) => e.child(this.choices(c)))
-      .when(Boolean(costLine), (e) => e.child(costLine))
+      // What it costs stays in view when it bills. On this computer it costs nothing, which the chip already says.
+      .when(Boolean(costLine) && (!on || !local || this.details), (e) => e.child(costLine))
       .when(Boolean(s) && this.page.deployOpen, (e) => e.child(HeaderChart(this, c)))
       .when(Boolean(this.status?.warning), (e) => e.child(div().id("ship-line-warning").text_size(12).text_color(c.warn).child(this.status.warning)))
       .when(Boolean(this.note), (e) => e.child(div().id("ship-note").px(10).py(6).text_size(12).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)
@@ -1048,7 +1057,7 @@ export class Ship {
       .when(Boolean(this.servingLine(c)), (e) => e.child(this.servingLine(c)))
       .when(Boolean(this.confirm), (e) => e.child(this.confirmBox(c)))
       .when(Boolean(this.stopAsk) && on, (e) => e.child(this.stopBox(c)))
-      .when(Boolean(s), (e) => e.child(this.detailsBox(c, s)));
+      .when(Boolean(s), (e) => e.child(this.detailsBox(c, s, on ? "rows" : null)));
   }
 
   /** What a tab needs, asked when it is opened and again while it stays open. */
@@ -1065,6 +1074,24 @@ export class Ship {
     if (this.tab === "settings") get("/staging/settings", (d) => { this.setD = d; });
     if (this.tab === "cost") get("/staging/cost", (d) => { this.costD = d; });
   }
+
+  /** Is the header's chart open? A person's own choice wins and is remembered on this computer. Until they make
+   *  one it is open on the Requests tab and folded on the others, where the tab's content needs the room. */
+  chartShown() {
+    let kept = null;
+    try { kept = globalThis.localStorage?.getItem("captain.deployment.chart") ?? null; } catch {}
+    return kept === "open" ? true : kept === "folded" ? false : this.tab === "requests";
+  }
+
+  setChart(cx, open) {
+    try { globalThis.localStorage?.setItem("captain.deployment.chart", open ? "open" : "folded"); } catch {}
+    cx.notify();
+  }
+
+  /** The deployment page is laid out to fill the window, with the tab bar fixed and the tab's content scrolling
+   *  by itself, while a model is running and no question is open in the header. Otherwise the header holds the
+   *  choice of where to run or a confirm, which can be tall, so the whole page scrolls as one. */
+  pinned() { return this.running() && !this.confirm && !this.sheet && !this.listOpen; }
 
   /** Change how long an idle endpoint stays up. */
   saveIdle(cx, minutes) {
@@ -1188,11 +1215,11 @@ export class Ship {
     const [, tryIt, connect, ab, launch] = this.steps();
     const tabs = [["requests", "Requests"], ["try", "Try it"], ["traffic", "Traffic"], ["copies", "Copies"], ["metrics", "Metrics"],
       ["versions", "Versions"], ["logs", "Logs"], ["settings", "Settings"], ["cost", "Cost"]];
-    // The live card sits at the end of the tab row, so the state and the counts stay in view on every tab.
-    const tab = h_flex().id("dep-tabs").gap(18).items_center().flex_wrap().border_b(1).border_color(c.rule).children(tabs.map(([id, label]) =>
-      div().id(`dep-tab-${id}`).py(8).text_size(13).font_medium().cursor_pointer().border_b(2).border_color(this.tab === id ? c.blue : "#00000000")
+    // Nine tabs on one row, also beside an open terminal column: tight spacing, and no wrapping to a second row.
+    const tab = h_flex().id("dep-tabs").gap(12).items_center().border_b(1).border_color(c.rule).children(tabs.map(([id, label]) =>
+      div().id(`dep-tab-${id}`).flex_none().py(6).text_size(12.5).font_medium().cursor_pointer().border_b(2).border_color(this.tab === id ? c.blue : "#00000000")
         .text_color(this.tab === id ? c.blue : c.grey900).on_click((_e, cx) => { this.tab = id; this.loadTab(cx); cx.notify(); }).child(label)))
-      .child(div().flex_1().min_w(0)).when(Boolean(LiveCard(this, c)), (e) => e.child(LiveCard(this, c)));
+;
     const more = { copies: CopiesTab, metrics: MetricsTab, logs: LogsTab, settings: SettingsTab, cost: CostTab }[this.tab];
     const body = more ? more(this, c) : this.tab === "requests" ? this.requestsTab(c) : this.tab === "versions" ? this.versionsTab(c) : this.tab === "try"
       ? v_flex().id("dep-try").w_full().bg(c.surface).border_1().border_color(c.rule).child(this.tryStep(c, tryIt))
@@ -1200,6 +1227,10 @@ export class Ship {
         .when(this.page.shipFrom !== "ab", (e) => e.child(this.connectStep(c, connect)))
         .child(div().border_t(1).border_color(c.rule).child(this.abStep(c, ab)))
         .child(div().border_t(1).border_color(c.rule).child(this.launchStep(c, launch)));
+    // Pinned: the header and the tab bar keep their place and only the tab's content scrolls.
+    if (this.pinned()) return v_flex().id("deployment").w_full().flex_1().min_h(0).gap(8)
+      .child(div().flex_none().child(this.header(c))).child(div().flex_none().child(tab))
+      .child(div().id("dep-body").flex_1().min_h(0).overflow_y_scroll().child(body));
     return v_flex().id("deployment").w_full().gap(12).child(this.header(c)).child(tab).child(body);
   }
 

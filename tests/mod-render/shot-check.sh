@@ -234,9 +234,8 @@ props_of() {
     captain-project:ship) echo '{"deployment": true}' ;;
     captain-project:pins) echo '{"pinCheck": true}' ;;
     captain-project:connect) echo '{"shipFrom": "connect"}' ;;
-    captain-project:dep-requests|captain-project:dep-copies|captain-project:dep-metrics|captain-project:dep-logs|captain-project:dep-settings|captain-project:dep-cost)
-      echo "{\"depTab\": \"${1#captain-project:dep-}\"}" ;;
     captain-project:dep-list) echo '{"depList": true}' ;;
+    captain-project:dep-*) echo "{\"depTab\": \"${1#captain-project:dep-}\"}" ;;  # any tab: requests, try, traffic, copies, metrics, versions, logs, settings, cost
     captain-project:ab) echo '{"shipFrom": "ab"}' ;;
     captain-data:models-attach) echo '{"tab": "models", "registryAttach": true}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;

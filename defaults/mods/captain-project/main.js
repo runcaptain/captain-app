@@ -1085,6 +1085,7 @@ export default class ProjectHome extends View {
         .child(Button(c, "ph-new", "New project", () => form("project"), { small: true }))
         .when(Boolean(pid), (e) => e.child(this.moreMenu(c))));
     let body;
+    const fill = Boolean(pid) && !this.problem && Boolean(this.stages) && Boolean(this.exps) && this.deployOpen && this.shipPath.pinned();
     if (!pid) body = this.list(c);
     else if (this.problem) body = Problem(c, this.problem, (cx) => this.load(cx));
     else if (!this.stages || !this.exps) body = Skeleton(c, 6);
@@ -1095,7 +1096,7 @@ export default class ProjectHome extends View {
         .child(div().text_color(c.grey500).child("/"))
         .child(div().text_color(c.navy).font_medium().child("Deployments")))
       .child(this.shipPath.deploymentsList(c));
-    else if (this.deployOpen) body = v_flex().gap(14)
+    else if (this.deployOpen) body = v_flex().gap(fill ? 8 : 14).when(fill, (e) => e.flex_1().min_h(0))
       // Projects / <project> / Deployment: the middle one goes back to the project.
       .child(h_flex().id("dep-crumbs").gap(6).items_center().text_size(12.5)
         .child(div().id("dep-crumb-projects").text_color(c.blue).cursor_pointer().on_click((_e, cx) => { this.deployOpen = false; this.allProjects(cx); }).child("Projects"))
@@ -1119,6 +1120,8 @@ export default class ProjectHome extends View {
       .child(this.everythingPart(c));
     return v_flex().id("project-home").size_full().bg(c.canvas).font_family(FONT).text_color(c.navy)
       .child(head)
-      .child(div().id("ph-body").flex_1().min_h(0).overflow_y_scroll().child(v_flex().px(24).py(16).child(body)));
+      // A staged model's page fills the window: its tab bar stays put and the tab's content scrolls by itself.
+      .child(fill ? v_flex().id("ph-body").flex_1().min_h(0).px(24).py(12).child(body)
+        : div().id("ph-body").flex_1().min_h(0).overflow_y_scroll().child(v_flex().px(24).py(16).child(body)));
   }
 }

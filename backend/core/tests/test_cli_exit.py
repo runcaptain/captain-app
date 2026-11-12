@@ -65,7 +65,9 @@ def test_ctrl_c_exits_as_it_did_before(tmp_path):
     import time
 
     p = subprocess.Popen([sys.executable, "-c",
-                          "import sys, time; from captain_search.cli import main as M\n"
+                          "import signal, sys, time; from captain_search.cli import main as M\n"
+                          # A test run in the background inherits "ignore Ctrl-C". Put Python's own handler back.
+                          "signal.signal(signal.SIGINT, signal.default_int_handler)\n"
                           "@M.app.command('sleep-for-test', hidden=True)\n"
                           "def s():\n    print('ready', flush=True)\n    time.sleep(60)\n"
                           "sys.argv = ['cst', 'sleep-for-test']; M.app()"],
