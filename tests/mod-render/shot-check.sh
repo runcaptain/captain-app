@@ -16,7 +16,7 @@ if [[ ${#MODS[@]} -eq 0 ]]; then
 fi
 # captain-deployments has no place of its own in the shipped layout yet (the sidebar's Deployments entry adds it), so
 # its pictures are taken in the Runs place.
-block_of() { case "$1" in captain-deployments) echo runs ;; captain-project) echo project ;; captain-team) echo team ;; captain-nav) echo project ;; captain-data) echo data ;; captain-runs) echo runs ;; captain-compare) echo comparisons ;; captain-notebooks) echo notebooks ;; *) echo "" ;; esac; }
+block_of() { case "$1" in captain-deployments) echo deployments ;; captain-project) echo project ;; captain-team) echo team ;; captain-nav) echo project ;; captain-data) echo data ;; captain-runs) echo runs ;; captain-compare) echo comparisons ;; captain-notebooks) echo notebooks ;; *) echo "" ;; esac; }
 # Extra views after the plain ones (the two that open the import wizard last, so it covers nothing after them): a query side by side (props the mods read at init).
 EXTRA=()
 for m in "${MODS[@]}"; do

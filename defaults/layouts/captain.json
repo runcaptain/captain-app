@@ -89,6 +89,13 @@
           }
         },
         {
+          "id": "deployments",
+          "type": "block",
+          "content": {
+            "mod": "captain-deployments"
+          }
+        },
+        {
           "id": "comparisons",
           "type": "block",
           "content": {
