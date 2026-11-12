@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime as dt
 
 from ..workspace import Context
-from . import ENV, _ago, _awake, _span, call, set_control, state, status
+from . import ENV, _ago, _span, call, read_flush, set_control, state, status
 from . import logs as L
 
 RANGES = {"15m": (15 * 60, "the last 15 minutes"), "1h": (3600, "the last hour"), "24h": (86400, "the last 24 hours"),
@@ -47,13 +47,7 @@ def _ms(x: float | None) -> str:
 
 
 def _flush(ctx: Context, rec: dict) -> None:
-    if rec.get("status") == "running" and rec.get("how") != "image":
-        if rec.get("scale_to_zero") and not _awake(ctx, rec):
-            return  # asleep: nothing is buffered, and asking would wake it
-        try:
-            call(ctx, rec, "flush", {})
-        except Exception:  # noqa: BLE001  a log a few seconds old is still a log
-            pass
+    read_flush(ctx, rec)  # never wakes a host that sleeps, never raises
 
 
 def _read(ctx: Context, pid: str, env: str, rec: dict, every_stage: bool = False) -> dict:

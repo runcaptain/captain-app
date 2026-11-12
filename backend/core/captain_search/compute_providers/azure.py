@@ -2,7 +2,8 @@
 
 Both ran real jobs on a real subscription on 2026-11-10, with the workspace in Azure Blob (az://): a demo seed, an
 offline evaluation with its live stream, a retrain, logs and cancel. docs/compute-live-testing.md has what was run
-and what it found. Serving on either is planned (compute.plan_serve) but not executable yet.
+and what it found. A deploy through `cst deploy` on either is planned (compute.plan_serve) but not executable yet.
+Staging a model on Container Apps is azure_serving.py: built, tested against a stand-in, not yet run on a real account.
 
 Known limits, from that run:
 - Neither service reports a container's exit code, so a job's exit_code stays empty.
