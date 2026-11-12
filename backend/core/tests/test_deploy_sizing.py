@@ -125,3 +125,20 @@ def test_a_workspace_name_prefix_names_what_a_first_deploy_makes(ws, logins, mod
     assert modal.volumes and all(any(str(part).startswith("team-two") for part in v) for v in modal.volumes)
     ST.set_serving_prefix(ws, "")
     assert "name_prefix" not in (ST.get(ws).get("serving") or {})
+
+
+def test_on_aws_the_prefix_names_the_serving_bucket_and_the_endpoint_too(ws, logins, monkeypatch):  # noqa: F811
+    from captain_search import cloud
+    from captain_search.staging import serving_setup as SS
+
+    f = FakeAwsSetup()
+    monkeypatch.setattr(cloud, "aws_session", lambda profile, region=None: f)
+    monkeypatch.setattr(SS, "docker_answers", lambda timeout=5.0: False)
+    logins.append(LOGINS["aws"])
+    ST.set_serving_prefix(ws, "team-two")
+    p = DP.plan(ws, "shop", "aws")
+    made = {x["resource"]: x["name"] for g in p["creates"]["groups"] for x in g["items"]}
+    # A workspace kept on this computer gets a serving bucket: named with the prefix, like the roles and the repository.
+    assert made["S3 bucket"].startswith("team-two-serving-") and made["SageMaker endpoint"] == "team-two-{project}-staging"
+    assert made["ECR repository"] == "team-two-serving" and made["CodeBuild project"] == "team-two-serving-build"
+    assert SS._serving_uri(None, "000000000000", "us-west-1", "w") == "s3://captain-serving-000000000000-us-west-1/w"

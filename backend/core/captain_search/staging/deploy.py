@@ -365,7 +365,15 @@ def plan(ctx: Context, pid: str, host: str = "local", login: str | None = None, 
         exists = [{"resource": x["type"], "name": x["name"]} for x in st.get("created") or []]
         setup_cost_text = ""
     if host == "aws" and not each:
-        each = [{"resource": "SageMaker endpoint", "name": "captain-{project}-staging",
+        from .. import settings as ST
+
+        if o["first_time"] or not o.get("target"):
+            named = (ST.get(ctx).get("serving") or {}).get("name_prefix")
+        else:  # what the place was set up with, which a later change of the setting does not rename
+            from .. import compute as C
+
+            named = (C.get(ctx, o["target"]).get("config") or {}).get("name_prefix")
+        each = [{"resource": "SageMaker endpoint", "name": f"{named or 'captain'}-{{project}}-staging",
                  "why": "The model, answering. Made now, deleted when you stop it. It bills by the hour while it is up."}]
     # Which machine, and why this one, said once where "Show everything" puts it.
     # It is a choice, not a thing made, so it comes last and is left out of the count.

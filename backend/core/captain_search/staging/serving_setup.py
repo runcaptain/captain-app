@@ -86,11 +86,12 @@ def names(prefix: str = "captain") -> dict:
             "target": "aws-serving", "endpoints": p}
 
 
-def _serving_uri(bucket: str | None, account: str | None, region: str, workspace: str) -> str:
+def _serving_uri(bucket: str | None, account: str | None, region: str, workspace: str, prefix: str = "captain") -> str:
     """Where a workspace kept on this computer puts its serving bundle and request log. `bucket` is a bucket name
     (a folder named after the workspace is used inside it) or a full s3:// address with the folder to use."""
     if not bucket:
-        return f"s3://captain-serving-{account}-{region}/{workspace}"
+        # Named like everything else setup makes. A workspace with its own name prefix gets its own bucket.
+        return f"s3://{prefix.strip('-') or 'captain'}-serving-{account}-{region}/{workspace}"
     b = bucket.strip().rstrip("/")
     if b.startswith("s3://"):
         return b if "/" in b[5:] else f"{b}/{workspace}"
@@ -273,7 +274,7 @@ def plan(ctx: Context, profile: str, region: str, *, name_prefix: str = "captain
     if account is None:
         account = cloud.aws_session(profile, region).client("sts").get_caller_identity()["Account"]
     local = not ctx.workspace.storage_uri.startswith("s3://")
-    storage = ctx.workspace.storage_uri if not local else _serving_uri(bucket, account, region, ctx.workspace.name)
+    storage = ctx.workspace.storage_uri if not local else _serving_uri(bucket, account, region, ctx.workspace.name, name_prefix)
     rows = [
         {"resource": "IAM role", "name": n["role"], "why": "The endpoint runs as this. It can read the serving bundle, write the request log, "
                                                            "pull the serving image and delete its own endpoint. Nothing else."},
