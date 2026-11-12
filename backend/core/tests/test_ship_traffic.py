@@ -154,6 +154,8 @@ def test_shadow_readout_numbers_and_labels():
     r = TF.shadow_compute(sh, {"requests": reqs, "outcomes": [], "names": {}})
     assert r["requests"] == 10 and r["top1_differs"] == 0.2 and r["top10_differs"] == 0.4 and r["overlap"] == 0.9
     assert [q["query"] for q in r["queries"]] == ["tent", "boots"] and r["queries"][0]["differs"] == 0.5 and r["queries"][1]["differs"] == 0.0
+    # the same ten in another order: no other products, but two places moved. Said as places, never as "0% differs".
+    assert r["queries"][1]["moved"] == 2 and r["queries"][0]["moved"] == 5
     assert r["ms"] == {"baseline": {"p95": 4.0, "mean": 4.0}, "candidate": {"p95": 9.0, "mean": 9.0}}
     assert "changed the top result on 20% and the top 10 on 40%" in r["text"] and "90% of the top 10 is the same" in r["text"]
     # identical everywhere: said plainly

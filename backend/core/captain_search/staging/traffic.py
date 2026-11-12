@@ -365,12 +365,16 @@ def shadow_compute(sh: dict, got: dict, traffic: str | None = None) -> dict:
     ov = sum(_overlap(r["ids"], r["shadow"]["ids"]) for r in reqs) / n
     per: dict[str, list] = {}
     for r in reqs:
-        d = per.setdefault(" ".join(str(r["query"]).lower().split()), [0, 0.0, 0])
+        d = per.setdefault(" ".join(str(r["query"]).lower().split()), [0, 0.0, 0, 0])
+        b, c_ = r["ids"][:10], r["shadow"]["ids"][:10]
         d[0] += 1
-        d[1] += 1 - _overlap(r["ids"], r["shadow"]["ids"])
-        d[2] += r["ids"][:10] != r["shadow"]["ids"][:10]
-    worst = sorted(({"query": q, "requests": c, "differs": round(d / c, 3), "top10_differs": bool(t)}
-                    for q, (c, d, t) in per.items() if t), key=lambda x: (-x["differs"], -x["requests"], x["query"]))[:10]
+        d[1] += 1 - _overlap(b, c_)
+        d[2] += b != c_
+        d[3] += sum(1 for i in range(max(len(b), len(c_))) if i >= len(b) or i >= len(c_) or b[i] != c_[i])
+    # `differs` is how many of the ten products are different ones. `moved` is how many places hold another
+    # product: the same ten in another order moves places without changing which products are shown.
+    worst = sorted(({"query": q, "requests": c, "differs": round(d / c, 3), "moved": round(m / c), "top10_differs": bool(t)}
+                    for q, (c, d, t, m) in per.items() if t), key=lambda x: (-x["differs"], -x["moved"], -x["requests"], x["query"]))[:10]
     errors = sum(1 for r in reqs if r["shadow"].get("error"))
     ms = {"baseline": {"p95": _p95([r.get("ms") for r in reqs]), "mean": round(sum(r.get("ms") or 0 for r in reqs) / n, 2)},
           "candidate": {"p95": _p95([r["shadow"].get("ms") for r in reqs]),

@@ -674,7 +674,7 @@ export class Ship {
         .children(r.queries.slice(0, 6).map((q, i) => h_flex().id(`ship-shadow-q${i}`).gap(8).items_center().cursor_pointer().hover((x) => x.bg(c.surface))
           .on_click((_e, cx) => this.tryQuery(cx, q.query))
           .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.blue).child(q.query))
-          .child(div().flex_none().text_size(11.5).text_color(c.grey500).child(`${Math.round(q.differs * 100)}% of the top 10 differs, ${q.requests} request${q.requests === 1 ? "" : "s"}`))))));
+          .child(div().flex_none().text_size(11.5).text_color(c.grey500).child(`${q.moved} of the top 10 in another place, ${q.requests} request${q.requests === 1 ? "" : "s"}`))))));
   }
 
   pick1(c, id, label, on, onPick) {
