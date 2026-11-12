@@ -138,8 +138,44 @@ no cloud.
 above, with the lines under each. `GET /api/projects/{id}/deploy` says where the last deploy stands (each step, the
 one that failed, what exists now, `can: [retry, remove]`), and `DELETE` removes it.
 
+### Which machine it runs on
+
+A deploy runs on the smallest machine the model fits on. Nobody has to choose one.
+
+1. **The need** is what the model takes to serve, from the same measured numbers the "this computer" card uses
+   (see "Where it runs"). The demo store's ranker beside its baseline needs about 205 MB.
+2. **The room**: the machine must have twice the need, and at least 1 GB more than the need.
+3. **The pick** is the cheapest size with that much memory, by the price table, for that host and region.
+
+| Host | Sizes Captain offers | The demo store gets |
+|---|---|---|
+| AWS | ml.t2.medium (4 GB), ml.c5.large (4 GB), ml.m5.large (8 GB), then the xlarge and 2xlarge of each | ml.t2.medium |
+| Modal | 1 CPU with 1, 2 or 4 GB, then 2 CPU 8 GB, 4 CPU 16 GB, 8 CPU 32 GB | 1 CPU, 2 GB |
+| Cloud Run | 1 vCPU with 512 MB, 1, 2 or 4 GB, then 2 vCPU 8 GB, 4 vCPU 16 GB, 8 vCPU 32 GB | 1 vCPU, 2 GB |
+| Container Apps | 0.25 vCPU 512 MB up to 4 vCPU 8 GB, in steps of 0.25 vCPU and 512 MB | 0.75 vCPU, 1.5 GB |
+
+Before this rule a first AWS deploy took ml.m5.large, about twice the hourly price of ml.t2.medium, whatever the
+model was.
+
+The plan says which machine and why in one line, as `machine.text` and as the last item under "For this model":
+"ml.t2.medium: this model needs about 205 MB, and this has 4 GB. The smallest that leaves room to spare." Each
+place in `GET .../deploy/hosts` carries the same `machine`, its price is that machine's, and `machines` lists the
+sizes a person can choose from.
+
+**A bigger machine**: `PUT /api/settings/serving` `{host, machine}`, with a name from `machines`. An empty
+`machine` goes back to the smallest that fits. A choice the model doesn't fit on is refused when the deploy is
+planned, with the reason. A deploy onto a place that was set up on another size changes the size first and says
+so in the run ("Using ...").
+
+**Names in the cloud account**: everything a first deploy makes starts with `captain`. `PUT /api/settings/serving`
+`{name_prefix}` changes that for the workspace, for two workspaces that share an account or an account where names
+must start a certain way. It is read the first time a place is set up, and does not rename what exists.
+
+**Too big**: a model that needs more than the largest size a host has is not offered there. The place says why
+("The largest Captain offers on Container Apps is 4 vCPU, 8 GB. Pick another place for it.").
+
 `cst projects stage` and `cst compute setup serving` below are the same work in two parts, kept for agents and
-scripts.
+scripts. They take the size they are given and do not pick one.
 
 ## Hosts: every place a staged model can run
 

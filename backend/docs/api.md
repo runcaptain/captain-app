@@ -1008,6 +1008,10 @@ CLI: `cst mlflow use --uri URL | --databricks CONN`, `cst mlflow experiments|run
   - compute targets, with `default_for` and each kind's `live_tested`;
   - compute `defaults`, the available `kinds`, registries, MLflow (no links) and model keys (set or not).
   `check=true` runs select 1 on each connection and each target's test. Secrets are never included.
+- `PUT /api/settings/serving {host, machine}`: the machine a deploy on that host (`aws`, `modal`, `gcp`, `azure`)
+  uses, in place of the smallest the model fits on. `machine` is a name from `machines` in
+  `GET /api/projects/{id}/deploy/hosts`. Empty goes back to the smallest that fits. `{name_prefix}` sets the start
+  of the name of everything a first deploy makes in a cloud account ("captain" when empty).
 - `GET /api/settings`, `PUT /api/settings/compute {backtest?, serve?}`: the compute that backtests and serving use
   unless they name their own. They're saved in the bucket (`settings.yaml`), so every teammate and session gets them.
   A target must list the purpose.

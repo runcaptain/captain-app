@@ -156,10 +156,19 @@ def _virtual(host, login: dict | None) -> dict:
             "region": _region(host.cloud, login), "config": cfg}
 
 
-def _estimate(ctx: Context, host, login: dict | None, target: dict | None) -> dict:
+def _need_mb(ctx: Context, arms: dict) -> float:
+    """What these versions need to serve, from the fit check: the numbers the "this computer" card uses."""
+    from . import fit as FT
+
+    return float(FT.need([FT._products(ctx, r) for r in arms.values()])["memory_mb"])
+
+
+def _estimate(ctx: Context, host, login: dict | None, target: dict | None, machine: dict | None = None) -> dict:
     from .. import cost_estimates as CE
 
     t = target or _virtual(host, login)
+    if machine:  # priced on the machine this model will run on, not on what the target last ran
+        t = {**t, "config": {**(t.get("config") or {}), **machine["config"]}}
     size = {"instances": int((t.get("config") or {}).get("instance_count") or 1),
             "instance_type": (t.get("config") or {}).get("instance_type") or "ml.m5.large"} if host.cloud == "aws" else {}
     try:
@@ -223,11 +232,14 @@ def offers(ctx: Context, pid: str, candidate: str | None = None, baseline: bool 
     """The places this project's model can be deployed. Read from the workspace and this computer's logins only:
     nothing here calls a cloud, so the page can ask on every load."""
     doc = PS.get(ctx, pid)
+    from . import sizing as SZ
+
     try:
         arms, serve, _exp = _pick(ctx, doc, candidate, baseline)
         version, beside, nothing = arms[serve], arms.get("baseline") if serve != "baseline" else None, None
+        need = _need_mb(ctx, arms)
     except ValueError as e:
-        version, beside, nothing = None, None, str(e)
+        version, beside, nothing, need = None, None, str(e), 0.0
     last = (doc.get("staging") or {}).get(env) or {}
     out = []
     # This computer, always. Whether the model fits is the plan's own check.
@@ -255,15 +267,24 @@ def offers(ctx: Context, pid: str, candidate: str | None = None, baseline: bool 
         # One serving setup per cloud in a workspace. Another login of the same cloud deploys through it or not at all.
         other = ready and owner and owner != login["name"]
         failed = (login.get("last_test") or {}).get("ok") is False
-        why = (nothing or (f"Serving in this workspace runs under the login {owner}. Deploy with that one." if other else None)
+        region = (target or {}).get("region") or _region(host.cloud, login)
+        machine, too_big = None, None
+        if version is not None:
+            try:
+                machine = SZ.pick(ctx, host.cloud, region, need)
+            except ValueError as e:  # too big for this host, or a choice in Settings that doesn't fit
+                too_big = str(e)
+        why = (nothing or too_big or (f"Serving in this workspace runs under the login {owner}. Deploy with that one." if other else None)
                or (f"This login's last check failed: {(login['last_test'].get('error') or 'no reason given')[:200]}" if failed else None))
         out.append({
             "id": f"{host.cloud}:{login['name']}", "why_not_action": None,
             "host": host.cloud, "label": host.label, "login": login["name"], "login_label": login.get("label") or host.label,
-            "region": (target or {}).get("region") or _region(host.cloud, login), "can_deploy": why is None, "why_not": why,
+            "region": region, "can_deploy": why is None, "why_not": why,
+            "machine": ({k: machine[k] for k in ("name", "memory_mb", "hourly_usd", "need_mb", "room_mb", "by", "text")} if machine else None),
+            "machines": SZ.offered(host.cloud, region),
             "first_time": not ready, "proven": host.proven, "proven_text": host.describe()["proven_text"], "sleeps": host.scale_to_zero,
             "reachable": True, "reach_text": "A site can reach it.", "last": bool(last) and last.get("kind") == host.kind,
-            "minutes": _minutes(host.cloud, not ready), "estimate": _priced(_estimate(ctx, host, login, target), host.cloud, host.scale_to_zero),
+            "minutes": _minutes(host.cloud, not ready), "estimate": _priced(_estimate(ctx, host, login, target, machine), host.cloud, host.scale_to_zero),
             "target": target["name"] if target else None, "setup_status": st.get("status")})
     return {"project": pid, "env": env, "model_version": version, "beside": beside, "hosts": out,
             "connected": len(out) - 1, "last_id": next((h["id"] for h in out if h["last"]), None),
@@ -322,18 +343,16 @@ def plan(ctx: Context, pid: str, host: str = "local", login: str | None = None, 
                 "cost": {"hourly_usd": 0.0, "monthly_usd": 0.0, "setup_usd": 0.0, "sleeps": False, "free": True, "estimate": p["cost"]["estimate"],
                          "text": "Free. It runs on this computer, and stops when idle."},
                 "text": f"{what} on this computer. Free, and only you can reach it." + (f" {fit['text']}" if fit.get("text") else "")}
+    from . import sizing as SZ
+
     hobj = H.get(host)
     st = _setup(ctx, hobj)
+    machine = SZ.pick(ctx, host, o["region"], _need_mb(ctx, arms))
+    base["machine"] = {k: machine[k] for k in ("name", "memory_mb", "hourly_usd", "need_mb", "room_mb", "by", "text", "config")}
     first_groups, exists, setup_usd, policy, policy_text, replaces = [], [], 0.0, None, None, None
     each = []
     if o["first_time"]:
-        opts = {} if host == "modal" else {"profile": o["login"], "region": o["region"]}
-        if host == "modal":
-            from .. import cloud
-
-            env_name = (cloud.get_profile(o["login"]).get("fields") or {}).get("environment")
-            opts = {"environment": env_name} if env_name else {}
-        hp = hobj.plan(ctx, **opts)
+        hp = hobj.plan(ctx, **_setup_options(ctx, host, o, machine))
         made = {(x["type"], x["name"]) for x in st.get("created") or []}
         first_groups = _group(hp["creates"])
         each = _group(hp.get("each_deploy") or [])
@@ -344,20 +363,33 @@ def plan(ctx: Context, pid: str, host: str = "local", login: str | None = None, 
         setup_cost_text = (hp.get("cost") or {}).get("text") or ""
     else:
         p = stage_plan(ctx, pid, candidate, baseline, env, o["target"])
-        est, replaces = p["cost"]["estimate"], p.get("replaces")
+        est, replaces = o["estimate"], p.get("replaces")
         base["warnings"] = p.get("warnings") or []
         exists = [{"resource": x["type"], "name": x["name"]} for x in st.get("created") or []]
         setup_cost_text = ""
     if host == "aws" and not each:
-        each = [{"resource": "SageMaker endpoint", "name": "captain-{project}-staging",
+        from .. import settings as ST
+
+        if o["first_time"] or not o.get("target"):
+            named = (ST.get(ctx).get("serving") or {}).get("name_prefix")
+        else:  # what the place was set up with, which a later change of the setting does not rename
+            from .. import compute as C
+
+            named = (C.get(ctx, o["target"]).get("config") or {}).get("name_prefix")
+        each = [{"resource": "SageMaker endpoint", "name": f"{named or 'captain'}-{{project}}-staging",
                  "why": "The model, answering. Made now, deleted when you stop it. It bills by the hour while it is up."}]
+    # Which machine, and why this one, said once where "Show everything" puts it.
+    # It is a choice, not a thing made, so it comes last and is left out of the count.
+    # Only beside things being made: a plan that makes nothing keeps an empty list, and `machine.text` still says it.
+    if each:
+        each = [x for x in each if x["resource"] != "Machine"] + [{"resource": "Machine", "name": machine["name"], "why": machine["text"]}]
     priced = est if "monthly_usd" in est else _priced(est, host, o["sleeps"])
     hourly, monthly, cost_text = priced["hourly_usd"], priced["monthly_usd"], priced["text"]
     if setup_usd:
         cost_text += f" The first time also costs about {_money(setup_usd)} once, to build the image."
     groups = (([{"title": "The first time only", "summary": WORDS[host]["short"], "items": first_groups}] if first_groups else [])
               + ([{"title": "For this model", "summary": WORDS[host]["model"], "items": each}] if each else []))
-    count = sum(len(g["items"]) for g in groups)
+    count = sum(1 for g in groups for x in g["items"] if x.get("resource") != "Machine")
     where = {"aws": "your AWS account", "modal": "your Modal workspace", "gcp": "your Google Cloud project", "azure": "your Azure subscription"}[host]
     short = (WORDS[host]["short"] if o["first_time"] else "Only the model itself. Everything else is already there.")
     return {**base, "needs_confirm": True, "replaces": replaces,
@@ -368,6 +400,36 @@ def plan(ctx: Context, pid: str, host: str = "local", login: str | None = None, 
             "login_policy": policy, "login_text": policy_text,
             "text": f"{what} in {where}" + (f" ({o['region']})" if o["region"] else "") + f". {short} {cost_text} {o['minutes']['text']}"
                     + ("" if o["proven"] else " " + (o["proven_text"] or ""))}
+
+
+def _setup_options(ctx: Context, host: str, o: dict, machine: dict) -> dict:
+    """What a host's setup is told: the login and region, the machine this model was sized for, and the workspace's
+    name prefix when one is set."""
+    from .. import settings as ST
+
+    prefix = (ST.get(ctx).get("serving") or {}).get("name_prefix")
+    named = {"name_prefix": prefix} if prefix else {}
+    if host == "modal":
+        from .. import cloud
+
+        env_name = (cloud.get_profile(o["login"]).get("fields") or {}).get("environment")
+        return {**({"environment": env_name} if env_name else {}), **machine["config"], **named}
+    size = {"instance_type": machine["config"]["instance_type"]} if host == "aws" else machine["config"]
+    return {"profile": o["login"], "region": o["region"], **size, **named}
+
+
+def _use_machine(ctx: Context, target_name: str, machine: dict, say) -> None:
+    """Point the compute target at the machine this model was sized for, when it is on another one. The size is
+    read at each deploy, so nothing running changes until the model is started."""
+    from .. import compute as C
+
+    t = C.get(ctx, target_name)
+    cfg = dict(t.get("config") or {})
+    if all(str(cfg.get(k)) == str(v) for k, v in machine["config"].items()):
+        return
+    secrets = {k: v for k, v in cfg.items() if k.endswith("_secret")}
+    C.add(ctx, target_name, t["kind"], t.get("profile"), t.get("region"), {**cfg, **machine["config"], **secrets}, replace=True)
+    say(f"Using {machine['text']}")
 
 
 # ---- the state of the last deploy -----------------------------------------------------------------
@@ -515,12 +577,7 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
             line(f"Looked at what is in {p['label']} already.")
             if p["first_time"]:
                 begin("access")
-                opts = {} if host == "modal" else {"profile": p["login"], "region": p["region"]}
-                if host == "modal":
-                    from .. import cloud
-
-                    en = (cloud.get_profile(p["login"]).get("fields") or {}).get("environment")
-                    opts = {"environment": en} if en else {}
+                opts = _setup_options(ctx, host, p, p["machine"])
                 got = hobj.setup(ctx, confirm=True, progress=setup_line, **opts)
                 if by_id["image"]["status"] == "pending":
                     end("done")
@@ -531,6 +588,8 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
                 skip("image", "Already built.")
                 target = hobj.target
         begin("start")
+        if host != "local":
+            _use_machine(ctx, target, p["machine"], line)
         rec = stage(ctx, pid, candidate, baseline, env, target, confirm=True, progress=line, allow_large=allow_large)
         _save(ctx, pid, env, host=host, login=p["login"])  # so every screen can say where it runs without guessing
         begin("ready")
