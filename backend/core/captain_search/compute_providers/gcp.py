@@ -9,6 +9,7 @@ only unit-tested against fakes: the runner image could not be built that day. Se
 from __future__ import annotations
 
 from . import IMAGE_DEFAULT, ComputeProvider, Job, env_list, status
+from .gcp_serving import CloudRunServing
 
 
 def _iso(t) -> str | None:
@@ -47,13 +48,23 @@ class _GCP(ComputeProvider):
         return {"lines": lines, "next": last, "where": "Cloud Logging"}
 
 
-class CloudRunProvider(_GCP):
+class CloudRunProvider(CloudRunServing, _GCP):
+    """Jobs here, staging endpoints in gcp_serving.py (the fields from `service_account` down are staging's, and
+    `cst compute setup serving gcp` fills them)."""
     kind, label = "gcp-cloud-run", "Google Cloud Run (jobs and services)"
     purposes = ["backtest", "serve"]
     fields = [
         {"name": "job", "label": "Job name (for offline evaluations)", "required": False},
         {"name": "service", "label": "Service name (for serving)", "required": False},
-        {"name": "image", "label": "Runner image", "required": True, "default": IMAGE_DEFAULT}]
+        {"name": "image", "label": "Runner image", "required": True, "default": IMAGE_DEFAULT},
+        {"name": "service_account", "label": "Service account a staging endpoint runs as", "required": False},
+        {"name": "serving_storage", "label": "Bucket folder for the serving bundle and request log", "required": False},
+        {"name": "name_prefix", "label": "Name prefix for staging services", "required": False, "default": "captain"},
+        {"name": "project", "label": "Project ID (blank for the login's own)", "required": False},
+        {"name": "cpu", "label": "vCPU for one staging copy", "required": False, "default": "1"},
+        {"name": "memory_mb", "label": "Memory for one staging copy, in MB", "required": False, "default": "2048"},
+        {"name": "min_copies", "label": "Staging copies kept up while idle (0 for none)", "required": False, "default": "0"},
+        {"name": "max_copies", "label": "Most staging copies at once", "required": False, "default": "1"}]
 
     def _job_path(self, project: str = "{project}") -> str:
         return f"projects/{project}/locations/{self.region}/jobs/{self.config['job']}"

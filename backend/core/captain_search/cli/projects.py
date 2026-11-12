@@ -587,7 +587,8 @@ def stage(name: str,
     ep = r.get("endpoint") or {}
     emit(r, f"Staged {r['model_version']} " + ("on this computer" if r["kind"] == "local" else f"on {r['target']}")
             + f"\nEndpoint: {ep.get('url') or ep.get('name')}\n{r['cost']['text']}"
-            + f"\nStops by itself after {r['idle_minutes']:g} minutes with no requests."
+            + ("\nSleeps when nobody calls it, and wakes on the next request." if r.get("scale_to_zero")
+               else f"\nStops by itself after {r['idle_minutes']:g} minutes with no requests.")
             + f"\nTry it: cst projects staging-query {name} \"<a query>\"")
 
 

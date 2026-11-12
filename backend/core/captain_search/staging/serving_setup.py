@@ -189,18 +189,28 @@ def image_source(ctx: Context, want: str = "auto") -> str:
     return "docker" if docker_answers() else "codebuild"
 
 
-def build_folder() -> tuple[bytes, str]:
-    """The zip CodeBuild (or Docker) builds the image from: the installed captain_search package, its requirements,
-    a Dockerfile and the entry script. No repository checkout is needed, so the installed app can do this."""
+# What each host's image needs beside the base install: the library for its storage and its sign-in.
+FLAVOR_EXTRAS = {"aws": (), "modal": (), "gcp": ("gcs",), "azure": ("azure",)}
+
+
+def build_folder(flavor: str = "aws") -> tuple[bytes, str]:
+    """The zip a cloud's own builder (or Docker) builds the image from: the installed captain_search package, its
+    requirements, a Dockerfile and the entry script. No repository checkout is needed, so the installed app can do
+    this. `flavor` adds what one host needs: the storage library for Google Cloud or Azure. On Modal the image
+    runs as root, because Modal mounts its volume owned by root."""
     import captain_search
     from importlib.metadata import PackageNotFoundError, requires
 
     root = os.path.dirname(os.path.abspath(captain_search.__file__))
+    extras = FLAVOR_EXTRAS[flavor]
     try:
-        reqs = [r.split(";")[0].strip() for r in (requires("captain-search") or []) if "extra ==" not in r]
+        every = requires("captain-search") or []
+        reqs = [r.split(";")[0].strip() for r in every if "extra ==" not in r]
+        reqs += [r.split(";")[0].strip() for r in every if any(f'extra == "{x}"' in r or f"extra == '{x}'" in r for x in extras)]
     except PackageNotFoundError:
         reqs = []
     reqs = sorted(set(reqs) | {"boto3>=1.35"})
+    dockerfile = DOCKERFILE.replace("USER cst\n", "") if flavor == "modal" else DOCKERFILE
     digest = hashlib.sha256()  # of the contents, so the same Captain gives the same image tag (a zip's own bytes carry times)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -215,12 +225,20 @@ def build_folder() -> tuple[bytes, str]:
                 with open(full, "rb") as fh:
                     digest.update(rel.encode() + b"\0" + hashlib.sha256(fh.read()).digest())
         z.writestr("requirements.txt", "\n".join(reqs) + "\n")
-        z.writestr("Dockerfile", DOCKERFILE)
+        z.writestr("Dockerfile", dockerfile)
         info = zipfile.ZipInfo("serve.sh")
         info.external_attr = 0o755 << 16
         z.writestr(info, SERVE_SH)
-    digest.update(("\n".join(reqs) + DOCKERFILE + SERVE_SH).encode())
+    digest.update(("\n".join(reqs) + dockerfile + SERVE_SH).encode())
     return buf.getvalue(), digest.hexdigest()
+
+
+def build_folder_dir(path: str, flavor: str = "aws") -> str:
+    """The build folder written out under `path`, for a builder that reads a folder. Returns its digest."""
+    folder, digest = build_folder(flavor)
+    zipfile.ZipFile(io.BytesIO(folder)).extractall(path)
+    os.chmod(os.path.join(path, "serve.sh"), 0o755)
+    return digest
 
 
 def _buildspec(image: str, registry: str, region: str, public: str | None) -> str:

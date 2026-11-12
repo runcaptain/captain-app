@@ -18,6 +18,7 @@ import os
 import tempfile
 
 from . import IMAGE_DEFAULT, ComputeProvider, Job, env_list, status
+from .azure_serving import ContainerAppsServing
 
 
 def _iso(t) -> str | None:
@@ -50,7 +51,9 @@ _ACA = {"Processing": "queued", "Running": "running", "Succeeded": "succeeded", 
         "Degraded": "failed", "Stopped": "stopped", "Unknown": "running"}
 
 
-class ContainerAppsProvider(_Azure):
+class ContainerAppsProvider(ContainerAppsServing, _Azure):
+    """Jobs here, staging endpoints in azure_serving.py (the fields from `environment_id` down are staging's, and
+    `cst compute setup serving azure` fills them)."""
     kind, label = "azure-container-apps", "Azure Container Apps (jobs and apps)"
     purposes = ["backtest", "serve"]
     fields = [
@@ -59,7 +62,17 @@ class ContainerAppsProvider(_Azure):
         {"name": "app", "label": "Container app name (for serving)", "required": False},
         {"name": "image", "label": "Runner image", "required": True, "default": IMAGE_DEFAULT},
         {"name": "container", "label": "Container name in the job template", "required": False, "default": "runner"},
-        {"name": "log_analytics_workspace_id", "label": "Log Analytics workspace ID (for logs)", "required": False}]
+        {"name": "log_analytics_workspace_id", "label": "Log Analytics workspace ID (for logs)", "required": False},
+        {"name": "environment_id", "label": "Container Apps environment a staging endpoint runs in", "required": False},
+        {"name": "identity_id", "label": "Managed identity a staging endpoint runs as", "required": False},
+        {"name": "identity_client_id", "label": "That identity's client ID", "required": False},
+        {"name": "registry_server", "label": "Registry that holds the serving image", "required": False},
+        {"name": "serving_storage", "label": "Storage container folder for the serving bundle and request log", "required": False},
+        {"name": "name_prefix", "label": "Name prefix for staging apps", "required": False, "default": "captain"},
+        {"name": "cpu", "label": "vCPU for one staging copy", "required": False, "default": "1"},
+        {"name": "memory_mb", "label": "Memory for one staging copy, in MB", "required": False, "default": "2048"},
+        {"name": "min_copies", "label": "Staging copies kept up while idle (0 for none)", "required": False, "default": "0"},
+        {"name": "max_copies", "label": "Most staging copies at once", "required": False, "default": "1"}]
 
     def plan(self, job: Job) -> list[dict]:
         c = self.config

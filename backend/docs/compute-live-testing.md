@@ -212,4 +212,5 @@ Known limits:
   cancel arrived after the run was written. Modal still reports that call as cancelled.
 - Not run: GPUs, a workspace in `gs://` or `az://`, the older `run_backtest` function, and jobs longer than a few
   minutes (the function's limit is 6 hours).
-- Modal does not serve pipelines from Captain (`cst` reports "modal cannot serve models").
+- A Modal function target (`modal`) runs jobs only. Hosting a staged model on Modal is its own kind, `modal-endpoint`,
+  made by `cst compute setup serving modal` and run on a real workspace on 2026-11-11: see "Hosts" in `cst docs staging`.

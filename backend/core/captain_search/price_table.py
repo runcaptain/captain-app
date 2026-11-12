@@ -149,6 +149,20 @@ SAGEMAKER_HOSTING = {'ap-northeast-1': {'ml.c5.2xlarge': 0.514,
                'ml.m5.xlarge': 0.23,
                'ml.t2.medium': 0.056}}
 
+# Hosts that bill by the second a copy is awake and nothing while it sleeps. List prices in USD, read from each
+# provider's own price page (Azure: its Retail Prices API) on the date below.
+SERVERLESS_PRICED_AS_OF = "2026-11-11"
+# Modal: one physical core (two vCPU) for a second, one GiB of memory for a second. No charge per request.
+MODAL = {"core_second": 0.0000131, "gib_second": 0.00000222, "volume_gib_month": 0.09}
+# Cloud Run services billed by request, Tier 1 regions: while a copy is answering, and while a kept-warm copy idles.
+CLOUD_RUN = {"vcpu_second": 0.000024, "gib_second": 0.0000025, "idle_vcpu_second": 0.0000025, "idle_gib_second": 0.0000025,
+             "million_requests": 0.40, "job_vcpu_second": 0.000018, "job_gib_second": 0.000002,
+             "build_minute": 0.006, "registry_gib_month": 0.10, "storage_gib_month": 0.020}
+# Azure Container Apps, Consumption plan. It costs more in some regions: West US 2 is 42% above East US on CPU.
+CONTAINER_APPS = {"default": {"vcpu_second": 0.000024, "gib_second": 0.000003, "idle_vcpu_second": 0.000003, "idle_gib_second": 0.000003},
+                  "westus2": {"vcpu_second": 0.000034, "gib_second": 0.000004, "idle_vcpu_second": 0.000004, "idle_gib_second": 0.000004}}
+AZURE_EXTRAS = {"million_requests": 0.40, "registry_basic_day": 0.1666, "build_vcpu_second": 0.0001, "log_gb": 2.30}
+
 LLM_PRICED_AS_OF = "2026-11-03"
 # model id -> (USD per million input tokens, USD per million output tokens)
 LLM = {

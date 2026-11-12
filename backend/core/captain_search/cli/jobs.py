@@ -168,3 +168,55 @@ def setup_aws_serving(profile: str = typer.Option(..., "--profile", help="cloud 
     except (ValueError, NotFound) as e:
         fail(str(e))
     emit(r, r["text"])
+
+
+@setup_app.command("serving")
+def setup_serving(cloud: str = typer.Argument(..., help="where to host: aws, modal, gcp or azure"),
+                  option: list[str] = typer.Option([], "--set", help="a setup option, name=value (see --options). Repeat"),
+                  options: bool = typer.Option(False, "--options", help="list what this host's setup asks"),
+                  remove: bool = typer.Option(False, "--remove", help="remove the serving setup instead"),
+                  policy: bool = typer.Option(False, "--policy", help="print what your login must be allowed to do, for an admin"),
+                  leftovers: bool = typer.Option(False, "--leftovers", help="ask the cloud what of Captain's is still there"),
+                  yes: bool = typer.Option(False, "--yes", "-y")):
+    """Set up serving on one host, the same way for every cloud: what it creates and costs first, then a confirm.
+    `cst compute setup serving modal`, `... gcp --set profile=<login> --set region=us-central1`."""
+    import json as _json
+
+    from ..staging import hosts as H
+
+    c = ctx()
+    try:
+        h = H.get(cloud)
+        if options:
+            d = h.describe()
+            return emit(d, "\n".join([f"{d['label']}: {d['proven_text'] or ''}".strip(), f"  Storage: {d['storage']}", f"  Address: {d['address']}"]
+                                     + [f"  --set {o['name']}=...   {o['label']}" + (f" (default {o['default']})" if o.get("default") else "")
+                                        + (" (required)" if o.get("required") else "") for o in d["options"]]))
+        if leftovers:
+            left = h.leftovers(c)
+            return emit({"cloud": cloud, "left": left}, "Nothing of Captain's is left there." if not left else
+                        "Still there:\n" + "\n".join(f"  {x['type']:22} {x['name']}" + (f"  ({x['error']})" if x.get("error") else "") for x in left))
+        opts = dict(o.split("=", 1) for o in option if "=" in o)
+        if remove:
+            r = h.teardown(c, progress=None if S.json else lambda t: typer.echo(t, err=True), **opts)
+            return emit(r, r["text"])
+        p = h.plan(c, **opts)
+        if policy:
+            pol = p.get("login_policy")
+            return emit({"policy": pol, "text": p.get("login_text")}, _json.dumps(pol, indent=2) if pol else p.get("login_text") or "Nothing to grant.")
+        if S.dry_run or not yes:
+            lines = (["Would create:" if S.dry_run else "This will create:"] + [f"  {r['resource']:24} {r['name']:34} {r['why']}" for r in p["creates"]]
+                     + (["Each staged model adds:"] + [f"  {r['resource']:24} {r['name']:34} {r['why']}" for r in p["each_deploy"]] if p.get("each_deploy") else [])
+                     + [p["cost"]["text"]])
+            if S.dry_run:
+                return emit({**p, "dry_run": True}, "\n".join(lines))
+            typer.echo("\n".join(lines))
+            if not typer.confirm("Create these?"):
+                raise typer.Exit(1)
+        r = h.setup(c, confirm=True, progress=None if S.json else lambda t: typer.echo(t, err=True), **opts)
+    except H.MissingPermission as e:
+        emit({"error": str(e), "policy": e.policy}, f"error: {e}\n{_json.dumps(e.policy, indent=2)}")
+        raise typer.Exit(1)
+    except (ValueError, NotFound, KeyError) as e:
+        fail(str(e) if not isinstance(e, KeyError) else f"this host's setup needs {e}. See --options.")
+    emit(r, r["text"])
