@@ -70,15 +70,19 @@ globalThis.fetch = async (url, opts = {}) => {
     summary: { requests: 62, errors: 0, p50: 0.2, p95: 0.6, site_reported: 0 }, text: '62 requests in the last hour, no errors.' });
   if (p.endsWith('/staging/cost')) return reply(200, { free: false, month_text: '$0.79', rate_text: 'About $0.07 an hour while it is up, about $1.58 a day.' });
   if (p.endsWith('/staging/requests')) return reply(200, { rows: [{ request_id: 'r1', ts: '2026-11-11T16:06:02.118Z', query: 'jacket', arm: 'candidate', ms: 2.7, traffic: 'real' }], total: 1, text: '1 request since this version was deployed.' });
-  if (p.endsWith('/staging/connect')) return reply(200, { connected: world.real > 0, real: world.real, unlabelled: 0, test: 0, simulated: 0, running: 0, snippets: {}, test_request: 'curl https://example.invalid/rank', live: 'Waiting for the first request.', text: '' });
+  if (p.endsWith('/staging/connect')) return reply(200, { connected: world.real > 0, real: world.real, unlabelled: 0, test: 0, simulated: 0, running: 0, snippets: {}, test_request: 'curl https://example.invalid/rank', live: 'Waiting for the first request.', text: '',
+    own_tests: 'To compare models on real shoppers, split traffic in your own testing tool and send each group to its model\'s address.',
+    addresses: [{ model: 'candidate', model_version: 'shop/starter-ranker@v2', role: 'The deployed model', address: 'https://example.invalid/rank', how: 'POST, with the key as a bearer token' },
+      { model: 'baseline', model_version: 'shop/keyword-baseline@v1', role: 'The compared model', address: 'https://example.invalid/rank/baseline', how: 'POST, with the key as a bearer token' }] });
   if (p.endsWith('/staging/differ')) return reply(200, { checked: 40, same: 10, mostly_same: false, text: 'It ranks differently from the other model on 30 of 40 searches checked.',
     queries: [{ query: 'rain jacket under 50', moved: 9 }, { query: 'trail shoes', moved: 4 }] });
   if (p.endsWith('/staging/check')) { world.staging = { ...world.staging, staged: { ...world.staging.staged, check: world.check } }; return reply(200, world.check); }
-  if (p.endsWith('/shadow') || p.endsWith('/ab/options')) return reply(200, { status: 'none', ready: false, shares: [], text: '' });
+  if (p.endsWith('/shadow')) return reply(200, { status: 'none', text: '' });
+  // Captain runs no A/B tests: a screen that still asks for one gets what the services give, nothing.
+  if (/\/ab(\/|$)/.test(p)) return reply(404, { detail: 'Not Found' });
   if (p.endsWith('/staging/query')) return reply(200, { query: body.query, same_order: false, moved: 2, staged: { model_version: 'shop/starter-ranker@v2', ms: 2.7, results: [{ id: 'p1', position: 1, title: 'Rain Jacket' }] },
     baseline: { model_version: 'shop/keyword-baseline@v1', ms: 0.3, results: [{ id: 'p2', position: 1, title: 'Wind Jacket' }] } });
   if (p.endsWith('/staging')) return reply(200, world.staging);
-  if (p.endsWith('/ab')) return reply(200, { status: 'none', experiment: null, can_measure: ['clicks'] });
   return reply(200, {});
 };
 
@@ -210,8 +214,8 @@ assert.ok(t.includes('https://runtime.sagemaker.us-west-1.amazonaws.com/endpoint
 assert.ok(t.includes('Try a search') && t.includes('It has answered 62 requests in the last hour. Usually in under 1 ms at the endpoint, almost always within 1 ms.'), 'a search box, and how much and how fast in a sentence');
 assert.ok(t.includes('About $0.07 an hour while it is up, about $1.58 a day. $0.79 so far this month.') && byId(h, 'ship-stop').length === 1, 'the cost and Stop');
 const labels = h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]);
-assert.deepEqual(labels, ['Requests it has answered', 'Where the two models disagree', 'Is it healthy?', 'Check it uses the same numbers it was trained on', 'Send it real traffic', 'Earlier versions', 'Logs', 'Settings'], 'More, with labels that say what each is for');
-assert.ok(!labels.includes('Review before launch'), 'the review is not offered before there is real traffic or a test result');
+assert.deepEqual(labels, ['Requests it has answered', 'Where the two models disagree', 'Is it healthy?', 'Check it uses the same numbers it was trained on', 'Use it from your site', 'Earlier versions', 'Logs', 'Settings'], 'More, with labels that say what each is for');
+assert.ok(!labels.includes('Review before launch'), 'launch review is on no screen');
 assert.ok(t.includes('Each request it answered: what was asked, what it returned, and how long it took.'), 'each with a sentence');
 assert.equal(h.byIdPrefix('dep-tab-').length, 0, 'no tabs');
 assert.ok(!/\bMetrics\b|\bVersions\b|\bCopies\b|[Ss]taging|Stage it|Try it\b/.test(t), `no bare nouns and no old words: ${t}`);
@@ -227,10 +231,10 @@ await wait(h, () => h.mod.ship.result?.query === 'rain jacket under 50', 'pickin
 assert.equal(byId(h, 'dep-open-differ').length, 0, 'and the list gets out of the way of the results');
 h.mod.ship.result = null;
 
-// The check that it uses the numbers it was trained on: a launch gate, with its last result and Check now.
+// The check that it uses the numbers it was trained on: with its last result and Check now.
 await h.click('dep-more-check');
 t = h.text();
-assert.ok(t.includes('This compares the two. It must pass before launch.') && t.includes('Not checked yet.') && byId(h, 'dep-check-now').length === 1, `the check, before it has run: ${t}`);
+assert.ok(t.includes('This compares the two. It should pass before you put it in production.') && t.includes('Not checked yet.') && byId(h, 'dep-check-now').length === 1, `the check, before it has run: ${t}`);
 assert.equal(byId(h, 'dep-check-failed').length, 0);
 world.check = { status: 'fail', text: 'Served features differ from training on 4% of 250 values checked.', checked: 250, match_rate: 0.96, features: [{ feature: 'title_bm25', mismatch_rate: 0.09 }, { feature: 'price_rank', mismatch_rate: 0.03 }] };
 await h.click('dep-check-now');
@@ -265,10 +269,12 @@ await h.click('dep-open-close');
 assert.equal(byId(h, 'dep-open-requests').length, 0);
 await h.click('ship-stop');
 assert.ok(h.text().includes('Stop it? The address goes away. What it answered is kept.'), 'Stop asks first');
-// With real traffic, the review appears, last.
+// Launch review is on no screen, with or without real traffic: the path ends at a running endpoint and its address.
 h = await open({ places: [LOCAL, AWS], staging: RUN, real: 12 }, true);
 await wait(h, () => Boolean(h.mod.ship.conn), 'traffic is read');
-assert.equal(h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]).at(-1), 'Review before launch', 'the review appears once there is real traffic');
+assert.ok(!h.byIdPrefix('dep-more-').some((e) => /[Rr]eview|[Ll]aunch/.test(e.kids[0].kids[0])) && byId(h, 'dep-more-review').length === 0, 'no review under More');
+assert.ok(!/[Ll]aunch review|Send to launch/.test(h.text()), 'and nothing on the deployed screen names it');
+assert.deepEqual(h.mod.ship.steps().map((x) => x.title), ['Deploy', 'Try it', 'Use it from your site'], 'the steps agents read end at a site using it');
 
 // The screen rules on the deployed screen and on everything behind More: no filled button (the next step's is
 // the banner above this screen), and the code font only on what a person copies: the address, a request's id,
@@ -276,7 +282,7 @@ assert.equal(h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]).at(-1), 'Re
 {
   const { palette, MONO } = await import(path.join(dir, 'kit/tokens.js'));
   const solid = palette(false).solid;
-  const COPIED = /^(ship-address|ship-connect-address|ship-connect-snippet|dep-request-id|dep-log-\d+|dep-request-line-\d+)$/;
+  const COPIED = /^(ship-address|ship-address-\w+-value|ship-connect-address|ship-connect-snippet|dep-request-id|dep-log-\d+|dep-request-line-\d+)$/;
   const idOf = (e) => e.call('id')?.[0] ?? '';
   const counts = (hh) => {
     const all = hh.byIdPrefix('');
@@ -291,7 +297,7 @@ assert.equal(h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]).at(-1), 'Re
   await wait(hh, () => Boolean(hh.mod.ship.conn) && Boolean(hh.mod.ship.met), 'the screen is read');
   const seen = {};
   seen.screen = counts(hh);
-  for (const id of ['requests', 'differ', 'health', 'check', 'traffic', 'versions', 'logs', 'settings', 'review']) {
+  for (const id of ['requests', 'differ', 'health', 'check', 'traffic', 'versions', 'logs', 'settings']) {
     await hh.click(`dep-more-${id}`);
     await hh.idle(120);
     seen[id] = counts(hh);
@@ -302,12 +308,19 @@ assert.equal(h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]).at(-1), 'Re
     assert.deepEqual(k.stray, [], `the code font only on what a person copies, on ${where}`);
   }
   console.log(`  counted on ${Object.keys(seen).length} views: 0 filled buttons, code font only on copied text`);
-  // Inside "Send it real traffic" the words are the page's: this model, and the other model by its own name.
+  // Inside "Use it from your site" the words are the page's: this model, and the other model by its own name.
   await hh.click('dep-more-traffic');
   await hh.idle(120);
   const tt = hh.text();
-  assert.ok(!/\b(the |The |a )?(candidate|baseline)\b(?!-)/.test(tt.replace(/keyword-baseline/g, '')), `no "candidate" or "baseline" inside Send it real traffic: ${tt.match(/.{60}\b(candidate|baseline)\b.{40}/)?.[0]}`);
-  assert.ok(tt.includes("Your site keeps showing keyword-baseline's results. This model ranks the same requests silently"), `shadow mode in the page's words: ${tt.slice(-900)}`);
+  assert.ok(!/\b(the |The |a )?(candidate|baseline)\b(?!-)/.test(tt.replace(/keyword-baseline/g, '').replace(/\/rank\/baseline/g, '')), `no "candidate" or "baseline" in a sentence inside Use it from your site (an address a person copies may hold one): ${tt.match(/.{60}\b(candidate|baseline)\b.{40}/)?.[0]}`);
+  assert.ok(tt.includes("Your site keeps showing keyword-baseline's results. This model ranks a copy of the same requests silently"), `the quiet test in the page's words: ${tt.slice(-900)}`);
+  assert.ok(tt.includes("Test quietly with a copy of your site's requests") && tt.includes('nothing a shopper does is collected') && !/[Ss]hadow mode/.test(tt), 'the quiet test under its plain label');
+  // One address a model, for a team's own testing tool, and the one paragraph that says so.
+  assert.ok(tt.includes("To compare models on real shoppers, split traffic in your own testing tool and send each group to its model's address."), `the paragraph: ${tt.slice(-900)}`);
+  assert.ok(tt.includes('The deployed model, starter-ranker@v2') && tt.includes('https://example.invalid/rank') && tt.includes('The compared model, keyword-baseline@v1') && tt.includes('https://example.invalid/rank/baseline'), 'an address a model');
+  // Nothing about an A/B test, a ramp or simulated shoppers, here or anywhere on the deployed screen.
+  for (const word of ['A/B', 'Ramp', 'ramp to', 'simulated shoppers', 'of traffic', 'Start an A/B test', 'Practice with']) assert.ok(!tt.includes(word), `"${word}" is gone`);
+  assert.equal(sent.filter((x) => /\/ab(\/|$)/.test(x[1])).length, 0, 'and no screen asks the services about a test');
 }
 
 // Health: the last recorded check in words, the targets a person sets, and Check now. Unhealthy is said at the top

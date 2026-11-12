@@ -164,7 +164,7 @@ async function follow(ship, cx, place, planned) {
   cx.notify();
 }
 
-/** Check now: does the deployed model compute the same numbers it was trained on? A launch gate, so its result
+/** Check now: does the deployed model compute the same numbers it was trained on? So its result
  *  is kept with the deployment and shown at the top of the screen when it fails. */
 export function checkNow(ship, cx) {
   if (ship.checking) return;
@@ -342,34 +342,31 @@ const note = (c, n) => div().id("ship-note").px(10).py(6).text_size(12.5).bg(n.t
 
 /** What sits behind "More": a label that says what the thing is for, and the sentence it opens with. */
 function moreItems(ship) {
-  const k = ship.conn, r = ship.ab, s = ship.staged();
+  const k = ship.conn, s = ship.staged();
   const base = s?.arms?.baseline && s.serve !== "baseline" ? short(s.arms.baseline).replace(/@v\d+$/, "") : null;
-  const reviewable = Boolean(k?.real) || Boolean(r?.ab?.decision) || r?.status === "finished" || Boolean(r?.enough);
   return [
     { id: "requests", label: "Requests it has answered", text: "Each request it answered: what was asked, what it returned, and how long it took. Pick one to see it in full." },
     base ? { id: "differ", label: "Where the two models disagree", text: `Searches where this model and ${base} return the most different results. Pick one to run it.` } : null,
     { id: "health", label: "Is it healthy?", text: "Captain checks once a minute that it answers, how many requests fail and how fast it is, against the targets you set. It tells you when that changes." },
-    { id: "check", label: "Check it uses the same numbers it was trained on", text: "A model can be fed different numbers when it runs than when it was trained, and then it ranks worse than its tests said. This compares the two. It must pass before launch." },
-    { id: "traffic", label: "Send it real traffic", text: "Connect your site, test it quietly beside the model it's compared with, then split shoppers between the two." },
+    { id: "check", label: "Check it uses the same numbers it was trained on", text: "A model can be fed different numbers when it runs than when it was trained, and then it ranks worse than its tests said. This compares the two. It should pass before you put it in production." },
+    { id: "traffic", label: "Use it from your site", text: "The code your site pastes, the address of each model, and the key. You can test it quietly with a copy of your site's requests first." },
     { id: "versions", label: "Earlier versions", text: "Every version deployed here, newest first, and a way to put an earlier one back." },
     { id: "logs", label: "Logs", text: "What the model wrote down while it answered, line by line." },
     { id: "settings", label: "Settings", text: "Where it runs, on what machine, and when it stops by itself." },
-    reviewable ? { id: "review", label: "Review before launch", text: "A check of the evidence before you send every shopper to it. It asks for real traffic or a finished test." } : null,
   ].filter(Boolean);
 }
 
 function moreBody(ship, c, id) {
-  const [, , connect, ab, launch] = ship.steps();
+  const [, , connect] = ship.steps();
   if (id === "differ") return differBody(ship, c);
   if (id === "health") return healthBody(ship, c);
   if (id === "check") return checkBody(ship, c);
   if (id === "requests") return v_flex().gap(8).child(numbers(ship, c, true)).child(ship.requestsTab(c));
   if (id === "traffic") return v_flex().id("dep-traffic").w_full().bg(c.surface).border_1().border_color(c.rule)
-    .child(ship.connectStep(c, connect)).child(div().border_t(1).border_color(c.rule).child(ship.abStep(c, ab)));
+    .child(ship.connectStep(c, connect));
   if (id === "versions") return ship.versionsTab(c);
   if (id === "logs") return LogsTab(ship, c);
   if (id === "settings") return v_flex().gap(8).child(SettingsTab(ship, c)).child(CopiesTab(ship, c));
-  if (id === "review") return v_flex().id("dep-review").w_full().bg(c.surface).border_1().border_color(c.rule).child(ship.launchStep(c, launch));
   return null;
 }
 
@@ -464,7 +461,7 @@ export function DeployedView(ship, c) {
       .child(line(c, "dep-unhealthy-text", ship.healthD.text, "fail"))
       .child(div().id("dep-unhealthy-open").text_size(12.5).text_color(c.blue).cursor_pointer()
         .on_click((_e, cx) => { ship.more = "health"; cx.notify(); }).child("See its health and your targets"))))
-    // A failed check is a reason not to launch: said here, at the top, in words, not only behind More.
+    // A failed check is a reason not to put it in production: said here, at the top, in words, not only behind More.
     .when(lastCheck(ship)?.status === "fail", (e) => e.child(v_flex().id("dep-check-failed").p(10).gap(4).bg(c.failLight)
       .child(line(c, "dep-check-failed-text", `It is not using the same numbers it was trained on, so it may rank worse than its tests said. ${lastCheck(ship).text ?? ""}`.trim(), "fail"))
       .child(div().id("dep-check-failed-open").text_size(12.5).text_color(c.blue).cursor_pointer()

@@ -1037,5 +1037,5 @@ def stages(ctx: Context, pid: str) -> dict:
                                "text": f"Newer version available: {newest_champ}."}] if newest_champ else []},
         "ship": {"registry": {k: reg.get(k) for k in ("arch", "brand", "uri")},
                  "ready": bool(champ and reg.get("arch") and reg.get("brand")), "online": NOT_ONLINE,
-                 "staging": shp["staging"], "steps": shp["steps"], "ab": bool(doc.get("ab"))},
+                 "staging": shp["staging"], "steps": shp["steps"]},
     }

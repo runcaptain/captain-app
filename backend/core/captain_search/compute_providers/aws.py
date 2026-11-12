@@ -312,7 +312,7 @@ class SageMakerProvider(_AWS):
 
     CANT_STOP = "This endpoint can't stop itself when idle. It will keep billing until you stop it from Captain."
     CANT_LOG = ("The serving role can't write the workspace bucket, so the endpoint can't keep its request log: no "
-                "served-features check and no A/B readout.")
+                "served-features check.")
 
     def stage_preflight(self, st: dict, storage_uri: str) -> dict:
         """Ask IAM (simulate, nothing changes) whether the execution role may delete its own endpoint and write the

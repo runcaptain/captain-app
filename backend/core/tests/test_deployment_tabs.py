@@ -44,20 +44,19 @@ def test_the_log_has_a_line_per_request_to_the_millisecond_and_can_be_filtered_a
     SG.stage(ws, "shop", target="local", allow_large=True)
     got = _site(ws, 3)
     rec = SG.state(ws, "shop")
-    SG.call(ws, rec, "outcome", {"request_id": got[0]["request_id"], "event": "click", "product_id": got[0]["ids"][0]})
     lg = OB.logs(ws, "shop")
     texts = [x["text"] for x in lg["rows"]]
     assert texts[0].startswith("Ready in ") and lg["streaming"] and "interleave" in lg["note"]
-    assert sum(t.startswith("Ranked 'jacket' with the candidate in ") for t in texts) == 1 and any(t.startswith("Outcome: click of ") for t in texts)
+    assert sum(t.startswith("Ranked 'jacket' with the candidate in ") for t in texts) == 1 and not any(t.startswith("Outcome") for t in texts)
     assert all(len(x["ts"]) == 24 and x["ts"].endswith("Z") for x in lg["rows"])  # 2026-11-11T16:05:49.231Z: milliseconds
     assert [x["ts"] for x in lg["rows"]] == sorted(x["ts"] for x in lg["rows"])
     only = OB.logs(ws, "shop", q="TENT")
     assert only["matching"] == 1 and only["total"] == lg["total"] and "tent" in only["rows"][0]["text"] and only["text"] == f"1 of {lg['total']} lines match."
     # the lines of one request, which is what the Requests panel shows
     mine = OB.logs(ws, "shop", request_id=got[0]["request_id"])
-    assert [x["text"].split(" ")[0] for x in mine["rows"]] == ["Ranked", "Outcome:"]
+    assert [x["text"].split(" ")[0] for x in mine["rows"]] == ["Ranked"]
     one = TF.request(ws, "shop", got[0]["request_id"])
-    assert [x["text"].split(" ")[0] for x in one["lines"]] == ["Ranked", "Outcome:"] and one["site_ms"] is None
+    assert [x["text"].split(" ")[0] for x in one["lines"]] == ["Ranked"] and one["site_ms"] is None
     assert one["time_text"].endswith("Your site didn't report how long it took.")
     # following: only what came after the last line seen
     _site(ws, 1, start=10)
@@ -132,23 +131,20 @@ def test_metrics_give_median_and_95th_percentile_at_the_endpoint_and_as_the_site
     assert m["text"].startswith("20 requests in the last 15 minutes, no errors. At the endpoint: median ")
     # the site reports what it saw: with an outcome, or by itself
     for i, r in enumerate(got[:10]):
-        SG.call(ws, rec, "outcome", {"request_id": r["request_id"], "event": "click", "product_id": r["ids"][0], "client_ms": 100 + i})
-    SG.call(ws, rec, "outcome", {"request_id": got[10]["request_id"], "event": "timing", "ms": 300})
+        SG.call(ws, rec, "timing", {"request_id": r["request_id"], "ms": 100 + i})
+    SG.call(ws, rec, "timing", {"request_id": got[10]["request_id"], "ms": 300})
     m = OB.metrics(ws, "shop", span="1h")
     assert m["summary"]["site_reported"] == 11 and m["summary"]["site_p50"] == 105 and m["summary"]["site_p95"] == 300
     assert m["summary"]["site_text"] == "As your site sees it: median 105 ms, 95th percentile 300 ms, from 11 requests your site timed."
     assert TF.request(ws, "shop", got[0]["request_id"])["site_ms"] == 100
     assert TF.request(ws, "shop", got[0]["request_id"])["time_text"].endswith("100 ms as your site saw it.")
-    from captain_search.staging import ab as AB  # a timing is not an outcome: nothing counts it as a shopper's action
-
     from captain_search.staging import logs as L
 
-    assert len(L.read(ws, "shop", "staging", rec["id"])["outcomes"]) == 10
-    assert AB  # imported to show the readout still loads beside timings
+    assert "outcomes" not in L.read(ws, "shop", "staging", rec["id"])  # a timing is all a site reports back
     with pytest.raises(ValueError, match="15m, 1h, 24h or 7d"):
         OB.metrics(ws, "shop", span="2h")
     with pytest.raises(Exception, match="number of milliseconds"):
-        SG.call(ws, rec, "outcome", {"request_id": got[0]["request_id"], "event": "timing", "ms": "soon"})
+        SG.call(ws, rec, "timing", {"request_id": got[0]["request_id"], "ms": "soon"})
 
 
 def test_the_deployments_list_shows_live_and_stopped_across_projects(ws):  # noqa: F811
@@ -198,13 +194,11 @@ def test_the_commands_are_named_like_the_pages(ws):  # noqa: F811
 def test_reading_a_page_never_wakes_a_host_that_sleeps(ws, monkeypatch):  # noqa: F811
     """The request list, the readout, shadow mode and the traffic count are read again and again by the page. On a
     host that sleeps when idle they must not send anything to an endpoint with no copy up."""
-    from captain_search.staging import ab as AB
-
     SG.stage(ws, "shop", target="local", allow_large=True)
     _site(ws, 3)
     sent = []
     real_call = SG.call
-    for mod in (SG, TF, AB, OB):
+    for mod in (SG, TF, OB):
         monkeypatch.setattr(mod, "call", lambda ctx, rec, op, body, *a, **k: (sent.append(op), real_call(ctx, rec, op, body, *a, **k))[1])
     TF.requests(ws, "shop")
     assert sent == ["flush"]  # an ordinary host is asked to write its log first
@@ -213,7 +207,7 @@ def test_reading_a_page_never_wakes_a_host_that_sleeps(ws, monkeypatch):  # noqa
     monkeypatch.setattr(SG, "_awake", lambda ctx, rec: False, raising=False)
     sent.clear()
     assert TF.requests(ws, "shop")["total"] == 3  # what was already written is still read
-    AB.traffic_seen(ws, "shop"); AB.readout(ws, "shop"); TF.shadow(ws, "shop")
+    TF.shadow(ws, "shop")
     assert "flush" not in sent, sent
     monkeypatch.setattr(SG, "_awake", lambda ctx, rec: True, raising=False)  # a copy is up: it is asked again
     TF.requests(ws, "shop")

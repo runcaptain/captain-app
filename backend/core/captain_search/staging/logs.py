@@ -1,27 +1,29 @@
-"""What a staging endpoint wrote down: one record per request, one per outcome, in small write-once files.
+"""What a deployed endpoint wrote down: one record per request it served, in small write-once files.
 
 The runtime (runtime.py) buffers records and writes them as chunks under
 `staging/<project>/<env>/logs/<stage id>/`:
 
   requests-<id>.jsonl   {request_id, ts, query, k, user_id, session_id, arm, model_version, ids, scores,
-                         features: {product id: [floats]}, ms, traffic, experiment}
+                         features: {product id: [floats]}, ms, traffic}
                         The first line of a chunk is {"_meta": {"names": {arm: [feature names]}}}.
-  outcomes-<id>.jsonl   {request_id, event: click | add-to-cart | purchase, product_id, value, ts}
   timings-<id>.jsonl    {request_id, ms, ts}: how long a request took as the site saw it, when the site reports it
   lines-<id>.jsonl      {ts, text, level, copy, request_id?}: the endpoint's log lines, to the millisecond
 
-Everything that reads staging traffic (the consistency check, the A/B readout, `monitor record`) reads these
-chunks or the dataset version published from them. `publish` turns the chunks of one stage into an `events`
-dataset version, one row per result shown, in the columns `monitor.measure` and `historic` already read, plus
-request_id, arm, model_version and traffic. `traffic` says where a request came from: `real` (a site that labels its shoppers), `unlabelled`,
-`simulated` (the shopper simulator) or `test` (the Try it console). Only `real` is ever REAL_TRAFFIC evidence.
+This is a log of what was served, not of what shoppers did. Captain does not collect clicks or purchases: a
+team measures those in its own testing tool. `outcomes-*` files written by an older version are left where they
+are and never read.
+
+Everything that reads deployed traffic (the consistency check, shadow mode, health) reads these chunks or the
+dataset version published from them. `publish` turns the chunks of one stage into a dataset version, one row per
+result served, with request_id, arm, model_version and traffic. `traffic` says where a request came from: `real`
+(a site that labels its shoppers), `unlabelled`, `simulated` (written by older versions) or `test` (the Try it
+console). Only `real` is ever REAL_TRAFFIC evidence.
 """
 from __future__ import annotations
 
 import json
 
-EVENTS = ("click", "add-to-cart", "purchase")
-# What a request says it is. `real` is a shopper, and only a site that says so counts: the Connect your site code
+# What a request says it is. `real` is a shopper, and only a site that says so counts: the code under Use it from your site
 # sends "traffic": "real". A request with no label is `unlabelled`: it may be a shopper, a script or this computer,
 # and Captain doesn't guess. `simulated` is the shopper simulator, `test` the console and test requests.
 TRAFFIC = ("real", "unlabelled", "simulated", "test")
@@ -65,9 +67,9 @@ def _lines(data: bytes) -> list[dict]:
 
 
 def read(ctx, pid: str, env: str, stage: str | None = None, extra: bool = False) -> dict:
-    """Every request and outcome logged for a project's staging endpoint (one stage, or all of them). With `extra`,
+    """Every request logged for a project's deployed endpoint (one stage, or all of them). With `extra`,
     also its log lines and the response times sites reported."""
-    reqs, outs, names, lines, timings = [], [], {}, [], []
+    reqs, names, lines, timings = [], {}, [], []
     store = shared(ctx, pid, env)
     for k in sorted(store.list(prefix(pid, env, stage))):
         base = k.rsplit("/", 1)[-1]
@@ -77,40 +79,24 @@ def read(ctx, pid: str, env: str, stage: str | None = None, extra: bool = False)
                     names.update(r["_meta"].get("names") or {})
                 else:
                     reqs.append(r)
-        elif base.startswith("outcomes-"):
-            outs += _lines(store.get(k))
         elif extra and base.startswith("lines-"):
             lines += _lines(store.get(k))
         elif extra and base.startswith("timings-"):
             timings += _lines(store.get(k))
-    return {"requests": reqs, "outcomes": outs, "names": names, **({"lines": lines, "timings": timings} if extra else {})}
+    return {"requests": reqs, "names": names, **({"lines": lines, "timings": timings} if extra else {})}
 
 
-def impressions(reqs: list[dict], outs: list[dict]) -> list[dict]:
-    """One row per result shown, with what happened to it: the shape events datasets have."""
-    by: dict[tuple[str, str], dict] = {}
-    for o in outs:
-        d = by.setdefault((str(o["request_id"]), str(o.get("product_id") or "")), {"click": 0, "cart": 0, "buy": 0, "value": 0.0})
-        ev = o.get("event")
-        if ev == "click":
-            d["click"] = 1
-        elif ev == "add-to-cart":
-            d["cart"] = 1
-        elif ev == "purchase":
-            d["buy"] = 1
-            d["value"] += float(o.get("value") or 0.0)
+def impressions(reqs: list[dict]) -> list[dict]:
+    """One row per result served: which request, which product, where it was placed, by which model. Nothing about
+    what a shopper did with it: Captain does not collect that."""
     rows = []
     for r in reqs:
         rid = str(r["request_id"])
         for i, pid in enumerate(r.get("ids") or []):
-            d = by.get((rid, str(pid))) or {}
             f = (r.get("features") or {}).get(str(pid))
             rows.append({"request_id": rid, "ts": r.get("ts"), "session_id": r.get("session_id") or rid,
                          "user_id": r.get("user_id"), "query": r.get("query"), "product_id": str(pid), "position": i + 1,
-                         "clicked": bool(d.get("click") or d.get("cart") or d.get("buy")),
-                         "added_to_cart": bool(d.get("cart") or d.get("buy")), "purchased": bool(d.get("buy")),
-                         "value": float(d.get("value") or 0.0), "arm": r.get("arm"),
-                         "model_version": r.get("model_version"), "traffic": r.get("traffic") or "unlabelled",
+                         "arm": r.get("arm"), "model_version": r.get("model_version"), "traffic": r.get("traffic") or "unlabelled",
                          "ms": r.get("ms"), "features": json.dumps(f) if f is not None else None})
     return rows
 
@@ -123,7 +109,7 @@ def publish(ctx, pid: str, env: str, stage: str):
     from ..model.entities import DatasetKind, Provenance
 
     got = read(ctx, pid, env, stage)
-    rows = impressions(got["requests"], got["outcomes"])
+    rows = impressions(got["requests"])
     if not rows:
         return None
     kinds = sorted({r["traffic"] for r in rows})
@@ -136,9 +122,8 @@ def publish(ctx, pid: str, env: str, stage: str):
                     provenance=Provenance(source="generated", params={"generator": "captain_search.staging",
                                                                       "project": pid, "env": env, "stage": stage,
                                                                       "requests": len(got["requests"]),
-                                                                      "outcomes": len(got["outcomes"]),
                                                                       "feature_names": got["names"]}),
-                    description=f"What the {env} endpoint of {pid} served: {len(got['requests']):,} requests, "
-                                f"{len(got['outcomes']):,} outcomes. Traffic: {', '.join(kinds)}."
+                    description=f"What the {env} endpoint of {pid} served: {len(got['requests']):,} requests. "
+                                f"No shopper outcomes. Traffic: {', '.join(kinds)}."
                                 + ("" if real else " Not real shoppers."),
                     tags=tags)

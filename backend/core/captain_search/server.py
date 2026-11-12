@@ -1074,46 +1074,6 @@ def project_staging_check(pid: str, body: dict | None = None):
                          float(b.get("min_match") or SC.MIN_MATCH))
 
 
-# ---- A/B test on staging: a split between the baseline and the candidate, ramp and roll back -----------------
-
-
-@app.get("/api/projects/{pid}/ab", dependencies=A)
-def project_ab(pid: str, traffic: str | None = None):
-    """The A/B readout: {experiment, status, split, traffic, evidence, label, arms: {baseline, candidate: {sessions}},
-    primary: {metric, baseline, candidate, diff, ci_low, ci_high, verdict, text}, guardrails, enough, srm, text}.
-    status "none" when no test was started."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.readout, ctx(), pid, traffic)
-
-
-@app.post("/api/projects/{pid}/ab/start", dependencies=A)
-def project_ab_start(pid: str, body: dict | None = None):
-    """{split?, primary?, guardrails?, mode?: captain|own, min_sessions?, dry_run?}"""
-    from .staging import ab as AB
-
-    b = body or {}
-    return _staging_call(AB.start, ctx(), pid, b.get("split") or 0.05, b.get("primary") or None, b.get("guardrails"),
-                         b.get("mode") or "captain", int(b.get("min_sessions") or AB.MIN_SESSIONS), dry_run=bool(b.get("dry_run")),
-                         practice=bool(b.get("practice")))
-
-
-@app.post("/api/projects/{pid}/ab/ramp", dependencies=A)
-def project_ab_ramp(pid: str, body: dict):
-    """{split}: the candidate's new share of traffic."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.ramp, ctx(), pid, body.get("split") or 0)
-
-
-@app.post("/api/projects/{pid}/ab/rollback", dependencies=A)
-def project_ab_rollback(pid: str, body: dict | None = None):
-    """Every shopper gets the baseline again (or, with no test running, the previous version is staged again)."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.rollback, ctx(), pid, reason=(body or {}).get("reason") or None)
-
-
 def _host_options(q: dict) -> dict:
     """The setup options a host was given: everything but the words the routes themselves use."""
     return {k: v for k, v in q.items() if k not in ("cloud", "confirm", "plan") and v not in (None, "")}
@@ -1320,27 +1280,9 @@ def serving_setup_remove(cloud: str = "aws"):
     return {"job": _job(lambda _p: SS.teardown(c), "removing the serving setup")}
 
 
-@app.get("/api/projects/{pid}/ab/options", dependencies=A)
-def project_ab_options(pid: str):
-    """What the A/B form needs before it opens: {ready, real, sessions, per_day, shares: [{split, label, text}],
-    can_measure, text}. ready is false until a real request has reached the endpoint."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.options, ctx(), pid)
-
-
-@app.post("/api/projects/{pid}/ab/decide", dependencies=A)
-def project_ab_decide(pid: str, body: dict):
-    """{choice: ship | keep-baseline | keep-testing, note?}: how the test ends, recorded. ship returns
-    {launch_review: {pipeline, readout, evidence}} and is refused without enough real traffic."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.decide, ctx(), pid, str(body.get("choice") or ""), str(body.get("note") or ""))
-
-
 @app.get("/api/projects/{pid}/staging/connect", dependencies=A)
 def project_staging_connect(pid: str, env: str = "staging"):
-    """Connect your site: {reachable, address, text, live, real, test, simulated, last_real_at, connected, snippets,
+    """Use it from your site: {reachable, address, text, live, real, test, simulated, last_real_at, connected, snippets,
     key_note, fallback, blocked?}. Only real requests count as a site calling."""
     from .staging import traffic as TF
 
@@ -1584,44 +1526,6 @@ def project_shadow_stop(pid: str, body: dict | None = None):
     from .staging import traffic as TF
 
     return _staging_call(TF.shadow_stop, ctx(), pid)
-
-
-@app.post("/api/projects/{pid}/ab/stop", dependencies=A)
-def project_ab_stop(pid: str, body: dict | None = None):
-    from .staging import ab as AB
-
-    return _staging_call(AB.stop, ctx(), pid)
-
-
-@app.post("/api/projects/{pid}/ab/simulate", dependencies=A)
-def project_ab_simulate(pid: str, body: dict | None = None):
-    """{sessions?, seed?}: send simulated shoppers at staging, as a job. Everything read from them says SIMULATED."""
-    from .staging import ab as AB
-
-    c, b = ctx(), body or {}
-    _staging_call(AB._running, c, pid, b.get("env") or "staging")  # refuse now, in a sentence, not inside the job
-    return {"job": _job(lambda p: AB.simulate(c, pid, int(b.get("sessions") or 1000), int(b.get("seed") or 7), progress=p),
-                        f"sending simulated shoppers at staging for {pid}")}
-
-
-@app.post("/api/projects/{pid}/ab/outcomes", dependencies=A)
-def project_ab_outcomes(pid: str, body: dict):
-    """{events, dry_run?}: bring in outcomes from an events dataset that carries request_id."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.import_outcomes, ctx(), pid, str(body.get("events") or ""), dry_run=bool(body.get("dry_run")))
-
-
-@app.post("/api/projects/{pid}/ab/result", dependencies=A)
-def project_ab_result(pid: str, body: dict):
-    """{metric, baseline, candidate, source, traffic?, ci_low?, ci_high?, sessions?, handoff?}: the readout from the
-    team's own A/B system."""
-    from .staging import ab as AB
-
-    b = body
-    return _staging_call(AB.bring, ctx(), pid, str(b.get("metric") or ""), float(b.get("baseline") or 0), float(b.get("candidate") or 0),
-                         str(b.get("source") or ""), b.get("traffic") or "real", b.get("ci_low"), b.get("ci_high"),
-                         b.get("sessions"), b.get("handoff") or None)
 
 
 @app.get("/api/sources", dependencies=A)

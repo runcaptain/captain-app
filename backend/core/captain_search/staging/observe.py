@@ -9,7 +9,7 @@ endpoint that is up with nothing to do is not a problem.
 
 Response time is shown twice when it can be. "At the endpoint" is the time the ranking took inside it, which
 Captain measures on every request. "As your site sees it" includes the network, and only the site can know it: the
-site reports it (`client_ms` with an outcome, or the event `timing`). Measured on 2026-11-11 from a laptop to a
+site reports it (`POST /timing` with the request id and `ms`). Measured on 2026-11-11 from a laptop to a
 SageMaker endpoint in us-west-1: a median of 0.2 ms at the endpoint and 111 ms as the caller saw it.
 """
 from __future__ import annotations
@@ -192,7 +192,7 @@ def settings(ctx: Context, pid: str, env: str = ENV) -> dict:
             ["Then", "The process ends." if local else "The endpoint deletes itself, so it stops billing."]]},
         {"title": "Time limits", "rows": [
             ["Your site should wait at most", f"{TIMEOUT_MS} ms, then show its own results"],
-            ["Why", "A slow ranking must never hold up the page. The Connect your site code already does this."]]},
+            ["Why", "A slow ranking must never hold up the page. The code under Use it from your site already does this."]]},
         {"title": "Served-features check", "rows": [
             ["Last result", chk.get("text") or "Not run yet. Run it from the Requests tab, or with cst projects staging-check."],
             ["Passes at", "99.9% of checked feature values equal to what training saw"]]},
@@ -382,7 +382,7 @@ def metrics(ctx: Context, pid: str, env: str = ENV, span: str = "1h") -> dict:
                             f"from {len(site_all):,} request{'s' if len(site_all) != 1 else ''} your site timed."
                             if site_all else
                             "As your site sees it: not reported yet. The network adds to the time at the endpoint, and only "
-                            "your site can measure it. Send client_ms with each outcome, as the Connect your site code does.")
+                            "your site can measure it. The code under Use it from your site reports it.")
     return {**empty, "buckets": b, "markers": markers, "summary": summary, "bucket_seconds": round(step, 1),
             "text": (f"{total:,} request{'s' if total != 1 else ''} in {words}"
                      + (f", {errors:,} error{'s' if errors != 1 else ''}" if errors else ", no errors") + ". " + summary["endpoint_text"])

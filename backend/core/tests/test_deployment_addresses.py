@@ -26,7 +26,7 @@ def page(ws, monkeypatch):  # noqa: F811
     SG.stage(ws, "shop", target="local", allow_large=True)
     rec = SG.state(ws, "shop")
     got = [SG.call(ws, rec, "rank", {"query": q, "k": 5, "session_id": f"s{i}", "traffic": "real"}) for i, q in enumerate(["jacket", "tent", "boots"])]
-    SG.call(ws, rec, "outcome", {"request_id": got[0]["request_id"], "event": "click", "product_id": got[0]["ids"][0], "client_ms": 111})
+    SG.call(ws, rec, "timing", {"request_id": got[0]["request_id"], "ms": 111})
     c = TestClient(server.app)
     h = {"Authorization": f"Bearer {server.TOKEN}"}
 
@@ -36,6 +36,7 @@ def page(ws, monkeypatch):  # noqa: F811
         return r.json()
 
     get.put = lambda path, body: c.put(path, headers=h, json=body)
+    get.raw = lambda path: c.get(path, headers=h)
     get.first = got[0]["request_id"]
     return get
 
@@ -67,16 +68,23 @@ def test_requests_tab_and_one_request_beside_it(page):
     has(d["rows"][0], "request_id", "ts", "query", "arm", "ms", "traffic")
     one = page(f"{P}/staging/requests/{page.first}")
     has(one, "request_id", "query", "arm", "model_version", "ms", "traffic", "results", "shadow", "lines", "time_text", "site_ms")
-    has(one["results"][0], "position", "title", "signals", "events")
-    assert one["site_ms"] == 111 and [x["text"].split(" ")[0] for x in one["lines"]] == ["Ranked", "Outcome:"]
+    has(one["results"][0], "position", "title", "signals")
+    assert "events" not in one["results"][0] and "outcomes" not in one  # what was served, not what a shopper did
+    assert one["site_ms"] == 111 and [x["text"].split(" ")[0] for x in one["lines"]] == ["Ranked"]
 
 
 def test_try_it_and_traffic_tabs(page):
     k = page(f"{P}/staging/connect")
     has(k, "address", "text", "live", "real", "unlabelled", "test", "simulated", "running", "snippets", "connected", "evidence_label", "test_request")
     assert k["real"] == 3 and k["connected"]
-    has(page(f"{P}/ab"), "status", "can_measure")
-    has(page(f"{P}/ab/options"), "ready", "shares", "text")
+    # one address a model, for a team's own testing tool, and the sentence that says so
+    has(k, "addresses", "own_tests")
+    assert [a["role"] for a in k["addresses"]] == ["The deployed model", "The compared model"]
+    assert k["addresses"][0]["address"].endswith("/rank") and k["addresses"][1]["address"].endswith("/rank/baseline")
+    assert k["own_tests"] == "To compare models on real shoppers, split traffic in your own testing tool and send each group to its model's address."
+    # Captain runs no A/B tests: the addresses are gone, not answering with something empty
+    for gone in ("/ab", "/ab/options"):
+        assert page.raw(f"{P}{gone}").status_code == 404
     has(page(f"{P}/shadow"), "status")
     has(page(f"{P}/staging/differ"), "queries")
 

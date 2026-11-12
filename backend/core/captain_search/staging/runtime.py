@@ -7,35 +7,33 @@ staging endpoint and a cloud one serve exactly the same files.
   POST /rank        {query, k?, user_id?, session_id?, request_id?, traffic?} -> {request_id, ids, scores, arm,
                     model_version, ms}. Keyword search finds the candidates and the trained model reorders the
                     top K with features from the module that built its training set (features/).
-  POST /rank/<arm>  the same, from one named arm (baseline or candidate): for the Try it console's side by side
-                    view, and for a team that splits traffic in its own A/B system.
+  POST /rank/<arm>  the same, from one named model (baseline or candidate): for the Try it console's side by side
+                    view, and so a team's own testing tool can send each group of shoppers to its model.
                     With "explain": true the answer also carries, for each result, the signals the model was
                     given (`signals`), and how much the model leans on each one (`importance`).
-  POST /outcome     {request_id, event: click | add-to-cart | purchase, product_id?, value?}
+  POST /timing      {request_id, ms}: how long the request took as the site saw it, network included.
   POST /flush       write buffered log records now (and publish the logs dataset with {"publish": true})
   GET  /healthz     what is loaded, uptime, requests served, and when it stops by itself. No secrets.
-  GET  /ping, POST /invocations   SageMaker's contract. /invocations takes {"op": "rank" | "outcome" | "flush" |
+  GET  /ping, POST /invocations   SageMaker's contract. /invocations takes {"op": "rank" | "timing" | "flush" |
                     "status", "key": ..., ...the op's own fields}, because SageMaker exposes one route.
 
 Every route but /ping and /healthz needs the endpoint key: `Authorization: Bearer <key>` locally, `"key"` in the
 body through SageMaker. The process only ever holds the key's SHA-256.
 
-Traffic split. With a split set in the control document (`staging/<project>/<env>/control.json`), a request goes
-to the candidate when a hash of its session id (else user id, else request id) falls under the split, so one
-shopper always sees one arm, and raising the split only ever moves shoppers from baseline to candidate. The arm
-is logged on every request. The control document is re-read every few seconds, so a ramp or a rollback needs no
-redeploy.
+No split, and no shopper outcomes. Captain does not assign shoppers to models and does not collect what they
+clicked or bought: that is the job of the team's own testing tool, which sends each group to its model's address.
+A `split` left in an old control document is ignored. `POST /outcome` answers 410 with a sentence.
 
 Shadow mode. With `shadow` set in the control document, every request is answered with the baseline's ranking,
 exactly as before, while the candidate ranks the same request silently. Both rankings are logged on the request.
-No shopper sees the candidate. It comes before any split: it shows how different the candidate is on the site's
-real queries, and what it costs in response time, at no risk.
+No shopper sees the candidate. It shows how different the candidate is on the site's real queries, and what it
+costs in response time, at no risk.
 
 Logging. Every request is logged with the feature rows it served (logs.py). Records are buffered, written as
 write-once chunks, and published as a version of the project's staging-logs dataset every few minutes. In the
 cloud that needs the serving role to write to the workspace bucket.
 
-Stopping by itself. After `idle_minutes` with no /rank or /outcome the runtime flushes its log, leaves a marker in
+Stopping by itself. After `idle_minutes` with no /rank the runtime flushes its log, leaves a marker in
 storage and stops: a local process exits, a SageMaker container asks SageMaker to delete its own endpoint.
 """
 from __future__ import annotations
@@ -85,18 +83,14 @@ def copies_prefix(pid: str, env: str, stage: str) -> str:
     return f"staging/{pid}/{env}/copies/{stage}/"
 
 
-def bucket(salt: str, unit: str) -> float:
-    """Where a shopper falls in [0, 1): the same shopper and salt always give the same place."""
-    return int(hashlib.sha256(f"{salt}:{unit}".encode()).hexdigest()[:12], 16) / float(16 ** 12)
+def assign(control: dict, arms, unit: str | None = None) -> str:
+    """The model a request is served from: the one the deployment serves. There is no split: a `split` left in an
+    old control document is ignored."""
+    serve = control.get("serve")
+    return serve if serve in arms else next(iter(arms))
 
 
-def assign(control: dict, arms, unit: str) -> str:
-    """The arm a request is served from. No split: the arm the endpoint serves. A split: candidate under it."""
-    split = control.get("split")
-    if split is None or not {"baseline", "candidate"} <= set(arms):
-        serve = control.get("serve")
-        return serve if serve in arms else next(iter(arms))
-    return "candidate" if bucket(str(control.get("salt") or ""), unit) < float(split) else "baseline"
+OUTCOMES_GONE = ("Captain no longer collects what shoppers clicked or bought. Keep that in your own testing tool. To report how long a request took at your site, POST /timing with request_id and ms.")
 
 
 class Arm:
@@ -155,18 +149,16 @@ class Runtime:
         self.started = self.last_used = self.last_flush = self.last_publish = clock()
         self._beat_at, self._beat_used, self._beat_tag = 0.0, None, None
         self.started_at = _now()
-        self.requests = self.outcomes = 0
+        self.requests = 0
         self.by_traffic = {k: 0 for k in L.TRAFFIC}  # how many requests of each kind: only "real" is a site calling
         self.last_real_at: str | None = None
         self.running = 0  # requests being answered right now
         self._lock = threading.Lock()
         self._req: list[dict] = []
-        self._out: list[dict] = []
         self._lines: list[dict] = []    # log lines, each with the request it belongs to when there is one
         self._timings: list[dict] = []  # how long a request took as the site saw it, when the site reports it
         self.errors = self.refused = 0  # requests that failed in here, and requests refused for what they sent
         self._unpublished = False
-        self._seen: dict[str, str] = {}  # request id -> arm, for answering /outcome; bounded
         self._control = dict(self.bundle.get("control") or {})
         self._control_at = 0.0
         self._idle_default = float(idle_minutes if idle_minutes is not None else self.bundle.get("idle_minutes") or 240)
@@ -192,9 +184,8 @@ class Runtime:
                 if doc.get("stage") in (None, self.stage):
                     old = self._control
                     self._control = doc
-                    if self._control_at and any(old.get(k) != doc.get(k) for k in ("serve", "split", "shadow", "idle_minutes")):
-                        self.say("Traffic changed: " + ("shadow mode, shoppers get the baseline" if doc.get("shadow") else
-                                                        f"the candidate gets {float(doc['split']):.0%} of sessions" if doc.get("split") is not None
+                    if self._control_at and any(old.get(k) != doc.get(k) for k in ("serve", "shadow", "idle_minutes")):
+                        self.say("Traffic changed: " + ("shadow mode, shoppers get the baseline" if doc.get("shadow")
                                                         else f"every request gets the {doc.get('serve') or 'candidate'}")
                                  + f". Stops after {float(doc.get('idle_minutes') or self._idle_default):g} idle minutes.")
             except NotFound:
@@ -257,7 +248,6 @@ class Runtime:
                "arm": name, "model_version": a.pipeline, "ids": ids,
                "scores": [None if s is None else round(float(s), 6) for _, s in ranked],
                "features": {p: feats[p] for p in ids[:LOG_TOP] if p in feats}, "ms": ms, "traffic": traffic,
-               "experiment": ctl.get("experiment") if arm is None and ctl.get("split") is not None else None,
                "forced": arm is not None, "copy": self.copy}  # which running copy answered, for a host with several
         if shadow:
             rec["shadow"] = shadow
@@ -268,10 +258,6 @@ class Runtime:
             if traffic == "real":
                 self.last_real_at = rec["ts"]
             self.last_used = self.clock()
-            self._seen[rid] = name
-            if len(self._seen) > 50_000:
-                for old in list(self._seen)[:10_000]:
-                    del self._seen[old]
         self.say(f"Ranked {query[:80]!r} with the {name} in {ms:g} ms: {len(ids)} results." , rid)
         if shadow:
             self.say(f"The candidate ranked it silently in {shadow['ms']:g} ms." if shadow.get("ms") is not None
@@ -282,42 +268,30 @@ class Runtime:
             out["importance"] = a.importance
         return out
 
-    def outcome(self, body: dict) -> dict:
-        rid, ev = str(body.get("request_id") or ""), body.get("event")
+    def timing(self, body: dict) -> dict:
+        """How long a request took as the site saw it, network included: {request_id, ms}. The only thing a site
+        reports back. What shoppers clicked or bought is not collected here."""
+        rid = str(body.get("request_id") or "")
         if not rid:
-            raise ValueError("an outcome needs the request_id that /rank returned")
-        # How long the request took as the site saw it, network included. Sent with an outcome as `client_ms`, or
-        # by itself as the event "timing" with `ms`.
-        seen_ms = body.get("ms") if ev == "timing" else body.get("client_ms")
-        if seen_ms is not None:
-            try:
-                seen_ms = float(seen_ms)
-            except (TypeError, ValueError):
-                raise ValueError("the time the site saw is a number of milliseconds") from None
-            if not 0 <= seen_ms < 600_000:
-                raise ValueError("the time the site saw is a number of milliseconds")
-            with self._lock:
-                self._timings.append({"request_id": rid, "ms": round(seen_ms, 3), "ts": _now()})
-                self.last_used = self.clock()
-        if ev == "timing":
-            if seen_ms is None:
-                raise ValueError("a timing needs ms: how long the request took as your site saw it")
-            return {"ok": True, "request_id": rid, "known": rid in self._seen}
-        if ev not in L.EVENTS:
-            raise ValueError(f"event is one of {', '.join(L.EVENTS)}, or timing")
-        rec = {"request_id": rid, "event": ev, "product_id": None if body.get("product_id") is None else str(body["product_id"]),
-               "value": float(body.get("value") or 0.0), "ts": _now()}
+            raise ValueError("a timing needs the request_id that /rank returned")
+        seen_ms = body.get("ms") if body.get("ms") is not None else body.get("client_ms")
+        if seen_ms is None:
+            raise ValueError("a timing needs ms: how long the request took as your site saw it")
+        try:
+            seen_ms = float(seen_ms)
+        except (TypeError, ValueError):
+            raise ValueError("the time the site saw is a number of milliseconds") from None
+        if not 0 <= seen_ms < 600_000:
+            raise ValueError("the time the site saw is a number of milliseconds")
         with self._lock:
-            self._out.append(rec)
-            self.outcomes += 1
+            self._timings.append({"request_id": rid, "ms": round(seen_ms, 3), "ts": _now()})
             self.last_used = self.clock()
-        self.say(f"Outcome: {ev}" + (f" of {rec['product_id']}" if rec["product_id"] else "") + ".", rid)
-        return {"ok": True, "request_id": rid, "known": rid in self._seen}
+        return {"ok": True, "request_id": rid}
 
     def flush(self, publish: bool = False) -> dict:
         with self._lock:
-            req, out, lines, timings = self._req, self._out, self._lines, self._timings
-            self._req, self._out, self._lines, self._timings = [], [], [], []
+            req, lines, timings = self._req, self._lines, self._timings
+            self._req, self._lines, self._timings = [], [], []
             self.last_flush = self.clock()
         base = L.prefix(self.pid, self.env, self.stage)
         cid = new_id()
@@ -325,8 +299,6 @@ class Runtime:
             if req:
                 meta = {"_meta": {"names": {n: a.names for n, a in self.arms.items() if a.names}}}
                 self.store.put_new(f"{base}requests-{cid}.jsonl", "\n".join(json.dumps(x) for x in [meta, *req]).encode())
-            if out:
-                self.store.put_new(f"{base}outcomes-{cid}.jsonl", "\n".join(json.dumps(x) for x in out).encode())
             if timings:
                 self.store.put_new(f"{base}timings-{cid}.jsonl", "\n".join(json.dumps(x) for x in timings).encode())
             if lines:
@@ -335,10 +307,10 @@ class Runtime:
             pass  # a retry after a half-written flush: what was written stays, the rest went in the first try
         except Exception:
             with self._lock:  # nothing is lost to a failed write: the records go back in the buffer
-                self._req, self._out = req + self._req, out + self._out
+                self._req = req + self._req
                 self._lines, self._timings = lines + self._lines, timings + self._timings
             raise
-        if req or out:
+        if req:
             self._unpublished = True
         ref = None
         note = None
@@ -355,16 +327,16 @@ class Runtime:
                 ref = f"{m.name}@v{m.version}" if m else None
             except Exception as e:  # noqa: BLE001
                 note = f"not published from the endpoint: {str(e)[:160]}"
-        return {"requests": len(req), "outcomes": len(out), "published": ref, **({"publish_note": note} if note else {})}
+        return {"requests": len(req), "published": ref, **({"publish_note": note} if note else {})}
 
     def status(self) -> dict:
         now = self.clock()
         ctl = self._control
         idle = now - self.last_used
         return {"ok": self.stopped is None, "project": self.pid, "env": self.env, "stage": self.stage,
-                "arms": {n: a.pipeline for n, a in self.arms.items()}, "serve": ctl.get("serve"), "split": ctl.get("split"),
-                "experiment": ctl.get("experiment"), "started_at": self.started_at, "uptime_s": round(now - self.started),
-                "requests": self.requests, "outcomes": self.outcomes, "running": max(0, self.running), "traffic": dict(self.by_traffic),
+                "arms": {n: a.pipeline for n, a in self.arms.items()}, "serve": ctl.get("serve"),
+                "started_at": self.started_at, "uptime_s": round(now - self.started),
+                "requests": self.requests, "running": max(0, self.running), "traffic": dict(self.by_traffic),
                 "errors": self.errors, "refused": self.refused, "copy": self.copy, "ready_s": self.load_s, "memory_mb": _memory_mb(),
                 "last_real_at": self.last_real_at, "shadow": ctl.get("shadow") or None, "idle_s": round(idle),
                 "idle_minutes": self.idle_minutes,
@@ -380,7 +352,7 @@ class Runtime:
             return
         due = now - self.last_flush >= self.flush_s or len(self._req) >= 500 or len(self._lines) >= 2000
         publish = self._unpublished and now - self.last_publish >= self.publish_s
-        if (due and (self._req or self._out or self._lines or self._timings)) or publish:
+        if (due and (self._req or self._lines or self._timings)) or publish:
             try:
                 self.flush(publish=now - self.last_publish >= self.publish_s)
             except Exception as e:  # noqa: BLE001
@@ -487,10 +459,17 @@ def make_app(rt: Runtime):
         check(authorization)
         return run(rt.rank, body, arm)
 
+    @api.post("/timing")
+    def timing(body: dict, authorization: str = Header(default="")):
+        check(authorization)
+        return run(rt.timing, body)
+
     @api.post("/outcome")
     def outcome(body: dict, authorization: str = Header(default="")):
         check(authorization)
-        return run(rt.outcome, body)
+        if (body or {}).get("event") == "timing":  # the code sites pasted before: still how they report their time
+            return run(rt.timing, body)
+        raise HTTPException(410, OUTCOMES_GONE)
 
     @api.post("/flush")
     def flush(body: dict | None = None, authorization: str = Header(default="")):
@@ -509,15 +488,17 @@ def make_app(rt: Runtime):
         op = body.pop("op", "rank")
         if op == "rank":
             return run(rt.rank, body, body.pop("arm", None))
+        if op == "timing" or (op == "outcome" and body.get("event") == "timing"):
+            return run(rt.timing, body)
         if op == "outcome":
-            return run(rt.outcome, body)
+            raise HTTPException(410, OUTCOMES_GONE)
         if op == "flush":
             return run(rt.flush, bool(body.get("publish")))
         if op == "status":
             return rt.status()
         if op == "reload":
             return rt.control(force=True)
-        raise HTTPException(400, f"unknown op {op!r}: rank, outcome, flush, status or reload")
+        raise HTTPException(400, f"unknown op {op!r}: rank, timing, flush, status or reload")
 
     return api
 

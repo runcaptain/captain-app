@@ -541,7 +541,6 @@ def test_copies_from_the_cli_and_the_api_and_a_plan_with_nothing_to_warn_about(w
 
 
 def test_a_site_is_given_the_address_and_the_key_header_not_aws_calls(ws, modal):  # noqa: F811
-    from captain_search.staging import ab as AB
     from captain_search.staging import traffic as TF
 
     _setup(ws)
@@ -550,4 +549,6 @@ def test_a_site_is_given_the_address_and_the_key_header_not_aws_calls(ws, modal)
     assert c["reachable"] and c["address"] == URL and c["text"].startswith(f"Running on Modal at {URL}")
     assert all(URL in code and "CAPTAIN_STAGING_KEY" in code and "sagemaker" not in code.lower() for code in c["snippets"].values())
     assert c["test_request"].startswith(f"curl -s {URL}/rank")
-    assert AB.addresses(SG.state(ws, "shop"))["candidate"] == {"url": f"{URL}/rank/candidate", "auth": "Authorization: Bearer <the endpoint key>"}
+    adr = {a["model"]: a for a in c["addresses"]}  # one address a model, for a team's own testing tool
+    assert adr["candidate"]["address"] == f"{URL}/rank" and adr["baseline"]["address"] == f"{URL}/rank/baseline"
+    assert adr["candidate"]["how"] == "POST, with the key as a bearer token"
