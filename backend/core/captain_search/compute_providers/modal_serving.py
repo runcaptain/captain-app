@@ -19,6 +19,7 @@ import tempfile
 import time
 
 from . import ComputeProvider, Job, ProviderError
+from ..staging import timings as TM
 from .serving import HttpServing, clean_name
 
 APP_TAGS = {"app": "captain", "captain-purpose": "serving"}
@@ -198,7 +199,8 @@ class ModalServingProvider(HttpServing, ComputeProvider):
                                         "Give this target another name prefix.") from None
                 raise
             made.append(sec_res)
-            say("Deploying the endpoint on Modal (the first time, Modal builds the image: about two minutes)")
+            say("Deploying the endpoint on Modal (the first time Modal builds the image: " + (TM.step_words("modal", "start", True) or "a few minutes")
+                + ". After that: " + (TM.step_words("modal", "start", False) or "less") + ")")
             made.append(app_res)  # from here an app may exist, whatever the deploy says
             self._deploy(n, st, say)
             url = self._fn(n["app"]).get_web_url()

@@ -178,7 +178,12 @@ def test_the_plan_says_what_will_be_created_and_what_it_costs_and_changes_nothin
     text = json.dumps(p["login_policy"])
     assert f"arn:aws:iam::{ACC}:role/captain-serving" in text and "codebuild:StartBuild" in text and "iam:PassRole" in text
     assert '"Resource": "*"' in text  # SageMaker endpoints only: everything else is named
-    assert all(s["Resource"] != "*" for s in p["login_policy"]["Statement"] if s["Sid"] != "StagingEndpoints")
+    # Two statements may name every resource: SageMaker's endpoints, and the scaling service, whose targets and alarms
+    # get names AWS makes up. Everything else names exactly what setup makes.
+    assert all(s["Resource"] != "*" for s in p["login_policy"]["Statement"] if s["Sid"] not in ("StagingEndpoints", "MoreThanOneCopy"))
+    scaling = next(s for s in p["login_policy"]["Statement"] if s["Sid"] == "ScalingServiceRole")
+    assert scaling["Action"] == "iam:CreateServiceLinkedRole" and "sagemaker.application-autoscaling.amazonaws.com" in scaling["Resource"]
+    assert scaling["Condition"] == {"StringLike": {"iam:AWSServiceName": "sagemaker.application-autoscaling.amazonaws.com"}}
 
 
 def test_setup_creates_a_least_privilege_role_an_image_built_in_the_account_and_a_target(cloud_ws, aws):

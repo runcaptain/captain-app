@@ -80,6 +80,11 @@ def stopped_key(pid: str, env: str, stage: str) -> str:
     return f"staging/{pid}/{env}/stopped/{stage}.json"
 
 
+def copies_prefix(pid: str, env: str, stage: str) -> str:
+    """Where each running copy of one deployment says when it was last used: one small file a copy."""
+    return f"staging/{pid}/{env}/copies/{stage}/"
+
+
 def bucket(salt: str, unit: str) -> float:
     """Where a shopper falls in [0, 1): the same shopper and salt always give the same place."""
     return int(hashlib.sha256(f"{salt}:{unit}".encode()).hexdigest()[:12], 16) / float(16 ** 12)
@@ -148,6 +153,7 @@ class Runtime:
         self.flush_s, self.publish_s = float(flush_s), float(publish_minutes) * 60.0
         self.clock, self.on_stop = clock, on_stop
         self.started = self.last_used = self.last_flush = self.last_publish = clock()
+        self._beat_at, self._beat_used, self._beat_tag = 0.0, None, None
         self.started_at = _now()
         self.requests = self.outcomes = 0
         self.by_traffic = {k: 0 for k in L.TRAFFIC}  # how many requests of each kind: only "real" is a site calling
@@ -252,7 +258,7 @@ class Runtime:
                "scores": [None if s is None else round(float(s), 6) for _, s in ranked],
                "features": {p: feats[p] for p in ids[:LOG_TOP] if p in feats}, "ms": ms, "traffic": traffic,
                "experiment": ctl.get("experiment") if arm is None and ctl.get("split") is not None else None,
-               "forced": arm is not None}
+               "forced": arm is not None, "copy": self.copy}  # which running copy answered, for a host with several
         if shadow:
             rec["shadow"] = shadow
         with self._lock:
@@ -381,8 +387,47 @@ class Runtime:
                 print(f"staging: could not write the log: {e}", flush=True)
         self.control()
         # On a host that sleeps when idle, the host takes the copies away. Stopping here would leave one answering 503.
-        if not self.bundle.get("scale_to_zero") and now - self.last_used >= self.idle_minutes * 60:
+        if self.bundle.get("scale_to_zero"):
+            return
+        self._beat(now)
+        if now - self.last_used >= self.idle_minutes * 60:
+            # Stopping deletes the whole endpoint, and with more than one copy the host hands a request to whichever
+            # it likes: this copy can sit unused while another is busy. So ask the others before stopping.
+            other = self._others_last_used()
+            if other is not None and other > self.last_used:
+                self.last_used = other
+                return
             self.stop(f"no requests for {self.idle_minutes:g} minutes")
+
+    def _beat(self, now: float) -> None:
+        """Say when this copy was last used, where the other copies of this deployment can read it. Written when it
+        has changed, at most once a flush interval. A failure is not worth a line: the next tick tries again."""
+        if self._beat_used == self.last_used or now - self._beat_at < self.flush_s:
+            return
+        key = copies_prefix(self.pid, self.env, self.stage) + f"{self.copy}.json"
+        try:
+            self._beat_tag = self.store.put_if(key, json.dumps({"copy": self.copy, "last_used": self.last_used, "at": _now()}).encode(), self._beat_tag)
+            self._beat_at, self._beat_used = now, self.last_used
+        except Exception:  # noqa: BLE001
+            self._beat_at = now
+
+    def _others_last_used(self) -> float | None:
+        """The latest time any other copy of this deployment said it was used, or None when there is no other copy
+        or it can't be read. Asked only when this copy is about to stop."""
+        latest = None
+        try:
+            mine = f"{self.copy}.json"
+            for key in self.store.list(copies_prefix(self.pid, self.env, self.stage)):
+                if key.endswith("/" + mine):
+                    continue
+                try:
+                    used = float(json.loads(self.store.get(key)).get("last_used") or 0)
+                except Exception:  # noqa: BLE001
+                    continue
+                latest = used if latest is None else max(latest, used)
+        except Exception:  # noqa: BLE001
+            return None
+        return latest
 
     def stop(self, reason: str) -> None:
         if self.stopped:

@@ -63,11 +63,8 @@ WORDS = {
               "model": "The container app itself. Made now, deleted when you stop it."},
 }
 TITLES = {"check": "Checking your account", "image": "Building the model's image", "start": "Starting the model", "ready": "Checking it answers"}
-# How long each part took on a real account, in seconds: (first-time setup, deploy to ready the first time, deploy
-# to ready after). None where it has not run for real, and then the plan says so and gives a cautious range.
-MEASURED = {"aws": {"setup": 94, "first": 126, "again": 126, "on": "2026-11-11"},
-            "modal": {"setup": 1, "first": 96, "again": 20, "on": "2026-11-11"}}
-UNMEASURED_MINUTES = (5, 12)
+# How long each step takes comes from one table of measured times (timings.py), which the lines a run prints
+# read too.
 DEFAULT_REGION = {"aws": "us-east-1", "gcp": "us-central1", "azure": "eastus"}
 # A run that has said nothing for this long is taken to have died with its process, so another may start.
 STALE_S = 180
@@ -108,6 +105,14 @@ def _after(ctx: Context, pid: str) -> list[dict]:
 def _steps(cloud: str, ctx: Context | None = None, pid: str | None = None) -> list[dict]:
     base = [{"id": s, "title": WORDS[cloud]["access"] if s == "access" else TITLES[s]} for s in STEPS]
     return base + ([{"id": a["id"], "title": a["title"]} for a in _after(ctx, pid)] if ctx is not None else [])
+
+
+def _typical(steps: list[dict], cloud: str, first_time: bool) -> list[dict]:
+    """Each step with what it typically takes on this host, from the measured table: `typical_s` and `typical`
+    ("about 2 minutes"), both None for a step that has not been timed or does not run this time."""
+    from . import timings as TM
+
+    return [{**s, "typical_s": TM.seconds(cloud, s["id"], first_time), "typical": TM.step_words(cloud, s["id"], first_time)} for s in steps]
 
 
 def _money(x: float) -> str:
@@ -210,21 +215,27 @@ def _priced(est: dict, cloud: str, sleeps: bool) -> dict:
     return {**est, "text": text, "hourly_usd": None if hourly is None else round(hourly, 4), "monthly_usd": None if monthly is None else round(monthly, 2)}
 
 
+TITLES_SHORT = {"access": "set up", "image": "build the image", "start": "start the model"}
+
+
 def _minutes(cloud: str, first_time: bool) -> dict:
     if cloud == "local":
         return {"low": 0, "high": 1, "measured": None, "text": "A few seconds."}
-    m = MEASURED.get(cloud)
-    if not m:
-        lo, hi = UNMEASURED_MINUTES if first_time else (2, 6)
-        return {"low": lo, "high": hi, "measured": None,
+    from . import timings as TM
+
+    total = TM.total(cloud, first_time)
+    if total is None:
+        lo, hi = TM.UNMEASURED_MINUTES[bool(first_time)]
+        return {"low": lo, "high": hi, "measured": None, "seconds": None,
                 "text": f"About {lo} to {hi} minutes. This place has not run on a real account yet, so that is a cautious guess."}
-    total = (m["setup"] + m["first"]) if first_time else m["again"]
-    mins = max(1, round(total / 60))
-    parts = (f"about {max(1, round(m['setup'] / 60))} to set up and {max(1, round(m['first'] / 60))} to start" if first_time and m["setup"] >= 30
-             else "almost all of it starting the model")
-    return {"low": mins, "high": mins + 1, "measured": m["on"],
-            "text": (f"About {mins} minute{'s' if mins != 1 else ''}" + (f": {parts}." if first_time else ".")
-                     + f" Measured on {m['on']}.")}
+    mins = max(1, int(total / 60 + 0.5))
+    # The steps worth naming: the ones that take half a minute or more, in the order they run.
+    slow = [(TITLES_SHORT[s], TM.seconds(cloud, s, first_time)) for s in ("access", "image", "start") if (TM.seconds(cloud, s, first_time) or 0) >= 30]
+    parts = " and ".join(f"{TM.words(sec)} to {name}" for name, sec in slow)
+    low = max(1, int(total / 60))  # the measured time lies between low and high, in whole minutes
+    return {"low": low, "high": low + 1, "measured": TM.measured_on(cloud), "seconds": total,
+            "text": ("Under a minute." if total < 50 else f"About {mins} minute{'s' if mins != 1 else ''}" + (f": {parts}." if len(slow) > 1 else "."))
+                    + f" Measured on {TM.measured_on(cloud)}."}
 
 
 def offers(ctx: Context, pid: str, candidate: str | None = None, baseline: bool = False, env: str = ENV) -> dict:
@@ -331,7 +342,7 @@ def plan(ctx: Context, pid: str, host: str = "local", login: str | None = None, 
             raise NotServable(s["text"])
     version, beside = arms[serve], arms.get("baseline") if serve != "baseline" else None
     base = {"project": pid, "env": env, "id": o["id"], "host": host, "login": o["login"], "label": o["label"], "region": o["region"], "model_version": version,
-            "beside": beside, "first_time": o["first_time"], "steps": _steps(host, ctx, pid), "minutes": o["minutes"], "proven": o["proven"],
+            "beside": beside, "first_time": o["first_time"], "steps": _typical(_steps(host, ctx, pid), host, o["first_time"]), "minutes": o["minutes"], "proven": o["proven"],
             "proven_text": o["proven_text"], "sleeps": o["sleeps"], "warnings": [], "login_policy": None, "login_text": None}
     what = f"Deploy {version}" + (f" beside the baseline {beside}" if beside else "")
     if host == "local":
