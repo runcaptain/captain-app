@@ -414,7 +414,8 @@ assert.ok(t.includes(rq.text) && t.includes('Answered by') && t.includes('Took')
 await h.click('dep-request-0');
 await until(h, () => byId(h, 'dep-request-id').length === 1, 'the side panel opens');
 assert.equal(byId(h, 'dep-request-id')[0].kids.join(''), rq.rows[0].request_id, 'with the request id');
-assert.ok(/answered in [\d.]+ ms\./.test(h.text()), `who answered and how fast: ${h.text().slice(-500)}`);
+assert.ok(/answered\. [\d.]+ ms at the endpoint\. Your site didn't report how long it took\./.test(h.text()), `who answered and how fast: ${h.text().slice(-500)}`);
+assert.ok(h.text().includes('Log lines of this request') && /Ranked '.+' with the (candidate|baseline) in [\d.]+ ms: \d+ results\./.test(h.text()), "the request's own log lines, from the real endpoint");
 assert.equal(h.byIdPrefix('dep-request-r').length, rq.rows[0].results, 'and each result it returned');
 assert.equal(h.byIdPrefix('dep-request-0').length > 0, true, 'the list keeps its place');
 // The Versions tab: every version staged, the live one marked, and Roll back on the others after a yes.

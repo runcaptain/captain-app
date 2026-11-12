@@ -1231,6 +1231,77 @@ def project_staging_request(pid: str, rid: str):
     return _staging_call(TF.request, ctx(), pid, rid)
 
 
+@app.get("/api/projects/{pid}/staging/live", dependencies=A)
+def project_staging_live(pid: str):
+    """The small card that follows every tab: {state: stopped | idle | handling, label, text, copies, running, line}."""
+    from .staging import observe as OB
+
+    return _staging_call(OB.live, ctx(), pid)
+
+
+@app.get("/api/projects/{pid}/staging/copies", dependencies=A)
+def project_staging_copies(pid: str):
+    """Each running copy: {rows: [{copy, where, machine, model_version, created_at, started_at, ready_s, requests,
+    running, state, status, text}], text}."""
+    from .staging import observe as OB
+
+    return _staging_call(OB.copies, ctx(), pid)
+
+
+@app.get("/api/projects/{pid}/staging/logs", dependencies=A)
+def project_staging_logs(pid: str, q: str | None = None, limit: int = 300, request_id: str | None = None, since: str | None = None):
+    """The endpoint's log lines, oldest first: {rows: [{ts, text, level, request_id?}], total, matching, streaming,
+    last, note}. `q` filters, `since` follows."""
+    from .staging import observe as OB
+
+    return _staging_call(OB.logs, ctx(), pid, "staging", q, limit, request_id, since)
+
+
+@app.get("/api/projects/{pid}/staging/settings", dependencies=A)
+def project_staging_settings(pid: str):
+    """How the endpoint is set up: {groups: [{title, rows: [[label, value]], edit?}], idle_minutes, idle_choices, can_edit}."""
+    from .staging import observe as OB
+
+    return _staging_call(OB.settings, ctx(), pid)
+
+
+@app.put("/api/projects/{pid}/staging/settings", dependencies=A)
+def project_staging_settings_put(pid: str, body: dict):
+    """{idle_minutes}: how long an idle endpoint stays up. Takes effect in a few seconds, with no restart."""
+    from .staging import observe as OB
+
+    return _staging_call(OB.set_idle, ctx(), pid, body.get("idle_minutes"))
+
+
+@app.get("/api/projects/{pid}/staging/cost", dependencies=A)
+def project_staging_cost(pid: str):
+    """What this deployment has cost: {month_text, day_text, rate_text, rows: [{machine, usd, hours, text}], free, note}."""
+    from .staging import observe as OB
+
+    return _staging_call(OB.cost, ctx(), pid)
+
+
+@app.get("/api/projects/{pid}/staging/metrics", dependencies=A)
+def project_staging_metrics(pid: str, range: str = "1h"):  # noqa: A002  the query parameter is named for what it is
+    """Requests, response time and errors over one time range (15m, 1h, 24h, 7d): {buckets: [{at, requests, errors,
+    p50, p95, site_p50, site_p95}], markers, summary}."""
+    from .staging import observe as OB
+
+    return _staging_call(OB.metrics, ctx(), pid, "staging", range)
+
+
+@app.get("/api/deployments", dependencies=A)
+def deployments(which: str = "live"):
+    """Every staged model across projects: {rows: [{project, name, model_version, state, status, where, by,
+    since_text, copies, running, requests_24h, series, errors}]}. `which` is live, stopped or all."""
+    from .staging import observe as OB
+
+    try:
+        return OB.deployments(ctx(), which)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
 @app.get("/api/projects/{pid}/staging/versions", dependencies=A)
 def project_staging_versions(pid: str):
     """Every version put on this endpoint, newest first: {rows: [{n, model_version, at, by, live, can_roll_back}]}."""
