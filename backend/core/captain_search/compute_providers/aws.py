@@ -1,6 +1,8 @@
 """AWS: ECS on Fargate, Batch, and SageMaker (serving only). Logs come from CloudWatch for both job kinds."""
 from __future__ import annotations
 
+import threading
+
 import datetime as dt
 
 from . import ComputeProvider, Job, ProviderError, env_list, split_csv, status
@@ -22,6 +24,17 @@ def _who() -> str:
     return whoami()
 
 
+_CLIENTS: dict = {}
+_CLIENTS_LOCK = threading.Lock()
+CLIENT_TTL_S = 1800
+
+
+def forget_clients() -> None:
+    """Drop every kept client: after a login is changed or removed, and between tests."""
+    with _CLIENTS_LOCK:
+        _CLIENTS.clear()
+
+
 class _AWS(ComputeProvider):
     provider = "aws"
 
@@ -31,7 +44,32 @@ class _AWS(ComputeProvider):
         return cloud.aws_session(self.profile, self.region)
 
     def _client(self, name: str):
-        return self._session().client(name)
+        """One client per login, region and service, kept for this process. Making a client for every call cost
+        about 60 ms each time to build it, and a new connection to AWS on top (a fresh TLS handshake, and for a
+        login that assumes a role, a fresh call to AWS to sign in). A query from the terminal showed 848 ms and
+        480 ms round trips against 4 ms inside the endpoint. A kept client reuses the sign-in and the connection.
+        Kept for 30 minutes at most, so a role's one-hour credentials are renewed well before they run out."""
+        import time
+
+        who = self.profile if isinstance(self.profile, str) or self.profile is None else (self.profile or {}).get("name")
+        key = (who, self.region, name)
+        with _CLIENTS_LOCK:
+            hit = _CLIENTS.get(key)
+            if hit and time.monotonic() - hit[0] < CLIENT_TTL_S:
+                return hit[1]
+        # The sign-in is kept too, so a second service (asking the endpoint, after starting it) does not sign in again.
+        skey = (who, self.region, None)
+        with _CLIENTS_LOCK:
+            hit = _CLIENTS.get(skey)
+            session = hit[1] if hit and time.monotonic() - hit[0] < CLIENT_TTL_S else None
+        if session is None:
+            session = self._session()  # outside the lock: it can call AWS to sign in
+            with _CLIENTS_LOCK:
+                _CLIENTS[skey] = (time.monotonic(), session)
+        made = session.client(name)
+        with _CLIENTS_LOCK:
+            _CLIENTS[key] = (time.monotonic(), made)
+        return made
 
     def _identity(self) -> str:
         return self._client("sts").get_caller_identity()["Arn"]
@@ -593,6 +631,52 @@ class SageMakerProvider(_AWS):
             raise ProviderError("The staging endpoint refused the request: " + _aws_sentence(e)[:300]) from None
         body = r["Body"].read() if hasattr(r["Body"], "read") else r["Body"]
         return json.loads(body)
+
+    def found(self, prefix: str = "captain") -> list[dict]:
+        """Every SageMaker endpoint here that Captain made, whatever project made it: found by Captain's tag, or by
+        the name prefix. Reads only, and never calls a model. One row each: the name, the state as SageMaker reports
+        it with its reason, the machine, the copies up, since when, and the project its tags name."""
+        sm = self._client("sagemaker")
+        start = prefix.strip("-") + "-"
+        out, token = [], None
+        states = {"InService": "running", "Creating": "starting", "Updating": "starting", "SystemUpdating": "starting",
+                  "RollingBack": "starting", "Failed": "failed", "OutOfService": "failed", "UpdateRollbackFailed": "failed"}
+        while True:
+            r = sm.list_endpoints(**({"NextToken": token} if token else {}), MaxResults=100)
+            for e in r.get("Endpoints", []):
+                name = e["EndpointName"]
+                try:
+                    tags = {t["Key"]: t["Value"] for t in sm.list_tags(ResourceArn=e["EndpointArn"]).get("Tags", [])}
+                except Exception:  # noqa: BLE001  a login that may not read tags still finds things by name
+                    tags = {}
+                if tags.get("app") != "captain" and not name.startswith(start):
+                    continue
+                try:
+                    d = sm.describe_endpoint(EndpointName=name)
+                except Exception as err:  # noqa: BLE001
+                    if _missing(err):
+                        continue
+                    raise
+                if d.get("EndpointStatus") == "Deleting":
+                    continue
+                v = (d.get("ProductionVariants") or [{}])[0]
+                machine = None
+                try:
+                    cfg = sm.describe_endpoint_config(EndpointConfigName=d["EndpointConfigName"])
+                    machine = (cfg.get("ProductionVariants") or [{}])[0].get("InstanceType")
+                except Exception:  # noqa: BLE001
+                    pass
+                out.append({"type": "endpoint", "name": name, "region": self.region,
+                            "state": states.get(d.get("EndpointStatus"), "starting"),
+                            "reason": d.get("FailureReason") if states.get(d.get("EndpointStatus")) == "failed" else
+                            (d.get("EndpointStatus") if states.get(d.get("EndpointStatus"), "starting") == "starting" else None),
+                            "machine": machine, "copies_now": v.get("CurrentInstanceCount"), "copies_min": None, "copies_max": None,
+                            "since": _iso(d.get("CreationTime")), "changed": _iso(d.get("LastModifiedTime")),
+                            "project": tags.get("project"), "env": tags.get("env"), "stage": tags.get("captain:stage"),
+                            "by": tags.get("captain:by"), "by_tag": tags.get("app") == "captain", "by_prefix": name.startswith(start)})
+            token = r.get("NextToken")
+            if not token:
+                return out
 
     def tagged(self, project: str, env: str) -> list[dict]:
         """Every SageMaker endpoint, endpoint config and model here that carries Captain's tags for this project."""

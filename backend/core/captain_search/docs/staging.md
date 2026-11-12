@@ -161,6 +161,23 @@ lines a run prints ("Starting the endpoint (about 2 minutes)") all read it, and 
 up to the confirm's total. A step that has not been timed on a real account says so instead of guessing. Moving a
 running endpoint to a new version has not been timed yet.
 
+### What a request costs in time
+
+A request from this computer to a cloud endpoint has two very different costs, so a query reports them apart
+(`timing` in `POST .../staging/query`, and the last line `cst projects staging-query` prints):
+
+- **The first call** from a process signs in to the cloud and opens a connection. It can take several times as
+  long as the request itself. `timing.first_call_ms`, null once this process is connected.
+- **A warm call**, with the connection open: `timing.warm_ms`, of which `timing.inside_ms` is the model.
+
+Before 2026-11-12 Captain made a new cloud client for every call, so every call paid the first cost: one query
+from the terminal showed round trips of 848 ms and 480 ms against 3.9 ms and 1.4 ms inside the endpoint. Measured
+on this laptop, building a client alone took 50 to 70 ms each time, loading the AWS library 135 to 190 ms once,
+and each new client opened a new connection. Captain now keeps one sign-in and one client per login and service
+for the life of the process (30 minutes at most). The round trip also no longer counts the time this computer
+takes to look up product titles for the answer. A site that calls the endpoint should do the same: make one
+client and keep it.
+
 ### Which machine it runs on
 
 A deploy runs on the smallest machine the model fits on. Nobody has to choose one.
@@ -364,15 +381,15 @@ the account, and Captain does not remove it.
 
 - The request log. Each copy writes its own chunks under the same folder with create-only writes, so two copies
   never overwrite each other. Each request row says which copy answered it (`copy`).
-- The split. A session's version is a hash of the experiment's salt and the session id, so every copy gives the
-  same session the same version.
+- Each model's own address. `/rank/candidate` and `/rank/baseline` give that model from whichever copy the host
+  hands the request to, so a team that splits traffic in its own system gets the same answer from every copy.
 - Shadow mode. Every copy serves the baseline and logs the candidate's answer beside it.
 - Stopping when idle. A copy that has had no request for the idle limit asks the other copies when they were last
   used before it stops the endpoint. Each copy leaves that in `staging/<project>/<env>/copies/<deployment>/`.
   Before this, one quiet copy could delete an endpoint another copy was busy on.
 
-**What is per copy.** A change of traffic (the split, shadow mode, the idle limit) reaches the copy that was told at
-once and the others within 3 seconds. `flush` and `status` reach one copy, whichever the host picks, so the newest
+**What is per copy.** A change to the running endpoint (shadow mode, the idle limit) reaches the copy that was told
+at once and the others within 3 seconds. `flush` and `status` reach one copy, whichever the host picks, so the newest
 15 seconds of another copy's requests can be missing from a readout taken right after a flush.
 
 ## Cost, and stopping by itself
