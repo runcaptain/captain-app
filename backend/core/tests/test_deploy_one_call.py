@@ -294,3 +294,28 @@ def test_the_api_plans_confirms_runs_with_live_steps_and_removes(ws, logins, mod
             break
         time.sleep(0.05)
     assert j["status"] == "done" and j["result"]["removed_setup"] and not modal.volumes
+
+
+def test_steps_can_follow_the_five_and_one_that_fails_does_not_undo_the_deploy(ws, logins, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(DP, "AFTER", [])
+    ran = []
+    DP.after_step("match", "Checking it matches training", lambda ctx, pid, env, say: (_ for _ in ()).throw(ValueError("Served features don't match training: 91% of 50 checked")))
+    DP.after_step("publish", "Saving this version to your model registry", lambda ctx, pid, env, say: ran.append(pid) or say("Saved."))
+    DP.after_step("never", "Not for this project", lambda *a: ran.append("never"), when=lambda ctx, pid: False)
+    p = DP.plan(ws, "shop", "local")
+    assert [s["id"] for s in p["steps"]] == [*DP.STEPS, "match", "publish"]
+    seen, hear = _events()
+    out = DP.run(ws, "shop", "local", on_event=hear)
+    assert out["status"] == "done" and SG.state(ws, "shop")["status"] == "running" and ran == ["shop"]  # still up, and the next step still ran
+    steps = {s["id"]: s for s in out["steps"]}
+    assert steps["match"]["status"] == "failed" and "91% of 50 checked" in steps["match"]["lines"][-1] and steps["publish"]["status"] == "done"
+    assert out["soft_failed"] == [{"id": "match", "title": "Checking it matches training", "error": "Served features don't match training: 91% of 50 checked"}]
+    assert [d["index"] for k, d in seen if k == "step"][-1] == 7 and [d["of"] for k, d in seen if k == "step"][-1] == 7
+    # "Checking it answers" sent a few of the project's own queries through, as test traffic, for what follows to read.
+    assert any("test request" in ln for ln in steps["ready"]["lines"])
+    h = SG.call(ws, SG.state(ws, "shop"), "status", {})
+    assert h["traffic"]["test"] == DP.TEST_REQUESTS and h["traffic"]["real"] == 0
+    DP.after_step("hard", "Must pass", lambda *a: (_ for _ in ()).throw(ValueError("no")), soft=False)
+    with pytest.raises(ValueError, match="no"):
+        DP.run(ws, "shop", "local")
+    assert DP.status(ws, "shop")["failed_step"]["id"] == "hard"

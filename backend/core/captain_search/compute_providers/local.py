@@ -1,4 +1,4 @@
-"""This machine: the job runs as a child process of whoever submitted it, with its output in a file."""
+"""This computer: the job runs as a child process of whoever submitted it, with its output in a file."""
 from __future__ import annotations
 
 import datetime as dt
@@ -16,7 +16,7 @@ def _now() -> str:
 
 
 class LocalProvider(ComputeProvider):
-    kind, provider, label = "local", "local", "This machine"
+    kind, provider, label = "local", "local", "This computer"
     purposes = ["backtest"]
     fields: list[dict] = []
     live_tested = "2026-11-06"

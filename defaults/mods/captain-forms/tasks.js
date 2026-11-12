@@ -533,14 +533,15 @@ export const TASKS = [
   },
   {
     id: "cloud", label: "Connect a cloud account", icon: "cloud",
-    about: "AWS, Google Cloud or Azure, for your data and to run work there. Secrets stay in your keychain.",
+    about: "AWS, Google Cloud, Azure or Modal, for your data and to run work there. Secrets stay in your keychain.",
     load: async () => ({ providers: (await api("/api/cloud/providers")).data ?? [] }),
     fields: [
-      { key: "provider", label: "Cloud", kind: "choice", required: true, options: (ctx) => (ctx.providers ?? []).map((p) => ({ value: p.provider, label: { aws: "AWS", gcp: "Google Cloud", azure: "Azure" }[p.provider] ?? p.provider, brand: p.provider })) },
+      { key: "provider", label: "Cloud", kind: "choice", required: true, options: (ctx) => (ctx.providers ?? []).map((p) => ({ value: p.provider, label: { aws: "AWS", gcp: "Google Cloud", azure: "Azure", modal: "Modal" }[p.provider] ?? p.provider, brand: p.provider })) },
       { key: "auth", label: "Sign in with", kind: "choice", required: true, when: (v) => Boolean(v.provider),
         options: (ctx, v) => ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).map((a) => ({ value: a.mode, label: a.label })) },
-      { key: "name", label: "Name", placeholder: "work-aws", required: true, help: "How you'll pick this login later." },
-      { key: "region", label: "Region", placeholder: "us-west-1", optional: true },
+      { key: "name", label: "Name", placeholder: "work", required: true, help: "How you'll pick this login later." },
+      // Modal picks where it runs by itself, so it is asked for no region.
+      { key: "region", label: "Region", placeholder: "us-west-1", optional: true, when: (v) => v.provider !== "modal" },
       // The sign-in mode's own fields come from the services (cloud.providers), secrets masked.
       { key: "*auth-fields", kind: "dynamic", fields: (ctx, v) => ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).find((a) => a.mode === v.auth)?.fields ?? [] },
     ],

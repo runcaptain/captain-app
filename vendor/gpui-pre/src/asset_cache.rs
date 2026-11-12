@@ -10,6 +10,33 @@ use std::mem;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+// CAPTAIN: how many asset loads (an image's file being read and decoded, say) are still under way. A picture of a
+// window that never draws by itself (a test window behind other apps) is taken by drawing a frame on request: the
+// first such frame is what starts a load, so the picture would show the gap where the image goes. The caller waits
+// for this to reach zero and draws again.
+static PENDING_LOADS: AtomicUsize = AtomicUsize::new(0);
+
+/// CAPTAIN: the number of asset loads that have started and not yet finished or been dropped.
+pub fn pending_asset_loads() -> usize {
+    PENDING_LOADS.load(Ordering::SeqCst)
+}
+
+struct PendingLoad;
+
+impl PendingLoad {
+    fn begin() -> Self {
+        PENDING_LOADS.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for PendingLoad {
+    fn drop(&mut self) {
+        PENDING_LOADS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 pub(crate) struct CachedLoad<T> {
     state: Rc<RefCell<CachedLoadState<T>>>,
@@ -26,9 +53,12 @@ impl<T: Clone + Send + 'static> CachedLoad<T> {
     pub(crate) fn new(future: impl Future<Output = T> + Send + 'static, cx: &App) -> Self {
         let state = Rc::new(RefCell::new(CachedLoadState::Loading(FxHashSet::default())));
         let task = cx.background_executor().spawn(future);
+        let pending = PendingLoad::begin();
         let task = cx.spawn({
             let state = Rc::downgrade(&state);
             async move |cx| {
+                // Held until the result is published, or dropped with the task when the load is cancelled.
+                let _pending = pending;
                 let result = task.await;
                 let Some(state) = state.upgrade() else {
                     return;
@@ -42,6 +72,11 @@ impl<T: Clone + Send + 'static> CachedLoad<T> {
                     for view in views {
                         cx.notify(view);
                     }
+                    // CAPTAIN: and draw every window again. Notifying the view that asked is not always enough:
+                    // an image inside a dialog drawn after its parent (a deferred draw) registers under a view the
+                    // window may no longer be tracking, and then nothing redraws and the image stays a gap until
+                    // something else moves. A load finishes once per file, so this costs one frame.
+                    cx.refresh_windows();
                 });
             }
         });
@@ -235,6 +270,32 @@ mod tests {
         assert_eq!(second_notification_count.get(), 1);
         assert_eq!(load.use_by(first_entity.entity_id()), Some(42));
         assert_eq!(load.use_by(second_entity.entity_id()), Some(42));
+    }
+
+    #[gpui::test]
+    fn pending_loads_are_counted_until_they_finish_or_are_dropped(cx: &mut TestAppContext) {
+        let before = super::pending_asset_loads();
+        let (sender, receiver) = oneshot::channel::<i32>();
+        let finished = cx.update(|cx| {
+            CachedLoad::new(
+                async move { receiver.await.expect("test sends a result") },
+                cx,
+            )
+        });
+        let (_never_sender, never_receiver) = oneshot::channel::<i32>();
+        let dropped = cx.update(|cx| {
+            CachedLoad::new(async move { never_receiver.await.unwrap_or_default() }, cx)
+        });
+        assert_eq!(super::pending_asset_loads(), before + 2);
+
+        assert!(sender.send(7).is_ok());
+        cx.run_until_parked();
+        assert_eq!(super::pending_asset_loads(), before + 1);
+        assert_eq!(finished.get(), Some(7));
+
+        drop(dropped);
+        cx.run_until_parked();
+        assert_eq!(super::pending_asset_loads(), before);
     }
 
     #[gpui::test]

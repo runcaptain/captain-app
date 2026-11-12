@@ -49,7 +49,7 @@ def signed_out(e: Exception) -> str | None:
 class ModalServingProvider(HttpServing, ComputeProvider):
     kind, provider, label = "modal-endpoint", "modal", "Modal web endpoint"
     purposes = ["serve"]
-    live_tested = None  # it runs no jobs
+    live_tested = "2026-11-11"  # it runs no jobs: this is the date it hosted a model on a real workspace (below)
     # A team Modal workspace, in its own environment, 1 CPU and 2 GB: the guided setup, the demo store's starter
     # ranker staged beside its baseline (ready in 82 s with the image build, 20 s without), queried, checked,
     # shadowed, split with simulated shoppers, ramped, rolled back, slept and woken (4.5 s), unstaged, removed.

@@ -26,7 +26,10 @@ Steps. Every host has the same five, with its own words for the second:
   access   Creating the role ...      the identity the model runs as and where its files are kept (first time)
   image    Building the image         (first time, or when Captain itself has changed)
   start    Starting the model
-  ready    Ready                      it answered
+  ready    Checking it answers        it answered, and a few test requests went through it
+
+More steps can follow these (`after_step`): a check that what is served matches training, saving the version to a
+model registry. One of those failing does not undo the deploy.
 
 The state of the last deploy is kept in the workspace, `staging/<project>/<env>/deploy.json`.
 """
@@ -78,8 +81,33 @@ def _key(pid: str, env: str) -> str:
     return f"staging/{pid}/{env}/deploy.json"
 
 
-def _steps(cloud: str) -> list[dict]:
-    return [{"id": s, "title": WORDS[cloud]["access"] if s == "access" else TITLES[s]} for s in STEPS]
+# Steps that run after the model answers, in order. Each is {id, title, run(ctx, pid, env, say), when(ctx, pid)?,
+# soft}. `when` says whether the step applies to this project (always, when left out). A `soft` step that fails is
+# marked failed with its reason and the deploy still ends done: the model is up, and the screen says what the step
+# found. Add one with `after_step`.
+AFTER: list[dict] = []
+TEST_REQUESTS = 5
+
+
+def after_step(id: str, title: str, run, when=None, soft: bool = True) -> None:
+    """Register a step that runs after "Checking it answers". Registering an id again replaces it."""
+    AFTER[:] = [a for a in AFTER if a["id"] != id] + [{"id": id, "title": title, "run": run, "when": when, "soft": soft}]
+
+
+def _after(ctx: Context, pid: str) -> list[dict]:
+    out = []
+    for a in AFTER:
+        try:
+            if a["when"] is None or a["when"](ctx, pid):
+                out.append(a)
+        except Exception:  # noqa: BLE001  a step that can't tell whether it applies does not run
+            continue
+    return out
+
+
+def _steps(cloud: str, ctx: Context | None = None, pid: str | None = None) -> list[dict]:
+    base = [{"id": s, "title": WORDS[cloud]["access"] if s == "access" else TITLES[s]} for s in STEPS]
+    return base + ([{"id": a["id"], "title": a["title"]} for a in _after(ctx, pid)] if ctx is not None else [])
 
 
 def _money(x: float) -> str:
@@ -280,7 +308,7 @@ def plan(ctx: Context, pid: str, host: str = "local", login: str | None = None, 
             raise NotServable(s["text"])
     version, beside = arms[serve], arms.get("baseline") if serve != "baseline" else None
     base = {"project": pid, "env": env, "id": o["id"], "host": host, "login": o["login"], "label": o["label"], "region": o["region"], "model_version": version,
-            "beside": beside, "first_time": o["first_time"], "steps": _steps(host), "minutes": o["minutes"], "proven": o["proven"],
+            "beside": beside, "first_time": o["first_time"], "steps": _steps(host, ctx, pid), "minutes": o["minutes"], "proven": o["proven"],
             "proven_text": o["proven_text"], "sleeps": o["sleeps"], "warnings": [], "login_policy": None, "login_text": None}
     what = f"Deploy {version}" + (f" beside the baseline {beside}" if beside else "")
     if host == "local":
@@ -430,6 +458,7 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
            "started_at": _now(), "started_by": whoami(), "made_setup": made_setup, "failed_step": None, "error": None, "policy": None,
            "steps": [{**s, "status": "pending", "seconds": None, "lines": []} for s in p["steps"]]}
     by_id = {s["id"]: s for s in doc["steps"]}
+    order = [s["id"] for s in doc["steps"]]
     cur = {"id": None, "t": time.time(), "wrote": 0.0}
 
     def begin(sid: str) -> None:
@@ -440,7 +469,7 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
         s["status"] = "running"
         cur.update(id=sid, t=time.time())
         _write(ctx, pid, env, doc)
-        say("step", id=sid, title=s["title"], index=STEPS.index(sid) + 1, of=len(STEPS))
+        say("step", id=sid, title=s["title"], index=order.index(sid) + 1, of=len(order))
 
     def end(how: str, note: str | None = None) -> None:
         if cur["id"] is None:
@@ -504,8 +533,26 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
         begin("ready")
         ep = (rec or {}).get("endpoint") or {}
         line(f"It answered at {ep.get('url') or ep.get('name')}.")
+        sent = _test_requests(ctx, pid, env)
+        if sent:
+            line(f"Sent {sent} test request{'s' if sent != 1 else ''} through it. They are marked as test traffic, never as shoppers.")
         end("done")
-        doc.update(status="done", ended_at=_now(), address=ep.get("url") or ep.get("name"))
+        soft_failed = []
+        for a in _after(ctx, pid):
+            if a["id"] not in by_id:
+                continue
+            begin(a["id"])
+            try:
+                a["run"](ctx, pid, env, line)
+                end("done")
+            except Exception as e:  # noqa: BLE001
+                if not a["soft"]:
+                    raise
+                # The model is up. What this step found is said on the step, and the deploy still ends done.
+                end("failed", str(e)[:400])
+                soft_failed.append({"id": a["id"], "title": a["title"], "error": str(e)[:400]})
+                say("line", text=str(e)[:400], step=a["id"])
+        doc.update(status="done", ended_at=_now(), address=ep.get("url") or ep.get("name"), soft_failed=soft_failed)
         _write(ctx, pid, env, doc)
         say("done", address=doc["address"], model_version=p["model_version"])
         return {**status(ctx, pid, env), "plan": p}
@@ -520,6 +567,27 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
         _write(ctx, pid, env, doc)
         say("failed", step=failed, title=s["title"], error=doc["error"])
         raise
+
+
+def _test_requests(ctx: Context, pid: str, env: str, n: int = TEST_REQUESTS) -> int:
+    """Send a few of the project's own queries through the new endpoint, as test traffic, so what runs next (the
+    served-features check, say) has something to look at. Best effort: a deploy never fails on this."""
+    from . import call
+    from .traffic import sample_queries
+
+    try:
+        rec = state(ctx, pid, env)
+        if not rec or rec.get("status") != "running" or rec.get("how") == "image":
+            return 0
+        sent = 0
+        for i, q in enumerate(sample_queries(ctx, pid, n)[:n]):
+            call(ctx, rec, "rank", {"query": q, "k": 10, "traffic": "test", "session_id": f"deploy-check-{i}"})
+            sent += 1
+        if sent:
+            call(ctx, rec, "flush", {})
+        return sent
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 def remove(ctx: Context, pid: str, env: str = ENV, progress=None) -> dict:

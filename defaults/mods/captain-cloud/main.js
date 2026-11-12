@@ -6,12 +6,15 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay } from "herdr";
 import { api, watchWorkspace } from "./kit/cst.js";
-import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
-import { Card, Badge, Button, Empty, Problem } from "./kit/ui.js";
+import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
+import { Card, Button, Empty, Problem } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 
-const SHORT = { aws: "AWS", gcp: "Google Cloud", azure: "Azure", local: "This computer" };
+const SHORT = { aws: "AWS", gcp: "Google Cloud", azure: "Azure", modal: "Modal", local: "This computer" };
+// How each kind of sign-in is said, in place of its id ("adc", "default", "local").
+const SIGN_IN = { profile: "AWS CLI profile", keys: "Access keys", role: "Assumed role", default: "This computer's sign-in", adc: "This computer's Google sign-in",
+  "service-account": "Service account key", "service-principal": "Service principal", "connection-string": "Storage connection string", local: "This computer's Modal sign-in" };
 
 function ago(t) {
   if (!t) return null;
@@ -56,18 +59,19 @@ export default class CaptainCloud extends View {
 
   login(c, p, active) {
     const t = p.last_test;
-    const status = t ? (t.ok ? `Signed in as ${t.identity ?? "?"}, checked ${ago(t.at) ?? "earlier"}` : `Last check failed ${ago(t.at) ?? ""}: ${t.error ?? ""}`) : "Not checked yet";
-    return v_flex().gap(4).pb(10).border_b(1).border_color(c.rule)
+    const status = t ? (t.ok ? `Signed in as ${t.identity ?? "you"}. Checked ${ago(t.at) ?? "earlier"}.` : `The last check failed ${ago(t.at) ?? ""}: ${t.error ?? ""}`) : "Not checked yet.";
+    // One row: the cloud's own mark, its name, and one plain line under it. The check's result is words, in the
+    // failing colour only when it failed. One quiet button.
+    return v_flex().id(`cloud-login-${p.name}`).gap(3).pb(10).border_b(1).border_color(c.rule)
       .child(h_flex().gap(8).items_center()
-        .child(Brand(c, p.provider, 15))
-        .child(div().text_size(13.5).font_semibold().text_color(c.navy).child(p.name))
-        .child(Badge(c, SHORT[p.provider] ?? p.label ?? p.provider, "neutral"))
-        .when(active, (e) => e.child(Badge(c, "in use", "blue")))
+        .child(Brand(c, p.provider, 16))
+        .child(div().text_size(13.5).font_semibold().text_color(c.navy).child(SHORT[p.provider] ?? p.label ?? p.provider))
+        .child(div().text_size(13).text_color(c.grey500).child(p.name))
+        .when(active, (e) => e.child(div().id(`cloud-login-${p.name}-used`).text_size(12).text_color(c.grey500).child("Holds this workspace")))
         .child(div().flex_1())
-        .child(div().size(8).rounded_full().bg(!t ? c.grey300 : t.ok ? c.good : c.fail))
-        .child(Button(c, `test-${p.name}`, this.testing[p.name] ? "Testing..." : "Test", (_e, cx) => this.test(p.name, cx), { small: true, disabled: Boolean(this.testing[p.name]) })))
-      .child(div().pl(23).text_size(12.5).text_color(c.grey900).child([p.auth_label ?? p.auth, p.region, p.account_hint].filter(Boolean).join(", ")))
-      .child(div().pl(23).text_size(12.5).text_color(t && !t.ok ? c.fail : c.grey500).child(status));
+        .child(Button(c, `test-${p.name}`, this.testing[p.name] ? "Checking..." : "Check", (_e, cx) => this.test(p.name, cx), { small: true, disabled: Boolean(this.testing[p.name]) })))
+      .child(div().pl(24).text_size(12.5).text_color(c.grey900).child([SIGN_IN[p.auth] ?? p.auth_label ?? p.auth, p.region, p.account_hint].filter(Boolean).join(", ")))
+      .child(div().id(`cloud-login-${p.name}-status`).pl(24).text_size(12.5).text_color(t && !t.ok ? c.fail : c.grey500).child(status));
   }
 
   render() {
@@ -83,19 +87,20 @@ export default class CaptainCloud extends View {
       const compute = s.compute ?? [];
       body = v_flex().gap(14)
         .child(Card(c, { title: "Storage" },
-          h_flex().gap(10).items_center().child(Badge(c, s.storage_provider_label ?? SHORT[s.storage_provider] ?? s.storage_provider ?? "local", "neutral"))
-            .child(div().flex_1().min_w(0).truncate().font_family(MONO).text_size(12).text_color(c.navy).child(String(s.storage ?? "")))
+          h_flex().gap(8).items_center()
+            .child(s.storage_provider && s.storage_provider !== "local" ? Brand(c, s.storage_provider, 16) : svg(icon("server")).size(15).text_color(c.navy))
+            .child(div().text_size(13.5).font_semibold().text_color(c.navy).child(SHORT[s.storage_provider] ?? s.storage_provider_label ?? "This computer"))
+            .child(div().id("cloud-storage").flex_1().min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(String(s.storage ?? "")))
             .when(Boolean(s.storage_profile), (e) => e.child(div().text_size(12).text_color(c.grey500).child(`through ${s.storage_profile}`)))))
         .child(Card(c, { title: `Logins (${profiles.length})`, actions: [Button(c, "cloud-add", "Add a login", task("cloud"), { small: true, kind: "primary" })] },
           ...(profiles.length ? profiles.map((p) => this.login(c, p, p.name === s.active?.name))
-            : [Empty(c, "No cloud connected", "Add a login for AWS, Google Cloud or Azure. Secrets stay in your keychain.")])))
+            : [Empty(c, "No cloud connected", "Add a login for AWS, Google Cloud, Azure or Modal. Secrets stay in your keychain.")])))
         .child(Card(c, { title: `Compute targets (${compute.length})`, actions: [Button(c, "compute-add", "Add a place to run work", task("compute"), { small: true })] },
           ...(compute.length ? compute.map((t) => h_flex().gap(8).items_center().pb(8).border_b(1).border_color(c.rule)
             .child(t.provider && t.provider !== "local" ? Brand(c, t.provider, 14) : svg(icon("server")).size(14).text_color(c.navy))
-            .child(div().text_size(13).font_semibold().text_color(c.navy).child(t.name))
-            .child(Badge(c, t.kind, "neutral"))
-            .child(div().flex_1().text_size(12).text_color(c.grey500).child([SHORT[t.provider] ?? t.provider, t.region, t.profile && `login ${t.profile}`].filter(Boolean).join(", ")))
-            .child(div().text_size(12).text_color(c.grey500).child((t.purposes ?? []).join(", "))))
+            .child(div().text_size(13).font_semibold().text_color(c.navy).child(t.kind === "local" ? "This computer" : t.name))
+            .child(div().flex_1().text_size(12).text_color(c.grey500).child([t.kind === "local" ? null : SHORT[t.provider] ?? t.provider, t.region, t.profile && `login ${t.profile}`].filter(Boolean).join(", ")))
+            .child(div().text_size(12).text_color(c.grey500).child((t.purposes ?? []).map((x) => ({ backtest: "offline evaluations", serve: "hosting" }[x] ?? x)).join(", "))))
             : [div().text_size(12.5).text_color(c.grey500).child("No compute targets yet.")]),
           ...(s.can_run_in_cloud ? [] : [div().text_size(12.5).text_color(c.grey900).child(`Offline evaluations run on this computer. Add a compute target to run them in ${SHORT[s.active?.provider] ?? "the cloud"}.`)])))
         .children((s.notes ?? []).map((n) => div().text_size(12.5).line_height("18px").text_color(c.grey900).child(String(n))));

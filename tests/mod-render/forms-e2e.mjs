@@ -66,8 +66,8 @@ console.log(`     compute kinds: ${kinds.map((k) => k.label).join(", ")}`);
 await step("Connect a cloud account (AWS default chain)", "cloud", { provider: "aws", auth: auths.find((a) => /Default/.test(a.label))?.value, name: "forms-e2e-aws", region: "us-west-1" });
 // The second add reuses the first's name, so it already exists.
 const localName = `forms-e2e-local-${Date.now() % 100000}`;
-await step("Add a place to run work (this machine)", "compute", { kind: kinds.find((k) => /This machine/.test(k.label))?.value, name: localName });
-await step("Add a place that already exists (plain error)", "compute", { kind: kinds.find((k) => /This machine/.test(k.label))?.value, name: localName }, {}, false);
+await step("Add a place to run work (this computer)", "compute", { kind: kinds.find((k) => /This computer/.test(k.label))?.value, name: localName });
+await step("Add a place that already exists (plain error)", "compute", { kind: kinds.find((k) => /This computer/.test(k.label))?.value, name: localName }, {}, false);
 const envs = await options("handoff", "env");
 await step("Hand off a candidate that isn't ready (plain error)", "handoff", { pipeline: pipes.find((p) => /tuned/.test(p.value))?.value ?? pipes[0]?.value, env: envs.find((e) => e.chip === "live")?.value ?? envs[0]?.value }, {}, false);
 await step("Hand off with a reason", "handoff", { pipeline: pipes.find((p) => /tuned/.test(p.value))?.value ?? pipes[0]?.value, env: envs.find((e) => e.chip === "live")?.value ?? envs[0]?.value, reason: "forms e2e, scratch workspace" });

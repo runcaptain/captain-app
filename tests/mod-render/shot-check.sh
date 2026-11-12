@@ -171,6 +171,15 @@ if [[ -n "${SHOT_HOSTS:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
   [[ -n "${SHOT_GCP_PROJECT:-}" ]] && CST_HOME=$WORK/cst "$CSTCMD" cloud add shot-gcp --provider gcp --auth adc -f "project=$SHOT_GCP_PROJECT" >/dev/null
   [[ -n "${SHOT_AZURE_SUB:-}" ]] && CST_HOME=$WORK/cst "$CSTCMD" cloud add shot-azure --provider azure --auth default -f "subscription_id=$SHOT_AZURE_SUB" >/dev/null
 fi
+# SHOT_LOGINS=1: four cloud logins, one of each kind (AWS, Google Cloud, Azure, Modal), for the list of logins and
+# the cloud chip. They hold made-up names and no secret, and none is checked, so nothing is sent to a cloud.
+if [[ -n "${SHOT_LOGINS:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
+  export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
+  CST_HOME=$WORK/cst "$CSTCMD" cloud add work-aws --provider aws --auth profile --region us-west-1 -f profile=work >/dev/null
+  CST_HOME=$WORK/cst "$CSTCMD" cloud add shop-gcp --provider gcp --auth adc -f project=shop-demo >/dev/null
+  CST_HOME=$WORK/cst "$CSTCMD" cloud add shop-azure --provider azure --auth default --region eastus >/dev/null
+  CST_HOME=$WORK/cst "$CSTCMD" cloud add modal --provider modal --auth local >/dev/null
+fi
 # SHOT_ASLEEP=1 (with SHOT_PROJECT=1): the project's model staged on Modal and asleep, with no call to Modal: a
 # compute plugin in a scratch project folder stands in for Modal and says no copy is up (seed-asleep.py). For
 # captain-project:ship and the captain-project:dep-* tabs.
@@ -215,6 +224,22 @@ export default class FoldsOpen extends View {
 }
 JS
 fi
+# The marks strip: six vendor marks on a magenta background, for marks-check.py at the end. Mods are found at launch.
+mkdir -p "$HOME_DIR/mods/marks-strip"; cp -R defaults/captain/kit "$HOME_DIR/mods/marks-strip/kit"
+echo '{ "place": "none", "overlay": { "kind": "dialog", "width": 400, "height": 80 } }' > "$HOME_DIR/mods/marks-strip/mod.json"
+cat > "$HOME_DIR/mods/marks-strip/main.js" <<'JS'
+import { View, div } from "gpui-kit";
+import { h_flex } from "gpui-base";
+import { Brand } from "./kit/brands.js";
+// 32 px: a size no screen in this check draws, so nothing has loaded these files before the strip opens.
+const c = { dark: true, navy: "#FFFFFF", grey500: "#FFFFFF" };
+export default class MarksStrip extends View {
+  render() {
+    return h_flex().size_full().bg("#FF00FF").children(["aws", "azure", "redshift", "athena", "sqlserver", "snowflake"]
+      .map((k) => div().flex_1().h_full().flex().items_center().justify_center().child(Brand(c, k, 32))));
+  }
+}
+JS
 launch() {
   # "Captain (test)" in the title bar, so nobody mistakes this window for their own Captain.
   CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_HOME=$CSTH "$BIN" >"$WORK/app.log" 2>&1 &
@@ -245,7 +270,6 @@ if covered; then
 fi
 covered && { echo "an overlay still covers the window: $(app status | python3 -c "import json,sys; print(json.load(sys.stdin).get('overlays'))")"; exit 1; }
 [[ "${SHOT_WINDOW:-}" == max ]] && { app do window.maximize >/dev/null; sleep 1; }
-
 # Props for a view: the scratch workspace's first query of the seeded replay, read from its own serve.
 props_of() {
   case "$1" in
@@ -443,7 +467,9 @@ if [[ -n "${SHOT_AUDIT:-}" ]]; then
   for _ in 1 2 3; do app do overlay.close '{}' >/dev/null 2>&1 || true; done
   app do layout.switch '{"name":"captain"}' >/dev/null || true
   sleep 3
-  shoot() { sleep "${2:-4}"; app shot "$OUT/audit-$1.png" >/dev/null && echo "audit: $1"; }
+  # A full-colour mark (AWS, Azure) is loaded after the first frame, and a window in the background may not draw
+  # another by itself: ask for the section again, which draws one, then take the picture.
+  shoot() { sleep "${2:-4}"; app do layout.select '{"stack":"sections","child":"data"}' >/dev/null 2>&1 || true; sleep 0.7; app shot "$OUT/audit-$1.png" >/dev/null && echo "audit: $1"; }
   for child in investigations data runs comparisons handoff engine; do
     app do layout.select "{\"stack\":\"sections\",\"child\":\"$child\"}" >/dev/null || true
     shoot "$child" 5
@@ -484,4 +510,15 @@ if [[ -n "${SHOT_CONTEXT:-}" ]]; then
     echo "terminal.paste {text}: got '$(cat "$OUT/pasted.txt" 2>/dev/null)', clipboard $([[ "$clip_before" == "$clip_after" ]] && echo unchanged || echo CHANGED)"; fail=1
   fi
 fi
+# Every vendor mark draws: the five full-colour ones and a tinted one as the control. A blank mark fails the check.
+# The strip is opened fresh, left alone for three seconds, and shot once. A full-colour mark is loaded in the
+# background the first time a frame shows it. On 2026-11-12 every picture from this window had a gap where the AWS
+# and Azure marks go: this window is behind other apps and draws only when a picture asks, and that one frame was
+# what started the load. A picture now waits for the loads its frame started and draws again.
+for _ in 1 2 3; do app do overlay.close '{}' >/dev/null 2>&1 || true; done
+app do mod.open '{"name":"marks-strip"}' >/dev/null || true; sleep 3
+app shot "$OUT/marks-strip.png" >/dev/null || true
+if python3 tests/mod-render/marks-check.py "$OUT/marks-strip.png"; then :; else fail=1; fi
+app do overlay.close '{}' >/dev/null 2>&1 || true
+
 exit $fail
