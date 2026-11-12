@@ -87,8 +87,10 @@ export class Catalog {
     const all = this.rows ?? [];
     const q = this.find.value().trim();
     const unread = this.connections.filter((k) => !k.pulled_at);
-    // Name and where it lives share what the three fixed columns leave.
+    // Name and where it lives share what the fixed columns leave. Versions always shows: it is the column that says
+    // a dataset is a table Captain keeps versions of. Beside an open terminal column its words get shorter.
     const narrow = w < 900;
+    const versions = (r) => (narrow ? (r.kind === "dataset" ? `${int(r.versions ?? 1)} kept` : "Live") : versionWords(r));
     const col = (t, width, right) => div().w(width).flex_none().px(8).truncate().when(!!right, (e) => e.text_right()).child(t);
     return v_flex().id("catalog").flex_1().min_h(0)
       .on_drop((e, cx) => this.host.lib.importPaths(cx, e.paths ?? [], ""))
@@ -108,11 +110,11 @@ export class Catalog {
         .child(div().flex_1().min_w(0).child(`${unread.map((k) => k.connection).join(", ")} ${unread.length === 1 ? "is connected, but its tables haven't been read yet" : "are connected, but their tables haven't been read yet"}.`))
         .child(Button(c, "cat-read", unread.length === 1 ? "Read its tables" : "Read their tables", (_e, cx) => this.host.showSources(cx, unread[0].connection), { small: true }))))
       .child(h_flex().flex_none().h(30).px(12).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().text_color(c.grey900).items_center()
-        .child(div().flex_1().min_w(160).px(8).child("Name"))
-        .child(div().flex_1().min_w(160).px(8).child("Where it lives"))
-        .child(col("Rows", 96, true))
-        .when(!narrow, (e) => e.child(col("Versions", 190)))
-        .child(col("Last read", 110)))
+        .child(div().flex_1().min_w(120).px(8).child("Name"))
+        .child(div().flex_1().min_w(120).px(8).child("Where it lives"))
+        .child(col("Rows", narrow ? 72 : 96, true))
+        .child(col("Versions", narrow ? 84 : 190))
+        .child(col("Last read", narrow ? 100 : 110)))
       .child(v_flex().id("cat-list").flex_1().min_h(0).overflow_y_scrollbar()
         .when(this.rows === null && !this.error, (e) => e.child(Skeleton(c, 8)))
         .when(!!this.error, (e) => e.child(div().p(20).child(this.host.troubleView(c, "tables-list", this.error, "Couldn't load your tables.", (cx) => this.load(cx)))))
@@ -121,14 +123,14 @@ export class Catalog {
         .children(rows.map((r, i) => h_flex().id(`cat-row-${i}`).h(36).flex_none().px(12).items_center().cursor_pointer().border_b(1).border_color(c.rule).text_size(12.5)
           .hover((s) => s.bg(c.surface2)).tooltip(r.description ?? r.name)
           .on_click((_e, cx) => this.open(cx, r))
-          .child(h_flex().flex_1().min_w(160).px(8).gap(8).items_center()
+          .child(h_flex().flex_1().min_w(120).px(8).gap(8).items_center()
             .child(r.kind === "table" && r.engine ? Brand(c, r.engine, 14) : svg(icon("table")).size(14).flex_none().text_color(c.grey500))
             .child(div().min_w(0).truncate().text_color(c.navy).child(r.name))
             .when(!!r.matched_column, (e) => e.child(div().flex_none().text_size(11).text_color(c.grey500).child(`column ${r.matched_column}`))))
-          .child(div().flex_1().min_w(160).px(8).truncate().text_color(c.grey900).child(r.where))
-          .child(col(r.rows != null ? int(r.rows) : "", 96, true))
-          .when(!narrow, (e) => e.child(col(versionWords(r), 190)))
-          .child(col(readWords(r.last_read), 110).text_color(c.grey500)))));
+          .child(div().flex_1().min_w(120).px(8).truncate().text_color(c.grey900).child(r.where))
+          .child(col(r.rows != null ? int(r.rows) : "", narrow ? 72 : 96, true))
+          .child(col(versions(r), narrow ? 84 : 190).tooltip(versionWords(r)))
+          .child(col(readWords(r.last_read), narrow ? 100 : 110).text_color(c.grey500)))));
   }
 
 }

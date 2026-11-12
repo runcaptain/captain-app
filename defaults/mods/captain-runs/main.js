@@ -632,8 +632,8 @@ export default class CaptainRuns extends View {
         .children(KINDS.map(([k, , label]) => chip(k, label, counts[k]))))
       .child(h_flex().flex_none().h(28).px(10).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().text_color(c.grey900).items_center()
         .child(div().flex_1().min_w(0).px(4).child("Name"))
-        .child(div().w(140).flex_none().px(4).child("Kind"))
-        .child(div().w(120).flex_none().px(4).child("Status")))
+        .child(div().w(128).flex_none().px(4).child("Kind"))
+        .child(div().w(96).flex_none().px(4).child("Status")))
       .child(v_flex().id("runs-rows").flex_1().min_h(0).overflow_y_scrollbar()
         .when(!!this.error, (e) => e.child(div().p(10).child(trouble(c, "runs-load", this.errorR, this.error, (cx) => this.loadAll(cx)))))
         .when(!loaded && !this.error, (e) => e.child(div().child(Skeleton(c, 8))))
@@ -659,8 +659,8 @@ export default class CaptainRuns extends View {
               .child(v_flex().flex_1().min_w(0)
                 .child(div().truncate().text_size(12.5).text_color(on ? c.blue : c.navy).child(r.title))
                 .when(!!r.sub, (e) => e.child(div().when(!!r.subId, (d) => d.id(r.subId)).truncate().text_size(11).text_color(c.grey500).child(r.sub)))))
-            .child(div().w(140).flex_none().px(4).truncate().text_size(12).text_color(c.grey900).child(r.word))
-            .child(div().w(120).flex_none().px(4).truncate().text_size(12).text_color(tone).child(r.status));
+            .child(div().w(128).flex_none().px(4).truncate().text_size(12).text_color(c.grey900).child(r.word))
+            .child(div().w(96).flex_none().px(4).truncate().text_size(12).text_color(tone).tooltip(r.status).child(r.status));
         })));
   }
 
@@ -905,7 +905,8 @@ export default class CaptainRuns extends View {
   render() {
     const c = palette(isDark(theme()));
     const w = this.width;
-    const lw = Math.max(380, Math.min(520, Math.floor(w * 0.4)));
+    // The list takes half: a name needs room beside its kind and its status.
+    const lw = Math.max(400, Math.min(620, Math.floor(w * 0.5)));
     // Never blank: the header always shows, and the body says what is happening.
     const body = this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true))
       : this.tab === "compare" ? this.reg.render(c, w)

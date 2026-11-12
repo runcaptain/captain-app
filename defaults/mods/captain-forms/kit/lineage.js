@@ -28,7 +28,7 @@ const NODE_H = 52;
 const GAP_X = 84; // room for an arrow to bend and for its head
 const GAP_Y = 16;
 const PAD = 20;
-const ARROW = 7; // the arrowhead's length, in layout units
+const ARROW = 11; // the arrowhead's length, in layout units
 const ALL = 99; // every step, each way: the whole chain
 
 // [the word for the kind, its icon, the palette colour of its edge stripe].
@@ -405,8 +405,8 @@ export class LineageGraph {
         })
         .child(h_flex().gap(6 * z).items_center()
           .child(this.icon(ic, 13 * z, on || picked ? c.blue : c.navy))
-          .child(div().flex_1().min_w(0).truncate().text_size(12.5 * z).font_medium().font_family(MONO).text_color(on || picked ? c.blue : c.navy).child(n.label ?? id))
-          .when(n.version != null, (e) => e.child(div().flex_none().px(4 * z).border_1().border_color(c.grey300).text_size(10 * z).font_family(MONO).text_color(c.grey900).child(`v${n.version}`))))
+          .child(div().flex_1().min_w(0).truncate().text_size(12.5 * z).font_medium().text_color(on || picked ? c.blue : c.navy).child(n.label ?? id))
+          .when(n.version != null, (e) => e.child(div().flex_none().px(4 * z).border_1().border_color(c.grey300).text_size(10 * z).text_color(c.grey900).child(`v${n.version}`))))
         .child(div().truncate().text_size(10.5 * z).text_color(c.grey500).child(viaColumn && this.column ? `${kindWord}, column ${this.columnAt(id) ?? this.column}` : kindWord));
     });
     const view = (e) => { if (e?.bounds) this.view = { w: e.bounds.width, h: e.bounds.height }; };
@@ -463,7 +463,7 @@ export class LineageGraph {
           } else this.pan = { x: this.pan.x + d.x, y: this.pan.y + d.y };
           cx.notify();
         })
-        .child(layer(plain, c.grey300, 1.5) ?? div())
+        .child(layer(plain, c.grey500, 1.5) ?? div())
         .child(layer(lit, c.blue, 2.5) ?? div())
         .children(nodes)
         .child(this.details(c, L) ?? div())
