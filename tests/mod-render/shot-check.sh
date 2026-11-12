@@ -171,6 +171,15 @@ if [[ -n "${SHOT_HOSTS:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
   [[ -n "${SHOT_GCP_PROJECT:-}" ]] && CST_HOME=$WORK/cst "$CSTCMD" cloud add shot-gcp --provider gcp --auth adc -f "project=$SHOT_GCP_PROJECT" >/dev/null
   [[ -n "${SHOT_AZURE_SUB:-}" ]] && CST_HOME=$WORK/cst "$CSTCMD" cloud add shot-azure --provider azure --auth default -f "subscription_id=$SHOT_AZURE_SUB" >/dev/null
 fi
+# SHOT_LOGINS=1: four cloud logins, one of each kind (AWS, Google Cloud, Azure, Modal), for the list of logins and
+# the cloud chip. They hold made-up names and no secret, and none is checked, so nothing is sent to a cloud.
+if [[ -n "${SHOT_LOGINS:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
+  export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
+  CST_HOME=$WORK/cst "$CSTCMD" cloud add work-aws --provider aws --auth profile --region us-west-1 -f profile=work >/dev/null
+  CST_HOME=$WORK/cst "$CSTCMD" cloud add shop-gcp --provider gcp --auth adc -f project=shop-demo >/dev/null
+  CST_HOME=$WORK/cst "$CSTCMD" cloud add shop-azure --provider azure --auth default --region eastus >/dev/null
+  CST_HOME=$WORK/cst "$CSTCMD" cloud add modal --provider modal --auth local >/dev/null
+fi
 # SHOT_ASLEEP=1 (with SHOT_PROJECT=1): the project's model staged on Modal and asleep, with no call to Modal: a
 # compute plugin in a scratch project folder stands in for Modal and says no copy is up (seed-asleep.py). For
 # captain-project:ship and the captain-project:dep-* tabs.
@@ -443,7 +452,9 @@ if [[ -n "${SHOT_AUDIT:-}" ]]; then
   for _ in 1 2 3; do app do overlay.close '{}' >/dev/null 2>&1 || true; done
   app do layout.switch '{"name":"captain"}' >/dev/null || true
   sleep 3
-  shoot() { sleep "${2:-4}"; app shot "$OUT/audit-$1.png" >/dev/null && echo "audit: $1"; }
+  # A full-colour mark (AWS, Azure) is loaded after the first frame, and a window in the background may not draw
+  # another by itself: ask for the section again, which draws one, then take the picture.
+  shoot() { sleep "${2:-4}"; app do layout.select '{"stack":"sections","child":"data"}' >/dev/null 2>&1 || true; sleep 0.7; app shot "$OUT/audit-$1.png" >/dev/null && echo "audit: $1"; }
   for child in investigations data runs comparisons handoff engine; do
     app do layout.select "{\"stack\":\"sections\",\"child\":\"$child\"}" >/dev/null || true
     shoot "$child" 5
