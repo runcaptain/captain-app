@@ -254,9 +254,14 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
     """{rows, asked, text, read_at}: every deployed model across projects and clouds, as the clouds report them.
     `asked` says which places were asked and which could not be. `fresh` skips the few-second cache."""
     key = ctx.workspace.name
+    # The kept answer is only good while Captain's own records are as they were: a deploy or a stop a second ago
+    # must show at once, so the records are read every time (they are on this computer or in the workspace) and
+    # only the clouds' answers are kept.
+    records = _records(ctx)
+    mark = tuple(sorted((pr["id"], env, str(rec.get("id")), str(rec.get("status")), str(rec.get("model_version"))) for pr, env, rec in records))
     with _lock:
         hit = _cache.get(key)
-        if hit and not fresh and time.monotonic() - hit[0] < TTL_S:
+        if hit and not fresh and time.monotonic() - hit[0] < TTL_S and hit[2] == mark:
             return hit[1]
     srcs = sources(ctx)
     asked, found = [], {}
@@ -266,7 +271,7 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
                       "error": err, "found": len(things)})
         found[(s["cloud"], s["login"], s["region"])] = (things, err)
     rows, matched = [], set()
-    for pr, env, rec in _records(ctx):
+    for pr, env, rec in records:
         cloud, login, region, target = _where_of(ctx, rec)
         if cloud == "local":
             state, reason = _local_state(rec)
@@ -314,8 +319,10 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
     if could_not:
         text += " Could not ask " + ", ".join(sorted({a["cloud_label"] for a in could_not})) + " just now."
     out = {"rows": rows, "asked": asked, "text": text, "read_at": _now(), "ttl_s": TTL_S}
+    # Marked with the records as they stand after any correction, so the corrected answer is the one kept.
+    after = tuple(sorted((pr["id"], env, str(rec.get("id")), str(rec.get("status")), str(rec.get("model_version"))) for pr, env, rec in _records(ctx)))
     with _lock:
-        _cache[key] = (time.monotonic(), out)
+        _cache[key] = (time.monotonic(), out, after)
     return out
 
 
@@ -436,3 +443,75 @@ def link(ctx: Context, row_id: str, pid: str, env: str = ENV) -> dict:
     return {"project": pid, "env": env, "record": {k: rec.get(k) for k in ("id", "status", "target", "endpoint", "host", "login")},
             "text": f"{row['name']} is now this project's deployment. Captain does not know which model version it runs, or its key: "
                     "to ask it for results, deploy from this project again, or use the key it was made with."}
+
+
+# ---- what the first deploy created in each account -------------------------------------------------
+
+# What each kind of thing is for, in a sentence a person who has never deployed a model can follow. Matched on the
+# kind's name, most specific first.
+WHAT_FOR = (
+    ("build", "Builds the model's image inside your account. It runs only when an image is built."),
+    ("codebuild", "Builds the model's image inside your account. It runs only when an image is built."),
+    ("repository", "Holds the model's image in your account."),
+    ("registry", "Holds the model's image in your account."),
+    ("role", "What a running model is allowed to do: read its own files and write its request log. Nothing else."),
+    ("identity", "What a running model is allowed to do: read its own files and write its request log. Nothing else."),
+    ("service-account", "What a running model is allowed to do: read its own files and write its request log. Nothing else."),
+    ("bucket", "Holds the model's files and its request log."),
+    ("storage", "Holds the model's files and its request log."),
+    ("volume", "Holds the model's files and its request log."),
+    ("environment", "The place in your account where a deployed model's copies run."),
+    ("resource-group", "The folder in your account that holds everything else here, so it can be removed whole."),
+    ("target", "Captain's own note of where to deploy. It is not in your cloud account."),
+)
+
+
+# The kind of thing, as a person says it. Two things can share a name (a role and a repository both called
+# "captain-serving"), so the kind is shown beside the name.
+KIND_WORDS = (("codebuild", "Image build"), ("build", "Image build"), ("repository", "Image repository"), ("registry", "Image registry"),
+              ("role", "Role"), ("identity", "Identity"), ("service-account", "Service account"), ("bucket", "Bucket"), ("storage", "Storage account"),
+              ("volume", "Volume"), ("environment", "Environment"), ("resource-group", "Resource group"), ("target", "Captain's note"))
+
+
+def _kind_word(kind: str, name: str = "") -> str:
+    k = str(kind or "").lower()
+    if "role" in k and "build" in str(name).lower():
+        return "Role for the image build"
+    return next((word for key, word in KIND_WORDS if key in k), "Made by the first deploy")
+
+
+def _what_for(kind: str) -> str:
+    k = str(kind or "").lower()
+    return next((text for word, text in WHAT_FOR if word in k), "Made by the first deploy. Deployments here use it.")
+
+
+def created(ctx: Context) -> dict:
+    """What Captain created in each cloud account the first time a model was deployed there: {places: [{cloud,
+    cloud_label, login, region, status, things: [{kind, name, what_for}], in_use_by, can_remove, text}], text}.
+    Read from the workspace alone. Removing a place's setup is refused while a model is deployed on it."""
+    from . import hosts as H
+
+    rows = {(r["cloud"], r["project_name"] or r["project"]) for r in deployed(ctx)["rows"]
+            if r["link"] != "unlinked" and r["state"] in ("running", "asleep", "starting")}
+    places = []
+    for c in ("aws", "modal", "gcp", "azure"):
+        try:
+            st = H.get(c).status(ctx)
+        except Exception as e:  # noqa: BLE001
+            st = {"status": "unknown", "created": [], "text": str(e)[:200]}
+        made = st.get("created") or []
+        if st.get("status") in (None, "none", "removed") or not made:
+            continue
+        using = sorted(name for cloud, name in rows if cloud == c and name)
+        places.append({"cloud": c, "cloud_label": CLOUDS[c], "login": st.get("profile"), "region": st.get("region"), "status": st.get("status"),
+                       "created_at": st.get("created_at"), "created_by": st.get("created_by"),
+                       "things": [{"kind": x.get("type"), "kind_label": _kind_word(x.get("type"), x.get("name")), "name": x.get("name"),
+                                   "what_for": ("Lets the image build read its files and save the image. Nothing else." if "role" in str(x.get("type")).lower()
+                                                and "build" in str(x.get("name")).lower() else _what_for(x.get("type")))} for x in made],
+                       "in_use_by": using, "can_remove": not using,
+                       "text": (f"{len(made)} thing{'s' if len(made) != 1 else ''} in your {CLOUDS[c]} account."
+                                + (f" In use by {', '.join(using)}: stop that first to remove these." if using else
+                                   " Nothing is deployed here, so they can be removed."))})
+    return {"places": places,
+            "text": "Captain has created nothing in your cloud accounts." if not places else
+                    "What the first deploy to each cloud created. A deployed model uses them, and they cost nothing or close to nothing while idle."}

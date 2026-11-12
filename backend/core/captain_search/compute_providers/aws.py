@@ -305,10 +305,10 @@ class SageMakerProvider(_AWS):
         {"name": "execution_role_arn", "label": "Execution role ARN", "required": True},
         {"name": "instance_type", "label": "Instance type", "required": False, "default": "ml.m5.large"},
         {"name": "instance_count", "label": "Instance count", "required": False, "default": "1"},
-        {"name": "min_copies", "label": "Fewest copies of a staged model", "required": False, "default": "1"},
-        {"name": "max_copies", "label": "Most copies of a staged model (more than the fewest turns on scaling with load)", "required": False, "default": "1"},
+        {"name": "min_copies", "label": "Fewest copies of a deployed model", "required": False, "default": "1"},
+        {"name": "max_copies", "label": "Most copies of a deployed model (more than the fewest turns on scaling with load)", "required": False, "default": "1"},
         {"name": "requests_per_copy", "label": "Requests a minute one copy takes before another is added", "required": False, "default": "3000"},
-        {"name": "name_prefix", "label": "Name prefix for staging resources", "required": False, "default": "captain"},
+        {"name": "name_prefix", "label": "Name prefix for what a deploy makes", "required": False, "default": "captain"},
         {"name": "serving_storage", "label": "Bucket folder for the serving bundle (for a workspace kept on this computer)", "required": False}]
 
     def plan(self, job: Job) -> list[dict]:
@@ -415,7 +415,7 @@ class SageMakerProvider(_AWS):
         out = {"min": lo, "max": max(lo, num("max_copies", lo)), "per_copy": max(1, num("requests_per_copy", 3000))}
         out.update({k: int(v) for k, v in (scale or {}).items() if k in out and v is not None})
         if out["max"] > self.MAX_COPIES:
-            raise ProviderError(f"Captain runs at most {self.MAX_COPIES} copies of a staged model on SageMaker.")
+            raise ProviderError(f"Captain runs at most {self.MAX_COPIES} copies of a deployed model on SageMaker.")
         return out
 
     def _resource(self, endpoint: str) -> str:
@@ -628,7 +628,7 @@ class SageMakerProvider(_AWS):
             r = rt.invoke_endpoint(EndpointName=(rec.get("endpoint") or {}).get("name"), ContentType="application/json",
                                    Accept="application/json", Body=json.dumps(payload).encode())
         except Exception as e:  # noqa: BLE001
-            raise ProviderError("The staging endpoint refused the request: " + _aws_sentence(e)[:300]) from None
+            raise ProviderError("The deployed model refused the request: " + _aws_sentence(e)[:300]) from None
         body = r["Body"].read() if hasattr(r["Body"], "read") else r["Body"]
         return json.loads(body)
 

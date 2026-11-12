@@ -111,7 +111,7 @@ class HttpServing(ServingProvider):
         ep = rec.get("endpoint") or {}
         base = str(ep.get("url") or "").rstrip("/")
         if not base:
-            raise ProviderError("this endpoint has no address recorded. Stage it again.")
+            raise ProviderError("This deployment has no address recorded. Deploy it again.")
         body = dict(payload)
         op, key, arm = body.pop("op", "rank"), body.pop("key", None), body.pop("arm", None)
         front = self._front_door(rec)
@@ -124,13 +124,13 @@ class HttpServing(ServingProvider):
                     raise ProviderError(f"unknown op {op!r}: rank, timing, flush, status or reload")
                 r = _client(base).post(base + path, json=body, headers={**front, "Authorization": f"Bearer {key}"}, timeout=self.INVOKE_TIMEOUT_S)
         except httpx.HTTPError as e:
-            raise ProviderError(f"The staging endpoint did not answer: {type(e).__name__} {str(e)[:200]}") from None
+            raise ProviderError(f"The deployed model did not answer: {type(e).__name__} {str(e)[:200]}") from None
         if r.status_code >= 400:
             try:
                 detail = r.json().get("detail")
             except Exception:  # noqa: BLE001
                 detail = r.text[:200]
-            raise ProviderError(f"The staging endpoint refused the request ({r.status_code}): {detail}")
+            raise ProviderError(f"The deployed model refused the request ({r.status_code}): {detail}")
         return r.json()
 
     def wait_ready(self, url: str, stage_id: str, rec: dict | None = None, deadline_s: float | None = None, failed=None) -> float:

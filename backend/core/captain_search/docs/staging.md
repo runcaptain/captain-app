@@ -433,6 +433,32 @@ again, and never longer.
 **Not run on a real account yet.** Tested against each host's stand-in: running, removed outside Captain, found
 with no project, failed, a stale failed deploy beside a healthy endpoint, and a cloud that cannot be asked.
 
+### The Deployments screen
+
+The screen (`defaults/mods/captain-deployments`, the sidebar's Deployments) is the place to manage deployed models.
+It reads `GET /api/deployed`, so it shows what the clouds report, never Captain's records alone.
+
+- **One row per deployed model**, across every project and cloud: the cloud's mark, the project and the model
+  version, the state in words as the cloud reports it, where it runs (cloud, region, machine), a small chart of
+  the last hour's requests, the requests and failures of the last 24 hours, the typical response time, the cost an
+  hour and this month, and who deployed it and when. What was just corrected from the cloud is said on the row.
+- **Buttons on a row**: Open, Stop and "Go back to an earlier version" on a running model. Open, "Start again"
+  and "Remove from the cloud" on a stopped one. "Link to a project" and "Remove from the cloud" on something found
+  in a cloud with no project. Starting, removing and removing a cloud's setup ask first, and the question holds
+  the screen's one filled button.
+- **Filters**: Running, Stopped, All. By cloud and by project when there is more than one.
+- **What Captain created in your accounts**: what the first deploy to each cloud made, with what each thing is
+  for, and "Remove everything" when no model is deployed there.
+- **A model's page** (Open): its state, its address or its name in the cloud with Copy, then five parts. Traffic
+  and cost has the charts at full size over 15 minutes, 1 hour, 24 hours or 7 days: requests a minute, requests
+  that failed, response time, processor, memory and copies, and what it costs now, today and this month. The
+  others are the requests it answered, its log, the earlier versions with "Put this version back", and its copies
+  and machine.
+
+A cloud that could not be asked is said above the list, and nothing can be done to a deployment Captain could not
+check. The picture check draws every state from sample rows handed to the screen (`props.demo`,
+`tests/mod-render/deployments-demo.py`), so nothing is deployed to take a picture.
+
 ### Something in the cloud that no project knows
 
 A row whose `link` is `unlinked` is something Captain made that this workspace has no record of: another

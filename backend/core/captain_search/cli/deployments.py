@@ -21,7 +21,7 @@ from .main import S, app, ctx, emit, fail
 from .more import deploy_app
 from .projects import _do, _staging_errors, stage, unstage
 
-deployments_app = typer.Typer(no_args_is_help=True, help="Staged models: list them, read their history and log, stop one or roll it back")
+deployments_app = typer.Typer(no_args_is_help=True, help="Deployed models: list them as each cloud reports them, read their traffic, cost, history and log, stop, start, roll back or remove one")
 app.add_typer(deployments_app, name="deployments")
 
 
@@ -44,14 +44,14 @@ deploy_app.info.help = ("Deploys. `cst deploy <project>` stages the project's ca
 @deploy_app.command("to-staging", hidden=True)
 def deploy(name: str,
            candidate: Optional[str] = typer.Option(None, "--candidate", help="a candidate id or model version; default the newest judged candidate"),
-           baseline: bool = typer.Option(False, "--baseline", help="stage the baseline itself"),
+           baseline: bool = typer.Option(False, "--baseline", help="deploy the baseline itself"),
            env: str = typer.Option("staging", "--env"),
            target: Optional[str] = typer.Option(None, "--target", help="compute target, or `local` for this computer; default the workspace's serving target"),
            on: Optional[str] = typer.Option(None, "--on", help="where to run it: local, aws, modal, gcp or azure. The first time on a cloud, what it needs there is set up as part of the deploy"),
            login: Optional[str] = typer.Option(None, "--login", help="with --on: which connected cloud login, when there is more than one"),
            remove: bool = typer.Option(False, "--remove", help="stop the model, and remove the first-time setup too when this deploy made it and nothing else uses it"),
            idle_minutes: Optional[float] = typer.Option(None, "--idle-minutes", help="stop by itself after this long with no requests; default 240"),
-           allow_large: bool = typer.Option(False, "--allow-large", help="stage on this computer even when the model is over the size limit for it"),
+           allow_large: bool = typer.Option(False, "--allow-large", help="deploy on this computer even when the model is over the size limit for it"),
            yes: bool = typer.Option(False, "--yes", "-y", help="confirm the cost of a cloud deploy")):
     """Stage the project's current candidate as a live endpoint. The last line printed is its address."""
     from .. import staging as SG
@@ -292,8 +292,27 @@ def deployments_logs(name: str,
 
 @deployments_app.command("stop")
 def deployments_stop(name: str, env: str = typer.Option("staging", "--env")):
-    """Stop the project's endpoint and remove every resource Captain created for it."""
-    unstage(name, env)
+    """Stop the project's deployed model. It stops answering and stops billing. What the first deploy created in
+    your cloud account stays, so the next deploy is quick: `cst deployments remove` takes that away too."""
+    from .. import staging as SG
+    from ..staging import fleet as FL
+
+    c = ctx()
+    rec = SG.public(_do(SG.state, c, name, env))
+    if not rec or rec.get("status") not in ("running", "starting", "failed"):
+        fail(f"{name} has no model deployed, so there is nothing to stop.")
+    made = ", ".join(f"{r['type']} {r['name']}" for r in rec.get("resources") or [])
+    if S.dry_run:
+        emit({"dry_run": True, "would_remove": rec.get("resources") or [], "deployed": rec}, f"Would stop {name}'s model" + (f" and remove {made}." if made else "."))
+        return
+    try:
+        r = SG.unstage(c, name, env)
+    except _staging_errors() as e:
+        fail(str(e))
+    FL.forget(c)
+    left = r.get("resources") or []
+    emit(r, f"Stopped {name}'s model. It no longer answers or bills." + (f" Removed {made}." if made and not left else "")
+         + (" Could not remove: " + ", ".join(f"{x.get('type')} {x.get('name')} ({x.get('error', 'still there')})" for x in left) + "." if left else ""))
 
 
 @deployments_app.command("rollback")
