@@ -585,3 +585,61 @@ cst deployments rollback <project> [version]      put an earlier version back (d
 `cst projects stage`, `staging` and `unstage` do the same and stay. `cst deploy promote|rollback|status|history`
 are the gated environment commands and are unchanged: a project that has one of those names is staged with
 `cst deploy to-staging <project>`.
+
+## Health, and being told when it changes
+
+Captain keeps a deployed model's health as a fact on its record, and a file for every check it ran.
+
+**What a check asks.** Is it answering (one status call, five seconds at most). How many of the last 15 minutes'
+requests failed. How long 95 in 100 took at the endpoint. When the last request was.
+
+**What healthy means** is yours to set: `cst deployments health <project> --p95-ms 200 --error-rate 0.01`, or
+"Is it healthy?" on the deployed model's screen. Until you set one, a model is unhealthy when it stops answering
+or fails more than 5 in 100 requests, and response time is not judged. With fewer than 20 requests in the window
+the rates are not judged at all, and the health says so.
+
+**When it runs.** Once a minute while the app's service is open. `cst deployments watch` does the same for an
+agent or a server, and `cst deployments watch --once` checks once and exits 1 when anything is unhealthy, for a
+cron. `cst deployments health <project> --check` runs one now.
+
+**Unhealthy takes two bad checks in a row**, so one slow minute is not an alert. Recovering takes one good one.
+On either change a message goes out, once:
+- to the webhook you set (`cst deployments alerts --webhook https://...`): a JSON body with `text`, `project`,
+  `model_version`, `status`, `reasons` and `at`, which Slack and PagerDuty accept. The address can hold a secret:
+  it is never printed or sent to a screen, only whether one is set;
+- as a notification of the computer the service runs on (macOS), and in the app.
+
+**What a check never does.** It never wakes a host that sleeps when idle: with no copy up the health is "Asleep".
+It never alerts while a deploy is running on that project. It never calls a model healthy on numbers it doesn't
+have.
+
+`GET /api/projects/<id>/staging/health[?history=N]`, `POST .../health/check`, `PUT .../health/target`, and
+`GET /api/alerts` for every unhealthy model in the workspace.
+
+## Rolling back
+
+A roll back is a deploy of an earlier version to the same place, under the same login, through the same job
+every deploy runs. So it works on every host a deploy works on, and runs the same steps.
+
+- `cst deployments rollback <project> --reason "..."` puts back the version before the one running.
+  Add a number from `cst deployments history <project>` to pick another. A reason is required.
+- **What is running keeps answering during the switch.** The earlier version is started and checked first, and
+  only then is the other one stopped. If the earlier version fails to start, what was running stays up.
+- **The key stays the same** across a redeploy and a roll back, so a site's key keeps working.
+- **Who and why is kept.** `cst deployments rollback <project> --history` lists every roll back: when, who, from
+  which version to which, and the reason. It is also in the project's history.
+- **By itself, if you ask.** `cst deployments rollback <project> --auto 30`: for the first 30 minutes after each
+  deploy, when a health check finds the new version unhealthy, Captain puts the previous one back and says so in
+  the alert. It does this once per deploy, never without an earlier version, and never to the version it just put
+  back. `--auto 0` turns it off.
+
+One limit on this computer: each version gets a new port, so the address changes with the version. Requests made
+through Captain follow it. A program that saved the address must read it again. On a cloud the address stays.
+
+`POST /api/projects/<id>/staging/versions/<n>/rollback {reason}`, `GET .../staging/rollbacks`,
+`PUT .../staging/rollbacks/auto {minutes}`.
+
+## Which machine, in Settings
+
+`GET /api/serving/machines` lists, per cloud, the sizes on offer and the one chosen in place of the smallest that
+fits. `PUT /api/settings/serving {host, machine}` saves a choice. An empty machine goes back to the smallest.

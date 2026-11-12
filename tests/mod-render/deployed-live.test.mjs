@@ -109,7 +109,7 @@ await h.click('ship-copy-key');
 await until(h, () => copied === 'render-test-key', 'Copy its key reads it from the keychain');
 assert.ok(!h.text().includes('render-test-key'), 'and never draws it');
 const labels = () => h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]);
-assert.deepEqual(labels(), [...['Requests it has answered'], ...(haveTrainer ? ['Where the two models disagree'] : []), 'Check it uses the same numbers it was trained on', 'Send it real traffic', 'Earlier versions', 'Logs', 'Settings'], 'More: labels that say what each is for, and no review before there is traffic');
+assert.deepEqual(labels(), [...['Requests it has answered'], ...(haveTrainer ? ['Where the two models disagree'] : []), 'Is it healthy?', 'Check it uses the same numbers it was trained on', 'Send it real traffic', 'Earlier versions', 'Logs', 'Settings'], 'More: labels that say what each is for, and no review before there is traffic');
 clean(t, 'on the deployed screen');
 
 // Try a search: the results, beside the model it is compared with, by that model's own name.
@@ -129,6 +129,16 @@ if (haveTrainer) {
 assert.ok(t.includes('Searches typed here are tests. They never count as shoppers.'), 'searches typed here are labelled tests');
 clean(t, 'with results');
 h.mod.shipPath.result = null;
+
+// Is it healthy? A real check against the real endpoint, recorded, with the target a person sets.
+await more(h, 'health', (x) => Boolean(x.healthD));
+await h.click('dep-health-check');
+await until(h, () => h.mod.shipPath.healthD?.status === 'healthy' && Boolean(h.mod.shipPath.healthD?.checked_at), 'a check runs and is recorded');
+assert.ok(/Healthy: it is answering\. Only \d+ requests? in the last 15 minutes, too few to judge/.test(h.text()), `it says what it could judge: ${h.text().slice(-700)}`);
+await h.click('dep-health-p95-200');
+await until(h, () => h.mod.shipPath.healthD?.target?.p95_ms === 200, 'the target is saved');
+assert.equal((await get('/api/projects/outdoor/staging/health')).target.set, true);
+await h.click('dep-open-close');
 
 // The check that it uses the numbers it was trained on: a launch gate, behind More with its last result.
 await more(h, 'check');
@@ -179,6 +189,11 @@ await h.click('dep-open-close');
 // Earlier versions, the log and the settings, each opening with what it is for.
 await more(h, 'versions', (s) => Boolean(s.vers));
 assert.ok(h.text().includes('Every version deployed here, newest first') && byId(h, 'dep-version-1').length === 1, 'earlier versions');
+await until(h, () => Boolean(h.mod.shipPath.backs), 'its roll backs are read');
+assert.ok(h.text().includes('Off: an unhealthy version stays up until you roll it back.'), `automatic roll back is off until asked for: ${h.text().slice(-500)}`);
+await h.click('dep-auto-30');
+await until(h, () => h.mod.shipPath.backs?.auto?.on === true, 'and a click turns it on for real');
+assert.equal((await get('/api/projects/outdoor/staging/rollbacks')).auto.minutes, 30);
 await h.click('dep-open-close');
 await more(h, 'logs', (s) => Boolean(s.logsD));
 assert.ok(/Ready in [\d.]+ s: /.test(h.text()) && h.text().includes('Streaming'), 'the log, growing');

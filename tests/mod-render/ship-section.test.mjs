@@ -23,7 +23,8 @@ const LOCAL = { host: 'local', id: 'local', label: 'This computer', login: null,
   estimate: { free: true, text: 'Free.' }, fit: { outcome: 'fits', text: 'Needs about 180 MB of memory.' } };
 const AWS = { host: 'aws', id: 'aws:aws-main', label: 'AWS', login: 'aws-main', login_label: 'Amazon Web Services', region: 'us-west-1', can_deploy: true, why_not: null, first_time: true,
   proven: '2026-11-11', proven_text: 'Ran on a real account on 2026-11-11.', sleeps: false, reachable: true,
-  estimate: { text: 'About $0.07 an hour, about $48 a month if it runs all the time.', machine: 'ml.m5.large' }, minutes_text: 'About 4 minutes the first time, 2 after.' };
+  estimate: { text: 'About $0.07 an hour, about $48 a month if it runs all the time.', hourly_usd: 0.066 },
+  machine: { name: 'ml.t2.medium', memory_mb: 4096, hourly_usd: 0.066, by: 'smallest', text: 'ml.t2.medium: this model needs about 205 MB, and this has 4 GB. The smallest that leaves room to spare.' }, minutes_text: 'About 4 minutes the first time, 2 after.' };
 // The plan is the host's own. This one has two groups and five things: the page must not assume a number.
 const PLAN = { project: 'shop', host: 'aws', login: 'aws-main', label: 'AWS', model_version: 'shop/starter-ranker@v2', beside: 'shop/keyword-baseline@v1', first_time: true,
   creates: { short: 'Two roles, an image repository, an image build and the endpoint.', count: 5, groups: [
@@ -31,6 +32,7 @@ const PLAN = { project: 'shop', host: 'aws', login: 'aws-main', label: 'AWS', mo
       { resource: 'IAM role', name: 'captain-serving-build', why: 'The image build runs as this' }, { resource: 'ECR repository', name: 'captain-serving', why: "Holds Captain's serving image" },
       { resource: 'CodeBuild project', name: 'captain-serving-build', why: 'Builds the image in your account' }] },
     { title: 'For this model', summary: 'One small machine (ml.t2.medium)', items: [{ resource: 'SageMaker endpoint', name: 'captain-shop-live', why: 'Answers requests' }] }] },
+  machine: { name: 'ml.t2.medium', hourly_usd: 0.066, by: 'smallest', text: 'ml.t2.medium: this model needs about 205 MB, and this has 4 GB. The smallest that leaves room to spare.' },
   exists: [], cost: { hourly_usd: 0.066, monthly_usd: 48.2, setup_usd: 0.03, sleeps: false, text: 'About $0.07 an hour, about $48 a month if it runs all the time. $0.03 once to build the image.' },
   minutes: { low: 3, high: 5, text: 'About 4 minutes: 2 to set up, 2 to start.' },
   steps: [{ id: 'check', title: 'Checking your account' }, { id: 'access', title: 'Creating permissions' }, { id: 'image', title: "Building the model's image" }, { id: 'start', title: 'Starting the model' }, { id: 'ready', title: 'Checking it answers' }],
@@ -54,7 +56,16 @@ globalThis.fetch = async (url, opts = {}) => {
     if (body.host === 'local' || body.confirm) return reply(200, { job: 'dep-1', run: 'run-1', plan: body.host === 'local' ? { steps: [] } : PLAN });
     return reply(409, { needs_confirm: true, detail: 'Confirm first.', plan: PLAN });
   }
+  if (p.endsWith('/staging/versions')) return reply(200, { text: '2 versions staged so far.', live: 'shop/starter-ranker@v2', rows: [
+    { n: 2, model_version: 'shop/starter-ranker@v2', at: '2026-11-12T19:00:00+00:00', by: 'dev', live: true, can_roll_back: false },
+    { n: 1, model_version: 'shop/keyword-baseline@v1', at: '2026-11-12T18:00:00+00:00', by: 'dev', live: false, can_roll_back: true }] });
+  if (p.endsWith('/rollback')) return reply(200, { job: 'rb-1' });
+  if (p.endsWith('/staging/rollbacks/auto')) { world.backs = { ...world.backs, auto: body.minutes ? { minutes: body.minutes, on: true, text: `On: if a new version is unhealthy in its first ${body.minutes} minutes, Captain puts the previous one back and tells you.` } : { minutes: null, on: false, text: 'Off: an unhealthy version stays up until you roll it back.' } }; return reply(200, world.backs.auto); }
+  if (p.endsWith('/staging/rollbacks')) return reply(200, world.backs);
   if (p.endsWith('/staging/live')) return reply(200, world.live);
+  if (p.endsWith('/staging/health/check')) return reply(200, { ...world.health, checked_at: '2026-11-12T19:31:00+00:00', changed: false, alert: null });
+  if (p.endsWith('/staging/health/target')) { world.health = { ...world.health, target: { p95_ms: body.p95_ms ?? null, error_rate: body.error_rate ?? 0.05, set: true } }; return reply(200, world.health); }
+  if (p.endsWith('/staging/health')) return reply(200, world.health);
   if (p.endsWith('/staging/metrics')) return reply(200, { range_text: 'the last hour', buckets: Array.from({ length: 30 }, (_x, i) => ({ requests: i === 29 ? 62 : 0, errors: 0 })), markers: [],
     summary: { requests: 62, errors: 0, p50: 0.2, p95: 0.6, site_reported: 0 }, text: '62 requests in the last hour, no errors.' });
   if (p.endsWith('/staging/cost')) return reply(200, { free: false, month_text: '$0.79', rate_text: 'About $0.07 an hour while it is up, about $1.58 a day.' });
@@ -82,7 +93,10 @@ class Dep extends View {
   render() { return page.deployOpen ? this.ship.deployed(palette(false)) : this.ship.section(palette(false)); }
 }
 const open = async (w, deployOpen = false) => {
-  world = { places: [LOCAL], staging: NONE, live: { state: 'handling', label: 'Handling requests' }, real: 0, job: () => ({ status: 'running', host: 'aws', login: 'aws-main', steps: STEPS }), ...w };
+  world = { places: [LOCAL], staging: NONE, live: { state: 'handling', label: 'Handling requests' }, real: 0,
+    backs: { rows: [{ at: '2026-11-12T18:30:00+00:00', by: 'Captain', from: 'shop/starter-ranker@v1', to: 'shop/keyword-baseline@v1', version: 1, auto: true, reason: 'It turned unhealthy 4 minutes after it was deployed. It is not answering.' }],
+      auto: { minutes: null, on: false, text: 'Off: an unhealthy version stays up until you roll it back.' }, text: '1 roll back so far.' },
+    health: { project: 'shop', status: 'healthy', text: 'Healthy. 0 of its last 62 requests failed, in the last 15 minutes. 95 in 100 took under 0.6 ms at the endpoint.', checked_at: '2026-11-12T19:30:00+00:00', reasons: [], target: { p95_ms: null, error_rate: 0.05, set: false } }, job: () => ({ status: 'running', host: 'aws', login: 'aws-main', steps: STEPS }), ...w };
   sent = []; jobReads = 0; page.deployOpen = deployOpen;
   const h = harness(Dep);
   await h.start();
@@ -113,6 +127,8 @@ assert.ok(t.includes('AWS') && t.includes('aws-main · us-west-1') && t.includes
 assert.deepEqual(h.byIdPrefix('ship-deploy-').map((e) => e.call('id')[0]), ['ship-deploy-local', 'ship-deploy-aws:aws-main'], 'Deploy on each, and nothing else to understand');
 assert.ok(t.includes('Connect a cloud') && !t.includes('Connect a cloud to deploy where a site can reach it'), 'connecting another is a small card now');
 assert.ok(!t.includes("isn't set up"), 'a connected cloud never says it is not set up');
+// The card names the machine its price is for, in the services' own sentence.
+assert.ok(t.includes('ml.t2.medium: this model needs about 205 MB, and this has 4 GB. The smallest that leaves room to spare.'), `the machine, beside its price: ${t}`);
 
 // A login named after its cloud isn't said twice: "AWS  aws" is just "AWS", with the region. Two logins of one
 // cloud are told apart by name.
@@ -132,9 +148,10 @@ assert.ok(t.includes('First time only') && t.includes('Permissions and a home fo
 assert.ok(!t.includes('captain-serving-build') && t.includes('Show everything (5 things)'), 'the full list is behind Show everything, counted from the plan');
 assert.ok(t.includes('About $0.07 an hour, about $48 a month if it runs all the time. $0.03 once to build the image. It bills until you stop it.') && t.includes('About 4 minutes: 2 to set up, 2 to start.'), 'the cost and how long');
 assert.equal(sent.filter((x) => x[0] === 'POST' && x[1].endsWith('/deploy') && x[2].confirm).length, 0, 'nothing was started');
+assert.ok(byId(h, 'ship-confirm-machine')[0].kids.join('') === 'ml.t2.medium: this model needs about 205 MB, and this has 4 GB. The smallest that leaves room to spare.', 'the confirm names the same machine, in the same words, without opening anything');
 await h.click('ship-confirm-all');
 assert.ok(h.text().includes('captain-serving-build') && h.text().includes('Show less'), 'Show everything lists each thing by name');
-assert.ok(h.text().includes('Machine: ml.m5.large. The price is for this machine in this region.'), 'and names the machine the price is for');
+
 assert.equal(h.byIdPrefix('ship-place-').length, 0, 'the confirm stands alone: one question at a time');
 
 // Yes: one progress view, each step named.
@@ -193,7 +210,7 @@ assert.ok(t.includes('https://runtime.sagemaker.us-west-1.amazonaws.com/endpoint
 assert.ok(t.includes('Try a search') && t.includes('It has answered 62 requests in the last hour. Usually in under 1 ms at the endpoint, almost always within 1 ms.'), 'a search box, and how much and how fast in a sentence');
 assert.ok(t.includes('About $0.07 an hour while it is up, about $1.58 a day. $0.79 so far this month.') && byId(h, 'ship-stop').length === 1, 'the cost and Stop');
 const labels = h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]);
-assert.deepEqual(labels, ['Requests it has answered', 'Where the two models disagree', 'Check it uses the same numbers it was trained on', 'Send it real traffic', 'Earlier versions', 'Logs', 'Settings'], 'More, with labels that say what each is for');
+assert.deepEqual(labels, ['Requests it has answered', 'Where the two models disagree', 'Is it healthy?', 'Check it uses the same numbers it was trained on', 'Send it real traffic', 'Earlier versions', 'Logs', 'Settings'], 'More, with labels that say what each is for');
 assert.ok(!labels.includes('Review before launch'), 'the review is not offered before there is real traffic or a test result');
 assert.ok(t.includes('Each request it answered: what was asked, what it returned, and how long it took.'), 'each with a sentence');
 assert.equal(h.byIdPrefix('dep-tab-').length, 0, 'no tabs');
@@ -274,7 +291,7 @@ assert.equal(h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]).at(-1), 'Re
   await wait(hh, () => Boolean(hh.mod.ship.conn) && Boolean(hh.mod.ship.met), 'the screen is read');
   const seen = {};
   seen.screen = counts(hh);
-  for (const id of ['requests', 'differ', 'check', 'traffic', 'versions', 'logs', 'settings', 'review']) {
+  for (const id of ['requests', 'differ', 'health', 'check', 'traffic', 'versions', 'logs', 'settings', 'review']) {
     await hh.click(`dep-more-${id}`);
     await hh.idle(120);
     seen[id] = counts(hh);
@@ -292,6 +309,86 @@ assert.equal(h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]).at(-1), 'Re
   assert.ok(!/\b(the |The |a )?(candidate|baseline)\b(?!-)/.test(tt.replace(/keyword-baseline/g, '')), `no "candidate" or "baseline" inside Send it real traffic: ${tt.match(/.{60}\b(candidate|baseline)\b.{40}/)?.[0]}`);
   assert.ok(tt.includes("Your site keeps showing keyword-baseline's results. This model ranks the same requests silently"), `shadow mode in the page's words: ${tt.slice(-900)}`);
 }
+
+// Health: the last recorded check in words, the targets a person sets, and Check now. Unhealthy is said at the top
+// of the screen and on the project page, in words, with what is wrong.
+h = await open({ places: [LOCAL, AWS], staging: RUN }, true);
+await wait(h, () => Boolean(h.mod.ship.healthD), 'health is read');
+assert.equal(byId(h, 'dep-unhealthy').length, 0, 'nothing is said at the top while it is healthy');
+await h.click('dep-more-health');
+t = h.text();
+assert.ok(t.includes('Captain checks once a minute that it answers') && t.includes('Healthy. 0 of its last 62 requests failed') && t.includes('Last checked 19:30 UTC.'), `its health, under its sentence: ${t.slice(-900)}`);
+assert.ok(t.includes('No target is set yet.') && t.includes('Unhealthy when 95 in 100 requests take longer than') && t.includes('Unhealthy when more requests than this fail'), 'the targets, in words');
+await h.click('dep-health-p95-200');
+await wait(h, () => h.mod.ship.healthD?.target?.p95_ms === 200, 'the target is saved');
+assert.deepEqual(sent.find((x) => x[0] === 'PUT' && x[1].endsWith('/staging/health/target'))[2], { p95_ms: 200, error_rate: 0.05 });
+assert.ok(h.text().includes('Saved. The next check uses it.') && !h.text().includes('No target is set yet.'));
+await h.click('dep-health-check');
+await wait(h, () => sent.some((x) => x[0] === 'POST' && x[1].endsWith('/staging/health/check')), 'Check now asks the services');
+const BAD = { project: 'shop', status: 'unhealthy', text: 'Unhealthy. 9 of its last 200 requests failed (4.5%), over the 1% target.', since: '2026-11-12T19:20:00+00:00', checked_at: '2026-11-12T19:30:00+00:00',
+  reasons: ['9 of its last 200 requests failed (4.5%), over the 1% target.'], target: { p95_ms: 200, error_rate: 0.01, set: true } };
+h = await open({ places: [LOCAL, AWS], staging: RUN, health: BAD }, true);
+await wait(h, () => h.mod.ship.healthD?.status === 'unhealthy', 'health is read');
+t = h.text();
+assert.ok(byId(h, 'dep-unhealthy').length === 1 && t.includes('Unhealthy. 9 of its last 200 requests failed (4.5%), over the 1% target.'), `said at the top: ${t.slice(0, 700)}`);
+await h.click('dep-unhealthy-open');
+assert.equal(byId(h, 'dep-open-health').length, 1, 'and it leads to its health');
+h = await open({ places: [LOCAL, AWS], staging: RUN, health: BAD }, false);
+await wait(h, () => h.mod.ship.healthD?.status === 'unhealthy', 'the project page reads it too');
+assert.ok(byId(h, 'ship-deployed-unhealthy').length === 1 && h.text().includes('over the 1% target.'), `the project page says so: ${h.text()}`);
+
+// Roll back: it asks why before it can be confirmed, sends the reason, and shows who rolled back last and why.
+h = await open({ places: [LOCAL, AWS], staging: RUN }, true);
+await h.click('dep-more-versions');
+await wait(h, () => Boolean(h.mod.ship.vers) && Boolean(h.mod.ship.backs), 'versions and roll backs are read');
+t = h.text();
+assert.ok(t.includes('Captain put keyword-baseline@v1 back in place of starter-ranker@v1. It turned unhealthy 4 minutes after it was deployed.'), `who rolled back and why: ${t.slice(-900)}`);
+assert.ok(t.includes('Roll back by itself when a new version is unhealthy') && t.includes('Off: an unhealthy version stays up until you roll it back.'), 'automatic roll back, off, in words');
+await h.click('dep-version-1-back');
+assert.ok(h.text().includes('What runs now keeps answering until it does. Say why, so the next person knows.'));
+assert.ok(!byId(h, 'dep-version-yes')[0].call('on_click'), 'no reason, no roll back: the button cannot be pressed yet');
+await h.click('dep-version-why-1');
+await h.click('dep-version-yes');
+await wait(h, () => sent.some((x) => x[1].endsWith('/staging/versions/1/rollback')), 'the roll back is asked for');
+assert.deepEqual(sent.find((x) => x[1].endsWith('/staging/versions/1/rollback'))[2], { reason: 'It is too slow' }, 'with its reason');
+await h.click('dep-auto-30');
+await wait(h, () => h.mod.ship.backs?.auto?.on === true, 'automatic roll back is turned on');
+assert.ok(h.text().includes('On: if a new version is unhealthy in its first 30 minutes, Captain puts the previous one back and tells you.'));
+assert.deepEqual(sent.find((x) => x[0] === 'PUT' && x[1].endsWith('/staging/rollbacks/auto'))[2], { minutes: 30 });
+
+// The present over the past: a deploy that failed earlier never covers a model that is running. It is one line
+// that can be dismissed, on the project page and on the deployed screen, and the Next banner is back.
+for (const deployOpen of [false, true]) {
+  h = await open({ places: [LOCAL, AWS], staging: RUN }, deployOpen);
+  h.mod.ship.djob = { place: { id: 'aws:aws-main', label: 'AWS' }, steps: STEPS.map((x) => ({ ...x, status: 'failed' })), started: Date.now(), failed: { text: 'An A/B test is running on this endpoint.', step: 'Starting the model' } };
+  await h.idle(20);
+  t = h.text();
+  assert.equal(byId(h, 'ship-progress').length, 0, `no failed panel over a running model (deployed screen: ${deployOpen})`);
+  assert.ok(!t.includes('Deploying to AWS stopped'), 'the old panel title is gone');
+  assert.equal(byId(h, deployOpen ? 'deployed' : 'ship-deployed').length, 1, 'the deployed view is shown');
+  assert.equal(h.mod.ship.djob, null, 'the past job is put away');
+  if (!deployOpen) {
+    assert.ok(t.includes('An earlier deploy to AWS didn\'t finish, at "Starting the model". This model is running.'), `one line says so: ${t.slice(-500)}`);
+    assert.equal(h.mod.ship.steps()[0].done, true, 'the steps agents read say it is deployed');
+    await h.click('ship-past-dismiss');
+    assert.equal(byId(h, 'ship-past').length, 0, 'and it can be dismissed');
+  }
+}
+// With nothing running, a failed deploy is the present: its panel stays.
+h = await open({ places: [LOCAL, AWS], staging: NONE });
+h.mod.ship.djob = { place: { id: 'aws:aws-main', label: 'AWS' }, steps: [], started: Date.now(), failed: { text: 'no capacity', step: 'Starting the model' } };
+await h.idle(20);
+assert.equal(byId(h, 'ship-progress').length, 1);
+// And the page keeps asking what is deployed, whatever it last saw: a model deployed from a terminal shows up.
+h = await open({ places: [LOCAL, AWS], staging: NONE });
+assert.equal(byId(h, 'ship-deployed').length, 0);
+world.staging = RUN;
+{ const before = sent.filter((x) => x[0] === 'GET' && x[1].endsWith('/staging')).length;
+  h.mod.ship.tick(h.cx ?? h.mod.cx ?? { notify() {}, spawn: (f) => f({ notify() {} }) });
+  await wait(h, () => h.mod.ship.running(), 'the tick reads what is deployed even when nothing was running');
+  assert.ok(sent.filter((x) => x[0] === 'GET' && x[1].endsWith('/staging')).length > before); }
+await h.idle(20);
+assert.equal(byId(h, 'ship-deployed').length, 1, 'and the deployed view appears');
 
 // Asleep, and stopped: said in words.
 h = await open({ places: [LOCAL, AWS], staging: { ...RUN, asleep: true }, live: { state: 'asleep', label: 'Asleep' } }, true);

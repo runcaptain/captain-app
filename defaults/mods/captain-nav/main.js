@@ -280,6 +280,15 @@ export default class CaptainNav extends View {
           if (!workspace() && this.workspace) setShared("captain.workspace", this.workspace);
           const all = await api("/api/workspaces");
           if (all.ok && Array.isArray(all.data)) this.workspaces = all.data.map((w) => w.name);
+          // A deployed model that turned unhealthy is said once, wherever the person is in the app. The service
+          // posts the same message as a notification of this computer.
+          const alerts = await api("/api/alerts");
+          for (const u of alerts.ok ? alerts.data?.unhealthy ?? [] : []) {
+            const key = `${u.project}:${u.since}`;
+            if (this.alerted?.has(key)) continue;
+            (this.alerted ??= new Set()).add(key);
+            notify({ title: `${u.name}: its deployed model is unhealthy`, body: String(u.text ?? "").slice(0, 240), level: "error" });
+          }
           const cloud = await api("/api/cloud/summary");
           this.cloud = cloud.ok ? cloud.data : null;
         }

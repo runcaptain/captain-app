@@ -172,8 +172,7 @@ def _estimate(ctx: Context, host, login: dict | None, target: dict | None, machi
     size = {"instances": int((t.get("config") or {}).get("instance_count") or 1),
             "instance_type": (t.get("config") or {}).get("instance_type") or "ml.m5.large"} if host.cloud == "aws" else {}
     try:
-        # Which machine the price is for, so the card's Details and the confirm can name it.
-        return {**CE.estimate(ctx, "staging", t, size), **({"machine": size["instance_type"]} if size.get("instance_type") else {})}
+        return CE.estimate(ctx, "staging", t, size)
     except Exception as e:  # noqa: BLE001  a price that can't be read never hides a place
         return {"available": False, "text": f"Captain couldn't work out an estimate just now ({str(e)[:120]}).", "basis": []}
 

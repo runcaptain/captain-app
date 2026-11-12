@@ -419,13 +419,15 @@ def test_versions_list_and_roll_back_to_one(ws):  # noqa: F811
     v = TF.versions(ws, "shop")
     assert [(r["n"], r["model_version"], r["live"]) for r in v["rows"]] == [(2, ws.candidate, True), (1, ws.baseline, False)]
     assert v["rows"][1]["can_roll_back"] and not v["rows"][0]["can_roll_back"] and v["rows"][0]["by"] and v["rows"][0]["at"]
-    out = TF.rollback_to(ws, "shop", 1)
+    with pytest.raises(ValueError, match="Say why"):
+        TF.rollback_to(ws, "shop", 1)  # a roll back is recorded with its reason
+    out = TF.rollback_to(ws, "shop", 1, reason="It is too slow")
     assert out["rolled_back_to"] == ws.baseline and SG.state(ws, "shop")["model_version"] == ws.baseline
     v = TF.versions(ws, "shop")
     assert [(r["n"], r["live"]) for r in v["rows"]] == [(3, True), (2, False), (1, False)] and v["rows"][0]["model_version"] == ws.baseline
-    assert "rolled staging back to version 1" in " | ".join(h["what"] for h in PS.get(ws, "shop")["history"])
-    with pytest.raises(ValueError, match="There is no version 9"):
-        TF.rollback_to(ws, "shop", 9)
+    assert f"rolled the deployment back from {ws.candidate} to {ws.baseline}: It is too slow" in " | ".join(h["what"] for h in PS.get(ws, "shop")["history"])
+    with pytest.raises(ValueError, match="There is no earlier version 9"):
+        TF.rollback_to(ws, "shop", 9, reason="a test")
 
 
 def test_a_model_over_the_size_limit_is_not_staged_on_this_computer_even_with_memory_free(ws):  # noqa: F811

@@ -81,6 +81,17 @@ def test_try_it_and_traffic_tabs(page):
     has(page(f"{P}/staging/differ"), "queries")
 
 
+def test_health_behind_more(page):
+    h = page(f"{P}/staging/health")
+    has(h, "status", "text", "target")
+    assert h["status"] == "unknown" and h["text"] == "Not checked yet."  # reading it never runs a check
+    has(h["target"], "p95_ms", "error_rate", "set")
+    r = page.put(f"{P}/staging/health/target", {"p95_ms": 200, "error_rate": 0.01})
+    assert r.status_code == 200 and r.json()["target"] == {"p95_ms": 200.0, "error_rate": 0.01, "set": True}
+    assert page.put(f"{P}/staging/health/target", {"error_rate": 2}).status_code == 400
+    has(page("/api/alerts"), "webhook_set", "unhealthy")
+
+
 def test_copies_tab(page):
     d = page(f"{P}/staging/copies")
     has(d, "rows", "text")

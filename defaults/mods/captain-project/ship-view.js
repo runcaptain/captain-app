@@ -42,7 +42,8 @@ function place(h, twice = false) {
   const login = h.login && (twice || !(same(h.login, h.label) || same(h.login, h.host) || same(h.login, h.login_label))) ? h.login : null;
   return { id: h.id ?? (h.login ? `${h.host}:${h.login}` : h.host), host: h.host, login: h.login ?? null, kind: local ? "local" : "cloud",
     provider: local ? null : h.host, label: h.label, sub: local ? "" : [login, h.region].filter(Boolean).join(" \u00b7 "),
-    machine: h.estimate?.machine ?? null,
+    // The machine the price is for, in the services' own sentence: the price and the machine named are one fact.
+    machine: h.machine?.text ?? null,
     can_deploy: Boolean(h.can_deploy), why_not: h.why_not ?? null, why_not_action: h.fit?.outcome === "over-limit" ? "settings" : null,
     reach: h.reachable ? "A site can reach it." : "Only you can reach it.",
     cost: h.estimate?.text ?? (local ? "Free." : ""),
@@ -72,6 +73,30 @@ export function loadLive(ship, cx) {
   const pid = ship.pid();
   if (!pid || !ship.staged()) return;
   cx.spawn(async (cx) => { const r = await api(`/api/projects/${enc(pid)}/staging/live`, { scoped: false, timeout: 60 }); if (ship.pid() === pid && r.ok) { ship.liveD = r.data; cx.notify(); } });
+  loadHealth(ship, cx);
+}
+
+/** The health Captain last recorded for the deployed model. Reading it never runs a check: the service does that
+ *  once a minute. */
+export function loadHealth(ship, cx) {
+  const pid = ship.pid();
+  if (!pid || !ship.staged()) return;
+  cx.spawn(async (cx) => { const r = await api(`/api/projects/${enc(pid)}/staging/health`, { scoped: false, timeout: 60 }); if (ship.pid() === pid && r.ok) { ship.healthD = r.data; cx.notify(); } });
+}
+
+/** Run a check now, or set what healthy means. */
+export function healthDo(ship, cx, body) {
+  if (ship.healthBusy) return;
+  ship.healthBusy = true; ship.healthNote = null;
+  cx.notify();
+  cx.spawn(async (cx) => {
+    const r = body ? await api(`/api/projects/${enc(ship.pid())}/staging/health/target`, { method: "PUT", body, scoped: false })
+      : await api(`/api/projects/${enc(ship.pid())}/staging/health/check`, { body: {}, scoped: false, timeout: 60 });
+    ship.healthBusy = false;
+    if (r.ok) { ship.healthD = r.data; ship.healthNote = body ? "Saved. The next check uses it." : null; }
+    else ship.healthNote = plainError(r.error, body ? "That target couldn't be saved." : "The check couldn't run.");
+    cx.notify();
+  });
 }
 
 /** What the plain screen shows without being asked: the state, the last hour's numbers and the cost. */
@@ -80,11 +105,12 @@ export function loadPlain(ship, cx) {
   if (!pid || !ship.staged()) return;
   const get = (path, set) => cx.spawn(async (cx) => { const r = await api(`/api/projects/${enc(pid)}${path}`, { scoped: false, timeout: 60 }); if (ship.pid() === pid && r.ok) { set(r.data); cx.notify(); } });
   get("/staging/live", (d) => { ship.liveD = d; });
+  get("/staging/health", (d) => { ship.healthD = d; });
   get("/staging/metrics?range=1h", (d) => { ship.met = d; });
   get("/staging/cost", (d) => { ship.costD = d; });
   const open = ship.more;
   if (open === "requests") get("/staging/requests?limit=50", (d) => { ship.reqs = d; });
-  if (open === "versions") get("/staging/versions", (d) => { ship.vers = d; });
+  if (open === "versions") { get("/staging/versions", (d) => { ship.vers = d; }); get("/staging/rollbacks", (d) => { ship.backs = d; }); }
   if (open === "logs") get(`/staging/logs?limit=300${ship.logBox.value().trim() ? `&q=${enc(ship.logBox.value().trim())}` : ""}`, (d) => { ship.logsD = d; });
   if (open === "settings") { get("/staging/settings", (d) => { ship.setD = d; }); get("/staging/copies", (d) => { ship.copiesD = d; }); }
 }
@@ -192,6 +218,7 @@ function placeCard(ship, c, p) {
       .when(Boolean(sub), (e) => e.child(div().min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(sub))))
     .child(line(c, `ship-place-${p.id}-reach`, p.reach ?? ""))
     .child(line(c, `ship-place-${p.id}-cost`, p.cost))
+    .when(Boolean(p.machine), (e) => e.child(line(c, `ship-place-${p.id}-machine`, p.machine, "grey500")))
     .when(Boolean(p.note), (e) => e.child(line(c, `ship-place-${p.id}-note`, p.note, "grey500")))
     .when(Boolean(p.unproven), (e) => e.child(line(c, `ship-place-${p.id}-unproven`, p.unproven, "warn")))
     .when(Boolean(p.why_not), (e) => e.child(line(c, `ship-place-${p.id}-why`, p.why_not, "fail")))
@@ -230,7 +257,7 @@ function confirmBox(ship, c) {
         .child(div().flex_none().text_size(12.5).text_color(c.navy).child(it.name ?? ""))
         .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey500).child([it.resource, it.why].filter(Boolean).join(". "))))))))
     .when(n > 0, (e) => e.child(h_flex().child(Button(c, "ship-confirm-all", all ? "Show less" : `Show everything (${count(n, "thing")})`, (_e, cx) => { ship.dconfirm.all = !all; cx.notify(); }, { small: true }))))
-    .when(all && Boolean(plan.machine ?? place.machine), (e) => e.child(line(c, "ship-confirm-machine", `Machine: ${plan.machine ?? place.machine}. The price is for this machine in this region.`, "grey500")))
+    .when(Boolean(plan.machine?.text ?? place.machine), (e) => e.child(line(c, "ship-confirm-machine", plan.machine?.text ?? place.machine)))
     .when(all && (plan.exists ?? []).length > 0, (e) => e.child(line(c, "ship-confirm-exists", `Already there, and used as it is: ${plan.exists.map((x) => x.name).join(", ")}.`, "grey500")))
     .child(line(c, "ship-confirm-cost", `${plan.cost?.text ?? ""}${plan.cost?.sleeps ? "" : " It bills until you stop it."}`.trim(), "navy"))
     .when(Boolean(plan.minutes?.text), (e) => e.child(line(c, "ship-confirm-minutes", plan.minutes.text)))
@@ -267,6 +294,7 @@ function progressBox(ship, c) {
 
 /** The bottom of the project page. Only where to deploy, or what is deployed. */
 export function ShipSection(ship, c) {
+  ship.settlePast();
   const d = ship.dp, s = ship.staged(), on = ship.running() || ship.status?.status === "starting";
   const cand = ship.pick(), champ = ship.page.exps?.champion ?? null;
   const what = cand ? short(cand.pipeline) : champ ? short(champ) : null;
@@ -281,10 +309,12 @@ export function ShipSection(ship, c) {
         .child(div().id("ship-deployed-name").text_size(15).font_semibold().text_color(c.navy).child(short(s.model_version)))
         .child(div().flex_1().min_w(0))
         .child(Button(c, "ship-open", "Open it", (_e, cx) => ship.page.openDeployment(cx), { small: true })))
-      .child(h_flex().gap(8).items_center().child(dot(c, w.tone)).child(line(c, "ship-deployed-state", w.text)))
+      .child(h_flex().gap(8).items_center().child(dot(c, ship.healthD?.status === "unhealthy" ? "fail" : w.tone)).child(line(c, "ship-deployed-state", w.text)))
+      .when(ship.healthD?.status === "unhealthy", (e) => e.child(line(c, "ship-deployed-unhealthy", ship.healthD.text, "fail")))
       .when(Boolean(address), (e) => e.child(h_flex().gap(8).items_center().flex_wrap()
         .child(div().id("ship-deployed-address").min_w(0).max_w_full().truncate().font_family(MONO).text_size(12.5).text_color(c.navy).child(address))
         .child(Button(c, "ship-deployed-copy", "Copy", (_e, cx) => ship.copy(cx, address, "The address is on your clipboard."), { small: true })))))
+      .when(Boolean(ship.dpast), (e) => e.child(pastLine(ship, c)))
       .when(Boolean(ship.dnote), (e) => e.child(note(c, ship.dnote)));
   }
   if (!what) return wrap.child(line(c, "ship-nothing", "Train a model, or pick one to compare others with, and you can deploy it here.", "grey500"));
@@ -301,6 +331,11 @@ export function ShipSection(ship, c) {
     .when(Boolean(ship.dnote), (e) => e.child(note(c, ship.dnote)));
 }
 
+/** An earlier failure, once a model is running: one line, and a way to put it away. */
+const pastLine = (ship, c) => h_flex().id("ship-past").gap(8).items_center().flex_wrap()
+  .child(div().id("ship-past-text").flex_1().min_w(0).text_size(12.5).text_color(c.grey500).child(ship.dpast.text))
+  .child(Button(c, "ship-past-dismiss", "Dismiss", (_e, cx) => { ship.dpast = null; cx.notify(); }, { small: true }));
+
 const note = (c, n) => div().id("ship-note").px(10).py(6).text_size(12.5).bg(n.tone === "fail" ? c.failLight : c.goodLight).text_color(n.tone === "fail" ? c.fail : c.good).child(n.text);
 
 // ---- the deployed model's screen --------------------------------------------------------------------------------
@@ -313,6 +348,7 @@ function moreItems(ship) {
   return [
     { id: "requests", label: "Requests it has answered", text: "Each request it answered: what was asked, what it returned, and how long it took. Pick one to see it in full." },
     base ? { id: "differ", label: "Where the two models disagree", text: `Searches where this model and ${base} return the most different results. Pick one to run it.` } : null,
+    { id: "health", label: "Is it healthy?", text: "Captain checks once a minute that it answers, how many requests fail and how fast it is, against the targets you set. It tells you when that changes." },
     { id: "check", label: "Check it uses the same numbers it was trained on", text: "A model can be fed different numbers when it runs than when it was trained, and then it ranks worse than its tests said. This compares the two. It must pass before launch." },
     { id: "traffic", label: "Send it real traffic", text: "Connect your site, test it quietly beside the model it's compared with, then split shoppers between the two." },
     { id: "versions", label: "Earlier versions", text: "Every version deployed here, newest first, and a way to put an earlier one back." },
@@ -325,6 +361,7 @@ function moreItems(ship) {
 function moreBody(ship, c, id) {
   const [, , connect, ab, launch] = ship.steps();
   if (id === "differ") return differBody(ship, c);
+  if (id === "health") return healthBody(ship, c);
   if (id === "check") return checkBody(ship, c);
   if (id === "requests") return v_flex().gap(8).child(numbers(ship, c, true)).child(ship.requestsTab(c));
   if (id === "traffic") return v_flex().id("dep-traffic").w_full().bg(c.surface).border_1().border_color(c.rule)
@@ -347,6 +384,26 @@ function differBody(ship, c) {
       .on_click((_e, cx) => ship.tryQuery(cx, q.query))
       .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.blue).child(q.query))
       .child(div().flex_none().text_size(12.5).text_color(c.grey500).child(`${q.moved} of the top 10 in another place`))));
+}
+
+/** Its health as last recorded, what healthy means here, and a way to change that or check now. */
+function healthBody(ship, c) {
+  const h = ship.healthD, t = h?.target ?? {};
+  const choice = (id, label, on, body) => div().id(id).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+    .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy)
+    .on_click((_e, cx) => healthDo(ship, cx, body)).child(label);
+  return v_flex().id("dep-health").w_full().p(12).gap(8).bg(c.surface).border_1().border_color(c.rule)
+    .child(line(c, "dep-health-text", h?.text ?? "Reading its health...", h?.status === "unhealthy" ? "fail" : "grey900"))
+    .when(Boolean(h?.checked_at), (e) => e.child(line(c, "dep-health-when", `Last checked ${String(h.checked_at).slice(11, 16)} UTC.${h.last_request_at ? ` Last request ${String(h.last_request_at).slice(11, 16)} UTC.` : ""}`, "grey500")))
+    .child(v_flex().gap(4)
+      .child(div().text_size(12.5).font_medium().text_color(c.navy).child("Unhealthy when 95 in 100 requests take longer than"))
+      .child(h_flex().gap(6).flex_wrap().children([[50, "50 ms"], [200, "200 ms"], [500, "500 ms"], [1000, "1 second"]].map(([v, label]) => choice(`dep-health-p95-${v}`, label, t.p95_ms === v, { p95_ms: v, error_rate: t.error_rate })))))
+    .child(v_flex().gap(4)
+      .child(div().text_size(12.5).font_medium().text_color(c.navy).child("Unhealthy when more requests than this fail"))
+      .child(h_flex().gap(6).flex_wrap().children([[0.001, "1 in 1,000"], [0.01, "1 in 100"], [0.05, "5 in 100"]].map(([v, label]) => choice(`dep-health-err-${String(v).replace(".", "_")}`, label, t.error_rate === v, { error_rate: v, ...(t.p95_ms != null ? { p95_ms: t.p95_ms } : {}) })))))
+    .when(!t.set, (e) => e.child(line(c, "dep-health-default", "No target is set yet. Until one is, only a model that stops answering or fails more than 5 in 100 requests counts as unhealthy.", "grey500")))
+    .when(Boolean(ship.healthNote), (e) => e.child(line(c, "dep-health-note", ship.healthNote, "grey500")))
+    .child(h_flex().child(Button(c, "dep-health-check", ship.healthBusy ? "Checking..." : "Check now", (_e, cx) => healthDo(ship, cx, null), { small: true, disabled: Boolean(ship.healthBusy) || !ship.running() })));
 }
 
 /** The check that it uses the numbers it was trained on: the last result, in words, and Check now. */
@@ -388,6 +445,7 @@ function costLine(ship, c) {
 /** The deployed model, top to bottom. */
 export function DeployedView(ship, c) {
   const s = ship.staged(), on = ship.running(), w = stateWords(ship);
+  ship.settlePast();
   if (!s || ship.djob || ship.dconfirm) return ShipSection(ship, c);
   const address = on ? (s.url ?? s.endpoint?.url ?? s.endpoint?.name ?? "") : null;
   const k = ship.conn, r = ship.result;
@@ -401,6 +459,11 @@ export function DeployedView(ship, c) {
       .when(on && !ship.busy, (e) => e.child(Button(c, "ship-stop", "Stop", (_e, cx) => { ship.stopAsk = true; cx.notify(); }, { small: true })))
       .when(Boolean(ship.busy), (e) => e.child(div().id("ship-busy").text_size(12.5).text_color(c.grey500).child(`${ship.busy}...`))))
     .child(h_flex().gap(8).items_center().child(dot(c, w.tone)).child(line(c, "dep-state", w.text, "navy")))
+    // Unhealthy is said here, at the top, in words: what is wrong, and since when.
+    .when(ship.healthD?.status === "unhealthy" && on, (e) => e.child(v_flex().id("dep-unhealthy").p(10).gap(4).bg(c.failLight)
+      .child(line(c, "dep-unhealthy-text", ship.healthD.text, "fail"))
+      .child(div().id("dep-unhealthy-open").text_size(12.5).text_color(c.blue).cursor_pointer()
+        .on_click((_e, cx) => { ship.more = "health"; cx.notify(); }).child("See its health and your targets"))))
     // A failed check is a reason not to launch: said here, at the top, in words, not only behind More.
     .when(lastCheck(ship)?.status === "fail", (e) => e.child(v_flex().id("dep-check-failed").p(10).gap(4).bg(c.failLight)
       .child(line(c, "dep-check-failed-text", `It is not using the same numbers it was trained on, so it may rank worse than its tests said. ${lastCheck(ship).text ?? ""}`.trim(), "fail"))
