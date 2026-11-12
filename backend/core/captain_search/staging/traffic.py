@@ -526,3 +526,96 @@ def differ(ctx: Context, pid: str, env: str = ENV, n: int = 40) -> dict:
         except Exception:  # noqa: BLE001
             pass
     return out
+
+
+# ---- the deployment page's Requests and Versions tabs ---------------------------------------------
+
+
+def requests(ctx: Context, pid: str, env: str = ENV, limit: int = 50) -> dict:
+    """The newest requests the endpoint answered: when, the query, which version answered, how long it took, and
+    what kind of traffic it was. Newest first."""
+    rec = state(ctx, pid, env)
+    if not rec:
+        return {"project": pid, "rows": [], "total": 0, "text": "Nothing is staged, so there are no requests."}
+    if rec.get("status") == "running" and rec.get("how") != "image":
+        try:
+            call(ctx, rec, "flush", {})
+        except Exception:  # noqa: BLE001
+            pass
+    got = L.read(ctx, pid, env, rec["id"])
+    reqs = sorted(got["requests"], key=lambda r: str(r.get("ts")), reverse=True)
+    rows = [{"request_id": r["request_id"], "ts": r.get("ts"), "query": r.get("query"), "arm": r.get("arm"),
+             "model_version": r.get("model_version"), "ms": r.get("ms"), "results": len(r.get("ids") or []),
+             "traffic": r.get("traffic") or "real", "status": "answered", "shadowed": bool(r.get("shadow"))} for r in reqs[:limit]]
+    return {"project": pid, "stage": rec["id"], "rows": rows, "total": len(reqs),
+            "text": f"{len(reqs):,} request{'s' if len(reqs) != 1 else ''} since this version was staged." if reqs
+                    else "No requests yet. Try a query, or send a test request."}
+
+
+def request(ctx: Context, pid: str, request_id: str, env: str = ENV) -> dict:
+    """One request in full, for the side panel: the results it returned in order, the signals served for each, what
+    the shopper did, and what the candidate would have returned when it was shadowed."""
+    rec = state(ctx, pid, env)
+    if not rec:
+        raise ValueError(f"Nothing is staged for {pid}.")
+    got = L.read(ctx, pid, env, rec["id"])
+    r = next((x for x in got["requests"] if str(x["request_id"]) == str(request_id)), None)
+    if r is None:
+        raise ValueError(f"No request {request_id} in this version's log.")
+    names = (got.get("names") or {}).get(r.get("arm")) or []
+    from . import _joined
+
+    joined = _joined(ctx, {"ids": r.get("ids") or [], "scores": r.get("scores") or []}, r.get("model_version"))
+    outs = [o for o in got["outcomes"] if str(o["request_id"]) == str(request_id)]
+    for x in joined:
+        row = (r.get("features") or {}).get(x["id"])
+        x["signals"] = [{"signal": n, "label": signal_label(n), "value": v} for n, v in zip(names, row)] if row else None
+        x["events"] = [o["event"] for o in outs if str(o.get("product_id")) == x["id"]]
+    return {"request_id": r["request_id"], "ts": r.get("ts"), "query": r.get("query"), "arm": r.get("arm"),
+            "model_version": r.get("model_version"), "ms": r.get("ms"), "traffic": r.get("traffic") or "real",
+            "session_id": r.get("session_id"), "results": joined, "outcomes": outs,
+            "shadow": ({"model_version": r["shadow"].get("model_version"), "ids": r["shadow"].get("ids"), "ms": r["shadow"].get("ms"),
+                        "same": (r["shadow"].get("ids") or [])[:10] == (r.get("ids") or [])[:10]} if r.get("shadow") else None)}
+
+
+def versions(ctx: Context, pid: str, env: str = ENV) -> dict:
+    """Every time a version was put on this endpoint, newest first: its number, which one is live, when, who, and
+    the model version. Recent ones can be rolled back to."""
+    from .. import ops
+
+    rec = state(ctx, pid, env)
+    try:
+        hist = sorted(ops.history(ctx, f"{pid}-{env}"), key=lambda d: d.created_at)
+    except Exception:  # noqa: BLE001
+        hist = []
+    live = rec.get("model_version") if rec and rec.get("status") == "running" else None
+    rows = [{"n": i + 1, "model_version": d.pipeline, "at": d.created_at.isoformat(timespec="seconds"), "by": d.created_by,
+             "action": d.action, "live": False} for i, d in enumerate(hist)]
+    if rows and rec and rec.get("status") == "running":
+        # The newest deploy is what is on the endpoint. (During shadow mode or after a test is rolled back the
+        # baseline beside it answers, but the deployed bundle is still this one.)
+        rows[-1]["live"] = True
+    rows.reverse()
+    for r in rows[:5]:
+        r["can_roll_back"] = bool(live) and not r["live"]
+    return {"project": pid, "rows": rows, "live": live,
+            "text": f"{len(rows)} version{'s' if len(rows) != 1 else ''} staged so far." if rows else "Nothing has been staged yet."}
+
+
+def rollback_to(ctx: Context, pid: str, n: int, env: str = ENV) -> dict:
+    """Put an earlier version back on the endpoint, by its number in the Versions list."""
+    from . import stage as _stage
+
+    v = versions(ctx, pid, env)
+    row = next((r for r in v["rows"] if r["n"] == int(n)), None)
+    if row is None:
+        raise ValueError(f"There is no version {n} for this endpoint.")
+    rec = _running(ctx, pid, env)
+    ab = PS.get(ctx, pid).get("ab") or {}
+    if ab.get("status") == "running" and ab.get("mode") == "captain":
+        raise ValueError("An A/B test is running. Roll the test back, or end it, before putting another version on the endpoint.")
+    champ = PS.get(ctx, pid).get("champion")
+    out = _stage(ctx, pid, candidate=None if row["model_version"] == champ else row["model_version"],
+                 baseline=row["model_version"] == champ, env=env, target=rec["target"], confirm=True)
+    _note(ctx, pid, f"rolled staging back to version {n} ({row['model_version']})")
+    return {"rolled_back_to": row["model_version"], "version": int(n), "staged": out}

@@ -404,6 +404,34 @@ if (haveTrainer) {
   clean(h.text(), 'with a brought-in readout');
 }
 
+// The Requests tab: newest first, and one request opens beside the list with what it returned.
+h = await page('requests');
+await tab(h, 'requests');
+await until(h, () => h.byIdPrefix('dep-request-0').length > 0, 'the requests are listed');
+const rq = await get('/api/projects/outdoor/staging/requests?limit=50');
+t = h.text();
+assert.ok(t.includes(rq.text) && t.includes('Answered by') && t.includes('Took') && t.includes(rq.rows[0].query), `newest first, with who answered and how long it took: ${t.slice(-800)}`);
+await h.click('dep-request-0');
+await until(h, () => byId(h, 'dep-request-id').length === 1, 'the side panel opens');
+assert.equal(byId(h, 'dep-request-id')[0].kids.join(''), rq.rows[0].request_id, 'with the request id');
+assert.ok(/answered in [\d.]+ ms\./.test(h.text()), `who answered and how fast: ${h.text().slice(-500)}`);
+assert.equal(h.byIdPrefix('dep-request-r').length, rq.rows[0].results, 'and each result it returned');
+assert.equal(h.byIdPrefix('dep-request-0').length > 0, true, 'the list keeps its place');
+// The Versions tab: every version staged, the live one marked, and Roll back on the others after a yes.
+await tab(h, 'versions');
+await until(h, () => h.byIdPrefix('dep-version-1').length > 0, 'the versions are listed');
+const vs = await get('/api/projects/outdoor/staging/versions');
+assert.ok(h.text().includes('Live') && h.text().includes(vs.text), 'the live one is marked');
+const back = vs.rows.find((r) => r.can_roll_back);
+if (back) {
+  await h.click(`dep-version-${back.n}-back`);
+  assert.equal(byId(h, 'dep-version-ask').length, 1, 'it asks first');
+  await h.click('dep-version-yes');
+  await until(h, () => h.text().includes(`Rolled back to version ${back.n}.`), 'rolled back', 400);
+  assert.equal((await get('/api/projects/outdoor/staging')).staged.model_version, back.model_version, 'the earlier version is on the endpoint again');
+}
+h = await page();
+
 // Stop asks first, then nothing is left running.
 await h.click('ship-stop');
 assert.equal(h.byIdPrefix('ship-stop-ask').length, 1, 'a confirmation');

@@ -1146,6 +1146,42 @@ def project_staging_differ(pid: str, env: str = "staging"):
     return _staging_call(TF.differ, ctx(), pid, env)
 
 
+@app.get("/api/projects/{pid}/staging/requests", dependencies=A)
+def project_staging_requests(pid: str, limit: int = 50):
+    """The newest requests the endpoint answered: {rows: [{request_id, ts, query, arm, model_version, ms, results,
+    traffic, status}], total}."""
+    from .staging import traffic as TF
+
+    return _staging_call(TF.requests, ctx(), pid, "staging", min(200, max(1, limit)))
+
+
+@app.get("/api/projects/{pid}/staging/requests/{rid}", dependencies=A)
+def project_staging_request(pid: str, rid: str):
+    """One request in full: its results with the signals served for each, what the shopper did, and the shadowed
+    candidate's results when there were any."""
+    from .staging import traffic as TF
+
+    return _staging_call(TF.request, ctx(), pid, rid)
+
+
+@app.get("/api/projects/{pid}/staging/versions", dependencies=A)
+def project_staging_versions(pid: str):
+    """Every version put on this endpoint, newest first: {rows: [{n, model_version, at, by, live, can_roll_back}]}."""
+    from .staging import traffic as TF
+
+    return _staging_call(TF.versions, ctx(), pid)
+
+
+@app.post("/api/projects/{pid}/staging/versions/{n}/rollback", dependencies=A)
+def project_staging_rollback_to(pid: str, n: int):
+    """Put version n back on the endpoint, as a job."""
+    from .staging import traffic as TF
+
+    c = ctx()
+    _staging_call(TF.versions, c, pid)
+    return {"job": _job(lambda _p: TF.rollback_to(c, pid, n), f"rolling staging for {pid} back to version {n}")}
+
+
 @app.get("/api/projects/{pid}/shadow", dependencies=A)
 def project_shadow(pid: str, traffic: str | None = None):
     """The shadow readout: {status, requests, top1_differs, top10_differs, overlap, queries, ms, evidence, label, text}."""

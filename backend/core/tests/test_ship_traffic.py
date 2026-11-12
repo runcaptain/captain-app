@@ -382,3 +382,45 @@ def test_an_endpoint_that_dies_while_loading_says_it_ran_out_of_memory(ws, monke
     with pytest.raises(ValueError, match="most likely because this computer ran out of memory"):
         SG.stage(ws, "shop", target="local")
     assert SG.state(ws, "shop")["status"] == "failed"
+
+
+# ---- the deployment page's Requests and Versions --------------------------------------------------
+
+
+def test_requests_newest_first_and_one_request_in_full(ws):  # noqa: F811
+    assert TF.requests(ws, "shop")["rows"] == []
+    SG.stage(ws, "shop", target="local")
+    rec = SG.state(ws, "shop")
+    assert TF.requests(ws, "shop")["text"] == "No requests yet. Try a query, or send a test request."
+    a = SG.call(ws, rec, "rank", {"query": "jacket", "k": 5, "session_id": "s1", "request_id": "first"})
+    SG.call(ws, rec, "rank", {"query": "boots", "k": 3, "traffic": "test", "request_id": "second"})
+    SG.call(ws, rec, "outcome", {"request_id": "first", "event": "click", "product_id": a["ids"][1]})
+    r = TF.requests(ws, "shop")
+    assert [x["request_id"] for x in r["rows"]] == ["second", "first"] and r["total"] == 2 and r["text"] == "2 requests since this version was staged."
+    top = r["rows"][1]
+    assert top["query"] == "jacket" and top["arm"] == "candidate" and top["model_version"] == ws.candidate and top["results"] == 5 and top["status"] == "answered"
+    assert r["rows"][0]["traffic"] == "test" and top["traffic"] == "real" and top["ms"] >= 0
+    one = TF.request(ws, "shop", "first")
+    assert [x["id"] for x in one["results"]] == a["ids"] and one["results"][0]["title"] and one["session_id"] == "s1"
+    assert one["results"][1]["events"] == ["click"] and one["results"][0]["events"] == []
+    sig = one["results"][0]["signals"]
+    assert sig and sig[0]["label"] and isinstance(sig[0]["value"], float) and any(x["signal"] == "price_log" for x in sig)
+    assert one["shadow"] is None
+    with pytest.raises(ValueError, match="No request nope"):
+        TF.request(ws, "shop", "nope")
+
+
+def test_versions_list_and_roll_back_to_one(ws):  # noqa: F811
+    assert TF.versions(ws, "shop")["rows"] == []
+    SG.stage(ws, "shop", baseline=True, target="local")
+    SG.stage(ws, "shop", candidate=ws.exp, target="local")
+    v = TF.versions(ws, "shop")
+    assert [(r["n"], r["model_version"], r["live"]) for r in v["rows"]] == [(2, ws.candidate, True), (1, ws.baseline, False)]
+    assert v["rows"][1]["can_roll_back"] and not v["rows"][0]["can_roll_back"] and v["rows"][0]["by"] and v["rows"][0]["at"]
+    out = TF.rollback_to(ws, "shop", 1)
+    assert out["rolled_back_to"] == ws.baseline and SG.state(ws, "shop")["model_version"] == ws.baseline
+    v = TF.versions(ws, "shop")
+    assert [(r["n"], r["live"]) for r in v["rows"]] == [(3, True), (2, False), (1, False)] and v["rows"][0]["model_version"] == ws.baseline
+    assert "rolled staging back to version 1" in " | ".join(h["what"] for h in PS.get(ws, "shop")["history"])
+    with pytest.raises(ValueError, match="There is no version 9"):
+        TF.rollback_to(ws, "shop", 9)

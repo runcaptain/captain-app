@@ -212,7 +212,7 @@ export class Ship {
   /** Redraw the countdown, and look again while something is running, starting, or being staged or stopped. */
   tick(cx) {
     const s = this.status?.status;
-    if (this.pid() && (this.busyFor || (!this.busy && (s === "running" || s === "starting")))) this.load(cx);
+    if (this.pid() && (this.busyFor || (!this.busy && (s === "running" || s === "starting")))) { this.load(cx); if (this.page.deployOpen) this.loadTab(cx); }
   }
 
   running() { return this.status?.status === "running"; }
@@ -1024,14 +1024,103 @@ export class Ship {
       .when(Boolean(s), (e) => e.child(this.detailsBox(c, s)));
   }
 
-  /** The deployment page: the header, then tabs. Try it and Traffic today; the rest follow. */
+  /** What a tab needs, asked when it is opened and again while it stays open. */
+  loadTab(cx) {
+    const pid = this.pid();
+    const get = (path, set) => cx.spawn(async (cx) => { const r = await api(`/api/projects/${enc(pid)}${path}`, { scoped: false, timeout: 60 }); if (this.pid() === pid && r.ok) { set(r.data); cx.notify(); } });
+    if (this.tab === "requests") get("/staging/requests?limit=50", (d) => { this.reqs = d; });
+    if (this.tab === "versions") get("/staging/versions", (d) => { this.vers = d; });
+  }
+
+  /** Open one request beside the list. The list keeps its place. */
+  openRequest(cx, id) {
+    this.reqOpen = { id, data: null };
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/requests/${enc(id)}`, { scoped: false, timeout: 60 });
+      if (this.reqOpen?.id === id) { this.reqOpen = { id, data: r.ok ? r.data : null, problem: r.ok ? null : plainError(r.error, "That request couldn't be read.") }; cx.notify(); }
+    });
+  }
+
+  /** Requests, newest first, and the one that is open beside them. */
+  requestsTab(c) {
+    const d = this.reqs, open = this.reqOpen;
+    const clock = (ts) => String(ts ?? "").slice(11, 23);
+    const cell = (w, t, mono) => div().w(w).flex_none().truncate().text_size(12).when(Boolean(mono), (e) => e.font_family(MONO).text_size(11.5)).child(String(t ?? ""));
+    const list = v_flex().id("dep-requests").flex_1().min_w(360)
+      .child(div().id("dep-requests-text").pb(6).text_size(12).text_color(c.grey500).child(d ? d.text : "Reading the request log..."))
+      .when(Boolean(d?.rows?.length), (e) => e
+        .child(h_flex().gap(8).py(4).text_color(c.grey500).border_b(1).border_color(c.rule)
+          .child(cell(92, "Time")).child(div().flex_1().min_w(80).text_size(12).child("Query")).child(cell(80, "Answered by")).child(cell(64, "Took")).child(cell(74, "Traffic")).child(cell(70, "Status")))
+        .children(d.rows.map((r, i) => h_flex().id(`dep-request-${i}`).gap(8).py(5).items_center().cursor_pointer().border_b(1).border_color(c.rule)
+          .when(open?.id === r.request_id, (x) => x.bg(c.blueLight)).hover((x) => x.bg(c.surface2))
+          .on_click((_e, cx) => this.openRequest(cx, r.request_id))
+          .child(cell(92, clock(r.ts), true)).child(div().flex_1().min_w(80).truncate().text_size(12.5).text_color(c.navy).child(r.query))
+          .child(cell(80, r.arm === "baseline" ? "Baseline" : "Candidate")).child(cell(64, `${Number(r.ms).toFixed(1)} ms`)).child(cell(74, r.traffic))
+          .child(div().w(70).flex_none().text_size(12).text_color(c.good).child("Answered")))));
+    const x = open?.data;
+    const panel = !open ? null : v_flex().id("dep-request-panel").w(360).flex_none().p(10).gap(6).bg(c.surface2).border_1().border_color(c.rule)
+      .child(h_flex().gap(6).items_center()
+        .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(x?.query ?? "Opening..."))
+        .child(Button(c, "dep-request-close", "Close", (_e, cx) => { this.reqOpen = null; cx.notify(); }, { small: true, kind: "quiet" })))
+      .when(Boolean(open.problem), (e) => e.child(div().text_size(12).text_color(c.fail).child(open.problem)))
+      .when(Boolean(x), (e) => e
+        .child(div().id("dep-request-meta").text_size(12).line_height("17px").text_color(c.grey900)
+          .child(`${x.arm === "baseline" ? "Baseline" : "Candidate"} ${short(x.model_version)} answered in ${Number(x.ms).toFixed(1)} ms. ${x.traffic === "real" ? "Real traffic." : x.traffic === "test" ? "Test traffic." : "Simulated."}`))
+        .child(h_flex().gap(6).items_center().child(div().text_size(11.5).text_color(c.grey500).child("Request")).child(div().id("dep-request-id").font_family(MONO).text_size(11.5).child(x.request_id)))
+        .children(x.results.map((p, i) => v_flex().id(`dep-request-r${i}`).py(4).border_t(1).border_color(c.rule)
+          .child(h_flex().gap(6).child(div().w(18).flex_none().text_size(11.5).text_color(c.grey500).child(String(p.position))).child(div().flex_1().min_w(0).truncate().text_size(12.5).child(p.title))
+            .when((p.events ?? []).length > 0, (y) => y.child(Badge(c, p.events[p.events.length - 1], "good"))))
+          .when(Boolean(p.signals), (y) => y.child(div().pl(24).text_size(11).line_height("15px").text_color(c.grey500)
+            .child(p.signals.filter((g) => g.value).slice(0, 4).map((g) => `${g.label} ${Number(g.value).toFixed(2)}`).join(", "))))))
+        .when(Boolean(x.shadow), (e2) => e2.child(div().id("dep-request-shadow").text_size(12).text_color(c.grey900)
+          .child(x.shadow.same ? "Shadowed: the candidate would have returned the same top 10." : "Shadowed: the candidate would have returned a different top 10."))));
+    return h_flex().id("dep-requests-wrap").w_full().p(12).gap(12).items_start().bg(c.surface).border_1().border_color(c.rule).child(list).when(Boolean(panel), (e) => e.child(panel));
+  }
+
+  /** Put an earlier version back, after a yes. */
+  rollBackTo(cx, n) {
+    if (this.busy) return;
+    this.cx = cx;
+    this.busy = `Rolling back to version ${n}`; this.busyStep = "stage"; this.note = null; this.verAsk = null;
+    this.busyFor = { what: "stage", was: this.running() ? this.staged().id : null }; this.settled = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/versions/${n}/rollback`, { body: {}, scoped: false });
+      const done = r.ok ? await this.wait(r.data.job, 30) : { ok: false, error: plainError(r.error, "It couldn't be rolled back.") };
+      this.busy = null; this.busyFor = null;
+      this.note = done.ok ? { tone: "good", text: `Rolled back to version ${n}.` } : { tone: "fail", text: done.error };
+      this.load(cx); this.loadTab(cx);
+      this.page.reload?.(cx);
+    });
+  }
+
+  /** Every version put on this endpoint, the live one marked, and Roll back on recent ones. */
+  versionsTab(c) {
+    const d = this.vers;
+    return v_flex().id("dep-versions").w_full().p(12).gap(2).bg(c.surface).border_1().border_color(c.rule)
+      .child(div().pb(6).text_size(12).text_color(c.grey500).child(d ? d.text : "Reading the versions..."))
+      .children((d?.rows ?? []).map((r) => v_flex().id(`dep-version-${r.n}`).py(6).border_t(1).border_color(c.rule)
+        .child(h_flex().gap(10).items_center().flex_wrap()
+          .child(div().w(36).flex_none().text_size(12.5).font_semibold().child(`v${r.n}`))
+          .child(div().flex_1().min_w(160).truncate().font_family(MONO).text_size(12).text_color(c.navy).child(short(r.model_version)))
+          .when(r.live, (e) => e.child(Badge(c, "Live", "good")))
+          .child(div().flex_none().text_size(12).text_color(c.grey500).child(`${String(r.at).slice(0, 16).replace("T", " ")} by ${r.by ?? "someone"}`))
+          .when(Boolean(r.can_roll_back) && !this.busy, (e) => e.child(Button(c, `dep-version-${r.n}-back`, "Roll back", (_e, cx) => { this.verAsk = r.n; cx.notify(); }, { small: true }))))
+        .when(this.verAsk === r.n, (e) => e.child(h_flex().id("dep-version-ask").mt(6).p(8).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
+          .child(div().flex_1().min_w(0).text_size(12).text_color(c.grey900).child(`Put ${short(r.model_version)} back on the endpoint? What runs now is replaced.`))
+          .child(Button(c, "dep-version-yes", "Roll back", (_e, cx) => this.rollBackTo(cx, r.n), { small: true, kind: "primary" }))
+          .child(Button(c, "dep-version-no", "Not now", (_e, cx) => { this.verAsk = null; cx.notify(); }, { small: true }))))));
+  }
+
+  /** The deployment page: the header, then tabs. */
   deployment(c) {
     const [, tryIt, connect, ab, launch] = this.steps();
-    const tabs = [["try", "Try it"], ["traffic", "Traffic"]];
+    const tabs = [["requests", "Requests"], ["try", "Try it"], ["traffic", "Traffic"], ["versions", "Versions"]];
     const tab = h_flex().id("dep-tabs").gap(18).border_b(1).border_color(c.rule).children(tabs.map(([id, label]) =>
       div().id(`dep-tab-${id}`).py(8).text_size(13).font_medium().cursor_pointer().border_b(2).border_color(this.tab === id ? c.blue : "#00000000")
-        .text_color(this.tab === id ? c.blue : c.grey900).on_click((_e, cx) => { this.tab = id; cx.notify(); }).child(label)));
-    const body = this.tab === "try"
+        .text_color(this.tab === id ? c.blue : c.grey900).on_click((_e, cx) => { this.tab = id; this.loadTab(cx); cx.notify(); }).child(label)));
+    const body = this.tab === "requests" ? this.requestsTab(c) : this.tab === "versions" ? this.versionsTab(c) : this.tab === "try"
       ? v_flex().id("dep-try").w_full().bg(c.surface).border_1().border_color(c.rule).child(this.tryStep(c, tryIt))
       : v_flex().id("dep-traffic").w_full().bg(c.surface).border_1().border_color(c.rule)
         .when(this.page.shipFrom !== "ab", (e) => e.child(this.connectStep(c, connect)))
