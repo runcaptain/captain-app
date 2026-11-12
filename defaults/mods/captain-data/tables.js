@@ -255,7 +255,7 @@ export class Tables {
         .child(h_flex().gap(4).pt(4).children(views.map(([id, label]) => div().id(`ttab-${id}`).h(26).px(10).flex().items_center().cursor_pointer().text_size(12)
           .border_1().border_color(this.tab === id ? c.navy : c.grey300).bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
           .on_click((_e, cx) => { this.tab = id; if (id === "rows" && !this.rows) this.loadRows(cx); cx.notify(); }).child(label)))))
-      .child(this.tab === "lineage" ? this.host.page.lineageView(c, w) : this.tab === "rows" ? this.rowsView(c) : v_flex().id("table-about").flex_1().min_h(0).overflow_y_scrollbar().child(this.columns(c, p)).child(this.insights(c, p)));
+      .child(this.tab === "lineage" ? this.host.page.lineageView(c, w, this.host.height ? this.host.height - 230 : 0) : this.tab === "rows" ? this.rowsView(c) : v_flex().id("table-about").flex_1().min_h(0).overflow_y_scrollbar().child(this.columns(c, p)).child(this.insights(c, p)));
   }
 
   columns(c, p) {

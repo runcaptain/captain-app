@@ -22,7 +22,7 @@ import { Models } from "./models.js";
 import { Tables } from "./tables.js";
 import { Catalog } from "./catalog.js";
 import { DatasetPage } from "./dataset-page.js";
-import { openOverlay } from "herdr";
+import { openOverlay, run, setShared } from "herdr";
 import { int } from "./kit/num.js";
 
 /** The import wizard, starting in this folder. */
@@ -184,6 +184,7 @@ export default class CaptainData extends View {
 
   showTab(cx, id) {
     this.tab = id;
+    this.graph = null;
     if (id === "sources") { this.tables.show(cx); if (this.models.regs === null) this.models.load(cx); }
     else this.catalog.load(cx);
     cx.notify();
@@ -215,6 +216,49 @@ export default class CaptainData extends View {
     this.catalog.kind = "table";
     this.catalog.find.set_value(conn);
     this.showTab(cx, "tables");
+  }
+
+  /** A box of the lineage graph was clicked: open it where it has a page. Answers whether it did. A table Captain
+   *  keeps opens here, a database's table opens here, an evaluation opens in Runs. A model version, a model and a
+   *  deployment have no page in Data: the graph shows their details instead. */
+  openNode(cx, node) {
+    const id = String(node?.id ?? "");
+    this.graph = null;
+    if (node.kind === "dataset") {
+      const m = /^dataset:(.*?)(?:@v(\d+))?$/.exec(id);
+      if (!m) return false;
+      if (m[2]) { this.tab = "tables"; this.shown = "dataset"; this.page.tab = "sample"; this.selectVersion(cx, m[1], Number(m[2])); }
+      else { this.page.tab = "sample"; this.select(cx, m[1]); }
+      return true;
+    }
+    if (node.kind === "table") {
+      // lineage names it table:<connection>/<schema.table>, lower case; the cached tables have the real names.
+      const m = /^table:([^/]+)\/(.+)$/.exec(id);
+      const hit = m ? (this.catalog.rows ?? []).find((r) => r.kind === "table" && r.connection === m[1] && `${String(r.schema).replace(/"/g, "")}.${r.name}`.toLowerCase().endsWith(m[2])) : null;
+      if (!hit) return false;
+      this.tables.tab = "rows";
+      this.openTable(cx, hit.connection, hit.schema, hit.name);
+      return true;
+    }
+    if (node.kind === "backtest" || node.kind === "run") {
+      const m = /^(?:backtest|run|backtest-run):(.*?)(?:@v(\d+))?$/.exec(id);
+      if (!m) return false;
+      setShared("captain.open", { section: "runs", backtest: m[1], ...(m[2] ? { version: Number(m[2]) } : {}), at: Date.now() });
+      run("layout.select", { stack: "sections", child: "runs" });
+      return true;
+    }
+    return false;
+  }
+
+  /** "Where this came from" for something that has no page in Data (a model, from Sources): the graph, over the
+   *  screen, with a crumb back. */
+  showGraph(cx, id, title, back) {
+    this.graph = { id, title, back: back ?? this.tab };
+    this.page.graphFor = null;
+    this.page.graphError = null;
+    this.page.lineage.set({ nodes: [], edges: [] }, null);
+    this.page.loadLineage(cx, id);
+    cx.notify();
   }
 
   importDataset(folder) { openImport(folder); }
@@ -402,6 +446,14 @@ export default class CaptainData extends View {
     // Never blank: the header always shows, and the body says what is happening.
     const body = this.starting || this.catalog.starting
       ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true))
+      // A model's "Where this came from": the graph over the screen, with a crumb back to where it was asked.
+      : this.graph
+        ? v_flex().id("data-graph").flex_1().min_h(0)
+          .child(h_flex().id("data-crumb").flex_none().h(34).px(20).gap(6).items_center().border_b(1).border_color(c.rule).text_size(12.5)
+            .child(div().id("crumb-back").text_color(c.blue).cursor_pointer().hover((s) => s.underline()).on_click((_e, cx) => { this.graph = null; cx.notify(); }).child(this.graph.back === "sources" ? "Sources" : "Tables"))
+            .child(this.icon("chevron-right", 11, c.grey500))
+            .child(div().min_w(0).truncate().text_color(c.navy).child(`Where ${this.graph.title} came from`)))
+          .child(this.page.lineageView(c, w, this.height ? this.height - 110 : 0))
       : this.tab === "sources"
         ? this.sources(c, w)
       : this.shown === "dataset"
@@ -412,7 +464,7 @@ export default class CaptainData extends View {
         ? this.lib.empty(c)
         : this.catalog.render(c, w);
     return v_flex().id("root").size_full().bg(c.surface).font_family(FONT).text_color(c.navy)
-      .on_size_change((size, cx) => { this.width = size.width; cx.notify(); })
+      .on_size_change((size, cx) => { this.width = size.width; this.height = size.height; cx.notify(); })
       .child(this.header(c))
       .when(!!this.lib.note && this.tab === "tables", (e) => e.child(h_flex().id("data-note").flex_none().px(20).py(6).gap(8).items_start().border_b(1).border_color(c.rule).text_size(12)
         .text_color(this.lib.note.tone === "fail" ? c.fail : this.lib.note.tone === "good" ? c.good : c.grey900)

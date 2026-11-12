@@ -382,7 +382,12 @@ export class Models {
             .when(parents.length > 0, (e) => e.child(h_flex().min_w(0).gap(4).items_center().text_size(11.5).text_color(c.grey900)
               .child(div().flex_none().child("built from")).child(div().min_w(0).truncate().font_family(MONO).child(parents.map(String).join(", ")))))
             .child(div().flex_1())
-            .child(div().flex_none().max_w(160).truncate().text_size(11).text_color(c.grey500).child((this.regs ?? []).find((r) => r.uri === m.registry)?.label ?? ""));
+            .child(div().flex_none().max_w(160).truncate().text_size(11).text_color(c.grey500).child((this.regs ?? []).find((r) => r.uri === m.registry)?.label ?? ""))
+            // Its whole chain, from the sources it was built on to where it runs.
+            .child(div().id(`model-lineage-${m.id}`).flex_none().h(22).px(8).flex().items_center().cursor_pointer().border_1().border_color(c.grey300).text_size(11.5).text_color(c.navy)
+              .hover((st) => st.border_color(c.blue).text_color(c.blue))
+              .on_click((_e, cx) => { cx.stop_propagation?.(); this.host.showGraph(cx, `model:${m.id}`, `${m.brand} ${m.version}`, "sources"); })
+              .child("Where this came from"));
         }))));
   }
 }

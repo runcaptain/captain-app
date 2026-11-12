@@ -66,6 +66,24 @@ t = h.text();
 assert.ok(globalThis.__asked.some((p) => p.startsWith('/api/lineage/graph')) && globalThis.__asked.includes('/api/lineage'), 'falls back to /api/lineage');
 for (const n of ['demo-store', 'demo-catalog', 'demo-tuned', 'demo-tuned-vs-bm25']) assert.ok(t.includes(n), `lineage node ${n}`);
 assert.ok(!/demo-catalog@v1/.test(t), 'versions as chips, not @v');
+// The graph draws arrows with arrowheads, as paths.
+{
+  const kinds = [];
+  (function walk(e) { if (!e || typeof e !== 'object') return; if (e.kind === 'path') kinds.push(e.args[0].kind); for (const k of e.kids ?? []) walk(k); })(h.byIdPrefix('ds-lineage-canvas')[0]);
+  assert.ok(kinds.includes('stroke') && kinds.includes('fill'), `lines and arrowheads: ${kinds}`);
+}
+// Clicking a box opens it: an evaluation opens in Runs, with its comparison.
+const evalBox = h.byIdPrefix('ds-lineage-node-').map((e) => e.call('id')[0]).find((id) => /node-(backtest|run):/.test(id));
+assert.ok(evalBox, 'an evaluation is on the graph');
+globalThis.__runs = [];
+await h.click(evalBox);
+assert.equal(globalThis.__shared['captain.open']?.section, 'runs', 'the evaluation opens in Runs');
+assert.ok(globalThis.__shared['captain.open'].backtest, JSON.stringify(globalThis.__shared['captain.open']));
+assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections', child: 'runs' }]);
+// A model version has no page in Data: its details show on the graph instead.
+const modelBox = h.byIdPrefix('ds-lineage-node-').map((e) => e.call('id')[0]).find((id) => /node-pipeline:/.test(id));
+await h.click(modelBox);
+assert.equal(h.byIdPrefix('ds-lineage-details').length >= 1, true, 'its details show');
 await h.click('ds-lineage-close');
 assert.ok(h.byIdPrefix('ds-lineage-open').length === 1, 'back on the table');
 

@@ -46,7 +46,8 @@ export class DatasetPage {
     this.host = host;
     this.tab = "sample"; // "sample" | "about" | "lineage" (the graph, opened by its button)
     this.sections = new Set(); // sections of About that are open
-    this.lineage = new LineageGraph({ id: "ds-lineage", onFocus: (id, cx) => this.refocus(cx, id), onColumn: (col, cx) => this.traceColumn(cx, col) });
+    this.lineage = new LineageGraph({ id: "ds-lineage", onFocus: (id, cx) => this.refocus(cx, id), onColumn: (col, cx) => this.traceColumn(cx, col),
+      onOpen: (node, cx) => this.host.openNode(cx, node) });
     this.graphFor = null;
     this.graphError = null;
     this.profile = null; // {columns, freshness} | {missing: true} | {error}
@@ -156,8 +157,8 @@ export class DatasetPage {
     this.graphFor = id;
     this.graphError = null;
     cx.spawn(async (cx) => {
-      const { up, down } = this.lineage;
-      let r = await api(`/api/lineage/graph?node=${encodeURIComponent(id)}&up=${Math.max(up, 4)}&down=${Math.max(down, 4)}`);
+      // The whole chain: as far as the services go each way (10 steps).
+      let r = await api(`/api/lineage/graph?node=${encodeURIComponent(id)}&up=10&down=10`);
       if (!r.ok && r.status === 404) r = await api("/api/lineage");
       if (this.graphFor !== id) return;
       if (!r.ok) { this.graphError = "Couldn't load where this came from."; cx.notify(); return; }
@@ -367,7 +368,7 @@ export class DatasetPage {
   }
 
   body(c, w, d) {
-    if (this.tab === "lineage") return this.lineageView(c, w);
+    if (this.tab === "lineage") return this.lineageView(c, w, this.host.height ? this.host.height - 230 : 0);
     if (this.tab === "about") return this.about(c, d);
     return this.sample(c);
   }
@@ -455,12 +456,12 @@ export class DatasetPage {
       .when(!!d.judgment_source, (e) => e.child(row("Judgments from", String(d.judgment_source))));
   }
 
-  lineageView(c, w) {
+  /** The graph, filling what is left of the page. `h` is the height it has. */
+  lineageView(c, w, h) {
     if (this.graphError) return v_flex().id("ds-lineage-none").flex_1().p(20).child(div().text_size(12.5).text_color(this.graphEmpty ? c.grey900 : c.fail).child(this.graphError));
     if (!this.lineage.graph.nodes?.length) return v_flex().flex_1().child(Skeleton(c, 6));
     return v_flex().id("ds-lineage-view").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(10).gap(8)
-      .child(div().text_size(12).text_color(c.grey900).child("What this table was made from, and what uses it."))
-      .child(this.lineage.render(c, { width: w ? w - 40 - 2 - 12 : 0 })) // the view's padding, the canvas's border, a scrollbar
+      .child(this.lineage.render(c, { width: w ? w - 40 - 2 - 12 : 0, height: h ? Math.max(320, h - 150) : 0 })) // the view's padding, the canvas's border, a scrollbar; the controls and legend around it
       .when(!!this.columnNote, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(this.columnNote)));
   }
 

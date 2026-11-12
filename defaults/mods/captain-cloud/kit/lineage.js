@@ -1,14 +1,20 @@
-// captain-ui: a lineage graph, drawn natively. Nodes are source tables, datasets, pipelines, models, backtests and
-// handoffs; edges say what was made from what. Columns run upstream to downstream around the focused node, how far
-// each way is the person's choice, and picking a column of the focused node highlights the column-level edges.
+// captain-ui: "Where this came from", drawn as a graph (Edgar, 2026-11-12: "a React Flow-like setup where it shows
+// you the whole lineage of the model or where the data went"). Boxes are sources, tables, model versions, models,
+// evaluations and deployments; an arrow runs from what was read to what was made from it. No library: the layout
+// is written here and the lines are drawn with the app's own path painter.
 //
-//   const lin = new LineageGraph({ id: "lin", onFocus: (id, cx) => ..., onColumn: (col, cx) => ... });
+//   const lin = new LineageGraph({ id: "lin", onOpen: (node, cx) => true | false, onFocus, onColumn });
 //   lin.set({ nodes: [{id, kind, label, version?, columns?}], edges: [{from, to}] }, focusId);
-//   lin.render(c)            // keep the instance on the view
+//   lin.render(c, { width, height })       // keep the instance on the view
 //
-// The canvas works like a node editor: drag a node to move it, drag the background (or scroll) to pan, hold Command
-// and scroll (or use + and -) to zoom, Fit to see it all. Clicking a node selects it: its details show, and only the
-// path through it is highlighted. A double click, or "Show its lineage" in the details, calls onFocus.
+// Layout: layered, left to right. A box's column is how many steps it is from the focused box (upstream to the
+// left, downstream to the right), or its longest path from a source when nothing is focused. Within a column the
+// boxes are ordered by where their neighbours sit (two barycenter sweeps), so arrows cross as little as a simple
+// layout manages. The whole chain is shown, fitted to the canvas.
+//
+// Hovering a box lights everything upstream and downstream of it and dims the rest. Clicking a box opens it
+// (onOpen), or shows its details when it has no page. Drag the background (or scroll) to pan, hold Command and
+// scroll (or use + and -) to zoom, Fit to see it all; a box can be dragged aside.
 //
 // Edges may use {from, to} or {src, dst}. Column edges: lin.setColumns([{from: {node, column}, to: {node, column}}]).
 import { div, svg, PathBuilder } from "gpui-kit";
@@ -17,17 +23,22 @@ import { MONO } from "./tokens.js";
 import { icon } from "./icons.js";
 import { BRANDS } from "./brands.js";
 
-const NODE_W = 196;
+const NODE_W = 204;
 const NODE_H = 52;
-const GAP_X = 72;
-const GAP_Y = 14;
-const PAD = 16;
+const GAP_X = 84; // room for an arrow to bend and for its head
+const GAP_Y = 16;
+const PAD = 20;
+const ARROW = 7; // the arrowhead's length, in layout units
+const ALL = 99; // every step, each way: the whole chain
 
+// [the word for the kind, its icon, the palette colour of its edge stripe].
 export const KINDS = {
-  table: ["Source table", "table"], connection: ["Database", "server"], dataset: ["Dataset", "database"],
-  pipeline: ["Model version", "workflow"], model: ["Model", "boxes"], backtest: ["Offline evaluation", "flask-conical"],
-  run: ["Evaluation run", "flask-conical"], handoff: ["Launch review", "send"], label: ["Label", "tag"],
-  notebook: ["Notebook", "file-text"], registry: ["Registry", "cloud"], environment: ["Environment", "rocket"],
+  table: ["Database table", "table", "grey500"], connection: ["Source", "server", "grey500"], dataset: ["Table", "database", "blue"],
+  pipeline: ["Model version", "workflow", "navy"], model: ["Model", "boxes", "navy"], "model-unregistered": ["Model, not in a registry", "boxes", "grey500"],
+  architecture: ["Model family", "layers", "grey500"], backtest: ["Evaluation", "flask-conical", "good"],
+  run: ["Evaluation run", "flask-conical", "good"], handoff: ["Launch review", "send", "warn"], label: ["Label", "tag", "grey500"],
+  notebook: ["Notebook", "file-text", "grey500"], registry: ["Registry", "cloud", "grey500"], environment: ["Deployment", "rocket", "warn"],
+  demo: ["Demo", "rocket", "warn"],
   // MLflow, read through the bridge (kit/mlflow.js withMlflow): drawn with its own mark.
   "mlflow-run": ["MLflow run", "brand:mlflow"], "mlflow-model": ["MLflow model", "brand:mlflow"],
 };
@@ -88,13 +99,52 @@ export function ranks(graph) {
   return rank;
 }
 
+/** Order each column so a box sits near the boxes it is joined to: two sweeps, left to right then right to left,
+ *  each placing a box at the average position of its neighbours in the column just passed. `cols` is a list of
+ *  columns of ids, in order; `edges` is [[from, to]]. Returns the columns reordered. */
+export function untangle(cols, edges) {
+  const out = cols.map((c) => [...c]);
+  const near = new Map();
+  for (const [a, b] of edges) { (near.get(a) ?? near.set(a, []).get(a)).push(b); (near.get(b) ?? near.set(b, []).get(b)).push(a); }
+  const sweep = (order) => {
+    for (let k = 1; k < order.length; k++) {
+      const prev = new Map(out[order[k - 1]].map((id, i) => [id, i]));
+      const here = out[order[k]];
+      const was = new Map(here.map((id, i) => [id, i]));
+      const want = (id) => { const ps = (near.get(id) ?? []).filter((n) => prev.has(n)).map((n) => prev.get(n)); return ps.length ? ps.reduce((x, y) => x + y, 0) / ps.length : was.get(id); };
+      const score = new Map(here.map((id) => [id, want(id)]));
+      here.sort((x, y) => (score.get(x) - score.get(y)) || (was.get(x) - was.get(y)));
+    }
+  };
+  const fwd = out.map((_c, i) => i);
+  sweep(fwd);
+  sweep([...fwd].reverse());
+  sweep(fwd);
+  return out;
+}
+
+/** How many pairs of edges between neighbouring columns cross, for a layout: fewer is easier to read. */
+export function crossings(cols, edges) {
+  const at = new Map();
+  cols.forEach((col, ci) => col.forEach((id, i) => at.set(id, [ci, i])));
+  const spans = edges.filter(([a, b]) => at.has(a) && at.has(b) && Math.abs(at.get(a)[0] - at.get(b)[0]) === 1)
+    .map(([a, b]) => (at.get(a)[0] < at.get(b)[0] ? [at.get(a), at.get(b)] : [at.get(b), at.get(a)]));
+  let n = 0;
+  for (let i = 0; i < spans.length; i++) for (let j = i + 1; j < spans.length; j++) {
+    const [p, q] = spans[i], [r, t] = spans[j];
+    if (p[0] === r[0] && (p[1] - r[1]) * (q[1] - t[1]) < 0) n++;
+  }
+  return n;
+}
+
 export class LineageGraph {
-  constructor({ id, onFocus, onColumn }) {
-    Object.assign(this, { id, onFocus, onColumn });
+  constructor({ id, onFocus, onColumn, onOpen }) {
+    Object.assign(this, { id, onFocus, onColumn, onOpen });
     this.graph = { nodes: [], edges: [] };
     this.focus = null;
-    this.up = 2;
-    this.down = 2;
+    this.up = ALL; // the whole chain, upstream and downstream
+    this.down = ALL;
+    this.hover = null; // the box under the pointer: everything upstream and downstream of it lights up
     this.column = null;
     this.colEdges = [];
     this.sel = null; // the selected node: its details show, and the path through it lights up
@@ -112,6 +162,7 @@ export class LineageGraph {
       this.focus = focus;
     }
     if (this.sel && !(this.graph.nodes ?? []).some((n) => n.id === this.sel)) this.sel = null;
+    this.hover = null;
     this.cache = null;
   }
 
@@ -173,8 +224,12 @@ export class LineageGraph {
     const tallest = Math.max(1, ...[...cols.values()].map((v) => v.length));
     const height = PAD * 2 + tallest * NODE_H + (tallest - 1) * GAP_Y;
     const pos = new Map();
+    // By name first, so the same graph always starts the same; then untangled.
+    const named = order.map((l) => cols.get(l).sort((a, b) => String(a.label ?? a.id).localeCompare(String(b.label ?? b.id))).map((n) => n.id));
+    const all0 = (this.graph.edges ?? []).map(ends);
+    const sorted = untangle(named, all0);
     order.forEach((l, ci) => {
-      const col = cols.get(l).sort((a, b) => String(a.label ?? a.id).localeCompare(String(b.label ?? b.id)));
+      const col = sorted[ci].map((id) => byId.get(id));
       const colH = col.length * NODE_H + (col.length - 1) * GAP_Y;
       const top = PAD + (height - PAD * 2 - colH) / 2;
       col.forEach((n, i) => pos.set(n.id, { x: PAD + ci * (NODE_W + GAP_X), y: top + i * (NODE_H + GAP_Y), level: l }));
@@ -184,7 +239,7 @@ export class LineageGraph {
     const hidden = { up: 0, down: 0 };
     const all = this.focus ? levels(this.graph, this.focus, 99, 99) : new Map();
     for (const [, l] of all) { if (l < -this.up) hidden.up++; if (l > this.down) hidden.down++; }
-    this.cache = { key, pos, width, height, edges, byId, hidden };
+    this.cache = { key, pos, width, height, edges, byId, hidden, columns: sorted };
     return this.cache;
   }
 
@@ -203,7 +258,16 @@ export class LineageGraph {
     a = T(a); b = T(b);
     const x1 = a.x + NODE_W * z, y1 = a.y + NODE_H * z / 2, x2 = b.x, y2 = b.y + NODE_H * z / 2;
     const dx = Math.max(24, (x2 - x1) / 2);
-    return p.move_to(x1, y1).cubic_bezier_to(x2, y2, x1 + dx, y1, x2 - dx, y2);
+    // The line stops where the arrowhead starts, so the head's point touches the box.
+    const end = x2 - ARROW * z;
+    return p.move_to(x1, y1).cubic_bezier_to(end, y2, x1 + dx, y1, end - dx, y2);
+  }
+
+  /** The arrowhead at the box an edge points to: a small filled triangle, its point on the box's left edge. */
+  head(b) {
+    const z = this.zoom;
+    const x = b.x * z + this.pan.x, y = b.y * z + this.pan.y + NODE_H * z / 2;
+    return [[x, y], [x - ARROW * z, y - ARROW * z * 0.55], [x - ARROW * z, y + ARROW * z * 0.55]];
   }
 
   icon(name, size, color) {
@@ -212,22 +276,11 @@ export class LineageGraph {
     return svg(icon(name)).size(size).flex_none().when(!!color, (e) => e.text_color(color));
   }
 
-  step(c, id, label, value, set) {
-    const btn = (k, text, on) => div().id(`${this.id}-${id}-${k}`).size(22).flex().items_center().justify_center().cursor_pointer()
-      .border_1().border_color(c.grey300).text_size(13).text_color(c.navy).hover((s) => s.border_color(c.blue).text_color(c.blue))
-      .on_click((_e, cx) => { set(on); this.cache = null; cx.notify(); }).child(text);
-    return h_flex().gap(6).items_center().text_size(12)
-      .child(div().text_color(c.grey900).child(label))
-      .child(btn("less", "-", Math.max(0, value - 1)))
-      .child(div().w(18).text_center().font_family(MONO).child(String(value)))
-      .child(btn("more", "+", Math.min(6, value + 1)));
-  }
-
   /** The selected node's details, over the canvas's top-left corner. */
   details(c, L) {
     const n = L.byId.get(this.sel);
     if (!n) return null;
-    const [kindWord, ic] = KINDS[n.kind] ?? [n.kind ?? "Node", "layers"];
+    const [kindWord, ic] = KINDS[n.kind] ?? [n.kind ?? "Box", "layers"];
     const all = (this.graph.edges ?? []).map(ends);
     const name = (id) => L.byId.get(id)?.label ?? id;
     const ins = all.filter(([, b]) => b === n.id).map(([a]) => name(a));
@@ -251,7 +304,7 @@ export class LineageGraph {
       .when(cols.length > 0, (e) => e.child(line(`Columns (${cols.length})`, cols)))
       .when(!!this.onFocus && n.id !== this.focus && this.focus != null, (e) => e.child(div().id(`${this.id}-details-focus`).h(26).px(8).flex().items_center().justify_center()
         .cursor_pointer().border_1().border_color(c.blue).text_size(12).text_color(c.blue).hover((s) => s.bg(c.blueLight))
-        .on_click((_e, cx) => this.onFocus(n.id, cx)).child("Show its lineage")));
+        .on_click((_e, cx) => this.onFocus(n.id, cx)).child("Put this in the middle")));
   }
 
   /** A small map of the whole graph, with the part on screen outlined; a press there moves the view to it. */
@@ -286,7 +339,8 @@ export class LineageGraph {
     const colNodes = new Set(this.colEdges.flatMap((e) => [e.from?.node, e.to?.node]));
     const paint = globalThis.window?.paint_path;
     // Before the zoom is read: the fit sets it.
-    const H = Math.max(300, Math.min(560, L.height + 16));
+    // As tall as the host gives it, so the chain has room; else sized to the graph.
+    const H = opts.height > 0 ? Math.max(300, opts.height) : Math.max(320, Math.min(620, L.height + 16));
     if (opts.width > 0) {
       this.view = { w: opts.width, h: H };
       if (!this.fitted && L.pos.size) {
@@ -296,8 +350,10 @@ export class LineageGraph {
       }
     }
     const z = this.zoom;
-    // Only the path through the selected node lights up (and a traced column's edges, which the person picked).
-    const path = this.sel && L.pos.has(this.sel) ? this.pathOf(L.edges, this.sel) : null;
+    // Everything upstream and downstream of the box under the pointer lights up, and the rest dims. With nothing
+    // hovered, the selected box's path stays lit (and a traced column's edges, which the person picked).
+    const lead = this.hover && L.pos.has(this.hover) ? this.hover : this.sel && L.pos.has(this.sel) ? this.sel : null;
+    const path = lead ? this.pathOf(L.edges, lead) : null;
     const onPath = (a, b) => !!path && ((path.up.has(a) && path.up.has(b)) || (path.down.has(a) && path.down.has(b)));
     const inPath = (id) => !!path && (path.up.has(id) || path.down.has(id));
     const plain = [], lit = [];
@@ -306,16 +362,20 @@ export class LineageGraph {
       (onColumn || onPath(a, b) ? lit : plain).push([a, b]);
     }
 
+    // One stroked path for the lines and one filled path for their arrowheads, per colour.
     const layer = (list, color, width) => {
       if (!paint || !list.length) return null;
       let p = PathBuilder.stroke(width);
-      for (const [a, b] of list) p = this.curve(p, this.at(L, a), this.at(L, b));
-      return div().absolute().top(0).left(0).size_full().child(paint(p.build(), color));
+      let heads = PathBuilder.fill();
+      for (const [a, b] of list) { p = this.curve(p, this.at(L, a), this.at(L, b)); heads = heads.add_polygon(this.head(this.at(L, b)), true); }
+      return div().absolute().top(0).left(0).size_full()
+        .child(div().absolute().inset_0().child(paint(p.build(), color)))
+        .child(div().absolute().inset_0().child(paint(heads.build(), color)));
     };
     const nodes = [...L.pos.keys()].map((id) => {
       const at = this.at(L, id);
       const n = L.byId.get(id);
-      const [kindWord, ic] = KINDS[n.kind] ?? [n.kind ?? "Node", "layers"];
+      const [kindWord, ic, stripe] = KINDS[n.kind] ?? [n.kind ?? "Box", "layers", "grey500"];
       const on = id === this.focus;
       const picked = id === this.sel;
       const viaColumn = colNodes.has(id);
@@ -327,14 +387,19 @@ export class LineageGraph {
         .when(dim, (e) => e.opacity(0.45))
         .hover((s) => s.border_color(c.blue))
         .tooltip(`${kindWord}: ${n.label ?? id}${n.version ? ` v${n.version}` : ""}`)
+        // The kind's colour, down the box's left edge.
+        .child(div().absolute().left(0).top(0).bottom(0).w(3 * z).bg(c[stripe] ?? c.grey300))
+        .on_hover((over, cx) => { if (over) { if (this.hover !== id) { this.hover = id; cx.notify(); } } else if (this.hover === id) { this.hover = null; cx.notify(); } })
         .on_mouse_down("left", (e, cx) => {
           cx.stop_propagation?.();
           if (e.click_count >= 2) { if (id !== this.focus) this.onFocus?.(id, cx); return; }
           this.press = { kind: "node", id, x0: e.position?.x ?? 0, y0: e.position?.y ?? 0, ox: at.x, oy: at.y, moved: false };
         })
-        // A click selects (and a second one clears). A drag that ends here isn't a click.
+        // A click opens the box where it has a page (onOpen answers true). Where it has none, its details show
+        // (and a second click clears them). A drag that ends here isn't a click.
         .on_click((_e, cx) => {
           if (this.dragEnd && Date.now() - this.dragEnd < 250) return;
+          if (id !== this.focus && this.onOpen?.(n, cx) === true) return;
           this.sel = this.sel === id ? null : id;
           cx.notify();
         })
@@ -352,11 +417,6 @@ export class LineageGraph {
     const vw = this.view?.w ?? 0, vh = this.view?.h ?? H;
     const cols = focus?.columns ?? [];
     return v_flex().id(`${this.id}-wrap`).w_full().gap(10)
-      .when(!!this.focus, (e) => e.child(h_flex().flex_wrap().gap(16).items_center()
-        .child(this.step(c, "up", "Upstream", this.up, (v) => { this.up = v; }))
-        .child(this.step(c, "down", "Downstream", this.down, (v) => { this.down = v; }))
-        .when(L.hidden.up + L.hidden.down > 0, (e) => e.child(div().text_size(11.5).text_color(c.grey500)
-          .child(`${L.hidden.up + L.hidden.down} more ${L.hidden.up && L.hidden.down ? "further each way" : L.hidden.up ? "further upstream" : "further downstream"}`)))))
       .when(cols.length > 0, (e) => e.child(h_flex().id(`${this.id}-cols`).gap(4).items_center().overflow_x_scrollbar().text_size(11.5)
         .child(div().flex_none().text_color(c.grey500).child("Trace a column"))
         .children(cols.map((col) => {
@@ -412,9 +472,9 @@ export class LineageGraph {
           .child(zoomBtn("out", "-", "Zoom out", () => this.zoomBy(1 / 1.2, (vw || L.width) / 2, vh / 2)))
           .child(zoomBtn("in", "+", "Zoom in", () => this.zoomBy(1.2, (vw || L.width) / 2, vh / 2)))
           .child(zoomBtn("fit", "Fit", "Show the whole graph", () => { this.moved = new Map(); this.fit(L, vw || L.width, vh); }))))
-      .child(div().text_size(11).text_color(c.grey500).child("Drag to move, scroll to pan, Command and scroll to zoom. Click a box for its details." + ``))
+      .child(div().id(`${this.id}-hint`).text_size(11).text_color(c.grey500).child("Hover a box to see what feeds it and what it feeds. Click one to open it. Drag to move, Command and scroll to zoom."))
       .child(h_flex().flex_wrap().gap(12).text_size(11).text_color(c.grey500)
         .children([...new Set([...L.pos.keys()].map((id) => L.byId.get(id)?.kind))].filter(Boolean).map((k) =>
-          h_flex().gap(4).items_center().child(this.icon((KINDS[k] ?? [k, "layers"])[1], 11, c.grey500)).child(div().child((KINDS[k] ?? [k])[0])))));
+          h_flex().gap(4).items_center().child(div().w(3).h(11).bg(c[(KINDS[k] ?? [])[2]] ?? c.grey300)).child(this.icon((KINDS[k] ?? [k, "layers"])[1], 11, c.grey500)).child(div().child((KINDS[k] ?? [k])[0])))));
   }
 }

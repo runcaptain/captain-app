@@ -116,7 +116,7 @@ filled in. A record outside the Explorer's pick opens by showing the whole works
 `--as-asked` an agent's accept is refused. `cst projects slot-add`, `slot-edit`, `slot-rm`, `input`, `input-clear`,
 `pin`, `kind` and `evaluation` work for an agent when the person asked. Each change an agent makes is written to
 the project's history with the agent's name, the time and, for an accept, the person's instruction; the proposal
-keeps `applied_by` and `on_instruction` too. The person sees it on Home: the proposal panel says "Applied by
+keeps `applied_by` and `on_instruction` too. The person sees it on the project's page: the proposal panel says "Applied by
 <agent> on your instruction", and Recent changes under "Everything in this project" lists the last ten. Rejecting a proposal, deleting a project, deleting data and
 overriding a live launch review stay with the person, in the app.
 
@@ -1176,6 +1176,24 @@ There is no Datasets screen and no Labels screen. `cst labels` still defines and
   `cst data mkdir | move | rename-folder | rmdir` still arrange them.
 - With a project picked in the Explorer the list shows that project's datasets only: a database's tables belong
   to no project.
+
+### Where this came from: lineage as a graph
+
+Lineage is not a tab or a submenu. It opens from **Where this came from** on a table's page, on a database
+table's page, and on a model in Sources. It is a graph (`kit/lineage.js`): a box for each source, table, model
+version, model, evaluation and deployment, and an arrow from what was read to what was made from it.
+
+- Laid out left to right in columns: upstream on the left of the box it opened from, downstream on the right.
+  A table shows where it came from and what used it. A model shows its whole chain. The layout is written in
+  the kit (columns by distance, then two sweeps that put a box near the boxes it is joined to). There is no
+  graph library.
+- Hovering a box lights everything upstream and downstream of it and dims the rest. Clicking a box opens it: a
+  table on its page, an evaluation in Runs. A box with no page (a model version, a deployment) shows its
+  details instead. Drag to pan, Command and scroll to zoom, Fit to see it all.
+- Arrows are drawn as paths with arrowheads. Never write a Unicode arrow.
+- It reads the lineage index that was already there: `GET /api/lineage/graph?node=<id>&up=10&down=10`, where an
+  id is `dataset:<name>@vN`, `table:<connection>/<schema.table>`, `model:<id>`, `pipeline:<name>@vN` or
+  `run:<evaluation>@vN`. A table whose lineage was never read says so instead of drawing one box.
 
 ### Runs: one list, the comparison in place, and regression testing
 
