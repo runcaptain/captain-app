@@ -22,7 +22,7 @@ import json
 from .. import project_state as PS
 from ..model.entities import new_id
 from ..workspace import Context, whoami
-from . import ENV, _note, _save, call, key_name, set_control, state
+from . import ENV, _note, _save, call, key_name, read_flush, set_control, state
 from . import logs as L
 
 TIMEOUT_MS = 300  # what the snippets give the endpoint before the site falls back to its own search
@@ -437,11 +437,7 @@ def shadow(ctx: Context, pid: str, traffic: str | None = None) -> dict:
                 "text": "Shadow mode is off. In shadow mode your site keeps showing the baseline's results while the "
                         "candidate ranks the same requests silently."}
     rec = state(ctx, pid, sh["env"])
-    if rec and rec.get("status") == "running":
-        try:
-            call(ctx, rec, "flush", {})
-        except Exception:  # noqa: BLE001
-            pass
+    read_flush(ctx, rec)  # not on a sleeping host: reading a page must not wake a copy
     return {"project": pid, "started_at": sh["started_at"], **shadow_compute(sh, L.read(ctx, pid, sh["env"], sh["stage"]), traffic)}
 
 
@@ -582,11 +578,7 @@ def requests(ctx: Context, pid: str, env: str = ENV, limit: int = 50) -> dict:
     rec = state(ctx, pid, env)
     if not rec:
         return {"project": pid, "rows": [], "total": 0, "text": "Nothing is staged, so there are no requests."}
-    if rec.get("status") == "running" and rec.get("how") != "image":
-        try:
-            call(ctx, rec, "flush", {})
-        except Exception:  # noqa: BLE001
-            pass
+    read_flush(ctx, rec)  # not on a sleeping host: reading a page must not wake a copy
     got = L.read(ctx, pid, env, rec["id"])
     reqs = sorted(got["requests"], key=lambda r: str(r.get("ts")), reverse=True)
     rows = [{"request_id": r["request_id"], "ts": r.get("ts"), "query": r.get("query"), "arm": r.get("arm"),

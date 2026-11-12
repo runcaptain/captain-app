@@ -34,7 +34,7 @@ import random
 from .. import project_state as PS
 from ..model.entities import new_id
 from ..workspace import Context, whoami
-from . import ENV, _note, _save, call, set_control, state
+from . import ENV, _note, _save, call, read_flush, set_control, state
 from . import logs as L
 
 METRICS = {"clicks": "Sessions with a click", "purchases": "Sessions with a purchase", "revenue": "Revenue per session"}
@@ -121,11 +121,7 @@ def traffic_seen(ctx: Context, pid: str, env: str = ENV) -> dict:
     rec = state(ctx, pid, env)
     if not rec:
         return {"real": 0, "unlabelled": 0, "sessions": 0, "per_day": None}
-    if rec.get("status") == "running":
-        try:
-            call(ctx, rec, "flush", {})
-        except Exception:  # noqa: BLE001
-            pass
+    read_flush(ctx, rec)  # not on a sleeping host: reading a page must not wake a copy
     every = L.read(ctx, pid, env, rec["id"])["requests"]
     unlabelled = sum(1 for r in every if (r.get("traffic") or "unlabelled") == "unlabelled")
     reqs = [r for r in every if (r.get("traffic") or "unlabelled") == "real" and not r.get("forced")]
@@ -593,11 +589,7 @@ def readout(ctx: Context, pid: str, traffic: str | None = None) -> dict:
                 "addresses": ab.get("addresses"),
                 "text": last["text"] if last else "Waiting for the readout from your own A/B system. Bring it in when it has run."}
     rec = state(ctx, pid, ab["env"])
-    if rec and rec.get("status") == "running":
-        try:
-            call(ctx, rec, "flush", {})
-        except Exception:  # noqa: BLE001  the chunks already written are still read
-            pass
+    read_flush(ctx, rec)  # not on a sleeping host: reading a page must not wake a copy
     out = compute(ab, L.read(ctx, pid, ab["env"], ab.get("stage")), traffic, _segments(ctx, pid))
     # A failed "must not get worse" guardrail pauses the ramp, and it is written down once, with why.
     why = " ".join(g["text"] for g in out["guardrails"] if not g["ok"] and g.get("mode") == "must") or None
