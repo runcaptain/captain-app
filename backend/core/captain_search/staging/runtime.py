@@ -56,6 +56,18 @@ LOG_TOP = 10  # feature rows are logged for this many of the results returned
 ARMS = ("baseline", "candidate")
 
 
+def _memory_mb() -> float | None:
+    """The most memory this copy has used, in MB."""
+    try:
+        import resource
+        import sys
+
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return round(peak / (1024 * 1024 if sys.platform == "darwin" else 1024), 1)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -128,7 +140,10 @@ class Runtime:
         self.bundle = json.loads(self.store.get(f"{self.bundle_key}/bundle.json"))
         self.pid, self.env, self.stage = self.bundle["project"], self.bundle["env"], self.bundle["id"]
         catalogs: dict = {}
+        t_load = time.perf_counter()
         self.arms = {n: load_arm(self.store, self.bundle_key, n, s, catalogs) for n, s in self.bundle["arms"].items()}
+        self.load_s = round(time.perf_counter() - t_load, 3)  # how long this copy took to be ready to answer
+        self.copy = new_id()[-8:].lower()  # this running copy: one process, or one container
         self.key_sha256 = key_sha256
         self.flush_s, self.publish_s = float(flush_s), float(publish_minutes) * 60.0
         self.clock, self.on_stop = clock, on_stop
@@ -141,6 +156,9 @@ class Runtime:
         self._lock = threading.Lock()
         self._req: list[dict] = []
         self._out: list[dict] = []
+        self._lines: list[dict] = []    # log lines, each with the request it belongs to when there is one
+        self._timings: list[dict] = []  # how long a request took as the site saw it, when the site reports it
+        self.errors = self.refused = 0  # requests that failed in here, and requests refused for what they sent
         self._unpublished = False
         self._seen: dict[str, str] = {}  # request id -> arm, for answering /outcome; bounded
         self._control = dict(self.bundle.get("control") or {})
@@ -148,6 +166,15 @@ class Runtime:
         self._idle_default = float(idle_minutes if idle_minutes is not None else self.bundle.get("idle_minutes") or 240)
         self.stopped: str | None = None
         self.control()
+        self.say(f"Ready in {self.load_s:g} s: " + ", ".join(f"{n} is {a.pipeline}" for n, a in self.arms.items()) + ".")
+
+    def say(self, text: str, request_id: str | None = None, level: str = "info") -> None:
+        """One log line, with the time to the millisecond. Lines of requests handled at the same time interleave."""
+        with self._lock:
+            self._lines.append({"ts": _now(), "text": text, "level": level, "copy": self.copy,
+                                **({"request_id": request_id} if request_id else {})})
+            if len(self._lines) > 20_000:  # a storage outage must not grow this without bound
+                del self._lines[:5_000]
 
     # ---- control -------------------------------------------------------------------------------
 
@@ -157,7 +184,13 @@ class Runtime:
             try:
                 doc = json.loads(self.store.get(control_key(self.pid, self.env)))
                 if doc.get("stage") in (None, self.stage):
+                    old = self._control
                     self._control = doc
+                    if self._control_at and any(old.get(k) != doc.get(k) for k in ("serve", "split", "shadow", "idle_minutes")):
+                        self.say("Traffic changed: " + ("shadow mode, shoppers get the baseline" if doc.get("shadow") else
+                                                        f"the candidate gets {float(doc['split']):.0%} of sessions" if doc.get("split") is not None
+                                                        else f"every request gets the {doc.get('serve') or 'candidate'}")
+                                 + f". Stops after {float(doc.get('idle_minutes') or self._idle_default):g} idle minutes.")
             except NotFound:
                 pass
             except Exception:  # noqa: BLE001  a storage hiccup keeps the last known control
@@ -195,6 +228,10 @@ class Runtime:
         self.running += 1
         try:
             ranked, feats = a.rank(query, k)
+        except Exception as e:  # noqa: BLE001
+            self.errors += 1
+            self.say(f"Ranking {query[:80]!r} with the {name} failed: {str(e)[:200]}", rid, "error")
+            raise
         finally:
             self.running -= 1
         ms = round((time.perf_counter() - t0) * 1000, 3)
@@ -229,6 +266,10 @@ class Runtime:
             if len(self._seen) > 50_000:
                 for old in list(self._seen)[:10_000]:
                     del self._seen[old]
+        self.say(f"Ranked {query[:80]!r} with the {name} in {ms:g} ms: {len(ids)} results." , rid)
+        if shadow:
+            self.say(f"The candidate ranked it silently in {shadow['ms']:g} ms." if shadow.get("ms") is not None
+                     else f"The candidate failed on it silently: {shadow.get('error')}", rid, "info" if shadow.get("ms") is not None else "error")
         out = {"request_id": rid, "ids": ids, "scores": rec["scores"], "arm": name, "model_version": a.pipeline, "ms": ms}
         if body.get("explain"):
             out["signals"] = {p: dict(zip(a.names, feats[p])) for p in ids if p in feats}
@@ -239,20 +280,38 @@ class Runtime:
         rid, ev = str(body.get("request_id") or ""), body.get("event")
         if not rid:
             raise ValueError("an outcome needs the request_id that /rank returned")
+        # How long the request took as the site saw it, network included. Sent with an outcome as `client_ms`, or
+        # by itself as the event "timing" with `ms`.
+        seen_ms = body.get("ms") if ev == "timing" else body.get("client_ms")
+        if seen_ms is not None:
+            try:
+                seen_ms = float(seen_ms)
+            except (TypeError, ValueError):
+                raise ValueError("the time the site saw is a number of milliseconds") from None
+            if not 0 <= seen_ms < 600_000:
+                raise ValueError("the time the site saw is a number of milliseconds")
+            with self._lock:
+                self._timings.append({"request_id": rid, "ms": round(seen_ms, 3), "ts": _now()})
+                self.last_used = self.clock()
+        if ev == "timing":
+            if seen_ms is None:
+                raise ValueError("a timing needs ms: how long the request took as your site saw it")
+            return {"ok": True, "request_id": rid, "known": rid in self._seen}
         if ev not in L.EVENTS:
-            raise ValueError(f"event is one of {', '.join(L.EVENTS)}")
+            raise ValueError(f"event is one of {', '.join(L.EVENTS)}, or timing")
         rec = {"request_id": rid, "event": ev, "product_id": None if body.get("product_id") is None else str(body["product_id"]),
                "value": float(body.get("value") or 0.0), "ts": _now()}
         with self._lock:
             self._out.append(rec)
             self.outcomes += 1
             self.last_used = self.clock()
+        self.say(f"Outcome: {ev}" + (f" of {rec['product_id']}" if rec["product_id"] else "") + ".", rid)
         return {"ok": True, "request_id": rid, "known": rid in self._seen}
 
     def flush(self, publish: bool = False) -> dict:
         with self._lock:
-            req, out = self._req, self._out
-            self._req, self._out = [], []
+            req, out, lines, timings = self._req, self._out, self._lines, self._timings
+            self._req, self._out, self._lines, self._timings = [], [], [], []
             self.last_flush = self.clock()
         base = L.prefix(self.pid, self.env, self.stage)
         cid = new_id()
@@ -262,9 +321,16 @@ class Runtime:
                 self.store.put_new(f"{base}requests-{cid}.jsonl", "\n".join(json.dumps(x) for x in [meta, *req]).encode())
             if out:
                 self.store.put_new(f"{base}outcomes-{cid}.jsonl", "\n".join(json.dumps(x) for x in out).encode())
+            if timings:
+                self.store.put_new(f"{base}timings-{cid}.jsonl", "\n".join(json.dumps(x) for x in timings).encode())
+            if lines:
+                self.store.put_new(f"{base}lines-{cid}.jsonl", "\n".join(json.dumps(x) for x in lines).encode())
+        except AlreadyExists:
+            pass  # a retry after a half-written flush: what was written stays, the rest went in the first try
         except Exception:
             with self._lock:  # nothing is lost to a failed write: the records go back in the buffer
                 self._req, self._out = req + self._req, out + self._out
+                self._lines, self._timings = lines + self._lines, timings + self._timings
             raise
         if req or out:
             self._unpublished = True
@@ -290,6 +356,7 @@ class Runtime:
                 "arms": {n: a.pipeline for n, a in self.arms.items()}, "serve": ctl.get("serve"), "split": ctl.get("split"),
                 "experiment": ctl.get("experiment"), "started_at": self.started_at, "uptime_s": round(now - self.started),
                 "requests": self.requests, "outcomes": self.outcomes, "running": max(0, self.running), "traffic": dict(self.by_traffic),
+                "errors": self.errors, "refused": self.refused, "copy": self.copy, "ready_s": self.load_s, "memory_mb": _memory_mb(),
                 "last_real_at": self.last_real_at, "shadow": ctl.get("shadow") or None, "idle_s": round(idle),
                 "idle_minutes": self.idle_minutes, "stops_in_s": max(0, round(self.idle_minutes * 60 - idle)),
                 "stopped": self.stopped}
@@ -301,9 +368,9 @@ class Runtime:
         now = self.clock()
         if self.stopped:
             return
-        due = now - self.last_flush >= self.flush_s or len(self._req) >= 500
+        due = now - self.last_flush >= self.flush_s or len(self._req) >= 500 or len(self._lines) >= 2000
         publish = self._unpublished and now - self.last_publish >= self.publish_s
-        if (due and (self._req or self._out)) or publish:
+        if (due and (self._req or self._out or self._lines or self._timings)) or publish:
             try:
                 self.flush(publish=now - self.last_publish >= self.publish_s)
             except Exception as e:  # noqa: BLE001
@@ -315,6 +382,7 @@ class Runtime:
     def stop(self, reason: str) -> None:
         if self.stopped:
             return
+        self.say(f"Stopping: {reason}.")
         self.stopped = reason
         try:
             self.flush(publish=True)
@@ -347,6 +415,8 @@ def make_app(rt: Runtime):
         try:
             return fn(*a)
         except ValueError as e:
+            rt.refused += 1
+            rt.say(f"Refused a request: {str(e)[:200]}", level="warn")
             raise HTTPException(400, str(e)) from None
 
     @api.get("/ping")

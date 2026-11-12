@@ -7,6 +7,8 @@ The runtime (runtime.py) buffers records and writes them as chunks under
                          features: {product id: [floats]}, ms, traffic, experiment}
                         The first line of a chunk is {"_meta": {"names": {arm: [feature names]}}}.
   outcomes-<id>.jsonl   {request_id, event: click | add-to-cart | purchase, product_id, value, ts}
+  timings-<id>.jsonl    {request_id, ms, ts}: how long a request took as the site saw it, when the site reports it
+  lines-<id>.jsonl      {ts, text, level, copy, request_id?}: the endpoint's log lines, to the millisecond
 
 Everything that reads staging traffic (the consistency check, the A/B readout, `monitor record`) reads these
 chunks or the dataset version published from them. `publish` turns the chunks of one stage into an `events`
@@ -62,9 +64,10 @@ def _lines(data: bytes) -> list[dict]:
     return [json.loads(x) for x in data.decode().splitlines() if x.strip()]
 
 
-def read(ctx, pid: str, env: str, stage: str | None = None) -> dict:
-    """Every request and outcome logged for a project's staging endpoint (one stage, or all of them)."""
-    reqs, outs, names = [], [], {}
+def read(ctx, pid: str, env: str, stage: str | None = None, extra: bool = False) -> dict:
+    """Every request and outcome logged for a project's staging endpoint (one stage, or all of them). With `extra`,
+    also its log lines and the response times sites reported."""
+    reqs, outs, names, lines, timings = [], [], {}, [], []
     store = shared(ctx, pid, env)
     for k in sorted(store.list(prefix(pid, env, stage))):
         base = k.rsplit("/", 1)[-1]
@@ -76,7 +79,11 @@ def read(ctx, pid: str, env: str, stage: str | None = None) -> dict:
                     reqs.append(r)
         elif base.startswith("outcomes-"):
             outs += _lines(store.get(k))
-    return {"requests": reqs, "outcomes": outs, "names": names}
+        elif extra and base.startswith("lines-"):
+            lines += _lines(store.get(k))
+        elif extra and base.startswith("timings-"):
+            timings += _lines(store.get(k))
+    return {"requests": reqs, "outcomes": outs, "names": names, **({"lines": lines, "timings": timings} if extra else {})}
 
 
 def impressions(reqs: list[dict], outs: list[dict]) -> list[dict]:

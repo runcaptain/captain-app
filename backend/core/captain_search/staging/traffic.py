@@ -97,6 +97,7 @@ curl -s {url}/outcome \\
   -d '{{"request_id": "<from /rank>", "event": "purchase", "product_id": "<the product>", "value": 59.00}}'"""
         js = f"""// {fallback}
 async function rank(query, sessionId) {{
+  const t0 = Date.now();
   try {{
     const r = await fetch("{url}/rank", {{
       method: "POST", signal: AbortSignal.timeout({TIMEOUT_MS}),
@@ -104,35 +105,42 @@ async function rank(query, sessionId) {{
       body: JSON.stringify({{ query, k: 10, session_id: sessionId, traffic: "real" }}),   // "real": these are your shoppers
     }});
     if (!r.ok) return null;            // an error body is {{"detail": "..."}}: fall back to your own search
-    return await r.json();             // {{ request_id, ids, scores, arm, model_version, ms }}
+    const out = await r.json();        // {{ request_id, ids, scores, arm, model_version, ms }}
+    out.client_ms = Date.now() - t0;   // how long it took as your site saw it: pass it to outcome()
+    return out;
   }} catch {{ return null; }}            // too slow or unreachable: fall back to your own search
 }}
 
-function outcome(requestId, event, productId, value) {{   // event: "click" | "add-to-cart" | "purchase"
+function outcome(requestId, event, productId, value, clientMs) {{   // event: "click" | "add-to-cart" | "purchase"
   return fetch("{url}/outcome", {{
     method: "POST",
     headers: {{ Authorization: `Bearer ${{process.env.CAPTAIN_STAGING_KEY}}`, "Content-Type": "application/json" }},
-    body: JSON.stringify({{ request_id: requestId, event, product_id: productId, value }}),
+    body: JSON.stringify({{ request_id: requestId, event, product_id: productId, value, client_ms: clientMs }}),
   }}).catch(() => {{}});
 }}"""
         py = f"""# {fallback}
-import os, requests
+import os, time, requests
 
 URL, KEY = "{url}", os.environ["CAPTAIN_STAGING_KEY"]
 HEADERS = {{"Authorization": f"Bearer {{KEY}}"}}
 
 def rank(query, session_id):
+    t0 = time.monotonic()
     try:
         r = requests.post(f"{{URL}}/rank", json={{"query": query, "k": 10, "session_id": session_id, "traffic": "real"}},  # "real": these are your shoppers
                           headers=HEADERS, timeout={TIMEOUT_MS / 1000:g})
-        return r.json() if r.ok else None   # an error body is {{"detail": "..."}}: fall back to your own search
+        if not r.ok:
+            return None                     # an error body is {{"detail": "..."}}: fall back to your own search
+        out = r.json()
+        out["client_ms"] = (time.monotonic() - t0) * 1000   # as your site saw it: pass it to outcome()
+        return out
     except requests.RequestException:
         return None                         # too slow or unreachable: fall back to your own search
 
-def outcome(request_id, event, product_id=None, value=0.0):   # event: click, add-to-cart or purchase
+def outcome(request_id, event, product_id=None, value=0.0, client_ms=None):   # event: click, add-to-cart or purchase
     try:
         requests.post(f"{{URL}}/outcome", json={{"request_id": request_id, "event": event, "product_id": product_id,
-                                               "value": value}}, headers=HEADERS, timeout=2)
+                                               "value": value, "client_ms": client_ms}}, headers=HEADERS, timeout=2)
     except requests.RequestException:
         pass"""
         return {"curl": curl, "javascript": js, "python": py}
@@ -156,15 +164,19 @@ const call = async (body, ms) => {{
 }};
 
 async function rank(query, sessionId) {{
-  try {{ return await call({{ op: "rank", query, k: 10, session_id: sessionId, traffic: "real" }}, {TIMEOUT_MS}); }}   // {{ request_id, ids, ... }}
-  catch {{ return null; }}   // too slow, unreachable or refused: fall back to your own search
+  const t0 = Date.now();
+  try {{
+    const out = await call({{ op: "rank", query, k: 10, session_id: sessionId, traffic: "real" }}, {TIMEOUT_MS});   // {{ request_id, ids, ... }}
+    out.client_ms = Date.now() - t0;   // how long it took as your site saw it: pass it to outcome()
+    return out;
+  }} catch {{ return null; }}   // too slow, unreachable or refused: fall back to your own search
 }}
 
-function outcome(requestId, event, productId, value) {{   // event: "click" | "add-to-cart" | "purchase"
-  return call({{ op: "outcome", request_id: requestId, event, product_id: productId, value }}, 2000).catch(() => {{}});
+function outcome(requestId, event, productId, value, clientMs) {{   // event: "click" | "add-to-cart" | "purchase"
+  return call({{ op: "outcome", request_id: requestId, event, product_id: productId, value, client_ms: clientMs }}, 2000).catch(() => {{}});
 }}"""
     py = f"""# {fallback}
-import json, os, boto3
+import json, os, time, boto3
 from botocore.config import Config
 
 rt = boto3.client("sagemaker-runtime", region_name="{region}",
@@ -176,14 +188,18 @@ def _call(body):
     return json.loads(r["Body"].read())
 
 def rank(query, session_id):
+    t0 = time.monotonic()
     try:
-        return _call({{"op": "rank", "query": query, "k": 10, "session_id": session_id, "traffic": "real"}})   # request_id, ids, ...
+        out = _call({{"op": "rank", "query": query, "k": 10, "session_id": session_id, "traffic": "real"}})   # request_id, ids, ...
+        out["client_ms"] = (time.monotonic() - t0) * 1000   # as your site saw it: pass it to outcome()
+        return out
     except Exception:
         return None   # too slow, unreachable or refused: fall back to your own search
 
-def outcome(request_id, event, product_id=None, value=0.0):   # event: click, add-to-cart or purchase
+def outcome(request_id, event, product_id=None, value=0.0, client_ms=None):   # event: click, add-to-cart or purchase
     try:
-        _call({{"op": "outcome", "request_id": request_id, "event": event, "product_id": product_id, "value": value}})
+        _call({{"op": "outcome", "request_id": request_id, "event": event, "product_id": product_id, "value": value,
+               "client_ms": client_ms}})
     except Exception:
         pass"""
     return {"aws cli": cli, "javascript": js, "python": py}
@@ -574,10 +590,12 @@ def request(ctx: Context, pid: str, request_id: str, env: str = ENV) -> dict:
     rec = state(ctx, pid, env)
     if not rec:
         raise ValueError(f"Nothing is staged for {pid}.")
-    got = L.read(ctx, pid, env, rec["id"])
+    got = L.read(ctx, pid, env, rec["id"], extra=True)
     r = next((x for x in got["requests"] if str(x["request_id"]) == str(request_id)), None)
     if r is None:
         raise ValueError(f"No request {request_id} in this version's log.")
+    lines = sorted((x for x in got["lines"] if str(x.get("request_id")) == str(request_id)), key=lambda x: str(x.get("ts")))
+    seen = next((t["ms"] for t in got["timings"] if str(t["request_id"]) == str(request_id)), None)
     names = (got.get("names") or {}).get(r.get("arm")) or []
     from . import _joined
 
@@ -590,6 +608,9 @@ def request(ctx: Context, pid: str, request_id: str, env: str = ENV) -> dict:
     return {"request_id": r["request_id"], "ts": r.get("ts"), "query": r.get("query"), "arm": r.get("arm"),
             "model_version": r.get("model_version"), "ms": r.get("ms"), "traffic": r.get("traffic") or "unlabelled",
             "session_id": r.get("session_id"), "results": joined, "outcomes": outs,
+            "lines": [{"ts": x["ts"], "text": x["text"], "level": x.get("level", "info")} for x in lines], "site_ms": seen,
+            "time_text": f"{r.get('ms'):g} ms at the endpoint" + (f", {seen:g} ms as your site saw it." if seen is not None else
+                                                              ". Your site didn't report how long it took."),
             "shadow": ({"model_version": r["shadow"].get("model_version"), "ids": r["shadow"].get("ids"), "ms": r["shadow"].get("ms"),
                         "same": (r["shadow"].get("ids") or [])[:10] == (r.get("ids") or [])[:10]} if r.get("shadow") else None)}
 
