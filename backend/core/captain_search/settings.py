@@ -129,3 +129,65 @@ def set_local_limit(ctx: Context, mb) -> dict:
         except Conflict:
             continue
     raise Conflict("the settings kept changing while saving. Try again.")
+
+
+def set_serving_machine(ctx: Context, host: str, machine) -> dict:
+    """The machine a deploy on this host uses, in place of the smallest the model fits on: an instance type on AWS
+    ("ml.m5.large"), a size's name or its memory in MB elsewhere. None or "" clears the choice. A choice the model
+    doesn't fit on is refused when the deploy is planned, with the reason (staging/sizing.py)."""
+    from .staging import sizing as SZ
+
+    if host not in SZ.WHERE:
+        raise ValueError("the host is one of: " + ", ".join(SZ.WHERE))
+    value = str(machine or "").strip() or None
+    if value is not None:
+        names = [str(x) for s in SZ.sizes(host, None) for x in (s["name"], s["memory_mb"])]
+        if value not in names:
+            raise ValueError(f"{value} is not a size Captain offers on {SZ.WHERE[host]}. Choose one of: "
+                             + ", ".join(s["name"] for s in SZ.sizes(host, None)) + ".")
+    for _ in range(10):
+        try:
+            body, tag = ctx.store.get_with_tag(KEY)
+            doc = yaml.safe_load(body) or {}
+        except NotFound:
+            doc, tag = {}, None
+        m = doc.setdefault("serving", {}).setdefault("machine", {})
+        if value is None:
+            m.pop(host, None)
+        else:
+            m[host] = value
+        doc["updated_by"], doc["updated_at"] = whoami(), dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+        try:
+            ctx.store.put_if(KEY, yaml.safe_dump(doc, sort_keys=False).encode(), tag)
+            return get(ctx)
+        except Conflict:
+            continue
+    raise Conflict("the settings kept changing while saving. Try again.")
+
+
+def set_serving_prefix(ctx: Context, prefix) -> dict:
+    """The start of the name of everything a first deploy makes in a cloud account ("captain" when not set). For
+    two workspaces that share one account, or an account where names must start a certain way. It is read when a
+    place is set up for the first time: changing it later does not rename what exists."""
+    import re
+
+    value = str(prefix or "").strip().lower() or None
+    if value is not None and not re.fullmatch(r"[a-z][a-z0-9-]{1,24}[a-z0-9]", value):
+        raise ValueError("the name prefix is 3 to 26 lower-case letters, digits and hyphens, starting with a letter")
+    for _ in range(10):
+        try:
+            body, tag = ctx.store.get_with_tag(KEY)
+            doc = yaml.safe_load(body) or {}
+        except NotFound:
+            doc, tag = {}, None
+        if value is None:
+            doc.setdefault("serving", {}).pop("name_prefix", None)
+        else:
+            doc.setdefault("serving", {})["name_prefix"] = value
+        doc["updated_by"], doc["updated_at"] = whoami(), dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+        try:
+            ctx.store.put_if(KEY, yaml.safe_dump(doc, sort_keys=False).encode(), tag)
+            return get(ctx)
+        except Conflict:
+            continue
+    raise Conflict("the settings kept changing while saving. Try again.")

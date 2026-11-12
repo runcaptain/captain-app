@@ -591,6 +591,24 @@ def settings_compute(body: dict):
     return ST.set_compute(ctx(), body.get("backtest"), body.get("serve"), clear_serve="serve" in body and not body["serve"])
 
 
+@app.put("/api/settings/serving", dependencies=A)
+def settings_serving(body: dict):
+    """{host, machine}: the machine a deploy on that host uses, in place of the smallest the model fits on. `host` is
+    aws, modal, gcp or azure. `machine` is a size's name (as GET .../deploy/hosts lists under `machines`), or empty
+    to go back to the smallest that fits. Or {name_prefix}: the start of the name of everything a first deploy makes
+    in a cloud account ("captain" when empty)."""
+    from . import settings as ST
+
+    try:
+        if "name_prefix" in body:
+            got = ST.set_serving_prefix(ctx(), body.get("name_prefix"))
+            if "host" not in body:
+                return got
+        return ST.set_serving_machine(ctx(), str(body.get("host") or ""), body.get("machine"))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
 @app.put("/api/settings/staging", dependencies=A)
 def settings_staging(body: dict):
     """{local_limit_mb}: the largest model to stage on this computer: 250, 500, 1024, 2048, 4096, or 0 for no limit."""
