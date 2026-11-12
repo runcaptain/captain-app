@@ -78,6 +78,31 @@ const TASK_ENTRIES = [
 const SETUP = { mod: "captain-setup", kind: "dialog", width: 600, height: 640 };
 const go = (section, extra) => ({ mod: "captain-go", kind: "popup", width: 1, height: 1, props: { section, ...extra } });
 
+/** What the sidebar's cloud chip says, from GET /api/cloud/summary. It says what is true:
+ *  the login that holds the workspace, or the only login, by name; several logins when none of them holds the
+ *  workspace, as a count with the list in the tooltip; "No cloud connected" only when there is none.
+ *  Returns {text, tip, dot: good | fail | none, provider (for its mark, when one login is shown), count, open}. */
+export function cloudChipInfo(summary) {
+  const short = (p) => ({ aws: "AWS", gcp: "GCP", azure: "Azure" }[p?.provider] ?? p?.label ?? p?.provider ?? "Cloud");
+  const line = (p) => [short(p), p.account_hint, p.region].filter(Boolean).join(" \u00b7 ");
+  const checked = (p) => (p.last_test ? (p.last_test.ok ? `signed in as ${p.last_test.identity ?? "?"}` : `last check failed: ${p.last_test.error ?? ""}`.trim()) : "not checked yet");
+  const all = summary?.profiles ?? [];
+  const a = summary?.active ?? (all.length === 1 ? all[0] : null);
+  if (a) {
+    const tip = a.last_test ? (a.last_test.ok ? `Signed in as ${a.last_test.identity ?? "?"}` : `Last check failed: ${a.last_test.error ?? ""}`) : "Not checked yet";
+    const others = all.filter((p) => p.name !== a.name);
+    return { text: line(a), provider: a.provider, count: Math.max(1, all.length), open: "cloud",
+      dot: a.last_test?.ok ? "good" : a.last_test ? "fail" : "none",
+      tip: `${line(a)}. ${tip}` + (a.used_by_storage && others.length ? `. It holds this workspace. Also connected: ${others.map(line).join(", ")}.` : "") };
+  }
+  if (all.length > 1) {
+    return { text: `${all.length} clouds connected`, provider: null, count: all.length, open: "cloud",
+      dot: all.some((p) => p.last_test && !p.last_test.ok) ? "fail" : all.every((p) => p.last_test?.ok) ? "good" : "none",
+      tip: `${all.length} clouds connected: ${all.map((p) => `${line(p)} (${checked(p)})`).join(", ")}. This workspace is not kept in any of them. Click for the list.` };
+  }
+  return { text: "No cloud connected", provider: null, count: 0, open: "connect", dot: "none", tip: "No cloud connected. Connect a cloud login" };
+}
+
 export function staticEntries(sections) {
   return [
     ...TASK_ENTRIES.map(([task, title, words, ic]) => ({ group: "Captain", title, words, icon: icon(ic),
@@ -444,18 +469,17 @@ export default class CaptainNav extends View {
   cloudChip(c, rail) {
     const s = this.cloud;
     if (!s && this.state !== "ready") return null;
-    const a = s?.active;
-    const short = { aws: "AWS", gcp: "GCP", azure: "Azure" }[a?.provider] ?? a?.label ?? a?.provider;
-    const dot = !a ? c.grey300 : a.last_test?.ok ? c.good : a.last_test ? c.fail : c.grey300;
-    const text = a ? [short, a.account_hint, a.region].filter(Boolean).join(" \u00b7 ") : "No cloud connected";
-    const tip = a ? (a.last_test ? (a.last_test.ok ? `Signed in as ${a.last_test.identity ?? "?"}` : `Last check failed: ${a.last_test.error ?? ""}`) : "Not checked yet") : "Connect a cloud login";
-    const open = () => (a ? openOverlay({ mod: "captain-cloud", kind: "dialog", width: 760, height: 640 })
-      : openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "cloud" } }));
+    const k = cloudChipInfo(s);
+    const dot = { good: c.good, fail: c.fail, none: c.grey300 }[k.dot];
+    // One login, or the one that holds the workspace: its own page. Several, and none holds the workspace: the page
+    // that lists them. None: the form that connects one.
+    const open = () => (k.open === "connect" ? openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "cloud" } })
+      : openOverlay({ mod: "captain-cloud", kind: "dialog", width: 760, height: 640 }));
     return h_flex().id("cloud-chip").mx(rail ? 0 : 14).my(4).h(30).gap(8).items_center().cursor_pointer()
       .when(rail, (e) => e.w_full().justify_center()).when(!rail, (e) => e.px(8).border_1().border_color(c.grey300))
-      .hover((x) => x.bg(c.surface2)).tooltip(`${text}. ${tip}`).on_click(open)
-      .child(a ? Brand(c, a.provider, 14) : svg(icon("cloud")).size(14).text_color(c.grey500))
-      .when(!rail, (e) => e.child(div().flex_1().min_w(0).truncate().text_size(12).text_color(a ? c.navy : c.grey500).child(text)))
+      .hover((x) => x.bg(c.surface2)).tooltip(k.tip).on_click(open)
+      .child(k.provider ? Brand(c, k.provider, 14) : svg(icon("cloud")).size(14).text_color(k.count ? c.navy : c.grey500))
+      .when(!rail, (e) => e.child(div().id("cloud-chip-text").flex_1().min_w(0).truncate().text_size(12).text_color(k.count ? c.navy : c.grey500).child(k.text)))
       .child(div().size(7).rounded_full().bg(dot));
   }
 

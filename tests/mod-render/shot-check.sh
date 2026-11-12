@@ -114,6 +114,14 @@ CST_HOME=$WORK/cst "$CSTCMD" tables pull demo-store >/dev/null 2>&1 || true
 CST_HOME=$WORK/cst "$CSTCMD" job run local -- data list >/dev/null 2>&1 || true
 fi
 
+# SHOT_CLOUDS=2: two cloud logins, neither holding the workspace, so the sidebar's chip shows the count and not one
+# of them. Nothing is checked against a cloud and no keychain is touched: both use the machine's default sign-in.
+if [[ "${SHOT_CLOUDS:-}" == 2 && -z "${SHOT_CST_HOME:-}" ]]; then
+  PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring CST_HOME=$WORK/cst "$CSTCMD" cloud add shot-aws --provider aws --auth default --region us-west-1 >/dev/null
+  PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring CST_HOME=$WORK/cst "$CSTCMD" cloud add shot-gcp --provider gcp --auth adc --region us-central1 -f project=shot-project >/dev/null
+  echo "Two cloud logins"
+fi
+
 # Skip the first-start welcome (it opens over everything while shared "frame.welcomed" is unset).
 echo '{"frame.welcomed":"skipped"}' > "$HOME_DIR/shared.json"
 # SHOT_SCOPE=1: a brand with demo-catalog linked, picked in the Explorer from the start, so every list is filtered.
