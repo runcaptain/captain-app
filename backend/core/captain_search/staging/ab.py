@@ -359,7 +359,7 @@ def import_outcomes(ctx: Context, pid: str, events: str, env: str = ENV, dry_run
     matched = sum(1 for o in outs if o["request_id"] in known)
     out = {"events": ref(m), "outcomes": len(outs), "matched": matched, "unmatched": len(outs) - matched, "dry_run": dry_run}
     if outs and not dry_run:
-        ctx.store.put_new(L.prefix(pid, env, rec["id"]) + f"outcomes-import-{new_id()}.jsonl",
+        L.shared(ctx, pid, env).put_new(L.prefix(pid, env, rec["id"]) + f"outcomes-import-{new_id()}.jsonl",
                           "\n".join(json.dumps(o) for o in outs).encode())
         _note(ctx, pid, f"brought in {len(outs):,} outcomes from {ref(m)}")
     return out

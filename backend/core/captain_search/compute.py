@@ -294,22 +294,37 @@ def can_stage(ctx: Context, target: dict) -> bool:
     return callable(getattr(P.get(target, ctx), "stage", None))
 
 
-def stage_env(ctx: Context, st: dict) -> dict:
-    """What the runtime container is told: where the workspace is, which bundle to load, and the key's hash."""
+def serving_storage(ctx: Context, target: dict) -> str:
+    """Where a staged endpoint reads its bundle and writes its log: the workspace's bucket, or, for a workspace kept
+    on this computer, the serving bucket the target names."""
+    return (target.get("config") or {}).get("serving_storage") or ctx.workspace.storage_uri
+
+
+def _check_serving_storage(ctx: Context, target: dict) -> None:
+    if target["kind"] != "local" and serving_storage(ctx, target).split("://")[0] not in ("s3", "gs", "gcs", "az", "azure"):
+        raise ValueError("This workspace is kept on this computer, and a cloud endpoint can't read it from there. Set up "
+                         "serving in your cloud account first: it makes a bucket for the serving bundle and the request "
+                         "log only, and the rest of the workspace stays here.")
+
+
+def stage_env(ctx: Context, st: dict, target: dict | None = None) -> dict:
+    """What the runtime container is told: where its storage is, which bundle to load, and the key's hash."""
     env = {**_env(ctx), "CST_STAGING_BUNDLE": st["bundle"], "CST_STAGING_KEY_SHA256": st["key_sha256"]}
+    if target is not None:
+        env["CST_STORAGE"] = serving_storage(ctx, target)
     return env
 
 
 def plan_stage(ctx: Context, target: dict, st: dict) -> list[dict]:
-    _check_cloud_workspace(ctx, target)
-    return P.get(target, ctx).stage_plan({**st, "container_env": stage_env(ctx, st) if st.get("bundle") else {}})
+    _check_serving_storage(ctx, target)
+    return P.get(target, ctx).stage_plan({**st, "container_env": stage_env(ctx, st, target) if st.get("bundle") else {}})
 
 
 def stage(ctx: Context, target: dict, st: dict, progress=None) -> dict:
     """Create (or update) the staging endpoint. Returns {endpoint, resources}. On failure everything it created is
     removed first; anything it could not remove rides on the error as `left_behind`."""
-    _check_cloud_workspace(ctx, target)
-    return P.get(target, ctx).stage({**st, "container_env": stage_env(ctx, st) if st.get("bundle") else {}}, progress)
+    _check_serving_storage(ctx, target)
+    return P.get(target, ctx).stage({**st, "container_env": stage_env(ctx, st, target) if st.get("bundle") else {}}, progress)
 
 
 def stage_preflight(ctx: Context, target: dict, st: dict) -> dict:
@@ -317,7 +332,7 @@ def stage_preflight(ctx: Context, target: dict, st: dict) -> dict:
     prov = P.get(target, ctx)
     if not callable(getattr(prov, "stage_preflight", None)):
         return {"checked": False, "can_delete": None, "can_write": None, "warnings": [], "note": "Not checked on this kind of target."}
-    return prov.stage_preflight(st, ctx.workspace.storage_uri)
+    return prov.stage_preflight(st, serving_storage(ctx, target))
 
 
 def unstage(ctx: Context, target: dict, resources: list[dict]) -> list[dict]:

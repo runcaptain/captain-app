@@ -259,7 +259,7 @@ def test_a_team_brings_its_own_container_image(ws, aws):  # noqa: F811
 
 def test_staging_needs_a_cloud_workspace_on_a_cloud_target(ws, aws):  # noqa: F811
     ws.workspace.storage_uri = "/tmp/on-disk"
-    with pytest.raises(ValueError, match="needs a cloud workspace"):
+    with pytest.raises(ValueError, match="kept on this computer, and a cloud endpoint can't read it from there. Set up serving"):
         SG.stage(ws, "shop", target="sm", confirm=True)
     assert not [c for c, _ in aws.calls if c != "simulate_principal_policy"]
 
@@ -300,3 +300,40 @@ def test_a_role_that_cannot_stop_its_own_endpoint_is_warned_about_before_the_con
     assert p["preflight"]["checked"] is False and p["preflight"]["can_delete"] is None and p["warnings"] == []
     assert "couldn't check" in p["preflight"]["note"] and "keeps billing until you stop it from Captain" in p["preflight"]["note"]
     assert SG.plan(ws, "shop", target="local")["preflight"] is None  # nothing to check on this computer
+
+
+def test_a_workspace_on_this_computer_sends_only_the_bundle_and_the_log_to_the_serving_bucket(ws, aws, tmp_path, monkeypatch):  # noqa: F811
+    """Staged in the cloud from a workspace kept here: the endpoint reads a serving bucket that holds the bundle,
+    the control document and the request log, and nothing else of the workspace."""
+    from types import SimpleNamespace
+
+    from captain_search.staging import consistency as SC
+    from captain_search.staging import logs as L
+    from captain_search.storage import backend as SB
+
+    ws.workspace.storage_uri = str(tmp_path / "store")  # on this computer
+    bucket = SB.LocalStore(str(tmp_path / "serving-bucket"))
+    monkeypatch.setattr(SB, "open_store", lambda uri, profile=None: bucket if uri == "s3://captain-serving-test/t" else (_ for _ in ()).throw(AssertionError(uri)))
+    L._stores.clear()
+    C.add(ws, "sm", "aws-sagemaker", "p", "us-west-1", {"image": IMAGE, "execution_role_arn": ROLE, "instance_type": "ml.t2.medium",
+                                                       "name_prefix": "captain-search-test", "serving_storage": "s3://captain-serving-test/t"}, replace=True)
+    aws.ctx = SimpleNamespace(store=bucket, registry=ws.registry, workspace=ws.workspace)  # what the endpoint can see
+    r = SG.stage(ws, "shop", target="sm", confirm=True)
+    assert r["status"] == "running" and r["serving_storage"] == "s3://captain-serving-test/t"
+    env = next(iter(aws.models.values()))["PrimaryContainer"]["Environment"]
+    assert env["CST_STORAGE"] == "s3://captain-serving-test/t"  # the endpoint is pointed at the serving bucket
+    asked = {c[1]["action"]: c[1]["resource"] for c in aws.calls if c[0] == "simulate_principal_policy"}
+    assert asked["s3:PutObject"] == "arn:aws:s3:::captain-serving-test/t/staging/preflight"
+    keys = bucket.list("")
+    assert "workspace.yaml" in keys and any(k.endswith("/bundle.json") for k in keys) and any("/catalogs/" in k for k in keys)
+    assert all(k == "workspace.yaml" or k.startswith("staging/") for k in keys), f"only the bundle, the control and the log: {keys}"
+    assert not any(k.startswith("staging/") for k in ws.store.list("staging/shop/bundles")), "and the bundle is not also written here"
+    # it serves, logs to the bucket, and Captain reads the log back from there
+    assert len(SG.query(ws, "shop", "jacket", k=4)["staged"]["results"]) == 4
+    assert SC.check(ws, "shop")["status"] == "pass"
+    assert any("/logs/" in k for k in bucket.list("staging/")) and SG.control(ws, "shop")["serve"] == "candidate"
+    assert all(k == "workspace.yaml" or k.startswith("staging/") for k in bucket.list(""))
+    SG.unstage(ws, "shop")
+    assert not aws.endpoints and not aws.models
+    # the published log dataset lands in the workspace here, not in the bucket
+    assert ws.registry.versions("dataset", "shop/staging-logs") and not bucket.list("datasets/")

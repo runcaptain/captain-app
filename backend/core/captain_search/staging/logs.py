@@ -23,6 +23,30 @@ TRAFFIC = ("real", "simulated", "test")
 DATASET = "staging-logs"
 
 
+_stores: dict = {}
+
+
+def shared(ctx, pid: str, env: str = "staging"):
+    """The store the endpoint and Captain share: where the bundle, the control document and the request log live.
+    Usually the workspace's own. When the workspace is kept on this computer and the model is staged in a cloud,
+    it is the serving bucket instead: only the bundle and the log are there, and the workspace stays here."""
+    try:
+        from .. import project_state as PS
+
+        rec = ((PS.read(ctx, pid)[0].get("staging") or {}).get(env)) or {}
+    except Exception:  # noqa: BLE001  inside the endpoint there is no project state: its own store is the shared one
+        rec = {}
+    uri = rec.get("serving_storage")
+    if not uri:
+        return ctx.store
+    key = (uri, rec.get("serving_profile"))
+    if key not in _stores:
+        from ..storage.backend import open_store
+
+        _stores[key] = open_store(uri, rec.get("serving_profile"))
+    return _stores[key]
+
+
 def prefix(pid: str, env: str, stage: str | None = None) -> str:
     return f"staging/{pid}/{env}/logs/" + (f"{stage}/" if stage else "")
 
@@ -38,16 +62,17 @@ def _lines(data: bytes) -> list[dict]:
 def read(ctx, pid: str, env: str, stage: str | None = None) -> dict:
     """Every request and outcome logged for a project's staging endpoint (one stage, or all of them)."""
     reqs, outs, names = [], [], {}
-    for k in sorted(ctx.store.list(prefix(pid, env, stage))):
+    store = shared(ctx, pid, env)
+    for k in sorted(store.list(prefix(pid, env, stage))):
         base = k.rsplit("/", 1)[-1]
         if base.startswith("requests-"):
-            for r in _lines(ctx.store.get(k)):
+            for r in _lines(store.get(k)):
                 if "_meta" in r:
                     names.update(r["_meta"].get("names") or {})
                 else:
                     reqs.append(r)
         elif base.startswith("outcomes-"):
-            outs += _lines(ctx.store.get(k))
+            outs += _lines(store.get(k))
     return {"requests": reqs, "outcomes": outs, "names": names}
 
 

@@ -124,7 +124,7 @@ def _put(store, key: str, data: bytes) -> None:
         pass
 
 
-def _arm_spec(ctx: Context, pid: str, bundle_key: str, name: str, pipeline: str) -> dict:
+def _arm_spec(ctx: Context, pid: str, bundle_key: str, name: str, pipeline: str, store=None) -> dict:
     """Copy what one arm needs to rank into the bundle, and return its entry for bundle.json."""
     import pyarrow as pa
 
@@ -148,18 +148,19 @@ def _arm_spec(ctx: Context, pid: str, bundle_key: str, name: str, pipeline: str)
                           "serve what was evaluated. Publish a new version.")
     cat = pm.catalog.split(":")[0].replace("/", "_").replace("@", "-")
     out["catalog"] = f"staging/{pid}/catalogs/{cat}-{(fp.sample_hash[:12] if fp else 'x')}.parquet"
-    if not ctx.store.exists(out["catalog"]):
-        _put(ctx.store, out["catalog"], to_parquet(pa.Table.from_pylist(prods)))
+    store = store or ctx.store
+    if not store.exists(out["catalog"]):
+        _put(store, out["catalog"], to_parquet(pa.Table.from_pylist(prods)))
     for f in pm.files or []:
         if f.path.startswith("artifact/"):
             rel = f.path[len("artifact/"):]
-            _put(ctx.store, f"{bundle_key}/{name}/{rel}", ctx.registry.get_blob(f))
+            _put(store, f"{bundle_key}/{name}/{rel}", ctx.registry.get_blob(f))
             out["artifact"][rel] = f"{name}/{rel}"
     return out
 
 
 def build_bundle(ctx: Context, pid: str, env: str, arms: dict[str, str | dict], serve: str,
-                 idle_minutes: float = IDLE_MINUTES) -> tuple[str, dict]:
+                 idle_minutes: float = IDLE_MINUTES, store=None) -> tuple[str, dict]:
     """Write a serving bundle for these arms ({arm name: pipeline ref, or a ready arm entry}). bundle.json goes
     last, so a half-written bundle is never loaded."""
     bid = "stg-" + new_id().lower()[-10:]
@@ -168,8 +169,8 @@ def build_bundle(ctx: Context, pid: str, env: str, arms: dict[str, str | dict], 
            "idle_minutes": idle_minutes, "control": {"serve": serve, "split": None, "experiment": None, "salt": bid,
                                                      "stage": bid}}
     for name, a in arms.items():
-        doc["arms"][name] = a if isinstance(a, dict) else _arm_spec(ctx, pid, key, name, a)
-    ctx.store.put_new(f"{key}/bundle.json", json.dumps(doc, indent=1).encode())
+        doc["arms"][name] = a if isinstance(a, dict) else _arm_spec(ctx, pid, key, name, a, store)
+    (store or ctx.store).put_new(f"{key}/bundle.json", json.dumps(doc, indent=1).encode())
     return key, doc
 
 
@@ -214,7 +215,7 @@ def _key(rec: dict) -> str | None:
 
 def control(ctx: Context, pid: str, env: str = ENV) -> dict:
     try:
-        return json.loads(ctx.store.get(RT.control_key(pid, env)))
+        return json.loads(L.shared(ctx, pid, env).get(RT.control_key(pid, env)))
     except NotFound:
         return {}
 
@@ -223,16 +224,17 @@ def set_control(ctx: Context, pid: str, env: str, **fields) -> dict:
     """Change what the running endpoint does (which arm it serves, the split, the idle limit). The runtime re-reads
     this every few seconds, and at once when asked."""
     k = RT.control_key(pid, env)
+    store = L.shared(ctx, pid, env)
     for _ in range(20):
         try:
-            body, tag = ctx.store.get_with_tag(k)
+            body, tag = store.get_with_tag(k)
             doc = json.loads(body)
         except NotFound:
             doc, tag = {}, None
         doc.update(fields)
         doc["updated_at"] = _now()
         try:
-            ctx.store.put_if(k, json.dumps(doc).encode(), tag)
+            store.put_if(k, json.dumps(doc).encode(), tag)
             return doc
         except Conflict:  # someone else wrote: read again
             time.sleep(0.01)
@@ -456,6 +458,7 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
         raise ValueError("An A/B test is running on this endpoint. Roll it back or end it before staging another version.")
     say = progress or (lambda _t: None)
     t = C.get(ctx, p["target"])
+    C._check_serving_storage(ctx, t)  # refused here, in a sentence, before a bundle is written
     idle = float(idle_minutes or (state(ctx, pid, env) or {}).get("idle_minutes") or IDLE_MINUTES)
     old = state(ctx, pid, env)
     rec = {"env": env, "status": "starting", "target": t["name"], "kind": t["kind"], "how": p["how"],
@@ -485,8 +488,20 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
             headers = {"Authorization": f"Bearer {{secret_raw:{endpoint_auth_secret}}}"} if endpoint_auth_secret else {}
             arms["candidate"] = {"pipeline": endpoint, "engine": "http", "spec": {"url": endpoint, "headers": headers},
                                  "kind": "endpoint", "catalog": None, "artifact": {}}
-        bundle_key, bundle = build_bundle(ctx, pid, env, arms, p["serve"], idle)
+        # A workspace kept on this computer, staged in a cloud: only the serving bundle and the request log go to
+        # the serving bucket the target names. The workspace itself stays here.
+        store = None
+        uri = (t.get("config") or {}).get("serving_storage")
+        if t["kind"] != "local" and uri and not ctx.workspace.storage_uri.startswith(("s3://", "gs://", "gcs://", "az://", "azure://")):
+            from ..storage.backend import open_store
+
+            store = open_store(uri, t.get("profile"))
+            if not store.exists("workspace.yaml"):
+                _put(store, "workspace.yaml", ctx.store.get("workspace.yaml"))  # so the endpoint can open it: a name, no data
+            rec.update(serving_storage=uri, serving_profile=t.get("profile"))
+        bundle_key, bundle = build_bundle(ctx, pid, env, arms, p["serve"], idle, store)
         rec.update(id=bundle["id"], bundle=bundle_key)
+        _save(ctx, pid, env, rec)  # before the control document, so it is written where the endpoint reads it
         if not given:
             try:
                 set_secret(rec["key_secret"], key)
@@ -647,7 +662,7 @@ def status(ctx: Context, pid: str, env: str = ENV, sweep: bool = True) -> dict:
     if gone:
         why = gone
         try:
-            why = json.loads(ctx.store.get(RT.stopped_key(pid, env, rec["id"])))["reason"]
+            why = json.loads(L.shared(ctx, pid, env).get(RT.stopped_key(pid, env, rec["id"])))["reason"]
         except Exception:  # noqa: BLE001
             pass
         rec = _save(ctx, pid, env, status="stopped", stopped_at=_now(), stop_reason=f"stopped by itself: {why}")
