@@ -438,7 +438,8 @@ cst_app app open dataset:demo-queries >/dev/null && opened dataset:demo-queries 
 # Compare is inside Runs: `cst app open compare` opens Runs. Experiments has no screen: the command says so and exits 1.
 cst_app app open compare >/dev/null && opened compare 'runs|*'
 if cst_app app open experiments >/dev/null 2>&1; then echo "cst app open experiments: opened something, expected it to say the screen is gone"; fail=1; else echo "cst app open experiments: says the screen is gone"; fi
-cst_app app open form:investigation --value "title=Opened by an agent" >/dev/null && opened form:investigation '*|investigation|Opened by an agent'
+# A form, filled in for the person: the New evaluation form, on a name an agent gave it. Nothing is submitted.
+cst_app app open form:backtest --value "name=opened-by-an-agent" >/dev/null && opened form:backtest '*|backtest|-'
 app shot "$OUT/cst-app-open-form.png" >/dev/null || true
 app do overlay.close '{}' >/dev/null 2>&1 || true
 # Pinned things: `cst context add` puts them in this window's sidebar strip, and `cst context show` expands them.
