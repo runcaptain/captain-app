@@ -142,7 +142,8 @@ def pipeline_new(name: str, engine: str = typer.Option("local-bm25", "--engine")
     if os.path.exists(path):
         fail(f"{path} exists")
     if not S.dry_run:
-        open(path, "w").write(text)
+        with open(path, "w") as fh:  # closed here, not whenever the object is collected
+            fh.write(text)
     emit({"draft": path}, f"wrote {path}. Edit it, then `cst pipeline publish {path}`.")
 
 

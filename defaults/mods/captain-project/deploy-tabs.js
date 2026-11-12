@@ -47,10 +47,11 @@ export function RangePicker(ship, c) {
 export function HeaderChart(ship, c) {
   const m = ship.met;
   return v_flex().id("dep-chart").w_full().gap(4)
-    .child(h_flex().gap(8).items_center().flex_wrap()
-      .child(div().text_size(12).font_medium().text_color(c.navy).child("Requests"))
-      .child(div().id("dep-chart-text").flex_1().min_w(160).text_size(12).text_color(c.grey500).child(m ? m.text : "Reading the request log..."))
+    .child(h_flex().gap(8).items_center()
+      .child(div().flex_1().text_size(12).font_medium().text_color(c.navy).child("Requests"))
       .child(RangePicker(ship, c)))
+    // The sentence gets the full width: beside the range buttons it wrapped into a narrow column.
+    .child(div().id("dep-chart-text").text_size(12).line_height("17px").text_color(c.grey500).child(m ? m.text : "Reading the request log..."))
     .when(Boolean(m), (e) => e.child(Bars(c, "dep-chart-bars", m.buckets.map((b) => b.requests), {
       over: m.buckets.map((b) => b.errors), marks: m.markers.map((k) => k.slot), from: when(m.start).slice(5), to: "now" })));
 }

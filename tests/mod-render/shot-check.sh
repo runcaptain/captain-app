@@ -23,7 +23,7 @@ for m in "${MODS[@]}"; do
     # needs SHOT_PROJECT=1: a project with pins and experiments. captain-project:list (the project cards, nothing picked):
     # SHOT_ONLY, as two cards leave the column the blank check measures nearly empty.
     # captain-project:ship needs SHOT_STAGED=1 too: the Ship steps first on the page, with something staged.
-    captain-project) EXTRA+=("captain-project:home" "captain-project:pins"); [[ -n "${SHOT_STAGED:-}" ]] && EXTRA+=("captain-project:ship" "captain-project:connect" "captain-project:ab" "captain-project:dep-copies" "captain-project:dep-metrics" "captain-project:dep-logs" "captain-project:dep-settings" "captain-project:dep-cost" "captain-project:dep-list") ;;
+    captain-project) EXTRA+=("captain-project:home" "captain-project:pins"); [[ -n "${SHOT_STAGED:-}" ]] && EXTRA+=("captain-project:ship" "captain-project:connect" "captain-project:ab" "captain-project:dep-copies" "captain-project:dep-metrics" "captain-project:dep-logs" "captain-project:dep-settings" "captain-project:dep-cost") ;;  # captain-project:dep-list: SHOT_ONLY (one card reads as too empty for the check)
     captain-runs) EXTRA+=("captain-runs:jobs" "captain-runs:live") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
@@ -141,7 +141,7 @@ if [[ -n "${SHOT_PROJECT:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
     # so Connect your site shows a live count and the shadow readout has something to say.
     EP=$(env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" --json projects staging "$PID" | python3 -c "import json,sys; print(json.load(sys.stdin)['staged']['endpoint']['url'])")
     site() { for i in $(seq 1 "$1"); do for q in "wireless headphones" "running shoes" "coffee maker" "desk lamp"; do
-      curl -s -o /dev/null "$EP/rank" -H "Authorization: Bearer ${!KEYNAME}" -H "Content-Type: application/json" -d "{\"query\": \"$q\", \"k\": 10, \"session_id\": \"shot-$2-$i-$RANDOM\"}"; done; done; }
+      curl -s -o /dev/null "$EP/rank" -H "Authorization: Bearer ${!KEYNAME}" -H "Content-Type: application/json" -d "{\"query\": \"$q\", \"k\": 10, \"session_id\": \"shot-$2-$i-$RANDOM\", \"traffic\": \"real\"}"; done; done; }
     site 5 a
     env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects staging-connect "$PID" >/dev/null
     env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects shadow-start "$PID" >/dev/null
