@@ -60,6 +60,8 @@ def test_only_this_computer_and_the_connected_logins_are_offered(ws, logins, mod
     assert g["first_time"] and g["proven"] is None and g["proven_text"] == "Not run on a real account yet. Tested against a stand-in only."
     assert g["region"] == "us-central1" and "cautious guess" in g["minutes"]["text"] and "Measured on 2026-11-11" in m["minutes"]["text"]
     assert not g["estimate"]["available"]  # no price for a place that has not run on a real account
+    assert [h["id"] for h in o["hosts"]] == ["local", "modal:modal", "gcp:g"] and o["connected"] == 2 and o["last_id"] is None
+    assert "nothing while it sleeps. Up to $" in m["estimate"]["text"] and "if a copy never slept" in m["estimate"]["text"] and 40 < m["estimate"]["monthly_usd"] < 55
     assert modal.calls == [] and not modal.volumes  # asking what is offered creates nothing and calls nothing
 
 
@@ -67,7 +69,7 @@ def test_a_login_whose_check_failed_and_a_model_too_big_for_here_say_why(ws, log
     logins.append({**LOGINS["aws"], "last_test": {"ok": False, "error": "ExpiredToken: the security token is expired"}})
     monkeypatch.setattr("captain_search.staging.fit.check", lambda *a, **k: {"outcome": "wont-fit", "text": "This catalog needs about 9 GB of memory, and this computer has 3 GB free. Stage it in your cloud."})
     o = DP.offers(ws, "shop")["hosts"]
-    assert not o[0]["can_deploy"] and "9 GB of memory" in o[0]["why_not"]
+    assert not o[0]["can_deploy"] and "9 GB of memory" in o[0]["why_not"] and o[0]["why_not_action"] is None
     assert not o[1]["can_deploy"] and "last check failed: ExpiredToken" in o[1]["why_not"]
     with pytest.raises(ValueError, match="No Google Cloud login is connected in Captain"):
         DP.plan(ws, "shop", "gcp")
@@ -83,7 +85,7 @@ def test_this_computer_deploys_with_no_confirm_and_skips_the_cloud_steps(ws, log
     out = DP.run(ws, "shop", "local", on_event=hear)
     assert out["status"] == "done" and out["address"].startswith("http://127.0.0.1:")
     assert [(s["id"], s["status"]) for s in out["steps"]] == [("check", "done"), ("access", "skipped"), ("image", "skipped"), ("start", "done"), ("ready", "done")]
-    assert [d["title"] for k, d in seen if k == "step"] == ["Checking your account", "Starting the model", "Ready"] and seen[-1][0] == "done"
+    assert [d["title"] for k, d in seen if k == "step"] == ["Checking your account", "Starting the model", "Checking it answers"] and seen[-1][0] == "done"
     assert SG.state(ws, "shop")["status"] == "running" and DP.status(ws, "shop")["can"] == []
     assert DP.remove(ws, "shop")["status"] == "removed" and SG.state(ws, "shop")["status"] == "stopped"
 
@@ -96,7 +98,7 @@ def test_modal_first_deploy_sets_up_then_starts_as_one_run(ws, logins, modal):  
     p = DP.plan(ws, "shop", "modal")
     assert p["first_time"] and p["needs_confirm"] and p["login"] == "modal"
     assert [g["title"] for g in p["creates"]["groups"]] == ["The first time only", "For this model"] and p["creates"]["count"] == 4
-    assert "A Modal volume" in p["creates"]["short"] and p["exists"] == []
+    assert "A Modal volume" in p["creates"]["short"] and p["creates"]["groups"][0]["summary"] == p["creates"]["short"] and p["id"] == "modal:modal" and p["exists"] == []
     assert p["cost"]["sleeps"] and "nothing while it sleeps" in p["cost"]["text"] and 40 < p["cost"]["monthly_usd"] < 55 and p["cost"]["setup_usd"] == 0
     assert p["minutes"]["measured"] == "2026-11-11" and p["minutes"]["low"] == 2
     assert not modal.volumes and DP.status(ws, "shop")["status"] == "none"  # the plan made nothing
@@ -107,9 +109,11 @@ def test_modal_first_deploy_sets_up_then_starts_as_one_run(ws, logins, modal):  
     out = DP.run(ws, "shop", "modal", confirm=True, on_event=hear)
     assert out["status"] == "done" and out["address"].startswith("https://") and out["made_setup"]
     assert [(s["id"], s["status"]) for s in out["steps"]] == [("check", "done"), ("access", "done"), ("image", "skipped"), ("start", "done"), ("ready", "done")]
-    assert [d["title"] for k, d in seen if k == "step"] == ["Checking your account", "Creating the volume", "Starting the model", "Ready"]
+    assert [d["title"] for k, d in seen if k == "step"] == ["Checking your account", "Creating storage", "Starting the model", "Checking it answers"]
     assert any(k == "line" and "Creating the Modal volume" in d["text"] and d["step"] == "access" for k, d in seen)
     assert (ENV, "captain-serving") in modal.volumes and SG.state(ws, "shop")["kind"] == "modal-endpoint"  # the login's environment was used
+    assert (out["staged"]["host"], out["staged"]["login"]) == ("modal", "modal") and DP.offers(ws, "shop")["last_id"] == "modal:modal"
+    assert p["cost"]["text"] == DP.offers(ws, "shop")["hosts"][1]["estimate"]["text"]  # the card and the confirm say the same thing
     # The second time there is nothing to set up: the plan is the model alone, and the run says so.
     p2 = DP.plan(ws, "shop", "modal")
     assert not p2["first_time"] and [g["title"] for g in p2["creates"]["groups"]] == [] and "already there" in p2["creates"]["short"]
@@ -168,21 +172,21 @@ def test_google_first_deploy_has_all_five_steps_and_a_missing_permission_names_i
     p = DP.plan(ws, "shop", "gcp")
     assert p["first_time"] and p["region"] == "us-central1" and p["proven"] is None and "Not run on a real account yet" in p["text"]
     assert [i["resource"] for i in p["creates"]["groups"][0]["items"]][:2] == ["API switched on", "API switched on"]
-    assert p["cost"]["hourly_usd"] is None and "bills only while a copy is awake" in p["cost"]["text"] and p["cost"]["setup_usd"] == 0.02
+    assert p["cost"]["hourly_usd"] is None and "bills only while a copy is awake" in p["cost"]["text"] and "nothing while it sleeps" in p["cost"]["text"] and p["cost"]["setup_usd"] == 0.02
     assert p["login_policy"]["roles"] and p["minutes"]["measured"] is None
     google.deny = {"POST https://storage.googleapis.com/storage/v1/b"}
     with pytest.raises(H.MissingPermission):
         DP.run(ws, "shop", "gcp", confirm=True)
     st = DP.status(ws, "shop")
-    assert st["failed_step"] == {"id": "access", "title": "Creating the service accounts and the bucket"} and "storage.buckets.create" in st["error"]
+    assert st["failed_step"] == {"id": "access", "title": "Creating permissions and storage"} and "storage.buckets.create" in st["error"]
     assert "roles/storage.admin" in [r["role"] for r in st["policy"]["roles"]] and st["can"] == ["retry", "remove"]
     assert {x["resource"] for x in st["exists_now"]} == {"api", "service-account"}
     google.deny = set()
     seen, hear = _events()
     out = DP.run(ws, "shop", "gcp", confirm=True, on_event=hear)
     assert out["status"] == "done" and [s["status"] for s in out["steps"]] == ["done"] * 5 and out["address"].endswith(".run.app")
-    assert [d["title"] for k, d in seen if k == "step"] == ["Checking your account", "Creating the service accounts and the bucket", "Building the image",
-                                                           "Starting the model", "Ready"]
+    assert [d["title"] for k, d in seen if k == "step"] == ["Checking your account", "Creating permissions and storage", "Building the model's image",
+                                                           "Starting the model", "Checking it answers"]
     assert len(google.accounts) == 2  # the two made before the failure were kept, not made again
     assert DP.remove(ws, "shop")["removed_setup"] and not google.services and not google.buckets and not google.accounts
 
@@ -190,9 +194,9 @@ def test_google_first_deploy_has_all_five_steps_and_a_missing_permission_names_i
 def test_azure_first_deploy_and_the_registry_in_the_monthly_cost(ws, logins, azure):  # noqa: F811
     logins.append(LOGINS["azure"])
     p = DP.plan(ws, "shop", "azure")
-    assert p["first_time"] and "One resource group" in p["creates"]["short"] and "The registry costs about $5" in p["cost"]["text"]
+    assert p["first_time"] and "One resource group" in p["creates"]["short"] and "Its registry costs about $5" in p["cost"]["text"]
     out = DP.run(ws, "shop", "azure", confirm=True)
-    assert out["status"] == "done" and [s["status"] for s in out["steps"]] == ["done"] * 5 and out["steps"][1]["title"] == "Creating the resource group"
+    assert out["status"] == "done" and [s["status"] for s in out["steps"]] == ["done"] * 5 and out["steps"][1]["title"] == "Creating permissions and storage"
     assert DP.remove(ws, "shop")["removed_setup"] and not azure.res
 
 
@@ -222,14 +226,14 @@ def test_aws_first_deploy_runs_setup_as_named_steps(ws, logins, monkeypatch):  #
     assert o["host"] == "aws" and o["first_time"] and o["proven"] == "2026-11-11" and not o["sleeps"] and o["region"] == "us-west-1"
     assert "About 4 minutes" in o["minutes"]["text"] and o["estimate"]["available"]
     p = DP.plan(ws, "shop", "aws")
-    assert "A role the model runs as" in p["creates"]["short"] and p["creates"]["groups"][1]["items"][0]["resource"] == "SageMaker endpoint"
-    assert p["cost"]["hourly_usd"] > 0 and "a month if you leave it up" in p["cost"]["text"] and p["login_policy"]["Statement"]
+    assert "A role that can only read this model" in p["creates"]["short"] and p["creates"]["groups"][1]["items"][0]["resource"] == "SageMaker endpoint"
+    assert p["cost"]["hourly_usd"] > 0 and "a month if it runs all the time" in p["cost"]["text"] and p["login_policy"]["Statement"]
     staged = {}
     monkeypatch.setattr(DP, "stage", lambda ctx, pid, *a, **k: staged.update(target=a[3]) or {"endpoint": {"name": "captain-shop-staging"}})
     seen, hear = _events()
     out = DP.run(ws, "shop", "aws", confirm=True, on_event=hear)
     assert out["status"] == "done" and staged["target"] == "aws-serving" and C.get(ws, "aws-serving")["kind"] == "aws-sagemaker"
-    assert [d["title"] for k, d in seen if k == "step"] == ["Checking your account", "Creating the role", "Building the image", "Starting the model", "Ready"]
+    assert [d["title"] for k, d in seen if k == "step"] == ["Checking your account", "Creating permissions", "Building the model's image", "Starting the model", "Checking it answers"]
     lines = {d["step"]: d["text"] for k, d in seen if k == "line"}
     assert "role" in lines["access"].lower() or "repository" in lines["access"].lower()
 
@@ -280,7 +284,7 @@ def test_the_api_plans_confirms_runs_with_live_steps_and_removes(ws, logins, mod
     assert j["status"] == "done", j
     run = LV.read(got["run"])
     stages = [e["name"] for e in run["events"] if e["type"] == "stage"]
-    assert stages == ["Checking your account", "Creating the volume", "Starting the model", "Ready"] and run["run"]["status"] == "done"
+    assert stages == ["Checking your account", "Creating storage", "Starting the model", "Checking it answers"] and run["run"]["status"] == "done"
     st = c.get("/api/projects/shop/deploy", headers=h).json()
     assert st["status"] == "done" and st["staged"]["status"] == "running" and st["staged"]["endpoint"]["url"]
     job = c.delete("/api/projects/shop/deploy", headers=h).json()["job"]

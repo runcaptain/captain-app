@@ -39,22 +39,27 @@ import time
 from .. import project_state as PS
 from ..storage.backend import Conflict, NotFound
 from ..workspace import Context, whoami
-from . import ENV, NeedsConfirm, _pick, _status_text, plan as stage_plan, public, servable, stage, state, unstage
+from . import ENV, NeedsConfirm, _pick, _save, _status_text, plan as stage_plan, public, servable, stage, state, unstage
 from . import hosts as H
 
 HOURS_A_MONTH = 730
 STEPS = ("check", "access", "image", "start", "ready")
 # What the second step is called on each host, and what its first-time work is in a few words.
 WORDS = {
-    "local": {"access": "Nothing to create", "short": "Nothing is created. It runs as a process on this computer."},
-    "aws": {"access": "Creating the role", "short": "A role the model runs as, a repository for its image, the image, and a compute target."},
-    "modal": {"access": "Creating the volume", "short": "A Modal volume for the model's files and its request log, and a compute target."},
-    "gcp": {"access": "Creating the service accounts and the bucket",
-            "short": "Two service accounts, a bucket, a repository for the image, the image, and a compute target."},
-    "azure": {"access": "Creating the resource group",
-              "short": "One resource group holding a storage account, an identity, a registry, the image and an environment."},
+    "local": {"access": "Nothing to create", "short": "Nothing is created. It runs as a process on this computer.",
+              "model": "A process on this computer. It stops when idle."},
+    "aws": {"access": "Creating permissions", "short": "A role that can only read this model and write its log, a place for the model's image, and the image.",
+            "model": "The endpoint itself. Made now, deleted when you stop it."},
+    "modal": {"access": "Creating storage", "short": "A Modal volume for the model's files and its request log. No keys and no roles.",
+              "model": "The endpoint and what it is told. Made now, removed when you stop it."},
+    "gcp": {"access": "Creating permissions and storage",
+            "short": "Two service accounts that can only use one bucket and one image repository, the bucket, the repository, and the image.",
+            "model": "The Cloud Run service itself. Made now, deleted when you stop it."},
+    "azure": {"access": "Creating permissions and storage",
+              "short": "One resource group holding the model's storage, an identity that can only use it, a registry and the image.",
+              "model": "The container app itself. Made now, deleted when you stop it."},
 }
-TITLES = {"check": "Checking your account", "image": "Building the image", "start": "Starting the model", "ready": "Ready"}
+TITLES = {"check": "Checking your account", "image": "Building the model's image", "start": "Starting the model", "ready": "Checking it answers"}
 # How long each part took on a real account, in seconds: (first-time setup, deploy to ready the first time, deploy
 # to ready after). None where it has not run for real, and then the plan says so and gives a cautious range.
 MEASURED = {"aws": {"setup": 94, "first": 126, "again": 126, "on": "2026-11-11"},
@@ -135,6 +140,37 @@ def _estimate(ctx: Context, host, login: dict | None, target: dict | None) -> di
         return {"available": False, "text": f"Captain couldn't work out an estimate just now ({str(e)[:120]}).", "basis": []}
 
 
+def cost_words(hourly: float | None, sleeps: bool, fixed_month: float = 0.0, fallback: str = "") -> tuple[str, float | None]:
+    """The cost of a place in one sentence, the same on its card and in the confirm, and the monthly figure."""
+    if hourly is None:
+        text = fallback or "Captain has no estimate for this place yet."
+        if sleeps:
+            text += " It bills only while a copy is awake, and nothing while it sleeps."
+        if fixed_month:
+            text += f" Its registry costs about {_money(fixed_month)} a month for as long as it exists."
+        return text, None
+    monthly = hourly * HOURS_A_MONTH + fixed_month
+    if sleeps:
+        return (f"About {_money(hourly)} an hour while a copy is awake, and nothing while it sleeps. Up to {_money(monthly)} a month, "
+                "if a copy never slept."), monthly
+    return f"About {_money(hourly)} an hour, about {_money(monthly)} a month if it runs all the time. It keeps billing until you stop it.", monthly
+
+
+def _fixed_month(cloud: str) -> float:
+    if cloud != "azure":
+        return 0.0
+    from .. import price_table as PT
+
+    return PT.AZURE_EXTRAS["registry_basic_day"] * 30.4
+
+
+def _priced(est: dict, cloud: str, sleeps: bool) -> dict:
+    """The shared estimate, with its sentence in the words every deploy surface uses."""
+    hourly = float(est.get("high") or 0.0) if est.get("available") else None
+    text, monthly = cost_words(hourly, sleeps, _fixed_month(cloud), est.get("text") or "")
+    return {**est, "text": text, "hourly_usd": None if hourly is None else round(hourly, 4), "monthly_usd": None if monthly is None else round(monthly, 2)}
+
+
 def _minutes(cloud: str, first_time: bool) -> dict:
     if cloud == "local":
         return {"low": 0, "high": 1, "measured": None, "text": "A few seconds."}
@@ -164,17 +200,18 @@ def offers(ctx: Context, pid: str, candidate: str | None = None, baseline: bool 
     last = (doc.get("staging") or {}).get(env) or {}
     out = []
     # This computer, always. Whether the model fits is the plan's own check.
-    here = {"host": "local", "label": "This computer", "login": None, "region": None, "can_deploy": version is not None, "why_not": nothing,
+    here = {"id": "local", "host": "local", "label": "This computer", "login": None, "region": None, "can_deploy": version is not None, "why_not": nothing,
             "first_time": False, "proven": None, "proven_text": None, "sleeps": False, "reachable": False,
             "reach_text": "Only you can reach it. A site can't send it traffic.", "last": last.get("kind") == "local",
-            "minutes": _minutes("local", False), "fit": None,
-            "estimate": {"free": True, "available": True, "text": "Runs on this computer. No cloud cost.", "basis": []}}
+            "minutes": _minutes("local", False), "fit": None, "why_not_action": None, "target": "local",
+            "estimate": {"free": True, "available": True, "text": "Free. It runs on this computer.", "basis": [], "hourly_usd": 0.0, "monthly_usd": 0.0}}
     if version is not None:
         try:
             fit = (stage_plan(ctx, pid, candidate, baseline, env, "local") or {}).get("local_fit")
             here["fit"] = fit
             if (fit or {}).get("outcome") in ("wont-fit", "over-limit"):
-                here.update(can_deploy=False, why_not=fit["text"])
+                # Over the size limit for this computer: Settings is where that limit is changed.
+                here.update(can_deploy=False, why_not=fit["text"], why_not_action="settings" if fit.get("outcome") == "over-limit" else None)
         except Exception as e:  # noqa: BLE001
             here.update(can_deploy=False, why_not=str(e)[:300])
     out.append(here)
@@ -190,13 +227,15 @@ def offers(ctx: Context, pid: str, candidate: str | None = None, baseline: bool 
         why = (nothing or (f"Serving in this workspace runs under the login {owner}. Deploy with that one." if other else None)
                or (f"This login's last check failed: {(login['last_test'].get('error') or 'no reason given')[:200]}" if failed else None))
         out.append({
+            "id": f"{host.cloud}:{login['name']}", "why_not_action": None,
             "host": host.cloud, "label": host.label, "login": login["name"], "login_label": login.get("label") or host.label,
             "region": (target or {}).get("region") or _region(host.cloud, login), "can_deploy": why is None, "why_not": why,
             "first_time": not ready, "proven": host.proven, "proven_text": host.describe()["proven_text"], "sleeps": host.scale_to_zero,
             "reachable": True, "reach_text": "A site can reach it.", "last": bool(last) and last.get("kind") == host.kind,
-            "minutes": _minutes(host.cloud, not ready), "estimate": _estimate(ctx, host, login, target),
+            "minutes": _minutes(host.cloud, not ready), "estimate": _priced(_estimate(ctx, host, login, target), host.cloud, host.scale_to_zero),
             "target": target["name"] if target else None, "setup_status": st.get("status")})
     return {"project": pid, "env": env, "model_version": version, "beside": beside, "hosts": out,
+            "connected": len(out) - 1, "last_id": next((h["id"] for h in out if h["last"]), None),
             "text": nothing or f"{len(out) - 1} cloud login{'s' if len(out) != 2 else ''} connected, and this computer."}
 
 
@@ -240,7 +279,7 @@ def plan(ctx: Context, pid: str, host: str = "local", login: str | None = None, 
 
             raise NotServable(s["text"])
     version, beside = arms[serve], arms.get("baseline") if serve != "baseline" else None
-    base = {"project": pid, "env": env, "host": host, "login": o["login"], "label": o["label"], "region": o["region"], "model_version": version,
+    base = {"project": pid, "env": env, "id": o["id"], "host": host, "login": o["login"], "label": o["label"], "region": o["region"], "model_version": version,
             "beside": beside, "first_time": o["first_time"], "steps": _steps(host), "minutes": o["minutes"], "proven": o["proven"],
             "proven_text": o["proven_text"], "sleeps": o["sleeps"], "warnings": [], "login_policy": None, "login_text": None}
     what = f"Deploy {version}" + (f" beside the baseline {beside}" if beside else "")
@@ -250,7 +289,7 @@ def plan(ctx: Context, pid: str, host: str = "local", login: str | None = None, 
         return {**base, "needs_confirm": False, "fit": fit, "replaces": p.get("replaces"),
                 "creates": {"short": WORDS["local"]["short"], "count": 0, "groups": []}, "exists": [],
                 "cost": {"hourly_usd": 0.0, "monthly_usd": 0.0, "setup_usd": 0.0, "sleeps": False, "free": True, "estimate": p["cost"]["estimate"],
-                         "text": "Runs on this computer. No cloud cost. It stops when idle."},
+                         "text": "Free. It runs on this computer, and stops when idle."},
                 "text": f"{what} on this computer. Free, and only you can reach it." + (f" {fit['text']}" if fit.get("text") else "")}
     hobj = H.get(host)
     st = _setup(ctx, hobj)
@@ -281,33 +320,18 @@ def plan(ctx: Context, pid: str, host: str = "local", login: str | None = None, 
     if host == "aws" and not each:
         each = [{"resource": "SageMaker endpoint", "name": "captain-{project}-staging",
                  "why": "The model, answering. Made now, deleted when you stop it. It bills by the hour while it is up."}]
-    hourly = float(est.get("high") or 0.0) if est.get("available") else None
-    fixed_month = 0.0
-    if host == "azure":
-        from .. import price_table as PT
-
-        fixed_month = PT.AZURE_EXTRAS["registry_basic_day"] * 30.4
-    monthly = None if hourly is None else hourly * HOURS_A_MONTH + fixed_month
-    if hourly is None:
-        cost_text = est.get("text") or "Captain has no estimate for this place yet."
-        if o["sleeps"]:
-            cost_text += " It bills only while a copy is awake, and sleeps when nobody calls it."
-    elif o["sleeps"]:
-        cost_text = (f"About {_money(hourly)} an hour while a copy is awake, and nothing while it sleeps. If a copy never slept, "
-                     f"that would be about {_money(monthly)} a month.")
-    else:
-        cost_text = f"About {_money(hourly)} an hour, about {_money(monthly)} a month if you leave it up. It keeps billing until you stop it."
+    priced = est if "monthly_usd" in est else _priced(est, host, o["sleeps"])
+    hourly, monthly, cost_text = priced["hourly_usd"], priced["monthly_usd"], priced["text"]
     if setup_usd:
         cost_text += f" The first time also costs about {_money(setup_usd)} once, to build the image."
-    if fixed_month and hourly is None:
-        cost_text += f" The registry costs about {_money(fixed_month)} a month for as long as it exists."
-    groups = ([{"title": "The first time only", "items": first_groups}] if first_groups else []) + ([{"title": "For this model", "items": each}] if each else [])
+    groups = (([{"title": "The first time only", "summary": WORDS[host]["short"], "items": first_groups}] if first_groups else [])
+              + ([{"title": "For this model", "summary": WORDS[host]["model"], "items": each}] if each else []))
     count = sum(len(g["items"]) for g in groups)
     where = {"aws": "your AWS account", "modal": "your Modal workspace", "gcp": "your Google Cloud project", "azure": "your Azure subscription"}[host]
     short = (WORDS[host]["short"] if o["first_time"] else "Only the model itself. Everything else is already there.")
     return {**base, "needs_confirm": True, "replaces": replaces,
             "creates": {"short": short, "count": count, "groups": groups}, "exists": exists,
-            "cost": {"hourly_usd": None if hourly is None else round(hourly, 4), "monthly_usd": None if monthly is None else round(monthly, 2),
+            "cost": {"hourly_usd": hourly, "monthly_usd": monthly,
                      "setup_usd": round(setup_usd, 2), "sleeps": o["sleeps"], "free": False, "estimate": est, "text": cost_text,
                      "setup_text": setup_cost_text},
             "login_policy": policy, "login_text": policy_text,
@@ -476,6 +500,7 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
                 target = hobj.target
         begin("start")
         rec = stage(ctx, pid, candidate, baseline, env, target, confirm=True, progress=line, allow_large=allow_large)
+        _save(ctx, pid, env, host=host, login=p["login"])  # so every screen can say where it runs without guessing
         begin("ready")
         ep = (rec or {}).get("endpoint") or {}
         line(f"It answered at {ep.get('url') or ep.get('name')}.")

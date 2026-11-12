@@ -104,17 +104,18 @@ asks once, then does the work as one run with named steps:
 | Step | What it does |
 |---|---|
 | Checking your account | Looks at what is there already |
-| Creating the role (or the volume, the service accounts and the bucket, the resource group) | The first time on a cloud only: what the model runs as and where its files are kept |
-| Building the image | The first time only |
+| Creating permissions (or storage, or both) | The first time on a cloud only: what the model runs as and where its files are kept |
+| Building the model's image | The first time only |
 | Starting the model | Every time |
-| Ready | It answered. The last line printed is its address |
+| Checking it answers | It answered. The last line printed is its address |
 
 The second deploy on the same cloud skips the two first-time steps. On this computer there is nothing to create
 and nothing to confirm.
 
 **The plan** (`--dry-run`, or `POST /api/projects/{id}/deploy` with `dry_run`) says what will be created, in two
 groups (the first time only, and for this model), what exists already, the cost by the hour and by the month, and
-how long it takes. The minutes come from what a real run measured on that cloud, with its date. A cloud that has
+how long it takes. The cost is said the same way everywhere: "about $48 a month if it runs all the time", or, for a
+place that sleeps, "nothing while it sleeps" and "up to" a monthly figure. The minutes come from what a real run measured on that cloud, with its date. A cloud that has
 not run on a real account gives a cautious range and says it is a guess.
 
 **It is safe to run twice.** What exists is kept. A deploy that stopped is picked up where it stopped: run the same

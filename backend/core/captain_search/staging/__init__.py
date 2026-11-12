@@ -475,7 +475,12 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
     C._check_serving_storage(ctx, t)  # refused here, in a sentence, before a bundle is written
     idle = float(idle_minutes or (state(ctx, pid, env) or {}).get("idle_minutes") or IDLE_MINUTES)
     old = state(ctx, pid, env)
+    from . import hosts as _H
+
+    _h = _H.of_kind(t["kind"])
     rec = {"env": env, "status": "starting", "target": t["name"], "kind": t["kind"], "how": p["how"],
+           # Which place this is, in the words the deploy surfaces use: local, aws, modal, gcp or azure, and the login.
+           "host": _h.cloud if _h else None, "login": t.get("profile"),
            "model_version": p["model_version"], "arms": p["arms"], "serve": p["serve"], "experiment": p["experiment"],
            "started_at": _now(), "started_by": whoami(), "stopped_at": None, "stop_reason": None, "cost": p["cost"],
            "idle_minutes": idle, "resources": [], "endpoint": None, "error": None, "check": None,
