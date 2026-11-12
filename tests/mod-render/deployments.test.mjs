@@ -204,10 +204,12 @@ assert.ok(t.includes('Version 2') && t.includes('Running now') && t.includes('Pu
 // Putting a version back asks why, and sends the reason: a roll back is recorded with it.
 await h.click('model-back-1');
 assert.ok(h.text().includes('Why? It is kept with the record of the change.') && byId(h, 'model-back-why-1').length === 1, 'asks why');
+for (const why of ['It gives worse results', 'It is too slow', 'It is failing requests', 'It was deployed by mistake', 'Another reason']) assert.ok(h.text().includes(why), `offers "${why}"`);
 assert.ok(!sent.some((x) => x[1].endsWith('/rollback')), 'nothing is put back before a reason is given');
 await h.click('model-back-why-1');
 await h.idle(60);
-assert.deepEqual(sent.find((x) => x[0] === 'POST' && x[1] === '/api/projects/shop/staging/versions/1/rollback')?.[2], { reason: 'It is slow or failing' }, 'the reason goes with it');
+assert.deepEqual(sent.find((x) => x[0] === 'POST' && x[1] === '/api/projects/shop/staging/versions/1/rollback')?.[2], { reason: 'It is too slow' }, 'the reason goes with it');
+assert.equal(h.byIdPrefix('model-back-why-').length, 0, 'the question closes once answered');
 await h.click('model-close');
 assert.ok(h.text().includes('Ask the clouds again'), 'back to the list');
 // "Go back to an earlier version" on a row opens the page at Details, where the versions are first.

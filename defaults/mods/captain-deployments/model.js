@@ -15,7 +15,8 @@ const RANGES = [["15m", "15 minutes"], ["1h", "1 hour"], ["24h", "24 hours"], ["
 // Two submenus, never more: the numbers, and everything else about this model on one scrolling page.
 const PARTS = [{ id: "traffic", label: "Traffic and cost" }, { id: "details", label: "Details" }];
 // Why a version is put back. A roll back is recorded with its reason, so one is asked for.
-const REASONS = ["It gives worse results", "It is slow or failing", "It was deployed by mistake", "Another reason"];
+// The same five, word for word, as the project page offers, so the record reads the same from either screen.
+const REASONS = ["It gives worse results", "It is too slow", "It is failing requests", "It was deployed by mistake", "Another reason"];
 // The kit's control for a view's submenus (it refuses a third). A copy of the kit from before it had one draws the same.
 const Submenus = UI.Submenus ?? ((c, tabs, active, onSelect) => h_flex().flex_none().border_1().border_color(c.grey300).children(tabs.map((t, i) =>
   h_flex().id(`submenu-${t.id}`).h(28).px(12).gap(6).items_center().cursor_pointer().text_size(12.5)
