@@ -165,10 +165,10 @@ export class Explorer {
       return;
     }
     if (n.kind === "more") { run("layout.select", { stack: "sections", child: "runs" }); return; }
-    // An experiment opens in Comparisons, at its latest run.
+    // An offline evaluation opens in Runs, at its latest run, with its comparison in place.
     if (n.kind === "experiment") {
-      setShared("captain.open", { section: "comparisons", backtest: n.name, version: n.latest ?? 1, at: Date.now() });
-      run("layout.select", { stack: "sections", child: "comparisons" });
+      setShared("captain.open", { section: "runs", backtest: n.name, version: n.latest ?? 1, at: Date.now() });
+      run("layout.select", { stack: "sections", child: "runs" });
       return;
     }
     setShared("captain.scope", { kind: n.kind, id: n.id, label: nodeName(n) });
@@ -176,7 +176,7 @@ export class Explorer {
     // An engine opens its page, a project its home; anything else goes back to the views, filtered to it.
     if (n.kind === "engine") run("layout.select", { stack: "sections", child: "engine" });
     else if (n.kind === "project") run("layout.select", { stack: "sections", child: "project" });
-    else if (this.onEnginePage?.()) run("layout.select", { stack: "sections", child: "investigations" });
+    else if (this.onEnginePage?.()) run("layout.select", { stack: "sections", child: "data" });
   }
 
   /** A node's menu. `holder` is the scope a group sits in ({id, type, name}), or null at the top level. */

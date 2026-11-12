@@ -1,6 +1,6 @@
 // A dataset's Insights tab against a real backend (backend/core) on the demo store: what uses demo-catalog (pipelines,
 // runs, an environment, datasets made from it), a saved notebook that names it, who works with it and recent activity.
-// A run opens in Comparisons, a dataset here, a notebook in the Notebooks tab.
+// A run opens in Runs, a dataset here, a notebook in the Notebooks view.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/insights-live.test.mjs
 import fs from 'node:fs';
 import os from 'node:os';
@@ -60,8 +60,8 @@ for (const s of ['Model versions built on it', 'demo-bm25@v1', 'Runs scored with
 // A run opens in Comparisons.
 globalThis.__runs = [];
 await h.click('ins-run-0');
-assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections', child: 'comparisons' }]);
-assert.equal(globalThis.__shared['captain.open'].section, 'comparisons');
+assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections', child: 'runs' }]);
+assert.equal(globalThis.__shared['captain.open'].section, 'runs');
 // A dataset opens here.
 const ds = h.mod.page.insights.data.used_by.dataset[0].name;
 await h.click('ins-dataset-0');
@@ -72,7 +72,10 @@ await until(() => h.mod.detail?.name === 'demo-catalog', 'the catalog again');
 await h.click('dtab-insights');
 await until((t) => t.includes('catalog-checks'), 'insights again');
 await h.click('ins-nb-0');
-await until(() => h.mod.tab === 'notebooks' && h.mod.nb.open?.name === 'catalog-checks', 'the notebook open');
+// Notebooks is its own view: the row asks it to open that notebook.
+assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections', child: 'notebooks' }]);
+assert.equal(globalThis.__shared['captain.open'].section, 'notebooks');
+assert.equal(globalThis.__shared['captain.open'].notebook, 'catalog-checks');
 
 // Search across folders: a column finds its dataset and says so; Show all lists foldered datasets flat.
 h.mod.tab = 'datasets';

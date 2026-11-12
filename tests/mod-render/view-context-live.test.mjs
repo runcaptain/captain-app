@@ -82,16 +82,16 @@ assert.ok(v.at >= firstAt);
 const { currentView, viewSnapshot, withView, safeFields, safeValue } = await import(path.join(project.dir, 'kit/view.js'));
 let cur = currentView();
 assert.equal(cur.section, 'project');
-assert.equal(cur.screen, 'Home');
+assert.equal(cur.screen, 'Projects');
 assert.equal(cur.view.project.id, 'gifts');
 let snap = viewSnapshot();
 assert.match(snap, /^What the person has open in Captain right now:/);
-assert.ok(snap.includes('- Workspace: viewtest') && snap.includes('- Project: Gifts (id gifts)') && snap.includes('- Screen: Home'), snap);
+assert.ok(snap.includes('- Workspace: viewtest') && snap.includes('- Project: Gifts (id gifts)') && snap.includes('- Screen: Projects'), snap);
 assert.ok(snap.includes(`- Next: ${v.next.text}`), snap);
 assert.ok(snap.includes('cst app context') && snap.includes('cst app shot'), 'says how to look again');
 assert.ok(!/[←-⇿—]/.test(snap), 'no arrows or em dashes');
 
-// --- Switch sections: Data and signals publishes its own part, and the snapshot changes screen ---
+// --- Switch sections: Data publishes its own part, and the snapshot changes screen ---
 // (The whole workspace, as after "Show the whole workspace": the project's own list of datasets may be empty.)
 globalThis.__shared['captain.scope'] = null;
 const data = await load('captain-data');
@@ -104,10 +104,10 @@ assert.ok(dv.dataset, `a dataset is selected and published: ${JSON.stringify(dv)
 globalThis.__layout = sections('data');
 cur = currentView();
 assert.equal(cur.section, 'data');
-assert.equal(cur.screen, 'Data and signals');
+assert.equal(cur.screen, 'Data');
 assert.equal(cur.view.dataset, dv.dataset);
 snap = viewSnapshot();
-assert.ok(snap.includes('- Screen: Data and signals, tab datasets') && snap.includes(`- Dataset: ${dv.dataset}`), snap);
+assert.ok(snap.includes('- Screen: Data, tab datasets') && snap.includes(`- Dataset: ${dv.dataset}`), snap);
 assert.ok(!snap.includes('- Next:'), 'the project page\'s Next line is not this screen\'s');
 // Back to Home: the project again.
 globalThis.__shared['captain.scope'] = { kind: 'project', id: 'gifts', label: 'Gifts' };
@@ -143,7 +143,7 @@ assert.equal(globalThis.__hc.length, 1, 'one message to the open tab');
 const [verb, addr, text] = globalThis.__hc[0];
 assert.deepEqual([verb, addr], ['send', 't7']);
 assert.ok(!text.includes('\n'), 'one line: a newline would send half of it');
-assert.ok(text.includes('cst app context') && text.includes('Project: Gifts (id gifts)') && text.includes('Screen: Home'), text);
+assert.ok(text.includes('cst app context') && text.includes('Project: Gifts (id gifts)') && text.includes('Screen: Projects'), text);
 assert.ok(!globalThis.__runs.some(([n]) => n === 'tab.new'), 'no second tab');
 assert.ok(globalThis.__runs.some(([n, a]) => n === 'agent.focus' && a.terminal === 't7'), 'the tab is shown');
 globalThis.__agentList = [];
@@ -214,7 +214,7 @@ const hn = harness(nav.Mod);
 await hn.start();
 for (let i = 0; i < 20 && !hn.text().includes('demo-tuned-vs-bm25'); i++) { await hn.layoutLists({}); await hn.idle(30); }
 let nt = hn.text();
-assert.ok(nt.includes('AGENT CONTEXT') && nt.includes('Home, Gifts'), `the current screen is in the strip: ${nt.slice(-600)}`);
+assert.ok(nt.includes('AGENT CONTEXT') && nt.includes('Projects, Gifts'), `the current screen is in the strip: ${nt.slice(-600)}`);
 assert.ok(nt.includes(`${dv.dataset}@v${shared('captain.view.data').version}`) && nt.includes('demo-tuned-vs-bm25') && nt.includes('Clear'), 'the pinned things are listed');
 assert.ok(!/[←-⇿—]/.test(nt), 'no arrows or em dashes in the sidebar');
 // Something pinned from the command line (cst context add) shows up without a click.
@@ -227,7 +227,7 @@ assert.deepEqual(pinned().map((i) => i.ref), ['run:demo-tuned-vs-bm25', 'project
 await hn.click('ctx-clear');
 await hn.idle(50);
 assert.deepEqual(pinned(), [], 'Clear removes them all');
-assert.ok(hn.text().includes('AGENT CONTEXT') && hn.text().includes('Home, Gifts') && !hn.text().includes('Clear'), 'the screen stays: it is always included');
+assert.ok(hn.text().includes('AGENT CONTEXT') && hn.text().includes('Projects, Gifts') && !hn.text().includes('Clear'), 'the screen stays: it is always included');
 
 // --- cst app open: the sidebar shows what an agent asked to show; a form opens filled and is never submitted ---
 // (The sidebar also runs commands of its own, such as making a first space: look for ours among them.)

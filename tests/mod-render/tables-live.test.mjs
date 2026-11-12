@@ -63,8 +63,22 @@ assert.ok(h.text().includes('Download CSV'), 'CSV export from the grid');
 await h.click('ttab-insights');
 await until((t) => t.includes('Who queries it') && t.includes('Example queries') && t.includes('Open in a notebook'), 'insights');
 await h.click('ex-nb-0');
-await until((t) => t.includes('Notebooks') && t.includes('products-query'), 'a new notebook');
-await until(() => h.mod.nb.cells[0]?.source?.includes('count(*)') && h.mod.nb.cells[0]?.meta?.conn === 'demo-store', 'the example query as its first cell');
+// Notebooks is its own view: Data hands it the query, and it starts a notebook with that query as its first cell.
+const asked = globalThis.__shared['captain.open'];
+assert.equal(asked.section, 'notebooks');
+assert.ok(asked.seedSql.sql.includes('count(*)') && asked.seedSql.conn === 'demo-store' && asked.seedSql.name === 'products-query', JSON.stringify(asked));
+assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections', child: 'notebooks' }]);
+{
+  const nbDir = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-notebooks-seed-')));
+  fs.cpSync(path.join(root, 'defaults/mods/captain-notebooks'), nbDir, { recursive: true });
+  const { default: NbMod } = await import(path.join(nbDir, 'main.js'));
+  globalThis.__shared['captain.open'] = { ...asked, at: Date.now() };
+  const n = harness(NbMod);
+  await n.start();
+  for (let i = 0; i < 80 && !(n.mod.nb.cells[0]?.source?.includes('count(*)')); i++) await n.layoutLists({});
+  assert.ok(n.mod.nb.cells[0]?.source?.includes('count(*)') && n.mod.nb.cells[0]?.meta?.conn === 'demo-store', `the example query as its first cell: ${n.text().slice(0, 300)}`);
+  assert.ok(n.text().includes('products-query'), 'named after the table');
+}
 
 h.mod.tab = 'tables';
 h.mod.tables.search.set_value('price');

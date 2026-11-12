@@ -1,6 +1,6 @@
-// The engine page against a real backend (this repo's backend/core): its tabs read the lists filtered to the engine.
-// A demo workspace has seven datasets; one is linked to a new engine, and the engine's Datasets tab shows that one.
-// Its pipeline shows in Overview and Versions, and the Experiments tab opens Comparisons on a click.
+// The engine page against a real backend (this repo's backend/core): one page whose lists are filtered to the engine.
+// A demo workspace has seven datasets; one is linked to a new engine, and the engine's page shows that one.
+// Its model version is listed, and an offline evaluation opens in Runs on a click.
 //
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/engine-live.test.mjs
 import fs from 'node:fs';
@@ -54,27 +54,26 @@ await h.start();
 await until(h, () => Boolean(h.mod.engine) && Boolean(h.mod.data.datasets), 'the engine page loaded');
 let t = h.text();
 assert.ok(t.includes('Product search') && t.includes('Search') && t.includes('Not in any scope'), `header: ${t.slice(0, 300)}`);
-assert.ok(t.includes('demo-bm25'), 'Overview lists its pipeline');
+assert.ok(t.includes('demo-bm25@v1'), 'its model version is listed');
 
-await h.click('eng-tabs-datasets');
-t = h.text();
-assert.ok(t.includes('demo-catalog'), `its dataset: ${t.slice(0, 400)}`);
-const others = all.map((d) => d.name).filter((n) => n !== 'demo-catalog');
-for (const n of others) assert.ok(!t.includes(n), `${n} isn't this engine's, so it doesn't show`);
+// One page, no submenus: every list that has something is on it, under its own heading.
+assert.equal(h.byIdPrefix('eng-tabs').length, 0, 'the engine page has no tabs');
+assert.ok(h.byIdPrefix('eng-sec-datasets').length === 1 && t.includes('demo-catalog'), `its dataset: ${t.slice(0, 400)}`);
+// Only its own dataset is listed (the other datasets' names can still appear in an evaluation's line).
+assert.equal(h.byIdPrefix('eng-ds-').length, 1, 'one dataset row: the others are not this engine\'s');
+assert.equal(h.mod.count('datasets'), 1);
+// Runs: every run of its evaluations, from GET /api/runs filtered to it (demo-historic-replay has demo-bm25 as an arm).
+assert.ok(t.includes('demo-historic-replay, run 1'), `its runs: ${t.slice(0, 400)}`);
+// Experiments left the screens: the page neither asks for them nor names them.
+assert.ok(!h.asked().some((p) => String(p).includes('/api/investigations')), 'experiments are not asked for');
+assert.ok(!/Experiments/.test(t), 'no Experiments on the page');
 
-// Runs: every run of its experiments, from GET /api/runs filtered to it (demo-historic-replay has demo-bm25 as an arm).
-await h.click('eng-tabs-runs');
-assert.ok(h.text().includes('demo-historic-replay, run 1'), `its runs: ${h.text().slice(0, 400)}`);
-assert.ok(!h.text().includes("Signals aren't linked"), 'no whole-workspace note any more');
-
-await h.click('eng-tabs-versions');
-assert.ok(h.text().includes('demo-bm25@v1'), 'Versions lists its pipeline version');
-
-// A row opens its record in its section.
-await h.click('eng-tabs-datasets');
+// A row opens its record in its section; a run opens in Runs, where its comparison shows.
 await h.click('eng-ds-0');
 assert.equal(globalThis.__shared['captain.open']?.section, 'data');
 assert.equal(globalThis.__shared['captain.open']?.dataset, 'demo-catalog');
+await h.click('eng-run-0');
+assert.equal(globalThis.__shared['captain.open']?.section, 'runs');
 
 console.log('engine-live render test: ok');
 process.exit(0);

@@ -70,7 +70,6 @@ const runs = await mount('captain-runs');
 await until(runs, (t) => t.includes('demo-tuned-vs-bm25'), 'Runs lists the backtests');
 const data = await mount('captain-data');
 await until(data, (t) => t.includes('demo-catalog'), 'Data lists the datasets');
-const inv = await mount('captain-investigations');
 
 // 2. The backend dies. Each screen's next request fails in transport. (Past the kit's 15 s patience for services
 // coming up, which each screen's kit counts from when it loaded, so a failure is a failure.)
@@ -81,10 +80,9 @@ await new Promise((r) => setTimeout(r, 800));
 cmp.mod.error = null; cmp.mod.backtests = null; cmp.mod.loadBacktests(cmp.cx);
 runs.mod.load(runs.cx, 'backtests');
 data.mod.load(data.cx);
-inv.mod.table?.load?.(inv.cx);
-for (const h of [cmp, runs, data, inv]) await h.idle(300);
+for (const h of [cmp, runs, data]) await h.idle(300);
 if (process.env.SHOW) console.log('CMP', cmp.mod.error, JSON.stringify(cmp.mod.errorR), cmp.mod.starting, (cmp.mod.backtests ?? []).length);
-for (const [name, h] of [['Comparisons', cmp], ['Runs', runs], ['Data', data], ['Investigations', inv]]) {
+for (const [name, h] of [['Comparisons', cmp], ['Runs', runs], ['Data', data]]) {
   const t = h.text();
   const bad = t.match(FORBIDDEN);
   assert.ok(!bad, `${name} shows "${bad?.[0]}": ${t.slice(Math.max(0, t.search(FORBIDDEN) - 100), t.search(FORBIDDEN) + 100)}`);

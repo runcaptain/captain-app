@@ -30,10 +30,10 @@ process.on('uncaughtException', (e) => { stop(); console.error(e); process.exit(
 const line = await new Promise((res, rej) => { let b = ''; serve.stdout.on('data', (d) => { b += d; if (b.includes('\n')) res(b.split('\n')[0]); }); serve.on('exit', () => rej(new Error('cst serve exited'))); });
 const j = JSON.parse(line);
 globalThis.__shared = { 'captain.daemon': { state: 'ready', base: `http://127.0.0.1:${j.port}`, token: j.token } };
-globalThis.__props = { tab: 'notebooks' };
+globalThis.__props = {};
 
-const dir = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-sqlt-')));
-fs.cpSync(path.join(root, 'defaults/mods/captain-data'), dir, { recursive: true });
+const dir = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-notebooks-sqlt-')));
+fs.cpSync(path.join(root, 'defaults/mods/captain-notebooks'), dir, { recursive: true });
 const { default: Mod } = await import(path.join(dir, 'main.js'));
 const h = harness(Mod);
 await h.start();

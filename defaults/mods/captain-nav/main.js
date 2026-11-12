@@ -30,17 +30,20 @@ import { askAboutScreen } from "./kit/agent.js";
 import { currentView } from "./kit/view.js";
 import { loadPins, unpin, clearPins } from "./kit/context.js";
 
-const ITEMS = [
-  // Home: the current project's page (captain-project), or New project when there is none.
-  { id: "project", label: "Home", icon: icon("house") },
-  { id: "investigations", label: "Experiments", was: "investigations", icon: "search", badge: "/api/proposals?status=proposed", badgeLabel: "recommendations to review" },
-  { id: "data", label: "Data and signals", icon: "database" },
-  { id: "runs", label: "Runs", was: "offline evaluations backtests rating grading off-policy replays", icon: "play" },
-  { id: "comparisons", label: "Compare", was: "comparisons side by side", icon: "git-compare" },
-  { id: "handoff", label: "Launch review", was: "handoff hand off", icon: "send" },
+// The views, in the order a team works: projects, the data they read, notebooks, runs and their comparisons,
+// what is deployed, the team. Six at most (Edgar, 2026-11-12: "there are a lot of views"). Experiments, Compare
+// and Launch review left the screens; `cst investigate`, `cst backtest` and `cst handoff` still work in a terminal.
+export const ITEMS = [
+  // Projects: every project of the workspace (captain-project). One opens from there or from the Explorer.
+  { id: "project", label: "Projects", was: "home all projects", icon: icon("folder"), open: { all: true } },
+  { id: "data", label: "Data", was: "data and signals sources tables datasets catalogs databases", icon: "database" },
+  { id: "notebooks", label: "Notebooks", was: "sql python charts", icon: icon("file-text") },
+  { id: "runs", label: "Runs", was: "offline evaluations backtests rating grading off-policy replays compare comparisons regression jobs", icon: "play" },
   // Team collaboration was only in the palette, so people who built it couldn't find it (Edgar, 2026-11-09).
   { id: "team", label: "Team", icon: icon("users") },
 ];
+/** Screens that left the app, for something that still asks for one (`cst app open`, an old link): where it goes now. */
+export const MOVED = { comparisons: "runs", investigations: null, handoff: null };
 const WIDE = 216, RAIL = 52;
 const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
 
@@ -59,14 +62,12 @@ function find(node, id) {
 // Raw cst commands sit behind one "Run a cst command..." entry; agents use the CLI.
 const TASK_ENTRIES = [
   // [task, title, search words, icon: the New menu's for the same task (captain-forms/tasks.js)]
-  ["investigation", "New experiment", "investigation question hypothesis start", "search"],
   ["dataset", "Import a dataset", "file csv parquet sql upload catalog queries judgments", "database"],
   ["database", "Connect a database", "postgres snowflake bigquery mysql redshift sql", "server"],
   ["cloud", "Connect a cloud account", "aws gcp azure login credentials", "cloud"],
   ["mlflow", "Connect MLflow", "mlflow tracking experiments models registry", "flask-conical"],
   ["compute", "Add a place to run work", "compute cloud run offline evaluations backtests serve", "boxes"],
-  ["handoff", "Start a launch review", "handoff hand off candidate promote deploy ship release readiness", "send"],
-  ["backtest", "Run an offline evaluation", "backtest compare evaluate offline ndcg what if settings tune knobs sweep sandbox", "flask-conical"],
+  ["backtest", "Run an offline evaluation", "backtest compare evaluate offline ndcg what if settings tune knobs sweep sandbox regression test", "flask-conical"],
   ["grading", "Start rating", "grading grade grader raters judgments labels relevance human", "square-check"],
   ["dataset-class", "New dataset class", "class type role catalog queries judgments", "tag"],
   ["rankings", "Compare your own rankings", "bring import rankings results system offline compare evaluate", "git-compare"],
@@ -110,7 +111,7 @@ export function staticEntries(sections) {
         : task === "rankings" ? { mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }
         : task === "explain" ? { mod: "captain-explain", kind: "dialog", width: 0.9, height: 0.9 }
         : task === "sandbox" ? { mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9 } : { mod: "captain-forms", kind: "dialog", width: 560, props: { task } } })),
-    ...sections.map((s) => ({ group: "Captain", title: `Go to ${s.label}`, words: `section ${s.label} ${s.was ?? ""}`, icon: s.icon && !String(s.icon).includes("/") ? icon(s.icon) : undefined, overlay: go(s.id) })),
+    ...sections.map((s) => ({ group: "Captain", title: `Go to ${s.label}`, words: `section ${s.label} ${s.was ?? ""}`, icon: s.icon && !String(s.icon).includes("/") ? icon(s.icon) : undefined, overlay: go(s.id, s.open) })),
     { name: "captain-nav.theme-light", args: {}, group: "Captain", icon: icon("sun"), title: "Switch to light", words: "appearance theme light mode" },
     { name: "captain-nav.theme-dark", args: {}, group: "Captain", icon: icon("moon"), title: "Switch to dark", words: "appearance theme dark mode night" },
     { name: "captain-nav.theme-system", args: {}, group: "Captain", icon: icon("monitor"), title: "Match the system appearance", words: "appearance theme system auto" },
@@ -127,15 +128,12 @@ export function staticEntries(sections) {
   ];
 }
 
-/** "Open <name>" for datasets and investigations, from the workspace. */
-export function openEntries(datasets, investigations, backtests = []) {
+/** "Open <name>" for datasets and offline evaluations, from the workspace. An evaluation opens in Runs, with its
+ *  comparison in place. */
+export function openEntries(datasets, _investigations = [], backtests = []) {
   return [
-    ...backtests.slice(0, 200).flatMap((b) => [
-      { group: "Captain", icon: icon("flask-conical"), title: `Open ${b.name}`, words: "offline evaluation backtest run", overlay: go("runs", { backtest: b.name }) },
-      { group: "Captain", icon: icon("git-compare"), title: `Compare ${b.name}`, words: "offline evaluation backtest comparison results side by side", overlay: go("comparisons", { backtest: b.name }) },
-    ]),
-    ...datasets.slice(0, 200).map((d) => ({ group: "Captain", icon: icon("table"), title: `Open ${d.name}`, words: `dataset ${d.kind ?? ""}`, overlay: go("data", { dataset: d.name }) })),
-    ...investigations.slice(0, 200).map((i) => ({ group: "Captain", icon: icon("search"), title: `Open experiment: ${i.title ?? i.id}`, words: `experiment investigation ${i.state ?? ""}`, overlay: go("investigations", { investigation: i.id }) })),
+    ...backtests.slice(0, 200).map((b) => ({ group: "Captain", icon: icon("flask-conical"), title: `Open ${b.name}`, words: "offline evaluation backtest run compare comparison results side by side", overlay: go("runs", { backtest: b.name }) })),
+    ...datasets.slice(0, 200).map((d) => ({ group: "Captain", icon: icon("table"), title: `Open ${d.name}`, words: `dataset table ${d.kind ?? ""}`, overlay: go("data", { dataset: d.name }) })),
   ];
 }
 
@@ -194,6 +192,9 @@ export default class CaptainNav extends View {
         this.openTarget(t);
       });
     }
+    // Every launch starts on Projects, on the list of every project (Edgar, 2026-11-12: "always default to
+    // projects: all projects"), whatever screen the last session ended on.
+    if (props()?.part !== "brand") cx.timer.after(1, () => run("layout.select", { stack: props()?.stack ?? "sections", child: "project" }));
     this.explorer = new Explorer();
     this.explorer.start(cx);
     // Team views from the project's captain/views/ (teamviews.js).
@@ -226,11 +227,16 @@ export default class CaptainNav extends View {
       return run("layout.select", { stack, child: "project" });
     }
     if (!t.section) return null;
+    // A screen that left the app: Compare is inside Runs now; Experiments and Launch review are terminal-only.
+    if (t.section in MOVED) {
+      if (!MOVED[t.section]) return notify({ title: "That screen is no longer in the app", body: `Use ${t.section === "handoff" ? "cst handoff" : "cst investigate"} in a terminal.`, level: "info" });
+      t = { ...t, section: MOVED[t.section] };
+    }
     const { at: _at, ...rest } = t;
     // A record by name (a dataset, an evaluation, an experiment): the lists are filtered to the Explorer's pick, and
     // a record outside it would not open. Show the whole workspace, and say so.
-    if ((t.dataset || t.backtest || t.investigation) && shared("captain.scope")?.id) {
-      notify({ title: "Showing the whole workspace", body: `So ${t.dataset ?? t.backtest ?? t.investigation} can open. Pick your project again in the Explorer to filter.`, level: "info" });
+    if ((t.dataset || t.backtest) && shared("captain.scope")?.id) {
+      notify({ title: "Showing the whole workspace", body: `So ${t.dataset ?? t.backtest} can open. Pick your project again in the Explorer to filter.`, level: "info" });
       setShared("captain.scope", null);
     }
     if (Object.keys(rest).length > 1) setShared("captain.open", { ...rest, at: Date.now() });
@@ -243,7 +249,7 @@ export default class CaptainNav extends View {
     const v = currentView();
     const pins = this.pins ?? [];
     const on = v.view?.project?.name ?? (v.scope?.kind === "project" ? v.scope.label : null);
-    const picked = v.view?.dataset ?? v.view?.backtest ?? v.view?.title ?? v.view?.experiment ?? v.view?.launch_review ?? null;
+    const picked = v.view?.dataset ?? v.view?.backtest ?? v.view?.notebook ?? v.view?.title ?? null;
     const screen = [v.screen, on, picked].filter(Boolean).join(", ");
     return v_flex().id("nav-context").w_full().flex_none().pb(4)
       .child(h_flex().h(24).px(16).items_center().text_size(11).font_medium().text_color(c.grey500)
@@ -289,10 +295,10 @@ export default class CaptainNav extends View {
           this.counts[it.id] = r.ok && Array.isArray(r.data) ? r.data.length : 0;
         }
         if (ws.ok && (this.tick ?? 0) % 10 === 0) {
-          const [ds, inv, bt] = await Promise.all([api("/api/datasets"), api("/api/investigations"), api("/api/backtests")]);
+          const [ds, bt] = await Promise.all([api("/api/datasets"), api("/api/backtests")]);
           const extra = { ...(shared("palette.extra") ?? {}) };
           const arr = (r) => (Array.isArray(r.data) ? r.data : []);
-          extra.captain = openEntries(arr(ds), arr(inv), arr(bt));
+          extra.captain = openEntries(arr(ds), [], arr(bt));
           setShared("palette.extra", extra);
         }
       } finally {
@@ -516,7 +522,9 @@ export default class CaptainNav extends View {
       // The mark only; on macOS it sits right of the traffic lights.
       return h_flex().size_full().bg(c.surface).border_b(1).border_color(c.rule).items_center()
         .when(rail, (e) => e.justify_center()).when(!rail, (e) => e.pl(mac ? 84 : 16))
-        .child(image("mods/captain-nav/captain.png").size(28).flex_none())
+        .child(div().id("nav-logo").flex_none().cursor_pointer().tooltip("All projects")
+          .on_click(() => { setShared("captain.open", { section: "project", all: true, at: Date.now() }); run("layout.select", { stack: props()?.stack ?? "sections", child: "project" }); })
+          .child(image("mods/captain-nav/captain.png").size(28)))
         .when(!rail, (e) => e.child(div().flex_1()).child(div().id("nav-collapse").size(24).mr(8).flex().items_center().justify_center()
           .cursor_pointer().text_color(c.grey500).hover((s) => s.text_color(c.navy)).tooltip("Collapse").on_click(() => this.toggle())
           .child(svg("mods/captain-nav/panel-left.svg").size(15))));
@@ -524,7 +532,12 @@ export default class CaptainNav extends View {
     const stack = props()?.stack ?? "sections";
     const node = find(layout(), stack);
     const active = node?.active ?? node?.children?.[0]?.id;
-    const go = (it) => () => (it.run ? run(it.run, it.args ?? {}) : run("layout.select", { stack, child: it.id }));
+    // An item with `open` says what its screen shows when picked (Projects: every project).
+    const go = (it) => () => {
+      if (it.run) return run(it.run, it.args ?? {});
+      if (it.open) setShared("captain.open", { section: it.id, ...it.open, at: Date.now() });
+      return run("layout.select", { stack, child: it.id });
+    };
     return v_flex().size_full().bg(c.surface).font_family("Inter").border_r(1).border_color(c.rule)
       .when(!rail, (e) => e.child(this.spaceSwitcher(c)))
       .when(rail, (e) => e.child(h_flex().id("nav-expand").h(40).flex_none().justify_center().items_center().cursor_pointer()

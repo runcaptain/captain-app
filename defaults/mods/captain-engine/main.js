@@ -1,31 +1,28 @@
-// CAPTAIN: an engine's page (Edgar's spec, 2026-11-06), opened by picking an engine in the Explorer. Its tabs read
-// the services' lists filtered to it (the kit sends X-CST-Scope "engine:<id>", backend 4d6a983d):
-//   Overview        the engine: what it serves, where it belongs, its pipelines, and a count for every tab
-//   Investigations  /api/investigations          Experiments  /api/backtests
-//   Runs            /api/runs (every run)         Evaluations  /api/grading
-//   Datasets        /api/datasets                 Signals      /api/signals
-//   Versions        its pipelines' versions (/api/pipelines) and models (/api/models)
+// CAPTAIN: an engine's page (Edgar's spec, 2026-11-06), opened by picking an engine in the Explorer. One page, no
+// submenus: what it serves and where it belongs, its model versions and models, then each list the services
+// filter to it (the kit sends X-CST-Scope "engine:<id>") that has something in it: offline evaluations
+// (/api/backtests), runs (/api/runs), rating (/api/grading), datasets (/api/datasets), signals (/api/signals).
 // A row opens the record in its section (shared "captain.open"). Rename, Move and Archive open captain-scope.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, shared, setShared, run, openOverlay, notify } from "herdr";
 import { palette, isDark, FONT } from "./kit/tokens.js";
 import { api, watchScope, watchWorkspace } from "./kit/cst.js";
-import { Button, Badge, Tabs, Empty, Skeleton, Problem } from "./kit/ui.js";
+import { Button, Badge, Empty, Skeleton, Problem } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { nodeName } from "./kit/scopes.js";
 import { int } from "./kit/num.js";
 import { costState, loadPlaces, refreshEstimate, needsConfirm, RunsOn, LOCAL } from "./kit/cost.js";
 
-const TABS = [["overview", "Overview"], ["investigations", "Experiments"], ["experiments", "Offline evaluations"], ["runs", "Runs"],
-  ["evaluations", "Rating"], ["datasets", "Datasets"], ["signals", "Signals"], ["versions", "Versions"]];
+// One page, no submenus (Edgar, 2026-11-12: "a lot of individual menus within views"): the engine's model versions
+// first, then each list that has something in it, under its own heading.
+const SECTIONS = [["experiments", "Offline evaluations"], ["runs", "Runs"], ["evaluations", "Rating"], ["datasets", "Datasets"], ["signals", "Signals"]];
 const SERVES = { search: "Search", recommendation: "Recommendations" };
 const list = (r) => (r?.ok ? (Array.isArray(r.data) ? r.data : r.data?.items ?? []) : null);
 const when = (iso) => (iso ? String(iso).slice(0, 10) : "");
 
 export default class Engine extends View {
   init(_props, cx) {
-    this.tab = "overview";
     this.engine = null; this.data = {}; this.where = [];
     // Retrain asks first where it runs and what that costs (kit cost.js): the row opens under the version picked.
     this.cost = costState();
@@ -35,7 +32,7 @@ export default class Engine extends View {
       cx.spawn(async (cx) => { if (await refreshEstimate(this.cost, { kind: "training", size: { how: "command" } })) cx.notify(); });
     });
     this.load(cx);
-    watchScope(cx, (cx) => { this.tab = "overview"; this.load(cx); });
+    watchScope(cx, (cx) => this.load(cx));
     watchWorkspace(cx, (cx) => this.load(cx));
     // A rename or move from the dialog bumps shared "captain.explorer.rev".
     let rev = shared("captain.explorer.rev") ?? null;
@@ -51,16 +48,16 @@ export default class Engine extends View {
     const seq = (this.seq = (this.seq ?? 0) + 1);
     cx.spawn(async (cx) => {
       // The engine itself and where it belongs, unfiltered; its records, filtered to it.
-      const [engines, tree, inv, bt, rn, ds, pl, md, sg, gr] = await Promise.all([
+      const [engines, tree, bt, rn, ds, pl, md, sg, gr] = await Promise.all([
         api("/api/engines", { scoped: false }), api("/api/explorer", { scoped: false }),
-        api("/api/investigations"), api("/api/backtests"), api("/api/runs"), api("/api/datasets"), api("/api/pipelines"), api("/api/models"),
+        api("/api/backtests"), api("/api/runs"), api("/api/datasets"), api("/api/pipelines"), api("/api/models"),
         api("/api/signals"), api("/api/grading"),
       ]);
       if (seq !== this.seq) return;
       this.engine = (list(engines) ?? []).find((e) => e.id === pick.id) ?? { id: pick.id, name: pick.label, missing: true };
       this.where = this.scopesOf(tree.ok ? tree.data?.tree ?? [] : [], this.engine.scopes ?? []);
       // Every list here is the services', filtered to the engine (X-CST-Scope).
-      this.data = { investigations: inv, experiments: bt, runs: rn, datasets: ds, versions: pl, models: md, signals: sg, evaluations: gr };
+      this.data = { experiments: bt, runs: rn, datasets: ds, versions: pl, models: md, signals: sg, evaluations: gr };
       cx.notify();
     });
     cx.notify();
@@ -147,31 +144,22 @@ export default class Engine extends View {
 
   overview(c) {
     const e = this.engine;
-    const card = (key, label) => {
-      const n = this.count(key);
-      return v_flex().id(`eng-card-${key}`).flex_1().min_w(110).p(12).gap(4).border_1().border_color(c.rule).cursor_pointer()
-        .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => { this.tab = key; cx.notify(); })
-        .child(div().text_size(20).font_semibold().text_color(c.navy).child(n === null ? "..." : String(n)))
-        .child(div().text_size(12).text_color(c.grey500).child(label));
-    };
-    return v_flex().gap(16).p(16)
-      .when(Boolean(e.description), (x) => x.child(div().text_size(13).line_height("20px").text_color(c.grey900).child(e.description)))
-      .child(h_flex().flex_wrap().gap(10).children([["investigations", "Experiments"], ["experiments", "Offline evaluations"], ["runs", "Runs"],
-        ["evaluations", "Evaluations"], ["datasets", "Datasets"], ["versions", "Versions"]].map(([k, l]) => card(k, l))))
-      .child(v_flex().gap(6)
-        .child(div().text_size(12.5).font_semibold().text_color(c.navy).child("Model versions"))
-        .child((e.pipelines ?? []).length
-          ? h_flex().flex_wrap().gap(6).children(e.pipelines.map((p) => Badge(c, p, "neutral")))
-          : div().text_size(12.5).text_color(c.grey500).child("No model versions belong to this engine yet. A model version belongs to the engine that lists it.")));
+    if (!e.description) return div();
+    return div().px(16).pt(16).text_size(13).line_height("20px").text_color(c.grey900).child(e.description);
   }
 
-  body(c) {
-    const t = this.tab;
-    if (t === "overview") return this.overview(c);
-    if (t === "investigations") return this.listTab(c, "investigations", { title: "No experiments here yet", body: "Experiments linked to this engine show here." },
-      (x, i) => this.row(c, `eng-inv-${i}`, x.title ?? x.id, x.question ?? x.hypothesis ?? "", [x.status], () => this.open("investigations", { investigation: x.id })));
+  /** The whole page: what the engine is, its model versions, then every list that isn't empty. */
+  page(c) {
+    const head = (label, n) => div().px(14).pt(18).pb(8).text_size(12).font_semibold().text_color(c.grey500).child(n ? `${label.toUpperCase()} ${n}` : label.toUpperCase());
+    return v_flex().w_full().pb(20)
+      .child(this.overview(c))
+      .child(this.part(c, "versions"))
+      .children(SECTIONS.filter(([k]) => (this.count(k) ?? 0) > 0).map(([k, label]) => v_flex().id(`eng-sec-${k}`).w_full().child(head(label, this.count(k))).child(this.part(c, k))));
+  }
+
+  part(c, t) {
     if (t === "experiments") return this.listTab(c, "experiments", { title: "No offline evaluations here yet", body: "Offline evaluations comparing this engine's model versions show here." },
-      (x, i) => this.row(c, `eng-exp-${i}`, x.name, (x.arms ?? []).join(" vs "), [x.primary_metric, `${x.runs ?? 0} runs`], () => this.open("comparisons", { backtest: x.name, version: x.latest })));
+      (x, i) => this.row(c, `eng-exp-${i}`, x.name, (x.arms ?? []).join(" vs "), [x.primary_metric, `${x.runs ?? 0} runs`], () => this.open("runs", { backtest: x.name, version: x.latest })));
     if (t === "runs") return this.listTab(c, "runs", { title: "No runs here yet", body: "Every run of this engine's offline evaluations shows here, newest first." },
       (x, i) => this.row(c, `eng-run-${i}`, `${x.name}, run ${x.version}`, [(x.arms ?? []).join(" vs "), when(x.created), x.by].filter(Boolean).join(", "),
         [x.complete === false ? "incomplete" : null, x.mode, x.wall_s != null ? `${Math.round(x.wall_s)} s` : null], () => this.open("runs", { backtest: x.name, version: x.version })));
@@ -218,7 +206,7 @@ export default class Engine extends View {
       .child(h_flex().items_center().gap(12)
         .child(div().flex_1().text_size(18).font_semibold().text_color(c.navy).child("All engines"))
         .when(es.length > 0, (e) => e.child(Button(c, "eng-add", "Add engine", add, { small: true }))))
-      .child(div().text_size(13).text_color(c.grey900).child("The search and recommendation systems you're improving, across every brand. Pick one to see its experiments, evaluations, runs and versions."))
+      .child(div().text_size(13).text_color(c.grey900).child("The search and recommendation systems you're improving, across every brand. Pick one to see its model versions, evaluations and runs."))
       .child(!this.engines ? Skeleton(c, 3) : !es.length
         ? v_flex().id("eng-empty").mt(12).p(24).gap(10).items_center().border_1().border_color(c.rule).bg(c.surface2)
           .child(svg(icon("search")).size(28).text_color(c.blue))
@@ -249,7 +237,6 @@ export default class Engine extends View {
           .child(Button(c, "eng-rename", "Rename", () => openOverlay({ mod: "captain-scope", kind: "dialog", width: 460, props: { action: "rename", node } }), { small: true }))
           .child(Button(c, "eng-move", "Move", () => openOverlay({ mod: "captain-scope", kind: "dialog", width: 460, props: { action: "move", node } }), { small: true }))
           .child(Button(c, "eng-archive", "Archive", () => openOverlay({ mod: "captain-scope", kind: "dialog", width: 460, props: { action: "archive", node } }), { small: true }))))
-      .child(div().px(20).child(Tabs(c, "eng-tabs", TABS.map(([id, label]) => ({ id, label, count: id === "overview" ? null : this.count(id) })), this.tab, (id, cx) => { this.tab = id; cx.notify(); })))
-      .child(div().id("eng-body").flex_1().min_h(0).overflow_y_scroll().child(!e ? Skeleton(c, 6) : this.body(c)));
+      .child(div().id("eng-body").flex_1().min_h(0).overflow_y_scroll().child(!e ? Skeleton(c, 6) : this.page(c)));
   }
 }

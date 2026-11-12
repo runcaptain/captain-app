@@ -121,8 +121,8 @@ def app_status():
 SOCKET = "captain-app.sock"
 HIDDEN = "(hidden)"
 # Section ids, in the words the screens use (defaults/AGENTS.md, "Words"; kit/view.js SCREENS).
-SCREENS = {"project": "Home", "investigations": "Experiments", "data": "Data and signals", "runs": "Runs",
-           "comparisons": "Compare", "handoff": "Launch review", "team": "Team"}
+SCREENS = {"project": "Projects", "data": "Data", "notebooks": "Notebooks", "runs": "Runs", "deployments": "Deployments",
+           "team": "Team"}
 # A session id in a row of search events names a shopper's visit, not a login, so it is not on this list.
 SECRET_KEY = re.compile(r"pass(word|phrase)?|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|"
                         r"authorization|bearer|cookie|\bdsn\b|\bpat\b", re.I)
@@ -524,16 +524,19 @@ def context_clear():
 
 # --- Showing the person something ---------------------------------------------------------------------------------
 
-SECTIONS = {"home": "project", "project": "project", "experiments": "investigations", "investigations": "investigations",
-            "data": "data", "data-and-signals": "data", "runs": "runs", "compare": "comparisons", "comparisons": "comparisons",
-            "launch-review": "handoff", "handoff": "handoff", "team": "team"}
+# "compare" still opens something: an evaluation's comparison shows in place in Runs.
+SECTIONS = {"projects": "project", "home": "project", "project": "project", "data": "data", "data-and-signals": "data",
+            "notebooks": "notebooks", "runs": "runs", "compare": "runs", "comparisons": "runs",
+            "deployments": "deployments", "team": "team"}
+# Screens that left the app on 2026-11-12, and the command that still does the work.
+GONE = {"experiments": "cst investigate", "investigations": "cst investigate", "launch-review": "cst handoff", "handoff": "cst handoff"}
 
 
 @app_app.command("open")
-def app_open(target: str = typer.Argument(..., help="A screen (home, experiments, data, runs, compare, launch-review, team), project:<id>, dataset:<name>, run:<evaluation>, comparison:<evaluation>[@vN], experiment:<id>, form:<task>, settings[:<section>]"),
+def app_open(target: str = typer.Argument(..., help="A screen (projects, data, notebooks, runs, deployments, team), project:<id>, dataset:<name>, run:<evaluation>, comparison:<evaluation>[@vN], notebook:<name>, form:<task>, settings[:<section>]"),
              value: list[str] = typer.Option([], "--value", "-v", help="For form:<task>: field=value to fill in, repeatable. The person confirms; nothing is submitted"),
              tab: Optional[str] = typer.Option(None, "--tab", help="A tab on the screen opened (a dataset's sample, a comparison's queries)")):
-    """Show the person something in Captain: a screen, a project, a dataset, a run, a comparison, an experiment,
+    """Show the person something in Captain: a screen, a project, a dataset, a run and its comparison, a notebook,
     Settings, or a form filled in for them to confirm. It never submits a form or changes a record."""
     from .. import agent_context as AC
     from ..commands import SECRET_NAMES
@@ -546,13 +549,18 @@ def app_open(target: str = typer.Argument(..., help="A screen (home, experiments
     if value and head != "form":
         fail("--value fills a form: use it with form:<task>")
     what: dict
+    if head in GONE or (head == "experiment" and rest) or (head == "investigation" and rest):
+        cmd = GONE.get(head, "cst investigate")
+        fail(f"Captain's screens no longer have that one. It still works from a terminal: {cmd} --help")
     if not sep and head in SECTIONS:
         what = {"section": SECTIONS[head]}
+    elif head == "notebook" and rest:
+        what = {"section": "notebooks", "notebook": rest}
     elif head == "settings":
         what = {"settings": rest or None}
     elif head == "form":
         if not re.fullmatch(r"[a-z][a-z0-9-]*", rest or ""):
-            fail("say which form: form:<task>, for example form:investigation, form:backtest, form:database, form:experiment")
+            fail("say which form: form:<task>, for example form:backtest, form:database, form:experiment")
         vals = {}
         for item in value:
             k, eq, v = item.partition("=")
@@ -562,7 +570,7 @@ def app_open(target: str = typer.Argument(..., help="A screen (home, experiments
                 fail(f"{k} looks like a secret. Leave it out: the person types secrets into the form themselves.")
             vals[k] = v
         what = {"form": rest, "values": vals}
-    elif head in ("project", "dataset", "run", "comparison", "experiment", "investigation", "evaluation", "backtest") and rest:
+    elif head in ("project", "dataset", "run", "comparison", "evaluation", "backtest") and rest:
         c = _pin_ctx(view)
         kind = {"comparison": "run"}.get(head, head)
         version = None
@@ -575,13 +583,12 @@ def app_open(target: str = typer.Argument(..., help="A screen (home, experiments
             what = {"project": name, "label": it["label"]}
         elif it["kind"] == "dataset":
             what = {"section": "data", "dataset": name.split("@v")[0]}
-        elif it["kind"] == "run":
-            what = {"section": "comparisons" if head == "comparison" else "runs", "backtest": name, **({"version": version} if version else {})}
         else:
-            what = {"section": "investigations", "investigation": name}
+            # A run and its comparison are one page in Runs.
+            what = {"section": "runs", "backtest": name, **({"version": version} if version else {})}
     else:
-        fail(f"don't know how to open {target!r}. Try a screen (home, experiments, data, runs, compare, launch-review, team), "
-             "project:<id>, dataset:<name>, run:<evaluation>, comparison:<evaluation>, experiment:<id>, form:<task> or settings")
+        fail(f"don't know how to open {target!r}. Try a screen (projects, data, notebooks, runs, deployments, team), "
+             "project:<id>, dataset:<name>, run:<evaluation>, comparison:<evaluation>, notebook:<name>, form:<task> or settings")
     if tab:
         what["tab"] = tab
     if S.dry_run:

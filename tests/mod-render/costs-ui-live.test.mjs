@@ -235,7 +235,7 @@ const clean = (t, where) => {
   const h = harness(await load('captain-engine'));
   await h.start();
   await until(h, () => Boolean(h.mod.engine) && Boolean(h.mod.data.versions?.ok), 'the page loaded');
-  await h.click('eng-tabs-versions');
+  // The engine page is one page now: its model versions are on it without a click.
   // The demo's model versions declare no training command. Mark one as able to retrain, as the services would.
   h.mod.data.versions.data[0].trains = true;
   const name = h.mod.data.versions.data[0].name;
