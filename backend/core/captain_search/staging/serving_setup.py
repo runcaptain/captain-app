@@ -299,7 +299,7 @@ def plan(ctx: Context, profile: str, region: str, *, name_prefix: str = "captain
         rows.append({"resource": "S3 bucket", "name": _where(storage)[0],
                      "why": "Your workspace's data stays on this computer. Only the serving bundle (the model and its catalog) and the "
                             "request log go to this bucket."})
-    rows.append({"resource": "Captain compute target", "name": n["target"], "why": f"SageMaker endpoint, {instance_type}, in {region}. Staging uses it."})
+    rows.append({"resource": "Captain compute target", "name": n["target"], "why": f"SageMaker endpoint, {instance_type}, in {region}. A deploy to AWS uses it."})
     build_cost = round(BUILD_MINUTES * BUILD_USD_PER_MIN, 2) if src != "docker" else 0.0
     return {"profile": profile, "region": region, "account": account, "names": n, "image_source": src, "storage": storage,
             "local_workspace": local, "instance_type": instance_type, "creates": rows,
@@ -307,7 +307,7 @@ def plan(ctx: Context, profile: str, region: str, *, name_prefix: str = "captain
                      "text": ("Setting up costs about $" + f"{build_cost:.2f}" + f" once. Building the image takes {TM.step_words('aws', 'image')} in AWS CodeBuild (the estimate allows {BUILD_MINUTES} minutes). "
                               if src != "docker" else "Setting up costs nothing: this computer's Docker builds the image. ")
                              + "The role, the repository and the target cost nothing while idle. The image is under 1 GB, about $0.10 a month to "
-                               "keep. An endpoint bills by the hour only while it is staged."},
+                               "keep. A deployed model bills by the hour only while it is up."},
             "login_policy": login_policy(storage, region, account, n, src),
             "text": f"Set up serving in your AWS account {account[:4]}... in {region}: " + ", ".join(f"{r['resource']} {r['name']}" for r in rows) + "."}
 
@@ -385,7 +385,7 @@ def setup(ctx: Context, profile: str, region: str, *, name_prefix: str = "captai
                 note("s3-bucket", b)
 
         step(f"create the bucket {b}", "s3:CreateBucket", mk)
-    role_arn = role(n["role"], "sagemaker.amazonaws.com", role_policy(storage, region, account, n), "what a staging endpoint may do")
+    role_arn = role(n["role"], "sagemaker.amazonaws.com", role_policy(storage, region, account, n), "what a deployed model may do")
     say(f"Creating the image repository {n['repo']}")
 
     def repo():
@@ -521,7 +521,7 @@ def teardown(ctx: Context, progress=None) -> dict:
     for pr in PR.listing(ctx):
         for env, st in ((PS.read(ctx, pr["id"])[0].get("staging") or {}).items()):
             if st.get("status") == "running" and st.get("target") == rec.get("target"):
-                raise ValueError(f"{pr['name']} has a model staged on this target. Stop it first, then remove the setup.")
+                raise ValueError(f"{pr['name']} has a model deployed here. Stop it first, then remove what the first deploy created.")
     say = progress or (lambda _t: None)
     sess = cloud.aws_session(rec["profile"], rec["region"])
     left = []

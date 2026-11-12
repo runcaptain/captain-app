@@ -137,8 +137,8 @@ class GcpHost(Host):
                                                                                 "and push to that one repository."},
             {"resource": "Cloud Build build", "name": f"{n['repo']} image", "why": "Builds the serving image inside your project. It runs once. Not timed on a real account yet."},
             {"resource": "Captain compute target", "name": n["target"],
-             "why": f"Cloud Run service, {o['cpu']:g} vCPU and {o['memory_mb'] / 1024:g} GB a copy, at most {o['max_copies']}, in {o['region']}. Staging uses it."}]
-        later = [{"resource": "Cloud Run service", "name": f"{n['services']}-{{project}}", "why": "The endpoint. Made when you stage a model, deleted when you unstage it."}]
+             "why": f"Cloud Run service, {o['cpu']:g} vCPU and {o['memory_mb'] / 1024:g} GB a copy, at most {o['max_copies']}, in {o['region']}. A deploy to Google Cloud uses it."}]
+        later = [{"resource": "Cloud Run service", "name": f"{n['services']}-{{project}}", "why": "The deployed model. Made when you deploy, deleted when you stop it."}]
         build = BUILD_MINUTES * PT.CLOUD_RUN["build_minute"]
         return {"cloud": "gcp", "profile": o["profile"], "region": o["region"], "project": rest.project, "names": n, "storage": n["storage"], "options": o,
                 "apis_off": off, "creates": rows, "each_deploy": later,
@@ -203,7 +203,7 @@ class GcpHost(Host):
                     "POST", f"{IAM}/projects/{project}/serviceAccounts", {"accountId": name, "serviceAccount": {"displayName": f"Captain serving: {why}"[:100]}}))
                 note("service-account", email, project=project)
 
-        account(n["account"], n["account_email"], "what a staging endpoint may do")
+        account(n["account"], n["account_email"], "what a deployed model may do")
         account(n["build_account"], n["build_email"], "what the image build may do")
 
         say(f"Creating the bucket {n['bucket']} for the serving bundle and the request log")

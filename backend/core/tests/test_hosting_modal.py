@@ -297,7 +297,7 @@ def test_a_secret_of_that_name_it_did_not_make_stops_the_deploy(ws, modal):  # n
 def test_teardown_is_refused_while_a_model_is_staged_there(ws, modal):  # noqa: F811
     _setup(ws)
     SG.stage(ws, "shop", target="modal-serving", confirm=True)
-    with pytest.raises(ValueError, match="has a model staged on this target"):
+    with pytest.raises(ValueError, match="has a model deployed here"):
         H.get("modal").teardown(ws)
     SG.unstage(ws, "shop")
     assert H.get("modal").teardown(ws)["status"] == "removed"

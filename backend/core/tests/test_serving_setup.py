@@ -169,7 +169,7 @@ def test_the_plan_says_what_will_be_created_and_what_it_costs_and_changes_nothin
     assert [(r["resource"], r["name"]) for r in p["creates"]] == [
         ("IAM role", "captain-serving"), ("ECR repository", "captain-serving"), ("IAM role", "captain-serving-build"),
         ("CodeBuild project", "captain-serving-build"), ("Captain compute target", "aws-serving")]
-    assert p["cost"]["setup_usd"] == 0.01 and "Building the image takes about a minute and a half in AWS CodeBuild" in p["cost"]["text"] and "bills by the hour only while it is staged" in p["cost"]["text"]
+    assert p["cost"]["setup_usd"] == 0.01 and "Building the image takes about a minute and a half in AWS CodeBuild" in p["cost"]["text"] and "bills by the hour only while it is up" in p["cost"]["text"]
     assert not aws.roles and not aws.repos and SS.read(cloud_ws) is None and SS.status(cloud_ws)["status"] == "none"
     with pytest.raises(ValueError, match="Confirm first"):
         SS.setup(cloud_ws, "p", "us-west-1")
@@ -300,7 +300,7 @@ def test_teardown_removes_everything_and_refuses_while_a_model_is_staged(cloud_w
     SS.setup(cloud_ws, "p", "us-west-1", confirm=True, poll_s=0)
     PR.create(cloud_ws, "shop")
     PS._update(cloud_ws, "shop", lambda d: d.__setitem__("staging", {"staging": {"status": "running", "target": "aws-serving"}}))
-    with pytest.raises(ValueError, match="has a model staged on this target. Stop it first"):
+    with pytest.raises(ValueError, match="has a model deployed here. Stop it first"):
         SS.teardown(cloud_ws)
     PS._update(cloud_ws, "shop", lambda d: d.__setitem__("staging", {"staging": {"status": "stopped", "target": "aws-serving"}}))
     said = []

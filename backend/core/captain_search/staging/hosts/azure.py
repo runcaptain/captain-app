@@ -133,8 +133,8 @@ class AzureHost(Host):
             {"resource": "Container registry (Basic)", "name": n["registry"], "why": "Holds Captain's serving image, and builds it. It costs about $5 a month while the setup exists."},
             {"resource": "Container Apps environment", "name": n["environment"], "why": "Where the endpoint runs. Consumption plan: it costs nothing by itself."},
             {"resource": "Captain compute target", "name": n["target"],
-             "why": f"Container Apps app, {o['cpu']:g} vCPU and {o['memory_mb'] / 1024:g} GB a copy, at most {o['max_copies']}, in {o['region']}. Staging uses it."}]
-        later = [{"resource": "Container app", "name": f"{n['apps']}-{{project}}", "why": "The endpoint. Made when you stage a model, deleted when you unstage it."}]
+             "why": f"Container Apps app, {o['cpu']:g} vCPU and {o['memory_mb'] / 1024:g} GB a copy, at most {o['max_copies']}, in {o['region']}. A deploy to Azure uses it."}]
+        later = [{"resource": "Container app", "name": f"{n['apps']}-{{project}}", "why": "The deployed model. Made when you deploy, deleted when you stop it."}]
         build = BUILD_MINUTES * 60 * 2 * PT.AZURE_EXTRAS["build_vcpu_second"]
         return {"cloud": "azure", "profile": o["profile"], "region": o["region"], "subscription": arm.sub, "names": n, "storage": n["storage"], "options": o,
                 "unregistered": off, "creates": rows, "each_deploy": later,

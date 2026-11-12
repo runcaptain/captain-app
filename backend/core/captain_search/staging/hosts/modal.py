@@ -67,14 +67,14 @@ class ModalHost(Host):
             {"resource": "Modal volume", "name": n["volume"], "why": "Holds the serving bundle (the model and its catalog) and the request log. "
                                                                      "The endpoint mounts it, so no keys are needed."},
             {"resource": "Captain compute target", "name": n["target"],
-             "why": f"Modal web endpoint, {o['cpu']:g} CPU and {o['memory_mb'] / 1024:g} GB a copy, at most {o['max_copies']}, in {where}. Staging uses it."}]
+             "why": f"Modal web endpoint, {o['cpu']:g} CPU and {o['memory_mb'] / 1024:g} GB a copy, at most {o['max_copies']}, in {where}. A deploy to Modal uses it."}]
         later = [
-            {"resource": "Modal app", "name": f"{n['apps']}-{{project}}", "why": "The endpoint. Made when you stage a model, stopped when you unstage it."},
+            {"resource": "Modal app", "name": f"{n['apps']}-{{project}}", "why": "The deployed model. Made when you deploy, stopped when you stop it."},
             {"resource": "Modal secret", "name": f"{n['apps']}-{{project}}", "why": "What the endpoint is told: which bundle, and the SHA-256 of the endpoint key. "
                                                                                            "Never the key itself. Deleted with the app."}]
         return {"cloud": "modal", "environment": o["environment"], "names": n, "storage": n["storage"], "options": o, "creates": rows, "each_deploy": later,
                 "cost": {"setup_usd": 0.0, "hourly_awake_usd": round(hourly, 4),
-                         "text": f"Setting up costs nothing. Modal builds the image the first time you stage, {TM.step_words('modal', 'start')} of one CPU, under a cent. "
+                         "text": f"Setting up costs nothing. Modal builds the image the first time you deploy, {TM.step_words('modal', 'start')} of one CPU, under a cent. "
                                  f"A copy costs about ${hourly:.3f} an hour while it is awake and nothing while it sleeps. "
                                  f"It sleeps after {o['idle_seconds']} idle seconds. The volume is free under 1 TiB. "
                                  f"Prices as of {PT.SERVERLESS_PRICED_AS_OF}."},
