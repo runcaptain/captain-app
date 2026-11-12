@@ -100,6 +100,11 @@ class HttpServing(ServingProvider):
         """Headers the cloud's own front door needs, beside the endpoint key. None by default."""
         return {}
 
+    def stage_preflight(self, st: dict, storage_uri: str) -> dict:
+        # Setup made the endpoint's identity and its storage together, with the one grant between them, and the
+        # host stops idle copies itself. There is no role of the team's own to ask about.
+        return {"checked": True, "can_delete": None, "can_write": True, "warnings": [], "note": None}
+
     def invoke(self, rec: dict, payload: dict) -> dict:
         import httpx
 

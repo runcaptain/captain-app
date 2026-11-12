@@ -1061,6 +1061,23 @@ def _host_options(q: dict) -> dict:
     return {k: v for k, v in q.items() if k not in ("cloud", "confirm", "plan") and v not in (None, "")}
 
 
+@app.get("/api/projects/{pid}/staging/copies", dependencies=A)
+def project_staging_copies(pid: str):
+    """{min_copies, max_copies, idle_seconds, can_set, text}: how many copies the staged endpoint may run."""
+    from . import staging as SG
+
+    return _staging_call(SG.scale, ctx(), pid)
+
+
+@app.post("/api/projects/{pid}/staging/copies", dependencies=A)
+def project_staging_copies_set(pid: str, body: dict):
+    """{min_copies?, max_copies?, idle_seconds?}: change them. The host applies it with no restage."""
+    from . import staging as SG
+
+    num = lambda k: None if body.get(k) in (None, "") else int(body[k])  # noqa: E731
+    return _staging_call(SG.scale, ctx(), pid, min_copies=num("min_copies"), max_copies=num("max_copies"), idle_seconds=num("idle_seconds"))
+
+
 @app.get("/api/serving/hosts", dependencies=A)
 def serving_hosts():
     """Every place a model can be hosted, as a card: label, whether it sleeps when idle, where the bundle and log

@@ -132,10 +132,10 @@ class CloudRunServing(HttpServing):
                              "containers": [{"image": st.get("image") or self.config["image"], "args": ["serve"],
                                              "env": [{"name": k, "value": str(v)} for k, v in env.items()],
                                              "ports": [{"containerPort": 8080}],
+                                             # No probe of our own: Cloud Run's default waits up to four minutes for
+                                             # the port, and the catalog and its index load before the port opens.
                                              "resources": {"limits": {"cpu": f"{size['cpu']:g}", "memory": f"{size['memory_mb']}Mi"},
-                                                           "cpuIdle": True, "startupCpuBoost": True},
-                                             # the catalog and its index load before the port opens
-                                             "startupProbe": {"tcpSocket": {"port": 8080}, "periodSeconds": 3, "failureThreshold": 100, "timeoutSeconds": 2}}]}}
+                                                           "cpuIdle": True, "startupCpuBoost": True}}]}}
 
     def stage_plan(self, st: dict) -> list[dict]:
         n = self._names(st)

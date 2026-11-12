@@ -177,6 +177,64 @@ What that run found and fixed:
 Known limits: one region (Modal's default), CPU only, a container image of your own (`--image`) can't be staged
 there, and Modal keeps an idle copy at most 20 minutes.
 
+### Google Cloud (Cloud Run)
+
+Not run on a real account yet. Tested against a stand-in of Google's API only, so its card says so and it gets no
+cost estimate.
+
+`cst compute setup serving gcp --set profile=<login> [--set region=us-central1] [--set name_prefix=captain]` makes,
+in your own project: a service account the endpoint runs as, a serving bucket, an Artifact Registry repository, a
+second service account the image build runs as, the image (built by Cloud Build from the installed Captain, no
+Docker here), and the compute target `gcp-serving`. Each staged model is one Cloud Run service, deleted on unstage.
+
+- **Least privilege.** Every grant is on the one bucket or the one repository. The endpoint's account may read and
+  add objects in the serving bucket. The build account may read the build folder, write its log beside it, and
+  push to that repository. Nothing is granted on the project.
+- **APIs.** Cloud Run, Cloud Build and Artifact Registry must be on. The plan lists the ones that are off and setup
+  switches them on. `--remove` leaves them on, since something else may use them by then; `--remove --set apis=off`
+  switches off the ones Captain switched on. Google grants its own service agent a project role when an API is
+  first switched on (Cloud Run's gets `roles/run.serviceAgent`) and keeps it when the API is switched off.
+- **The address** is the service's `run.app` name, made public so a site can call it, with the endpoint key on
+  every route but `/healthz` and `/ping`. Where an organization forbids public services the service stays private:
+  Captain calls it with the login's own identity, and a site would need Google credentials.
+- **Sleeping.** No copy is up while nobody calls. Cloud Run keeps an idle one for up to 15 minutes and decides when,
+  so that time can't be set. It bills only while a copy answers, so Captain does ask the endpoint how it is.
+- **What your login needs**: `--policy` prints the roles and the commands that grant them.
+
+### Azure (Container Apps)
+
+Not run on a real account yet. Tested against a stand-in of Azure's API only, so its card says so and it gets no
+cost estimate.
+
+`cst compute setup serving azure --set profile=<login> [--set region=eastus] [--set name_prefix=captain]` makes one
+resource group, `<prefix>-serving`, and puts everything in it: a storage account with one container, a managed
+identity the endpoint runs as, a Basic container registry, the image (built by the registry itself, no Docker
+here), a Container Apps environment on the Consumption plan, and the compute target `azure-serving`. Each staged
+model is one container app in that group, deleted on unstage. Removing the setup deletes the group, and is refused
+if the group holds anything Captain did not make.
+
+- **Least privilege.** The identity may read and write that one container and pull that one image. The login that
+  runs setup is let into the container too: in Azure, owning a storage account does not let you read its blobs.
+  All three grants are inside the group. The storage account takes no keys, only signed-in identities.
+- **Cost while idle.** The registry costs about $0.17 a day for as long as the setup exists. The endpoint costs
+  nothing once it has slept. Container Apps costs more in some regions (West US 2 is 42% above East US on CPU).
+- **What your login needs**: Contributor and Role Based Access Control Administrator on the subscription, since
+  setup makes its own group. Owner has both. `--policy` prints them.
+- **Kept from the first Azure job run**: the image carries Azure's sign-in library, the container is told which
+  identity to use (`AZURE_CLIENT_ID`), and the copy's size is set on the app itself.
+- **Known limits.** Setup makes no log workspace, so the app's own lines are read with `az containerapp logs show`.
+  An idle copy is taken away after about 5 minutes, and Captain can't change that yet. A container app's name is
+  at most 32 characters, so a long one keeps its start and gains a short hash.
+
+### Copies
+
+    cst projects staging-copies <project>                       # the fewest, the most, how long an idle one stays
+    cst projects staging-copies <project> --fewest 1 --most 3   # change them: the host applies it, no restage
+
+`--fewest 1` keeps one copy up, so no request waits for a cold start, and it bills while it is up. On Modal
+`--idle-seconds` sets how long an idle copy stays (2 to 1200). The app reads and sets the same through
+`GET` and `POST /api/projects/{id}/staging/copies`. On this computer and on SageMaker there is one copy.
+
 ## Cost, and stopping by itself
 
 Before any cloud deploy Captain shows the instance type, an hourly estimate and "This keeps billing until you stop

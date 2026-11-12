@@ -246,6 +246,11 @@ A plugin that fails to load, lacks a method or reuses a built-in name is skipped
 
 ### Set up ECS for me
 
+`cst compute setup serving <aws|modal|gcp|azure> [--set name=value ...]` sets up what a staged model needs on one
+host, the same way for each: what it creates and costs, then a confirm (`--options`, `--policy`, `--leftovers`,
+`--remove`). `GET /api/serving/hosts` lists the hosts as cards, and `GET|POST|DELETE /api/serving/setup` take
+`cloud=<host>` (default `aws`). `cst docs staging` has each host, with what its first real run measured.
+
 `cst compute setup aws-ecs --profile <p> --region <r> [--name ecs] [--storage s3://...] [--dry-run]` makes, or
 reuses, everything an ECS target needs, prints each step, and adds the target to the open workspace:
 

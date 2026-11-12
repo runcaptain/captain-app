@@ -112,6 +112,12 @@ def cost(target: dict, ctx: Context) -> dict:
     if est.get("sleeps"):  # a host that sleeps when idle bills by the second awake, not by the hour up
         return {"instance_type": est.get("machine"), "instance_count": None, "hourly_usd": est.get("high"), "billing": True,
                 "estimate": est, "sleeps": True, "text": est["text"]}
+    if not local:
+        from .. import compute as C
+
+        if C.scale_to_zero(ctx, target):  # not priced yet (it has not run on a real account), and it still sleeps
+            return {"instance_type": None, "instance_count": None, "hourly_usd": None, "billing": True, "estimate": est, "sleeps": True,
+                    "text": est["text"] + " It bills only while a copy is awake, and sleeps when nobody calls it."}
     return {"instance_type": size.get("instance_type"), "instance_count": size.get("instances"),
             "hourly_usd": est.get("low"), "billing": not local, "estimate": est,
             "text": est["text"] + (" It stops when idle." if local else f" {KEEPS_BILLING}")}
@@ -754,6 +760,34 @@ def _status_text(rec: dict, health: dict | None, asleep: str | None = None) -> s
     if s == "failed":
         return f"Staging failed: {rec.get('error') or 'no reason recorded'}"
     return f"Stopped ({rec.get('stop_reason') or 'no reason recorded'})."
+
+
+def scale(ctx: Context, pid: str, env: str = ENV, min_copies: int | None = None, max_copies: int | None = None,
+          idle_seconds: int | None = None) -> dict:
+    """How many copies the staged endpoint may run and how long an idle one stays up. With a value, change it: the
+    host applies it with no restage. On this computer and on SageMaker there is one copy and nothing to change."""
+    from .. import compute as C
+
+    rec = state(ctx, pid, env)
+    if not rec or rec.get("status") != "running":
+        raise ValueError("Staging is not running. Stage a model version first.")
+    if rec.get("kind") == "local":
+        if any(v is not None for v in (min_copies, max_copies, idle_seconds)):
+            raise ValueError("On this computer there is one copy. Stage it in your cloud to run more.")
+        return {"project": pid, "min_copies": 0, "max_copies": 1, "idle_seconds": float(rec.get("idle_minutes") or IDLE_MINUTES) * 60, "can_set": [],
+                "text": "One copy on this computer. It stops when idle."}
+    t = C.get(ctx, rec["target"])
+    if all(v is None for v in (min_copies, max_copies, idle_seconds)):
+        return {"project": pid, **C.staged_scale(ctx, t, rec)}
+    for name, v in (("fewest", min_copies), ("most", max_copies)):
+        if v is not None and not 0 <= int(v) <= 100:
+            raise ValueError(f"The {name} copies is a number from 0 to 100.")
+    if max_copies is not None and int(max_copies) < 1:
+        raise ValueError("The most copies is at least 1.")
+    out = C.set_staged_scale(ctx, t, rec, min_copies=min_copies, max_copies=max_copies, idle_seconds=idle_seconds)
+    _save(ctx, pid, env, scale=out.pop("scale", None) or rec.get("scale"))
+    _note(ctx, pid, "changed the staged endpoint's copies: " + out["text"])
+    return {"project": pid, **out}
 
 
 # ---- talking to the endpoint ---------------------------------------------------------------------

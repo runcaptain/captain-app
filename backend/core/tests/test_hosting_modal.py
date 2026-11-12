@@ -477,3 +477,70 @@ def test_a_proven_host_that_sleeps_is_priced_by_the_hour_awake(ws, modal):  # no
     assert e["available"] and e["low"] == 0 and 0.05 < e["high"] < 0.08 and e["confidence"] == "rough"
     spent = CE.cost_of(ws, C.get(ws, "modal-serving"), 3600, staging=True)
     assert spent["upper_bound"] and spent["text"].startswith("Cost at most")
+
+
+def test_the_deployment_tabs_say_asleep_and_never_wake_it(ws, modal):  # noqa: F811
+    from captain_search.staging import observe as OB
+
+    _setup(ws)
+    SG.stage(ws, "shop", target="modal-serving", confirm=True)
+    SG.query(ws, "shop", "jacket")
+    up = OB.live(ws, "shop")
+    assert up["state"] in ("handling", "idle") and up["copies"] == 1
+    st = OB.settings(ws, "shop")
+    assert [g["title"] for g in st["groups"]][1:3] == ["Copies", "Sleeping when idle"] and not st["can_edit"]
+    assert st["groups"][2]["rows"][0] == ["An idle copy stays up", "5 min"]
+    with pytest.raises(ValueError, match="there is no idle time to set"):
+        OB.set_idle(ws, "shop", 60)
+    assert "while a copy is awake" in OB.cost(ws, "shop")["rate_text"]
+    modal.copies, modal.calls = 0, []
+    live = OB.live(ws, "shop")
+    assert live["state"] == "asleep" and live["copies"] == 0 and "nothing is billing" in live["text"]
+    assert OB.copies(ws, "shop")["rows"] == [] and "asleep" in OB.copies(ws, "shop")["text"]
+    OB.logs(ws, "shop")
+    OB.metrics(ws, "shop")
+    assert modal.calls == []  # reading the log and the metrics did not wake it either
+
+
+def test_copies_from_the_cli_and_the_api_and_a_plan_with_nothing_to_warn_about(ws, modal, monkeypatch):  # noqa: F811
+    from fastapi.testclient import TestClient as TC
+    from typer.testing import CliRunner
+
+    from captain_search import server
+    from captain_search.cli.main import app as cli
+
+    _setup(ws)
+    p = SG.plan(ws, "shop", target="modal-serving")
+    assert p["preflight"]["checked"] and p["preflight"]["note"] is None and p["warnings"] == []
+    SG.stage(ws, "shop", target="modal-serving", confirm=True)
+    out = SG.scale(ws, "shop", max_copies=2)
+    assert out["max_copies"] == 2 and SG.state(ws, "shop")["scale"] == {"max": 2} and modal.autoscaler["max_containers"] == 2
+    with pytest.raises(ValueError, match="at least 1"):
+        SG.scale(ws, "shop", max_copies=0)
+    r = CliRunner().invoke(cli, ["projects", "staging-copies", "shop"])
+    assert r.exit_code == 0 and "At most 2 at once" in r.output, r.output
+    monkeypatch.setattr(server, "ctx", lambda: ws)
+    c = TC(server.app)
+    h = {"Authorization": f"Bearer {server.TOKEN}"}
+    assert c.get("/api/projects/shop/staging/copies", headers=h).json()["max_copies"] == 2
+    assert c.post("/api/projects/shop/staging/copies", json={"min_copies": 1}, headers=h).json()["min_copies"] == 1
+    assert c.post("/api/projects/shop/staging/copies", json={"idle_seconds": 99999}, headers=h).status_code == 400
+    cards = c.get("/api/serving/hosts", headers=h).json()
+    assert [x["cloud"] for x in cards] == ["local", "aws", "modal", "gcp", "azure"] and cards[2]["setup"]["status"] == "ready"
+    plan = c.get("/api/serving/setup", params={"cloud": "modal", "plan": "true", "environment": "captain-search-test"}, headers=h).json()
+    assert plan["status"] == "ready" and plan["plan"]["creates"][0]["resource"] == "Modal volume"
+    assert c.post("/api/serving/setup", json={"cloud": "modal"}, headers=h).status_code == 409  # the plan first, never a surprise
+    assert c.get("/api/serving/setup", params={"cloud": "nowhere"}, headers=h).status_code == 400
+
+
+def test_a_site_is_given_the_address_and_the_key_header_not_aws_calls(ws, modal):  # noqa: F811
+    from captain_search.staging import ab as AB
+    from captain_search.staging import traffic as TF
+
+    _setup(ws)
+    SG.stage(ws, "shop", target="modal-serving", confirm=True)
+    c = TF.connect(ws, "shop")
+    assert c["reachable"] and c["address"] == URL and c["text"].startswith(f"Running on Modal at {URL}")
+    assert all(URL in code and "CAPTAIN_STAGING_KEY" in code and "sagemaker" not in code.lower() for code in c["snippets"].values())
+    assert c["test_request"].startswith(f"curl -s {URL}/rank")
+    assert AB.addresses(SG.state(ws, "shop"))["candidate"] == {"url": f"{URL}/rank/candidate", "auth": "Authorization: Bearer <the endpoint key>"}

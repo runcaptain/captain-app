@@ -21,6 +21,7 @@ import { Badge, Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { SendToAgent } from "./kit/context.js";
 import { costState, refreshEstimate, CostLine, costSlice } from "./kit/cost.js";
+import { loadHosts, HostCards, HostSheet, HostLines, whereWords, hasCloud } from "./hosts.js";
 import { HeaderChart, LiveCard, CopiesTab, MetricsTab, LogsTab, SettingsTab, CostTab, DeploymentsList } from "./deploy-tabs.js";
 
 const enc = encodeURIComponent;
@@ -56,6 +57,8 @@ export class Ship {
     this.places = null;    // {cloud: the connected login or null, targets: compute targets that can serve}
     this.tab = "try";      // the deployment page's open tab
     this.sheet = false;    // the "what serving in your cloud needs" sheet
+    this.hosts = [];       // the other hosts (hosts.js): Modal, Google Cloud, Azure, as the services offer them
+    this.hostSheet = null; // which host's setup sheet is open
     this.cost = costState(); // what the staged endpoint costs to keep up (POST /api/costs/estimate, kit/cost.js)
     this.conn = null;      // GET /staging/connect: the address, the snippets, how many real requests arrived
     this.shadow = null;    // GET /shadow: what the candidate would change, with no shopper seeing it
@@ -143,6 +146,9 @@ export class Ship {
       this.serving = su.ok ? su.data : null; // what Captain set up in the cloud account, so it can be listed and removed
       const targets = (t.ok && Array.isArray(t.data) ? t.data : []).filter((x) => x.kind !== "local" && (x.purposes ?? []).includes("serve") && x.kind === "aws-sagemaker");
       this.places = { cloud: cl.ok ? cl.data?.active ?? null : null, targets };
+      // The other hosts (Modal, Google Cloud, Azure): what the services offer, and what is set up on each.
+      await loadHosts(this, t.ok && Array.isArray(t.data) ? t.data : [], cl.ok ? cl.data?.profiles ?? [] : []);
+      if (this.pid() !== pid) return;
       const first = targets[0];
       // Would it fit on this computer? The plan answers from the catalog's size and what is free right now.
       const cand = this.pick();
@@ -156,7 +162,19 @@ export class Ship {
   }
 
   /** The cloud's name as a person says it. */
-  cloudName() { const p = this.places?.cloud?.provider ?? (this.places?.targets?.length ? "aws" : null); return { aws: "AWS", gcp: "Google Cloud", azure: "Azure" }[p] ?? null; }
+  cloudName() {
+    const p = this.places?.cloud?.provider ?? (this.places?.targets?.length ? "aws" : null);
+    // With the hosts read from the services, Google Cloud and Azure have cards of their own (hosts.js), and this
+    // one is AWS's alone.
+    if ((this.hosts ?? []).length && p !== "aws") return null;
+    return { aws: "AWS", gcp: "Google Cloud", azure: "Azure" }[p] ?? null;
+  }
+
+  /** Where a staged endpoint runs, as the header says it: "Your AWS account", "Modal", "Your Google Cloud project". */
+  whereName(s) {
+    const w = whereWords(this, s?.kind);
+    return w ? w[0].toUpperCase() + w.slice(1) : `Your ${this.cloudName() ?? "cloud"} account`;
+  }
 
   /** Where this project was last staged, so the same choice is offered first next time. */
   lastWhere() { try { return localStorage.getItem(`stage-where:${this.pid()}`) || null; } catch { return null; } }
@@ -973,11 +991,13 @@ export class Ship {
       target ? est?.text ?? "Working out the cost..." : `Serving isn't set up in your ${cloud} account yet.`, target ? "This keeps billing until you stop it." : null],
       target ? Button(c, "ship-stage-cloud", `Stage in your ${cloud} account`, (_e, cx) => this.stageAt(cx, target.name), { small: true, kind: last === "cloud" || wont ? "primary" : "secondary" })
         : Button(c, "ship-setup-cloud", `Set up serving in your ${cloud}`, (_e, cx) => this.openSetupSheet(cx), { small: true }));
+    const more = HostCards(this, c, card, { cand, wont, last });
+    const clouds = [there, ...more].filter(Boolean);
     return v_flex().id("ship-choices").gap(8)
       .child(div().text_size(12.5).text_color(c.grey900).child(`Where should ${what} run?`))
       // The cloud comes first when it was the last choice, or when this computer isn't a choice for this model.
-      .child(h_flex().flex_wrap().items_stretch().gap(10).children((last === "cloud" || wont) && there ? [there, here] : [here, there].filter(Boolean)))
-      .when(!cloud, (e) => e.child(div().id("ship-no-cloud").text_size(12).text_color(wont ? c.navy : c.grey500)
+      .child(h_flex().flex_wrap().items_stretch().gap(10).children((last === "cloud" || wont) && clouds.length ? [...clouds, here] : [here, ...clouds]))
+      .when(!cloud && !hasCloud(this), (e) => e.child(div().id("ship-no-cloud").text_size(12).text_color(wont ? c.navy : c.grey500)
         .child(wont ? "No cloud is connected. Connect a cloud login to stage this model (the cloud chip at the bottom of the sidebar)."
           : "To stage where a site can reach it, connect a cloud login (the cloud chip at the bottom of the sidebar).")));
   }
@@ -990,7 +1010,7 @@ export class Ship {
     const local = s?.kind === "local", cloud = this.cloudName(), target = this.places?.targets?.[0] ?? null;
     const address = on ? (s.endpoint?.url ?? s.endpoint?.name ?? "") : null;
     const name = on || s ? short(s.model_version) : cand ? short(cand.pipeline) : champ ? short(champ) : "Nothing to stage yet";
-    const state = this.busy && this.busyStep !== "ab" ? ["Working", "warn"] : on ? ["1 copy live", "good"] : s?.status === "starting" ? ["Starting", "warn"] : s?.status === "failed" ? ["Failed", "bad"] : s ? ["Stopped", "neutral"] : ["Not staged", "neutral"];
+    const state = this.busy && this.busyStep !== "ab" ? ["Working", "warn"] : on && this.status?.asleep ? ["Asleep", "neutral"] : on ? ["1 copy live", "good"] : s?.status === "starting" ? ["Starting", "warn"] : s?.status === "failed" ? ["Failed", "bad"] : s ? ["Stopped", "neutral"] : ["Not staged", "neutral"];
     const actions = h_flex().flex_none().flex_wrap().gap(6).items_center();
     if (this.busy && this.busyStep !== "ab") actions.child(div().id("ship-busy").text_size(12).text_color(c.grey500).child(`${this.busy}...`));
     else if (on && !this.busy) {
@@ -1005,7 +1025,8 @@ export class Ship {
     if (s && !this.busy) actions.child(SendToAgent(c, "ship-send", { ref: `staging:${this.pid()}`, kind: "staging", label: `staging for ${page.project()?.name ?? this.pid()}` }));
     const costLine = on && !this.confirm ? v_flex().id("ship-line-cost").gap(2)
       .child(CostLine(c, "ship-cost", this.cost.estimate ?? s?.cost?.estimate ?? { text: s?.cost?.text ?? "", basis: [] }, this.cost, { onToggle: (_e, cx) => { this.cost.open = !this.cost.open; cx.notify(); } }))
-      .when(!local, (e) => e.child(div().id("ship-cost-billing").text_size(12).text_color(c.grey900).child("This keeps billing until you stop it."))) : null;
+      .when(!local && !s.scale_to_zero, (e) => e.child(div().id("ship-cost-billing").text_size(12).text_color(c.grey900).child("This keeps billing until you stop it.")))
+      .when(!local && Boolean(s.scale_to_zero), (e) => e.child(div().id("ship-cost-sleeps").text_size(12).text_color(c.grey900).child("It sleeps when nobody calls it, and costs nothing asleep."))) : null;
     return v_flex().id("ship-header").w_full().p(14).gap(10).bg(c.surface).border_1().border_color(c.rule)
       .child(h_flex().gap(10).items_start().flex_wrap()
         .child(v_flex().flex_1().min_w(260).gap(6)
@@ -1016,7 +1037,7 @@ export class Ship {
             .child(this.chip(c, "ship-chip-state", state[0], state[1]))
             .when(on, (e) => e
               .child(this.chip(c, "ship-chip-running", `${k?.running ?? 0} request${(k?.running ?? 0) === 1 ? "" : "s"} running`))
-              .child(this.chip(c, "ship-chip-where", local ? "This computer" : `Your ${cloud ?? "cloud"} account`))
+              .child(this.chip(c, "ship-chip-where", local ? "This computer" : this.whereName(s)))
               .when(Boolean(s.needs_key), (x) => x.child(this.chip(c, "ship-chip-key", "Key required")))
               // What the traffic is, only once there is some. Never "real" before a real request.
               .when(Boolean(k?.evidence_label), (x) => x.child(this.chip(c, "ship-chip-traffic", k.evidence_label, k.real ? "good" : k.unlabelled ? "neutral" : "warn"))))))
@@ -1028,10 +1049,14 @@ export class Ship {
           .child(Button(c, "ship-copy-key", "Copy the key", (_e, cx) => this.copyKey(cx), { small: true }))
           .when(Boolean(k?.test_request), (x) => x.child(Button(c, "ship-copy-test", "Copy a test request", (_e, cx) => this.copy(cx, k.test_request, "A test request is on your clipboard. Set CAPTAIN_STAGING_KEY in that shell first: Copy the key gives it to you."), { small: true }))))
         .child(div().id("ship-where").text_size(12).line_height("17px").text_color(c.grey900)
-          .child(local ? "Only this computer can reach it." : `It runs in your ${cloud ?? "cloud"} account. Your site can call it.`))
+          .child(local ? "Only this computer can reach it." : whereWords(this, s.kind) ? `It runs ${s.kind === "modal-endpoint" ? "on" : "in"} ${whereWords(this, s.kind)}. Your site can call it.`
+            : `It runs in your ${cloud ?? "cloud"} account. Your site can call it.`))
+        .when(Boolean(this.status?.asleep), (x) => x.child(div().id("ship-asleep").text_size(12).line_height("17px").text_color(c.grey500)
+          .child("Asleep: no copy is up, and it costs nothing. It wakes on the next request.")))
         // How long it has been up and when it stops by itself. Where it runs is already said above, once.
         .when(Boolean(this.status.health), (x) => x.child(div().id("ship-status").text_size(12).line_height("17px").text_color(c.grey500)
-          .child(`${this.status.health.shadow ? "Shadow mode is on: every request is answered with the baseline's results. " : ""}Up ${span(this.status.health.uptime_s)}. Stops by itself in ${span(this.status.health.stops_in_s)} if nobody uses it.`)))))
+          .child(`${this.status.health.shadow ? "Shadow mode is on: every request is answered with the baseline's results. " : ""}Up ${span(this.status.health.uptime_s)}. ${this.status.health.stops_in_s === null || this.status.health.stops_in_s === undefined
+            ? "It sleeps by itself when nobody uses it." : `Stops by itself in ${span(this.status.health.stops_in_s)} if nobody uses it.`}`)))))
       .when(!on && Boolean(s) && !this.busy, (e) => e.child(div().id("ship-line-stopped").text_size(12).line_height("17px").text_color(c.grey900)
         .child(s.status === "stopped" ? `Last staged: ${short(s.model_version)}. ${this.status.text}` : this.status.text)))
       .when(!on && Boolean(s?.spent?.text), (e) => e.child(div().id("ship-line-spent").text_size(12).text_color(c.grey900).child(s.spent.text)))
@@ -1045,7 +1070,9 @@ export class Ship {
         .text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
       .when(Boolean(this.problem), (e) => e.child(div().id("ship-problem").text_size(12).text_color(c.fail).child(this.problem)))
       .when(this.sheet, (e) => e.child(this.setupSheet(c)))
+      .when(Boolean(this.hostSheet), (e) => e.child(HostSheet(this, c)))
       .when(Boolean(this.servingLine(c)), (e) => e.child(this.servingLine(c)))
+      .when(Boolean(HostLines(this, c)), (e) => e.child(HostLines(this, c)))
       .when(Boolean(this.confirm), (e) => e.child(this.confirmBox(c)))
       .when(Boolean(this.stopAsk) && on, (e) => e.child(this.stopBox(c)))
       .when(Boolean(s), (e) => e.child(this.detailsBox(c, s)));

@@ -1146,7 +1146,14 @@ last project opened there. With no project it offers New project, which can pin 
   (`cst projects unstage <project>`). **2 Try it** is a query box: the staged results beside the baseline's for
   the same query, with pictures where the catalog has them (`cst projects staging-query <project> "<query>"`).
   Queries typed there are test traffic, never shoppers. The endpoint, the instance and the log sit behind Details.
-  `cst projects staging <project>` says where it stands. A team with its own serving stages `--endpoint <url>`
+  `cst projects staging <project>` says where it stands. **Where it runs** is a card each in "Where should it
+  run?": this computer, AWS (a SageMaker endpoint), Modal, Google Cloud (Cloud Run) and Azure (Container Apps). Each
+  cloud has a guided sheet, "Set up serving in your <cloud>", that lists what it creates and costs before anything
+  is made, and "Remove serving setup" takes it away (`cst compute setup serving <aws|modal|gcp|azure>`, with
+  `--policy`, `--leftovers` and `--remove`; `GET /api/serving/hosts`). Modal, Google Cloud and Azure sleep when
+  nobody calls: no copy is up, nothing bills, the next request wakes one, and the page says "Asleep" rather than
+  waking it to ask. A cloud that has not run on a real account says so on its card and shows no cost estimate.
+  A team with its own serving stages `--endpoint <url>`
   (Captain's runtime sits in front of it) or `--image <uri>`. Once a candidate is judged, the page's Next line
   offers "Stage it", and the page publishes these steps for agents (`cst app context`). Staging is pinned for an
   agent with "Send to agent" (`staging:<project>`). One line under Try it says whether serving computed the

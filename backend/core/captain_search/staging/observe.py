@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime as dt
 
 from ..workspace import Context
-from . import ENV, _ago, _span, call, set_control, state, status
+from . import ENV, _ago, _awake, _span, call, set_control, state, status
 from . import logs as L
 
 RANGES = {"15m": (15 * 60, "the last 15 minutes"), "1h": (3600, "the last hour"), "24h": (86400, "the last 24 hours"),
@@ -48,6 +48,8 @@ def _ms(x: float | None) -> str:
 
 def _flush(ctx: Context, rec: dict) -> None:
     if rec.get("status") == "running" and rec.get("how") != "image":
+        if rec.get("scale_to_zero") and not _awake(ctx, rec):
+            return  # asleep: nothing is buffered, and asking would wake it
         try:
             call(ctx, rec, "flush", {})
         except Exception:  # noqa: BLE001  a log a few seconds old is still a log
@@ -59,10 +61,15 @@ def _read(ctx: Context, pid: str, env: str, rec: dict, every_stage: bool = False
     return L.read(ctx, pid, env, None if every_stage else rec["id"], extra=True)
 
 
-def activity(rec: dict | None, health: dict | None) -> dict:
-    """Which of the three states the endpoint is in: stopped, idle, or handling requests."""
+def activity(rec: dict | None, health: dict | None, asleep: bool | None = None) -> dict:
+    """Which state the endpoint is in: stopped, idle, or handling requests. On a host that sleeps when idle there
+    is a fourth: asleep, with no copy up and nothing billing, until the next request wakes it."""
     if not rec or rec.get("status") != "running":
         return {"state": "stopped", "label": "Stopped", "text": "Stopped. Nothing is running and nothing is billing."}
+    if asleep:
+        return {"state": "asleep", "label": "Asleep", "text": "Asleep: no copy is up and nothing is billing. It wakes on the next request."}
+    if not health and rec.get("scale_to_zero"):
+        return {"state": "up", "label": "Up", "text": "Up. It sleeps when nobody calls it, and Captain didn't ask it how it is, so as not to wake it."}
     if not health:
         return {"state": "up", "label": "Up", "text": "Up."}
     if health.get("running", 0) > 0 or health.get("idle_s", 1e9) < HANDLING_S:
@@ -71,18 +78,20 @@ def activity(rec: dict | None, health: dict | None) -> dict:
                 "text": f"Handling requests: {n} right now." if n else "Handling requests."}
     return {"state": "idle", "label": "Idle",
             "text": f"Idle and ready: nothing has called it for {_span(health['idle_s'])}. It answers the moment a request "
-                    f"arrives, and stops by itself in {_span(health.get('stops_in_s', 0))} if none does."}
+                    + (f"arrives, and stops by itself in {_span(health['stops_in_s'])} if none does." if health.get("stops_in_s") is not None
+                       else "arrives. If none does, its host puts it to sleep, and the next request wakes it.")}
 
 
 def live(ctx: Context, pid: str, env: str = ENV) -> dict:
     """The small card that follows every tab: the state, the copies, and what is being answered right now."""
     s = status(ctx, pid, env, sweep=False)
     rec, h = state(ctx, pid, env), s.get("health")
-    a = activity(rec if s.get("status") == "running" else None, h)
+    a = activity(rec if s.get("status") == "running" else None, h, asleep=s.get("asleep"))
     up = s.get("status") == "running"
-    return {"project": pid, **a, "copies": 1 if up else 0, "running": (h or {}).get("running", 0) if up else 0,
+    n = 0 if not up or s.get("asleep") else int(s.get("copies") or 1)
+    return {"project": pid, **a, "copies": n, "running": (h or {}).get("running", 0) if up else 0,
             "requests": (h or {}).get("requests"), "errors": (h or {}).get("errors"),
-            "line": f"Copies: {1 if up else 0} live. Requests: {(h or {}).get('running', 0) if up else 0} running."}
+            "line": f"Copies: {n} live. Requests: {(h or {}).get('running', 0) if up else 0} running."}
 
 
 def copies(ctx: Context, pid: str, env: str = ENV) -> dict:
@@ -97,6 +106,10 @@ def copies(ctx: Context, pid: str, env: str = ENV) -> dict:
     h = s.get("health")
     if s.get("status") != "running":
         return {"project": pid, "rows": [], "text": "No copy is running. " + (s.get("text") or "")}
+    sleeps = bool(rec.get("scale_to_zero"))
+    if sleeps and s.get("asleep"):
+        return {"project": pid, "rows": [], "minimum": 0, "maximum": _scale(ctx, rec).get("max_copies") or 1,
+                "text": "No copy is up: the endpoint is asleep, and nothing is billing. The next request wakes one."}
     a = activity(rec, h)
     row = {"copy": (h or {}).get("copy") or rec["id"][-8:], "where": where(rec)["text"].split(". ")[0] + ".",
            "machine": (rec.get("cost") or {}).get("instance_type") or ("this computer" if rec.get("kind") == "local" else None),
@@ -107,10 +120,26 @@ def copies(ctx: Context, pid: str, env: str = ENV) -> dict:
            "can_stop": True}
     if h and h.get("ready_s") is not None:
         row["ready_text"] = f"Ready to answer {h['ready_s']:g} s after it started."
+    if sleeps:
+        sc = _scale(ctx, rec)
+        return {"project": pid, "rows": [row], "minimum": sc.get("min_copies") or 0, "maximum": sc.get("max_copies") or 1,
+                "text": f"{s.get('copies') or 1} up now. " + (sc.get("text") or "") + " Stopping the endpoint removes it.",
+                **({"warning": s["warning"]} if s.get("warning") else {})}
     return {"project": pid, "rows": [row], "minimum": 0, "maximum": 1,
             "text": "One copy is running. Staging runs one copy, and none once it has been idle for "
                     f"{_span(float(rec.get('idle_minutes') or 240) * 60)}. Stopping the copy stops the endpoint.",
             **({"warning": s["warning"]} if s.get("warning") else {})}
+
+
+def _scale(ctx: Context, rec: dict) -> dict:
+    """The fewest and most copies and how long an idle one stays, as the host has them. Read from the target and
+    the record, with no call to the cloud."""
+    from .. import compute as C
+
+    try:
+        return C.staged_scale(ctx, C.get(ctx, rec["target"]), rec)
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def logs(ctx: Context, pid: str, env: str = ENV, q: str | None = None, limit: int = 300, request_id: str | None = None,
@@ -174,6 +203,18 @@ def settings(ctx: Context, pid: str, env: str = ENV) -> dict:
             ["Last result", chk.get("text") or "Not run yet. Run it from the Requests tab, or with cst projects staging-check."],
             ["Passes at", "99.9% of checked feature values equal to what training saw"]]},
     ]
+    if rec.get("scale_to_zero"):  # the host decides when a copy sleeps, not an idle timer in the endpoint
+        sc = _scale(ctx, rec)
+        secs = sc.get("idle_seconds")
+        groups[1] = {"title": "Copies", "rows": [
+            ["Fewest", "None: it sleeps when nobody calls it." if not sc.get("min_copies") else f"{sc['min_copies']} kept up at all times"],
+            ["Most", str(sc.get("max_copies") or 1)],
+            ["Why", "Staging is for trying a model on a share of traffic. Production scaling is your own deployment's job."]]}
+        groups[2] = {"title": "Sleeping when idle", "rows": [
+            ["An idle copy stays up", f"{_span(secs)}" if secs else "As long as the host decides"],
+            ["Then", "The host takes the copy away, and nothing bills. The next request starts one, which takes a few seconds."]]}
+        return {"project": pid, "groups": groups, "idle_minutes": None, "idle_choices": [], "can_edit": False, "scale": sc,
+                "text": "This host sleeps when idle, so there is no idle time to set here. To change the machine, the copies or where it runs, stage it again."}
     return {"project": pid, "groups": groups, "idle_minutes": idle, "idle_choices": list(IDLE_CHOICES),
             "can_edit": rec.get("status") == "running" and rec.get("how") != "image",
             "text": "Only the idle time can be changed while it runs. To change the machine or where it runs, stage it again."}
@@ -192,6 +233,8 @@ def set_idle(ctx: Context, pid: str, minutes: float, env: str = ENV) -> dict:
     rec = state(ctx, pid, env)
     if not rec or rec.get("status") != "running":
         raise ValueError("Nothing is staged, so there is nothing to change. The idle time is chosen when you stage.")
+    if rec.get("scale_to_zero"):
+        raise ValueError("This host puts the endpoint to sleep by itself when nobody calls it, so there is no idle time to set.")
     set_control(ctx, pid, env, idle_minutes=m)
     _save(ctx, pid, env, idle_minutes=m)
     try:
@@ -225,7 +268,7 @@ def cost(ctx: Context, pid: str, env: str = ENV) -> dict:
     if rec.get("status") == "running":
         up = _ago(rec.get("started_at")) or 0.0
         try:
-            running = CE.cost_of(ctx, {"kind": "local"} if rec.get("kind") == "local" else C.get(ctx, rec["target"]), up)
+            running = CE.cost_of(ctx, {"kind": "local"} if rec.get("kind") == "local" else C.get(ctx, rec["target"]), up, staging=True)
         except Exception:  # noqa: BLE001
             running = None
         if running and running.get("usd") is not None:
@@ -259,6 +302,7 @@ def cost(ctx: Context, pid: str, env: str = ENV) -> dict:
     out = {"project": pid, "free": bool(local_only), "month_usd": month, "day_usd": day, "hourly_usd": None if local_only else hourly,
            "month_text": say(month), "day_text": say(day), "rows": rows, "running": rec.get("status") == "running",
            "rate_text": ("Runs on this computer. No cloud cost." if rec.get("kind") == "local" else
+                         f"About ${hourly:.2f} an hour while a copy is awake, and nothing while it sleeps. What is shown is the most it can have cost." if hourly and rec.get("scale_to_zero") else
                          f"About ${hourly:.2f} an hour while it is up, about ${hourly * 24:.2f} a day." if hourly else
                          "Captain can't price this target.") if rec.get("status") == "running" else
                         "Stopped. It costs nothing now.",

@@ -150,9 +150,9 @@ class ContainerAppsServing(HttpServing):
                                                  "registries": [{"server": c["registry_server"], "identity": ident}] if c.get("registry_server") and ident else []},
                                "template": {"containers": [{"name": "runtime", "image": st.get("image") or c["image"], "args": ["serve"],
                                                             "env": [{"name": k, "value": str(v)} for k, v in env.items()],
-                                                            # the size is the app's own: one named only at start runs at the smallest
-                                                            "resources": {"cpu": size["cpu"], "memory": f"{size['memory_mb'] / 1024:g}Gi"},
-                                                            "probes": [{"type": "Startup", "tcpSocket": {"port": 8080}, "periodSeconds": 3, "failureThreshold": 100}]}],
+                                                            # The size is the app's own: one named only at start runs at the
+                                                            # smallest. No probe of our own: the default waits for the port.
+                                                            "resources": {"cpu": size["cpu"], "memory": f"{size['memory_mb'] / 1024:g}Gi"}}],
                                             "scale": {"minReplicas": size["min"], "maxReplicas": size["max"],
                                                       "rules": [{"name": "http", "http": {"metadata": {"concurrentRequests": "32"}}}]}}}}
 
