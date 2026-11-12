@@ -1079,6 +1079,89 @@ def project_staging_scale_set(pid: str, body: dict):
     return _staging_call(SG.scale, ctx(), pid, min_copies=num("min_copies"), max_copies=num("max_copies"), idle_seconds=num("idle_seconds"))
 
 
+@app.get("/api/projects/{pid}/deploy/hosts", dependencies=A)
+def project_deploy_hosts(pid: str, candidate: str | None = None, baseline: bool = False):
+    """The places this project's model can be deployed: this computer, and one entry per cloud login connected in
+    Captain. {model_version, beside, hosts: [{host, label, login, region, can_deploy, why_not, first_time, proven,
+    proven_text, sleeps, reachable, estimate, minutes, fit?, last}]}. Calls no cloud."""
+    from .staging import deploy as DP
+
+    return _staging_call(DP.offers, ctx(), pid, candidate or None, bool(baseline))
+
+
+@app.get("/api/projects/{pid}/deploy", dependencies=A)
+def project_deploy_status(pid: str):
+    """Where the last deploy stands: {status: none | running | done | failed | removed, host, login, run, steps:
+    [{id, title, status, seconds, lines}], failed_step, error, exists_now, can: [retry, remove], policy, staged}."""
+    from .staging import deploy as DP
+
+    return _staging_call(DP.status, ctx(), pid)
+
+
+@app.post("/api/projects/{pid}/deploy", dependencies=A)
+def project_deploy(pid: str, body: dict | None = None):
+    """{host, login?, candidate?, baseline?, allow_large?, confirm?, dry_run?}: deploy the project's model there,
+    first-time work included, as one job with named steps. dry_run returns the plan. A cloud without confirm is
+    refused with 409 {needs_confirm, plan}. With confirm: {job, run, plan}; `run` is a live run (GET /api/live/{run})
+    whose stages are the plan's steps. Safe to send again: what exists is kept, and a failed deploy is picked up."""
+    from . import live as LV
+    from .staging import deploy as DP
+
+    c, b = ctx(), body or {}
+    args = dict(host=str(b.get("host") or "local"), login=b.get("login") or None, candidate=b.get("candidate") or None,
+                baseline=bool(b.get("baseline")), allow_large=bool(b.get("allow_large")))
+    p = _staging_call(DP.plan, c, pid, **args)
+    if isinstance(p, JSONResponse):
+        return p
+    if b.get("dry_run"):
+        return {**p, "dry_run": True}
+    if p["host"] == "local" and (p.get("fit") or {}).get("outcome") in ("wont-fit", "over-limit"):
+        raise HTTPException(400, p["fit"]["text"])
+    if p["needs_confirm"] and not b.get("confirm"):
+        return JSONResponse({"detail": "Confirm first. " + p["cost"]["text"], "needs_confirm": True, "plan": p}, status_code=409)
+    lr = LV.start("custom", f"Deploying {p['model_version']} to {p['label']}", of=pid, source="deploy")
+
+    def go(prog):
+        def hear(kind, **d):
+            if kind == "step":
+                lr.stage(d["title"], d["index"], d["of"])
+                prog((d["index"] - 1) / d["of"])
+                JOBS[jid].update(message=d["title"], step=d["id"])
+                JOBS[jid]["log"].append(d["title"])
+            elif kind == "line":
+                lr.log(d["text"])
+                JOBS[jid]["log"].append(d["text"])
+
+        try:
+            out = DP.run(c, pid, confirm=True, on_event=hear, **args)
+            lr.end("done", ref=p["model_version"], summary=f"Ready at {out.get('address')}")
+            return out
+        except BaseException as e:  # noqa: BLE001
+            JOBS[jid]["policy"] = getattr(e, "policy", None)
+            lr.end("failed", error=str(e)[:600])
+            raise
+
+    jid = _job(go, f"deploying {p['model_version']} to {p['label']}")
+    JOBS[jid].update(compute=p["host"], run=lr.id)
+    return {"job": jid, "run": lr.id, "plan": p}
+
+
+@app.delete("/api/projects/{pid}/deploy", dependencies=A)
+def project_deploy_remove(pid: str):
+    """Stop the model and, when this project's deploy did the first-time work and nothing else uses it, remove
+    that too. As a job."""
+    from .staging import deploy as DP
+
+    c = ctx()
+
+    def go(_p):
+        say = lambda t: JOBS[jid]["log"].append(str(t)) or JOBS[jid].__setitem__("message", str(t))  # noqa: E731
+        return DP.remove(c, pid, progress=say)
+
+    jid = _job(go, f"removing the deploy of {pid}")
+    return {"job": jid}
+
+
 @app.get("/api/serving/hosts", dependencies=A)
 def serving_hosts():
     """Every place a model can be hosted, as a card: label, whether it sleeps when idle, where the bundle and log

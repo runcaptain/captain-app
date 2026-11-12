@@ -41,13 +41,18 @@ PROVIDERS = [
             {"name": "connection_string", "label": "Connection string", "secret": True, "required": True}]},
         {"mode": "default", "label": "Default credential (az login, managed identity)", "fields": [
             {"name": "subscription_id", "label": "Subscription ID", "secret": False, "required": False}]}]},
+    # Modal signs in by itself on this computer (`modal token new`), so the login holds no secret: connecting it
+    # here is how a person says "offer Modal in this Captain", and which Modal environment to use.
+    {"provider": "modal", "label": "Modal", "auth": [
+        {"mode": "local", "label": "This computer's Modal sign-in (modal token new)", "fields": [
+            {"name": "environment", "label": "Modal environment (blank for your default)", "secret": False, "required": False}]}]},
 ]
 
 
 def _spec(provider: str, mode: str) -> dict:
     p = next((p for p in PROVIDERS if p["provider"] == provider), None)
     if p is None:
-        raise ValueError(f"unknown provider {provider!r}: use aws, gcp or azure")
+        raise ValueError(f"unknown provider {provider!r}: use aws, gcp, azure or modal")
     a = next((a for a in p["auth"] if a["mode"] == mode), None)
     if a is None:
         raise ValueError(f"{provider} has no auth mode {mode!r}: use {', '.join(x['mode'] for x in p['auth'])}")
@@ -205,6 +210,8 @@ def _test_profile(name: str) -> dict:
 
             creds.refresh(Request())
             return {"ok": True, "identity": getattr(creds, "service_account_email", None) or f"project {project}"}
+        if p["provider"] == "modal":
+            return _test_modal()
         cred, conn, _ = azure_credential(p)
         if conn:
             from azure.storage.blob import BlobServiceClient  # type: ignore
@@ -217,6 +224,15 @@ def _test_profile(name: str) -> dict:
         return {"ok": False, "error": f"the {p['provider']} SDK is not installed: pip install 'captain-search[{p['provider']}]' ({e.name})"}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:400]}
+
+
+def _test_modal() -> dict:
+    """Is this computer signed in to Modal? Read from Modal's own settings: nothing is sent anywhere."""
+    from modal.config import config  # type: ignore
+
+    if config.get("token_id") and config.get("token_secret"):
+        return {"ok": True, "identity": "this computer's Modal sign-in"}
+    return {"ok": False, "error": "This computer isn't signed in to Modal. Run `modal token new` in a terminal."}
 
 
 def provider_of(uri: str) -> str:

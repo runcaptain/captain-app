@@ -692,7 +692,7 @@ app.add_typer(models_app, name="models")
 
 
 @cloud_app.command("add")
-def cloud_add(name: str, provider: str = typer.Option(..., "--provider", help="aws, gcp or azure"),
+def cloud_add(name: str, provider: str = typer.Option(..., "--provider", help="aws, gcp, azure or modal"),
               auth: str = typer.Option(..., "--auth", help="aws: profile|keys|role|default, gcp: service-account|adc, azure: service-principal|connection-string|default"),
               region: Optional[str] = typer.Option(None, "--region"),
               field: list[str] = typer.Option([], "--field", "-f", help="name=value for non-secret fields"),

@@ -47,17 +47,79 @@ def deploy(name: str,
            baseline: bool = typer.Option(False, "--baseline", help="stage the baseline itself"),
            env: str = typer.Option("staging", "--env"),
            target: Optional[str] = typer.Option(None, "--target", help="compute target, or `local` for this computer; default the workspace's serving target"),
+           on: Optional[str] = typer.Option(None, "--on", help="where to run it: local, aws, modal, gcp or azure. The first time on a cloud, what it needs there is set up as part of the deploy"),
+           login: Optional[str] = typer.Option(None, "--login", help="with --on: which connected cloud login, when there is more than one"),
+           remove: bool = typer.Option(False, "--remove", help="stop the model, and remove the first-time setup too when this deploy made it and nothing else uses it"),
            idle_minutes: Optional[float] = typer.Option(None, "--idle-minutes", help="stop by itself after this long with no requests; default 240"),
            allow_large: bool = typer.Option(False, "--allow-large", help="stage on this computer even when the model is over the size limit for it"),
            yes: bool = typer.Option(False, "--yes", "-y", help="confirm the cost of a cloud deploy")):
     """Stage the project's current candidate as a live endpoint. The last line printed is its address."""
     from .. import staging as SG
 
+    if on or remove:
+        return _deploy_on(name, on, login, candidate, baseline, env, allow_large, yes, remove)
     stage(name, candidate, baseline, env, target, None, None, None, idle_minutes, allow_large, yes)
     if S.json or S.dry_run:
         return
     ep = ((SG.state(ctx(), name, env) or {}).get("endpoint")) or {}
     typer.echo(ep.get("url") or ep.get("name") or "")
+
+
+def _deploy_on(name, on, login, candidate, baseline, env, allow_large, yes, remove):
+    """`cst deploy <project> --on <host>`: one plan, one confirm, then the first-time work and the model, step by
+    step. The last line printed is the model's address."""
+    import json as _json
+
+    from ..staging import NeedsConfirm
+    from ..staging import deploy as DP
+
+    c = ctx()
+    try:
+        if remove:
+            if S.dry_run:
+                st = DP.status(c, name, env)
+                return emit({**st, "dry_run": True}, "Would stop the model and remove: " + (", ".join(f"{x['resource']} {x['name']}" for x in st.get("exists_now") or []) or "nothing else"))
+            r = DP.remove(c, name, env, progress=None if S.json else lambda t: typer.echo(t, err=True))
+            return emit(r, r["text"])
+        p = DP.plan(c, name, on, login, candidate, baseline, env, allow_large)
+        lines = [p["text"]]
+        for g in p["creates"]["groups"]:
+            lines += [f"{g['title']}:"] + [f"  {r['resource']:28} {r['name']}" for r in g["items"]]
+        if S.dry_run:
+            return emit({**p, "dry_run": True}, "\n".join(lines))
+        if p["needs_confirm"] and not yes:
+            if S.json:
+                fail("Confirm first with --yes. " + p["cost"]["text"])
+            typer.echo("\n".join(lines))
+            if not typer.confirm("Deploy it?"):
+                raise typer.Exit(1)
+
+        def hear(kind, **d):
+            if S.json:
+                return
+            if kind == "step":
+                typer.echo(f"[{d['index']}/{d['of']}] {d['title']}", err=True)
+            elif kind == "line":
+                typer.echo(f"      {d['text']}", err=True)
+
+        r = DP.run(c, name, on, login, candidate, baseline, env, confirm=True, allow_large=allow_large, on_event=hear)
+    except NeedsConfirm as e:
+        fail(str(e))
+    except _staging_errors() as e:
+        st = DP.status(c, name, env)
+        if st.get("status") == "failed" and st.get("failed_step"):
+            left = ", ".join(f"{x['resource']} {x['name']}" for x in st.get("exists_now") or [])
+            msg = (f"The deploy stopped at \"{st['failed_step']['title']}\": {e}\n"
+                   + (f"What exists now: {left}.\n" if left else "Nothing was created.\n")
+                   + f"Run the same command again to pick it up where it stopped" + (f", or `cst deploy {name} --remove` to take it away." if left else "."))
+            if getattr(e, "policy", None):
+                msg += "\n" + _json.dumps(e.policy, indent=2)
+            if S.json:
+                emit({"error": str(e), "deploy": st})
+                raise typer.Exit(1)
+            fail(msg)
+        fail(str(e))
+    emit(r, f"Deployed {r['model_version']} to {r['label']}.\n{r.get('address') or ''}")
 
 
 @deployments_app.command("list")

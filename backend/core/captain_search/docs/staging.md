@@ -93,6 +93,53 @@ so no Docker is needed on your computer. Everything is named `<prefix>-serving..
 `--remove` takes it all away again and is refused while a model is staged there. `--policy` prints the exact
 policy your login needs, for an admin. A login that lacks a permission is told which step and which action.
 
+## Deploy in one step
+
+    cst deploy <project> --on <local|aws|modal|gcp|azure> [--login <name>] [--yes]
+    cst deploy <project> --remove
+
+A person never sets up serving as a step of its own. `--on` names where the model runs. Captain shows one plan and
+asks once, then does the work as one run with named steps:
+
+| Step | What it does |
+|---|---|
+| Checking your account | Looks at what is there already |
+| Creating the role (or the volume, the service accounts and the bucket, the resource group) | The first time on a cloud only: what the model runs as and where its files are kept |
+| Building the image | The first time only |
+| Starting the model | Every time |
+| Ready | It answered. The last line printed is its address |
+
+The second deploy on the same cloud skips the two first-time steps. On this computer there is nothing to create
+and nothing to confirm.
+
+**The plan** (`--dry-run`, or `POST /api/projects/{id}/deploy` with `dry_run`) says what will be created, in two
+groups (the first time only, and for this model), what exists already, the cost by the hour and by the month, and
+how long it takes. The minutes come from what a real run measured on that cloud, with its date. A cloud that has
+not run on a real account gives a cautious range and says it is a guess.
+
+**It is safe to run twice.** What exists is kept. A deploy that stopped is picked up where it stopped: run the same
+command again.
+
+**When it fails midway** it says which step failed and why, lists what exists now, and offers two ways on: the same
+command again (retry), or `cst deploy <project> --remove`. Remove stops the model, and takes away the first-time
+work too when this project's deploy made it and no other project has a model there. A login that lacks a
+permission fails its step with the sentence and the policy to hand to an admin.
+
+**Where it can be deployed** is this computer, plus one place for each cloud login connected in Captain
+(`cst cloud list`). A cloud with no login is not offered. Modal counts as a login too: `cst cloud add modal
+--provider modal --auth local` says "offer Modal here", using this computer's own Modal sign-in.
+`GET /api/projects/{id}/deploy/hosts` returns them for the page, each with whether it can deploy now, whether the
+first-time work is still to do, whether it has run on a real account, its estimate and how long it takes. It calls
+no cloud.
+
+**For the app**: `POST /api/projects/{id}/deploy` `{host, login?, confirm?}` answers 409 with the plan until
+`confirm` is sent, then `{job, run, plan}`. `run` is a live run (`GET /api/live/{run}`) whose stages are the steps
+above, with the lines under each. `GET /api/projects/{id}/deploy` says where the last deploy stands (each step, the
+one that failed, what exists now, `can: [retry, remove]`), and `DELETE` removes it.
+
+`cst projects stage` and `cst compute setup serving` below are the same work in two parts, kept for agents and
+scripts.
+
 ## Hosts: every place a staged model can run
 
 Every host has the same shape, so staging, the request log, shadow mode, the split, the served-features check and

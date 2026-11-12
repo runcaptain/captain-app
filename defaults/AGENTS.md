@@ -1153,6 +1153,10 @@ last project opened there. With no project it offers New project, which can pin 
   `--policy`, `--leftovers` and `--remove`; `GET /api/serving/hosts`). Modal, Google Cloud and Azure sleep when
   nobody calls: no copy is up, nothing bills, the next request wakes one, and the page says "Asleep" rather than
   waking it to ask. A cloud that has not run on a real account says so on its card and shows no cost estimate.
+  One command does it all for a person or an agent: `cst deploy <project> --on <local|aws|modal|gcp|azure> --yes`
+  shows one plan, then runs the first-time work on that cloud (if any) and starts the model, as named steps. Run
+  it again to retry a deploy that stopped, and `cst deploy <project> --remove` takes it away. Only this computer
+  and the cloud logins connected in Captain are offered (`GET /api/projects/<id>/deploy/hosts`).
   A team with its own serving stages `--endpoint <url>`
   (Captain's runtime sits in front of it) or `--image <uri>`. Once a candidate is judged, the page's Next line
   offers "Stage it", and the page publishes these steps for agents (`cst app context`). Staging is pinned for an

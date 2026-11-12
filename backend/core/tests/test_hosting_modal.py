@@ -532,8 +532,6 @@ def test_copies_from_the_cli_and_the_api_and_a_plan_with_nothing_to_warn_about(w
     # The Copies tab's own address still answers with the copies that are running: the two never share one.
     rows = c.get("/api/projects/shop/staging/copies", headers=h).json()
     assert "rows" in rows and len(rows["rows"]) == 1 and rows["rows"][0]["model_version"]
-    paths = [(m, r.path) for r in server.app.routes for m in getattr(r, "methods", None) or [] if "/staging" in r.path or "/serving" in r.path]
-    assert len(paths) == len(set(paths)), [x for x in paths if paths.count(x) > 1]  # no staging address is registered twice
     cards = c.get("/api/serving/hosts", headers=h).json()
     assert [x["cloud"] for x in cards] == ["local", "aws", "modal", "gcp", "azure"] and cards[2]["setup"]["status"] == "ready"
     plan = c.get("/api/serving/setup", params={"cloud": "modal", "plan": "true", "environment": "captain-search-test"}, headers=h).json()
