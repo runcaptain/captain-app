@@ -356,6 +356,40 @@ await wait(h, () => h.mod.ship.backs?.auto?.on === true, 'automatic roll back is
 assert.ok(h.text().includes('On: if a new version is unhealthy in its first 30 minutes, Captain puts the previous one back and tells you.'));
 assert.deepEqual(sent.find((x) => x[0] === 'PUT' && x[1].endsWith('/staging/rollbacks/auto'))[2], { minutes: 30 });
 
+// The present over the past: a deploy that failed earlier never covers a model that is running. It is one line
+// that can be dismissed, on the project page and on the deployed screen, and the Next banner is back.
+for (const deployOpen of [false, true]) {
+  h = await open({ places: [LOCAL, AWS], staging: RUN }, deployOpen);
+  h.mod.ship.djob = { place: { id: 'aws:aws-main', label: 'AWS' }, steps: STEPS.map((x) => ({ ...x, status: 'failed' })), started: Date.now(), failed: { text: 'An A/B test is running on this endpoint.', step: 'Starting the model' } };
+  await h.idle(20);
+  t = h.text();
+  assert.equal(byId(h, 'ship-progress').length, 0, `no failed panel over a running model (deployed screen: ${deployOpen})`);
+  assert.ok(!t.includes('Deploying to AWS stopped'), 'the old panel title is gone');
+  assert.equal(byId(h, deployOpen ? 'deployed' : 'ship-deployed').length, 1, 'the deployed view is shown');
+  assert.equal(h.mod.ship.djob, null, 'the past job is put away');
+  if (!deployOpen) {
+    assert.ok(t.includes('An earlier deploy to AWS didn\'t finish, at "Starting the model". This model is running.'), `one line says so: ${t.slice(-500)}`);
+    assert.equal(h.mod.ship.steps()[0].done, true, 'the steps agents read say it is deployed');
+    await h.click('ship-past-dismiss');
+    assert.equal(byId(h, 'ship-past').length, 0, 'and it can be dismissed');
+  }
+}
+// With nothing running, a failed deploy is the present: its panel stays.
+h = await open({ places: [LOCAL, AWS], staging: NONE });
+h.mod.ship.djob = { place: { id: 'aws:aws-main', label: 'AWS' }, steps: [], started: Date.now(), failed: { text: 'no capacity', step: 'Starting the model' } };
+await h.idle(20);
+assert.equal(byId(h, 'ship-progress').length, 1);
+// And the page keeps asking what is deployed, whatever it last saw: a model deployed from a terminal shows up.
+h = await open({ places: [LOCAL, AWS], staging: NONE });
+assert.equal(byId(h, 'ship-deployed').length, 0);
+world.staging = RUN;
+{ const before = sent.filter((x) => x[0] === 'GET' && x[1].endsWith('/staging')).length;
+  h.mod.ship.tick(h.cx ?? h.mod.cx ?? { notify() {}, spawn: (f) => f({ notify() {} }) });
+  await wait(h, () => h.mod.ship.running(), 'the tick reads what is deployed even when nothing was running');
+  assert.ok(sent.filter((x) => x[0] === 'GET' && x[1].endsWith('/staging')).length > before); }
+await h.idle(20);
+assert.equal(byId(h, 'ship-deployed').length, 1, 'and the deployed view appears');
+
 // Asleep, and stopped: said in words.
 h = await open({ places: [LOCAL, AWS], staging: { ...RUN, asleep: true }, live: { state: 'asleep', label: 'Asleep' } }, true);
 assert.ok(h.text().includes('Asleep on AWS. It wakes on the next request, and costs nothing asleep.'), `asleep: ${h.text()}`);

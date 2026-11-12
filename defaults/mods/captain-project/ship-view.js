@@ -294,6 +294,7 @@ function progressBox(ship, c) {
 
 /** The bottom of the project page. Only where to deploy, or what is deployed. */
 export function ShipSection(ship, c) {
+  ship.settlePast();
   const d = ship.dp, s = ship.staged(), on = ship.running() || ship.status?.status === "starting";
   const cand = ship.pick(), champ = ship.page.exps?.champion ?? null;
   const what = cand ? short(cand.pipeline) : champ ? short(champ) : null;
@@ -313,6 +314,7 @@ export function ShipSection(ship, c) {
       .when(Boolean(address), (e) => e.child(h_flex().gap(8).items_center().flex_wrap()
         .child(div().id("ship-deployed-address").min_w(0).max_w_full().truncate().font_family(MONO).text_size(12.5).text_color(c.navy).child(address))
         .child(Button(c, "ship-deployed-copy", "Copy", (_e, cx) => ship.copy(cx, address, "The address is on your clipboard."), { small: true })))))
+      .when(Boolean(ship.dpast), (e) => e.child(pastLine(ship, c)))
       .when(Boolean(ship.dnote), (e) => e.child(note(c, ship.dnote)));
   }
   if (!what) return wrap.child(line(c, "ship-nothing", "Train a model, or pick one to compare others with, and you can deploy it here.", "grey500"));
@@ -328,6 +330,11 @@ export function ShipSection(ship, c) {
     .when(Boolean(s) && !on && !ship.page.deployOpen, (e) => e.child(line(c, "ship-last", `Last deployed: ${short(s.model_version)}. ${stateWords(ship).text}${s.spent?.text ? ` ${s.spent.text}.` : ""}`, "grey500")))
     .when(Boolean(ship.dnote), (e) => e.child(note(c, ship.dnote)));
 }
+
+/** An earlier failure, once a model is running: one line, and a way to put it away. */
+const pastLine = (ship, c) => h_flex().id("ship-past").gap(8).items_center().flex_wrap()
+  .child(div().id("ship-past-text").flex_1().min_w(0).text_size(12.5).text_color(c.grey500).child(ship.dpast.text))
+  .child(Button(c, "ship-past-dismiss", "Dismiss", (_e, cx) => { ship.dpast = null; cx.notify(); }, { small: true }));
 
 const note = (c, n) => div().id("ship-note").px(10).py(6).text_size(12.5).bg(n.tone === "fail" ? c.failLight : c.goodLight).text_color(n.tone === "fail" ? c.fail : c.good).child(n.text);
 
@@ -438,6 +445,7 @@ function costLine(ship, c) {
 /** The deployed model, top to bottom. */
 export function DeployedView(ship, c) {
   const s = ship.staged(), on = ship.running(), w = stateWords(ship);
+  ship.settlePast();
   if (!s || ship.djob || ship.dconfirm) return ShipSection(ship, c);
   const address = on ? (s.url ?? s.endpoint?.url ?? s.endpoint?.name ?? "") : null;
   const k = ship.conn, r = ship.result;

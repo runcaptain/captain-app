@@ -207,10 +207,27 @@ export class Ship {
   }
 
   /** Redraw the countdown, and look again while something is running, starting, or being staged or stopped. */
+  /** Every few seconds, ask what is deployed. Always: a model can be deployed, stopped or replaced from a
+   *  terminal or another window, and what this page says must be the present, not what it last did itself. */
   tick(cx) {
+    if (!this.pid() || (this.busy && !this.busyFor)) return;
     const s = this.status?.status;
-    if (this.pid() && (this.busyFor || (!this.busy && (s === "running" || s === "starting")))) { this.load(cx); if (this.page.deployOpen) this.loadTab(cx); }
+    this.load(cx);
+    if (this.page.deployOpen && (s === "running" || s === "starting")) this.loadTab(cx);
   }
+
+  /** A deploy that failed earlier is the past. Once a model is running it is one line that can be dismissed,
+   *  never a panel over what is deployed. Returns whether a model is running. */
+  settlePast() {
+    if (this.djob?.failed && this.running() && this.staged()) {
+      this.dpast = { text: `An earlier deploy to ${this.djob.place?.label ?? "this place"} didn't finish${this.djob.failed.step ? `, at "${this.djob.failed.step}"` : ""}. This model is running.` };
+      this.djob = null;
+    }
+    return this.running();
+  }
+
+  /** Whether a deploy's own panel is on screen: one in progress, or one that failed with nothing running. */
+  jobShown() { this.settlePast(); return Boolean(this.djob); }
 
   running() { return this.status?.status === "running"; }
   staged() { return this.status?.staged ?? null; }
@@ -318,6 +335,7 @@ export class Ship {
   // ---- the steps, as plain data: the page draws them, and agents read them (cst app context) ---------------------
 
   steps() {
+    this.settlePast();
     const st = this.staged(), on = this.running();
     const cand = this.pick(), champ = this.page.exps?.champion ?? null;
     const what = st?.model_version ? short(st.model_version) : null;
