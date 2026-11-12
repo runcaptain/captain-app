@@ -265,6 +265,9 @@ def machine(ctx: Context, target: dict, size: dict | None = None) -> dict:
     kind, cfg, region = target.get("kind"), target.get("config") or {}, target.get("region")
     spec = C.kind_map().get(kind) or {}
     label = spec.get("label") or kind
+    # A host that sleeps when idle is priced once a model has been staged on it on a real account, and not before.
+    if kind in SLEEPERS and (size or {}).get("_staging") and (spec.get("serving") or {}).get("live_tested"):
+        return _sleeper(target, spec)
     if target.get("provider") != "aws" or not spec.get("live_tested"):
         return {"none": f"No estimate for {label} yet."}
     if kind in ("aws-ecs", "aws-batch"):
@@ -298,6 +301,45 @@ def machine(ctx: Context, target: dict, size: dict | None = None) -> dict:
                 "min_seconds": 0.0,
                 "basis": [f"{name} in {region}: ${hourly:.4f} an hour (${p['hour']:.4f} per instance).", _price_words(p)]}
     return {"none": f"No estimate for {label} yet."}
+
+
+SLEEPERS = ("modal-endpoint", "gcp-cloud-run", "azure-container-apps")
+
+
+def _sleeper(target: dict, spec: dict) -> dict:
+    """A host that bills by the second a copy is awake. `hourly` is one copy awake for an hour; `kept_hourly` is
+    what the copies kept up while idle cost (0 when it sleeps). From list prices (price_table.py)."""
+    from . import price_table as PT
+
+    kind, cfg, region = target.get("kind"), target.get("config") or {}, target.get("region")
+
+    def num(k, d):
+        try:
+            return float(cfg.get(k) or d)
+        except (TypeError, ValueError):
+            return float(d)
+
+    cpu, gb, kept = num("cpu", 1), num("memory_mb", 2048) / 1024, int(num("min_copies", 0))
+    if kind == "modal-endpoint":
+        hourly = 3600 * (cpu * PT.MODAL["core_second"] + gb * PT.MODAL["gib_second"])
+        idle = hourly  # a copy kept up on Modal bills as an awake one
+        name, where = f"{cpu:g} CPU, {gb:g} GB on Modal", "Modal"
+    elif kind == "gcp-cloud-run":
+        p = PT.CLOUD_RUN
+        hourly = 3600 * (cpu * p["vcpu_second"] + gb * p["gib_second"])
+        idle = 3600 * (cpu * p["idle_vcpu_second"] + gb * p["idle_gib_second"])
+        name, where = f"{cpu:g} vCPU, {gb:g} GB on Cloud Run", f"Cloud Run in {region}"
+    else:
+        p = PT.CONTAINER_APPS.get(str(region or "").lower().replace(" ", ""), PT.CONTAINER_APPS["default"])
+        hourly = 3600 * (cpu * p["vcpu_second"] + gb * p["gib_second"])
+        idle = 3600 * (cpu * p["idle_vcpu_second"] + gb * p["idle_gib_second"])
+        name, where = f"{cpu:g} vCPU, {gb:g} GB on Container Apps", f"Container Apps in {region}"
+    proven = (spec.get("serving") or {}).get("live_tested")
+    return {"hourly": hourly, "kept_hourly": kept * idle, "kept": kept, "sleeps": True, "label": name,
+            "priced_as_of": PT.SERVERLESS_PRICED_AS_OF, "price_source": "bundled", "min_seconds": 0.0,
+            "basis": [f"{name}: ${hourly:.4f} an hour for each copy while it is awake, on {where}.",
+                      f"List prices as of {PT.SERVERLESS_PRICED_AS_OF}. Free monthly allowances are not counted.",
+                      *([] if proven else ["Captain has not run a model on this host on a real account yet, so this is the list price only."])]}
 
 
 # ---- how long ------------------------------------------------------------------------------------------------
@@ -428,7 +470,16 @@ def estimate(ctx: Context, kind: str, where=None, size: dict | None = None) -> d
     if target.get("kind") != "local" and ctx.workspace.storage_uri.split("://")[0] not in ("s3", "gs", "gcs", "az", "azure") and kind != "staging":
         out["basis"].append("This workspace is on this computer's disk. Work on a cloud needs a cloud workspace, "
                             "so it can't run there yet.")
-    m = machine(ctx, target, size)
+    m = machine(ctx, target, {**size, "_staging": True} if kind == "staging" else size)
+    if m.get("sleeps") and kind == "staging":
+        out.update(machine=m["label"], hourly=round(m["hourly"], 6), priced_as_of=m["priced_as_of"], price_source=m["price_source"])
+        awake, kept = m["hourly"], m["kept_hourly"]
+        asleep = (f"about {money(kept * 24)} a day for the {m['kept']} kept up while idle" if kept else "nothing while it sleeps")
+        return {**out, "available": True, "unit": "hour", "low": round(kept, 4), "high": round(awake, 4), "confidence": "rough",
+                "sleeps": True, "basis": [*m["basis"], "It bills only for the seconds a copy is awake."
+                                          + ("" if kept else " With no requests it costs nothing.")],
+                "confirm": max(awake, kept) * 24 >= out["threshold"],
+                "text": f"About {money(awake)} an hour while a copy is awake on {name}, {asleep}. Estimate, prices as of {m['priced_as_of']}."}
     if m.get("none"):
         return {**out, "text": m["none"], "basis": [*out["basis"], m["none"],
                                                     "Captain only estimates where it has run real jobs. Today that is AWS."]}
@@ -610,17 +661,26 @@ def note_estimate(ctx: Context, run_id: str, est: dict | None, *, kind: str, siz
     return _change(ctx, run_id, ch)
 
 
-def cost_of(ctx: Context, target: dict, seconds: float) -> dict:
+def cost_of(ctx: Context, target: dict, seconds: float, staging: bool = False) -> dict:
     """What `seconds` on this target cost: {usd, hourly_usd, machine, priced_as_of, price_source, text}. usd is None
     when Captain can't price the target; on this computer it is 0."""
     where = target.get("name") or "local"
     if target.get("kind") == "local":
         return {"usd": 0.0, "free": True, "seconds": round(seconds, 1), "where": where,
                 "text": f"No cloud cost ({duration_words(seconds)} on this computer)"}
-    m = machine(ctx, target)
+    m = machine(ctx, target, {"_staging": True} if staging else None)
     if m.get("none"):
         return {"usd": None, "free": False, "seconds": round(seconds, 1), "where": where, "note": m["none"],
                 "text": f"{duration_words(seconds)} on {where}. {m['none']}"}
+    if m.get("sleeps"):
+        # Captain knows how long it was staged, not how long a copy was awake: the most it can have cost is every
+        # second awake. The provider's bill has the real figure.
+        most = m["hourly"] * seconds / 3600
+        return {"usd": round(most, 4), "free": False, "seconds": round(seconds, 1), "where": where, "upper_bound": True,
+                "hourly_usd": round(m["hourly"], 6), "machine": m["label"], "priced_as_of": m["priced_as_of"], "price_source": m["price_source"],
+                "text": f"Cost at most {'$0.01' if most < 0.01 else money(most)} (staged {duration_words(seconds)} on {where}, billed only while a copy was awake)",
+                "detail": f"{m['label']}, ${m['hourly']:.4f} an hour awake, prices as of {m['priced_as_of']}. This is the ceiling: "
+                          "the whole time staged, as if one copy never slept."}
     billed = max(seconds, m["min_seconds"])
     usd = m["hourly"] * billed / 3600
     return {"usd": round(usd, 4), "free": False, "seconds": round(seconds, 1), "billed_seconds": round(billed, 1),
@@ -635,7 +695,7 @@ def note_actual(ctx: Context, run_id: str, target: dict, seconds: float, *, stat
                 provider_usd: float | None = None, kind: str | None = None, size: dict | None = None,
                 project: str | None = None, title: str | None = None) -> dict:
     """Record what a finished run took and cost, beside its estimate. Returns the cost ({usd, text, ...})."""
-    cost = cost_of(ctx, target, seconds)
+    cost = cost_of(ctx, target, seconds, staging=kind == "staging")
     cost.update(state=state, provider_usd=provider_usd, at=_now())
 
     def ch(doc):

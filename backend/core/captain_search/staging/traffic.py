@@ -73,9 +73,22 @@ def where(rec: dict) -> dict:
     if rec.get("kind") == "local":
         return {"reachable": False, "address": ep.get("url"),
                 "text": "Running on this computer. Only this computer can reach it."}
+    if _http(rec):  # a host whose endpoint has an address of its own: Modal, Cloud Run, Container Apps
+        from . import hosts as H
+
+        h = H.of_kind(rec.get("kind") or "")
+        return {"reachable": True, "address": ep.get("url"),
+                "text": f"Running on {h.label if h else rec.get('target')} at {ep.get('url')}" + (f" ({ep.get('region')})" if ep.get("region") else "")
+                        + ". Your site can call it."}
     return {"reachable": True, "address": ep.get("name"),
             "text": f"Running in your AWS account at {ep.get('name')}" + (f" ({ep.get('region')})" if ep.get("region") else "")
                     + ". Your site can call it."}
+
+
+def _http(rec: dict) -> bool:
+    """Does a site call this endpoint at an address, with the key as a bearer token? True on this computer and on
+    every host but SageMaker, which is called through AWS."""
+    return rec.get("kind") == "local" or (rec.get("kind") != "aws-sagemaker" and bool((rec.get("endpoint") or {}).get("url")))
 
 
 def snippets(rec: dict) -> dict:
@@ -84,7 +97,7 @@ def snippets(rec: dict) -> dict:
     ep = rec.get("endpoint") or {}
     fallback = ("If the endpoint doesn't answer in time, or answers with an error, show your own search results. "
                 "A slow ranking must never hold up the page.")
-    if rec.get("kind") == "local":
+    if _http(rec):
         url = ep.get("url")
         curl = f"""# Get a ranking. Keep the request_id it returns.
 curl -s --max-time {TIMEOUT_MS / 1000:g} {url}/rank \\
@@ -254,7 +267,7 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
     ep = rec.get("endpoint") or {}
     out["test_request"] = (
         f"curl -s {ep.get('url')}/rank -H \"Authorization: Bearer $CAPTAIN_STAGING_KEY\" -H \"Content-Type: application/json\" "
-        f"-d '{{\"query\": \"{q}\", \"k\": 5, \"traffic\": \"test\"}}'" if rec.get("kind") == "local" else
+        f"-d '{{\"query\": \"{q}\", \"k\": 5, \"traffic\": \"test\"}}'" if _http(rec) else
         f"aws sagemaker-runtime invoke-endpoint --region {ep.get('region')} --endpoint-name {ep.get('name')} --content-type application/json "
         f"--cli-binary-format raw-in-base64-out --body '{{\"op\": \"rank\", \"key\": \"'\"$CAPTAIN_STAGING_KEY\"'\", \"query\": \"{q}\", \"k\": 5, \"traffic\": \"test\"}}' /dev/stdout")
     ago = _ago(out["last_real_at"])

@@ -109,6 +109,15 @@ def cost(target: dict, ctx: Context) -> dict:
     local = target["kind"] == "local"
     size = {} if local else {"instances": int(c.get("instance_count") or 1), "instance_type": c.get("instance_type") or "ml.m5.large"}
     est = CE.estimate(ctx, "staging", target, size)
+    if est.get("sleeps"):  # a host that sleeps when idle bills by the second awake, not by the hour up
+        return {"instance_type": est.get("machine"), "instance_count": None, "hourly_usd": est.get("high"), "billing": True,
+                "estimate": est, "sleeps": True, "text": est["text"]}
+    if not local:
+        from .. import compute as C
+
+        if C.scale_to_zero(ctx, target):  # not priced yet (it has not run on a real account), and it still sleeps
+            return {"instance_type": None, "instance_count": None, "hourly_usd": None, "billing": True, "estimate": est, "sleeps": True,
+                    "text": est["text"] + " It bills only while a copy is awake, and sleeps when nobody calls it."}
     return {"instance_type": size.get("instance_type"), "instance_count": size.get("instances"),
             "hourly_usd": est.get("low"), "billing": not local, "estimate": est,
             "text": est["text"] + (" It stops when idle." if local else f" {KEEPS_BILLING}")}
@@ -160,13 +169,17 @@ def _arm_spec(ctx: Context, pid: str, bundle_key: str, name: str, pipeline: str,
 
 
 def build_bundle(ctx: Context, pid: str, env: str, arms: dict[str, str | dict], serve: str,
-                 idle_minutes: float = IDLE_MINUTES, store=None) -> tuple[str, dict]:
+                 idle_minutes: float = IDLE_MINUTES, store=None, sleeps: bool = False) -> tuple[str, dict]:
     """Write a serving bundle for these arms ({arm name: pipeline ref, or a ready arm entry}). bundle.json goes
     last, so a half-written bundle is never loaded."""
     bid = "stg-" + new_id().lower()[-10:]
     key = f"staging/{pid}/bundles/{bid}"
     doc = {"id": bid, "project": pid, "env": env, "created_at": _now(), "created_by": whoami(), "arms": {},
-           "idle_minutes": idle_minutes, "control": {"serve": serve, "split": None, "experiment": None, "salt": bid,
+           "idle_minutes": idle_minutes,
+           # On a host that sleeps when idle, the host stops the copies: the runtime never stops itself. And an
+           # endpoint that only holds the bundle and the log never publishes the log: Captain does, from the workspace.
+           **({"scale_to_zero": True} if sleeps else {}), **({"serving_store": True} if store is not None else {}),
+           "control": {"serve": serve, "split": None, "experiment": None, "salt": bid,
                                                      "stage": bid}}
     for name, a in arms.items():
         doc["arms"][name] = a if isinstance(a, dict) else _arm_spec(ctx, pid, key, name, a, store)
@@ -280,8 +293,8 @@ def _target(ctx: Context, name: str | None) -> dict:
     name = name or ST.default_compute(ctx, "serve") or "local"
     t = C.get(ctx, name)
     if t["kind"] != "local" and not C.can_stage(ctx, t):
-        raise ValueError(f"Compute target {name} ({t['kind']}) can't run a staging endpoint yet. Use a SageMaker "
-                         "target, or stage on this computer with --target local.")
+        raise ValueError(f"Compute target {name} ({t['kind']}) can't run a staging endpoint yet. Use a target that "
+                         "serving setup made (AWS, Modal, Google Cloud or Azure), or stage on this computer with --target local.")
     return t
 
 
@@ -493,7 +506,11 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
         # the serving bucket the target names. The workspace itself stays here.
         store = None
         uri = (t.get("config") or {}).get("serving_storage")
-        if t["kind"] != "local" and uri and not ctx.workspace.storage_uri.startswith(("s3://", "gs://", "gcs://", "az://", "azure://")):
+        # The same holds for a host that keeps storage of its own whatever the workspace is on (a Modal volume,
+        # the serving bucket of Cloud Run or Container Apps).
+        own = bool(uri) and t["kind"] != "local" and C.own_serving_storage(ctx, t)
+        if t["kind"] != "local" and uri and uri != ctx.workspace.storage_uri and (
+                own or not ctx.workspace.storage_uri.startswith(("s3://", "gs://", "gcs://", "az://", "azure://"))):
             from ..storage.backend import open_store
 
             store = open_store(uri, t.get("profile"))
@@ -506,8 +523,9 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
                 doc["storage_uri"] = uri
                 _put(store, "workspace.yaml", _yaml.safe_dump(doc, sort_keys=False).encode())
             rec.update(serving_storage=uri, serving_profile=t.get("profile"))
-        bundle_key, bundle = build_bundle(ctx, pid, env, arms, p["serve"], idle, store)
-        rec.update(id=bundle["id"], bundle=bundle_key)
+        sleeps = t["kind"] != "local" and C.scale_to_zero(ctx, t)
+        bundle_key, bundle = build_bundle(ctx, pid, env, arms, p["serve"], idle, store, sleeps=sleeps)
+        rec.update(id=bundle["id"], bundle=bundle_key, **({"scale_to_zero": True} if sleeps else {}))
         _save(ctx, pid, env, rec)  # before the control document, so it is written where the endpoint reads it
         if not given:
             try:
@@ -582,7 +600,10 @@ def unstage(ctx: Context, pid: str, env: str = ENV, reason: str | None = None) -
         elif rec.get("resources"):
             if rec.get("status") == "running" and rec.get("how") != "image":
                 try:
-                    r = call(ctx, rec, "flush", {"publish": True})
+                    if not rec.get("scale_to_zero") or _awake(ctx, rec):  # a sleeping copy holds nothing to write
+                        r = call(ctx, rec, "flush", {"publish": True})
+                    else:
+                        r = {"publish_note": "asleep"}
                     if r.get("publish_note"):  # the endpoint's role may only write the log: publish it from here
                         L.publish(ctx, pid, env, rec["id"])
                 except Exception:  # noqa: BLE001
@@ -628,7 +649,7 @@ def public(rec: dict | None) -> dict | None:
         return None
     out = {k: v for k, v in rec.items() if k not in ("key_secret",)}
     ep = dict(rec.get("endpoint") or {})
-    out["endpoint"] = {k: ep.get(k) for k in ("name", "url", "region", "log") if ep.get(k)} or None
+    out["endpoint"] = {k: ep.get(k) for k in ("name", "url", "region", "log", "environment", "private", "resource_group") if ep.get(k)} or None
     out["needs_key"] = bool(rec.get("key_secret"))
     return out
 
@@ -660,7 +681,15 @@ def status(ctx: Context, pid: str, env: str = ENV, sweep: bool = True) -> dict:
                 gone = s.get("reason") or "the endpoint no longer exists"
             elif s["state"] == "failed":
                 gone = s.get("reason") or "the endpoint failed"
+            elif s["state"] == "running" and rec.get("scale_to_zero") and not s.get("copies") and not s.get("ask"):
+                # Asleep, or the host doesn't say: asking the endpoint would wake it, and a page that asks every
+                # few seconds would then keep it awake and billing. Say so instead. (A host that bills only while
+                # it answers sets `ask`: there a question costs a few milliseconds.)
+                out["asleep"] = s.get("copies") == 0
+                out["copies"] = s.get("copies")
+                return {**out, "text": _status_text(rec, None, asleep="yes" if out["asleep"] else "unknown")}
             elif s["state"] == "running" and rec.get("how") != "image":
+                out["copies"] = s.get("copies")
                 health = call(ctx, rec, "status", {})
             else:
                 out["status"] = "starting" if s["state"] == "starting" else out["status"]
@@ -678,12 +707,12 @@ def status(ctx: Context, pid: str, env: str = ENV, sweep: bool = True) -> dict:
         _note(ctx, pid, f"staging stopped by itself ({why})")
         rec = state(ctx, pid, env)
         return {**out, "status": "stopped", "staged": public(rec), "text": _status_text(rec, None)}
-    if health and sweep and health.get("idle_s", 0) >= float(health.get("idle_minutes") or rec.get("idle_minutes") or IDLE_MINUTES) * 60:
+    if health and sweep and not rec.get("scale_to_zero") and health.get("idle_s", 0) >= float(health.get("idle_minutes") or rec.get("idle_minutes") or IDLE_MINUTES) * 60:
         unstage(ctx, pid, env, reason=f"stopped by itself: no requests for {rec.get('idle_minutes') or IDLE_MINUTES:g} minutes")
         rec = state(ctx, pid, env)
         return {**out, "status": "stopped", "staged": public(rec), "text": _status_text(rec, None)}
     out["health"] = health
-    if health:
+    if health and health.get("stops_in_s") is not None:
         out["stops_at"] = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=health["stops_in_s"])).isoformat(timespec="seconds")
     return {**out, "text": _status_text(rec, health)}
 
@@ -697,7 +726,17 @@ def _span(seconds: float) -> str:
     return f"{m // 60} h {m % 60} min" if m % 60 else f"{m // 60} h"
 
 
-def _status_text(rec: dict, health: dict | None) -> str:
+def _awake(ctx: Context, rec: dict) -> bool:
+    """Is a copy of a sleeping host's endpoint up right now? Unknown counts as yes."""
+    from .. import compute as C
+
+    try:
+        return C.staged_status(ctx, C.get(ctx, rec["target"]), rec).get("copies") != 0
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _status_text(rec: dict, health: dict | None, asleep: str | None = None) -> str:
     s = rec.get("status")
     where = "on this computer" if rec.get("kind") == "local" else f"on {rec.get('target')}"
     if s == "running":
@@ -707,7 +746,13 @@ def _status_text(rec: dict, health: dict | None) -> str:
         t = f"{rec['model_version']} is {w[0].lower()}{w[1:]}"
         if health and health.get("shadow"):
             t += " Shadow mode is on: every request is answered with the baseline's results."
-        if health:
+        if asleep == "yes":
+            t += " Asleep: no copy is up, and it costs nothing. It wakes on the next request."
+        elif asleep:
+            t += " It sleeps when nobody calls it. Captain didn't ask it how it is, so as not to wake it."
+        elif health and health.get("stops_in_s") is None:
+            t += f" A copy has been up {_span(health['uptime_s'])}. It sleeps by itself when nobody uses it."
+        elif health:
             t += f" Up {_span(health['uptime_s'])}. Stops by itself in {_span(health['stops_in_s'])} if nobody uses it."
         return t
     if s == "starting":
@@ -715,6 +760,34 @@ def _status_text(rec: dict, health: dict | None) -> str:
     if s == "failed":
         return f"Staging failed: {rec.get('error') or 'no reason recorded'}"
     return f"Stopped ({rec.get('stop_reason') or 'no reason recorded'})."
+
+
+def scale(ctx: Context, pid: str, env: str = ENV, min_copies: int | None = None, max_copies: int | None = None,
+          idle_seconds: int | None = None) -> dict:
+    """How many copies the staged endpoint may run and how long an idle one stays up. With a value, change it: the
+    host applies it with no restage. On this computer and on SageMaker there is one copy and nothing to change."""
+    from .. import compute as C
+
+    rec = state(ctx, pid, env)
+    if not rec or rec.get("status") != "running":
+        raise ValueError("Staging is not running. Stage a model version first.")
+    if rec.get("kind") == "local":
+        if any(v is not None for v in (min_copies, max_copies, idle_seconds)):
+            raise ValueError("On this computer there is one copy. Stage it in your cloud to run more.")
+        return {"project": pid, "min_copies": 0, "max_copies": 1, "idle_seconds": float(rec.get("idle_minutes") or IDLE_MINUTES) * 60, "can_set": [],
+                "text": "One copy on this computer. It stops when idle."}
+    t = C.get(ctx, rec["target"])
+    if all(v is None for v in (min_copies, max_copies, idle_seconds)):
+        return {"project": pid, **C.staged_scale(ctx, t, rec)}
+    for name, v in (("fewest", min_copies), ("most", max_copies)):
+        if v is not None and not 0 <= int(v) <= 100:
+            raise ValueError(f"The {name} copies is a number from 0 to 100.")
+    if max_copies is not None and int(max_copies) < 1:
+        raise ValueError("The most copies is at least 1.")
+    out = C.set_staged_scale(ctx, t, rec, min_copies=min_copies, max_copies=max_copies, idle_seconds=idle_seconds)
+    _save(ctx, pid, env, scale=out.pop("scale", None) or rec.get("scale"))
+    _note(ctx, pid, "changed the staged endpoint's copies: " + out["text"])
+    return {"project": pid, **out}
 
 
 # ---- talking to the endpoint ---------------------------------------------------------------------

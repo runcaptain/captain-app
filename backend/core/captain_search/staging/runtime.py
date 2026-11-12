@@ -336,7 +336,10 @@ class Runtime:
             self._unpublished = True
         ref = None
         note = None
-        if publish and self._unpublished:
+        if publish and self._unpublished and self.bundle.get("serving_store"):
+            # This endpoint's storage holds the bundle and the log only, not the workspace. Captain publishes.
+            note = "not published from the endpoint: its storage holds only the serving bundle and the log"
+        elif publish and self._unpublished:
             # A serving role that may only write the request log can't publish a dataset version. That is fine: the
             # chunks are written, and Captain publishes the version from them on its side.
             self.last_publish = self.clock()
@@ -358,7 +361,8 @@ class Runtime:
                 "requests": self.requests, "outcomes": self.outcomes, "running": max(0, self.running), "traffic": dict(self.by_traffic),
                 "errors": self.errors, "refused": self.refused, "copy": self.copy, "ready_s": self.load_s, "memory_mb": _memory_mb(),
                 "last_real_at": self.last_real_at, "shadow": ctl.get("shadow") or None, "idle_s": round(idle),
-                "idle_minutes": self.idle_minutes, "stops_in_s": max(0, round(self.idle_minutes * 60 - idle)),
+                "idle_minutes": self.idle_minutes,
+                "stops_in_s": None if self.bundle.get("scale_to_zero") else max(0, round(self.idle_minutes * 60 - idle)),
                 "stopped": self.stopped}
 
     # ---- housekeeping --------------------------------------------------------------------------
@@ -376,7 +380,8 @@ class Runtime:
             except Exception as e:  # noqa: BLE001
                 print(f"staging: could not write the log: {e}", flush=True)
         self.control()
-        if now - self.last_used >= self.idle_minutes * 60:
+        # On a host that sleeps when idle, the host takes the copies away. Stopping here would leave one answering 503.
+        if not self.bundle.get("scale_to_zero") and now - self.last_used >= self.idle_minutes * 60:
             self.stop(f"no requests for {self.idle_minutes:g} minutes")
 
     def stop(self, reason: str) -> None:

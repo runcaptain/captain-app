@@ -106,8 +106,10 @@ def _running(ctx: Context, pid: str, env: str) -> dict:
 
 def addresses(rec: dict) -> dict:
     """Where each arm answers, for a team that splits traffic itself."""
+    from .traffic import _http
+
     ep = rec.get("endpoint") or {}
-    if rec.get("kind") == "local":
+    if _http(rec):  # this computer, and every host whose endpoint has an address of its own
         return {a: {"url": f"{ep.get('url')}/rank/{a}", "auth": "Authorization: Bearer <the endpoint key>"} for a in rec["arms"]}
     return {a: {"endpoint": ep.get("name"), "region": ep.get("region"),
                 "body": {"op": "rank", "arm": a, "key": "<the endpoint key>", "query": "...", "session_id": "..."}} for a in rec["arms"]}

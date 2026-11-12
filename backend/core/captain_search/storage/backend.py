@@ -390,4 +390,8 @@ def open_store(uri: str, profile: str | None = None) -> Store:
             cred, conn, _ = azure_credential(profile)
             return AzureStore(u.netloc, container, prefix, credential=cred, connection_string=conn)
         return AzureStore(u.netloc, container, prefix)
+    if u.scheme == "modal":
+        from .modal_volume import open_modal
+
+        return open_modal(uri)
     raise StorageError(f"unsupported storage URI: {uri}")

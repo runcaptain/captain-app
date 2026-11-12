@@ -301,7 +301,7 @@ def serving_storage(ctx: Context, target: dict) -> str:
 
 
 def _check_serving_storage(ctx: Context, target: dict) -> None:
-    if target["kind"] != "local" and serving_storage(ctx, target).split("://")[0] not in ("s3", "gs", "gcs", "az", "azure"):
+    if target["kind"] != "local" and serving_storage(ctx, target).split("://")[0] not in ("s3", "gs", "gcs", "az", "azure", "modal"):
         raise ValueError("This workspace is kept on this computer, and a cloud endpoint can't read it from there. Set up "
                          "serving in your cloud account first: it makes a bucket for the serving bundle and the request "
                          "log only, and the rest of the workspace stays here.")
@@ -346,6 +346,40 @@ def staged_status(ctx: Context, target: dict, rec: dict) -> dict:
 
 def invoke_staged(ctx: Context, target: dict, rec: dict, payload: dict) -> dict:
     return P.get(target, ctx).invoke(rec, payload)
+
+
+def scale_to_zero(ctx: Context, target: dict) -> bool:
+    """Does this host stop every copy while nobody calls, and start one on the next request?"""
+    return bool(getattr(P.get(target, ctx), "scale_to_zero", False))
+
+
+def own_serving_storage(ctx: Context, target: dict) -> bool:
+    """Does this host keep the bundle and the log in storage of its own, whatever the workspace is kept on?"""
+    return bool(getattr(P.get(target, ctx), "serving_storage_own", False))
+
+
+def staged_logs(ctx: Context, target: dict, rec: dict, since: str | None = None) -> dict:
+    """The host's own log lines for the endpoint (compute_providers/serving.py)."""
+    fn = getattr(P.get(target, ctx), "staged_logs", None)
+    return fn(rec, since) if callable(fn) else {"lines": [], "next": since, "note": "This host's own log can't be read from here."}
+
+
+def staged_scale(ctx: Context, target: dict, rec: dict) -> dict:
+    fn = getattr(P.get(target, ctx), "scale", None)
+    return fn(rec) if callable(fn) else {"min_copies": None, "max_copies": None, "idle_seconds": None, "can_set": [],
+                                         "text": "Copies can't be changed on this host from here."}
+
+
+def set_staged_scale(ctx: Context, target: dict, rec: dict, **kw) -> dict:
+    fn = getattr(P.get(target, ctx), "set_scale", None)
+    if not callable(fn):
+        raise ValueError("Copies can't be changed on this host from here.")
+    return fn(rec, **kw)
+
+
+def staged_address(ctx: Context, target: dict, rec: dict) -> dict:
+    fn = getattr(P.get(target, ctx), "address", None)
+    return fn(rec) if callable(fn) else {"url": (rec.get("endpoint") or {}).get("url"), "auth": None, "how": None}
 
 
 def tagged(ctx: Context, target: dict, project: str, env: str) -> list[dict]:

@@ -587,8 +587,28 @@ def stage(name: str,
     ep = r.get("endpoint") or {}
     emit(r, f"Staged {r['model_version']} " + ("on this computer" if r["kind"] == "local" else f"on {r['target']}")
             + f"\nEndpoint: {ep.get('url') or ep.get('name')}\n{r['cost']['text']}"
-            + f"\nStops by itself after {r['idle_minutes']:g} minutes with no requests."
+            + ("\nSleeps when nobody calls it, and wakes on the next request." if r.get("scale_to_zero")
+               else f"\nStops by itself after {r['idle_minutes']:g} minutes with no requests.")
             + f"\nTry it: cst projects staging-query {name} \"<a query>\"")
+
+
+@projects_app.command("staging-copies")
+def staging_copies(name: str, fewest: Optional[int] = typer.Option(None, "--fewest", help="copies kept up while idle (0 lets it sleep)"),
+                   most: Optional[int] = typer.Option(None, "--most", help="the most copies at once"),
+                   idle_seconds: Optional[int] = typer.Option(None, "--idle-seconds", help="how long an idle copy stays up, where the host lets it be set"),
+                   env: str = typer.Option("staging", "--env")):
+    """How many copies the staged endpoint may run and how long an idle one stays up. With a value, change it."""
+    from .. import staging as SG
+
+    try:
+        if S.dry_run and any(v is not None for v in (fewest, most, idle_seconds)):
+            cur = SG.scale(ctx(), name, env)
+            return emit({**cur, "dry_run": True, "would_set": {"min_copies": fewest, "max_copies": most, "idle_seconds": idle_seconds}},
+                        f"Would change it. Now: {cur['text']}")
+        r = SG.scale(ctx(), name, env, min_copies=fewest, max_copies=most, idle_seconds=idle_seconds)
+    except _staging_errors() as e:
+        fail(str(e))
+    emit(r, r["text"])
 
 
 @projects_app.command("unstage")

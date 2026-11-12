@@ -1056,13 +1056,57 @@ def project_ab_rollback(pid: str, body: dict | None = None):
     return _staging_call(AB.rollback, ctx(), pid, reason=(body or {}).get("reason") or None)
 
 
+def _host_options(q: dict) -> dict:
+    """The setup options a host was given: everything but the words the routes themselves use."""
+    return {k: v for k, v in q.items() if k not in ("cloud", "confirm", "plan") and v not in (None, "")}
+
+
+@app.get("/api/projects/{pid}/staging/copies", dependencies=A)
+def project_staging_copies(pid: str):
+    """{min_copies, max_copies, idle_seconds, can_set, text}: how many copies the staged endpoint may run."""
+    from . import staging as SG
+
+    return _staging_call(SG.scale, ctx(), pid)
+
+
+@app.post("/api/projects/{pid}/staging/copies", dependencies=A)
+def project_staging_copies_set(pid: str, body: dict):
+    """{min_copies?, max_copies?, idle_seconds?}: change them. The host applies it with no restage."""
+    from . import staging as SG
+
+    num = lambda k: None if body.get(k) in (None, "") else int(body[k])  # noqa: E731
+    return _staging_call(SG.scale, ctx(), pid, min_copies=num("min_copies"), max_copies=num("max_copies"), idle_seconds=num("idle_seconds"))
+
+
+@app.get("/api/serving/hosts", dependencies=A)
+def serving_hosts():
+    """Every place a model can be hosted, as a card: label, whether it sleeps when idle, where the bundle and log
+    are kept, what its address looks like, when it last ran on a real account, and what is set up there."""
+    from .staging import hosts as H
+
+    return H.listing(ctx())
+
+
 @app.get("/api/serving/setup", dependencies=A)
-def serving_setup_status(profile: str | None = None, region: str | None = None, image: str = "auto"):
+def serving_setup_status(request: Request, profile: str | None = None, region: str | None = None, image: str = "auto",
+                         cloud: str = "aws", plan: bool = False):
     """What serving setup exists ({status, created, target, image}). With profile and region: also `plan`, what
-    setting it up would create, what it costs, and the policy the login needs."""
+    setting it up would create, what it costs, and the policy the login needs. `cloud` picks the host (aws by
+    default; modal, gcp, azure): its options ride as query parameters, and `plan=true` asks for the plan."""
     from .staging import serving_setup as SS
 
     c = ctx()
+    if cloud != "aws":
+        from .staging import hosts as H
+
+        h = _staging_call(H.get, cloud)
+        out = h.status(c)
+        if plan:
+            try:
+                out["plan"] = h.plan(c, **_host_options(dict(request.query_params)))
+            except Exception as e:  # noqa: BLE001
+                out["plan_error"] = str(e)[:300]
+        return out
     out = SS.status(c)
     if profile and region:
         try:
@@ -1079,6 +1123,25 @@ def serving_setup_run(body: dict):
     from .staging import serving_setup as SS
 
     c, b = ctx(), body
+    if (b.get("cloud") or "aws") != "aws":
+        from .staging import hosts as H
+
+        h = _staging_call(H.get, b["cloud"])
+        opts = _host_options(b)
+        hp = _staging_call(h.plan, c, **opts)
+        if not b.get("confirm"):
+            return JSONResponse({"detail": "Confirm what will be created first.", "needs_confirm": True, "plan": hp}, status_code=409)
+
+        def go_host(_p):
+            say = lambda t: JOBS[hjid]["log"].append(str(t)) or JOBS[hjid].__setitem__("message", str(t))  # noqa: E731
+            try:
+                return h.setup(c, confirm=True, progress=say, **opts)
+            except H.MissingPermission as e:
+                JOBS[hjid]["policy"] = e.policy
+                raise
+
+        hjid = _job(go_host, f"setting up serving in your {h.label} account")
+        return {"job": hjid, "plan": hp}
     kw = dict(name_prefix=b.get("name_prefix") or "captain", instance_type=b.get("instance_type") or "ml.m5.large",
               source=b.get("image") or "auto", bucket=b.get("bucket") or None)
     p = _staging_call(SS.plan, c, str(b.get("profile") or ""), str(b.get("region") or ""), **kw)
@@ -1098,11 +1161,18 @@ def serving_setup_run(body: dict):
 
 
 @app.delete("/api/serving/setup", dependencies=A)
-def serving_setup_remove():
+def serving_setup_remove(cloud: str = "aws"):
     """Remove what setup made, as a job. Refused while a model is staged on the target."""
     from .staging import serving_setup as SS
 
     c = ctx()
+    if cloud != "aws":
+        from .staging import hosts as H
+
+        h = _staging_call(H.get, cloud)
+        if h.status(c)["status"] == "none":
+            raise HTTPException(400, f"Serving was never set up in {h.label} for this workspace.")
+        return {"job": _job(lambda _p: h.teardown(c), "removing the serving setup")}
     if not SS.read(c):
         raise HTTPException(400, "Serving was never set up for this workspace.")
     return {"job": _job(lambda _p: SS.teardown(c), "removing the serving setup")}
