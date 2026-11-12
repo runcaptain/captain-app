@@ -36,6 +36,8 @@ class FakeAWS:
         self.lineage = set()       # the lineage records SageMaker writes for endpoints
         self.role_denies = set()   # actions the execution role lacks
         self.iam_refuses = False   # Captain's own sign-in may not ask IAM
+        self.scaling = {}          # endpoint resource id -> {min, max, policy}: SageMaker's scaling on an endpoint
+        self.copies = {}           # endpoint -> copies up now
 
     def client(self, name):
         return self
@@ -65,6 +67,8 @@ class FakeSM:
 
     def update_endpoint(self, **kw):
         self._do("update_endpoint", kw)
+        if any(k.startswith(f"endpoint/{kw['EndpointName']}/") for k in self.w.scaling):
+            raise Boom("Cannot update an endpoint while a scalable target is registered for it")
         self.w.endpoints[kw["EndpointName"]].update(EndpointConfigName=kw["EndpointConfigName"], polls=0)
 
     def describe_endpoint(self, EndpointName):
@@ -75,7 +79,31 @@ class FakeSM:
         if self.w.endpoint_fails:
             return {"EndpointStatus": "Failed", "FailureReason": "The primary container did not pass the ping health check.",
                     "EndpointConfigName": e["EndpointConfigName"]}
-        return {"EndpointStatus": "InService" if e["polls"] > 1 else "Creating", "EndpointConfigName": e["EndpointConfigName"]}
+        if e["polls"] > 1:  # in service: the copies the config asked for are up, unless something scaled it since
+            want = self.w.configs[e["EndpointConfigName"]]["ProductionVariants"][0]["InitialInstanceCount"]
+            if e.get("copies_for") != e["EndpointConfigName"]:
+                self.w.copies[EndpointName], e["copies_for"] = want, e["EndpointConfigName"]
+        n = self.w.copies.get(EndpointName)
+        return {"EndpointStatus": "InService" if e["polls"] > 1 else "Creating", "EndpointConfigName": e["EndpointConfigName"],
+                "ProductionVariants": [{"VariantName": "main", "CurrentInstanceCount": n, "DesiredInstanceCount": n}] if n else []}
+
+    def register_scalable_target(self, **kw):
+        self._do("register_scalable_target", kw)
+        self.w.scaling.setdefault(kw["ResourceId"], {}).update(min=kw["MinCapacity"], max=kw["MaxCapacity"])
+
+    def put_scaling_policy(self, **kw):
+        self._do("put_scaling_policy", kw)
+        self.w.scaling[kw["ResourceId"]]["policy"] = kw
+
+    def deregister_scalable_target(self, **kw):
+        self._do("deregister_scalable_target", kw)
+        if kw["ResourceId"] not in self.w.scaling:
+            raise Boom("No scalable target found for service namespace: sagemaker (ObjectNotFoundException)")
+        del self.w.scaling[kw["ResourceId"]]
+
+    def update_endpoint_weights_and_capacities(self, **kw):
+        self._do("update_endpoint_weights_and_capacities", kw)
+        self.w.copies[kw["EndpointName"]] = kw["DesiredWeightsAndCapacities"][0]["DesiredInstanceCount"]
 
     def _delete(self, call, store, name):
         self._do(call, {"name": name})
@@ -186,7 +214,7 @@ def test_stage_query_and_unstage_leave_nothing_behind(ws, aws):  # noqa: F811
     assert r["status"] == "running" and r["kind"] == "aws-sagemaker"
     assert r["endpoint"] == {"name": "captain-search-test-shop-staging", "region": "us-west-1"}
     assert [x["type"] for x in r["resources"]] == ["endpoint", "model", "endpoint-config"]
-    assert any("4 to 10 minutes" in s for s in said)
+    assert any(s == "Starting the endpoint (about 2 minutes)" for s in said)  # the measured time, from the one table
     # every resource carries Captain's tags, so it can be found and removed without Captain's own records
     for store in (aws.models, aws.configs, aws.endpoints):
         (item,) = store.values()
@@ -361,3 +389,79 @@ def test_a_workspace_on_this_computer_sends_only_the_bundle_and_the_log_to_the_s
     assert not aws.endpoints and not aws.models
     # the published log dataset lands in the workspace here, not in the bucket
     assert ws.registry.versions("dataset", "shop/staging-logs") and not bucket.list("datasets/")
+
+
+# ---- more than one copy ---------------------------------------------------------------------------
+
+
+def _copies_target(ws, **cfg):  # noqa: F811
+    t = C.get(ws, "sm")
+    C.add(ws, "sm", "aws-sagemaker", "p", "us-west-1", {**t["config"], **cfg}, replace=True)
+
+
+def test_one_copy_by_default_and_no_scaling_is_set_up(ws, aws):  # noqa: F811
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    assert not aws.scaling and "register_scalable_target" not in [c for c, _ in aws.calls]
+    sc = SG.scale(ws, "shop")
+    assert (sc["min_copies"], sc["max_copies"], sc["copies_now"]) == (1, 1, 1) and sc["can_set"] == ["min_copies", "max_copies"]
+    assert sc["text"] == "Keeps 1 up at all times. It never sleeps, and bills for each copy by the hour. 1 up now."
+    SG.unstage(ws, "shop")
+
+
+def test_fewest_and_most_copies_turn_on_scaling_on_requests_per_copy(ws, aws):  # noqa: F811
+    _copies_target(ws, min_copies="1", max_copies="3", requests_per_copy="1200")
+    rec = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    rid = f"endpoint/{rec['endpoint']['name']}/variant/main"
+    got = aws.scaling[rid]
+    assert (got["min"], got["max"]) == (1, 3) and next(iter(aws.configs.values()))["ProductionVariants"][0]["InitialInstanceCount"] == 1
+    pol = got["policy"]["TargetTrackingScalingPolicyConfiguration"]
+    assert pol["TargetValue"] == 1200.0 and pol["PredefinedMetricSpecification"] == {"PredefinedMetricType": "SageMakerVariantInvocationsPerInstance"}
+    assert pol["ScaleOutCooldown"] < pol["ScaleInCooldown"]
+    sc = SG.scale(ws, "shop")
+    assert "adds copies up to 3 when one takes more than 1,200 requests a minute" in sc["text"] and sc["requests_per_copy"] == 1200
+    # Stopping takes the scaling off first, and leaves nothing.
+    SG.unstage(ws, "shop")
+    calls = [c for c, _ in aws.calls]
+    assert not aws.scaling and not aws.endpoints and calls.index("deregister_scalable_target") < calls.index("delete_endpoint")
+
+
+def test_copies_change_on_a_running_endpoint_with_no_restage(ws, aws):  # noqa: F811
+    rec = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    name = rec["endpoint"]["name"]
+    before = len([c for c, _ in aws.calls if c in ("create_endpoint", "update_endpoint")])
+    sc = SG.scale(ws, "shop", min_copies=2, max_copies=4)
+    assert (sc["min_copies"], sc["max_copies"]) == (2, 4) and aws.scaling[f"endpoint/{name}/variant/main"]["min"] == 2
+    assert aws.copies[name] == 2  # one was up, under the new fewest: asked for directly
+    assert len([c for c, _ in aws.calls if c in ("create_endpoint", "update_endpoint")]) == before
+    # Fewest equal to most turns scaling off again.
+    sc = SG.scale(ws, "shop", min_copies=2, max_copies=2)
+    assert not aws.scaling and sc["text"].startswith("Keeps 2 up at all times.")
+    for bad, words in (({"min_copies": 0}, "at least 1 copy"), ({"min_copies": 5, "max_copies": 2}, "can't be more than the most"),
+                       ({"max_copies": 50}, "at most 10 copies"), ({"idle_seconds": 60}, "never sleeps")):
+        with pytest.raises(Exception, match=words):
+            SG.scale(ws, "shop", **bad)
+    SG.unstage(ws, "shop")
+
+
+def test_a_redeploy_onto_a_scaled_endpoint_keeps_the_copies_that_are_up(ws, aws):  # noqa: F811
+    _copies_target(ws, min_copies="1", max_copies="3")
+    a = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    name = a["endpoint"]["name"]
+    aws.copies[name] = 3  # load scaled it out
+    SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
+    calls = [c for c, _ in aws.calls]
+    # Scaling comes off before the move (SageMaker refuses otherwise) and goes back on after it.
+    assert calls.index("deregister_scalable_target") < calls.index("update_endpoint") < len(calls) - 1 - calls[::-1].index("register_scalable_target")
+    assert next(iter(aws.configs.values()))["ProductionVariants"][0]["InitialInstanceCount"] == 3 and aws.scaling
+    SG.unstage(ws, "shop")
+
+
+def test_a_login_that_may_not_scale_still_gets_a_running_model_and_is_told(ws, aws):  # noqa: F811
+    _copies_target(ws, min_copies="1", max_copies="3")
+    aws.fail_on = "register_scalable_target"
+    said = []
+    rec = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True, progress=said.append)
+    assert rec["status"] == "running" and aws.endpoints and not aws.scaling
+    assert any("scaling with load could not be turned on" in str(x) for x in said)
+    aws.fail_on = None
+    SG.unstage(ws, "shop")

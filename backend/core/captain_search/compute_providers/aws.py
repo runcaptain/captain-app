@@ -267,6 +267,9 @@ class SageMakerProvider(_AWS):
         {"name": "execution_role_arn", "label": "Execution role ARN", "required": True},
         {"name": "instance_type", "label": "Instance type", "required": False, "default": "ml.m5.large"},
         {"name": "instance_count", "label": "Instance count", "required": False, "default": "1"},
+        {"name": "min_copies", "label": "Fewest copies of a staged model", "required": False, "default": "1"},
+        {"name": "max_copies", "label": "Most copies of a staged model (more than the fewest turns on scaling with load)", "required": False, "default": "1"},
+        {"name": "requests_per_copy", "label": "Requests a minute one copy takes before another is added", "required": False, "default": "3000"},
         {"name": "name_prefix", "label": "Name prefix for staging resources", "required": False, "default": "captain"},
         {"name": "serving_storage", "label": "Bucket folder for the serving bundle (for a workspace kept on this computer)", "required": False}]
 
@@ -292,7 +295,7 @@ class SageMakerProvider(_AWS):
 
     # ---- staging endpoints (staging/): created, tagged, waited for and removed by Captain -------------
 
-    WAIT_S = 1500  # a new endpoint takes 4 to 10 minutes; SageMaker's own limit for a container to start is longer
+    WAIT_S = 1500  # a new endpoint took about 2 minutes when measured; SageMaker's own limit for a container to start is far longer
     POLL_S = 10
 
     def _names(self, st: dict) -> dict:
@@ -348,16 +351,118 @@ class SageMakerProvider(_AWS):
             {"service": "sagemaker", "region": self.region, "call": "create_endpoint_config", "args": {
                 "EndpointConfigName": n["config"], "Tags": tags, "ProductionVariants": [{
                     "VariantName": "main", "ModelName": n["model"], "InstanceType": c.get("instance_type") or "ml.m5.large",
-                    "InitialInstanceCount": int(c.get("instance_count") or 1)}]}},
+                    "InitialInstanceCount": int(st.get("copies_now") or self._copies()["min"])}]}},
             {"service": "sagemaker", "region": self.region, "call": "update_endpoint" if update else "create_endpoint",
              "args": {"EndpointName": n["endpoint"], "EndpointConfigName": n["config"], **({} if update else {"Tags": tags})}},
         ]
 
+    # ---- more than one copy: SageMaker's own scaling on requests per copy -----------------------------
+    #
+    # Written against a stand-in. Not run on a real account yet.
+
+    VARIANT = "main"
+    DIMENSION = "sagemaker:variant:DesiredInstanceCount"
+    MAX_COPIES = 10
+
+    def _copies(self, scale: dict | None = None) -> dict:
+        """{min, max, per_copy}: from the target's settings, with what was changed on the running endpoint on top."""
+        c = self.config
+
+        def num(name, default):
+            try:
+                return int(float(c.get(name) or default))
+            except (TypeError, ValueError):
+                raise ProviderError(f"{name} is a whole number") from None
+        lo = max(1, num("min_copies", c.get("instance_count") or 1))
+        out = {"min": lo, "max": max(lo, num("max_copies", lo)), "per_copy": max(1, num("requests_per_copy", 3000))}
+        out.update({k: int(v) for k, v in (scale or {}).items() if k in out and v is not None})
+        if out["max"] > self.MAX_COPIES:
+            raise ProviderError(f"Captain runs at most {self.MAX_COPIES} copies of a staged model on SageMaker.")
+        return out
+
+    def _resource(self, endpoint: str) -> str:
+        return f"endpoint/{endpoint}/variant/{self.VARIANT}"
+
+    def _scaling_off(self, endpoint: str) -> None:
+        """Take SageMaker's scaling off an endpoint. It has to be off before the endpoint is moved or deleted."""
+        try:
+            self._client("application-autoscaling").deregister_scalable_target(
+                ServiceNamespace="sagemaker", ResourceId=self._resource(endpoint), ScalableDimension=self.DIMENSION)
+        except Exception as e:  # noqa: BLE001
+            if not _missing(e) and "ObjectNotFound" not in str(e) and "No scalable target" not in str(e):
+                raise
+
+    def _scaling_on(self, endpoint: str, copies: dict) -> None:
+        """Scale between the fewest and the most copies on requests a minute per copy. With fewest equal to most
+        there is nothing to scale, and any scaling left from before is taken off."""
+        if copies["max"] <= copies["min"]:
+            self._scaling_off(endpoint)
+            return
+        aas = self._client("application-autoscaling")
+        aas.register_scalable_target(ServiceNamespace="sagemaker", ResourceId=self._resource(endpoint), ScalableDimension=self.DIMENSION,
+                                     MinCapacity=copies["min"], MaxCapacity=copies["max"])
+        aas.put_scaling_policy(PolicyName=f"{endpoint}-requests-per-copy", ServiceNamespace="sagemaker", ResourceId=self._resource(endpoint),
+                               ScalableDimension=self.DIMENSION, PolicyType="TargetTrackingScaling",
+                               TargetTrackingScalingPolicyConfiguration={
+                                   "TargetValue": float(copies["per_copy"]),
+                                   "PredefinedMetricSpecification": {"PredefinedMetricType": "SageMakerVariantInvocationsPerInstance"},
+                                   # Add a copy quickly, take one away slowly: a new copy takes minutes to arrive.
+                                   "ScaleOutCooldown": 60, "ScaleInCooldown": 300})
+
+    def _copies_up(self, endpoint: str) -> tuple[int | None, int | None]:
+        """(running now, asked for) on this endpoint, or (None, None) when SageMaker doesn't say."""
+        try:
+            v = (self._client("sagemaker").describe_endpoint(EndpointName=endpoint).get("ProductionVariants") or [{}])[0]
+            return v.get("CurrentInstanceCount"), v.get("DesiredInstanceCount")
+        except Exception:  # noqa: BLE001
+            return None, None
+
+    def scale(self, rec: dict) -> dict:
+        c = self._copies(rec.get("scale"))
+        now, _want = self._copies_up((rec.get("endpoint") or {}).get("name"))
+        up = "" if now is None else f" {now} up now."
+        if c["max"] > c["min"]:
+            text = (f"Keeps {c['min']} up at all times, and adds copies up to {c['max']} when one takes more than "
+                    f"{c['per_copy']:,} requests a minute. A new copy takes a few minutes to arrive.{up}")
+        else:
+            text = f"Keeps {c['min']} up at all times. It never sleeps, and bills for each copy by the hour.{up}"
+        return {"min_copies": c["min"], "max_copies": c["max"], "idle_seconds": None, "requests_per_copy": c["per_copy"], "copies_now": now,
+                "can_set": ["min_copies", "max_copies"], "text": text}
+
+    def set_scale(self, rec: dict, min_copies: int | None = None, max_copies: int | None = None, idle_seconds: int | None = None) -> dict:
+        if idle_seconds is not None:
+            raise ValueError("A SageMaker endpoint never sleeps, so there is no idle time to set. It stops by itself after the idle limit.")
+        cur = dict(rec.get("scale") or {})
+        cur.update({k: int(v) for k, v in (("min", min_copies), ("max", max_copies)) if v is not None})
+        if cur.get("min") is not None and cur["min"] < 1:
+            raise ValueError("A SageMaker endpoint keeps at least 1 copy up. Stop it to pay nothing.")
+        c = self._copies(cur)
+        if (min_copies is not None and max_copies is None and int(min_copies) > c["max"]) or c["min"] > c["max"]:
+            raise ValueError("The fewest copies can't be more than the most.")
+        name = (rec.get("endpoint") or {}).get("name")
+        self._scaling_on(name, c)
+        now, _want = self._copies_up(name)
+        if now is not None and not c["min"] <= now <= c["max"]:
+            # Outside the new bounds and nothing is scaling it there (or scaling is off): ask for it directly.
+            self._client("sagemaker").update_endpoint_weights_and_capacities(
+                EndpointName=name, DesiredWeightsAndCapacities=[{"VariantName": self.VARIANT, "DesiredInstanceCount": min(max(now, c["min"]), c["max"])}])
+        return {**self.scale({**rec, "scale": cur}), "scale": cur}
+
     def stage(self, st: dict, progress=None) -> dict:
         import time
 
+        from ..staging import timings as TM
+
         say = progress or (lambda _t: None)
         sm = self._client("sagemaker")
+        copies = self._copies(st.get("scale"))
+        if any(r["type"] == "endpoint" for r in st.get("existing") or []):
+            # Moving a running endpoint: start the new version on as many copies as are up now, so a busy endpoint
+            # is not cut back to its fewest in the middle of the switch.
+            now, _want = self._copies_up(self._names(st)["endpoint"])
+            st = {**st, "copies_now": min(max(now or copies["min"], copies["min"]), copies["max"])}
+        else:
+            st = {**st, "copies_now": copies["min"]}
         plan, n = self.stage_plan(st), self._names(st)
         kinds = {"create_model": ("model", n["model"]), "create_endpoint_config": ("endpoint-config", n["config"]),
                  "create_endpoint": ("endpoint", n["endpoint"])}
@@ -367,8 +472,12 @@ class SageMakerProvider(_AWS):
         try:
             for step in plan:
                 say({"create_model": "Registering the model with SageMaker", "create_endpoint_config": "Describing the endpoint",
-                     "create_endpoint": "Starting the endpoint (this takes 4 to 10 minutes)",
-                     "update_endpoint": "Moving the endpoint to the new version (this takes 4 to 10 minutes)"}[step["call"]])
+                     "create_endpoint": "Starting the endpoint" + TM.aside("aws", "start"),
+                     # A move has not been timed on a real account yet. A new endpoint is the nearest measured thing.
+                     "update_endpoint": "Moving the endpoint to the new version (a new endpoint takes "
+                                        + (TM.step_words("aws", "start") or "a few minutes") + ". A move has not been timed yet)"}[step["call"]])
+                if step["call"] == "update_endpoint":
+                    self._scaling_off(n["endpoint"])  # SageMaker won't move an endpoint while its scaling is on
                 getattr(sm, step["call"])(**step["args"])
                 if step["call"] in kinds:
                     made.append({"type": kinds[step["call"]][0], "name": kinds[step["call"]][1], "region": self.region})
@@ -396,6 +505,13 @@ class SageMakerProvider(_AWS):
             raise err from None
         if updating and old:
             self.unstage(old)
+        if copies["max"] > copies["min"] or updating:
+            say(f"Turning on scaling with load: {copies['min']} to {copies['max']} copies" if copies["max"] > copies["min"] else "Checking scaling is off")
+            try:
+                self._scaling_on(n["endpoint"], copies)
+            except Exception as e:  # noqa: BLE001  the model is up and answering: say so, and say what is missing
+                say(f"The model is running on {st['copies_now']} " + ("copy" if st["copies_now"] == 1 else "copies")
+                    + f", but scaling with load could not be turned on: {_aws_sentence(e)[:300]}")
         ep = {"type": "endpoint", "name": n["endpoint"], "region": self.region}
         return {"endpoint": {"name": n["endpoint"], "region": self.region},
                 "resources": [ep] + [r for r in made if r["type"] != "endpoint"]}
@@ -411,6 +527,11 @@ class SageMakerProvider(_AWS):
         left = []
         for r in sorted(resources, key=lambda r: order.get(r["type"], 9)):
             call, arg = calls[r["type"]]
+            if r["type"] == "endpoint":
+                try:
+                    self._scaling_off(r["name"])
+                except Exception:  # noqa: BLE001  best effort: deleting the endpoint ends its scaling too
+                    pass
             try:
                 getattr(sm, call)(**{arg: r["name"]})
             except Exception as e:  # noqa: BLE001

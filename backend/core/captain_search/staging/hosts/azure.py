@@ -29,6 +29,7 @@ import uuid
 
 from ... import price_table as PT
 from ...workspace import Context
+from .. import timings as TM
 from .base import Host, MissingPermission, now
 
 TARGET = "azure-serving"
@@ -138,7 +139,7 @@ class AzureHost(Host):
         return {"cloud": "azure", "profile": o["profile"], "region": o["region"], "subscription": arm.sub, "names": n, "storage": n["storage"], "options": o,
                 "unregistered": off, "creates": rows, "each_deploy": later,
                 "cost": {"setup_usd": round(build, 2), "hourly_awake_usd": round(hourly, 4), "daily_usd": PT.AZURE_EXTRAS["registry_basic_day"],
-                         "text": f"Setting up costs about ${build:.2f} once: the registry builds the image in about {BUILD_MINUTES} minutes. "
+                         "text": f"Setting up costs about ${build:.2f} once: the estimate allows {BUILD_MINUTES} minutes for the registry to build the image, not timed on a real account yet. "
                                  f"The registry then costs about ${PT.AZURE_EXTRAS['registry_basic_day']:.2f} a day for as long as the setup exists. "
                                  f"A copy costs about ${hourly:.3f} an hour while it is up and nothing once it has slept"
                                  + (f", plus about ${kept:.3f} an hour for the {o['min_copies']} kept up" if kept else "")
@@ -272,7 +273,7 @@ class AzureHost(Host):
             r = httpx.put(up["uploadUrl"], content=_tgz(folder), headers={"x-ms-blob-type": "BlockBlob", "Content-Type": "application/gzip"}, timeout=300)
             if r.status_code >= 300:
                 raise ValueError(f"Azure refused the build folder ({r.status_code}): {r.text[:200]}")
-            say(f"Building the serving image in your registry (about {BUILD_MINUTES} minutes)")
+            say("Building the serving image in your registry" + TM.aside("azure", "image"))
             run = step("start the image build", "Microsoft.ContainerRegistry/registries/scheduleRun/action", lambda: arm.call("POST", f"{reg}/scheduleRun", {
                 "type": "DockerBuildRequest", "imageNames": [f"serving:{tag}"], "isPushEnabled": True, "noCache": False, "dockerFilePath": "Dockerfile",
                 "sourceLocation": up["relativePath"], "platform": {"os": "Linux", "architecture": "amd64"}, "timeout": 1800}, API["build"]))
@@ -291,7 +292,7 @@ class AzureHost(Host):
                 time.sleep(self.POLL_S)
         rec["image"] = image
         rec["build_seconds"] = round(time.time() - t0) if built else None
-        env = make("container-apps-environment", f"Container Apps environment {n['environment']} (this takes a few minutes)", "Microsoft.App/managedEnvironments/write",
+        env = make("container-apps-environment", f"Container Apps environment {n['environment']} (not timed on a real account yet)", "Microsoft.App/managedEnvironments/write",
                    f"{group}/providers/Microsoft.App/managedEnvironments/{n['environment']}",
                    {"location": region, "tags": TAGS, "properties": {"zoneRedundant": False, "workloadProfiles": [{"name": "Consumption", "workloadProfileType": "Consumption"}]}},
                    API["env"], deadline_s=1500)

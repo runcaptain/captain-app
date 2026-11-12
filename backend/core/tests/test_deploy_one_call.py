@@ -100,7 +100,7 @@ def test_modal_first_deploy_sets_up_then_starts_as_one_run(ws, logins, modal):  
     assert [g["title"] for g in p["creates"]["groups"]] == ["The first time only", "For this model"] and p["creates"]["count"] == 4
     assert "A Modal volume" in p["creates"]["short"] and p["creates"]["groups"][0]["summary"] == p["creates"]["short"] and p["id"] == "modal:modal" and p["exists"] == []
     assert p["cost"]["sleeps"] and "nothing while it sleeps" in p["cost"]["text"] and 40 < p["cost"]["monthly_usd"] < 55 and p["cost"]["setup_usd"] == 0
-    assert p["minutes"]["measured"] == "2026-11-11" and p["minutes"]["low"] == 2
+    assert p["minutes"]["measured"] == "2026-11-11" and (p["minutes"]["low"], p["minutes"]["high"], p["minutes"]["seconds"]) == (1, 2, 97)
     assert not modal.volumes and DP.status(ws, "shop")["status"] == "none"  # the plan made nothing
     with pytest.raises(SG.NeedsConfirm) as e:
         DP.run(ws, "shop", "modal")

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from ... import price_table as PT
 from ...workspace import Context
+from .. import timings as TM
 from .base import Host, MissingPermission, now
 
 TARGET = "modal-serving"
@@ -73,7 +74,7 @@ class ModalHost(Host):
                                                                                            "Never the key itself. Deleted with the app."}]
         return {"cloud": "modal", "environment": o["environment"], "names": n, "storage": n["storage"], "options": o, "creates": rows, "each_deploy": later,
                 "cost": {"setup_usd": 0.0, "hourly_awake_usd": round(hourly, 4),
-                         "text": "Setting up costs nothing. Modal builds the image the first time you stage, about two minutes of one CPU, under a cent. "
+                         "text": f"Setting up costs nothing. Modal builds the image the first time you stage, {TM.step_words('modal', 'start')} of one CPU, under a cent. "
                                  f"A copy costs about ${hourly:.3f} an hour while it is awake and nothing while it sleeps. "
                                  f"It sleeps after {o['idle_seconds']} idle seconds. The volume is free under 1 TiB. "
                                  f"Prices as of {PT.SERVERLESS_PRICED_AS_OF}."},
