@@ -38,6 +38,13 @@ class FakeAWS:
         self.iam_refuses = False   # Captain's own sign-in may not ask IAM
         self.scaling = {}          # endpoint resource id -> {min, max, policy}: SageMaker's scaling on an endpoint
         self.copies = {}           # endpoint -> copies up now
+        # What CloudWatch reports: 120 requests a minute, none failing, 3 ms median and 9 ms 95th percentile inside
+        # the model, 20% of a core, 5% of memory, one copy reporting once a minute.
+        self.metric = lambda name, stat, t, period: {
+            ("Invocations", "Sum"): 120.0 * period / 60, ("Invocation4XXErrors", "Sum"): 0.0, ("Invocation5XXErrors", "Sum"): 0.0,
+            ("ModelLatency", "p50"): 3000.0, ("ModelLatency", "p95"): 9000.0, ("OverheadLatency", "p50"): 800.0,
+            ("CPUUtilization", "Average"): 20.0, ("CPUUtilization", "Maximum"): 35.0, ("MemoryUtilization", "Average"): 5.0,
+            ("MemoryUtilization", "Maximum"): 6.0, ("CPUUtilization", "SampleCount"): period / 60.0}.get((name, stat))
 
     def client(self, name):
         return self
@@ -150,6 +157,25 @@ class FakeSM:
 
     def list_endpoints(self, **kw):
         return {"Endpoints": [{"EndpointName": n, "EndpointArn": f"endpoint/{n}"} for n in self.w.endpoints]}
+
+    # cloudwatch: the endpoint's own numbers, one value a bucket. `w.metric` decides them: (metric name, statistic,
+    # time) -> value or None.
+    def get_metric_data(self, MetricDataQueries, StartTime, EndTime, ScanBy="TimestampDescending", **kw):
+        import datetime as dt
+
+        self._do("get_metric_data", {"n": len(MetricDataQueries), "start": StartTime, "end": EndTime})
+        out = []
+        for q in MetricDataQueries:
+            m, period = q["MetricStat"], q["MetricStat"]["Period"]
+            ts, vs, t = [], [], StartTime
+            while t < EndTime:
+                v = self.w.metric(m["Metric"]["MetricName"], m["Stat"], t, period)
+                if v is not None:
+                    ts.append(t)
+                    vs.append(v)
+                t += dt.timedelta(seconds=period)
+            out.append({"Id": q["Id"], "Timestamps": ts, "Values": vs})
+        return {"MetricDataResults": out}
 
     def describe_endpoint_config(self, EndpointConfigName):
         return self.w.configs[EndpointConfigName]

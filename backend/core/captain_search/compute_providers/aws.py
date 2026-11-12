@@ -632,6 +632,41 @@ class SageMakerProvider(_AWS):
         body = r["Body"].read() if hasattr(r["Body"], "read") else r["Body"]
         return json.loads(body)
 
+    METRICS = (  # id, namespace, metric, statistic
+        ("requests", "AWS/SageMaker", "Invocations", "Sum"),
+        ("errors_4xx", "AWS/SageMaker", "Invocation4XXErrors", "Sum"),
+        ("errors_5xx", "AWS/SageMaker", "Invocation5XXErrors", "Sum"),
+        ("p50_us", "AWS/SageMaker", "ModelLatency", "p50"),
+        ("p95_us", "AWS/SageMaker", "ModelLatency", "p95"),
+        ("overhead_us", "AWS/SageMaker", "OverheadLatency", "p50"),
+        ("cpu", "/aws/sagemaker/Endpoints", "CPUUtilization", "Average"),
+        ("cpu_max", "/aws/sagemaker/Endpoints", "CPUUtilization", "Maximum"),
+        ("memory", "/aws/sagemaker/Endpoints", "MemoryUtilization", "Average"),
+        ("memory_max", "/aws/sagemaker/Endpoints", "MemoryUtilization", "Maximum"),
+        # Each copy reports its CPU once a minute, so the count of reports in a minute is the copies that were up.
+        ("reports", "/aws/sagemaker/Endpoints", "CPUUtilization", "SampleCount"),
+    )
+
+    def metrics(self, endpoint: str, start, end, period: int, only: tuple[str, ...] | None = None) -> dict:
+        """CloudWatch's own numbers for one endpoint between two times, in buckets of `period` seconds: {id: {time:
+        value}}. One read-only call. `only` limits it to some of METRICS. Nothing is sent to the endpoint."""
+        cw = self._client("cloudwatch")
+        dims = [{"Name": "EndpointName", "Value": endpoint}, {"Name": "VariantName", "Value": self.VARIANT}]
+        want = [m for m in self.METRICS if only is None or m[0] in only]
+        queries = [{"Id": i, "ReturnData": True, "MetricStat": {"Metric": {"Namespace": ns, "MetricName": name, "Dimensions": dims},
+                                                                "Period": int(period), "Stat": stat}} for i, ns, name, stat in want]
+        out: dict = {i: {} for i, *_ in want}
+        token = None
+        while True:
+            r = cw.get_metric_data(MetricDataQueries=queries, StartTime=start, EndTime=end, ScanBy="TimestampAscending",
+                                   **({"NextToken": token} if token else {}))
+            for res in r.get("MetricDataResults", []):
+                for t, v in zip(res.get("Timestamps") or [], res.get("Values") or []):
+                    out[res["Id"]][_iso(t)] = float(v)
+            token = r.get("NextToken")
+            if not token:
+                return out
+
     def found(self, prefix: str = "captain") -> list[dict]:
         """Every SageMaker endpoint here that Captain made, whatever project made it: found by Captain's tag, or by
         the name prefix. Reads only, and never calls a model. One row each: the name, the state as SageMaker reports
@@ -661,12 +696,17 @@ class SageMakerProvider(_AWS):
                     continue
                 v = (d.get("ProductionVariants") or [{}])[0]
                 machine = None
+                parts = [{"type": "endpoint", "name": name, "region": self.region}]
                 try:
                     cfg = sm.describe_endpoint_config(EndpointConfigName=d["EndpointConfigName"])
-                    machine = (cfg.get("ProductionVariants") or [{}])[0].get("InstanceType")
+                    pv = (cfg.get("ProductionVariants") or [{}])[0]
+                    machine = pv.get("InstanceType")
+                    parts.append({"type": "endpoint-config", "name": d["EndpointConfigName"], "region": self.region})
+                    if pv.get("ModelName"):
+                        parts.append({"type": "model", "name": pv["ModelName"], "region": self.region})
                 except Exception:  # noqa: BLE001
                     pass
-                out.append({"type": "endpoint", "name": name, "region": self.region,
+                out.append({"type": "endpoint", "name": name, "region": self.region, "resources": parts,
                             "state": states.get(d.get("EndpointStatus"), "starting"),
                             "reason": d.get("FailureReason") if states.get(d.get("EndpointStatus")) == "failed" else
                             (d.get("EndpointStatus") if states.get(d.get("EndpointStatus"), "starting") == "starting" else None),

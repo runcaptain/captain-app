@@ -299,6 +299,39 @@ class ModalServingProvider(HttpServing, ComputeProvider):
         return {"lines": [], "next": since,
                 "note": f"Modal keeps the app's own lines. From a terminal: modal app logs {name}" + (f" -e {env}" if env else "")}
 
+    def found(self, prefix: str = "captain") -> list[dict]:
+        """Every deployed app in this Modal environment that Captain made, whatever project made it: by Captain's
+        tag, or by the name prefix. Asks Modal for the list and for how many copies are up. It never calls an app,
+        so a sleeping one stays asleep."""
+        import json
+
+        argv = [sys.executable, "-m", "modal", "app", "list", "--json"] + (["-e", self._env()] if self._env() else [])
+        r = self._run(argv, dict(os.environ))
+        if r.returncode != 0:
+            raise ProviderError(signed_out(Exception(r.stderr)) or f"Modal could not list apps: {r.stderr.strip()[-300:]}")
+        start = prefix.strip("-") + "-"
+        out = []
+        for a in json.loads(r.stdout or "[]"):
+            name = a.get("Description") or a.get("description") or a.get("name")
+            if not name or str(a.get("State") or a.get("state") or "").lower() not in ("deployed", "running"):
+                continue
+            tags = self._app_tags(name) or {}
+            if tags.get("app") != "captain" and not str(name).startswith(start):
+                continue
+            try:
+                copies = int(getattr(self._fn(name).get_current_stats(), "num_total_runners", 0) or 0)
+            except Exception:  # noqa: BLE001
+                copies = None
+            size = self._size()
+            out.append({"type": "modal-app", "name": name, "region": None, "environment": self._env(),
+                        "resources": [{"type": "modal-app", "name": name, "environment": self._env()}],
+                        "state": "asleep" if copies == 0 else "running", "reason": None,
+                        "machine": None, "copies_now": copies, "copies_min": size.get("min"), "copies_max": size.get("max"),
+                        "since": a.get("Created at") or a.get("created_at"), "changed": None,
+                        "project": tags.get("project"), "env": tags.get("env"), "stage": tags.get("stage") or tags.get("captain-stage"),
+                        "by": tags.get("by"), "by_tag": tags.get("app") == "captain", "by_prefix": str(name).startswith(start)})
+        return out
+
     def tagged(self, project: str, env: str) -> list[dict]:
         """Every deployed app in this Modal environment that carries Captain's tags for this project's staging."""
         import json
