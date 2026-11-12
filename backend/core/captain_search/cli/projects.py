@@ -555,6 +555,7 @@ def stage(name: str,
           endpoint_auth_secret: Optional[str] = typer.Option(None, "--endpoint-auth-secret", help="name of a secret sent to your endpoint as a Bearer token"),
           image: Optional[str] = typer.Option(None, "--image", help="a container image that serves the model (SageMaker contract), for a cloud target"),
           idle_minutes: Optional[float] = typer.Option(None, "--idle-minutes", help="stop by itself after this long with no requests; default 240"),
+          allow_large: bool = typer.Option(False, "--allow-large", help="stage on this computer even when the model is over the size limit for it (Settings)"),
           yes: bool = typer.Option(False, "--yes", "-y", help="confirm the cost of a cloud deploy")):
     """Run a model version as a live staging endpoint: on your compute target, or on this computer with --target local."""
     from .. import staging as SG
@@ -579,7 +580,8 @@ def stage(name: str,
                 raise typer.Exit(1)
         _by_hand(c, name, "stage a model version")
         r = SG.stage(c, name, candidate, baseline, env, target, endpoint, endpoint_auth_secret, image, confirm=True,
-                     idle_minutes=idle_minutes, progress=None if S.json else lambda t: typer.echo(t, err=True))
+                     idle_minutes=idle_minutes, progress=None if S.json else lambda t: typer.echo(t, err=True),
+                     allow_large=allow_large)
     except _staging_errors() as e:
         fail(str(e))
     ep = r.get("endpoint") or {}

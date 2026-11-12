@@ -424,3 +424,43 @@ def test_versions_list_and_roll_back_to_one(ws):  # noqa: F811
     assert "rolled staging back to version 1" in " | ".join(h["what"] for h in PS.get(ws, "shop")["history"])
     with pytest.raises(ValueError, match="There is no version 9"):
         TF.rollback_to(ws, "shop", 9)
+
+
+def test_a_model_over_the_size_limit_is_not_staged_on_this_computer_even_with_memory_free(ws):  # noqa: F811
+    from captain_search import settings as ST
+    from captain_search.staging import fit as FT
+
+    arms = {"candidate": ws.candidate, "baseline": ws.baseline}
+    roomy = {"memory_mb": 64_000, "disk_mb": 500_000}
+    assert FT.limit_mb(ws) == 1024  # the default: 1 GB
+    need = FT.check(ws, arms, roomy)["need"]["memory_mb"]
+    assert FT.check(ws, arms, roomy)["outcome"] == "fits" and need < 1024  # the demo store is under it
+    # over: the smallest limit is below what even the demo store needs with both versions and headroom
+    ST.set_local_limit(ws, 250) if need > 250 else None
+    big = FT.need([(200_000, "ranker"), (200_000, "keyword")])
+    assert big["memory_mb"] > 1024  # what a 200,000 product catalog needs: over the default
+    from unittest import mock
+
+    with mock.patch.object(FT, "need", return_value={**big, "products": 200_000}):
+        ST.set_local_limit(ws, 1024)
+        r = FT.check(ws, arms, roomy)
+        assert r["outcome"] == "over-limit" and r["limit_mb"] == 1024
+        assert r["text"] == (f"This model needs about {big['memory_mb'] / 1024:.1f} GB to serve, which is more than the 1 GB limit for staging on "
+                             "this computer. Stage it in your cloud.")
+        with pytest.raises(ValueError, match="more than the 1 GB limit for staging on this computer.*raise the limit in Settings, or pass --allow-large"):
+            SG.stage(ws, "shop", target="local")
+        assert SG.state(ws, "shop") is None
+        out = CliRunner().invoke(app, ["projects", "stage", "shop", "--target", "local"])
+        assert out.exit_code == 1 and "1 GB limit for staging on this computer" in out.output
+        # the limit is a setting: raise it and the same model is offered, with the free-memory test still applied
+        ST.set_local_limit(ws, 4096)
+        assert FT.check(ws, arms, roomy)["outcome"] == "fits" and FT.check(ws, arms, {"memory_mb": 2000, "disk_mb": 500_000})["outcome"] == "wont-fit"
+        ST.set_local_limit(ws, 0)  # no limit
+        assert FT.check(ws, arms, roomy)["outcome"] == "fits"
+        ST.set_local_limit(ws, 1024)
+        # --allow-large skips the limit, never the free-memory test
+        assert FT.check(ws, arms, roomy, allow_large=True)["outcome"] == "fits"
+        assert FT.check(ws, arms, {"memory_mb": 2000, "disk_mb": 500_000}, allow_large=True)["outcome"] == "wont-fit"
+    with pytest.raises(ValueError, match="250 MB, 500 MB, 1 GB, 2 GB, 4 GB or no limit"):
+        ST.set_local_limit(ws, 300)
+    assert SG.stage(ws, "shop", target="local", allow_large=True)["status"] == "running"

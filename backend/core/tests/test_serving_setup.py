@@ -137,6 +137,10 @@ class Fake:
             return {"builds": [{"buildStatus": "SUCCEEDED"}]}
         return {"builds": [{"buildStatus": "FAILED", "phases": [{"phaseType": "BUILD", "phaseStatus": "FAILED", "contexts": [{"message": "pip could not resolve a package"}]}]}]}
 
+    def delete_log_group(self, logGroupName):
+        self._do("logs:DeleteLogGroup")
+        self.calls.append(("deleted-log-group", logGroupName))
+
     def delete_project(self, name):
         self._do("codebuild:DeleteProject")
         del self.projects[name]
@@ -289,6 +293,7 @@ def test_teardown_removes_everything_and_refuses_while_a_model_is_staged(cloud_w
     r = SS.teardown(cloud_ws, progress=said.append)
     assert r["status"] == "removed" and r["created"] == [] and r["text"] == "Serving setup is removed. Nothing of Captain's is left in the account."
     assert not aws.roles and not aws.policies and not aws.repos and not aws.projects and not aws.objects
+    assert ("deleted-log-group", "/aws/codebuild/captain-serving-build") in aws.calls  # the build's log goes too
     assert "serve" not in C.get(cloud_ws, "aws-serving")["purposes"]  # the target can no longer be staged on
     assert SS.teardown(cloud_ws)["status"] == "removed"  # twice is fine
     # what can't be removed is named

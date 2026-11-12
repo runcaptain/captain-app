@@ -286,7 +286,7 @@ def _target(ctx: Context, name: str | None) -> dict:
 
 
 def plan(ctx: Context, pid: str, candidate: str | None = None, baseline: bool = False, env: str = ENV,
-         target: str | None = None, endpoint: str | None = None, image: str | None = None) -> dict:
+         target: str | None = None, endpoint: str | None = None, image: str | None = None, allow_large: bool = False) -> dict:
     """What staging would do, before anything is created: the versions, where, and what it costs."""
     doc = PS.get(ctx, pid)
     t = _target(ctx, "local" if endpoint and not target else target)
@@ -310,7 +310,7 @@ def plan(ctx: Context, pid: str, candidate: str | None = None, baseline: bool = 
     from . import fit as FT
 
     # Would it fit on this computer? Always answered, so the choice can show "On this computer" as it is.
-    local_fit = FT.check(ctx, {k: v for k, v in arms.items() if not endpoint and not image}) if not image else None
+    local_fit = FT.check(ctx, {k: v for k, v in arms.items() if not endpoint and not image}, allow_large=allow_large) if not image else None
     return {"project": pid, "env": env, "target": t["name"], "kind": t["kind"], "region": t.get("region"),
             "arms": arms, "serve": serve, "experiment": exp, "model_version": arms[serve], "cost": c,
             "needs_confirm": bool(c["billing"]), "local_fit": local_fit, "preflight": pre, "warnings": (pre or {}).get("warnings") or [], "replaces": cur["model_version"] if cur and cur.get("status") == "running" else None,
@@ -441,16 +441,17 @@ def _record_deploy(ctx: Context, pid: str, env: str, pipeline: str, target: dict
 def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool = False, env: str = ENV,
           target: str | None = None, endpoint: str | None = None, endpoint_auth_secret: str | None = None,
           image: str | None = None, confirm: bool = False, idle_minutes: float | None = None, progress=None,
-          dry_run: bool = False) -> dict:
+          dry_run: bool = False, allow_large: bool = False) -> dict:
     """Package and start a staging endpoint, and record it on the project. Replaces one that is already running."""
     from .. import compute as C
     from ..workspace import set_secret
 
-    p = plan(ctx, pid, candidate, baseline, env, target, endpoint, image)
+    p = plan(ctx, pid, candidate, baseline, env, target, endpoint, image, allow_large)
     if dry_run:
         return {**p, "dry_run": True}
-    if p["kind"] == "local" and (p.get("local_fit") or {}).get("outcome") == "wont-fit":
-        raise ValueError(p["local_fit"]["text"])  # refused before anything starts, in the sentence the choice shows
+    if p["kind"] == "local" and (p.get("local_fit") or {}).get("outcome") in ("wont-fit", "over-limit"):
+        raise ValueError(p["local_fit"]["text"] + (" To stage it here anyway, raise the limit in Settings, or pass --allow-large."
+                                                   if p["local_fit"]["outcome"] == "over-limit" else ""))  # refused before anything starts, in the sentence the choice shows
     if p["needs_confirm"] and not confirm:
         raise NeedsConfirm("Confirm the cost first. " + p["cost"]["text"] + "".join(" " + w for w in p["warnings"]), p)
     running_test = (PS.get(ctx, pid).get("ab") or {})

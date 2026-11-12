@@ -13,7 +13,11 @@ from .storage.backend import Conflict, NotFound
 from .workspace import Context, whoami
 
 KEY = "settings.yaml"
-DEFAULTS = {"compute": {"backtest": "local", "serve": None}, "costs": {"confirm_above_usd": 5.0}}
+# staging.local_limit_mb: the largest model staged on this computer. A bigger one is staged in the cloud, even when
+# this computer has the memory free. 0 means no limit.
+DEFAULTS = {"compute": {"backtest": "local", "serve": None}, "costs": {"confirm_above_usd": 5.0},
+            "staging": {"local_limit_mb": 1024}}
+LOCAL_LIMITS = (250, 500, 1024, 2048, 4096, 0)
 
 
 def get(ctx: Context) -> dict:
@@ -93,6 +97,31 @@ def set_serving_image(ctx: Context, public_image: str | None) -> dict:
         except NotFound:
             doc, tag = {}, None
         doc.setdefault("serving", {})["public_image"] = (public_image or "").strip() or None
+        doc["updated_by"], doc["updated_at"] = whoami(), dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+        try:
+            ctx.store.put_if(KEY, yaml.safe_dump(doc, sort_keys=False).encode(), tag)
+            return get(ctx)
+        except Conflict:
+            continue
+    raise Conflict("the settings kept changing while saving. Try again.")
+
+
+def set_local_limit(ctx: Context, mb) -> dict:
+    """The largest model to stage on this computer, in MB of memory it needs to serve: 250, 500, 1024, 2048, 4096,
+    or 0 for no limit."""
+    try:
+        v = int(float(mb))
+    except (TypeError, ValueError):
+        raise ValueError("the limit is 250 MB, 500 MB, 1 GB, 2 GB, 4 GB or no limit") from None
+    if v not in LOCAL_LIMITS:
+        raise ValueError("the limit is 250 MB, 500 MB, 1 GB, 2 GB, 4 GB or no limit")
+    for _ in range(10):
+        try:
+            body, tag = ctx.store.get_with_tag(KEY)
+            doc = yaml.safe_load(body) or {}
+        except NotFound:
+            doc, tag = {}, None
+        doc.setdefault("staging", {})["local_limit_mb"] = v
         doc["updated_by"], doc["updated_at"] = whoami(), dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
         try:
             ctx.store.put_if(KEY, yaml.safe_dump(doc, sort_keys=False).encode(), tag)

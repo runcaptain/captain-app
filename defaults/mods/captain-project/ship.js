@@ -14,7 +14,7 @@
 //   POST /api/projects/{id}/ab/start|ramp|rollback|stop|simulate   each one click, with a confirmation, in history
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { exec, appHome, openOverlay } from "herdr";
+import { exec, appHome, openOverlay, run } from "herdr";
 import { MONO } from "./kit/tokens.js";
 import { api } from "./kit/cst.js";
 import { Badge, Button, plainError } from "./kit/ui.js";
@@ -941,19 +941,25 @@ export class Ship {
       .children(lines.filter(Boolean).map((t, i) => div().id(`${id}-l${i}`).text_size(12).line_height("17px").text_color(c.grey900).child(t)))
       .child(div().flex_1()).child(h_flex().child(button));
     // This computer is only a normal choice when the model fits in what is free here right now.
-    const fit = this.fit, wont = fit?.outcome === "wont-fit";
+    // Two tests: is it under the size limit for staging on this computer, and does it fit in what is free now.
+    const fit = this.fit, over = fit?.outcome === "over-limit", wont = fit?.outcome === "wont-fit" || over;
     const here = card("ship-choice-local", "On this computer", ["Free. Only you can reach it.", wont ? null : "Good for trying a model. A site can't send it traffic."],
       Button(c, "ship-stage", cand ? "Stage it" : "Stage the baseline", (_e, cx) => this.stageAt(cx, "local"), { small: true, kind: last === "cloud" && target ? "secondary" : "primary", disabled: wont }))
       .when(Boolean(fit?.text), (e) => e.child(div().id("ship-fit").text_size(12).line_height("17px")
-        .text_color(wont ? c.fail : fit.outcome === "tight" ? c.warn : c.grey500).child(fit.text)));
+        .text_color(wont ? c.fail : fit.outcome === "tight" ? c.warn : c.grey500).child(fit.text)))
+      .when(over, (e) => e.child(div().id("ship-fit-limit").text_size(12).text_color(c.blue).cursor_pointer()
+        .on_click(() => run("app.settings")).child("Change the limit in Settings")));
     const there = !cloud ? null : card("ship-choice-cloud", `In your ${cloud} account`, ["A site can reach it.",
       target ? est?.text ?? "Working out the cost..." : `Serving isn't set up in your ${cloud} account yet.`, target ? "This keeps billing until you stop it." : null],
-      target ? Button(c, "ship-stage-cloud", `Stage in your ${cloud} account`, (_e, cx) => this.stageAt(cx, target.name), { small: true, kind: last === "cloud" ? "primary" : "secondary" })
+      target ? Button(c, "ship-stage-cloud", `Stage in your ${cloud} account`, (_e, cx) => this.stageAt(cx, target.name), { small: true, kind: last === "cloud" || wont ? "primary" : "secondary" })
         : Button(c, "ship-setup-cloud", `Set up serving in your ${cloud}`, (_e, cx) => this.openSetupSheet(cx), { small: true }));
     return v_flex().id("ship-choices").gap(8)
       .child(div().text_size(12.5).text_color(c.grey900).child(`Where should ${what} run?`))
-      .child(h_flex().flex_wrap().items_stretch().gap(10).children(last === "cloud" && there ? [there, here] : [here, there].filter(Boolean)))
-      .when(!cloud, (e) => e.child(div().id("ship-no-cloud").text_size(12).text_color(c.grey500).child("To stage where a site can reach it, connect a cloud login (the cloud chip at the bottom of the sidebar).")));
+      // The cloud comes first when it was the last choice, or when this computer isn't a choice for this model.
+      .child(h_flex().flex_wrap().items_stretch().gap(10).children((last === "cloud" || wont) && there ? [there, here] : [here, there].filter(Boolean)))
+      .when(!cloud, (e) => e.child(div().id("ship-no-cloud").text_size(12).text_color(wont ? c.navy : c.grey500)
+        .child(wont ? "No cloud is connected. Connect a cloud login to stage this model (the cloud chip at the bottom of the sidebar)."
+          : "To stage where a site can reach it, connect a cloud login (the cloud chip at the bottom of the sidebar).")));
   }
 
   /** The deployment's header: is it up, where is it, is anything calling it, and the action for now. Nothing here

@@ -426,6 +426,14 @@ class SageMakerProvider(_AWS):
                 time.sleep(min(self.POLL_S, 5))
             else:
                 left.append({**r, "error": "SageMaker is still deleting it"})
+        # The endpoint's own log group goes with it. Best effort: a login without logs:DeleteLogGroup leaves it, named.
+        for r in resources:
+            if r["type"] == "endpoint" and not any(x["name"] == r["name"] and x["type"] == "endpoint" for x in left):
+                try:
+                    self._client("logs").delete_log_group(logGroupName=f"/aws/sagemaker/Endpoints/{r['name']}")
+                except Exception as e:  # noqa: BLE001
+                    if not _missing(e) and "ResourceNotFound" not in str(e):
+                        left.append({"type": "log-group", "name": f"/aws/sagemaker/Endpoints/{r['name']}", "region": self.region, "error": _aws_sentence(e)[:200]})
         return left
 
     def staged_status(self, rec: dict) -> dict:

@@ -143,6 +143,21 @@ assert.ok(h.text().includes('This catalog needs about 9.0 GB of memory to serve,
 assert.equal(byId(h, 'ship-stage')[0].call('on_click'), undefined, "won't fit: the local button is switched off");
 assert.ok(byId(h, 'ship-stage-cloud')[0].call('on_click'), 'and the cloud is still offered');
 
+// Over the size limit for this computer: switched off with the reason and a way to change the limit, and the
+// cloud comes first. A big model is staged in the cloud even when this computer has the memory.
+const OVER = { outcome: 'over-limit', limit_mb: 1024, text: 'This model needs about 2.6 GB to serve, which is more than the 1 GB limit for staging on this computer. Stage it in your cloud.' };
+h = await open({ targets: [SM], cloud: AWS, staging: NONE, fit: OVER });
+t = h.text();
+assert.ok(t.includes(OVER.text) && t.includes('Change the limit in Settings'), `the reason and the way to change it: ${t}`);
+assert.equal(byId(h, 'ship-stage')[0].call('on_click'), undefined, 'the local button is switched off');
+assert.ok(h.byIdPrefix('ship-choice-').findIndex((e) => e.call('id')[0] === 'ship-choice-cloud') < h.byIdPrefix('ship-choice-').findIndex((e) => e.call('id')[0] === 'ship-choice-local'), 'the cloud card comes first');
+globalThis.__runs = [];
+await h.click('ship-fit-limit');
+assert.ok(JSON.stringify(globalThis.__runs).includes('app.settings'), 'the link opens Settings');
+// Over the limit with no cloud connected: say how to connect one.
+h = await open({ targets: [], cloud: null, staging: NONE, fit: OVER });
+assert.ok(h.text().includes('No cloud is connected. Connect a cloud login to stage this model'), `how to get a cloud: ${h.text()}`);
+
 // What Captain set up in the account is listed, and one action removes it, after a confirm.
 h = await open({ targets: [SM], cloud: AWS, staging: NONE, serving: { status: 'ready', created: [{ type: 'iam-role', name: 'captain-serving' }, { type: 'ecr-repository', name: 'captain-serving' }], text: 'Serving is set up: iam-role captain-serving, ecr-repository captain-serving.' } });
 assert.ok(h.text().includes('Serving is set up: iam-role captain-serving, ecr-repository captain-serving.'), 'listed on the card');

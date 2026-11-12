@@ -3,7 +3,13 @@
 A local endpoint holds, in one process: the catalog's rows, a keyword index over them for each version, and for a
 trained ranker the feature tables too. When the baseline runs beside the candidate that is two indexes. This
 estimates that from the catalog's row count, compares it with the memory and disk free right now, and answers
-`fits`, `tight` (allowed, with a warning) or `wont-fit` (not offered: stage it in your cloud).
+`fits`, `tight` (allowed, with a warning), `wont-fit` (not offered: stage it in your cloud) or `over-limit`.
+
+Fitting is not enough. A big model with a lot of products should not run on a laptop even when the memory is
+there, so there is a size limit for staging on this computer, separate from free memory: by default a model that
+needs more than 1 GB to serve (this estimate, with headroom, counting the baseline beside it) is `over-limit` and
+not offered here. The limit is a workspace setting (`staging.local_limit_mb`, 0 for none). It is the first test;
+free memory is the second.
 
 The per-product figures were measured, not guessed. Measured 2026-11-11 on an Apple silicon laptop with Python
 3.14, on catalogs shaped like the demo catalog (short titles and descriptions), by building the same objects the
@@ -88,15 +94,30 @@ def need(arms: list[tuple[int, str]]) -> dict:
 
 
 def _gb(mb: float) -> str:
+    if mb >= 1024 and mb % 1024 == 0:
+        return f"{mb // 1024:.0f} GB"
     return f"{mb / 1024:.0f} GB" if mb >= 10 * 1024 else f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
 
 
-def check(ctx: Context, arms: dict[str, str], have: dict | None = None) -> dict:
-    """{outcome: fits | tight | wont-fit | unknown, need, free, text}. `arms` is {arm: model version}."""
+def limit_mb(ctx: Context) -> int:
+    from .. import settings as ST
+
+    return int((ST.get(ctx).get("staging") or {}).get("local_limit_mb") or 0)
+
+
+def check(ctx: Context, arms: dict[str, str], have: dict | None = None, allow_large: bool = False) -> dict:
+    """{outcome: fits | tight | wont-fit | over-limit | unknown, need, free, limit_mb, text}. `arms` is
+    {arm: model version}. `allow_large` skips the size limit, never the free-memory test."""
     nd = need([_products(ctx, r) for r in arms.values()])
+    lim = limit_mb(ctx)
+    if lim and nd["memory_mb"] > lim and not allow_large:
+        return {"need": nd, "free": None, "measured": MEASURED, "limit_mb": lim, "outcome": "over-limit",
+                "text": f"This model needs about {_gb(nd['memory_mb'])} to serve, which is more than the {_gb(lim)} limit for staging on "
+                        "this computer. Stage it in your cloud."}
     hv = have if have is not None else free()
     mem, disk = hv.get("memory_mb"), hv.get("disk_mb")
-    out = {"need": nd, "free": {"memory_mb": None if mem is None else round(mem), "disk_mb": None if disk is None else round(disk)}, "measured": MEASURED}
+    out = {"need": nd, "free": {"memory_mb": None if mem is None else round(mem), "disk_mb": None if disk is None else round(disk)}, "measured": MEASURED,
+           "limit_mb": lim}
     what = "This catalog" if nd["products"] else "This model"
     if mem is None:
         return {**out, "outcome": "unknown",

@@ -146,6 +146,9 @@ def login_policy(storage_uri: str, region: str, account: str, n: dict, image_sou
     else:
         st.append({"Sid": "ImagePush", "Effect": "Allow", "Action": ["ecr:GetAuthorizationToken"], "Resource": "*"})
         st[1]["Action"] += ["ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:PutImage"]
+    st.append({"Sid": "TheirLogs", "Effect": "Allow", "Action": "logs:DeleteLogGroup",
+               "Resource": [f"arn:aws:logs:{region}:{account}:log-group:/aws/codebuild/{n['build']}*",
+                            f"arn:aws:logs:{region}:{account}:log-group:/aws/sagemaker/Endpoints/{n['endpoints']}-*"]})
     return {"Version": "2012-10-17", "Statement": st}
 
 
@@ -397,6 +400,7 @@ def setup(ctx: Context, profile: str, region: str, *, name_prefix: str = "captai
 
         say(f"Creating the image build {n['build']}")
         step(f"create the image build {n['build']}", "codebuild:CreateProject", project)
+        note("log-group", f"/aws/codebuild/{n['build']}")  # the build writes its log there: removed with the rest
         say(f"Building the serving image in your account (about {BUILD_MINUTES} minutes)")
         bid = step("start the image build", "codebuild:StartBuild", lambda: cb.start_build(projectName=n["build"]))["build"]["id"]
         while True:
@@ -474,7 +478,7 @@ def teardown(ctx: Context, progress=None) -> dict:
     say = progress or (lambda _t: None)
     sess = cloud.aws_session(rec["profile"], rec["region"])
     left = []
-    order = {"compute-target": 0, "codebuild-project": 1, "ecr-repository": 2, "iam-role": 3, "s3-object": 4, "s3-bucket": 5}
+    order = {"compute-target": 0, "codebuild-project": 1, "log-group": 2, "ecr-repository": 2, "iam-role": 3, "s3-object": 4, "s3-bucket": 5}
     for x in sorted(rec.get("created") or [], key=lambda x: order.get(x["type"], 9)):
         say(f"Removing {x['type']} {x['name']}")
         try:
@@ -484,6 +488,8 @@ def teardown(ctx: Context, progress=None) -> dict:
                 ctx.store.put_if(f"compute/{name}.yaml", dump_yaml({**yaml.safe_load(body), "deleted": True, "purposes": []}), tag)
             elif t == "codebuild-project":
                 sess.client("codebuild").delete_project(name=name)
+            elif t == "log-group":
+                sess.client("logs").delete_log_group(logGroupName=name)
             elif t == "ecr-repository":
                 sess.client("ecr").delete_repository(repositoryName=name, force=True)
             elif t == "iam-role":

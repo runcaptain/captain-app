@@ -66,6 +66,13 @@ Before staging, Captain offers the places a model can run with what each costs: 
 reach it) and the connected cloud (an hourly estimate, a site can reach it). The last choice is remembered per
 project.
 
+**A big model is staged in the cloud, not on this computer.** There is a size limit for staging here, separate from
+free memory: by default a model that needs more than 1 GB to serve (the estimate below, with headroom, counting the
+baseline beside it) is not offered on this computer, even when the memory is free. The choice is switched off with
+the reason and a link to the setting (Settings, Costs: "Largest model to stage on this computer": 250 MB, 500 MB,
+1 GB, 2 GB, 4 GB or No limit). `cst projects stage --target local` refuses the same way unless `--allow-large` is
+passed. With a cloud connected the cloud is offered first.
+
 **This computer is only offered when the model fits.** A local endpoint holds the catalog, a keyword index for
 each version and a trained ranker's feature tables in one process. Captain estimates that from the catalog's size
 and compares it with the memory and disk free right now. Measured 2026-11-11 on demo-shaped catalogs: about 8.0 KB

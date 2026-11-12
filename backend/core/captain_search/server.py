@@ -591,6 +591,17 @@ def settings_compute(body: dict):
     return ST.set_compute(ctx(), body.get("backtest"), body.get("serve"), clear_serve="serve" in body and not body["serve"])
 
 
+@app.put("/api/settings/staging", dependencies=A)
+def settings_staging(body: dict):
+    """{local_limit_mb}: the largest model to stage on this computer: 250, 500, 1024, 2048, 4096, or 0 for no limit."""
+    from . import settings as ST
+
+    try:
+        return ST.set_local_limit(ctx(), body.get("local_limit_mb"))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
 @app.put("/api/settings/costs", dependencies=A)
 def settings_costs(body: dict):
     """{confirm_above_usd}: the estimate above which a form asks again before starting work on a cloud."""
@@ -950,11 +961,13 @@ def project_stage(pid: str, body: dict | None = None):
     c, b = ctx(), body or {}
     args = (b.get("candidate") or None, bool(b.get("baseline")), b.get("env") or "staging", b.get("target") or None,
             b.get("endpoint") or None, b.get("image") or None)
-    p = _staging_call(SG.plan, c, pid, *args)
+    p = _staging_call(SG.plan, c, pid, *args, allow_large=bool(b.get("allow_large")))
     if isinstance(p, JSONResponse):
         return p
     if b.get("dry_run"):
         return {**p, "dry_run": True}
+    if p["kind"] == "local" and (p.get("local_fit") or {}).get("outcome") in ("wont-fit", "over-limit"):
+        raise HTTPException(400, p["local_fit"]["text"])  # refused here, in the sentence the choice shows, not inside a job
     if p["needs_confirm"] and not b.get("confirm"):
         return JSONResponse({"detail": "Confirm the cost first. " + p["cost"]["text"], "needs_confirm": True, "plan": p},
                             status_code=409)
@@ -962,7 +975,8 @@ def project_stage(pid: str, body: dict | None = None):
     def go(_p):
         say = lambda t: JOBS[jid]["log"].append(str(t)) or JOBS[jid].__setitem__("message", str(t))  # noqa: E731
         return SG.stage(c, pid, args[0], args[1], args[2], args[3], args[4], b.get("endpoint_auth_secret") or None,
-                        args[5], confirm=True, idle_minutes=b.get("idle_minutes") or None, progress=say)
+                        args[5], confirm=True, idle_minutes=b.get("idle_minutes") or None, progress=say,
+                        allow_large=bool(b.get("allow_large")))
 
     jid = _job(go, f"staging {p['model_version']} for {pid}")
     JOBS[jid]["compute"] = p["target"]

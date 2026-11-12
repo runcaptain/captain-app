@@ -99,6 +99,9 @@ class FakeSM:
         return {"EvaluationResults": [{"EvalActionName": ActionNames[0],
                                        "EvalDecision": "implicitDeny" if ActionNames[0] in self.w.role_denies else "allowed"}]}
 
+    def delete_log_group(self, logGroupName):
+        self.w.calls.append(("delete_log_group", {"name": logGroupName}))
+
     def list_endpoints(self, **kw):
         return {"Endpoints": [{"EndpointName": n, "EndpointArn": f"endpoint/{n}"} for n in self.w.endpoints]}
 
@@ -190,6 +193,7 @@ def test_stage_query_and_unstage_leave_nothing_behind(ws, aws):  # noqa: F811
     assert out["spent"]["text"].startswith("Cost ") and out["spent"]["usd"] >= 0  # what it cost while it was up
     from captain_search import cost_estimates as CE
     assert CE.estimate(ws, "staging", "sm", {"instances": 1, "instance_type": "ml.t2.medium"})["low"] == r["cost"]["hourly_usd"]
+    assert ("delete_log_group", {"name": "/aws/sagemaker/Endpoints/captain-search-test-shop-staging"}) in aws.calls  # its log group too
     assert not aws.models and not aws.configs and not aws.endpoints
     assert C.tagged(ws, C.get(ws, "sm"), "shop", "staging") == []
 

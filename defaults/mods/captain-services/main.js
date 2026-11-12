@@ -49,6 +49,7 @@ export default class CaptainServices extends View {
     cx.spawn(async (cx) => {
       const r = await api("/api/settings", { scoped: false });
       if (!r.ok) return;
+      this.localLimit = r.data?.staging?.local_limit_mb ?? 1024;
       this.askSaved = r.data?.costs?.confirm_above_usd ?? 5;
       this.askAbove.set_value(String(this.askSaved));
       this.askNote = null;
@@ -87,7 +88,24 @@ export default class CaptainServices extends View {
           .child(div().flex_none().text_size(12.5).text_color(c.grey500).child("$"))
           .child(Input.new(this.askAbove).w_full().text_size(12.5).text_color(c.navy)))
         .child(Button(c, "ask-above-save", this.askSaving ? "Saving..." : "Save", (_e, cx) => { if (!this.askSaving) this.saveCosts(cx); }, { small: true }))
-        .when(Boolean(note), (e) => e.child(div().id("ask-above-note").text_size(12).text_color(note.tone === "fail" ? c.fail : c.good).child(note.text))));
+        .when(Boolean(note), (e) => e.child(div().id("ask-above-note").text_size(12).text_color(note.tone === "fail" ? c.fail : c.good).child(note.text))))
+      // A big model with a lot of products is staged in the cloud, even when this computer has the memory free.
+      .child(v_flex().id("local-limit").w_full().px(12).py(10).gap(6).border_1().border_color(c.rule).bg(c.surface)
+        .child(div().text_size(12.5).text_color(c.grey900).child("Largest model to stage on this computer"))
+        .child(h_flex().flex_wrap().gap(6).children([[250, "250 MB"], [500, "500 MB"], [1024, "1 GB"], [2048, "2 GB"], [4096, "4 GB"], [0, "No limit"]].map(([mb, label]) =>
+          div().id(`local-limit-${mb}`).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12).border_1()
+            .border_color(this.localLimit === mb ? c.blue : c.grey300).bg(this.localLimit === mb ? c.blueLight : c.surface).text_color(this.localLimit === mb ? c.blue : c.navy)
+            .on_click((_e, cx) => this.saveLimit(cx, mb)).child(label))))
+        .child(div().id("local-limit-note").text_size(12).line_height("17px").text_color(c.grey500)
+          .child(this.limitNote ?? "A model that needs more memory than this to serve is staged in your cloud, not on this computer.")));
+  }
+
+  saveLimit(cx, mb) {
+    cx.spawn(async (cx) => {
+      const r = await api("/api/settings/staging", { method: "PUT", body: { local_limit_mb: mb }, scoped: false });
+      if (r.ok) { this.localLimit = r.data?.staging?.local_limit_mb ?? mb; this.limitNote = "Saved."; } else this.limitNote = "Couldn't save the limit. Try again in a moment.";
+      cx.notify();
+    });
   }
 
   setDefault(cx, purpose, name) {
