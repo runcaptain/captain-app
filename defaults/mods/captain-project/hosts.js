@@ -137,7 +137,13 @@ export function HostSheet(ship, c) {
     .child(h_flex().gap(8).child(div().w(190).flex_none().text_size(12).text_color(c.grey500).child(r.resource)).child(div().font_family(MONO).text_size(11.5).text_color(c.navy).child(r.name)))
     .child(div().pl(198).text_size(12).line_height("17px").text_color(c.grey900).child(r.why));
   return v_flex().id("ship-host-sheet").p(10).gap(5).bg(c.surface2).border_1().border_color(c.rule)
-    .child(div().id("ship-host-sheet-title").text_size(12.5).font_semibold().text_color(c.navy).child(`Set up serving in your ${w.yours}`))
+    // The title and the actions share the first row, so "Create these" is in view however long the list is.
+    .child(h_flex().gap(6).items_center().flex_wrap()
+      .child(div().id("ship-host-sheet-title").flex_1().min_w(200).text_size(12.5).font_semibold().text_color(c.navy).child(`Set up serving in your ${w.yours}`))
+      .when(Boolean(p), (e) => e.child(Button(c, "ship-host-go", "Create these", (_e, cx) => runHostSetup(ship, cx), { small: true, kind: "primary", disabled: Boolean(ship.busy) })))
+      .when(Boolean(policy), (e) => e.child(Button(c, "ship-host-policy-copy", "Copy what your login needs",
+        (_e, cx) => ship.copy(cx, JSON.stringify(policy, null, 2), `What your login needs is on your clipboard. Send it to whoever manages ${w.admin}.`), { small: true, kind: ship.hostPolicy ? "primary" : "secondary" })))
+      .child(Button(c, "ship-host-close", "Not now", (_e, cx) => { ship.hostSheet = null; cx.notify(); }, { small: true, kind: "quiet" })))
     .when(!p && !ship.hostProblem, (e) => e.child(div().text_size(12).text_color(c.grey500).child("Working out what to create...")))
     .when(Boolean(ship.hostProblem), (e) => e.child(div().id("ship-host-problem").text_size(12).text_color(c.fail).child(ship.hostProblem)))
     .when(Boolean(p), (e) => e
@@ -150,12 +156,7 @@ export function HostSheet(ship, c) {
       .when(Boolean(p?.login_text), (x) => x.child(div().id("ship-host-login").text_size(12).line_height("17px").text_color(c.grey500).child(p.login_text)))
       .child(div().text_size(12).line_height("17px").text_color(c.grey500).child("Nothing is created until you say so. Remove serving setup takes all of it away again.")))
     .when(Boolean(ship.hostPolicy), (e) => e.child(div().id("ship-host-denied").text_size(12).text_color(c.grey900)
-      .child("Your login needs more permissions for this. What to ask an admin for is ready to copy.")))
-    .child(h_flex().gap(6).flex_wrap()
-      .when(Boolean(p), (e) => e.child(Button(c, "ship-host-go", "Create these", (_e, cx) => runHostSetup(ship, cx), { small: true, kind: "primary", disabled: Boolean(ship.busy) })))
-      .when(Boolean(policy), (e) => e.child(Button(c, "ship-host-policy-copy", "Copy what your login needs",
-        (_e, cx) => ship.copy(cx, JSON.stringify(policy, null, 2), `What your login needs is on your clipboard. Send it to whoever manages ${w.admin}.`), { small: true, kind: ship.hostPolicy ? "primary" : "secondary" })))
-      .child(Button(c, "ship-host-close", "Not now", (_e, cx) => { ship.hostSheet = null; cx.notify(); }, { small: true, kind: "quiet" })));
+      .child("Your login needs more permissions for this. What to ask an admin for is ready to copy.")));
 }
 
 /** What Captain made on each host for serving, always listed, with the one action that removes it. */

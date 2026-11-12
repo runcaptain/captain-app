@@ -233,7 +233,7 @@ if the group holds anything Captain did not make.
 
 `--fewest 1` keeps one copy up, so no request waits for a cold start, and it bills while it is up. On Modal
 `--idle-seconds` sets how long an idle copy stays (2 to 1200). The app reads and sets the same through
-`GET` and `POST /api/projects/{id}/staging/copies`. On this computer and on SageMaker there is one copy.
+`GET` and `POST /api/projects/{id}/staging/scale`. On this computer and on SageMaker there is one copy.
 
 ## Cost, and stopping by itself
 

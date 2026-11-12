@@ -126,14 +126,14 @@ class AzureHost(Host):
         rows = [{"resource": "Resource provider registered", "name": ns, "why": PROVIDERS[ns]} for ns in off or []]
         rows += [
             {"resource": "Resource group", "name": n["group"], "why": "Holds everything below. Removing the setup deletes this group."},
-            {"resource": "Storage account", "name": n["storage_account"], "why": "One container, `serving`: the serving bundle (the model and its catalog) and the request log. "
+            {"resource": "Storage account", "name": n["storage_account"], "why": "One container, named serving: the serving bundle (the model and its catalog) and the request log. "
                                                                                  "Your workspace is not copied there."},
             {"resource": "Managed identity", "name": n["identity"], "why": "The endpoint runs as this. It may read and write that one container and pull the serving image. Nothing else."},
             {"resource": "Container registry (Basic)", "name": n["registry"], "why": "Holds Captain's serving image, and builds it. It costs about $5 a month while the setup exists."},
             {"resource": "Container Apps environment", "name": n["environment"], "why": "Where the endpoint runs. Consumption plan: it costs nothing by itself."},
             {"resource": "Captain compute target", "name": n["target"],
              "why": f"Container Apps app, {o['cpu']:g} vCPU and {o['memory_mb'] / 1024:g} GB a copy, at most {o['max_copies']}, in {o['region']}. Staging uses it."}]
-        later = [{"resource": "Container app", "name": f"{n['apps']}-<project>-staging", "why": "The endpoint. Made when you stage a model, deleted when you unstage it."}]
+        later = [{"resource": "Container app", "name": f"{n['apps']}-{{project}}-staging", "why": "The endpoint. Made when you stage a model, deleted when you unstage it."}]
         build = BUILD_MINUTES * 60 * 2 * PT.AZURE_EXTRAS["build_vcpu_second"]
         return {"cloud": "azure", "profile": o["profile"], "region": o["region"], "subscription": arm.sub, "names": n, "storage": n["storage"], "options": o,
                 "unregistered": off, "creates": rows, "each_deploy": later,

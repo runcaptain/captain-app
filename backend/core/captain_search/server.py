@@ -1061,16 +1061,17 @@ def _host_options(q: dict) -> dict:
     return {k: v for k, v in q.items() if k not in ("cloud", "confirm", "plan") and v not in (None, "")}
 
 
-@app.get("/api/projects/{pid}/staging/copies", dependencies=A)
-def project_staging_copies(pid: str):
-    """{min_copies, max_copies, idle_seconds, can_set, text}: how many copies the staged endpoint may run."""
+@app.get("/api/projects/{pid}/staging/scale", dependencies=A)
+def project_staging_scale(pid: str):
+    """{min_copies, max_copies, idle_seconds, can_set, text}: how many copies the staged endpoint may run. (The
+    copies that are running now are GET .../staging/copies, the Copies tab.)"""
     from . import staging as SG
 
     return _staging_call(SG.scale, ctx(), pid)
 
 
-@app.post("/api/projects/{pid}/staging/copies", dependencies=A)
-def project_staging_copies_set(pid: str, body: dict):
+@app.post("/api/projects/{pid}/staging/scale", dependencies=A)
+def project_staging_scale_set(pid: str, body: dict):
     """{min_copies?, max_copies?, idle_seconds?}: change them. The host applies it with no restage."""
     from . import staging as SG
 

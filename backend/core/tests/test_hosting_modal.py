@@ -500,6 +500,10 @@ def test_the_deployment_tabs_say_asleep_and_never_wake_it(ws, modal):  # noqa: F
     OB.logs(ws, "shop")
     OB.metrics(ws, "shop")
     assert modal.calls == []  # reading the log and the metrics did not wake it either
+    from captain_search.staging import traffic as TF
+
+    c = TF.connect(ws, "shop")  # the page asks this on every load
+    assert c["asleep"] and "Asleep: no copy is up" in c["live"] and "warning" not in c and modal.calls == []
 
 
 def test_copies_from_the_cli_and_the_api_and_a_plan_with_nothing_to_warn_about(ws, modal, monkeypatch):  # noqa: F811
@@ -522,9 +526,14 @@ def test_copies_from_the_cli_and_the_api_and_a_plan_with_nothing_to_warn_about(w
     monkeypatch.setattr(server, "ctx", lambda: ws)
     c = TC(server.app)
     h = {"Authorization": f"Bearer {server.TOKEN}"}
-    assert c.get("/api/projects/shop/staging/copies", headers=h).json()["max_copies"] == 2
-    assert c.post("/api/projects/shop/staging/copies", json={"min_copies": 1}, headers=h).json()["min_copies"] == 1
-    assert c.post("/api/projects/shop/staging/copies", json={"idle_seconds": 99999}, headers=h).status_code == 400
+    assert c.get("/api/projects/shop/staging/scale", headers=h).json()["max_copies"] == 2
+    assert c.post("/api/projects/shop/staging/scale", json={"min_copies": 1}, headers=h).json()["min_copies"] == 1
+    assert c.post("/api/projects/shop/staging/scale", json={"idle_seconds": 99999}, headers=h).status_code == 400
+    # The Copies tab's own address still answers with the copies that are running: the two never share one.
+    rows = c.get("/api/projects/shop/staging/copies", headers=h).json()
+    assert "rows" in rows and len(rows["rows"]) == 1 and rows["rows"][0]["model_version"]
+    paths = [(m, r.path) for r in server.app.routes for m in getattr(r, "methods", None) or [] if "/staging" in r.path or "/serving" in r.path]
+    assert len(paths) == len(set(paths)), [x for x in paths if paths.count(x) > 1]  # no staging address is registered twice
     cards = c.get("/api/serving/hosts", headers=h).json()
     assert [x["cloud"] for x in cards] == ["local", "aws", "modal", "gcp", "azure"] and cards[2]["setup"]["status"] == "ready"
     plan = c.get("/api/serving/setup", params={"cloud": "modal", "plan": "true", "environment": "captain-search-test"}, headers=h).json()

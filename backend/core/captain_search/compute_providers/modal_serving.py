@@ -275,7 +275,8 @@ class ModalServingProvider(HttpServing, ComputeProvider):
         s = dict(self._size())
         s.update({k: v for k, v in ((rec.get("scale") or {}).items()) if k in ("min", "max", "idle_s") and v is not None})
         return {"min_copies": s["min"], "max_copies": s["max"], "idle_seconds": s["idle_s"], "can_set": ["min_copies", "max_copies", "idle_seconds"],
-                "text": (f"Sleeps when idle: an idle copy stays up {s['idle_s']} seconds. " if s["min"] == 0 else f"Keeps {s['min']} up at all times. ")
+                "text": (f"Sleeps when idle: an idle copy stays up {s['idle_s'] // 60} min. " if s["min"] == 0 and s["idle_s"] >= 120 and s["idle_s"] % 60 == 0
+                         else f"Sleeps when idle: an idle copy stays up {s['idle_s']} seconds. " if s["min"] == 0 else f"Keeps {s['min']} up at all times. ")
                         + f"At most {s['max']} at once."}
 
     def set_scale(self, rec: dict, min_copies: int | None = None, max_copies: int | None = None, idle_seconds: int | None = None) -> dict:

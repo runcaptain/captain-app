@@ -154,6 +154,24 @@ if [[ -n "${SHOT_PROJECT:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
     echo "Staged on this computer, with real requests, shadow mode${SHOT_PRACTICE:+ and a practice A/B test}"
   fi
 fi
+# SHOT_HOSTS=1 (with SHOT_PROJECT=1): the cards and setup sheets of the other hosts (captain-project:hosts and
+# captain-project:hostsheet-modal|gcp|azure). Modal needs nothing. A Google Cloud or Azure card needs a login for it:
+# SHOT_GCP_PROJECT=<project id> and SHOT_AZURE_SUB=<subscription id> add one each (the computer's own sign-in, and
+# only read: the sheet asks which APIs are on). Nothing is created anywhere.
+if [[ -n "${SHOT_HOSTS:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
+  export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
+  [[ -n "${SHOT_GCP_PROJECT:-}" ]] && CST_HOME=$WORK/cst "$CSTCMD" cloud add shot-gcp --provider gcp --auth adc -f "project=$SHOT_GCP_PROJECT" >/dev/null
+  [[ -n "${SHOT_AZURE_SUB:-}" ]] && CST_HOME=$WORK/cst "$CSTCMD" cloud add shot-azure --provider azure --auth default -f "subscription_id=$SHOT_AZURE_SUB" >/dev/null
+fi
+# SHOT_ASLEEP=1 (with SHOT_PROJECT=1): the project's model staged on Modal and asleep, with no call to Modal: a
+# compute plugin in a scratch project folder stands in for Modal and says no copy is up (seed-asleep.py). For
+# captain-project:ship and the captain-project:dep-* tabs.
+if [[ -n "${SHOT_ASLEEP:-}" && -n "${PID:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
+  export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
+  export CST_PROJECT=$WORK/asleep/captain
+  CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-asleep.py "$PID" "$CST_PROJECT" >/dev/null
+  echo "Staged on Modal and asleep (a stand-in: Modal is not called)"
+fi
 # SHOT_FORMS_PREVIEW=cloud: the audit's forms dialog opens on that form (captain-forms' test hook), e.g. to compare the
 # cloud marks before and after a change. A comma list (database,cloud) shoots one dialog per form:
 # audit-dialog-captain-forms-database.png, audit-dialog-captain-forms-cloud.png.
@@ -232,6 +250,8 @@ props_of() {
     captain-project:home) echo '{"openExperiment": true}' ;;
     captain-project:list) echo '{"allProjects": true}' ;;
     captain-project:ship) echo '{"deployment": true}' ;;
+    captain-project:hosts) echo '{"deployment": true}' ;;  # nothing staged: the cards in "Where should it run?"
+    captain-project:hostsheet-*) echo "{\"hostSheet\": \"${1#captain-project:hostsheet-}\"}" ;;  # modal, gcp or azure: its setup sheet
     captain-project:pins) echo '{"pinCheck": true}' ;;
     captain-project:connect) echo '{"shipFrom": "connect"}' ;;
     captain-project:dep-list) echo '{"depList": true}' ;;
@@ -325,7 +345,9 @@ EOF
   if [[ $ok == 1 && $errs == 0 ]]; then echo "$view: drawn ($OUT/${view/:/-}.png)"; else echo "$view: BLANK or errors ($errs) ($OUT/${view/:/-}.png)"; app status; fail=1; fi
   # The Ship steps ask the services about the endpoint after the page is first drawn: give them a moment, then
   # take the picture again, so it shows the steps filled in and not the frame before the answer.
-  if [[ "$view" == captain-project:ship || "$view" == captain-project:connect || "$view" == captain-project:ab || "$view" == captain-project:dep-* ]]; then
+  # A setup sheet asks the cloud which APIs are on before it can say what it will create: that takes longer.
+  [[ "$view" == captain-project:hostsheet-* ]] && sleep 12
+  if [[ "$view" == captain-project:ship || "$view" == captain-project:connect || "$view" == captain-project:ab || "$view" == captain-project:dep-* || "$view" == captain-project:host* ]]; then
     for _ in 1 2 3; do sleep 2; app do layout.select "{\"stack\":\"sections\",\"child\":\"$block\"}" >/dev/null || true; sleep 0.5; app shot "$OUT/${view/:/-}.png" >/dev/null; done
     PREV_SUM=$(shasum "$OUT/${view/:/-}.png" | cut -d' ' -f1)
   fi

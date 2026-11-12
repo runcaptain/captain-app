@@ -249,7 +249,13 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
            "last_real_at": None}
     h: dict = {}
     try:
-        h = call(ctx, rec, "status", {}) if rec.get("how") != "image" else {}
+        from . import _awake
+
+        # A host that sleeps is not woken to be asked how much traffic it has seen: a page that asks on every
+        # load would keep a copy awake and billing.
+        asleep = bool(rec.get("scale_to_zero")) and not _awake(ctx, rec)
+        out["asleep"] = asleep
+        h = call(ctx, rec, "status", {}) if rec.get("how") != "image" and not asleep else {}
         t = h.get("traffic") or {}
         out.update(real=int(t.get("real") or 0), unlabelled=int(t.get("unlabelled") or 0), test=int(t.get("test") or 0), simulated=int(t.get("simulated") or 0),
                    last_real_at=h.get("last_real_at"))
@@ -276,7 +282,10 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
                    + (f", the last one {_since(ago)} ago" if ago is not None else "") + "."
                    if out["real"] else
                    f"Received {out['unlabelled']:,} unlabelled request{'s' if out['unlabelled'] != 1 else ''}. " + HOW_TO_LABEL
-                   if out["unlabelled"] else "Waiting for the first request.")
+                   if out["unlabelled"] else "Asleep: no copy is up. The next request wakes one, and the count starts again from there."
+                   if out.get("asleep") else "Waiting for the first request.")
+    if out.get("asleep") and rec.get("connected_at"):
+        out["connected"] = True  # it was connected before it slept
     if not w["reachable"]:
         out["blocked"] = ("A site can't reach an endpoint on this computer. Two ways forward: stage it in your cloud, "
                           "so your site can call it, or keep testing here with simulated shoppers.")
