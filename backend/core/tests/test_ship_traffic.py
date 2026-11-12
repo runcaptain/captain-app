@@ -21,7 +21,7 @@ from test_staging import _log, _runtime, keychain, ws  # noqa: F401  (fixtures a
 def _real(ctx, n=30, start=0):
     rec = SG.state(ctx, "shop")
     qs = ["jacket", "boots", "tent", "waterproof jacket", "boots under 50"]
-    return [SG.call(ctx, rec, "rank", {"query": qs[i % len(qs)], "k": 10, "session_id": f"shopper-{start + i}"}) for i in range(n)]
+    return [SG.call(ctx, rec, "rank", {"traffic": "real", "query": qs[i % len(qs)], "k": 10, "session_id": f"shopper-{start + i}"}) for i in range(n)]
 
 
 # ---- where it runs, and connecting a site --------------------------------------------------------
@@ -394,7 +394,7 @@ def test_requests_newest_first_and_one_request_in_full(ws):  # noqa: F811
     SG.stage(ws, "shop", target="local")
     rec = SG.state(ws, "shop")
     assert TF.requests(ws, "shop")["text"] == "No requests yet. Try a query, or send a test request."
-    a = SG.call(ws, rec, "rank", {"query": "jacket", "k": 5, "session_id": "s1", "request_id": "first"})
+    a = SG.call(ws, rec, "rank", {"traffic": "real", "query": "jacket", "k": 5, "session_id": "s1", "request_id": "first"})
     SG.call(ws, rec, "rank", {"query": "boots", "k": 3, "traffic": "test", "request_id": "second"})
     SG.call(ws, rec, "outcome", {"request_id": "first", "event": "click", "product_id": a["ids"][1]})
     r = TF.requests(ws, "shop")
@@ -466,3 +466,30 @@ def test_a_model_over_the_size_limit_is_not_staged_on_this_computer_even_with_me
     with pytest.raises(ValueError, match="250 MB, 500 MB, 1 GB, 2 GB, 4 GB or no limit"):
         ST.set_local_limit(ws, 300)
     assert SG.stage(ws, "shop", target="local", allow_large=True)["status"] == "running"
+
+
+def test_a_request_with_no_label_is_never_called_real(ws):  # noqa: F811
+    """A script or this computer can send requests too. Only a site that says "traffic": "real" counts as shoppers."""
+    SG.stage(ws, "shop", target="local", allow_large=True)
+    rec = SG.state(ws, "shop")
+    for i in range(6):
+        SG.call(ws, rec, "rank", {"query": "jacket", "k": 5, "session_id": f"script-{i}"})
+    k = TF.connect(ws, "shop")
+    assert k["real"] == 0 and k["unlabelled"] == 6 and k["evidence_label"] == "Unlabelled" and not k["connected"]
+    assert k["live"].startswith("Received 6 unlabelled requests.") and 'send "traffic": "real" with each request' in k["live"]
+    assert len(k["snippets"]) == 3 and all('"traffic": "real"' in v or 'traffic: "real"' in v for v in k["snippets"].values())  # the site code labels shoppers
+    opts = AB.options(ws, "shop")
+    assert not opts["ready"] and "with no label" in opts["text"]
+    with pytest.raises(ValueError, match="No real request has reached this endpoint yet"):
+        AB.start(ws, "shop")
+    assert TF.requests(ws, "shop")["rows"][0]["traffic"] == "unlabelled"
+    # a practice test over the same unlabelled requests can never be real evidence
+    AB.start(ws, "shop", split=0.5, practice=True)
+    for i in range(20):
+        SG.call(ws, SG.state(ws, "shop"), "rank", {"query": "jacket", "k": 5, "session_id": f"script-b{i}"})
+    r = AB.readout(ws, "shop", traffic="unlabelled")
+    assert r["evidence"] == "UNLABELLED" and r["label"] == "Unlabelled" and not r["can_ship"]
+    assert "can't go to launch review" in r["cannot_ship"]
+    # the moment the site labels them, they count
+    SG.call(ws, SG.state(ws, "shop"), "rank", {"query": "jacket", "k": 5, "session_id": "shopper-1", "traffic": "real"})
+    assert TF.connect(ws, "shop")["real"] == 1 and TF.connect(ws, "shop")["evidence_label"] == "Real traffic"

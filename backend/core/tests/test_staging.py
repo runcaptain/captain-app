@@ -291,11 +291,11 @@ def test_every_request_is_logged_with_what_it_served(ws):
     assert r1["arm"] == "candidate" and r1["traffic"] == "test" and r1["ms"] >= 0 and r1["ts"].endswith("Z")
     names = got["names"]["candidate"]
     assert set(r1["features"]) == set(a["ids"]) and all(len(v) == len(names) for v in r1["features"].values())
-    assert got["requests"][1]["traffic"] == "real" and got["requests"][1]["request_id"]  # an id is made when none is sent
+    assert got["requests"][1]["traffic"] == "unlabelled" and got["requests"][1]["request_id"]  # never real by default. An id is made when none is sent
     assert [o["event"] for o in got["outcomes"]] == ["click", "purchase"]
     # the published version is an events dataset monitor and replay can read, and it is never mistaken for shoppers
     m, rows, _ = ops.rows_of(ws, "shop/staging-logs@v1")
-    assert m.dataset_kind == DatasetKind.events and m.tags["synthetic"] == "true" and m.tags["traffic"] == "real,test"
+    assert m.dataset_kind == DatasetKind.events and m.tags["synthetic"] == "true" and m.tags["traffic"] == "test,unlabelled"
     top = next(r for r in rows if r["request_id"] == "r-1" and r["position"] == 1)
     assert top["clicked"] and top["purchased"] and top["value"] == 59.0 and top["arm"] == "candidate"
     assert {"query", "product_id", "position", "clicked", "session_id", "ts", "request_id", "model_version"} <= set(top)
@@ -469,9 +469,9 @@ def test_ab_test_end_to_end_on_this_computer(ws):
     # ramp: one call, recorded, and the endpoint follows without a redeploy
     pid_before = SG.state(ws, "shop")["endpoint"]["pid"]
     AB.ramp(ws, "shop", 1.0)
-    assert SG.call(ws, SG.state(ws, "shop"), "rank", {"query": "jacket", "session_id": "anyone"})["arm"] == "candidate"
+    assert SG.call(ws, SG.state(ws, "shop"), "rank", {"traffic": "real", "query": "jacket", "session_id": "anyone"})["arm"] == "candidate"
     AB.ramp(ws, "shop", 0.05)
-    arms = [SG.call(ws, SG.state(ws, "shop"), "rank", {"query": "jacket", "session_id": f"u{i}"})["arm"] for i in range(200)]
+    arms = [SG.call(ws, SG.state(ws, "shop"), "rank", {"traffic": "real", "query": "jacket", "session_id": f"u{i}"})["arm"] for i in range(200)]
     assert 0 < arms.count("candidate") < 40
     assert SG.state(ws, "shop")["endpoint"]["pid"] == pid_before
     with pytest.raises(ValueError, match="between 0 and 100%"):
@@ -480,7 +480,7 @@ def test_ab_test_end_to_end_on_this_computer(ws):
     # roll back: everyone gets the baseline again, the test ends, and the history has every step
     out = AB.rollback(ws, "shop")
     assert out["rolled_back_to"] == ws.baseline and AB.get(ws, "shop")["status"] == "rolled_back"
-    assert {SG.call(ws, SG.state(ws, "shop"), "rank", {"query": "jacket", "session_id": f"u{i}"})["arm"] for i in range(50)} == {"baseline"}
+    assert {SG.call(ws, SG.state(ws, "shop"), "rank", {"traffic": "real", "query": "jacket", "session_id": f"u{i}"})["arm"] for i in range(50)} == {"baseline"}
     assert SG.state(ws, "shop")["model_version"] == ws.baseline
     assert [x["action"] for x in AB.get(ws, "shop")["ramps"]] == ["start", "ramp", "ramp", "rollback"]
     whats = " | ".join(h["what"] for h in PS.get(ws, "shop")["history"])
@@ -569,10 +569,10 @@ def test_outcomes_from_an_events_dataset_and_a_readout_from_the_teams_own_system
 
     SG.stage(ws, "shop", target="local")
     rec = SG.state(ws, "shop")
-    SG.call(ws, rec, "rank", {"query": "tent", "session_id": "real-0"})  # a site is calling: a split means something
+    SG.call(ws, rec, "rank", {"traffic": "real", "query": "tent", "session_id": "real-0"})  # a site is calling: a split means something
     ab = AB.start(ws, "shop", split=0.5, primary="purchases", min_sessions=1)
-    a = SG.call(ws, rec, "rank", {"query": "jacket", "session_id": "real-1"})
-    b = SG.call(ws, rec, "rank", {"query": "boots", "session_id": "real-2"})
+    a = SG.call(ws, rec, "rank", {"traffic": "real", "query": "jacket", "session_id": "real-1"})
+    b = SG.call(ws, rec, "rank", {"traffic": "real", "query": "boots", "session_id": "real-2"})
     ev = snapshot(ws, "shop-outcomes", pa.Table.from_pylist([
         {"request_id": a["request_id"], "event": "purchase", "product_id": a["ids"][0], "value": 80.0},
         {"request_id": b["request_id"], "event": "click", "product_id": b["ids"][0], "value": 0.0},
@@ -711,14 +711,14 @@ def test_a_must_not_get_worse_guardrail_pauses_the_ramp(ws):
     SG.stage(ws, "shop", target="local")
     with pytest.raises(ValueError, match="marked must"):
         AB.start(ws, "shop", guardrails=["purchases:sometimes"], practice=True)
-    SG.call(ws, SG.state(ws, "shop"), "rank", {"query": "tent", "session_id": "before"})
+    SG.call(ws, SG.state(ws, "shop"), "rank", {"traffic": "real", "query": "tent", "session_id": "before"})
     ab = AB.start(ws, "shop", split="1%", primary="clicks", guardrails=["purchases:must", "revenue"], min_sessions=20)
     assert ab["guardrail_modes"] == {"latency": "must", "purchases": "must", "revenue": "watch"} and ab["split"] == 0.01
     rec = SG.state(ws, "shop")
     # real requests: baseline shoppers buy, candidate shoppers don't
     got = 0
     for i in range(4000):
-        r = SG.call(ws, rec, "rank", {"query": "jacket", "session_id": f"s{i}", "k": 3})
+        r = SG.call(ws, rec, "rank", {"traffic": "real", "query": "jacket", "session_id": f"s{i}", "k": 3})
         if r["arm"] == "baseline" and i % 2 == 0:
             SG.call(ws, rec, "outcome", {"request_id": r["request_id"], "event": "purchase", "product_id": r["ids"][0], "value": 30.0})
         got += r["arm"] == "candidate"

@@ -636,7 +636,7 @@ export class Ship {
         .child(svg(icon(k.connected ? "circle-check" : "clock")).size(13).flex_none().text_color(k.connected ? c.good : c.grey500))
         .child(div().text_size(12.5).font_medium().text_color(k.connected ? c.good : c.grey900).child(k.live))
         .when(k.test + k.simulated > 0, (e) => e.child(div().id("ship-connect-other").text_size(11.5).text_color(c.grey500)
-          .child(`Not counted: ${[k.test ? `${k.test} test` : null, k.simulated ? `${k.simulated} simulated` : null].filter(Boolean).join(", ")}.`))))
+          .child(`Not counted: ${[k.real && k.unlabelled ? `${k.unlabelled} unlabelled` : null, k.test ? `${k.test} test` : null, k.simulated ? `${k.simulated} simulated` : null].filter(Boolean).join(", ")}.`))))
       .child(h_flex().flex_wrap().gap(6).items_center()
         .child(Button(c, "ship-connect-key", "Copy the key", (_e, cx) => this.copyKey(cx), { small: true }))
         .child(Button(c, "ship-connect-test", "Send a test request", (_e, cx) => this.act(cx, "/staging/test", {}, (d) => d.text), { small: true }))
@@ -674,7 +674,7 @@ export class Ship {
         .children(r.queries.slice(0, 6).map((q, i) => h_flex().id(`ship-shadow-q${i}`).gap(8).items_center().cursor_pointer().hover((x) => x.bg(c.surface))
           .on_click((_e, cx) => this.tryQuery(cx, q.query))
           .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.blue).child(q.query))
-          .child(div().flex_none().text_size(11.5).text_color(c.grey500).child(`${q.moved} of the top 10 in another place, ${q.requests} request${q.requests === 1 ? "" : "s"}`))))));
+          .child(div().flex_none().text_size(11.5).text_color(c.grey500).child(`${q.text ?? `${q.moved} of the top 10 in another place.`} ${q.requests} request${q.requests === 1 ? "" : "s"}.`))))));
   }
 
   pick1(c, id, label, on, onPick) {
@@ -731,6 +731,7 @@ export class Ship {
         .child(Badge(c, r.label ?? "No traffic yet", r.evidence === "REAL_TRAFFIC" ? "good" : r.evidence ? "warn" : "neutral"))
         .when(Boolean(r.evidence) && r.evidence !== "REAL_TRAFFIC", (e) => e.child(div().id("ship-ab-evidence").text_size(12).text_color(c.warn).child(r.evidence === "SIMULATED"
           ? "SIMULATED: these shoppers are generated. Nothing here says what real shoppers will do."
+          : r.evidence === "UNLABELLED" ? "Unlabelled: these requests don't say they are shoppers. Send \"traffic\": \"real\" from your site, as the Connect your site code does."
           : "Test traffic: these requests are not shoppers."))))
       .when(!r.evidence && this.conn?.reachable === false, (e) => e.child(div().id("ship-ab-unreachable").text_size(12).text_color(c.grey900)
         .child("A site can't reach this endpoint, so no shopper will arrive. Only this computer can send it requests.")))
@@ -999,7 +1000,7 @@ export class Ship {
               .child(this.chip(c, "ship-chip-where", local ? "This computer" : `Your ${cloud ?? "cloud"} account`))
               .when(Boolean(s.needs_key), (x) => x.child(this.chip(c, "ship-chip-key", "Key required")))
               // What the traffic is, only once there is some. Never "real" before a real request.
-              .when(Boolean(k?.evidence_label), (x) => x.child(this.chip(c, "ship-chip-traffic", k.evidence_label, k.real ? "good" : "warn"))))))
+              .when(Boolean(k?.evidence_label), (x) => x.child(this.chip(c, "ship-chip-traffic", k.evidence_label, k.real ? "good" : k.unlabelled ? "neutral" : "warn"))))))
         .child(actions))
       .when(on, (e) => e.child(v_flex().id("ship-reach").gap(4)
         .child(h_flex().gap(8).items_center().flex_wrap()

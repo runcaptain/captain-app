@@ -922,7 +922,7 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
     # The next thing to do. A test that is running comes first; an ended one no longer decides anything.
     live_ab = bool(ab and ab["status"] == "running")
     shipped = bool(ab and (ab.get("decision") or {}).get("choice") == "ship")
-    real = not (ab or {}).get("practice") and last.get("evidence", "REAL_TRAFFIC") == "REAL_TRAFFIC"
+    real = not (ab or {}).get("practice") and (not last.get("evidence") or last.get("evidence") == "REAL_TRAFFIC")
     nxt = None
     if shipped and not sent and review_of:
         nxt = {"action": "handoff", "pipeline": review_of, "text": f"Send {review_of} to launch review."}

@@ -27,8 +27,10 @@ from . import logs as L
 
 TIMEOUT_MS = 300  # what the snippets give the endpoint before the site falls back to its own search
 SAME_SHARE = 0.8  # a candidate whose top 10 matches the baseline's on this share of queries "mostly reproduces" it
-LABELS = {"real": ("REAL_TRAFFIC", "Real traffic"), "simulated": ("SIMULATED", "Simulated shoppers"),
-          "test": ("TEST_TRAFFIC", "Test traffic")}
+LABELS = {"real": ("REAL_TRAFFIC", "Real traffic"), "unlabelled": ("UNLABELLED", "Unlabelled"),
+          "simulated": ("SIMULATED", "Simulated shoppers"), "test": ("TEST_TRAFFIC", "Test traffic")}
+HOW_TO_LABEL = ('If these are your shoppers, send "traffic": "real" with each request: the code under Connect your '
+                'site does. Captain never calls a request real unless the site says so.')
 # What a signal is, in words a person who never saw the feature list can read.
 SIGNALS = {"bm25_all": "how well its text matches the query's words", "title_overlap": "how many of the query's words are in its title",
            "title_partial": "query words that start a word in its title", "title_phrase": "the query appears as a phrase in its title",
@@ -87,7 +89,7 @@ def snippets(rec: dict) -> dict:
         curl = f"""# Get a ranking. Keep the request_id it returns.
 curl -s --max-time {TIMEOUT_MS / 1000:g} {url}/rank \\
   -H "Authorization: Bearer $CAPTAIN_STAGING_KEY" -H "Content-Type: application/json" \\
-  -d '{{"query": "waterproof jacket", "k": 10, "session_id": "the-shopper-session"}}'
+  -d '{{"query": "waterproof jacket", "k": 10, "session_id": "the-shopper-session", "traffic": "real"}}'
 
 # Report what the shopper did: click, add-to-cart or purchase.
 curl -s {url}/outcome \\
@@ -99,7 +101,7 @@ async function rank(query, sessionId) {{
     const r = await fetch("{url}/rank", {{
       method: "POST", signal: AbortSignal.timeout({TIMEOUT_MS}),
       headers: {{ Authorization: `Bearer ${{process.env.CAPTAIN_STAGING_KEY}}`, "Content-Type": "application/json" }},
-      body: JSON.stringify({{ query, k: 10, session_id: sessionId }}),
+      body: JSON.stringify({{ query, k: 10, session_id: sessionId, traffic: "real" }}),   // "real": these are your shoppers
     }});
     if (!r.ok) return null;            // an error body is {{"detail": "..."}}: fall back to your own search
     return await r.json();             // {{ request_id, ids, scores, arm, model_version, ms }}
@@ -121,7 +123,7 @@ HEADERS = {{"Authorization": f"Bearer {{KEY}}"}}
 
 def rank(query, session_id):
     try:
-        r = requests.post(f"{{URL}}/rank", json={{"query": query, "k": 10, "session_id": session_id}},
+        r = requests.post(f"{{URL}}/rank", json={{"query": query, "k": 10, "session_id": session_id, "traffic": "real"}},  # "real": these are your shoppers
                           headers=HEADERS, timeout={TIMEOUT_MS / 1000:g})
         return r.json() if r.ok else None   # an error body is {{"detail": "..."}}: fall back to your own search
     except requests.RequestException:
@@ -138,7 +140,7 @@ def outcome(request_id, event, product_id=None, value=0.0):   # event: click, ad
     cli = f"""# Get a ranking. Keep the request_id it returns. SageMaker signs the call with your AWS credentials.
 aws sagemaker-runtime invoke-endpoint --region {region} --endpoint-name {name} \\
   --content-type application/json --cli-read-timeout 1 --cli-binary-format raw-in-base64-out \\
-  --body '{{"op": "rank", "key": "'"$CAPTAIN_STAGING_KEY"'", "query": "waterproof jacket", "k": 10, "session_id": "the-shopper-session"}}' /dev/stdout
+  --body '{{"op": "rank", "key": "'"$CAPTAIN_STAGING_KEY"'", "query": "waterproof jacket", "k": 10, "session_id": "the-shopper-session", "traffic": "real"}}' /dev/stdout
 
 # Report what the shopper did: click, add-to-cart or purchase.
 aws sagemaker-runtime invoke-endpoint --region {region} --endpoint-name {name} \\
@@ -154,7 +156,7 @@ const call = async (body, ms) => {{
 }};
 
 async function rank(query, sessionId) {{
-  try {{ return await call({{ op: "rank", query, k: 10, session_id: sessionId }}, {TIMEOUT_MS}); }}   // {{ request_id, ids, ... }}
+  try {{ return await call({{ op: "rank", query, k: 10, session_id: sessionId, traffic: "real" }}, {TIMEOUT_MS}); }}   // {{ request_id, ids, ... }}
   catch {{ return null; }}   // too slow, unreachable or refused: fall back to your own search
 }}
 
@@ -175,7 +177,7 @@ def _call(body):
 
 def rank(query, session_id):
     try:
-        return _call({{"op": "rank", "query": query, "k": 10, "session_id": session_id}})   # request_id, ids, ...
+        return _call({{"op": "rank", "query": query, "k": 10, "session_id": session_id, "traffic": "real"}})   # request_id, ids, ...
     except Exception:
         return None   # too slow, unreachable or refused: fall back to your own search
 
@@ -214,13 +216,13 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
            "timeout_ms": TIMEOUT_MS,
            "fallback": (f"Give the endpoint {TIMEOUT_MS} ms. If it doesn't answer in time, or answers with an error, "
                         "show your own search results. An error body is {\"detail\": \"...\"} with a 4xx or 5xx status."),
-           "snippets": snippets(rec) if rec.get("how") != "image" else {}, "real": 0, "test": 0, "simulated": 0,
+           "snippets": snippets(rec) if rec.get("how") != "image" else {}, "real": 0, "unlabelled": 0, "test": 0, "simulated": 0,
            "last_real_at": None}
     h: dict = {}
     try:
         h = call(ctx, rec, "status", {}) if rec.get("how") != "image" else {}
         t = h.get("traffic") or {}
-        out.update(real=int(t.get("real") or 0), test=int(t.get("test") or 0), simulated=int(t.get("simulated") or 0),
+        out.update(real=int(t.get("real") or 0), unlabelled=int(t.get("unlabelled") or 0), test=int(t.get("test") or 0), simulated=int(t.get("simulated") or 0),
                    last_real_at=h.get("last_real_at"))
     except Exception as e:  # noqa: BLE001
         out["warning"] = f"Captain couldn't reach the endpoint: {str(e)[:160]}"
@@ -230,7 +232,8 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
     except Exception:  # noqa: BLE001
         pass
     # What the traffic so far is, said only once there is some: real beats simulated beats test.
-    out["evidence_label"] = ("Real traffic" if out["real"] else "Simulated" if out["simulated"] else "Test traffic only" if out["test"] else None)
+    out["evidence_label"] = ("Real traffic" if out["real"] else "Unlabelled" if out["unlabelled"] else "Simulated" if out["simulated"]
+                             else "Test traffic only" if out["test"] else None)
     q = (sample_queries(ctx, pid, 1) or ["shoes"])[0].replace("'", "")
     ep = rec.get("endpoint") or {}
     out["test_request"] = (
@@ -242,7 +245,9 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
     out["connected"] = out["real"] > 0
     out["live"] = (f"Received {out['real']:,} request{'s' if out['real'] != 1 else ''}"
                    + (f", the last one {_since(ago)} ago" if ago is not None else "") + "."
-                   if out["real"] else "Waiting for the first request.")
+                   if out["real"] else
+                   f"Received {out['unlabelled']:,} unlabelled request{'s' if out['unlabelled'] != 1 else ''}. " + HOW_TO_LABEL
+                   if out["unlabelled"] else "Waiting for the first request.")
     if not w["reachable"]:
         out["blocked"] = ("A site can't reach an endpoint on this computer. Two ways forward: stage it in your cloud, "
                           "so your site can call it, or keep testing here with simulated shoppers.")
@@ -348,9 +353,9 @@ def shadow_compute(sh: dict, got: dict, traffic: str | None = None) -> dict:
     reqs = [r for r in got["requests"] if (r.get("shadow") or {}).get("id") == sh["id"]]
     kinds: dict[str, int] = {}
     for r in reqs:
-        kinds[r.get("traffic") or "real"] = kinds.get(r.get("traffic") or "real", 0) + 1
-    kind = traffic or next((k for k in ("real", "simulated", "test") if kinds.get(k)), "real")
-    reqs = [r for r in reqs if (r.get("traffic") or "real") == kind]
+        kinds[r.get("traffic") or "unlabelled"] = kinds.get(r.get("traffic") or "unlabelled", 0) + 1
+    kind = traffic or next((k for k in ("real", "unlabelled", "simulated", "test") if kinds.get(k)), "real")
+    reqs = [r for r in reqs if (r.get("traffic") or "unlabelled") == kind]
     evidence, label = LABELS[kind]
     n = len(reqs)
     out = {"shadow": sh["id"], "status": sh["status"], "arms": sh["arms"], "traffic": kind, "evidence": evidence,
@@ -365,16 +370,23 @@ def shadow_compute(sh: dict, got: dict, traffic: str | None = None) -> dict:
     ov = sum(_overlap(r["ids"], r["shadow"]["ids"]) for r in reqs) / n
     per: dict[str, list] = {}
     for r in reqs:
-        d = per.setdefault(" ".join(str(r["query"]).lower().split()), [0, 0.0, 0, 0])
+        d = per.setdefault(" ".join(str(r["query"]).lower().split()), [0, 0.0, 0, 0, 0])
         b, c_ = r["ids"][:10], r["shadow"]["ids"][:10]
         d[0] += 1
         d[1] += 1 - _overlap(b, c_)
         d[2] += b != c_
         d[3] += sum(1 for i in range(max(len(b), len(c_))) if i >= len(b) or i >= len(c_) or b[i] != c_[i])
+        d[4] += b[:1] != c_[:1]
     # `differs` is how many of the ten products are different ones. `moved` is how many places hold another
     # product: the same ten in another order moves places without changing which products are shown.
-    worst = sorted(({"query": q, "requests": c, "differs": round(d / c, 3), "moved": round(m / c), "top10_differs": bool(t)}
-                    for q, (c, d, t, m) in per.items() if t), key=lambda x: (-x["differs"], -x["moved"], -x["requests"], x["query"]))[:10]
+    def say(d: float, m: float, t1: float) -> str:
+        if d == 0:
+            return f"Same ten products, different order. The top result changed on {t1:.0%} of these requests."
+        return f"{round(m)} of the top 10 in another place, {round(d * 10)} of them other products. The top result changed on {t1:.0%}."
+
+    worst = sorted(({"query": q, "requests": c, "differs": round(d / c, 3), "moved": round(m / c), "top1_differs": round(t1 / c, 3),
+                     "top10_differs": bool(t), "text": say(d / c, m / c, t1 / c)}
+                    for q, (c, d, t, m, t1) in per.items() if t), key=lambda x: (-x["differs"], -x["moved"], -x["requests"], x["query"]))[:10]
     errors = sum(1 for r in reqs if r["shadow"].get("error"))
     ms = {"baseline": {"p95": _p95([r.get("ms") for r in reqs]), "mean": round(sum(r.get("ms") or 0 for r in reqs) / n, 2)},
           "candidate": {"p95": _p95([r["shadow"].get("ms") for r in reqs]),
@@ -550,7 +562,7 @@ def requests(ctx: Context, pid: str, env: str = ENV, limit: int = 50) -> dict:
     reqs = sorted(got["requests"], key=lambda r: str(r.get("ts")), reverse=True)
     rows = [{"request_id": r["request_id"], "ts": r.get("ts"), "query": r.get("query"), "arm": r.get("arm"),
              "model_version": r.get("model_version"), "ms": r.get("ms"), "results": len(r.get("ids") or []),
-             "traffic": r.get("traffic") or "real", "status": "answered", "shadowed": bool(r.get("shadow"))} for r in reqs[:limit]]
+             "traffic": r.get("traffic") or "unlabelled", "status": "answered", "shadowed": bool(r.get("shadow"))} for r in reqs[:limit]]
     return {"project": pid, "stage": rec["id"], "rows": rows, "total": len(reqs),
             "text": f"{len(reqs):,} request{'s' if len(reqs) != 1 else ''} since this version was staged." if reqs
                     else "No requests yet. Try a query, or send a test request."}
@@ -576,7 +588,7 @@ def request(ctx: Context, pid: str, request_id: str, env: str = ENV) -> dict:
         x["signals"] = [{"signal": n, "label": signal_label(n), "value": v} for n, v in zip(names, row)] if row else None
         x["events"] = [o["event"] for o in outs if str(o.get("product_id")) == x["id"]]
     return {"request_id": r["request_id"], "ts": r.get("ts"), "query": r.get("query"), "arm": r.get("arm"),
-            "model_version": r.get("model_version"), "ms": r.get("ms"), "traffic": r.get("traffic") or "real",
+            "model_version": r.get("model_version"), "ms": r.get("ms"), "traffic": r.get("traffic") or "unlabelled",
             "session_id": r.get("session_id"), "results": joined, "outcomes": outs,
             "shadow": ({"model_version": r["shadow"].get("model_version"), "ids": r["shadow"].get("ids"), "ms": r["shadow"].get("ms"),
                         "same": (r["shadow"].get("ids") or [])[:10] == (r.get("ids") or [])[:10]} if r.get("shadow") else None)}

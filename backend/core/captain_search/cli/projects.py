@@ -885,8 +885,7 @@ def staging_test(name: str, query: Optional[str] = typer.Option(None, "--query")
 def _shadow_text(r: dict) -> str:
     lines = [r["text"]]
     for q in r.get("queries") or []:
-        lines.append(f"  {q['query'][:50]:50} {q['moved']} of the top 10 in another place, {round(q['differs'] * 10)} of them other products "
-                     f"({q['requests']} request{'s' if q['requests'] != 1 else ''})")
+        lines.append(f"  {q['query'][:40]:40} {q['text']} ({q['requests']} request{'s' if q['requests'] != 1 else ''})")
     if r.get("ms"):
         lines.append(f"Response time, 95th percentile: {r['ms']['baseline']['p95']} ms baseline, {r['ms']['candidate']['p95']} ms candidate.")
     return "\n".join(lines)

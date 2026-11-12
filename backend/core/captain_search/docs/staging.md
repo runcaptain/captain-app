@@ -307,3 +307,11 @@ the project's own queries: on the candidate's row, in the Try it box ("Queries w
 empty, and says why), and before training in the starter ranker form when the events are simulated. The Try it box
 also marks what moved against the baseline and, under "Why is this here?", shows the signals the model leans on
 most with that product's values.
+
+## Which requests count as shoppers
+
+A request counts as a real shopper only when the site says so: it sends `"traffic": "real"`, as the code under
+Connect your site does. A request with no label is **Unlabelled**. It may be a shopper, a script or this computer,
+and Captain doesn't guess. Unlabelled requests are answered and logged like any other, but they don't open the A/B
+form, they are never REAL_TRAFFIC evidence, and a readout made of them can't go to launch review. `simulated` is the
+shopper simulator and `test` is the console and test requests.

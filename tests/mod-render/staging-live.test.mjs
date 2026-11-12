@@ -317,7 +317,7 @@ if (haveTrainer) {
   const KH = { Authorization: 'Bearer render-test-key', 'Content-Type': 'application/json' };
   const site = async (path, body) => (await fetch(ep + path, { method: 'POST', headers: KH, body: JSON.stringify(body) })).json();
   const queries = ['waterproof jacket', 'hiking boots', 'tent', 'wool socks', 'headlamp', 'trail shoes'];
-  for (let i = 0; i < 24; i++) await site('/rank', { query: queries[i % queries.length], k: 10, session_id: `shopper-${i}` });
+  for (let i = 0; i < 24; i++) await site('/rank', { query: queries[i % queries.length], k: 10, session_id: `shopper-${i}`, traffic: 'real' });
   h = await page('traffic');
   await until(h, () => h.byIdPrefix('ship-done-connect').length === 1, 'step 3 is ticked once a site calls it');
   t = h.text();
@@ -330,7 +330,7 @@ if (haveTrainer) {
   await h.click('ship-shadow-start');
   await until(h, () => byId(h, 'ship-shadow-stop').length === 1, 'shadow mode is on');
   const seen = [];
-  for (let i = 0; i < 30; i++) seen.push(await site('/rank', { query: queries[i % queries.length], k: 10, session_id: `shadowed-${i}` }));
+  for (let i = 0; i < 30; i++) seen.push(await site('/rank', { query: queries[i % queries.length], k: 10, session_id: `shadowed-${i}`, traffic: 'real' }));
   assert.ok(seen.every((r) => r.arm === 'baseline'), 'every shopper gets the baseline');
   h = await page('traffic');
   const sh = await get('/api/projects/outdoor/shadow');
@@ -357,7 +357,7 @@ if (haveTrainer) {
   assert.equal(byId(h, 'ship-ab-simulate').length, 0, 'no simulated shoppers in a real test');
   // Shoppers arrive. Those on the candidate click more.
   for (let i = 0; i < 520; i++) {
-    const r = await site('/rank', { query: queries[i % queries.length], k: 10, session_id: `ab-${i}` });
+    const r = await site('/rank', { query: queries[i % queries.length], k: 10, session_id: `ab-${i}`, traffic: 'real' });
     if (r.arm === 'candidate' ? i % 10 < 6 : i % 10 < 2) await site('/outcome', { request_id: r.request_id, event: 'click', product_id: r.ids[0] });
   }
   h = await page('traffic');

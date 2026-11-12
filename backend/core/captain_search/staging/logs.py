@@ -11,15 +11,18 @@ The runtime (runtime.py) buffers records and writes them as chunks under
 Everything that reads staging traffic (the consistency check, the A/B readout, `monitor record`) reads these
 chunks or the dataset version published from them. `publish` turns the chunks of one stage into an `events`
 dataset version, one row per result shown, in the columns `monitor.measure` and `historic` already read, plus
-request_id, arm, model_version and traffic. `traffic` says where a request came from: `real`, `simulated` (the
-shopper simulator) or `test` (the Try it console). Only `real` is ever REAL_TRAFFIC evidence.
+request_id, arm, model_version and traffic. `traffic` says where a request came from: `real` (a site that labels its shoppers), `unlabelled`,
+`simulated` (the shopper simulator) or `test` (the Try it console). Only `real` is ever REAL_TRAFFIC evidence.
 """
 from __future__ import annotations
 
 import json
 
 EVENTS = ("click", "add-to-cart", "purchase")
-TRAFFIC = ("real", "simulated", "test")
+# What a request says it is. `real` is a shopper, and only a site that says so counts: the Connect your site code
+# sends "traffic": "real". A request with no label is `unlabelled`: it may be a shopper, a script or this computer,
+# and Captain doesn't guess. `simulated` is the shopper simulator, `test` the console and test requests.
+TRAFFIC = ("real", "unlabelled", "simulated", "test")
 DATASET = "staging-logs"
 
 
@@ -100,7 +103,7 @@ def impressions(reqs: list[dict], outs: list[dict]) -> list[dict]:
                          "clicked": bool(d.get("click") or d.get("cart") or d.get("buy")),
                          "added_to_cart": bool(d.get("cart") or d.get("buy")), "purchased": bool(d.get("buy")),
                          "value": float(d.get("value") or 0.0), "arm": r.get("arm"),
-                         "model_version": r.get("model_version"), "traffic": r.get("traffic") or "real",
+                         "model_version": r.get("model_version"), "traffic": r.get("traffic") or "unlabelled",
                          "ms": r.get("ms"), "features": json.dumps(f) if f is not None else None})
     return rows
 

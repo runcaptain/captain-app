@@ -42,8 +42,10 @@ RAMP = (0.01, 0.05, 0.25, 0.5, 1.0)  # start small: ship an expensive model to 1
 MODES = {"must": "Must not get worse", "watch": "Watch"}
 SEGMENTS = {"head": "Head queries", "torso": "Torso queries", "tail": "Tail queries", "new": "New shoppers", "returning": "Returning shoppers"}
 MIN_SESSIONS = 200
-LABELS = {"real": ("REAL_TRAFFIC", "Real traffic"), "simulated": ("SIMULATED", "Simulated shoppers"),
-          "test": ("TEST_TRAFFIC", "Test traffic")}
+LABELS = {"real": ("REAL_TRAFFIC", "Real traffic"), "unlabelled": ("UNLABELLED", "Unlabelled"),
+          "simulated": ("SIMULATED", "Simulated shoppers"), "test": ("TEST_TRAFFIC", "Test traffic")}
+UNLABELLED = ('These requests carry no label, so Captain can\'t call them real shoppers. If they are, send '
+              '"traffic": "real" with each request: the Connect your site code does.')
 Z = 1.959964
 
 
@@ -116,13 +118,15 @@ def traffic_seen(ctx: Context, pid: str, env: str = ENV) -> dict:
     Only real traffic counts: the console and simulated shoppers are not a site."""
     rec = state(ctx, pid, env)
     if not rec:
-        return {"real": 0, "sessions": 0, "per_day": None}
+        return {"real": 0, "unlabelled": 0, "sessions": 0, "per_day": None}
     if rec.get("status") == "running":
         try:
             call(ctx, rec, "flush", {})
         except Exception:  # noqa: BLE001
             pass
-    reqs = [r for r in L.read(ctx, pid, env, rec["id"])["requests"] if (r.get("traffic") or "real") == "real" and not r.get("forced")]
+    every = L.read(ctx, pid, env, rec["id"])["requests"]
+    unlabelled = sum(1 for r in every if (r.get("traffic") or "unlabelled") == "unlabelled")
+    reqs = [r for r in every if (r.get("traffic") or "unlabelled") == "real" and not r.get("forced")]
     units = {str(r.get("session_id") or r.get("user_id") or r["request_id"]) for r in reqs}
     per_day = None
     if len(reqs) >= 2:
@@ -132,7 +136,7 @@ def traffic_seen(ctx: Context, pid: str, env: str = ENV) -> dict:
             per_day = round(len(units) * 86400 / max(span, 3600.0))  # under an hour of traffic counts as an hour
         except ValueError:
             per_day = None
-    return {"real": len(reqs), "sessions": len(units), "per_day": per_day}
+    return {"real": len(reqs), "unlabelled": unlabelled, "sessions": len(units), "per_day": per_day}
 
 
 def options(ctx: Context, pid: str, env: str = ENV) -> dict:
@@ -146,6 +150,9 @@ def options(ctx: Context, pid: str, env: str = ENV) -> dict:
     ready = seen["real"] > 0
     return {"project": pid, **seen, "ready": ready, "shares": shares, "can_measure": metrics_for(ctx, pid),
             "text": ("Your site is sending requests. A split now means something." if ready else
+                     f"{seen['unlabelled']:,} request{'s have' if seen['unlabelled'] != 1 else ' has'} reached this endpoint with no label, so "
+                     "Captain can't count them as shoppers. " + UNLABELLED.split(". ", 1)[1] + " Or practice with simulated shoppers."
+                     if seen.get("unlabelled") else
                      "No real request has reached this endpoint yet, so a split would divide nothing. Connect your site "
                      "first, or practice with simulated shoppers.")}
 
@@ -430,9 +437,9 @@ def compute(ab: dict, got: dict, traffic: str | None = None, segments: dict | No
     reqs = [r for r in got["requests"] if r.get("experiment") == ab["id"] and not r.get("forced")]
     by_kind: dict[str, int] = {}
     for r in reqs:
-        by_kind[r.get("traffic") or "real"] = by_kind.get(r.get("traffic") or "real", 0) + 1
-    kind = traffic or next((k for k in ("real", "simulated", "test") if by_kind.get(k)), "real")
-    reqs = [r for r in reqs if (r.get("traffic") or "real") == kind]
+        by_kind[r.get("traffic") or "unlabelled"] = by_kind.get(r.get("traffic") or "unlabelled", 0) + 1
+    kind = traffic or next((k for k in ("real", "unlabelled", "simulated", "test") if by_kind.get(k)), "real")
+    reqs = [r for r in reqs if (r.get("traffic") or "unlabelled") == kind]
     unit_of = {}
     sess: dict[str, dict[str, dict]] = {"baseline": {}, "candidate": {}}
     by_seg: dict[str, dict[str, dict[str, dict]]] = {}  # segment -> arm -> session -> what happened in that segment
@@ -605,6 +612,7 @@ def readout(ctx: Context, pid: str, traffic: str | None = None) -> dict:
     out["cannot_ship"] = (None if out["can_ship"] else
                           "This is a practice test on simulated shoppers. It can't go to launch review." if ab.get("practice") or out["evidence"] == "SIMULATED"
                           else "These requests are test traffic, not shoppers. It can't go to launch review on them." if out["evidence"] == "TEST_TRAFFIC"
+                          else UNLABELLED + " Until then it can't go to launch review." if out["evidence"] == "UNLABELLED"
                           else "Not enough data yet to send it to launch review.")
     summary = {"at": _now(), "sessions": {a: out["arms"][a]["sessions"] for a in out["arms"]}, "enough": out["enough"],
                "evidence": out["evidence"], "verdict": out["primary"]["verdict"], "text": out["text"]}
@@ -725,7 +733,7 @@ def bring(ctx: Context, pid: str, metric: str, baseline: float, candidate: float
     ab = _need(ctx, pid)
     if not source.strip():
         raise ValueError("say where the number comes from (the A/B testing system and its report)")
-    if traffic not in LABELS:
+    if traffic not in ("real", "simulated", "test"):
         raise ValueError("traffic is real, simulated or test")
     evidence, label = LABELS[traffic]
     d = float(candidate) - float(baseline)

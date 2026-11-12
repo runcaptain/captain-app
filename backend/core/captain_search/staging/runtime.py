@@ -184,7 +184,7 @@ class Runtime:
         k = max(1, min(200, int(body.get("k") or 10)))
         rid = str(body.get("request_id") or new_id())
         session, user = body.get("session_id"), body.get("user_id")
-        traffic = body.get("traffic") if body.get("traffic") in L.TRAFFIC else "real"
+        traffic = body.get("traffic") if body.get("traffic") in L.TRAFFIC else "unlabelled"  # never real by default
         ctl = self.control()
         if arm is not None and arm not in self.arms:
             raise ValueError(f"this endpoint has no {arm} arm. Loaded: {', '.join(self.arms)}")
