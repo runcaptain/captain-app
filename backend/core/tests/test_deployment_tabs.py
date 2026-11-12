@@ -193,3 +193,28 @@ def test_the_commands_are_named_like_the_pages(ws):  # noqa: F811
     assert run("deploy", "history", "--env", "shop-staging").exit_code == 0
     assert "Staging stopped." in run("deployments", "stop", "shop").output
     assert "Stopped" in run("deployments", "list", "--stopped").output and run("deployments", "list").output.strip().startswith("Nothing is staged")
+
+
+def test_reading_a_page_never_wakes_a_host_that_sleeps(ws, monkeypatch):  # noqa: F811
+    """The request list, the readout, shadow mode and the traffic count are read again and again by the page. On a
+    host that sleeps when idle they must not send anything to an endpoint with no copy up."""
+    from captain_search.staging import ab as AB
+
+    SG.stage(ws, "shop", target="local", allow_large=True)
+    _site(ws, 3)
+    sent = []
+    real_call = SG.call
+    for mod in (SG, TF, AB, OB):
+        monkeypatch.setattr(mod, "call", lambda ctx, rec, op, body, *a, **k: (sent.append(op), real_call(ctx, rec, op, body, *a, **k))[1])
+    TF.requests(ws, "shop")
+    assert sent == ["flush"]  # an ordinary host is asked to write its log first
+    # the same endpoint, on a host that sleeps, with no copy up
+    SG._save(ws, "shop", "staging", scale_to_zero=True)
+    monkeypatch.setattr(SG, "_awake", lambda ctx, rec: False, raising=False)
+    sent.clear()
+    assert TF.requests(ws, "shop")["total"] == 3  # what was already written is still read
+    AB.traffic_seen(ws, "shop"); AB.readout(ws, "shop"); TF.shadow(ws, "shop")
+    assert "flush" not in sent, sent
+    monkeypatch.setattr(SG, "_awake", lambda ctx, rec: True, raising=False)  # a copy is up: it is asked again
+    TF.requests(ws, "shop")
+    assert sent[-1] == "flush"

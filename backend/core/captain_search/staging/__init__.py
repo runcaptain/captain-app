@@ -761,6 +761,23 @@ def call(ctx: Context, rec: dict, op: str, body: dict, arm: str | None = None, t
 _products: dict[str, tuple[dict, str, list]] = {}
 
 
+def read_flush(ctx: Context, rec: dict | None) -> bool:
+    """Ask a running endpoint to write its log, before something reads it. This is for reads the page repeats
+    (the request list, the readout, shadow mode, how much traffic arrived): on a host that sleeps when idle it
+    does nothing while no copy is up, so looking at a page never wakes one and never keeps one awake. Never raises:
+    a log a few seconds old is still a log. Returns whether it asked."""
+    if not rec or rec.get("status") != "running" or rec.get("how") == "image":
+        return False
+    awake = globals().get("_awake")  # there once a host that sleeps is supported
+    try:
+        if rec.get("scale_to_zero") and awake is not None and not awake(ctx, rec):
+            return False
+        call(ctx, rec, "flush", {})
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _catalog(ctx: Context, pipeline: str | None):
     """(products by id, title column, image columns with their address templates) for a version's catalog."""
     from .. import features as F
