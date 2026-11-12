@@ -315,3 +315,47 @@ Connect your site does. A request with no label is **Unlabelled**. It may be a s
 and Captain doesn't guess. Unlabelled requests are answered and logged like any other, but they don't open the A/B
 form, they are never REAL_TRAFFIC evidence, and a readout made of them can't go to launch review. `simulated` is the
 shopper simulator and `test` is the console and test requests.
+
+## The deployment page, tab by tab
+
+A staged model has its own page. The header carries the address, the key, a test request, where it runs, and a
+chart of requests over a time range you pick (15 minutes, 1 hour, 24 hours, 7 days), with errors marked in red and
+a thin line where each version was staged. A small card stays in view on every tab and says which of three states
+the endpoint is in: **stopped**, **idle** (up, ready, nothing to do, which is fine), or **handling requests**.
+
+| Tab | What it shows | From the terminal |
+|---|---|---|
+| Requests | Newest first. A row opens beside the list: the results, the signals served, both response times, and that request's own log lines. | |
+| Try it | A query against both versions. | `cst projects staging-query` |
+| Traffic | Connect your site, shadow mode, the A/B test. | `staging-connect`, `shadow`, `ab-*` |
+| Copies | The running copy: where, version, startup time, requests handled, peak memory, its state. Staging runs one copy, and none when idle. | |
+| Metrics | Requests, response time (median and 95th percentile), errors, copies, memory, requests being answered. | |
+| Versions | Every deploy, the live one marked, Roll back on recent ones. | `cst deployments history`, `rollback` |
+| Logs | Lines to the millisecond with a filter. Lines of requests handled at the same time can interleave. New lines arrive within about 15 seconds. | `cst deployments logs [-f] [--filter] [--request]` |
+| Settings | Where it runs, the machine, copies, stopping when idle, time limits, the served-features check. The idle time can be changed while it runs. | |
+| Cost | So far this month, the last 24 hours, the rate while it is up, by machine. Worked out from uptime at the list price. | |
+
+**Two response times.** "At the endpoint" is the time the ranking took inside it. Captain measures it on every
+request. "As your site sees it" includes the network, and only the site can know it, so the site reports it:
+`client_ms` with an outcome, or the event `timing` with `ms`. The Connect your site code does this. Measured on
+2026-11-11 from a laptop to a SageMaker endpoint in us-west-1: a median of 0.2 ms at the endpoint and 111 ms as the
+caller saw it. The network is nearly all of it, which is why both are shown.
+
+**What to expect when staging in AWS** (measured twice on 2026-11-11, ml.t2.medium, us-west-1): building the
+serving image in your account takes about a minute and a half (78 seconds), once. An endpoint is ready about two
+minutes after you confirm (115 and 126 seconds).
+
+## The same thing from the terminal
+
+```
+cst deploy <project> [--target local] [--yes]     stage the candidate. The last line printed is the address.
+cst deployments list [--stopped | --all]          state, copies, where and since when, across projects
+cst deployments history <project>                 each version: number, when, who, model version
+cst deployments logs <project> [-f]               the endpoint's log
+cst deployments stop <project>                    stop it and remove what Captain created
+cst deployments rollback <project> [version]      put an earlier version back (default: the one before the live one)
+```
+
+`cst projects stage`, `staging` and `unstage` do the same and stay. `cst deploy promote|rollback|status|history`
+are the gated environment commands and are unchanged: a project that has one of those names is staged with
+`cst deploy to-staging <project>`.

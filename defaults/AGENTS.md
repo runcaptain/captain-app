@@ -1139,7 +1139,9 @@ last project opened there. With no project it offers New project, which can pin 
 - **Ship**: a path of steps, each with its status, one button and a tick when done. **1 Stage** runs a model
   version as a live endpoint, beside the baseline: in the team's own cloud (a SageMaker compute target, with the
   instance, an hourly estimate and "this keeps billing until you stop it" to confirm first), or on this computer
-  with no cloud at all (`cst projects stage <project> [--candidate <id>|--baseline] [--target local]`). Captain
+  with no cloud at all (`cst projects stage <project> [--candidate <id>|--baseline] [--target local]`, or the
+  short form `cst deploy <project>`, whose last line is the address). `cst deployments list|history|logs|stop|rollback`
+  read and change staged models across projects. Captain
   hosts nothing. It stops by itself after 4 hours with no requests, and Stop removes everything Captain created
   (`cst projects unstage <project>`). **2 Try it** is a query box: the staged results beside the baseline's for
   the same query, with pictures where the catalog has them (`cst projects staging-query <project> "<query>"`).

@@ -80,11 +80,13 @@ export default class ProjectHome extends View {
     try { this.last = localStorage.getItem("project") || null; } catch { this.last = null; }
     this.shipPath = new Ship(this); // Stage, Try it: made here, because a text box can't be made while drawing
     if ((layoutProps?.() ?? {}).shipFrom) this.shipPath.tab = "traffic"; // the real-window check: open on Traffic
+    if ((layoutProps?.() ?? {}).depTab) this.shipPath.tab = (layoutProps?.() ?? {}).depTab; // the real-window check: open on that tab
+    if ((layoutProps?.() ?? {}).depList) { this.shipPath.listOpen = true; this.shipPath.loadList(cx); } // the real-window check: the list of deployments
     this.load(cx);
     if ((layoutProps?.() ?? {}).chooseModels) { this.everything = true; this.toggleChoosing(cx); }
     this.openFirst = Boolean((layoutProps?.() ?? {}).openExperiment); // a layout, or the real-window check: open a row
     if ((layoutProps?.() ?? {}).allProjects) this.allProjects(cx); // the real-window check: the card list, nothing picked
-    this.deployOpen = Boolean((layoutProps?.() ?? {}).deployment) || Boolean((layoutProps?.() ?? {}).shipFrom) || Boolean((layoutProps?.() ?? {}).shipFirst); // the staged model's own page
+    this.deployOpen = ["deployment", "shipFrom", "shipFirst", "depTab", "depList"].some((k) => Boolean((layoutProps?.() ?? {})[k])); // the staged model's own page
     this.pinCheck = Boolean((layoutProps?.() ?? {}).pinCheck); // the real-window check: pin twice, as Send to agent does
     this.shipFrom = (layoutProps?.() ?? {}).shipFrom ?? null; // the real-window check: start the Ship steps at "connect" or "ab"
     this.shipFirst = Boolean((layoutProps?.() ?? {}).shipFirst) || Boolean(this.shipFrom); // the real-window check: the Ship steps at the top
@@ -252,7 +254,7 @@ export default class ProjectHome extends View {
   goTo(section) { go(section); }
 
   /** The staged model's own page: its header (is it up, where, who is calling it) and its tabs. */
-  openDeployment(cx) { this.deployOpen = true; cx.notify(); }
+  openDeployment(cx) { this.deployOpen = true; this.shipPath.listOpen = false; this.shipPath.loadTab(cx); cx.notify(); }
 
   /** Read the project again (the Ship path asks for this after it stages or stops something). */
   reload(cx) { setShared("captain.explorer.rev", Date.now()); this.load(cx); }
@@ -1086,6 +1088,13 @@ export default class ProjectHome extends View {
     if (!pid) body = this.list(c);
     else if (this.problem) body = Problem(c, this.problem, (cx) => this.load(cx));
     else if (!this.stages || !this.exps) body = Skeleton(c, 6);
+    else if (this.deployOpen && this.shipPath.listOpen) body = v_flex().gap(14)
+      // Projects / Deployments: every staged model across projects.
+      .child(h_flex().id("dep-crumbs").gap(6).items_center().text_size(12.5)
+        .child(div().id("dep-crumb-projects").text_color(c.blue).cursor_pointer().on_click((_e, cx) => { this.deployOpen = false; this.shipPath.listOpen = false; this.allProjects(cx); }).child("Projects"))
+        .child(div().text_color(c.grey500).child("/"))
+        .child(div().text_color(c.navy).font_medium().child("Deployments")))
+      .child(this.shipPath.deploymentsList(c));
     else if (this.deployOpen) body = v_flex().gap(14)
       // Projects / <project> / Deployment: the middle one goes back to the project.
       .child(h_flex().id("dep-crumbs").gap(6).items_center().text_size(12.5)
@@ -1093,7 +1102,9 @@ export default class ProjectHome extends View {
         .child(div().text_color(c.grey500).child("/"))
         .child(div().id("dep-crumb-project").text_color(c.blue).cursor_pointer().on_click((_e, cx) => { this.deployOpen = false; cx.notify(); }).child(p?.name ?? pid))
         .child(div().text_color(c.grey500).child("/"))
-        .child(div().text_color(c.navy).font_medium().child("Deployment")))
+        .child(div().text_color(c.navy).font_medium().child("Deployment"))
+        .child(div().flex_1())
+        .child(div().id("dep-all").text_color(c.blue).cursor_pointer().on_click((_e, cx) => this.shipPath.openList(cx)).child("All deployments")))
       .child(this.nextLine(c))
       .child(this.shipPath.deployment(c));
     else body = v_flex().gap(22)

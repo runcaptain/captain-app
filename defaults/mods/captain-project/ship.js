@@ -21,11 +21,13 @@ import { Badge, Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { SendToAgent } from "./kit/context.js";
 import { costState, refreshEstimate, CostLine, costSlice } from "./kit/cost.js";
+import { HeaderChart, LiveCard, CopiesTab, MetricsTab, LogsTab, SettingsTab, CostTab, DeploymentsList } from "./deploy-tabs.js";
 
 const enc = encodeURIComponent;
 const THUMB = 96;
 const short = (ref) => String(ref ?? "").replace(/^.*\//, "");
 const pct = (x) => `${Math.round(Number(x) * 100)}%`;
+const clock = (ts) => String(ts ?? "").slice(11, 23);
 const form = (task, values = {}) => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, values } });
 export const METRICS = { clicks: "Sessions with a click", purchases: "Sessions with a purchase", revenue: "Revenue per session" };
 const RAMP = [0.01, 0.05, 0.25, 0.5, 1]; // start small: 1% first
@@ -64,6 +66,14 @@ export class Ship {
     this.ab = null;        // GET /ab: the readout
     this.setup = null;     // the A/B form while it is open: {split, primary, mode}
     this.ask2 = null;      // a ramp or a rollback waiting for a yes: {kind, split?}
+    this.range = "1h";     // the time range the header's chart and the Metrics tab share
+    this.met = null;       // GET /staging/metrics: requests, response time and errors over that range
+    this.liveD = null;     // GET /staging/live: stopped, idle or handling requests, and the live counts
+    this.copiesD = null; this.logsD = null; this.setD = null; this.costD = null; // the tabs of those names
+    this.setEdit = false; this.setNote = null;
+    this.listOpen = false; this.listWhich = "live"; this.listD = null; // the list of deployments across projects
+    this.logBox = InputState.new({ placeholder: "Filter the log" });
+    this.logBox.on("submit", (_e, cx) => { this.logsD = null; this.loadTab(cx ?? this.cx); });
     this.box = InputState.new({ placeholder: "Type what a shopper would search for" });
     this.box.on("submit", (_e, cx) => this.ask(cx ?? this.cx));
   }
@@ -74,7 +84,10 @@ export class Ship {
     this.cx = cx;
     const pid = this.pid();
     if (!pid) return;
-    if (pid !== this.shown) { this.shown = pid; this.status = null; this.result = null; this.note = null; this.confirm = null; this.askError = null; this.ab = null; this.setup = null; this.ask2 = null; }
+    if (pid !== this.shown) {
+      this.shown = pid; this.status = null; this.result = null; this.note = null; this.confirm = null; this.askError = null; this.ab = null; this.setup = null; this.ask2 = null;
+      this.met = null; this.liveD = null; this.copiesD = null; this.logsD = null; this.setD = null; this.costD = null; this.reqs = null; this.vers = null; this.reqOpen = null; this.tabsFor = null;
+    }
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(pid)}/ab`, { scoped: false, timeout: 60 });
       if (this.pid() !== pid) return;
@@ -90,7 +103,11 @@ export class Ship {
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(pid)}/staging`, { scoped: false });
       if (this.pid() !== pid) return;
-      if (r.ok) { this.status = r.data; this.problem = null; this.price(cx); this.settle(); this.around(cx); } else if (!r.starting) this.problem = plainError(r.error, "Captain couldn't read staging.");
+      if (r.ok) {
+        this.status = r.data; this.problem = null; this.price(cx); this.settle(); this.around(cx);
+        // The deployment page's own reads, once per project when the page is open: the chart, the live card, the open tab.
+        if (this.page.deployOpen && this.tabsFor !== pid) { this.tabsFor = pid; this.loadTab(cx); }
+      } else if (!r.starting) this.problem = plainError(r.error, "Captain couldn't read staging.");
       cx.notify();
     });
   }
@@ -505,6 +522,8 @@ export class Ship {
       .child(div().id("ship-confirm-where").text_size(12).text_color(c.grey900).child(`${p.cost?.instance_count ?? 1} x ${p.cost?.instance_type ?? "an instance"} on ${p.target}, in your own cloud account.`))
       .child(CostLine(c, "ship-confirm-cost", this.cost.estimate ?? p.cost?.estimate ?? { text: p.cost?.text ?? "", basis: [] }, this.cost, { onToggle: (_e, cx) => { this.cost.open = !this.cost.open; cx.notify(); } }))
       .child(div().id("ship-confirm-billing").text_size(12).font_medium().text_color(c.navy).child("This keeps billing until you stop it."))
+      // Measured on a real ml.t2.medium endpoint on 2026-11-11: ready 115 and 126 seconds after the confirm.
+      .child(div().id("ship-confirm-ready").text_size(12).text_color(c.grey900).child("Ready about two minutes after you confirm."))
       .children([...(p.warnings ?? []), p.preflight?.note].filter(Boolean).map((w, i) => div().id(`ship-confirm-warning-${i}`).text_size(12).line_height("17px").font_medium().text_color(c.fail).child(w)))
       .child(div().text_size(12).line_height("17px").text_color(c.grey900).child(`Captain stops it after ${span((this.staged()?.idle_minutes ?? 240) * 60)} with no requests, as long as Captain or the endpoint itself can reach your cloud.`))
       .child(h_flex().gap(6)
@@ -1020,6 +1039,7 @@ export class Ship {
         .child("Staging runs a model version as a live endpoint you can try before launch review. It runs in your own cloud, or on this computer.")))
       .when(!on && !this.busy && !this.confirm, (e) => e.child(this.choices(c)))
       .when(Boolean(costLine), (e) => e.child(costLine))
+      .when(Boolean(s) && this.page.deployOpen, (e) => e.child(HeaderChart(this, c)))
       .when(Boolean(this.status?.warning), (e) => e.child(div().id("ship-line-warning").text_size(12).text_color(c.warn).child(this.status.warning)))
       .when(Boolean(this.note), (e) => e.child(div().id("ship-note").px(10).py(6).text_size(12).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)
         .text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
@@ -1035,9 +1055,48 @@ export class Ship {
   loadTab(cx) {
     const pid = this.pid();
     const get = (path, set) => cx.spawn(async (cx) => { const r = await api(`/api/projects/${enc(pid)}${path}`, { scoped: false, timeout: 60 }); if (this.pid() === pid && r.ok) { set(r.data); cx.notify(); } });
+    if (!this.staged()) return;
+    get("/staging/live", (d) => { this.liveD = d; });
+    get(`/staging/metrics?range=${this.range}`, (d) => { this.met = d; });
     if (this.tab === "requests") get("/staging/requests?limit=50", (d) => { this.reqs = d; });
     if (this.tab === "versions") get("/staging/versions", (d) => { this.vers = d; });
+    if (this.tab === "copies") get("/staging/copies", (d) => { this.copiesD = d; });
+    if (this.tab === "logs") get(`/staging/logs?limit=300${this.logBox.value().trim() ? `&q=${enc(this.logBox.value().trim())}` : ""}`, (d) => { this.logsD = d; });
+    if (this.tab === "settings") get("/staging/settings", (d) => { this.setD = d; });
+    if (this.tab === "cost") get("/staging/cost", (d) => { this.costD = d; });
   }
+
+  /** Change how long an idle endpoint stays up. */
+  saveIdle(cx, minutes) {
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/settings`, { method: "PUT", body: { idle_minutes: minutes }, scoped: false });
+      if (r.ok) { this.setD = r.data; this.setEdit = false; this.setNote = { tone: "good", text: r.data.saved ?? "Saved." }; this.load(cx); }
+      else this.setNote = { tone: "fail", text: plainError(r.error, "The idle time couldn't be changed.") };
+      cx.notify();
+    });
+  }
+
+  /** The list of deployments across projects. */
+  openList(cx) { this.listOpen = true; this.listD = null; this.loadList(cx); cx.notify(); }
+
+  loadList(cx) {
+    const which = this.listWhich;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/deployments?which=${which}`, { scoped: false, timeout: 120 });
+      if (this.listWhich !== which) return;
+      this.listD = r.ok ? r.data : { rows: [], text: plainError(r.error, "The deployments couldn't be read.") };
+      cx.notify();
+    });
+  }
+
+  /** Open a deployment picked from the list: its project's own deployment page. */
+  openFromList(cx, r) {
+    this.listOpen = false; this.tab = "requests";
+    this.page.deployOpen = true;
+    this.page.pickProject(cx, { id: r.project, name: r.name });
+  }
+
+  deploymentsList(c) { return DeploymentsList(this, c); }
 
   /** Open one request beside the list. The list keeps its place. */
   openRequest(cx, id) {
@@ -1052,7 +1111,6 @@ export class Ship {
   /** Requests, newest first, and the one that is open beside them. */
   requestsTab(c) {
     const d = this.reqs, open = this.reqOpen;
-    const clock = (ts) => String(ts ?? "").slice(11, 23);
     const cell = (w, t, mono) => div().w(w).flex_none().truncate().text_size(12).when(Boolean(mono), (e) => e.font_family(MONO).text_size(11.5)).child(String(t ?? ""));
     const list = v_flex().id("dep-requests").flex_1().min_w(360)
       .child(div().id("dep-requests-text").pb(6).text_size(12).text_color(c.grey500).child(d ? d.text : "Reading the request log..."))
@@ -1073,7 +1131,7 @@ export class Ship {
       .when(Boolean(open.problem), (e) => e.child(div().text_size(12).text_color(c.fail).child(open.problem)))
       .when(Boolean(x), (e) => e
         .child(div().id("dep-request-meta").text_size(12).line_height("17px").text_color(c.grey900)
-          .child(`${x.arm === "baseline" ? "Baseline" : "Candidate"} ${short(x.model_version)} answered in ${Number(x.ms).toFixed(1)} ms. ${x.traffic === "real" ? "Real traffic." : x.traffic === "test" ? "Test traffic." : "Simulated."}`))
+          .child(`${x.arm === "baseline" ? "Baseline" : "Candidate"} ${short(x.model_version)} answered. ${x.time_text ?? `${Number(x.ms).toFixed(1)} ms at the endpoint.`} ${x.traffic === "real" ? "Real traffic." : x.traffic === "test" ? "Test traffic." : x.traffic === "simulated" ? "Simulated." : "Unlabelled: it didn't say it was a shopper."}`))
         .child(h_flex().gap(6).items_center().child(div().text_size(11.5).text_color(c.grey500).child("Request")).child(div().id("dep-request-id").font_family(MONO).text_size(11.5).child(x.request_id)))
         .children(x.results.map((p, i) => v_flex().id(`dep-request-r${i}`).py(4).border_t(1).border_color(c.rule)
           .child(h_flex().gap(6).child(div().w(18).flex_none().text_size(11.5).text_color(c.grey500).child(String(p.position))).child(div().flex_1().min_w(0).truncate().text_size(12.5).child(p.title))
@@ -1081,7 +1139,12 @@ export class Ship {
           .when(Boolean(p.signals), (y) => y.child(div().pl(24).text_size(11).line_height("15px").text_color(c.grey500)
             .child(p.signals.filter((g) => g.value).slice(0, 4).map((g) => `${g.label} ${Number(g.value).toFixed(2)}`).join(", "))))))
         .when(Boolean(x.shadow), (e2) => e2.child(div().id("dep-request-shadow").text_size(12).text_color(c.grey900)
-          .child(x.shadow.same ? "Shadowed: the candidate would have returned the same top 10." : "Shadowed: the candidate would have returned a different top 10."))));
+          .child(x.shadow.same ? "Shadowed: the candidate would have returned the same top 10." : "Shadowed: the candidate would have returned a different top 10.")))
+        .when((x.lines ?? []).length > 0, (e2) => e2.child(v_flex().id("dep-request-lines").pt(6).gap(1).border_t(1).border_color(c.rule)
+          .child(div().pb(2).text_size(11.5).text_color(c.grey500).child("Log lines of this request"))
+          .children(x.lines.map((ln, i) => h_flex().id(`dep-request-line-${i}`).gap(8).items_start()
+            .child(div().w(84).flex_none().font_family(MONO).text_size(11).text_color(c.grey500).child(clock(ln.ts)))
+            .child(div().flex_1().min_w(0).font_family(MONO).text_size(11).line_height("15px").text_color(ln.level === "error" ? c.fail : c.grey900).child(ln.text)))))));
     return h_flex().id("dep-requests-wrap").w_full().p(12).gap(12).items_start().bg(c.surface).border_1().border_color(c.rule).child(list).when(Boolean(panel), (e) => e.child(panel));
   }
 
@@ -1123,11 +1186,15 @@ export class Ship {
   /** The deployment page: the header, then tabs. */
   deployment(c) {
     const [, tryIt, connect, ab, launch] = this.steps();
-    const tabs = [["requests", "Requests"], ["try", "Try it"], ["traffic", "Traffic"], ["versions", "Versions"]];
-    const tab = h_flex().id("dep-tabs").gap(18).border_b(1).border_color(c.rule).children(tabs.map(([id, label]) =>
+    const tabs = [["requests", "Requests"], ["try", "Try it"], ["traffic", "Traffic"], ["copies", "Copies"], ["metrics", "Metrics"],
+      ["versions", "Versions"], ["logs", "Logs"], ["settings", "Settings"], ["cost", "Cost"]];
+    // The live card sits at the end of the tab row, so the state and the counts stay in view on every tab.
+    const tab = h_flex().id("dep-tabs").gap(18).items_center().flex_wrap().border_b(1).border_color(c.rule).children(tabs.map(([id, label]) =>
       div().id(`dep-tab-${id}`).py(8).text_size(13).font_medium().cursor_pointer().border_b(2).border_color(this.tab === id ? c.blue : "#00000000")
-        .text_color(this.tab === id ? c.blue : c.grey900).on_click((_e, cx) => { this.tab = id; this.loadTab(cx); cx.notify(); }).child(label)));
-    const body = this.tab === "requests" ? this.requestsTab(c) : this.tab === "versions" ? this.versionsTab(c) : this.tab === "try"
+        .text_color(this.tab === id ? c.blue : c.grey900).on_click((_e, cx) => { this.tab = id; this.loadTab(cx); cx.notify(); }).child(label)))
+      .child(div().flex_1().min_w(0)).when(Boolean(LiveCard(this, c)), (e) => e.child(LiveCard(this, c)));
+    const more = { copies: CopiesTab, metrics: MetricsTab, logs: LogsTab, settings: SettingsTab, cost: CostTab }[this.tab];
+    const body = more ? more(this, c) : this.tab === "requests" ? this.requestsTab(c) : this.tab === "versions" ? this.versionsTab(c) : this.tab === "try"
       ? v_flex().id("dep-try").w_full().bg(c.surface).border_1().border_color(c.rule).child(this.tryStep(c, tryIt))
       : v_flex().id("dep-traffic").w_full().bg(c.surface).border_1().border_color(c.rule)
         .when(this.page.shipFrom !== "ab", (e) => e.child(this.connectStep(c, connect)))
@@ -1140,8 +1207,11 @@ export class Ship {
   summary(c) {
     const s = this.staged(), on = this.running(), k = this.conn;
     const address = on ? (s.endpoint?.url ?? s.endpoint?.name ?? "") : null;
-    const counts = on && k ? [`${k.real} real request${k.real === 1 ? "" : "s"}`, k.test ? `${k.test} test` : null, k.simulated ? `${k.simulated} simulated` : null].filter(Boolean).join(", ") : null;
+    const counts = on && k ? [`${k.real} real request${k.real === 1 ? "" : "s"}`, k.unlabelled ? `${k.unlabelled} unlabelled` : null, k.test ? `${k.test} test` : null, k.simulated ? `${k.simulated} simulated` : null].filter(Boolean).join(", ") : null;
     const [, , , , launch] = this.steps();
+    // The same live line the deployment page keeps in view: which of the three states, and the counts.
+    const h = this.status?.health;
+    const liveLine = on && h ? `${h.running > 0 || h.idle_s < 60 ? "Handling requests" : "Idle and ready"}. Copies: 1 live. Requests: ${h.running ?? 0} running.` : null;
     return v_flex().id("ship-summary").w_full().bg(c.surface).border_1().border_color(c.rule)
       .child(h_flex().p(12).gap(12).items_center().flex_wrap()
         .child(v_flex().flex_1().min_w(280).gap(3)
@@ -1154,8 +1224,12 @@ export class Ship {
           .when(on, (e) => e.child(h_flex().gap(8).items_center().flex_wrap()
             .child(div().id("ship-summary-address").font_family(MONO).text_size(12).text_color(c.navy).child(address))
             .child(Button(c, "ship-summary-copy", "Copy", (_e, cx) => this.copy(cx, address, "The address is on your clipboard."), { small: true }))
-            .when(Boolean(counts), (x) => x.child(div().id("ship-summary-counts").text_size(12).text_color(c.grey900).child(counts))))))
-        .child(Button(c, "ship-open", on ? "Open the deployment" : "Stage it", (_e, cx) => this.page.openDeployment(cx), { small: true, kind: "primary" })))
+            .when(Boolean(counts), (x) => x.child(div().id("ship-summary-counts").text_size(12).text_color(c.grey900).child(counts)))))
+          .when(Boolean(liveLine), (e) => e.child(div().id("ship-summary-live").text_size(12).text_color(c.grey900).child(liveLine))))
+        .child(v_flex().flex_none().gap(6).items_end()
+          .child(Button(c, "ship-open", on ? "Open the deployment" : "Stage it", (_e, cx) => this.page.openDeployment(cx), { small: true, kind: "primary" }))
+          .child(div().id("ship-all-deployments").text_size(12).text_color(c.blue).cursor_pointer()
+            .on_click((_e, cx) => { this.page.openDeployment(cx); this.openList(cx); }).child("All deployments"))))
       .child(div().border_t(1).border_color(c.rule).child(this.launchStep(c, launch)));
   }
 

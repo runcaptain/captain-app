@@ -262,7 +262,7 @@ def plan(ctx: Context, profile: str, region: str, *, name_prefix: str = "captain
         {"resource": "ECR repository", "name": n["repo"], "why": "Holds Captain's serving image in your account."}]
     if src != "docker":
         rows += [{"resource": "IAM role", "name": n["build_role"], "why": "The image build runs as this. It can read the build folder and push to that one repository."},
-                 {"resource": "CodeBuild project", "name": n["build"], "why": "Builds the serving image inside your account. It runs once, for a few minutes."}]
+                 {"resource": "CodeBuild project", "name": n["build"], "why": "Builds the serving image inside your account. It runs once, for about a minute and a half."}]
     if local:
         rows.append({"resource": "S3 bucket", "name": _where(storage)[0],
                      "why": "Your workspace's data stays on this computer. Only the serving bundle (the model and its catalog) and the "
@@ -272,7 +272,7 @@ def plan(ctx: Context, profile: str, region: str, *, name_prefix: str = "captain
     return {"profile": profile, "region": region, "account": account, "names": n, "image_source": src, "storage": storage,
             "local_workspace": local, "instance_type": instance_type, "creates": rows,
             "cost": {"setup_usd": build_cost,
-                     "text": ("Setting up costs about $" + f"{build_cost:.2f}" + f" once: the image build runs about {BUILD_MINUTES} minutes in AWS CodeBuild. "
+                     "text": ("Setting up costs about $" + f"{build_cost:.2f}" + f" once. Building the image takes about a minute and a half in AWS CodeBuild (the estimate allows {BUILD_MINUTES} minutes). "
                               if src != "docker" else "Setting up costs nothing: this computer's Docker builds the image. ")
                              + "The role, the repository and the target cost nothing while idle. The image is under 1 GB, about $0.10 a month to "
                                "keep. An endpoint bills by the hour only while it is staged."},

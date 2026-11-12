@@ -23,7 +23,7 @@ for m in "${MODS[@]}"; do
     # needs SHOT_PROJECT=1: a project with pins and experiments. captain-project:list (the project cards, nothing picked):
     # SHOT_ONLY, as two cards leave the column the blank check measures nearly empty.
     # captain-project:ship needs SHOT_STAGED=1 too: the Ship steps first on the page, with something staged.
-    captain-project) EXTRA+=("captain-project:home" "captain-project:pins"); [[ -n "${SHOT_STAGED:-}" ]] && EXTRA+=("captain-project:ship" "captain-project:connect" "captain-project:ab") ;;
+    captain-project) EXTRA+=("captain-project:home" "captain-project:pins"); [[ -n "${SHOT_STAGED:-}" ]] && EXTRA+=("captain-project:ship" "captain-project:connect" "captain-project:ab" "captain-project:dep-copies" "captain-project:dep-metrics" "captain-project:dep-logs" "captain-project:dep-settings" "captain-project:dep-cost" "captain-project:dep-list") ;;
     captain-runs) EXTRA+=("captain-runs:jobs" "captain-runs:live") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
@@ -234,6 +234,9 @@ props_of() {
     captain-project:ship) echo '{"deployment": true}' ;;
     captain-project:pins) echo '{"pinCheck": true}' ;;
     captain-project:connect) echo '{"shipFrom": "connect"}' ;;
+    captain-project:dep-requests|captain-project:dep-copies|captain-project:dep-metrics|captain-project:dep-logs|captain-project:dep-settings|captain-project:dep-cost)
+      echo "{\"depTab\": \"${1#captain-project:dep-}\"}" ;;
+    captain-project:dep-list) echo '{"depList": true}' ;;
     captain-project:ab) echo '{"shipFrom": "ab"}' ;;
     captain-data:models-attach) echo '{"tab": "models", "registryAttach": true}' ;;
     captain-data:tables) echo '{"tab": "tables"}' ;;
@@ -323,7 +326,7 @@ EOF
   if [[ $ok == 1 && $errs == 0 ]]; then echo "$view: drawn ($OUT/${view/:/-}.png)"; else echo "$view: BLANK or errors ($errs) ($OUT/${view/:/-}.png)"; app status; fail=1; fi
   # The Ship steps ask the services about the endpoint after the page is first drawn: give them a moment, then
   # take the picture again, so it shows the steps filled in and not the frame before the answer.
-  if [[ "$view" == captain-project:ship || "$view" == captain-project:connect || "$view" == captain-project:ab ]]; then
+  if [[ "$view" == captain-project:ship || "$view" == captain-project:connect || "$view" == captain-project:ab || "$view" == captain-project:dep-* ]]; then
     for _ in 1 2 3; do sleep 2; app do layout.select "{\"stack\":\"sections\",\"child\":\"$block\"}" >/dev/null || true; sleep 0.5; app shot "$OUT/${view/:/-}.png" >/dev/null; done
     PREV_SUM=$(shasum "$OUT/${view/:/-}.png" | cut -d' ' -f1)
   fi
