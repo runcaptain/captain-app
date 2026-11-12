@@ -550,7 +550,7 @@ export default class CaptainNav extends View {
       .child(v_flex().w_full().flex_none().py(8).border_t(1).border_color(c.rule)
         .child(this.devBackend(c, rail) ?? div())
         .child(this.cloudChip(c, rail) ?? div())
-        .child(this.themeSwitch(c, rail))
+        // Light, dark or system is chosen in Settings (and from the palette): it is not something to look at every day.
         .child(this.row(c, { id: "terminals", label: "Terminals", icon: "terminal" }, !find(layout(), "work")?.hidden, rail, () => run("layout.toggle", { id: "work" })))
         .child(this.row(c, { id: "settings", label: "Settings", icon: "settings" }, false, rail, () => run("app.settings"))));
   }

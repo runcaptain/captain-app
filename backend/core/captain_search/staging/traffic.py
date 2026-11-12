@@ -12,7 +12,7 @@ the traffic":
             sentence when a candidate mostly reproduces the baseline and why.
 
 An endpoint on this computer answers on 127.0.0.1 only, so no site can call it. That is said plainly, with the two
-ways forward: stage it in your cloud, or keep testing here with simulated shoppers.
+ways forward: deploy it to a cloud, or keep testing here with simulated shoppers.
 """
 from __future__ import annotations
 
@@ -287,7 +287,7 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
     if out.get("asleep") and rec.get("connected_at"):
         out["connected"] = True  # it was connected before it slept
     if not w["reachable"]:
-        out["blocked"] = ("A site can't reach an endpoint on this computer. Two ways forward: stage it in your cloud, "
+        out["blocked"] = ("A site can't reach an endpoint on this computer. Two ways forward: deploy it to a cloud, "
                           "so your site can call it, or keep testing here with simulated shoppers.")
     if out["connected"] and not w["reachable"]:
         out["blocked"] = ("These requests came from this computer. A site anywhere else can't reach this endpoint: stage "

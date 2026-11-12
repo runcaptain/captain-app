@@ -13,6 +13,7 @@ import { Badge, Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand, engineTitle } from "./kit/brands.js";
 import { ICONS } from "./kit/icons.js";
+import { getAppearance, setAppearance } from "./kit/appearance.js";
 
 const form = (task, values = {}) => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, values } });
 const PURPOSE = { backtest: "Offline evaluations run on", serve: "Models are served on" };
@@ -50,6 +51,9 @@ export default class CaptainServices extends View {
       const r = await api("/api/settings", { scoped: false });
       if (!r.ok) return;
       this.localLimit = r.data?.staging?.local_limit_mb ?? 1024;
+      this.appearance = await getAppearance();
+      const li = await api("/api/lineage/index", { scoped: false });
+      this.lineage = li.ok ? li.data : null;
       this.askSaved = r.data?.costs?.confirm_above_usd ?? 5;
       this.askAbove.set_value(String(this.askSaved));
       this.askNote = null;
@@ -98,6 +102,40 @@ export default class CaptainServices extends View {
             .on_click((_e, cx) => this.saveLimit(cx, mb)).child(label))))
         .child(div().id("local-limit-note").text_size(12).line_height("17px").text_color(c.grey500)
           .child(this.limitNote ?? "A model that needs more memory than this to serve is staged in your cloud, not on this computer.")));
+  }
+
+  /** Light, dark, or whatever the system uses. */
+  appearanceRow(c) {
+    const now = this.appearance ?? "system";
+    return v_flex().id("sec-appearance").w_full().gap(6)
+      .child(div().text_size(14).font_semibold().text_color(c.navy).child("Appearance"))
+      .child(h_flex().gap(6).children([["light", "Light"], ["dark", "Dark"], ["system", "Same as the system"]].map(([v, label]) =>
+        div().id(`appearance-${v}`).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12).border_1()
+          .border_color(now === v ? c.blue : c.grey300).bg(now === v ? c.blueLight : c.surface).text_color(now === v ? c.blue : c.navy)
+          .on_click((_e, cx) => { this.appearance = v; cx.notify(); cx.spawn(async () => { await setAppearance(v); }); }).child(label))));
+  }
+
+  /** Versions made before lineage was indexed aren't in the index, so a newer version of a dataset may not be
+   *  offered on a project page. One button reads them in. Shown only while it is needed. */
+  lineageRow(c) {
+    return v_flex().id("sec-lineage").w_full().gap(6)
+      .child(div().text_size(14).font_semibold().text_color(c.navy).child("Lineage"))
+      .child(h_flex().w_full().flex_wrap().px(12).py(10).gap(10).items_center().border_1().border_color(c.rule).bg(c.surface)
+        .child(div().flex_1().min_w(200).text_size(12.5).line_height("18px").text_color(c.grey900)
+          .child(this.lineageNote ?? "Versions made before lineage was indexed aren't listed yet, so a newer version of a dataset may not be offered on a project page."))
+        .child(Button(c, "lineage-index", this.lineageBusy ? "Indexing..." : "Index them now", (_e, cx) => this.indexLineage(cx), { small: true, disabled: Boolean(this.lineageBusy) })));
+  }
+
+  indexLineage(cx) {
+    this.lineageBusy = true; this.lineageNote = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api("/api/lineage/reindex", { body: {}, scoped: false, timeout: 600 });
+      this.lineageBusy = false;
+      if (r.ok) this.lineage = { complete: Boolean(r.data?.complete ?? true) };
+      else this.lineageNote = "It couldn't be indexed. Try again in a moment.";
+      cx.notify();
+    });
   }
 
   saveLimit(cx, mb) {
@@ -229,6 +267,8 @@ export default class CaptainServices extends View {
         Button(c, "add-database", "Connect a database", () => form("database"), { small: true })))
       .child(this.compute(c, d.compute ?? {}))
       .child(this.costs(c))
+      .child(this.appearanceRow(c))
+      .when(Boolean(this.lineage) && !this.lineage.complete, (e) => e.child(this.lineageRow(c)))
       .child(this.section(c, "registries", "Model registries", "Where your trained models live, by brand.", (d.registries ?? []).map((r, i) => this.row(c, `reg-${i}`, {
         ic: r.provider ?? r.kind ?? "cloud", name: r.name ?? r.uri ?? `registry ${i + 1}`, sub: [r.kind, r.brand].filter(Boolean).join(", "),
         status: div().text_color(c.grey500).child(r.uri ?? ""),

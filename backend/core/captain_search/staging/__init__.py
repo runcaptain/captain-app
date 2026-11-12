@@ -407,7 +407,7 @@ def _start_local(ctx: Context, bundle_key: str, bid: str, key_sha: str) -> dict:
     if not tail or "MemoryError" in tail or "Killed" in tail:
         # A process the system ends for using too much memory leaves no message of its own. Say what most likely happened.
         raise ValueError("The staging endpoint ended while it was loading the catalog, most likely because this computer "
-                         "ran out of memory. Close other work and try again, or stage it in your cloud.")
+                         "ran out of memory. Close other work and try again, or deploy it to a cloud.")
     raise ValueError("The staging endpoint did not start on this computer." + (f" It said: {tail}" if tail else ""))
 
 
@@ -778,7 +778,7 @@ def scale(ctx: Context, pid: str, env: str = ENV, min_copies: int | None = None,
         raise ValueError("Staging is not running. Stage a model version first.")
     if rec.get("kind") == "local":
         if any(v is not None for v in (min_copies, max_copies, idle_seconds)):
-            raise ValueError("On this computer there is one copy. Stage it in your cloud to run more.")
+            raise ValueError("On this computer there is one copy. Deploy it to a cloud to run more.")
         return {"project": pid, "min_copies": 0, "max_copies": 1, "idle_seconds": float(rec.get("idle_minutes") or IDLE_MINUTES) * 60, "can_set": [],
                 "text": "One copy on this computer. It stops when idle."}
     t = C.get(ctx, rec["target"])
@@ -987,7 +987,7 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
     sh = doc.get("shadow") or None
     steps.append({"n": 3, "id": "connect", "title": "Connect your site", "done": connected,
                   "status": ("Your site is sending requests." + (" Shadow mode is on: shoppers see the baseline." if sh and sh.get("status") == "running" else "")) if connected
-                  else "A site can't reach an endpoint on this computer. Stage it in your cloud, or keep testing here with simulated shoppers." if on and local
+                  else "A site can't reach an endpoint on this computer. Deploy it to a cloud, or keep testing here with simulated shoppers." if on and local
                   else "Waiting for the first request from your site." if on else "Waits for staging.",
                   "action": {"action": "connect"} if on and not connected else None})
     ab = doc.get("ab") or None
@@ -1028,19 +1028,19 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
     if shipped and not sent and review_of:
         nxt = {"action": "handoff", "pipeline": review_of, "text": f"Send {review_of} to launch review."}
     elif judged and not on:
-        nxt = {"action": "stage", "experiment": judged[-1]["id"], "text": f"Stage {judged[-1]['pipeline']} to try it live."}
+        nxt = {"action": "stage", "experiment": judged[-1]["id"], "text": f"Deploy {judged[-1]['pipeline']} to try it live."}
     elif on and not rec.get("tried"):
-        nxt = {"action": "try", "text": "Try the staged model: type a query under Ship, step 2."}
+        nxt = {"action": "try", "text": "Try the deployed model: type a search on its screen."}
     elif live_ab and not ab_done:
         nxt = ({"action": "ab-wait", "text": "The practice test needs more sessions. Send simulated shoppers at staging."} if ab.get("practice")
-               else {"action": "ab-watch", "text": "The A/B test is collecting sessions. The readout under Ship says how many more it needs."})
+               else {"action": "ab-watch", "text": "The A/B test is collecting sessions. The readout on the deployed model's screen says how many more it needs."})
     elif live_ab and real and not ab.get("decision"):
         nxt = {"action": "ab-decide", "text": "The A/B test has enough sessions. Decide: ship it, keep the baseline, or keep testing."}
     elif live_ab and ab.get("practice"):
-        nxt = {"action": "connect", "text": "That was practice on simulated shoppers. To test for real, connect your site (Ship, step 3)."}
+        nxt = {"action": "connect", "text": "That was practice on simulated shoppers. To test for real, connect your site."}
     elif on and not connected and not live_ab:
-        nxt = ({"action": "connect", "text": "A site can't reach this computer. Stage it in your cloud, or practice here with simulated shoppers (Ship, step 3)."}
-               if local else {"action": "connect", "text": "Connect your site: copy the snippet under Ship, step 3, and send the first request."})
+        nxt = ({"action": "connect", "text": "A site can't reach this computer. Deploy it to a cloud, or practice here with simulated shoppers."}
+               if local else {"action": "connect", "text": "Connect your site: copy the code from the deployed model's screen (More, Send it real traffic) and send the first request."})
     elif both and connected and not live_ab:
         nxt = ({"action": "shadow-start", "text": "Your site is connected. Start shadow mode to see what the candidate would change, before any shopper sees it."}
                if not sh else {"action": "ab-start", "text": "Start an A/B test: split traffic between the baseline and the candidate."})

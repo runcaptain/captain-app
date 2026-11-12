@@ -42,8 +42,8 @@ const { default: Page } = await import(path.join(pdir, 'main.js'));
 const page = async () => {
   const h = harness(Page);
   await h.start();
-  for (let i = 0; i < 80 && !h.text().includes('Train and compare'); i++) await h.idle(150);
-  assert.ok(h.text().includes('Train and compare'), `the page loads: ${h.text().slice(0, 800)}`);
+  for (let i = 0; i < 80 && !h.text().includes('Models'); i++) await h.idle(150);
+  assert.ok(h.text().includes('Models'), `the page loads: ${h.text().slice(0, 800)}`);
   return h;
 };
 // What the page tells agents (kit/view.js publishes on a timer, so wait for it).

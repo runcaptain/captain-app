@@ -1109,7 +1109,49 @@ Sample-only read history is removed too. Other workspaces are preserved. `cst --
 The older generated demo remains available with `cst demo seed --legacy`;
 it writes simulated offline evaluations into the selected workspace.
 
+## Screen rules
+
+Every Captain screen follows these. They exist because a person said the interface had "way too much going on:
+different fonts, different styles". A render test counts the first two on the project page.
+
+1. **One typeface.** The code font is only for something a person copies or types: an address, a command, a key
+   name, a policy. Never for dataset names, tags, version numbers, metrics or table cells.
+2. **Two button styles.** One filled button per screen: the next step. Every other action is the plain outlined
+   button. Blue text is for going somewhere, never for doing something. No icon-and-text link buttons scattered
+   on cards. An open question (a confirm) takes the filled button, and the next-step banner steps aside for it.
+3. **One sentence under a heading at most**, and only if it tells the person what to do. No descriptions of what
+   a section is.
+4. **No caveats on the main page.** A limitation with a fix goes to Settings, with the button that fixes it. One
+   that belongs in the guide goes to the guide.
+5. **One status per row, in words.** No rows of tags. "Simulated" is a word in the status, said only when true.
+6. **Three text sizes and two text colours** (normal, muted), plus one accent. No amber panel unless something
+   is wrong and the person can act on it.
+7. **A label passes one test:** would a person who has never deployed a model know what clicking it does? No
+   bare nouns ("Metrics", "Versions") as the first thing a person sees. Something behind "More" opens with one
+   sentence saying what it is for.
+
+The evidence rules are not style and never bend to these: the evidence word (Simulated, LLM graded, Human graded,
+Real traffic) and "agrees with its own labeler" stay in a model's verdict sentence whenever they apply.
+
 ## Captain project page (Home)
+
+The page is a header and three sections. The header is the project's icon and name, one muted line saying what
+it builds, and **More** (All projects, New project, Workflows, Set up with an agent, Change what you're
+building, Import a model version, Ask the agent about this page, Change icon, Delete project). Under it the
+**Next** banner holds the page's one filled button. Then:
+- **Data**: one row per input: its name, where it comes from, how many rows and when it was read, and Change.
+  A newer version is offered in place of Change ("Use version 2"). "Add data" adds one.
+- **Models**: one row per model: its name, a verdict sentence in words ("Too few judged results to say whether
+  it beats keyword-baseline. Simulated events."), and Details, which opens the numbers (nDCG, recall, judged
+  share, the range, label independence, the evidence) and the actions. "New model" trains one.
+- **Ship**: one card per place the model can run: this computer always, one per cloud login connected in
+  Captain, and "Connect a cloud". Each has one button, Deploy. A cloud asks once, with what it makes the first
+  time, the cost and how long. Once deployed the card says so and "Open it" opens the deployed model's screen:
+  the state in words, the address, a search box, how much it has answered and how fast, the cost and Stop, with
+  everything else behind More.
+
+The older description below is kept for what each part does underneath.
+
 
 The sidebar's **Home** opens the current project's page (`captain-project`): the Explorer's pick, else the
 last project opened there. With no project it offers New project, which can pin a catalog at once.
@@ -1236,7 +1278,11 @@ word to a person, and type the CLI word.
 |---|---|---|
 | Offline evaluation | `backtest` (`cst backtest`, `/api/backtests`, the `backtests` tab id) | Two or more versions scored on the same queries |
 | Evaluation settings | the `captain-sandbox` mod, `/api/sandbox` | Other settings of one version, tried offline |
-| Candidate | a project `experiment` (`/api/projects/<id>/experiments`, form task `experiment`) | One trained version in a project, judged against the baseline |
+| Model (on the project page) | a project `experiment` (`/api/projects/<id>/experiments`, form task `experiment`) | One trained version in a project, compared with the baseline. Earlier screens said "candidate" |
+| Deploy, Deployed, Stop | `stage`, `staging`, `unstage` (`cst deploy`, `cst projects stage`, `/api/projects/<id>/deploy`, `/staging`) | Running a model version where it can answer searches. The screens never say "staging" or "Stage it" |
+| Compared with `<name>` | the `baseline` arm, the project's `champion` | The model another is compared with, shown by its own name. Never "today's search": it is often keyword search or a model nobody runs in production |
+| Review before launch | `handoff` on the deployed model's screen (More) | Launch review, offered only once there is real traffic or a test result |
+| Check it uses the same numbers it was trained on | the served-features check (`cst projects staging-check`, `/staging/check`) | Compares the features the deployed model computes with the ones training computed. A launch gate |
 | Baseline | `champion` (`/api/projects/<id>/champion`, form task `champion`) | The version a project ships and judges candidates against |
 | Experiment | `investigation` (`cst investigate`, `/api/investigations`, `CST_INVESTIGATION`, section id `investigations`) | A hypothesis, its evaluations and a decision |
 | Rating, rating queue, rater | `grading`, `grader` (`cst grade`, `/api/grading`) | People giving grades 0 to 3; the data stays "judgments" and "grades" |

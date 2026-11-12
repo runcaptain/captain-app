@@ -79,7 +79,7 @@ and compares it with the memory and disk free right now. Measured 2026-11-11 on 
 a product for a trained ranker, 4.5 KB a product for a keyword version, 0.45 KB a product for the rows, 120 MB for
 the process, plus 30% headroom. A 200,000 product catalog with both versions needs about 3.4 GB, loads in about 7
 seconds, and answers a query in about 120 ms. If it won't fit, the choice is shown switched off with the reason
-("This catalog needs about 9 GB of memory to serve, and this computer has 3 GB free. Stage it in your cloud."). If
+("This catalog needs about 9 GB of memory to serve, and this computer has 3 GB free. Deploy it to a cloud."). If
 it is tight, it is allowed with a warning. Staging is refused before anything starts when it won't fit, and an
 endpoint that runs out of memory while loading says so.
 

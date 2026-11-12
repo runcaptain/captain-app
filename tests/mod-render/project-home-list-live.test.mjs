@@ -65,7 +65,7 @@ assert.equal(h.byIdPrefix('ph-new').length, 1, 'New project stays, as a secondar
 const i = h.mod.projects.findIndex((p) => p.id === 'outdoor');
 await h.click(`ph-p-${i}`);
 assert.deepEqual(globalThis.__shared['captain.scope'], { kind: 'project', id: 'outdoor', label: 'Outdoor' });
-await until((x) => x.includes('Inputs') && x.includes('Train and compare') && x.includes('Ship'), 'the project page opens');
+await until((x) => x.includes('Data') && x.includes('Models') && x.includes('Ship'), 'the project page opens');
 
 // The next action on the new project picks it and opens the pin form for its catalog.
 globalThis.__shared['captain.scope'] = null;

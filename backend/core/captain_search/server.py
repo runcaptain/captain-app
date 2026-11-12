@@ -221,6 +221,25 @@ def connection_preview(name: str, body: dict):
     return SG.preview(ctx(), name, q, int(body.get("limit", 1000)))
 
 
+@app.get("/api/lineage/index", dependencies=A)
+def lineage_index_state():
+    """{complete}: is every version in the lineage index? Versions made before the index existed are not, until
+    they are read in once (POST /api/lineage/reindex, or `cst lineage reindex`)."""
+    from . import lineage_index as LI
+
+    return {"complete": bool(LI.Index(ctx().store).complete)}
+
+
+@app.post("/api/lineage/reindex", dependencies=A)
+def lineage_reindex():
+    """Read every version into the lineage index. Safe to run twice. {complete, ...what it indexed}."""
+    from . import lineage_index as LI
+
+    c = ctx()
+    out = LI.reindex(c)
+    return {**(out if isinstance(out, dict) else {}), "complete": bool(LI.Index(c.store).complete)}
+
+
 @app.get("/api/lineage/graph", dependencies=A)
 def lineage_graph(node: str | None = None, up: int = 2, down: int = 2):
     """Data and model lineage. With node=<id>, only what's within `up` steps upstream and `down` downstream, each node

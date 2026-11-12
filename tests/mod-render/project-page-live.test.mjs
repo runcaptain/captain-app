@@ -52,7 +52,7 @@ const until = async (ok, what, n = 80) => {
   assert.ok(ok(h.text()), `${what}: ${h.text().slice(0, 1500)}`);
 };
 
-await until((t) => t.includes('Train and compare') && t.includes('demo-tuned'), 'page loads');
+await until((t) => t.includes('Models') && t.includes('demo-tuned'), 'page loads');
 let t = h.text();
 // Inputs: each pinned version, one action each.
 for (const s of ['Catalog', 'Events', 'Queries', 'Labels', 'Sealed test set']) assert.ok(t.includes(s), `input card ${s}`);
@@ -60,19 +60,37 @@ assert.ok(t.includes('demo-catalog') && t.includes('demo-judgments'), 'pinned na
 assert.ok(t.includes('Newer version available: demo-queries@v2.'), 'newer version as information');
 assert.equal(h.byIdPrefix('in-queries-newer').length, 1, 'one action: use the newer version');
 assert.equal(h.byIdPrefix('in-events-pick').length, 1, 'a missing input asks to choose one');
-// Experiments: the champion, and the tuned ranker trained on its own labeler, which never reads as a win.
-assert.ok(t.includes('baseline'), 'baseline badge');
-assert.ok(t.includes('Agrees with its own labeler') && t.includes('Same labeler'), 'shared labels read differently');
-assert.ok(!t.includes('Beats the baseline'), 'no win claimed');
-assert.ok(t.includes('nDCG@10') && t.includes('Recall@50') && t.includes('Judged@10') && t.includes('simulated'), 'metrics and evidence');
-// Ship
-assert.ok(t.includes('Model registry') && t.includes('Staging runs a model version as a live endpoint') && t.includes('Deployment') && t.includes('Not staged') && t.includes('Launch review'), 'the deployment summary and the registry tile');
+// Three sections and nothing numbered: Data, Models, Ship. The header is the name, one line, and More.
+for (const id of ['part-inputs', 'part-experiments', 'part-ship']) assert.equal(h.byIdPrefix(id).length >= 1, true, id);
+assert.ok(t.includes('Data') && t.includes('Models') && t.includes('Ship') && !t.includes("What you're building") && !t.includes('Train and compare'), `the three sections: ${t.slice(0, 300)}`);
+assert.equal(h.byIdPrefix('ph-building').length, 1, 'what it builds is one muted line under the name');
+// Data: one row each, one status in words, and no tags.
+assert.ok(/480 rows, (taken|last read) \d{4}-\d\d-\d\d/.test(t), 'rows and when, as words');
+assert.ok(!/\b(required|optional|snapshot)\b/.test(t.replace('Not chosen. Optional.', '')) && !/version 1\b/.test(t.split('Models')[0]), `no tag rows on the inputs: ${t.split('Models')[0]}`);
+assert.equal(h.byIdPrefix('in-add').length, 1, 'one way to add data');
+// Models: a verdict sentence per model. The one trained on its own labeler never reads as a win, and the sentence
+// says so and says where the evidence comes from. The numbers are under Details.
+assert.ok(t.includes('The model the others are compared with.'), 'the compared model, in words');
+assert.ok(t.includes("Agrees with its own labeler, so its score doesn't show it ranks better than demo-bm25.") && t.includes('Simulated events.'), `the verdict sentence carries the labeler and the evidence: ${t}`);
+assert.ok(!t.includes('Ranks better than') && !t.includes('nDCG@10'), 'no win claimed, and no numbers before Details');
+// One filled button on the page: the Next banner's.
+// A filled button is the one drawn on the solid colour (kit/ui.js Button, kind "primary").
+const solid = (await import(path.join(dir, 'kit/tokens.js'))).palette(false).solid;
+const filled = () => h.byIdPrefix('').filter((e) => e.call('bg')?.[0] === solid && e.call('on_click')).map((e) => e.call('id')[0]);
+assert.deepEqual(filled(), ['ph-next-go'], 'one filled button: the next step');
+// One typeface: the code font is for something a person copies or types. Nothing on this page is.
+const MONO_FONT = (await import(path.join(dir, 'kit/tokens.js'))).MONO;
+const mono = h.byIdPrefix('').filter((e) => e.call('font_family')?.[0] === MONO_FONT);
+assert.equal(mono.length, 0, `no code font on the project page: ${mono.map((e) => (e.kids ?? []).filter((k) => typeof k === 'string').join(' ')).slice(0, 5)}`);
+// Ship: only where to deploy. No registry tile, no launch review, none of the old words.
+assert.ok(t.includes('Where should demo-tuned@v1 run?') && !/Model registry|Launch review|Not staged|Staging runs/.test(t), `Ship: ${t.slice(-600)}`);
 
 // Open the row: why, and its actions, with the evidence on Make champion.
 const row = h.mod.exps.experiments.findIndex((e) => e.id === tuned.id);
 await h.click(`exp-${row}`);
 t = h.text();
 assert.ok(t.includes('same judgment set'), 'independence explained');
+assert.ok(t.includes('nDCG@10') && t.includes('Recall@50') && t.includes('Judged@10') && t.includes('simulated') && t.includes('Same labeler'), 'Details opens the numbers, the evidence and the label independence, as before');
 assert.ok(t.includes('Make it the baseline (simulated)'), 'evidence on the button');
 for (const id of ['open', 'rerun', 'judge', 'champion', 'publish']) assert.equal(h.byIdPrefix(`exp-${row}-${id}`).length, 1, `row action ${id}`);
 await h.click(`exp-${row}-rerun`);
@@ -102,7 +120,8 @@ assert.equal(spawnSync(cst, ['judge', 'import', graded, '--name', 'human-grades'
 await post('/api/projects/outdoor/pin', { labels: 'human-grades' });
 assert.equal(spawnSync(cst, ['projects', 'experiment-backtest', 'outdoor', tuned.id], { env }).status, 0, 'judged on human grades');
 h.mod.load(h.cx);
-await until((x) => /Beats the baseline|Loses to the baseline|No clear difference/.test(x), 'a real verdict with independent labels');
+await until((x) => /Ranks better than demo-bm25\.|Ranks worse than demo-bm25\.|No clear difference from demo-bm25\./.test(x), 'a real verdict with independent labels');
+assert.ok(h.text().includes('Human graded.'), 'and the sentence now says the evidence is human graded');
 assert.ok(h.text().includes('Independent labels'));
 assert.ok(!h.text().includes('Agrees with its own labeler'));
 
