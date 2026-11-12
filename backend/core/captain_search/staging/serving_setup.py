@@ -86,6 +86,19 @@ def names(prefix: str = "captain") -> dict:
             "target": "aws-serving", "endpoints": p}
 
 
+def _serving_uri(bucket: str | None, account: str | None, region: str, workspace: str) -> str:
+    """Where a workspace kept on this computer puts its serving bundle and request log. `bucket` is a bucket name
+    (a folder named after the workspace is used inside it) or a full s3:// address with the folder to use."""
+    if not bucket:
+        return f"s3://captain-serving-{account}-{region}/{workspace}"
+    b = bucket.strip().rstrip("/")
+    if b.startswith("s3://"):
+        return b if "/" in b[5:] else f"{b}/{workspace}"
+    if "://" in b or not b:
+        raise ValueError("the bucket is a bucket name, or an address like s3://my-bucket/a-folder")
+    return f"s3://{b}/{workspace}"
+
+
 def _where(storage_uri: str) -> tuple[str, str]:
     bucket, _, prefix = storage_uri.split("://", 1)[-1].partition("/")
     return bucket, prefix.strip("/")
@@ -242,7 +255,7 @@ def plan(ctx: Context, profile: str, region: str, *, name_prefix: str = "captain
     if account is None:
         account = cloud.aws_session(profile, region).client("sts").get_caller_identity()["Account"]
     local = not ctx.workspace.storage_uri.startswith("s3://")
-    storage = ctx.workspace.storage_uri if not local else f"s3://{bucket or f'captain-serving-{account}-{region}'}/{ctx.workspace.name}"
+    storage = ctx.workspace.storage_uri if not local else _serving_uri(bucket, account, region, ctx.workspace.name)
     rows = [
         {"resource": "IAM role", "name": n["role"], "why": "The endpoint runs as this. It can read the serving bundle, write the request log, "
                                                            "pull the serving image and delete its own endpoint. Nothing else."},
@@ -480,6 +493,28 @@ def teardown(ctx: Context, progress=None) -> dict:
     say = progress or (lambda _t: None)
     sess = cloud.aws_session(rec["profile"], rec["region"])
     left = []
+    # A workspace kept on this computer put its serving bundles, their catalog and the request log in a folder of
+    # a bucket. That folder is Captain's and nothing else's, so it goes: the three things Captain writes there,
+    # never the rest of the bucket. The log was already published into the workspace when each endpoint stopped.
+    emptied = 0
+    if rec.get("storage") and rec["storage"] != ctx.workspace.storage_uri:
+        b, pre = _where(rec["storage"])
+        base = pre + "/" if pre else ""
+        say(f"Removing the serving bundle and request log from s3://{b}/{base}")
+        try:
+            s3 = sess.client("s3")
+            for part in (base + "staging/", base + "serving/", base + "workspace.yaml"):
+                token = None
+                while True:
+                    got = s3.list_objects_v2(Bucket=b, Prefix=part, **({"ContinuationToken": token} if token else {}))
+                    for o in got.get("Contents", []):
+                        s3.delete_object(Bucket=b, Key=o["Key"])
+                        emptied += 1
+                    token = got.get("NextContinuationToken")
+                    if not token:
+                        break
+        except Exception as e:  # noqa: BLE001
+            left.append({"type": "s3-folder", "name": f"s3://{b}/{base}", "error": str((getattr(e, "response", None) or {}).get("Error", {}).get("Message") or e)[:300]})
     order = {"compute-target": 0, "codebuild-project": 1, "log-group": 2, "ecr-repository": 2, "iam-role": 3, "s3-object": 4, "s3-bucket": 5}
     for x in sorted(rec.get("created") or [], key=lambda x: order.get(x["type"], 9)):
         say(f"Removing {x['type']} {x['name']}")
@@ -521,7 +556,7 @@ def teardown(ctx: Context, progress=None) -> dict:
             if any(w in msg.lower() for w in ("not found", "does not exist", "cannot be found", "nosuch")):
                 continue
             left.append({**x, "error": msg[:300]})
-    rec.update(created=left, status="removed" if not left else "partly removed", removed_at=_now())
+    rec.update(created=left, status="removed" if not left else "partly removed", removed_at=_now(), emptied=emptied)
     _write(ctx, rec)
     return {**rec, "text": "Serving setup is removed. Nothing of Captain's is left in the account." if not left else
             "Removed, except: " + "; ".join(f"{x['type']} {x['name']} ({x['error']})" for x in left)}

@@ -112,8 +112,8 @@ class Fake:
     def delete_object(self, Bucket, Key):
         self.objects.pop(f"{Bucket}/{Key}", None)
 
-    def list_objects_v2(self, Bucket):
-        return {"Contents": [{"Key": k.split("/", 1)[1]} for k in self.objects if k.startswith(Bucket + "/")]}
+    def list_objects_v2(self, Bucket, Prefix="", **kw):
+        return {"Contents": [{"Key": k.split("/", 1)[1]} for k in list(self.objects) if k.startswith(f"{Bucket}/{Prefix}")]}
 
     def delete_bucket(self, Bucket):
         del self.buckets[Bucket]
@@ -258,6 +258,15 @@ def test_a_workspace_on_this_computer_gets_a_bucket_for_the_bundle_only(tmp_path
     assert aws.policies["captain-serving"]["Statement"][0]["Resource"][1] == f"arn:aws:s3:::captain-serving-{ACC}-us-west-1/shop/staging/*"
     assert SS.plan(c, "p", "us-west-1", bucket="our-own-bucket")["storage"] == "s3://our-own-bucket/shop"  # or one the person picks
     assert ("s3-bucket", f"captain-serving-{ACC}-us-west-1") in [(x["type"], x["name"]) for x in r["created"]]
+    # Removing the setup empties the serving folder (bundle, catalog, log, the workspace file) and nothing beside it.
+    b = f"captain-serving-{ACC}-us-west-1"
+    for k in ("shop/staging/demo/bundles/x/bundle.json", "shop/staging/demo/staging/logs/x/requests-1.jsonl", "shop/workspace.yaml"):
+        aws.objects[f"{b}/{k}"] = b"x"
+    aws.objects[f"{b}/someone-elses/file.txt"] = b"theirs"
+    out = SS.teardown(c)
+    assert not [k for k in aws.objects if k.startswith(f"{b}/shop/")], "the serving folder is empty"
+    assert aws.objects[f"{b}/someone-elses/file.txt"] == b"theirs" and b in aws.buckets  # not Captain's: kept, and so is the bucket
+    assert out["emptied"] >= 3 and "it still holds 1 object" in out["text"]
 
 
 def test_the_public_image_path_exists_and_stays_off_until_one_is_published(cloud_ws, aws):
@@ -313,3 +322,17 @@ def test_cli_shows_the_plan_and_the_policy(cloud_ws, aws):
     aws.deny = {"ecr:CreateRepository"}
     out = run.invoke(app, ["compute", "setup", "aws-serving", "--profile", "p", "--region", "us-west-1", "--yes"])
     assert out.exit_code == 1 and "it lacks ecr:CreateRepository" in out.output and '"Sid": "ServingImage"' in out.output
+
+
+def test_the_serving_bucket_is_a_name_or_a_full_address():
+    from captain_search.staging import serving_setup as SS
+
+    assert SS._serving_uri(None, "000000000000", "us-west-1", "shop") == "s3://captain-serving-000000000000-us-west-1/shop"
+    assert SS._serving_uri("my-bucket", None, "us-west-1", "shop") == "s3://my-bucket/shop"
+    assert SS._serving_uri("s3://my-bucket", None, "us-west-1", "shop") == "s3://my-bucket/shop"
+    assert SS._serving_uri("s3://my-bucket/a/folder/", None, "us-west-1", "shop") == "s3://my-bucket/a/folder"
+    assert SS._where(SS._serving_uri("s3://my-bucket/a/folder", None, "us-west-1", "shop")) == ("my-bucket", "a/folder")
+    import pytest
+
+    with pytest.raises(ValueError, match="a bucket name, or an address like s3://"):
+        SS._serving_uri("gs://other", None, "us-west-1", "shop")

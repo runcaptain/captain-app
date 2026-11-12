@@ -350,6 +350,7 @@ def test_a_workspace_on_this_computer_sends_only_the_bundle_and_the_log_to_the_s
     keys = bucket.list("")
     assert "workspace.yaml" in keys and any(k.endswith("/bundle.json") for k in keys) and any("/catalogs/" in k for k in keys)
     assert all(k == "workspace.yaml" or k.startswith("staging/") for k in keys), f"only the bundle, the control and the log: {keys}"
+    assert str(tmp_path) not in bucket.get("workspace.yaml").decode(), "no path on this computer goes to the bucket"
     assert not any(k.startswith("staging/") for k in ws.store.list("staging/shop/bundles")), "and the bundle is not also written here"
     # it serves, logs to the bucket, and Captain reads the log back from there
     assert len(SG.query(ws, "shop", "jacket", k=4)["staged"]["results"]) == 4

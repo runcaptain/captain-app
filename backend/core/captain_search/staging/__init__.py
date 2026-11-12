@@ -498,7 +498,13 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
 
             store = open_store(uri, t.get("profile"))
             if not store.exists("workspace.yaml"):
-                _put(store, "workspace.yaml", ctx.store.get("workspace.yaml"))  # so the endpoint can open it: a name, no data
+                # So the endpoint can open it: a name, no data. The address in it is the serving folder, never the
+                # folder on this computer: a path on someone's laptop has no business in a bucket.
+                import yaml as _yaml
+
+                doc = _yaml.safe_load(ctx.store.get("workspace.yaml")) or {}
+                doc["storage_uri"] = uri
+                _put(store, "workspace.yaml", _yaml.safe_dump(doc, sort_keys=False).encode())
             rec.update(serving_storage=uri, serving_profile=t.get("profile"))
         bundle_key, bundle = build_bundle(ctx, pid, env, arms, p["serve"], idle, store)
         rec.update(id=bundle["id"], bundle=bundle_key)
