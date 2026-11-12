@@ -653,20 +653,8 @@ def versions(ctx: Context, pid: str, env: str = ENV) -> dict:
             "text": f"{len(rows)} version{'s' if len(rows) != 1 else ''} staged so far." if rows else "Nothing has been staged yet."}
 
 
-def rollback_to(ctx: Context, pid: str, n: int, env: str = ENV) -> dict:
-    """Put an earlier version back on the endpoint, by its number in the Versions list."""
-    from . import stage as _stage
+def rollback_to(ctx: Context, pid: str, n: int | None, env: str = ENV, reason: str | None = None) -> dict:
+    """Put an earlier version back on the endpoint, by its number in the Versions list (staging/rollback.py)."""
+    from . import rollback as RB
 
-    v = versions(ctx, pid, env)
-    row = next((r for r in v["rows"] if r["n"] == int(n)), None)
-    if row is None:
-        raise ValueError(f"There is no version {n} for this endpoint.")
-    rec = _running(ctx, pid, env)
-    ab = PS.get(ctx, pid).get("ab") or {}
-    if ab.get("status") == "running" and ab.get("mode") == "captain":
-        raise ValueError("An A/B test is running. Roll the test back, or end it, before putting another version on the endpoint.")
-    champ = PS.get(ctx, pid).get("champion")
-    out = _stage(ctx, pid, candidate=None if row["model_version"] == champ else row["model_version"],
-                 baseline=row["model_version"] == champ, env=env, target=rec["target"], confirm=True)
-    _note(ctx, pid, f"rolled staging back to version {n} ({row['model_version']})")
-    return {"rolled_back_to": row["model_version"], "version": int(n), "staged": out}
+    return RB.go(ctx, pid, n, reason, env)
