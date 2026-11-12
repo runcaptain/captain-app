@@ -224,6 +224,30 @@ export default class FoldsOpen extends View {
 }
 JS
 fi
+# The marks strip: six vendor marks on a magenta background, for marks-check.py. Mods are found at launch.
+# It also draws the five full-colour marks at every size the screens use, one pixel high, to load them. A
+# full-colour mark is loaded in the background, and the screen that asked for it is not drawn again when it
+# arrives: it is blank the first time any screen shows it, and there until that screen next redraws. A person's
+# window redraws all the time, so they see it a moment later. A test window sits still, so every picture taken from
+# it showed a blank where the logo is (found 2026-11-12). Opening the strip once after launch loads them all, so
+# the pictures that follow show what a person sees.
+mkdir -p "$HOME_DIR/mods/marks-strip"; cp -R defaults/captain/kit "$HOME_DIR/mods/marks-strip/kit"
+echo '{ "place": "none", "overlay": { "kind": "dialog", "width": 400, "height": 80 } }' > "$HOME_DIR/mods/marks-strip/mod.json"
+cat > "$HOME_DIR/mods/marks-strip/main.js" <<'JS'
+import { View, div } from "gpui-kit";
+import { h_flex, v_flex } from "gpui-base";
+import { Brand } from "./kit/brands.js";
+const FULL = ["aws", "azure", "redshift", "athena", "sqlserver"];
+const SIZES = [14, 15, 16, 18, 20, 24, 32]; // FULL_SIZES in kit/brands.js
+const themes = [{ dark: true, navy: "#FFFFFF", grey500: "#FFFFFF" }, { dark: false, navy: "#000000", grey500: "#000000" }];
+export default class MarksStrip extends View {
+  render() {
+    return v_flex().size_full().bg("#FF00FF")
+      .child(h_flex().flex_1().children([...FULL, "snowflake"].map((k) => div().flex_1().h_full().flex().items_center().justify_center().child(Brand(themes[0], k, 32)))))
+      .child(h_flex().h(1).overflow_hidden().children(themes.flatMap((c) => FULL.flatMap((k) => SIZES.map((n) => Brand(c, k, n))))));
+  }
+}
+JS
 launch() {
   # "Captain (test)" in the title bar, so nobody mistakes this window for their own Captain.
   CAPTAIN_TEST_WINDOW=1 CAPTAIN_WINDOW_TITLE="Captain (test)" CAPTAIN_APP_HOME=$HOME_DIR CAPTAIN_CORE_SESSION=$SESSION HC_SESSION=$SESSION CST_HOME=$CSTH "$BIN" >"$WORK/app.log" 2>&1 &
@@ -254,6 +278,17 @@ if covered; then
 fi
 covered && { echo "an overlay still covers the window: $(app status | python3 -c "import json,sys; print(json.load(sys.stdin).get('overlays'))")"; exit 1; }
 [[ "${SHOT_WINDOW:-}" == max ]] && { app do window.maximize >/dev/null; sleep 1; }
+# Load every full-colour mark once, before any picture (see the marks strip above).
+# marks_load: show the strip, make the window draw once more while it is up (that second draw is what takes the
+# loaded marks in), then close it.
+marks_load() {
+  app do mod.open '{"name":"marks-strip"}' >/dev/null 2>&1 || true; sleep 4
+  app do layout.select '{"stack":"sections","child":"data"}' >/dev/null 2>&1 || true; sleep 1
+  app shot "$OUT/.marks-load.png" >/dev/null 2>&1 || true; rm -f "$OUT/.marks-load.png"
+}
+marks_load
+app status | python3 -c "import json,sys; sys.exit(0 if 'marks-strip' in json.load(sys.stdin).get('overlays', []) else 1)" || echo "the marks strip did not open: full-colour marks may be blank in the pictures"
+app do overlay.close '{}' >/dev/null 2>&1 || true; sleep 1
 
 # Props for a view: the scratch workspace's first query of the seeded replay, read from its own serve.
 props_of() {
@@ -495,4 +530,14 @@ if [[ -n "${SHOT_CONTEXT:-}" ]]; then
     echo "terminal.paste {text}: got '$(cat "$OUT/pasted.txt" 2>/dev/null)', clipboard $([[ "$clip_before" == "$clip_after" ]] && echo unchanged || echo CHANGED)"; fail=1
   fi
 fi
+# Every vendor mark draws: the five full-colour ones and a tinted one as the control. A blank mark fails the check.
+# Opened, closed and opened again: the first showing of a full-colour mark is blank (see the marks strip above).
+for _ in 1 2 3; do app do overlay.close '{}' >/dev/null 2>&1 || true; done
+marks_load
+app do overlay.close '{}' >/dev/null 2>&1 || true; sleep 1
+app do mod.open '{"name":"marks-strip"}' >/dev/null || true; sleep 3
+app shot "$OUT/marks-strip.png" >/dev/null || true
+if python3 tests/mod-render/marks-check.py "$OUT/marks-strip.png"; then :; else fail=1; fi
+app do overlay.close '{}' >/dev/null 2>&1 || true
+
 exit $fail
