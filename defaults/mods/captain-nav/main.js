@@ -26,7 +26,7 @@ import { getAppearance, setAppearance } from "./kit/appearance.js";
 import { Explorer, projectNode } from "./explorer.js";
 import { ProjectIcon } from "./kit/projecticon.js";
 import { TeamViews } from "./teamviews.js";
-import { askAboutScreen } from "./kit/agent.js";
+import { askAboutScreen, EVALUATION_FORM } from "./kit/agent.js";
 import { currentView } from "./kit/view.js";
 import { loadPins, unpin, clearPins } from "./kit/context.js";
 import { LOCAL, placesFrom, placeChanged } from "./kit/cost.js";
@@ -68,7 +68,7 @@ const TASK_ENTRIES = [
   ["cloud", "Connect a cloud account", "aws gcp azure login credentials", "cloud"],
   ["mlflow", "Connect MLflow", "mlflow tracking experiments models registry", "flask-conical"],
   ["compute", "Add a place to run work", "compute cloud run offline evaluations backtests serve", "boxes"],
-  ["backtest", "Run an offline evaluation", "backtest compare evaluate offline ndcg what if settings tune knobs sweep sandbox regression test", "flask-conical"],
+  ["backtest", "New evaluation", "run an offline evaluation backtest compare evaluate offline ndcg qa pairs questions answers test set regression test", "flask-conical"],
   ["grading", "Start rating", "grading grade grader raters judgments labels relevance human", "square-check"],
   ["dataset-class", "New dataset class", "class type role catalog queries judgments", "tag"],
   ["rankings", "Compare your own rankings", "bring import rankings results system offline compare evaluate", "git-compare"],
@@ -110,6 +110,7 @@ export function staticEntries(sections) {
     ...TASK_ENTRIES.map(([task, title, words, ic]) => ({ group: "Captain", title, words, icon: icon(ic),
       overlay: task === "dataset" ? { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} }
         : task === "rankings" ? { mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }
+        : task === "backtest" ? EVALUATION_FORM()
         : task === "explain" ? { mod: "captain-explain", kind: "dialog", width: 0.9, height: 0.9 }
         : task === "sandbox" ? { mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9 } : { mod: "captain-forms", kind: "dialog", width: 560, props: { task } } })),
     ...sections.map((s) => ({ group: "Captain", title: `Go to ${s.label}`, words: `section ${s.label} ${s.was ?? ""}`, icon: s.icon && !String(s.icon).includes("/") ? icon(s.icon) : undefined, overlay: go(s.id, s.open) })),
@@ -225,6 +226,8 @@ export default class CaptainNav extends View {
     if (t.form) {
       const overlay = t.form === "dataset" ? { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} }
         : t.form === "rankings" ? { mod: "captain-rankings", kind: "dialog", width: 760, height: 660 }
+        // `cst app open form:backtest --value test=<name>` (or a=, b=, queries=, judgments=, name=): the evaluation's own form.
+        : t.form === "backtest" ? EVALUATION_FORM(t.values ?? {})
           : { mod: "captain-forms", kind: "dialog", width: 560, props: { task: t.form, values: t.values ?? {} } };
       return openOverlay(overlay);
     }

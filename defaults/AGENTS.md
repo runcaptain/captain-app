@@ -1198,6 +1198,28 @@ There is no Datasets screen and no Labels screen. `cst labels` still defines and
   replays | live | compare` filters the list to that kind, or opens Compare.
 - One filled button: **New evaluation**.
 
+### New evaluation: a person sets one up themselves
+
+The form (`captain-evaluation`) has six steps: which models, what to test on, what decides it, limits, where it
+runs, and the name it is saved under.
+
+- **What to test on** is one of three. Their own questions and answers: a table in Data or a file on this
+  computer (or dropped on the form), with a column mapper (Question, Wanted product, Grade, Group) and a
+  preview that says what it makes and which rows it leaves out, with the reason. Logged searches. Or a saved
+  test set. Their own answers become judgments marked human, so the run reads Human graded.
+- **What decides it** is one measure, picked from the list with one line each. A run computes every measure it
+  has the data for, whatever is picked. A measure this test can't decide on says why.
+- **Limits are fields with their defaults**, never hidden: the smallest gain worth acting on, the grade a row
+  with no grade counts as, and, for logged searches, how many simulated shoppers.
+- **The setup is saved under its name as a test.** The same name again is the same test on another model, and
+  its runs line up in Runs, Compare. "Run it on another model" on an evaluation opens the form on that test:
+  pick the model and run. `cst app open form:backtest --value test=<name>` does the same for a person.
+- Three things the owner asked for are not something a run can do, so the form says them instead of drawing a
+  control that does nothing: how many results deep (each measure looks 10 deep, recall 50), which slices (a
+  run always reports by group and by traffic), and which measures to compute (all of them).
+  `GET /api/evaluations/options` lists these under `not_yet`, with the reason.
+- From a terminal the same thing is `cst backtest plan` then `cst backtest run`.
+
 ## Captain project page (Projects)
 
 The page is a header and three sections. The header is the project's icon and name, one muted line saying what

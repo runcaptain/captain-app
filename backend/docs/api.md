@@ -577,6 +577,23 @@ Lists are sorted, filtered and paged on the server, because native mods must not
 | GET | `/api/runs/{run}/histogram?bins=21` | the per-query delta distribution, pre-binned: `{n, edges, counts}` |
 | GET | `/api/compare-runs?a=&b=` | `{comparable, issues: [{code, text}]}` across two runs |
 
+## A person's own test set, and what the New evaluation form offers
+
+- `GET /api/evaluations/options` returns `{measures, slices, limits, not_yet, default_measure, grades}`, read from the
+  runner's own tables, so the form never offers what a run would ignore. A measure is `{id, label, line, needs
+  (answers, logs or shoppers), depth}`. A limit is `{id, label, default, line, only?}`. `not_yet` names what was asked
+  for and a run can't do: `{what, why}`.
+- `POST /api/testsets/preview {source: {dataset} or {file}, mapping?: {query, product, grade?, slice?},
+  default_grade?, limit?}` returns the table's `columns` and first `rows`, the `mapping` (guessed from the column
+  names when not given), and what it would make: `{ready, questions, answers, skipped: {reason: n}, sample:
+  [{query, product_id, grade, slice}], problem?}`. It writes nothing.
+- `POST /api/testsets {name, source, mapping, default_grade?}` makes `<name>/questions` (a query set) and
+  `<name>/answers` (judgments, `judgment_source` human) and returns `{queries, judgments, questions, answers,
+  skipped}`. The same name again is a new version of each. Every row of the table is read; a row with no question,
+  no product or a grade outside 0 to 3 is skipped and counted.
+- `POST /api/backtests` also takes `population_size`: how many simulated shoppers a replay of logged searches makes
+  (4000 unless given).
+
 ## Regression testing (the Runs screen's Compare)
 
 `GET /api/regression?model=&project=&limit=` returns `{rows, models}`: every evaluation run, newest first, one row

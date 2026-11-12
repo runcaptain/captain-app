@@ -36,8 +36,14 @@ export function copyPrompt(cx, prompt) {
 
 /** Open one of Captain's designed forms (captain-forms tasks.js), such as "dataset" or "backtest". */
 export function openForm(task, args) {
+  // An offline evaluation has its own form (captain-evaluation): models, what to test on, the measure, the limits.
+  if (task === "backtest") return openOverlay(EVALUATION_FORM(args?.values));
   openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, ...(args ? { args } : {}) } });
 }
+
+/** The New evaluation form, as an overlay. `values` presets it: {test: "<saved test>"} starts from that test, and
+ *  {a, b, queries, judgments, name, compute} fill those fields. */
+export const EVALUATION_FORM = (values) => ({ mod: "captain-evaluation", kind: "dialog", width: 820, height: 0.9, props: values ? { values } : {} });
 
 /** Send what the person has open to an agent: the agent tab that's open (the one shown, else the first), or a new
  *  one when there is none. The sidebar's button and the palette's "Ask an agent about this screen". */

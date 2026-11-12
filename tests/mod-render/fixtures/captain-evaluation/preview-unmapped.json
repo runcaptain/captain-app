@@ -1,0 +1,52 @@
+{
+ "source": "my-questions.csv",
+ "columns": [
+  "question",
+  "wanted",
+  "relevance",
+  "kind"
+ ],
+ "rows": [
+  [
+   "warm tent for two",
+   "p0000",
+   3,
+   "camping"
+  ],
+  [
+   "warm tent for two",
+   "p0001",
+   2,
+   "camping"
+  ],
+  [
+   "trail shoes",
+   "p0002",
+   null,
+   "footwear"
+  ],
+  [
+   null,
+   "p0003",
+   3,
+   "footwear"
+  ],
+  [
+   "rain jacket",
+   "p0004",
+   9,
+   "clothing"
+  ]
+ ],
+ "total": 5,
+ "mapping": {
+  "product": "wanted"
+ },
+ "default_grade": 3,
+ "ready": false,
+ "questions": 0,
+ "answers": 0,
+ "skipped": {},
+ "sample": [],
+ "problem": "Say which column holds the question and which holds the product you want back."
+}

@@ -15,7 +15,7 @@ import { watchView } from "./kit/view.js";
 import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button, Submenus } from "./kit/ui.js";
-import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
+import { askAgent, copyPrompt, openForm, EVALUATION_FORM } from "./kit/agent.js";
 import { Jobs, jobWords, jobState, place } from "./jobs.js";
 import { Live, liveKind, going } from "./live.js";
 import { Comparison } from "./comparison.js";
@@ -694,7 +694,9 @@ export default class CaptainRuns extends View {
         .child(div().flex_1())
         .when(!!this.live.running.find((x) => x.of === name), (e) => e.child(Button(c, "bt-watch", "Watch it live", (_e, cx) => {
           this.kind = "live"; this.live.load(cx, this.live.running.find((x) => x.of === name).id); cx.notify(); }, { small: true })))
-        .when(b.mode !== "imported", (e) => e.child(this.button(c, "run-backtest", running ? "Running" : this.cost.backtests.confirming ? "Start anyway" : "Run evaluation", "run", (_e, cx) => this.runBacktest(cx, name), false, !!running))))
+        .when(b.mode !== "imported", (e) => e.child(this.button(c, "run-backtest", running ? "Running" : this.cost.backtests.confirming ? "Start anyway" : "Run evaluation", "run", (_e, cx) => this.runBacktest(cx, name), false, !!running))
+          // Regression testing: the same test, on another model. The form opens on this test; only the model changes.
+          .child(Button(c, "bt-rerun-model", "Run it on another model", () => openOverlay(EVALUATION_FORM({ test: name })), { small: true }))))
       .child(div().text_size(13).font_medium().child(b.preregistration?.hypothesis ?? ""))
       .when(b.mode !== "imported", (e) => e.child(this.runsOn(c, "backtests")))
       .child(h_flex().flex_wrap().gap(16).text_size(12).text_color(c.grey900)

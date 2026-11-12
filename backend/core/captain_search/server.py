@@ -3412,10 +3412,44 @@ def population_add(body: dict):
 
 @app.post("/api/backtests", dependencies=A)
 def backtest_add(body: dict):
+    """{name, arms, queries?, judgments?, population?, hypothesis, primary?, mde?, mode?, logs?, compute?, surfaces?,
+    population_size?}. population_size is how many simulated shoppers a replay of logged searches makes (4000 unless
+    given): a limit the form shows as a field rather than hiding."""
     return ops.backtest_plan(ctx(), body["name"], body["arms"], body.get("queries") or None, body.get("judgments") or None,
                              body.get("population") or None, body["hypothesis"], body.get("primary", "ndcg@10"),
                              float(body.get("mde", 0.003)), mode=body.get("mode", "simulated"), logs=body.get("logs") or None,
-                             compute=body.get("compute") or None, surfaces=body.get("surfaces") or None).model_dump(mode="json")
+                             compute=body.get("compute") or None, surfaces=body.get("surfaces") or None,
+                             population_size=int(body.get("population_size") or 4000)).model_dump(mode="json")
+
+
+@app.get("/api/evaluations/options", dependencies=A)
+def evaluation_options():
+    """What the New evaluation form offers, straight from what a run can do: the measures (each with one line and
+    what it needs), the fixed depths they look at, the slices a run always reports, and the limits with their
+    defaults. Nothing here is a setting the runner ignores."""
+    from . import testsets as TS
+    from .eval import evalform as EF
+
+    return EF.options() | {"grades": TS.GRADE_WORDS}
+
+
+@app.post("/api/testsets/preview", dependencies=A)
+def testset_preview(body: dict):
+    """{source: {dataset | file}, mapping?: {query, product, grade?, slice?}, default_grade?, limit?}: the table's
+    columns and first rows, the mapping (guessed when not given), and what it would make. Writes nothing."""
+    from . import testsets as TS
+
+    return TS.preview(ctx(), body.get("source") or {}, body.get("mapping") or None, int(body.get("default_grade", 3)),
+                      max(1, min(int(body.get("limit", 8)), 50)))
+
+
+@app.post("/api/testsets", dependencies=A)
+def testset_create(body: dict):
+    """{name, source, mapping, default_grade?}: make <name>/questions and <name>/answers from a table of the person's
+    own questions and wanted products. Returns {queries, judgments, questions, answers, skipped}."""
+    from . import testsets as TS
+
+    return TS.from_pairs(ctx(), body["name"], body.get("source") or {}, body.get("mapping") or {}, int(body.get("default_grade", 3)))
 
 
 @app.post("/api/registry/import", dependencies=A)
