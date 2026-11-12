@@ -82,9 +82,12 @@ const clean = (t, where) => {
 {
   const h = harness(await load('captain-project'));
   await h.start();
-  await until(h, (t) => t.includes('Train and compare') && t.includes('demo-tuned') && t.includes(seed.cost), 'the candidate shows what it cost');
+  await until(h, (t) => t.includes('Models') && t.includes('demo-tuned'), 'the project page loads');
   const row = h.mod.exps.experiments.findIndex((e) => e.id === tuned.id);
-  assert.equal(textOf(h, `exp-${row}-cost`), seed.cost, "the cost is on the candidate's own row");
+  // What training cost is one of the numbers behind Details, with the scores.
+  assert.ok(!h.text().includes(seed.cost), 'not on the row before Details is opened');
+  await h.click(`exp-${row}`);
+  assert.equal(textOf(h, `exp-${row}-cost`), `Training ${seed.cost}`, "the cost is among the model's own numbers");
   const champ = h.mod.exps.experiments.findIndex((e) => e.is_champion);
   assert.equal(h.byIdPrefix(`exp-${champ}-cost`).length, 0, 'a candidate with no recorded cost shows none');
   // Recent changes: what a change cost, and for one that only has an estimate, the estimate.

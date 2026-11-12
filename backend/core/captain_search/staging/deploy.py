@@ -193,10 +193,12 @@ def cost_words(hourly: float | None, sleeps: bool, fixed_month: float = 0.0, fal
             text += f" Its registry costs about {_money(fixed_month)} a month for as long as it exists."
         return text, None
     monthly = hourly * HOURS_A_MONTH + fixed_month
+    # A month is an estimate of an estimate: whole dollars once it is over ten ("about $98 a month", not $97.82).
+    month = f"${monthly:,.0f}" if monthly >= 10 else _money(monthly)
     if sleeps:
-        return (f"About {_money(hourly)} an hour while a copy is awake, and nothing while it sleeps. Up to {_money(monthly)} a month, "
+        return (f"About {_money(hourly)} an hour while a copy is awake, and nothing while it sleeps. Up to {month} a month, "
                 "if a copy never slept."), monthly
-    return f"About {_money(hourly)} an hour, about {_money(monthly)} a month if it runs all the time. It keeps billing until you stop it.", monthly
+    return f"About {_money(hourly)} an hour, about {month} a month if it runs all the time. It keeps billing until you stop it.", monthly
 
 
 def _fixed_month(cloud: str) -> float:
@@ -791,3 +793,7 @@ def remove(ctx: Context, pid: str, env: str = ENV, progress=None) -> dict:
     return {"project": pid, "status": "removed" if not left else "partly removed", "left": left, "removed_setup": removed_setup,
             "text": ("Removed. Nothing of this deploy is left." if not left else
                      "Removed, except: " + "; ".join(f"{r.get('type')} {r.get('name')} ({r.get('error', 'still there')})" for r in left))}
+
+
+# The steps every deploy ends with (the trained-numbers check, saving to the registry) register themselves here.
+from . import deploy_steps  # noqa: E402,F401

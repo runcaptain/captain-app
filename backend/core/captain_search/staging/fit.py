@@ -113,7 +113,7 @@ def check(ctx: Context, arms: dict[str, str], have: dict | None = None, allow_la
     if lim and nd["memory_mb"] > lim and not allow_large:
         return {"need": nd, "free": None, "measured": MEASURED, "limit_mb": lim, "outcome": "over-limit",
                 "text": f"This model needs about {_gb(nd['memory_mb'])} to serve, which is more than the {_gb(lim)} limit for staging on "
-                        "this computer. Stage it in your cloud."}
+                        "this computer. Deploy it to a cloud."}
     hv = have if have is not None else free()
     mem, disk = hv.get("memory_mb"), hv.get("disk_mb")
     out = {"need": nd, "free": {"memory_mb": None if mem is None else round(mem), "disk_mb": None if disk is None else round(disk)}, "measured": MEASURED,
@@ -124,10 +124,10 @@ def check(ctx: Context, arms: dict[str, str], have: dict | None = None, allow_la
                 "text": f"{what} needs about {_gb(nd['memory_mb'])} of memory to serve. Captain couldn't read how much this computer has free."}
     if disk is not None and nd["disk_mb"] > disk:
         return {**out, "outcome": "wont-fit",
-                "text": f"{what} and its request log need about {_gb(nd['disk_mb'])} of disk, and this computer has {_gb(disk)} free. Stage it in your cloud."}
+                "text": f"{what} and its request log need about {_gb(nd['disk_mb'])} of disk, and this computer has {_gb(disk)} free. Deploy it to a cloud."}
     if nd["memory_mb"] > mem:
         return {**out, "outcome": "wont-fit",
-                "text": f"{what} needs about {_gb(nd['memory_mb'])} of memory to serve, and this computer has {_gb(mem)} free. Stage it in your cloud."}
+                "text": f"{what} needs about {_gb(nd['memory_mb'])} of memory to serve, and this computer has {_gb(mem)} free. Deploy it to a cloud."}
     if nd["memory_mb"] > TIGHT * mem:
         return {**out, "outcome": "tight",
                 "text": f"{what} needs about {_gb(nd['memory_mb'])} of memory to serve, and this computer has {_gb(mem)} free. It will run, "

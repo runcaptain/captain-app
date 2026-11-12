@@ -116,6 +116,10 @@ fi
 
 # SHOT_CLOUDS=2: two cloud logins, neither holding the workspace, so the sidebar's chip shows the count and not one
 # of them. Nothing is checked against a cloud and no keychain is touched: both use the machine's default sign-in.
+if [[ "${SHOT_CLOUDS:-}" == 1 && -z "${SHOT_CST_HOME:-}" ]]; then
+  PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring CST_HOME=$WORK/cst "$CSTCMD" cloud add shot-aws --provider aws --auth default --region us-west-1 >/dev/null
+  echo "One cloud login"
+fi
 if [[ "${SHOT_CLOUDS:-}" == 2 && -z "${SHOT_CST_HOME:-}" ]]; then
   PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring CST_HOME=$WORK/cst "$CSTCMD" cloud add shot-aws --provider aws --auth default --region us-west-1 >/dev/null
   PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring CST_HOME=$WORK/cst "$CSTCMD" cloud add shot-gcp --provider gcp --auth adc --region us-central1 -f project=shot-project >/dev/null
@@ -160,6 +164,8 @@ if [[ -n "${SHOT_PROJECT:-}" && -z "${SHOT_CST_HOME:-}" ]]; then
       env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects ab-simulate "$PID" --sessions 600 >/dev/null
     fi
     echo "Staged on this computer, with real requests, shadow mode${SHOT_PRACTICE:+ and a practice A/B test}"
+    # SHOT_STOPPED=1: and then stopped, to shoot what a stopped model's screen says.
+    if [[ -n "${SHOT_STOPPED:-}" ]]; then env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects unstage "$PID" >/dev/null; STAGED_PID=""; echo "Stopped again"; fi
   fi
 fi
 # SHOT_HOSTS=1 (with SHOT_PROJECT=1): the cards and setup sheets of the other hosts (captain-project:hosts and
@@ -283,10 +289,16 @@ props_of() {
     captain-project:list) echo '{"allProjects": true}' ;;
     captain-project:ship) echo '{"deployment": true}' ;;
     captain-project:hosts) echo '{"deployment": true}' ;;  # nothing staged: the cards in "Where should it run?"
-    captain-project:hostsheet-*) echo "{\"hostSheet\": \"${1#captain-project:hostsheet-}\"}" ;;  # modal, gcp or azure: its setup sheet
     captain-project:pins) echo '{"pinCheck": true}' ;;
     captain-project:connect) echo '{"shipFrom": "connect"}' ;;
     captain-project:dep-list) echo '{"depList": true}' ;;
+    # Ship as a person meets it. ship-none and ship-cloud are the same view, with and without SHOT_CLOUDS=1. The
+    # confirm and a deploy in progress are drawn from a plan and steps handed over here: nothing is deployed.
+    captain-project:ship-none|captain-project:ship-cloud) echo '{"shipFirst": true}' ;;
+    captain-project:ship-confirm) echo '{"shipFirst": true, "shipDemo": {"confirm": {"place": {"id": "aws:shot-aws", "host": "aws", "login": "shot-aws", "kind": "cloud", "provider": "aws", "label": "AWS"}, "plan": {"model_version": "shot-project/demo-tuned@v1", "first_time": true, "creates": {"short": "Two roles, an image repository, an image build and the endpoint.", "count": 5, "groups": [{"title": "The first time only", "summary": "Permissions and a home for the model'\''s image, kept for later deploys", "items": [{"resource": "IAM role", "name": "captain-serving", "why": "The endpoint runs as this"}]}, {"title": "For this model", "summary": "One small machine (ml.t2.medium)", "items": [{"resource": "SageMaker endpoint", "name": "captain-shot-project", "why": "Answers requests"}]}]}, "exists": [], "cost": {"sleeps": false, "text": "About $0.07 an hour, about $48 a month if it runs all the time. $0.03 once to build the image."}, "minutes": {"text": "About 4 minutes: 2 to set up, 2 to start."}, "warnings": []}}}}' ;;
+    captain-project:ship-deploying) echo '{"shipFirst": true, "shipDemo": {"deploying": {"place": {"id": "aws:shot-aws", "host": "aws", "login": "shot-aws", "kind": "cloud", "provider": "aws", "label": "AWS"}, "steps": [{"id": "check", "title": "Checking your account", "status": "done", "seconds": 2}, {"id": "access", "title": "Creating permissions", "status": "done", "seconds": 3}, {"id": "image", "title": "Building the model'\''s image", "status": "done", "seconds": 78}, {"id": "start", "title": "Starting the model", "status": "running", "seconds": 38}, {"id": "ready", "title": "Checking it answers", "status": "pending"}, {"id": "match", "title": "Checking it matches training", "status": "pending"}]}}}' ;;
+    captain-project:deployed|captain-project:deployed-asleep|captain-project:deployed-stopped) echo '{"deployment": true}' ;;
+    captain-project:deployed-more-*) echo "{\"depMore\": \"${1#captain-project:deployed-more-}\"}" ;;
     captain-project:dep-*) echo "{\"depTab\": \"${1#captain-project:dep-}\"}" ;;  # any tab: requests, try, traffic, copies, metrics, versions, logs, settings, cost
     captain-project:ab) echo '{"shipFrom": "ab"}' ;;
     captain-data:models-attach) echo '{"tab": "models", "registryAttach": true}' ;;

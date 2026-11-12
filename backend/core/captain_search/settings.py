@@ -191,3 +191,28 @@ def set_serving_prefix(ctx: Context, prefix) -> dict:
         except Conflict:
             continue
     raise Conflict("the settings kept changing while saving. Try again.")
+
+
+def set_alerts(ctx: Context, webhook_url) -> dict:
+    """Where a message goes when a deployed model turns unhealthy or recovers: an http(s) address that takes a JSON
+    body with `text` (a Slack incoming webhook, PagerDuty, your own). Pass "" to turn it off. The address can hold
+    a secret, so it is never printed: `get` returns it, and the screens show only whether one is set."""
+    url = str(webhook_url or "").strip()
+    if url and not (url.startswith("https://") or url.startswith("http://")):
+        raise ValueError("the webhook is an address that starts with https://")
+    if len(url) > 2000:
+        raise ValueError("that address is too long to be a webhook")
+    for _ in range(10):
+        try:
+            body, tag = ctx.store.get_with_tag(KEY)
+            doc = yaml.safe_load(body) or {}
+        except NotFound:
+            doc, tag = {}, None
+        doc.setdefault("alerts", {})["webhook_url"] = url or None
+        doc["updated_by"], doc["updated_at"] = whoami(), dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+        try:
+            ctx.store.put_if(KEY, yaml.safe_dump(doc, sort_keys=False).encode(), tag)
+            return get(ctx)
+        except Conflict:
+            continue
+    raise Conflict("the settings kept changing while saving. Try again.")

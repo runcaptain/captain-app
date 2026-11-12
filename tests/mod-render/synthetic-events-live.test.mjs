@@ -58,7 +58,7 @@ h = await page();
 assert.equal(h.byIdPrefix('in-events-pick').length, 1, 'choosing real events is still the first action');
 assert.equal(h.byIdPrefix('in-events-generate').length, 1, 'generate is offered');
 assert.equal(h.byIdPrefix('in-catalog-generate').length, 0, 'only on an events input');
-assert.ok(h.text().includes('Generate synthetic events'), 'its words');
+assert.ok(h.text().includes('Generate simulated events'), 'its words');
 globalThis.__overlays = [];
 await h.click('in-events-generate');
 const opened = (globalThis.__overlays ?? []).at(-1);
@@ -102,8 +102,10 @@ assert.equal(ds.tags?.synthetic, 'true', `dataset tags: ${JSON.stringify(ds.tags
 
 h = await page();
 const t = h.text();
-assert.equal(h.byIdPrefix('in-events-simulated').length, 1, 'the simulated badge on the card');
-assert.equal(h.byIdPrefix('in-catalog-simulated').length, 0, 'the catalog is not simulated');
+// "Simulated" is a word in the row's one status, said only when it is true.
+const statusOf = (slot) => (h.byIdPrefix(`in-${slot}-status`)[0]?.kids ?? []).join('');
+assert.ok(/, simulated$/.test(statusOf('events')), `the events row says simulated: ${statusOf('events')}`);
+assert.ok(!statusOf('catalog').includes('simulated'), 'the catalog is not simulated');
 assert.equal(h.byIdPrefix('in-events-generate').length, 0, 'no generate once it is set');
 assert.ok(t.includes('synthetic-events') && t.includes('simulated'), 'the card names the dataset and says simulated');
 assert.ok(t.includes('graded from clicks, on simulated events'), 'how candidates are judged says simulated');

@@ -21,6 +21,13 @@ from test_hosting_modal import ENV, modal  # noqa: F401  (fixtures)
 from test_serving_setup import Fake as FakeAwsSetup
 from test_staging import keychain, ws  # noqa: F401  (fixtures)
 
+
+@pytest.fixture(autouse=True)
+def only_the_five_steps(monkeypatch):
+    """These tests are about the five steps of a deploy. The steps that follow them on every deploy (the
+    trained-numbers check, saving to the registry) have their own tests in test_deploy_steps.py."""
+    monkeypatch.setattr(DP, "AFTER", [])
+
 LOGINS = {"aws": {"name": "aws-main", "provider": "aws", "auth": "profile", "region": "us-west-1", "fields": {"profile": "main"}},
           "modal": {"name": "modal", "provider": "modal", "auth": "local", "region": None, "fields": {"environment": ENV}},
           "gcp": {"name": "g", "provider": "gcp", "auth": "adc", "region": None, "fields": {"project": "demo-project"}},

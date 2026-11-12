@@ -102,6 +102,8 @@ export class Explorer {
    *  guard, and reads MLflow the first time it opens. */
   toggleMlflow(cx) {
     if (!this.meant()) return;
+    // Read and found not connected: the one line leads to connecting it. There is nothing to open.
+    if (this.mlflowEmpty() && !this.mlflow.status?.configured) { openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "mlflow" } }); return; }
     this.toggle("mlflow");
     if (this.isOpen("mlflow")) this.openMlflow(cx);
     cx.notify();
@@ -113,6 +115,14 @@ export class Explorer {
     this.mlflow.load(cx);
   }
 
+  /** Has MLflow been read and found empty, or not set up? Unknown until its heading has been opened once. */
+  mlflowEmpty() {
+    const m = this.mlflow;
+    if (!this.mlflowLoaded || !m.status) return false;
+    if (!m.status.configured) return true;
+    return Array.isArray(m.experiments) && !m.experiments.length && Array.isArray(m.models) && !m.models.length;
+  }
+
   mlflowRow(c) {
     const open = this.isOpen("mlflow");
     return v_flex().w_full()
@@ -122,8 +132,10 @@ export class Explorer {
         .on_click((_e, cx) => this.toggleMlflow(cx))
         .child(div().size(12).flex_none().flex().items_center().justify_center().text_color(c.grey500).child(svg(icon(open ? "chevron-down" : "chevron-right")).size(11)))
         .child(Brand(c, "mlflow", 13))
-        .child(div().flex_1().min_w(0).truncate().child("MLflow")))
-      .when(open, (e) => e.child(div().pl(10).child(this.mlflow.render(c, 220))));
+        // One line when there is nothing in it: said once it has been read, never guessed.
+        .child(div().id("ex-mlflow-label").flex_1().min_w(0).truncate().child(this.mlflowEmpty() ? "MLflow: nothing yet" : "MLflow")))
+      // Empty, it is one line and stays closed: there is nothing under it to show.
+      .when(open && !this.mlflowEmpty(), (e) => e.child(div().pl(10).child(this.mlflow.render(c, 220))));
   }
 
   // Whether an engine page or a project home is the section on show (the sections stack's active child).

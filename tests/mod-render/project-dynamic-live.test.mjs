@@ -48,11 +48,11 @@ const until = async (ok, what, n = 80) => {
   for (let i = 0; i < n && !ok(h.text()); i++) { await h.layoutLists({}); await h.idle(150); }
   assert.ok(ok(h.text()), `${what}: ${h.text().slice(0, 1600)}`);
 };
-await until((t) => t.includes('Train and compare') && t.includes('Embeddings'), 'page loads');
+await until((t) => t.includes('Models') && t.includes('Embeddings'), 'page loads');
 let t = h.text();
 // The workflow, top to bottom, with the next step first.
 let at = 0;
-for (const x of ['Next:', '1', "What you're building", 'Search ranking from events', '2', 'Inputs', '3', 'Train and compare', '4', 'Ship']) {
+for (const x of ['Search ranking from events', 'Next:', 'Data', 'Models', 'Ship']) {
   const i = t.indexOf(x, at);
   assert.ok(i >= 0, `reads top to bottom: ${x} after ${at}`);
   at = i;
@@ -62,8 +62,11 @@ assert.ok(/Next: .*catalog/i.test(t), 'next names the first required input');
 const slots = h.mod.stages.inputs.map((i) => h.mod.slotOf(i));
 const req = slots.filter((s) => s.required).map((s) => s.label);
 assert.ok(req.length >= 2 && t.indexOf(req[0]) < t.indexOf('Embeddings'), 'required inputs come first');
-assert.equal(h.byIdPrefix('in-embeddings-remove').length, 1, 'an optional input can be removed');
-assert.equal(h.byIdPrefix(`in-${slots.find((s) => s.required).slot}-remove`).length, 0, 'a required one cannot');
+// A row shows one action. Taking an optional input off the project is under its More.
+assert.equal(h.byIdPrefix('in-embeddings-remove').length, 0, 'not on the row');
+assert.equal(h.byIdPrefix(`in-${slots.find((s) => s.required).slot}-more`).length, 0, 'a required input with one version has nothing more to offer');
+await h.click('in-embeddings-more');
+assert.equal(h.byIdPrefix('in-embeddings-remove').length, 1, 'an optional input can be removed, from More');
 assert.equal(h.byIdPrefix('in-add').length, 1, 'Add an input');
 // No evaluation set: Train and compare says so and offers to add one.
 // This recipe judges by replaying logged searches: it needs the events input, and the button says so.
@@ -74,6 +77,7 @@ await until(() => h.byIdPrefix('in-embeddings').length === 0, 'removed');
 assert.ok(!(await get('/api/projects/outdoor/state')).slots.some((s) => s.id === 'embeddings'));
 
 // Set up with an agent: a prompt for the agent (here, on the clipboard: no agent installed), then its proposal.
+await h.click('ph-more'); // Set up with an agent sits in More now
 await h.click('ph-assist');
 await until(() => Boolean(h.mod.assist?.id), 'assist started');
 assert.ok(String(globalThis.__clipboard ?? '').includes('cst projects propose outdoor'), 'the agent gets its prompt');

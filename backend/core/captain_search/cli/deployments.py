@@ -298,25 +298,104 @@ def deployments_stop(name: str, env: str = typer.Option("staging", "--env")):
 
 @deployments_app.command("rollback")
 def deployments_rollback(name: str,
-                         version: Optional[int] = typer.Argument(None, help="the version number from `cst deployments history`; default the one before the live one")):
-    """Put an earlier version back on the project's endpoint."""
-    from ..staging import traffic as TF
+                         version: Optional[int] = typer.Argument(None, help="the version number from `cst deployments history`; default the one before the live one"),
+                         reason: Optional[str] = typer.Option(None, "--reason", help="why: kept with who rolled back, and required"),
+                         auto: Optional[float] = typer.Option(None, "--auto", help="minutes after each deploy in which an unhealthy version is put back by itself; 0 turns it off"),
+                         show: bool = typer.Option(False, "--history", help="list every roll back: when, who, from, to and why")):
+    """Put an earlier version back on the project's endpoint, through the same deploy every version goes through.
+    What is running keeps answering until the earlier version does."""
+    from ..staging import rollback as RB
 
     c = ctx()
-    v = _do(TF.versions, c, name)
-    if version is None:
-        older = [r for r in v["rows"] if not r["live"]]
-        if not v["live"] or not older:
-            fail("There is no earlier version to roll back to." if v["live"] else "Nothing is staged, so there is nothing to roll back.")
-        version = older[0]["n"]
-    row = next((r for r in v["rows"] if r["n"] == version), None)
-    if row is None:
-        fail(f"There is no version {version} for this endpoint. See cst deployments history {name}.")
-    if S.dry_run:
-        emit({"dry_run": True, "version": version, "model_version": row["model_version"]}, f"Would put version {version} ({row['model_version']}) back on the endpoint.")
+    if auto is not None:
+        r = _do(RB.set_auto, c, name, auto)
+        emit(r, r["text"])
         return
+    if show:
+        h = _do(RB.history, c, name)
+        emit(h, "\n".join([h["text"], h["auto"]["text"]]
+                          + [f"  {r['at'][:16].replace('T', ' ')}  {r['by']}: {r['from']} to {r['to']}. {r['reason']}" for r in h["rows"]]))
+        return
+    older = _do(RB.earlier, c, name)
+    if not older:
+        fail("There is no earlier version to roll back to.")
+    row = older[0] if version is None else next((r for r in older if r["n"] == version), None)
+    if row is None:
+        fail(f"There is no earlier version {version} to go back to. See cst deployments history {name}.")
+    if S.dry_run:
+        emit({"dry_run": True, "version": row["n"], "model_version": row["model_version"]}, f"Would put version {row['n']} ({row['model_version']}) back on the endpoint.")
+        return
+    if not (reason or "").strip():
+        fail('Say why: a roll back is recorded with its reason. Pass --reason "...".')
     try:
-        r = TF.rollback_to(c, name, version)
+        r = RB.go(c, name, row["n"], reason)
     except _staging_errors() as e:
         fail(str(e))
-    emit(r, f"Rolled back to version {version} ({r['rolled_back_to']}).")
+    emit(r, f"Rolled back to version {r['version']} ({r['rolled_back_to']}). {r['reason']}")
+
+
+@deployments_app.command("health")
+def deployments_health(name: str,
+                       run: bool = typer.Option(False, "--check", help="run a check now and record it, instead of showing the last one"),
+                       p95_ms: Optional[float] = typer.Option(None, "--p95-ms", help="set the response time target: 95 in 100 requests under this, at the endpoint"),
+                       error_rate: Optional[float] = typer.Option(None, "--error-rate", help="set the share of requests that may fail, like 0.01 for 1%"),
+                       history: int = typer.Option(0, "--history", help="also show this many recorded checks")):
+    """A deployed model's health: is it answering, its error rate and response time against your target."""
+    from ..staging import health as HL
+
+    c = ctx()
+    if (p95_ms is not None or error_rate is not None) and not S.dry_run:
+        _do(HL.set_target, c, name, p95_ms, error_rate)
+    h = _do(HL.check, c, name) if run and not S.dry_run else _do(HL.get, c, name)
+    lines = [h.get("text") or "Not checked yet."]
+    t = h.get("target") or {}
+    lines.append("Target: " + (", ".join(x for x in [f"95 in 100 requests under {t['p95_ms']:g} ms" if t.get("p95_ms") is not None else None,
+                                                    f"at most {t['error_rate']:.0%} failing" if t.get("error_rate") is not None else None] if x))
+                 + ("" if t.get("set") else " (Captain's default: set your own with --p95-ms and --error-rate)."))
+    if h.get("checked_at"):
+        lines.append(f"Checked {h['checked_at']}." + (f" Last request {h['last_request_at']}." if h.get("last_request_at") else ""))
+    if h.get("alert"):
+        lines.append("Sent: " + h["alert"]["text"])
+    rows = _do(HL.history, c, name, limit=history)["rows"] if history else []
+    lines += [f"  {r.get('checked_at', '')}  {r.get('status', ''):10} {r.get('text', '')}" for r in rows]
+    emit({**h, **({"history": rows} if history else {})}, "\n".join(lines))
+
+
+@deployments_app.command("watch")
+def deployments_watch(every: float = typer.Option(60.0, "--every", help="seconds between checks"),
+                      once: bool = typer.Option(False, "--once", help="check every deployed model once and exit: for a cron"),
+                      quiet: bool = typer.Option(False, "--quiet", help="print only when a status changes"),
+                      system: bool = typer.Option(False, "--notify", help="also post a notification on this computer when a status changes")):
+    """Check every deployed model on a schedule, record each result, and send a message when one turns unhealthy or
+    recovers. Exits 1 with --once when any is unhealthy, so a cron or an agent can act on it."""
+    from ..staging import health as HL
+
+    c = ctx()
+    while True:
+        results = HL.watch_once(c, system=system)
+        for r in results:
+            if not quiet or r.get("changed"):
+                typer.echo(f"{r.get('checked_at', '')}  {r['project']}: {r.get('text', '')}" + (f"  [sent: {r['alert']['text']}]" if r.get("alert") else ""))
+        if once:
+            if S.json:
+                emit(results)
+            if any(r.get("status") == "unhealthy" for r in results):
+                raise typer.Exit(1)
+            if not results and not S.json:
+                typer.echo("Nothing is deployed.")
+            return
+        time.sleep(max(5.0, every))
+
+
+@deployments_app.command("alerts")
+def deployments_alerts(webhook: Optional[str] = typer.Option(None, "--webhook", help="an https:// address that takes a JSON body with `text` (Slack, PagerDuty, your own)"),
+                       off: bool = typer.Option(False, "--off", help="stop sending")):
+    """Where a message goes when a deployed model turns unhealthy or recovers. The address is never printed back."""
+    from .. import settings as ST
+
+    c = ctx()
+    if (webhook is not None or off) and not S.dry_run:
+        _do(ST.set_alerts, c, "" if off else webhook)
+    on = bool((ST.get(c).get("alerts") or {}).get("webhook_url"))
+    emit({"webhook_set": on}, "A webhook is set. Messages go there when a deployed model turns unhealthy or recovers." if on
+         else "No webhook is set. Set one with --webhook https://...")

@@ -41,7 +41,7 @@ def test_connect_counts_only_real_requests_and_never_shows_the_key(ws):  # noqa:
     SG.stage(ws, "shop", target="local")
     c = TF.connect(ws, "shop")
     assert not c["reachable"] and not c["connected"] and c["live"] == "Waiting for the first request."
-    assert "A site can't reach an endpoint on this computer" in c["blocked"] and "stage it in your cloud" in c["blocked"]
+    assert "A site can't reach an endpoint on this computer" in c["blocked"] and "deploy it to a cloud" in c["blocked"]
     key = SG._key(SG.state(ws, "shop"))
     text = json.dumps(c)
     assert key not in text and "CAPTAIN_STAGING_KEY" in text and "keychain" in c["key_note"]
@@ -353,8 +353,8 @@ def test_the_local_choice_is_checked_against_what_this_computer_has_free(ws, mon
     assert tight["outcome"] == "tight" and "It will run, but other work on this computer may slow down." in tight["text"]
     # won't fit: memory, then disk
     no = FT.check(ws, arms, {"memory_mb": 64, "disk_mb": 50000})
-    assert no["outcome"] == "wont-fit" and no["text"].endswith("and this computer has 64 MB free. Stage it in your cloud.")
-    assert FT.check(ws, arms, {"memory_mb": 16000, "disk_mb": 10})["text"].endswith("of disk, and this computer has 10 MB free. Stage it in your cloud.")
+    assert no["outcome"] == "wont-fit" and no["text"].endswith("and this computer has 64 MB free. Deploy it to a cloud.")
+    assert FT.check(ws, arms, {"memory_mb": 16000, "disk_mb": 10})["text"].endswith("of disk, and this computer has 10 MB free. Deploy it to a cloud.")
     # can't read the machine: say so, never guess
     assert FT.check(ws, arms, {"memory_mb": None, "disk_mb": None})["outcome"] == "unknown"
     # the measured figures: a 200,000 product catalog with both versions needs what was measured, plus headroom
@@ -368,7 +368,7 @@ def test_the_local_choice_is_checked_against_what_this_computer_has_free(ws, mon
     monkeypatch.setattr(FT, "free", lambda: {"memory_mb": 64, "disk_mb": 50000})
     p = SG.plan(ws, "shop", target="local")
     assert p["local_fit"]["outcome"] == "wont-fit"
-    with pytest.raises(ValueError, match="this computer has 64 MB free. Stage it in your cloud."):
+    with pytest.raises(ValueError, match="this computer has 64 MB free. Deploy it to a cloud."):
         SG.stage(ws, "shop", target="local")
     assert SG.state(ws, "shop") is None
     monkeypatch.setattr(FT, "free", lambda: {"memory_mb": 16000, "disk_mb": 50000})
@@ -419,13 +419,15 @@ def test_versions_list_and_roll_back_to_one(ws):  # noqa: F811
     v = TF.versions(ws, "shop")
     assert [(r["n"], r["model_version"], r["live"]) for r in v["rows"]] == [(2, ws.candidate, True), (1, ws.baseline, False)]
     assert v["rows"][1]["can_roll_back"] and not v["rows"][0]["can_roll_back"] and v["rows"][0]["by"] and v["rows"][0]["at"]
-    out = TF.rollback_to(ws, "shop", 1)
+    with pytest.raises(ValueError, match="Say why"):
+        TF.rollback_to(ws, "shop", 1)  # a roll back is recorded with its reason
+    out = TF.rollback_to(ws, "shop", 1, reason="It is too slow")
     assert out["rolled_back_to"] == ws.baseline and SG.state(ws, "shop")["model_version"] == ws.baseline
     v = TF.versions(ws, "shop")
     assert [(r["n"], r["live"]) for r in v["rows"]] == [(3, True), (2, False), (1, False)] and v["rows"][0]["model_version"] == ws.baseline
-    assert "rolled staging back to version 1" in " | ".join(h["what"] for h in PS.get(ws, "shop")["history"])
-    with pytest.raises(ValueError, match="There is no version 9"):
-        TF.rollback_to(ws, "shop", 9)
+    assert f"rolled the deployment back from {ws.candidate} to {ws.baseline}: It is too slow" in " | ".join(h["what"] for h in PS.get(ws, "shop")["history"])
+    with pytest.raises(ValueError, match="There is no earlier version 9"):
+        TF.rollback_to(ws, "shop", 9, reason="a test")
 
 
 def test_a_model_over_the_size_limit_is_not_staged_on_this_computer_even_with_memory_free(ws):  # noqa: F811
@@ -448,7 +450,7 @@ def test_a_model_over_the_size_limit_is_not_staged_on_this_computer_even_with_me
         r = FT.check(ws, arms, roomy)
         assert r["outcome"] == "over-limit" and r["limit_mb"] == 1024
         assert r["text"] == (f"This model needs about {big['memory_mb'] / 1024:.1f} GB to serve, which is more than the 1 GB limit for staging on "
-                             "this computer. Stage it in your cloud.")
+                             "this computer. Deploy it to a cloud.")
         with pytest.raises(ValueError, match="more than the 1 GB limit for staging on this computer.*raise the limit in Settings, or pass --allow-large"):
             SG.stage(ws, "shop", target="local")
         assert SG.state(ws, "shop") is None
