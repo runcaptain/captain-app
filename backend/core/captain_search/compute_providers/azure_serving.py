@@ -282,6 +282,33 @@ class ContainerAppsServing(HttpServing):
                 "note": "Setup makes no log workspace, to keep the group small. The app's own lines, from a terminal: "
                         f"az containerapp logs show -n {name} -g {self.config.get('resource_group')} --follow"}
 
+    def found(self, prefix: str = "captain") -> list[dict]:
+        """Every container app in Captain's resource group that Captain made, whatever project made it: by Captain's
+        tag, or by the name prefix. Reads the list and the count of copies up. It never calls an app."""
+        arm = self._arm()
+        start = prefix.strip("-") + "-"
+        got = arm.call("GET", f"{self._group(arm)}/providers/Microsoft.App/containerApps", api=APP_API, ok_missing=True) or {}
+        out = []
+        for a in got.get("value") or []:
+            t, name, p = a.get("tags") or {}, a["name"], a.get("properties") or {}
+            if t.get("app") != "captain" and not name.startswith(start):
+                continue
+            ps = p.get("provisioningState")
+            state = "failed" if ps in ("Failed", "Canceled") else "starting" if ps not in ("Succeeded", None) else "running"
+            copies = self._copies(arm, name, a) if state == "running" else None
+            c = (((p.get("template") or {}).get("containers") or [{}])[0].get("resources") or {})
+            sc = (p.get("template") or {}).get("scale") or {}
+            out.append({"type": "container-app", "name": name, "region": a.get("location") or self.region,
+                        "resources": [{"type": "container-app", "name": name, "resource_group": self.config["resource_group"]}],
+                        "state": "asleep" if state == "running" and copies == 0 else state,
+                        "reason": f"the container app ended {ps}" if state == "failed" else ps if state == "starting" else None,
+                        "machine": (f"{c.get('cpu'):g} vCPU, {c.get('memory')}" if c.get("cpu") and c.get("memory") else None),
+                        "copies_now": copies, "copies_min": sc.get("minReplicas"), "copies_max": sc.get("maxReplicas"),
+                        "since": (a.get("systemData") or {}).get("createdAt"), "changed": (a.get("systemData") or {}).get("lastModifiedAt"),
+                        "project": t.get("project"), "env": t.get("env"), "stage": t.get("stage") or t.get("captain-stage"),
+                        "by": (a.get("systemData") or {}).get("createdBy"), "by_tag": t.get("app") == "captain", "by_prefix": name.startswith(start)})
+        return out
+
     def tagged(self, project: str, env: str) -> list[dict]:
         arm = self._arm()
         got = arm.call("GET", f"{self._group(arm)}/providers/Microsoft.App/containerApps", api=APP_API, ok_missing=True) or {}

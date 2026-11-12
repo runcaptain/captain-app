@@ -38,6 +38,13 @@ class FakeAWS:
         self.iam_refuses = False   # Captain's own sign-in may not ask IAM
         self.scaling = {}          # endpoint resource id -> {min, max, policy}: SageMaker's scaling on an endpoint
         self.copies = {}           # endpoint -> copies up now
+        # What CloudWatch reports: 120 requests a minute, none failing, 3 ms median and 9 ms 95th percentile inside
+        # the model, 20% of a core, 5% of memory, one copy reporting once a minute.
+        self.metric = lambda name, stat, t, period: {
+            ("Invocations", "Sum"): 120.0 * period / 60, ("Invocation4XXErrors", "Sum"): 0.0, ("Invocation5XXErrors", "Sum"): 0.0,
+            ("ModelLatency", "p50"): 3000.0, ("ModelLatency", "p95"): 9000.0, ("OverheadLatency", "p50"): 800.0,
+            ("CPUUtilization", "Average"): 20.0, ("CPUUtilization", "Maximum"): 35.0, ("MemoryUtilization", "Average"): 5.0,
+            ("MemoryUtilization", "Maximum"): 6.0, ("CPUUtilization", "SampleCount"): period / 60.0}.get((name, stat))
 
     def client(self, name):
         return self
@@ -150,6 +157,28 @@ class FakeSM:
 
     def list_endpoints(self, **kw):
         return {"Endpoints": [{"EndpointName": n, "EndpointArn": f"endpoint/{n}"} for n in self.w.endpoints]}
+
+    # cloudwatch: the endpoint's own numbers, one value a bucket. `w.metric` decides them: (metric name, statistic,
+    # time) -> value or None.
+    def get_metric_data(self, MetricDataQueries, StartTime, EndTime, ScanBy="TimestampDescending", **kw):
+        import datetime as dt
+
+        self._do("get_metric_data", {"n": len(MetricDataQueries), "start": StartTime, "end": EndTime})
+        out = []
+        for q in MetricDataQueries:
+            m, period = q["MetricStat"], q["MetricStat"]["Period"]
+            ts, vs, t = [], [], StartTime
+            while t < EndTime:
+                v = self.w.metric(m["Metric"]["MetricName"], m["Stat"], t, period)
+                if v is not None:
+                    ts.append(t)
+                    vs.append(v)
+                t += dt.timedelta(seconds=period)
+            out.append({"Id": q["Id"], "Timestamps": ts, "Values": vs})
+        return {"MetricDataResults": out}
+
+    def describe_endpoint_config(self, EndpointConfigName):
+        return self.w.configs[EndpointConfigName]
 
     def list_endpoint_configs(self, **kw):
         return {"EndpointConfigs": [{"EndpointConfigName": n, "EndpointConfigArn": f"config/{n}"} for n in self.w.configs]}
@@ -464,4 +493,43 @@ def test_a_login_that_may_not_scale_still_gets_a_running_model_and_is_told(ws, a
     assert rec["status"] == "running" and aws.endpoints and not aws.scaling
     assert any("scaling with load could not be turned on" in str(x) for x in said)
     aws.fail_on = None
+    SG.unstage(ws, "shop")
+
+
+# ---- one client, and the first call timed apart ---------------------------------------------------
+
+
+def test_calls_reuse_one_client_instead_of_signing_in_each_time(ws, aws, monkeypatch):  # noqa: F811
+    from captain_search import cloud
+    from captain_search.compute_providers import aws as AWSP
+
+    made = []
+    real = cloud.aws_session
+    monkeypatch.setattr(cloud, "aws_session", lambda profile, region=None: made.append(profile) or real(profile, region))
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    made.clear()
+    for q in ("jacket", "tent", "boots"):
+        SG.query(ws, "shop", q)
+    assert made == []  # the stage call's client is kept: three queries sign in zero more times
+    AWSP.forget_clients()
+    SG.query(ws, "shop", "jacket")
+    assert len(made) == 1  # a changed login starts again, once
+    SG.unstage(ws, "shop")
+
+
+def test_a_query_times_the_first_call_apart_from_a_warm_one(ws, aws):  # noqa: F811
+    SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
+    before = [c for c, _ in aws.calls].count("invoke_endpoint") if any(c == "invoke_endpoint" for c, _ in aws.calls) else 0
+    first = SG.query(ws, "shop", "jacket")
+    t = first["timing"]
+    assert t["first_call_ms"] is not None and t["warm_ms"] == first["staged"]["round_trip_ms"] and t["inside_ms"] == first["staged"]["ms"]
+    assert t["text"].startswith("The first call took ") and "it signs in to your cloud and opens the connection" in t["text"]
+    assert "With the connection open, a request takes" in t["text"]
+    again = SG.query(ws, "shop", "tent")["timing"]
+    assert again["first_call_ms"] is None and again["text"].startswith("With the connection open, a request takes")
+    # The call made to open the connection asks nothing of the model: it is not a logged request.
+    SG.call(ws, SG.state(ws, "shop"), "flush", {})
+    from captain_search.staging import logs as L
+    reqs = L.read(ws, "shop", "staging", SG.state(ws, "shop")["id"])["requests"]
+    assert len(reqs) == 4 and before == 0  # two queries, each beside the baseline
     SG.unstage(ws, "shop")

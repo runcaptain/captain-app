@@ -161,6 +161,23 @@ lines a run prints ("Starting the endpoint (about 2 minutes)") all read it, and 
 up to the confirm's total. A step that has not been timed on a real account says so instead of guessing. Moving a
 running endpoint to a new version has not been timed yet.
 
+### What a request costs in time
+
+A request from this computer to a cloud endpoint has two very different costs, so a query reports them apart
+(`timing` in `POST .../staging/query`, and the last line `cst projects staging-query` prints):
+
+- **The first call** from a process signs in to the cloud and opens a connection. It can take several times as
+  long as the request itself. `timing.first_call_ms`, null once this process is connected.
+- **A warm call**, with the connection open: `timing.warm_ms`, of which `timing.inside_ms` is the model.
+
+Before 2026-11-12 Captain made a new cloud client for every call, so every call paid the first cost: one query
+from the terminal showed round trips of 848 ms and 480 ms against 3.9 ms and 1.4 ms inside the endpoint. Measured
+on this laptop, building a client alone took 50 to 70 ms each time, loading the AWS library 135 to 190 ms once,
+and each new client opened a new connection. Captain now keeps one sign-in and one client per login and service
+for the life of the process (30 minutes at most). The round trip also no longer counts the time this computer
+takes to look up product titles for the answer. A site that calls the endpoint should do the same: make one
+client and keep it.
+
 ### Which machine it runs on
 
 A deploy runs on the smallest machine the model fits on. Nobody has to choose one.
@@ -364,16 +381,118 @@ the account, and Captain does not remove it.
 
 - The request log. Each copy writes its own chunks under the same folder with create-only writes, so two copies
   never overwrite each other. Each request row says which copy answered it (`copy`).
-- The split. A session's version is a hash of the experiment's salt and the session id, so every copy gives the
-  same session the same version.
+- Each model's own address. `/rank/candidate` and `/rank/baseline` give that model from whichever copy the host
+  hands the request to, so a team that splits traffic in its own system gets the same answer from every copy.
 - Shadow mode. Every copy serves the baseline and logs the candidate's answer beside it.
 - Stopping when idle. A copy that has had no request for the idle limit asks the other copies when they were last
   used before it stops the endpoint. Each copy leaves that in `staging/<project>/<env>/copies/<deployment>/`.
   Before this, one quiet copy could delete an endpoint another copy was busy on.
 
-**What is per copy.** A change of traffic (the split, shadow mode, the idle limit) reaches the copy that was told at
-once and the others within 3 seconds. `flush` and `status` reach one copy, whichever the host picks, so the newest
+**What is per copy.** A change to the running endpoint (shadow mode, the idle limit) reaches the copy that was told
+at once and the others within 3 seconds. `flush` and `status` reach one copy, whichever the host picks, so the newest
 15 seconds of another copy's requests can be missing from a readout taken right after a flush.
+
+## What is deployed: the cloud is the truth
+
+Captain keeps a record of each deployment, and a record can be wrong: an endpoint deleted in the cloud's own
+console, a deploy whose process died, a model another workspace deployed into the same account. So "what is
+deployed" is answered by asking each connected cloud, and Captain's records are corrected from the answer.
+
+`GET /api/deployed` (in Python `staging.fleet.deployed(ctx)`) returns one row per deployed model across projects
+and clouds: the model version, the project, the cloud, region, machine and copies, the state as the cloud reports
+it (starting, running, asleep, stopped, failed with the cloud's reason), since when and who deployed it. Each row
+also says how the record and the cloud line up (`link`):
+
+| `link` | Means |
+|---|---|
+| `linked` | A project's record and the thing in the cloud, matched. |
+| `unlinked` | In the cloud, made by Captain, and no project record knows it: "Found in your AWS account, not linked to a project." |
+| `gone` | The record said running and the cloud does not have it: "Removed outside Captain." |
+| `local` | On this computer. There is no cloud to ask, so the process is checked. |
+| `unknown` | The cloud could not be asked just now. The record is shown as it stands and nothing is corrected. |
+
+What is Captain's in a cloud account is found two ways: by Captain's tag (`app=captain`), and by the name prefix
+the workspace's cloud resources start with. Something that has neither is not Captain's and is never listed.
+
+**Corrected on every read.** A record marked failed, stopped or starting whose endpoint the cloud reports running
+is set to running. A record marked running whose endpoint is gone is set to stopped, "removed outside Captain". A
+record marked running whose endpoint the cloud reports failed is set to failed, with the cloud's reason. A deploy
+left failed or stalled for a project whose model is running is closed as done. Each row lists what was just
+corrected, in sentences (`corrected`), and `GET /api/deployed/differences` prints only that.
+
+Why: on 2026-11-12 a project page showed "Deploying to AWS stopped. Starting the model: failed" beside an endpoint
+that was in service and answering. Two causes, both fixed. A deploy that printed nothing for three minutes was
+taken to have died, and a cloud starting an endpoint prints nothing while it waits: a running deploy now says it
+is alive every 30 seconds. And nothing cleared a failed deploy when the model came up: the project's deploy status
+now asks the cloud before it says failed.
+
+**What it costs.** A few read-only calls to each cloud's own listing. It never sends a request to a model, so a
+host that sleeps when idle is not woken. The answer is kept for 5 seconds, so a screen that redraws does not ask
+again, and never longer.
+
+**Not run on a real account yet.** Tested against each host's stand-in: running, removed outside Captain, found
+with no project, failed, a stale failed deploy beside a healthy endpoint, and a cloud that cannot be asked.
+
+### Something in the cloud that no project knows
+
+A row whose `link` is `unlinked` is something Captain made that this workspace has no record of: another
+workspace deployed it into the same account, or its record was lost. Two things can be done with it.
+
+- **Link it to a project** (`POST /api/deployed/link {id, project}`, `cst deployments link <id> <project>`). It
+  becomes that project's deployment, and can be watched, stopped and removed from there. Captain does not know
+  which model version it runs, or the key it was made with, and says so: to ask it for results, deploy from the
+  project again, or use its own key. A workspace that has never set that cloud up has nowhere to keep it, and is
+  told to deploy there once first.
+- **Remove it** (`POST /api/deployed/remove {id, confirm}`, `cst deployments remove <id> --yes`). Without the
+  confirm it says what would be deleted. On AWS the endpoint goes with its endpoint config and its model, so
+  nothing is left billing or lying about. It cannot be undone.
+
+### From the terminal
+
+    cst deployments list [--stopped | --all] [--fresh]   # every deployed model, as each cloud reports it
+    cst deployments show <project> [--range 1h]         # state, where, traffic, machine, cost
+    cst deployments sync                                # correct Captain's records, and print what differed
+    cst deployments stop <project>
+    cst deployments start <project> --yes               # the same model version, in the same place
+    cst deployments rollback <project> [version]
+    cst deployments remove <project> --yes              # stop it and remove what Captain made for it
+    cst deployments link <id> <project>                 # something found in a cloud with no project
+
+Each takes `--json` before the command (`cst --json deployments list`) for an agent to read.
+
+## Traffic and numbers, from the cloud's own metrics
+
+`GET /api/projects/{id}/deployed/numbers?range=1h` (in Python `staging.numbers.numbers`) gives one deployment's
+requests a minute, errors, response time at the endpoint (median and 95th percentile), CPU and memory, the copies
+that were up, and its cost: the hourly rate, today and this month. Ranges: 15 minutes, 1 hour, 24 hours, 7 days.
+
+| Host | Requests, errors, response time | CPU, memory, copies over time | Cost today and this month |
+|---|---|---|---|
+| AWS | CloudWatch | CloudWatch | The hours each copy was up, as CloudWatch saw them, at the list price |
+| Modal | The request log | Not read yet. Copies up now come from Modal | Captain's own record of when it was up |
+| Google Cloud | The request log | Not read yet | Captain's own record |
+| Azure | The request log | Not read yet | Captain's own record |
+| This computer | The request log | Not read | Nothing |
+
+What a host does not report is said in a sentence (`not_read`). It is never shown as a zero.
+
+On AWS, the copies up come from a count: every copy reports its CPU to CloudWatch once a minute, so the number of
+reports in a minute is the number of copies. Sixty reports are one copy up for one hour, and that is what the cost
+is worked out from. It is an estimate at the list price. The AWS bill is the final word.
+
+The median over a range is the median minute, weighted by its requests. The 95th percentile is the slowest
+minute's 95th, among minutes that carried real traffic, because a percentile of percentiles is not a percentile
+and CloudWatch reports by the minute. CPU is a share of one core: 100% is one core in full use.
+
+**What reading costs.** CloudWatch charges about a cent for a thousand metrics read, and each look reads eleven.
+A cloud's numbers are counted by the minute and arrive a minute or two late, so asking more often buys nothing.
+The answer for a deployment and range is kept for one minute, and the month's cost for ten. A screen left open on
+one deployment all day reads about 16,000 metrics, about 16 cents.
+
+Every call is read-only, and none is sent to the model, so a sleeping host stays asleep.
+
+**Not run on a real account yet.** Tested against the AWS stand-in. The metric names and the once-a-minute report
+are AWS's documented behaviour, and the first real read should be checked against the CloudWatch console.
 
 ## Cost, and stopping by itself
 
