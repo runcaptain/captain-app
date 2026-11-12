@@ -57,9 +57,28 @@ const filled = (h) => h.byIdPrefix('').filter((e) => e.calls?.some?.((x) => x[0]
 // ---- nothing deployed ----
 let h = await open({ deployed: { rows: [], asked: [], text: 'Nothing is deployed. Deploy a model from a project\'s page to see it here.', read_at: '' } });
 let t = h.text();
-assert.ok(t.includes('Deployments') && t.includes('Nothing is deployed') && t.includes('Open a project to deploy a model'), `empty: ${t}`);
+assert.ok(t.includes('Deployments') && t.includes('Nothing is deployed') && byId(h, 'dep-go-projects').length === 1 && t.includes('Deploy a model'), `empty: ${t}`);
 assert.equal(byId(h, 'dep-filters').length, 0, 'no filters over an empty list');
 assert.ok(!t.includes('What Captain created in your accounts'), 'no second section when nothing was created');
+
+// Nothing deployed, and things from an earlier deploy still in the account: the page is not empty. It says nothing
+// is deployed, offers to deploy, and lists what Captain created there with "Remove everything".
+h = await open({ deployed: { rows: [], asked: [], text: 'Nothing is deployed.', read_at: '' }, created: { text: '', places: [{ cloud: 'aws', cloud_label: 'AWS', login: 'work-aws', region: 'us-west-1',
+  in_use_by: [], can_remove: true, text: '', things: [
+    { kind: 'role', name: 'captain-serving', what_for: 'What a running model is allowed to do: read its own files and write its request log. Nothing else.' },
+    { kind: 'role', name: 'captain-serving-build', what_for: "Builds the model's image inside your account. It runs only when an image is built." },
+    { kind: 'ecr-repository', name: 'captain-serving', what_for: "Holds the model's image in your account." },
+    { kind: 'codebuild-project', name: 'captain-serving-build', what_for: "Builds the model's image inside your account. It runs only when an image is built." },
+    { kind: 'bucket', name: 'captain-serving-us-west-1', what_for: "Holds the model's files and its request log." }] }] } });
+t = h.text();
+assert.ok(t.includes('Nothing is deployed') && t.includes('Deploy a model') && t.includes('What Captain created in your accounts'), `nothing deployed, but not an empty page: ${t}`);
+for (let i = 0; i < 5; i++) assert.equal(byId(h, `dep-thing-aws-${i}`).length, 1, `thing ${i} of the five is listed`);
+assert.ok(t.includes("Holds the model's files and its request log.") && byId(h, 'dep-setup-remove-aws').length === 1 && t.includes('Remove everything'), 'each with what it is for, and Remove everything');
+await h.click('dep-setup-remove-aws');
+assert.ok(h.text().includes('Remove everything Captain created in your AWS account?'), 'it asks first');
+await h.click('dep-ask-yes');
+await h.idle(60);
+assert.ok(sent.some((x) => x[0] === 'DELETE' && x[1] === '/api/serving/setup?cloud=aws'), 'then removes it');
 
 // ---- one running ----
 h = await open({ deployed: { rows: [SHOP], asked, text: '1 deployed.', read_at: '' }, numbers: { shop: numbers(8640) } });

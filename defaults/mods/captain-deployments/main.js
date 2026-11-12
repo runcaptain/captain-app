@@ -201,7 +201,8 @@ export default class CaptainDeployments extends View {
         .child(div().text_size(14).font_semibold().text_color(c.navy).child(place.cloud_label))
         .child(div().text_size(13).text_color(c.grey500).child([place.region, place.login].filter(Boolean).join(", "))))
       .children(place.things.map((t, i) => h_flex().id(`dep-thing-${place.cloud}-${i}`).gap(8).items_start()
-        .child(div().w(260).flex_none().truncate().text_size(12.5).text_color(c.navy).child(t.name))
+        .child(div().w(150).flex_none().truncate().text_size(12.5).text_color(c.grey500).child(t.kind_label ?? ""))
+        .child(div().w(230).flex_none().truncate().text_size(12.5).text_color(c.navy).child(t.name))
         .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey500).child(t.what_for))))
       .when(Boolean(place.in_use_by?.length), (e) => e.child(div().text_size(12.5).text_color(c.grey500)
         .child(`In use by ${place.in_use_by.join(", ")}. Stop that model first to remove these.`)))
@@ -250,8 +251,8 @@ export default class CaptainDeployments extends View {
       .child(d.rows.length ? this.filters(c, d.rows) : div())
       .child(v_flex().id("dep-list")
         .children(rows.map((r) => this.row(c, r)))
-        .when(!d.rows.length, (e) => e.child(Empty(c, "Nothing is deployed", "Deploy a model from a project's page, and it shows here with its traffic and cost.",
-          Button(c, "dep-go-projects", "Open a project to deploy a model", () => run("layout.select", { stack: props()?.stack ?? "sections", child: "project" }), { kind: "primary" }))))
+        .when(!d.rows.length, (e) => e.child(Empty(c, "Nothing is deployed", "Deploy one from a project's page. It shows here with where it runs, its traffic and what it costs.",
+          Button(c, "dep-go-projects", "Deploy a model", () => run("layout.select", { stack: props()?.stack ?? "sections", child: "project" }), { kind: "primary" }))))
         .when(Boolean(d.rows.length) && !rows.length, (e) => e.child(div().id("dep-none-shown").py(16).text_size(13).text_color(c.grey500)
           .child(this.show === "running" ? "Nothing is running. Stopped ones are under Stopped." : "Nothing matches. Change what is shown above."))))
       .when(Boolean(places.length), (e) => e.child(v_flex().id("dep-created")

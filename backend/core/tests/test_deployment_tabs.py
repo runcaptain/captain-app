@@ -175,14 +175,16 @@ def test_the_commands_are_named_like_the_pages(ws):  # noqa: F811
     from captain_search.cli.main import app
 
     run = lambda *a: CliRunner().invoke(app, list(a))  # noqa: E731
-    assert "Nothing is staged in any project." in run("deployments", "list").output
+    assert "Nothing is deployed." in run("deployments", "list").output
     out = run("deploy", "shop", "--target", "local", "--allow-large")
     assert out.exit_code == 0, out.output
     url = SG.state(ws, "shop")["endpoint"]["url"]
     assert out.output.strip().splitlines()[-1] == url  # the address is the last line, so a script can take it
     _site(ws, 2)
     ls = run("deployments", "list").output
-    assert "Handling requests" in ls and "copies 1" in ls and "Staged by" in ls and "(2 requests in 24 h)" in ls
+    # The list is the cloud read now: the state in words, where it runs and the model version. It shows a deploy
+    # made a moment ago, though the list was asked for just before it.
+    assert "Running" in ls and "This computer" in ls and SG.state(ws, "shop")["model_version"] in ls
     hist = run("deployments", "history", "shop").output
     assert hist.startswith("v1 ") and hist.strip().endswith("Live")
     lg = run("deployments", "logs", "shop", "--filter", "jacket").output
@@ -191,8 +193,8 @@ def test_the_commands_are_named_like_the_pages(ws):  # noqa: F811
     # the old names still work, and the gated deploy commands are still there
     assert run("projects", "staging", "shop").exit_code == 0 and "promote" in run("deploy", "--help").output
     assert run("deploy", "history", "--env", "shop-staging").exit_code == 0
-    assert "Staging stopped." in run("deployments", "stop", "shop").output
-    assert "Stopped" in run("deployments", "list", "--stopped").output and run("deployments", "list").output.strip().startswith("Nothing is staged")
+    assert "Stopped shop's model. It no longer answers or bills." in run("deployments", "stop", "shop").output
+    assert "Stopped" in run("deployments", "list", "--stopped").output and "Running" not in run("deployments", "list").output
 
 
 def test_reading_a_page_never_wakes_a_host_that_sleeps(ws, monkeypatch):  # noqa: F811

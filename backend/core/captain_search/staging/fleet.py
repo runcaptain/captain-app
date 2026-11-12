@@ -254,9 +254,14 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
     """{rows, asked, text, read_at}: every deployed model across projects and clouds, as the clouds report them.
     `asked` says which places were asked and which could not be. `fresh` skips the few-second cache."""
     key = ctx.workspace.name
+    # The kept answer is only good while Captain's own records are as they were: a deploy or a stop a second ago
+    # must show at once, so the records are read every time (they are on this computer or in the workspace) and
+    # only the clouds' answers are kept.
+    records = _records(ctx)
+    mark = tuple(sorted((pr["id"], env, str(rec.get("id")), str(rec.get("status")), str(rec.get("model_version"))) for pr, env, rec in records))
     with _lock:
         hit = _cache.get(key)
-        if hit and not fresh and time.monotonic() - hit[0] < TTL_S:
+        if hit and not fresh and time.monotonic() - hit[0] < TTL_S and hit[2] == mark:
             return hit[1]
     srcs = sources(ctx)
     asked, found = [], {}
@@ -266,7 +271,7 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
                       "error": err, "found": len(things)})
         found[(s["cloud"], s["login"], s["region"])] = (things, err)
     rows, matched = [], set()
-    for pr, env, rec in _records(ctx):
+    for pr, env, rec in records:
         cloud, login, region, target = _where_of(ctx, rec)
         if cloud == "local":
             state, reason = _local_state(rec)
@@ -314,8 +319,10 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
     if could_not:
         text += " Could not ask " + ", ".join(sorted({a["cloud_label"] for a in could_not})) + " just now."
     out = {"rows": rows, "asked": asked, "text": text, "read_at": _now(), "ttl_s": TTL_S}
+    # Marked with the records as they stand after any correction, so the corrected answer is the one kept.
+    after = tuple(sorted((pr["id"], env, str(rec.get("id")), str(rec.get("status")), str(rec.get("model_version"))) for pr, env, rec in _records(ctx)))
     with _lock:
-        _cache[key] = (time.monotonic(), out)
+        _cache[key] = (time.monotonic(), out, after)
     return out
 
 
@@ -459,6 +466,20 @@ WHAT_FOR = (
 )
 
 
+# The kind of thing, as a person says it. Two things can share a name (a role and a repository both called
+# "captain-serving"), so the kind is shown beside the name.
+KIND_WORDS = (("codebuild", "Image build"), ("build", "Image build"), ("repository", "Image repository"), ("registry", "Image registry"),
+              ("role", "Role"), ("identity", "Identity"), ("service-account", "Service account"), ("bucket", "Bucket"), ("storage", "Storage account"),
+              ("volume", "Volume"), ("environment", "Environment"), ("resource-group", "Resource group"), ("target", "Captain's note"))
+
+
+def _kind_word(kind: str, name: str = "") -> str:
+    k = str(kind or "").lower()
+    if "role" in k and "build" in str(name).lower():
+        return "Role for the image build"
+    return next((word for key, word in KIND_WORDS if key in k), "Made by the first deploy")
+
+
 def _what_for(kind: str) -> str:
     k = str(kind or "").lower()
     return next((text for word, text in WHAT_FOR if word in k), "Made by the first deploy. Deployments here use it.")
@@ -484,7 +505,9 @@ def created(ctx: Context) -> dict:
         using = sorted(name for cloud, name in rows if cloud == c and name)
         places.append({"cloud": c, "cloud_label": CLOUDS[c], "login": st.get("profile"), "region": st.get("region"), "status": st.get("status"),
                        "created_at": st.get("created_at"), "created_by": st.get("created_by"),
-                       "things": [{"kind": x.get("type"), "name": x.get("name"), "what_for": _what_for(x.get("type"))} for x in made],
+                       "things": [{"kind": x.get("type"), "kind_label": _kind_word(x.get("type"), x.get("name")), "name": x.get("name"),
+                                   "what_for": ("Lets the image build read its files and save the image. Nothing else." if "role" in str(x.get("type")).lower()
+                                                and "build" in str(x.get("name")).lower() else _what_for(x.get("type")))} for x in made],
                        "in_use_by": using, "can_remove": not using,
                        "text": (f"{len(made)} thing{'s' if len(made) != 1 else ''} in your {CLOUDS[c]} account."
                                 + (f" In use by {', '.join(using)}: stop that first to remove these." if using else

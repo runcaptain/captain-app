@@ -320,3 +320,14 @@ def test_what_the_first_deploy_created_is_listed_with_what_each_is_for(ws, login
     FL.forget()
     p = FL.created(ws)["places"]
     assert p[0]["can_remove"] and p[0]["in_use_by"] == [] and "can be removed" in p[0]["text"]
+
+
+def test_a_deploy_or_a_stop_a_moment_ago_shows_at_once(ws):  # noqa: F811
+    """The clouds' answers are kept for a few seconds. Captain's own records are not: a list asked for just before
+    a deploy must not go on saying nothing is deployed."""
+    FL.forget()
+    assert FL.deployed(ws)["rows"] == []
+    SG.stage(ws, "shop", baseline=True, target="local", confirm=True)
+    assert [r["state"] for r in FL.deployed(ws)["rows"]] == ["running"]
+    SG.unstage(ws, "shop")
+    assert [r["state"] for r in FL.deployed(ws)["rows"]] == ["stopped"]

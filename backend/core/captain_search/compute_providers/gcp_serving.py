@@ -161,7 +161,7 @@ class CloudRunServing(HttpServing):
     def stage(self, st: dict, progress=None) -> dict:
         say = progress or (lambda _t: None)
         if st.get("image"):
-            raise ProviderError("A container image of your own can't be staged on Cloud Run from Captain yet. Use an endpoint you already run.")
+            raise ProviderError("A container image of your own can't be deployed on Cloud Run from Captain yet. Use an endpoint you already run.")
         rest = self._rest()
         n = self._names(st)
         res = {"type": "cloud-run-service", "name": n["service"], "region": self.region, "project": rest.project}

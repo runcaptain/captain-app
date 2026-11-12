@@ -59,7 +59,7 @@ class ModalServingProvider(HttpServing, ComputeProvider):
     can_logs = can_cancel = False
     fields = [
         {"name": "environment", "label": "Modal environment (blank for your login's default)", "required": False},
-        {"name": "name_prefix", "label": "Name prefix for staging apps", "required": False, "default": "captain"},
+        {"name": "name_prefix", "label": "Name prefix for deployed apps", "required": False, "default": "captain"},
         {"name": "serving_storage", "label": "Modal volume for the serving bundle and request log", "required": True},
         {"name": "cpu", "label": "CPU cores for one copy", "required": False, "default": "1"},
         {"name": "memory_mb", "label": "Memory for one copy, in MB", "required": False, "default": "2048"},
@@ -175,7 +175,7 @@ class ModalServingProvider(HttpServing, ComputeProvider):
     def stage(self, st: dict, progress=None) -> dict:
         say = progress or (lambda _t: None)
         if st.get("image"):
-            raise ProviderError("A container image of your own can't be staged on Modal from Captain yet. Use an endpoint you already run.")
+            raise ProviderError("A container image of your own can't be deployed on Modal from Captain yet. Use an endpoint you already run.")
         modal = _modal()
         n = self._names(st)
         mine = {(r["type"], r["name"]) for r in st.get("existing") or []}

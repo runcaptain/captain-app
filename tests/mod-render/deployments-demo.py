@@ -1,6 +1,6 @@
 """Sample rows for the Deployments screen's pictures: props for `captain-deployments:<view>`, as JSON on stdout.
 Nothing is deployed and no cloud is asked: the screen draws what it is handed, and its buttons reach no service.
-Views: empty, one, several, failed, found, model. Demo names only."""
+Views: empty, leftover, one, several, failed, found, model. Demo names only."""
 import datetime as dt
 import json
 import math
@@ -60,16 +60,18 @@ FOUND = {**row("an-older-project", None, None, "aws", "AWS", "us-west-1", "ml.m5
 ASKED = [{"cloud": "aws", "cloud_label": "AWS", "login": "work-aws", "region": "us-west-1", "ok": True, "error": None, "found": 2}]
 CREATED = {"places": [
     {"cloud": "aws", "cloud_label": "AWS", "login": "work-aws", "region": "us-west-1", "in_use_by": ["Demo shop"], "can_remove": False, "text": "", "things": [
-        {"kind": "role", "name": "captain-serving", "what_for": "What a running model is allowed to do: read its own files and write its request log. Nothing else."},
-        {"kind": "bucket", "name": "captain-serving-us-west-1", "what_for": "Holds the model's files and its request log."},
-        {"kind": "ecr-repository", "name": "captain-serving", "what_for": "Holds the model's image in your account."},
-        {"kind": "codebuild-project", "name": "captain-serving-build", "what_for": "Builds the model's image inside your account. It runs only when an image is built."}]},
+        {"kind": "role", "kind_label": "Role", "name": "captain-serving", "what_for": "What a running model is allowed to do: read its own files and write its request log. Nothing else."},
+        {"kind": "bucket", "kind_label": "Bucket", "name": "captain-serving-us-west-1", "what_for": "Holds the model's files and its request log."},
+        {"kind": "ecr-repository", "kind_label": "Image repository", "name": "captain-serving", "what_for": "Holds the model's image in your account."},
+        {"kind": "codebuild-project", "kind_label": "Image build", "name": "captain-serving-build", "what_for": "Builds the model's image inside your account. It runs only when an image is built."}]},
     {"cloud": "azure", "cloud_label": "Azure", "login": "work-azure", "region": "eastus", "in_use_by": [], "can_remove": True, "text": "", "things": [
-        {"kind": "resource-group", "name": "captain-serving", "what_for": "The folder in your account that holds everything else here, so it can be removed whole."},
-        {"kind": "container-registry", "name": "captainserving", "what_for": "Holds the model's image in your account."}]}], "text": ""}
+        {"kind": "resource-group", "kind_label": "Resource group", "name": "captain-serving", "what_for": "The folder in your account that holds everything else here, so it can be removed whole."},
+        {"kind": "container-registry", "kind_label": "Image registry", "name": "captainserving", "what_for": "Holds the model's image in your account."}]}], "text": ""}
 
 sets = {
     "empty": ([], "Nothing is deployed. Deploy a model from a project's page to see it here.", None, "running"),
+    # Nothing deployed, with what an earlier deploy left in the account: the page still has something to manage.
+    "leftover": ([], "Nothing is deployed.", {"places": [{**CREATED["places"][0], "in_use_by": [], "can_remove": True}], "text": ""}, "running"),
     "one": ([SHOP], "1 deployed.", CREATED, "running"),
     "several": ([SHOP, GARDEN, TRAIL, KIDS], "3 deployed, 1 not running.", CREATED, "all"),
     "failed": ([GIFTS, SHOP, KIDS], "1 deployed, 2 not running.", None, "all"),

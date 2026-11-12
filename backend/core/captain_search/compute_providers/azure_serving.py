@@ -173,7 +173,7 @@ class ContainerAppsServing(HttpServing):
     def stage(self, st: dict, progress=None) -> dict:
         say = progress or (lambda _t: None)
         if st.get("image"):
-            raise ProviderError("A container image of your own can't be staged on Container Apps from Captain yet. Use an endpoint you already run.")
+            raise ProviderError("A container image of your own can't be deployed on Container Apps from Captain yet. Use an endpoint you already run.")
         arm = self._arm()
         n = self._names(st)
         res = {"type": "container-app", "name": n["app"], "resource_group": self.config["resource_group"]}
