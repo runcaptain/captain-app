@@ -1293,6 +1293,12 @@ and compute, with the estimate beside it and "How this is estimated" under it (t
 price came from, how the time was worked out). New candidate, Run an offline evaluation, Generate synthetic events,
 Start rating, retrain, workflows and snapshots from a connection all show it (kit `cost.js`: `RunsOn`, `CostLine`).
 
+- **Where runs go** is one setting for the workspace, and the sidebar's cloud chip shows it ("Runs on This
+  computer"). Clicking the chip opens the compute picker: every place work can run (this computer, then each
+  compute target that runs jobs), with the current one checked. Picking one changes the setting
+  (`PUT /api/settings/compute {backtest}`) and nothing else. Every "Runs on" row then opens on that place; a
+  person can still pick another place for one run, and a place handed to a form (`values.compute`) stays. "Add
+  a place to run work" and the cloud logins open from the picker.
 - `cst costs estimate <kind> --where <place> --size name=value` prints the same estimate and its basis. Kinds:
   `training`, `evaluation`, `synthetic-events`, `snapshot`, `judging`, `staging`, `workflow`. `--project <id>` takes
   the size from a project's starter ranker plan. The route is `POST /api/costs/estimate`.

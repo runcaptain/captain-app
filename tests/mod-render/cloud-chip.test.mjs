@@ -38,12 +38,18 @@ const draw = (summary) => Nav.prototype.cloudChip.call({ cloud: summary, state: 
 let chip = draw(sum([AWS, GCP]));
 assert.ok(text(chip).includes('2 clouds connected'), `drawn: ${text(chip)}`);
 assert.ok(chip.call('tooltip')[0].startsWith('2 clouds connected: AWS'), 'the list is in the tooltip');
+// A click opens the compute picker (Edgar, 2026-11-12: "select what compute environment I'm working in whenever I
+// want"): the logins are one click further, from the picker. The chip says where runs go, under the login.
 globalThis.__overlays = [];
 chip.call('on_click')[0]();
-assert.equal(globalThis.__overlays.at(-1)?.mod, 'captain-cloud', 'a click opens the list of logins, not the form that adds one');
+assert.equal(globalThis.__overlays.at(-1)?.mod, 'captain-compute', 'a click opens the compute picker');
+assert.ok(text(chip).includes('Runs on This computer'), `before anything is picked, runs go to this computer: ${text(chip)}`);
+chip = Nav.prototype.cloudChip.call({ cloud: sum([AWS], AWS), state: 'ready', place: { value: 'aws-batch', label: 'aws-batch' } }, palette(false), false);
+assert.ok(text(chip).includes('Runs on aws-batch') && text(chip).includes('AWS · team · us-west-1'), `the place picked, under the login: ${text(chip)}`);
+assert.ok(chip.call('tooltip')[0].includes('Runs go to aws-batch'), 'and in the tooltip');
 chip = draw(sum([]));
 assert.ok(text(chip).includes('No cloud connected'));
 chip.call('on_click')[0]();
-assert.equal(globalThis.__overlays.at(-1)?.mod, 'captain-forms', 'with none, a click opens the form that connects one');
+assert.equal(globalThis.__overlays.at(-1)?.mod, 'captain-compute', 'with no cloud, the picker still opens: this computer is a place too');
 assert.equal(Nav.prototype.cloudChip.call({ cloud: sum([AWS, GCP]), state: 'ready' }, palette(false), true).call('tooltip')[0].includes('2 clouds connected'), true, 'the narrow sidebar keeps the tooltip');
 console.log('cloud chip render test: ok');

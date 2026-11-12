@@ -29,6 +29,7 @@ import { TeamViews } from "./teamviews.js";
 import { askAboutScreen } from "./kit/agent.js";
 import { currentView } from "./kit/view.js";
 import { loadPins, unpin, clearPins } from "./kit/context.js";
+import { LOCAL, placesFrom, placeChanged } from "./kit/cost.js";
 
 // The views, in the order a team works: projects, the data they read, notebooks, runs and their comparisons,
 // what is deployed, the team. Six at most (Edgar, 2026-11-12: "there are a lot of views"). Experiments, Compare
@@ -195,6 +196,11 @@ export default class CaptainNav extends View {
     // Every launch starts on Projects, on the list of every project (Edgar, 2026-11-12: "always default to
     // projects: all projects"), whatever screen the last session ended on.
     if (props()?.part !== "brand") cx.timer.after(1, () => run("layout.select", { stack: props()?.stack ?? "sections", child: "project" }));
+    // The compute picker changed where runs go: the chip says so at once.
+    if (props()?.part !== "brand") {
+      let seen = placeChanged();
+      cx.timer.every(400, (cx) => { const now = placeChanged(); if (now !== seen) { seen = now; cx.spawn(async (cx) => { await this.loadPlace(); cx.notify(); }); } });
+    }
     this.explorer = new Explorer();
     this.explorer.start(cx);
     // Team views from the project's captain/views/ (teamviews.js).
@@ -288,6 +294,7 @@ export default class CaptainNav extends View {
           if (all.ok && Array.isArray(all.data)) this.workspaces = all.data.map((w) => w.name);
           const cloud = await api("/api/cloud/summary");
           this.cloud = cloud.ok ? cloud.data : null;
+          await this.loadPlace();
         }
         await this.ensureSpace();
         for (const it of this.items().filter((i) => i.badge)) {
@@ -472,21 +479,31 @@ export default class CaptainNav extends View {
       .when(!rail, (e) => e.child(div().text_size(12).font_medium().truncate().child("Development backend")));
   }
 
+  /** Where new runs go: the workspace's default place (Settings, or the compute picker this chip opens). */
+  async loadPlace() {
+    const [t, st] = await Promise.all([api("/api/compute", { scoped: false }), api("/api/settings", { scoped: false })]);
+    if (!st.ok) return;
+    const name = st.data?.compute?.backtest ?? LOCAL;
+    this.place = placesFrom(t.ok ? t.data : []).find((p) => p.value === name) ?? { value: name, label: name };
+  }
+
   cloudChip(c, rail) {
     const s = this.cloud;
     if (!s && this.state !== "ready") return null;
     const k = cloudChipInfo(s);
     const dot = { good: c.good, fail: c.fail, none: c.grey300 }[k.dot];
-    // One login, or the one that holds the workspace: its own page. Several, and none holds the workspace: the page
-    // that lists them. None: the form that connects one.
-    const open = () => (k.open === "connect" ? openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "cloud" } })
-      : openOverlay({ mod: "captain-cloud", kind: "dialog", width: 760, height: 640 }));
-    return h_flex().id("cloud-chip").mx(rail ? 0 : 14).my(4).h(30).gap(8).items_center().cursor_pointer()
-      .when(rail, (e) => e.w_full().justify_center()).when(!rail, (e) => e.px(8).border_1().border_color(c.grey300))
-      .hover((x) => x.bg(c.surface2)).tooltip(k.tip).on_click(open)
+    // The chip opens the compute picker: every place work can run, the current one checked. Cloud logins are one
+    // click further, from the picker.
+    const open = () => openOverlay({ mod: "captain-compute", kind: "popup", width: 340, height: 420 });
+    const place = this.place?.label ?? "This computer";
+    return h_flex().id("cloud-chip").mx(rail ? 0 : 14).my(4).min_h(rail ? 30 : 42).gap(8).items_center().cursor_pointer()
+      .when(rail, (e) => e.w_full().justify_center()).when(!rail, (e) => e.px(8).py(4).border_1().border_color(c.grey300))
+      .hover((x) => x.bg(c.surface2)).tooltip(`${k.tip}. Runs go to ${place}. Click to pick where runs go`).on_click(open)
       .child(k.provider ? Brand(c, k.provider, 14) : svg(icon("cloud")).size(14).text_color(k.count ? c.navy : c.grey500))
-      .when(!rail, (e) => e.child(div().id("cloud-chip-text").flex_1().min_w(0).truncate().text_size(12).text_color(k.count ? c.navy : c.grey500).child(k.text)))
-      .child(div().size(7).rounded_full().bg(dot));
+      .when(!rail, (e) => e.child(v_flex().flex_1().min_w(0)
+        .child(div().id("cloud-chip-text").truncate().text_size(12).text_color(k.count ? c.navy : c.grey500).child(k.text))
+        .child(div().id("cloud-chip-place").truncate().text_size(11).text_color(c.grey500).child(`Runs on ${place}`))))
+      .child(div().size(7).rounded_full().flex_none().bg(dot));
   }
 
   agentRows(c, rail) {

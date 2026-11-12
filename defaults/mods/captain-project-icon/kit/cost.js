@@ -16,6 +16,7 @@
 // (a staging card). costText(cost) is the line for a finished run: "Cost about $0.42 (12 min on aws-batch)".
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
+import { shared, setShared } from "herdr";
 import { api } from "./cst.js";
 import { icon } from "./icons.js";
 import { Badge } from "./ui.js";
@@ -26,13 +27,36 @@ export function costState(where = LOCAL) {
   return { places: null, where, estimate: null, loading: false, open: false, confirming: false, asked: null };
 }
 
-/** The places work can run: this computer first, then each compute target that runs jobs. */
+const KIND_WORDS = {
+  "aws-ecs": "AWS ECS", "aws-batch": "AWS Batch", "aws-sagemaker": "AWS SageMaker", "gcp-cloud-run": "Google Cloud Run", "gcp-vertex": "Vertex AI",
+  "azure-container-apps": "Azure Container Apps", "azure-ml": "Azure ML", modal: "Modal",
+};
+
+/** The places work can run, from GET /api/compute: this computer first, then each compute target that runs jobs. */
+export function placesFrom(rows) {
+  return [{ value: LOCAL, label: "This computer", free: true },
+    ...(Array.isArray(rows) ? rows : []).filter((t) => t.kind !== "local" && (t.purposes ?? ["backtest"]).includes("backtest"))
+      .map((t) => ({ value: t.name, label: t.name, brand: t.provider, kind: t.kind, region: t.region ?? null, profile: t.profile ?? null }))];
+}
+
+/** One place in words, for the line under its name: "Free. Nothing leaves this computer.", "AWS Batch, us-west-1". */
+export function placeWords(p) {
+  if (!p || p.value === LOCAL) return "Free. Nothing leaves this computer.";
+  return [KIND_WORDS[p.kind] ?? p.kind ?? "Your cloud", p.region].filter(Boolean).join(", ");
+}
+
+/** The workspace's default place for runs changed (the compute picker on the cloud chip): tell every open screen.
+ *  Screens compare `placeChanged()` with the value they last saw, from a timer. */
+export function announcePlace(place) { setShared("captain.compute", { place, at: Date.now() }); }
+export function placeChanged() { return shared("captain.compute")?.at ?? null; }
+
+/** The places work can run, and the workspace's default among them (Settings, or the compute picker on the cloud
+ *  chip). A form opens on the default; once the person picks a place in the form (st.picked), their pick stays. */
 export async function loadPlaces(st) {
-  const r = await api("/api/compute", { scoped: false });
-  const rows = r.ok && Array.isArray(r.data) ? r.data : [];
-  st.places = [{ value: LOCAL, label: "This computer", free: true },
-    ...rows.filter((t) => t.kind !== "local" && (t.purposes ?? ["backtest"]).includes("backtest"))
-      .map((t) => ({ value: t.name, label: t.name, brand: t.provider, kind: t.kind }))];
+  const [r, s] = await Promise.all([api("/api/compute", { scoped: false }), api("/api/settings", { scoped: false })]);
+  st.places = placesFrom(r.ok ? r.data : []);
+  st.usual = s.ok ? s.data?.compute?.backtest ?? LOCAL : LOCAL;
+  if (!st.picked && st.where === LOCAL && st.places.some((p) => p.value === st.usual)) st.where = st.usual;
   if (!st.places.some((p) => p.value === st.where)) st.where = LOCAL;
   return st.places;
 }
@@ -108,7 +132,7 @@ export function RunsOn(c, id, st, on = {}, opts = {}) {
     const sel = st.where === p.value;
     return h_flex().id(`${id}-${p.value}`).h(30).px(10).gap(6).items_center().cursor_pointer().border_1()
       .border_color(sel ? c.blue : c.grey300).bg(sel ? c.blueLight : c.surface).text_color(sel ? c.blue : c.navy).text_size(12.5)
-      .on_click((e, cx) => on.onPick?.(p, e, cx))
+      .on_click((e, cx) => { st.picked = true; on.onPick?.(p, e, cx); })
       .child(svg(icon(p.value === LOCAL ? "monitor" : "cloud")).size(13))
       .child(p.label)
       .when(Boolean(p.free), (e) => e.child(Badge(c, "free", sel ? "blue" : "neutral")));

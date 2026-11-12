@@ -1,0 +1,9 @@
+{
+ "compute": {
+  "backtest": "local",
+  "serve": null
+ },
+ "costs": {
+  "confirm_above_usd": 5.0
+ }
+}

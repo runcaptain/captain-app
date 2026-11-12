@@ -22,7 +22,7 @@ import { Comparison } from "./comparison.js";
 import { Regression } from "./regression.js";
 import { metricWords } from "./kit/words.js";
 import { int } from "./kit/num.js";
-import { costState, loadPlaces, refreshEstimate, needsConfirm, costSlice, costText, RunsOn, LOCAL } from "./kit/cost.js";
+import { costState, loadPlaces, refreshEstimate, needsConfirm, costSlice, costText, placeChanged, RunsOn, LOCAL } from "./kit/cost.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
 const enc = (name) => name.split("/").map(encodeURIComponent).join("/");
@@ -154,6 +154,9 @@ export default class CaptainRuns extends View {
     this.cost = { backtests: costState(), workflows: costState() };
     this.loadPlaces(cx);
     cx.timer.every(500, (cx) => this.priceNow(cx));
+    // The compute picker on the cloud chip changed where runs go: the "Runs on" row follows.
+    let place = placeChanged();
+    cx.timer.every(500, (cx) => { const now = placeChanged(); if (now !== place) { place = now; this.cost.backtests.picked = false; this.loadPlaces(cx); } });
     cx.timer.every(1000, (cx) => this.pollJob(cx));
     // Compute jobs: their state and log lines. Live runs: what's running now, drawn as it goes (live.js).
     this.jobs = new Jobs(this);
@@ -263,9 +266,9 @@ export default class CaptainRuns extends View {
   loadPlaces(cx) {
     const st = this.cost.backtests;
     cx.spawn(async (cx) => {
-      const [, s, ds] = await Promise.all([loadPlaces(st), api("/api/settings", { scoped: false }), api("/api/datasets", { scoped: false })]);
+      const [, ds] = await Promise.all([loadPlaces(st), api("/api/datasets", { scoped: false })]);
       if (st !== this.cost.backtests) return; // another workspace since
-      this.usual = s.ok ? s.data?.compute?.backtest ?? null : null;
+      this.usual = st.usual ?? null; // the workspace's default place (kit cost.js reads it with the places)
       // Rows of each dataset by name: a query set's size decides how long an offline evaluation takes.
       this.rows = Object.fromEntries((ds.ok && Array.isArray(ds.data) ? ds.data : []).map((d) => [d.name, d.rows ?? 0]));
       this.cost.workflows.places = st.places;
