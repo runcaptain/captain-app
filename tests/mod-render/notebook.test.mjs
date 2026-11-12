@@ -1,4 +1,4 @@
-// Render test for the Notebooks tab in captain-data, against fixtures and a fake kernel socket (stubs/websocket.js).
+// Render test for the Notebooks view (captain-notebooks), against fixtures and a fake kernel socket (stubs/websocket.js).
 // It opens a notebook, runs a SQL cell into a grid, a Python cell, a failing cell (a sentence, Copy details, the
 // traceback only behind it), stops a long cell, draws a chart from the SQL result, autosaves a draft, saves a
 // version with Cmd-S, exports, imports, and adds cells. Then it checks the 50 ms render budget.
@@ -68,14 +68,14 @@ globalThis.__kernel = (m, send) => {
   send({ type: 'status', state: 'idle' });
 };
 
-const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-nb-')));
-fs.cpSync(path.join(root, 'defaults/mods/captain-data'), work, { recursive: true });
+const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-notebooks-')));
+fs.cpSync(path.join(root, 'defaults/mods/captain-notebooks'), work, { recursive: true });
 fs.copyFileSync(path.join(root, 'defaults/captain/kit/cst.js'), path.join(work, 'kit/real-cst.js'));
 fs.copyFileSync(path.join(here, 'fixture-cst.js'), path.join(work, 'kit/cst.js'));
 const { default: Mod } = await import(path.join(work, 'main.js'));
 const h = harness(Mod);
 await h.start();
-await h.click('tab-notebooks');
+// Notebooks is its own view: nothing to click to get to it.
 await h.idle();
 
 // The list and the first notebook, its markdown drawn as text.

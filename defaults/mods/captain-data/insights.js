@@ -58,15 +58,15 @@ export class DatasetInsights {
   go(cx, e) {
     if (e.kind === "dataset") { this.host.tab = "datasets"; this.host.select(cx, e.name); return; }
     if (e.kind === "run") {
-      setShared("captain.open", { section: "comparisons", backtest: e.name, version: e.version, at: Date.now() });
-      run("layout.select", { stack: "sections", child: "comparisons" });
+      // A run opens in Runs, with its comparison in place.
+      setShared("captain.open", { section: "runs", backtest: e.name, version: e.version, at: Date.now() });
+      run("layout.select", { stack: "sections", child: "runs" });
     }
   }
 
   openNotebook(cx, name) {
-    const nb = this.host.nb;
-    this.host.tab = "notebooks";
-    if (nb.list === null) { nb.want = name; nb.load(cx); } else nb.openNotebook(cx, name);
+    setShared("captain.open", { section: "notebooks", notebook: name, at: Date.now() });
+    run("layout.select", { stack: "sections", child: "notebooks" });
     cx.notify();
   }
 

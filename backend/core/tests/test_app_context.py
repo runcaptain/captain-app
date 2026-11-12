@@ -114,7 +114,7 @@ def test_the_project_page_with_what_the_services_know(app_home, ws):
     assert "What the person is looking at in Captain" in t
     assert "Workspace" in t and "shop" in t
     assert "Outdoor (id outdoor), search-judgments" in t
-    assert "Home  [section id: project]" in t
+    assert "Projects  [section id: project]" in t
     assert "Choose queries: the project can't train without it.  (button: Choose queries)" in t
     assert "Agent tab" in t and "t3" in t
     # What the services know: the same stages the page draws (PS.stages), each input and whether it is chosen.
@@ -124,7 +124,7 @@ def test_the_project_page_with_what_the_services_know(app_home, ws):
     assert w.asked == [{"view": True}]
 
     d = json.loads(r.invoke(app, ["--json", "app", "context"]).output)
-    assert d["workspace"] == "shop" and d["screen"] == "Home" and d["section"] == "project"
+    assert d["workspace"] == "shop" and d["screen"] == "Projects" and d["section"] == "project"
     assert d["project"] == {"id": "outdoor", "name": "Outdoor", "kind": "search-judgments"}
     assert d["next"]["action"] == {"action": "set-input", "slot": "queries"}
     assert d["dialog"] is None and d["open_over_the_page"] == []
@@ -165,12 +165,12 @@ def test_other_screens_a_dataset_an_evaluation_an_experiment(app_home, ws):
     w = Window(app_home, v)
     r = CliRunner()
     d = json.loads(r.invoke(app, ["--json", "app", "context"]).output)
-    assert d["screen"] == "Data and signals" and d["tab"] == "datasets" and d["project"] is None
+    assert d["screen"] == "Data" and d["tab"] == "datasets" and d["project"] is None
     assert d["selected"] == {"dataset": "demo-catalog", "version": 1, "dataset_tab": "sample"}
     ds = d["known"]["dataset"]
     assert ds["name"] == "demo-catalog" and ds["version"] == 1 and ds["rows"] > 0 and ds["columns"], ds
     t = r.invoke(app, ["app", "context"]).output
-    assert "Data and signals, tab datasets" in t and "Dataset" in t and "demo-catalog" in t
+    assert "Data, tab datasets" in t and "Dataset" in t and "demo-catalog" in t
 
     w.view = {**v, "section": "runs"}
     d = json.loads(r.invoke(app, ["--json", "app", "context"]).output)
@@ -178,14 +178,16 @@ def test_other_screens_a_dataset_an_evaluation_an_experiment(app_home, ws):
     ev = d["known"]["offline_evaluation"]
     assert ev["name"] == "demo-tuned-vs-bm25" and ev["status"] in ("finished", "planned, not run yet") and ev["arms"]
 
+    # Experiments and Launch review left the screens (2026-11-12). A window that still reports one (an older app)
+    # reads by its section id, and what it had selected is still looked up.
     w.view = {**v, "section": "investigations"}
     d = json.loads(r.invoke(app, ["--json", "app", "context"]).output)
-    assert d["screen"] == "Experiments" and d["known"]["experiment"]["title"] == "Why do numeric queries regress?"
+    assert d["screen"] == "investigations" and d["known"]["experiment"]["title"] == "Why do numeric queries regress?"
 
     # A screen whose part belongs to another workspace reads as nothing selected, and nothing is looked up for it.
     w.view = {**v, "section": "handoff"}
     d = json.loads(r.invoke(app, ["--json", "app", "context"]).output)
-    assert d["screen"] == "Launch review" and d["selected"] == {} and "launch_review" not in d["known"]
+    assert d["screen"] == "handoff" and d["selected"] == {} and "launch_review" not in d["known"]
     # A selection the services don't have: said, not a crash.
     w.view = {**v, "views": {"data": {"tab": "datasets", "dataset": "gone", "workspace": "shop"}}}
     out = r.invoke(app, ["--json", "app", "context"])
@@ -311,7 +313,7 @@ def test_pin_expand_remove_and_clear(app_home, ws, tmp_path):
 
     w = Window(app_home, view())
     d = json.loads(r.invoke(app, ["--json", "context", "show"]).output)
-    assert d["captain_running"] and d["view"]["screen"] == "Home" and d["view"]["known"]["project"]["inputs"]
+    assert d["captain_running"] and d["view"]["screen"] == "Projects" and d["view"]["known"]["project"]["inputs"]
     by = {i["kind"]: i["summary"] for i in d["pinned"]}
     assert by["dataset"]["kind"] == "catalog" and by["dataset"]["rows"] > 0 and by["dataset"]["columns"]
     assert len(by["dataset"]["sample"]) == 3 and "title" in by["dataset"]["sample"][0]
@@ -388,14 +390,22 @@ def test_app_open_sends_the_window_what_to_show(app_home, ws):
     w = Window(app_home, view())
     sent = lambda: w.asked[-1]["open"]
     assert r.invoke(app, ["app", "open", "data"]).exit_code == 0 and sent() == {"section": "data"}
-    assert r.invoke(app, ["app", "open", "launch-review"]).exit_code == 0 and sent() == {"section": "handoff"}
-    assert r.invoke(app, ["app", "open", "experiments"]).exit_code == 0 and sent() == {"section": "investigations"}
+    assert r.invoke(app, ["app", "open", "notebooks"]).exit_code == 0 and sent() == {"section": "notebooks"}
+    assert r.invoke(app, ["app", "open", "notebook:weekly-check"]).exit_code == 0 and sent() == {"section": "notebooks", "notebook": "weekly-check"}
+    # Compare is inside Runs now. Experiments and Launch review left the screens: the command says where the work
+    # still is, and the window is asked nothing.
+    assert r.invoke(app, ["app", "open", "compare"]).exit_code == 0 and sent() == {"section": "runs"}
+    opens = lambda: [a for a in w.asked if "open" in a]
+    asked = len(opens())
+    for gone, cmd in (("experiments", "cst investigate"), ("launch-review", "cst handoff"), ("experiment:abc", "cst investigate")):
+        out = r.invoke(app, ["app", "open", gone])
+        assert out.exit_code == 1 and cmd in out.output and len(opens()) == asked, out.output
     assert r.invoke(app, ["app", "open", "project:Outdoor"]).exit_code == 0 and sent() == {"project": "outdoor", "label": "Outdoor"}
     assert r.invoke(app, ["app", "open", "dataset:demo-catalog", "--tab", "sample"]).exit_code == 0
     assert sent() == {"section": "data", "dataset": "demo-catalog", "tab": "sample"}
     assert r.invoke(app, ["app", "open", "run:demo-tuned-vs-bm25"]).exit_code == 0 and sent() == {"section": "runs", "backtest": "demo-tuned-vs-bm25"}
     assert r.invoke(app, ["app", "open", "comparison:demo-tuned-vs-bm25@v1"]).exit_code == 0
-    assert sent() == {"section": "comparisons", "backtest": "demo-tuned-vs-bm25", "version": 1}
+    assert sent() == {"section": "runs", "backtest": "demo-tuned-vs-bm25", "version": 1}
     assert r.invoke(app, ["app", "open", "settings:structure"]).exit_code == 0 and sent() == {"settings": "structure"}
     # A form, filled in for the person. It opens; nothing is submitted.
     out = r.invoke(app, ["app", "open", "form:investigation", "--value", "title=Do long queries regress?"])

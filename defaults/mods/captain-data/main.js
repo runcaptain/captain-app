@@ -14,7 +14,6 @@ import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button, Badge } from "./kit/ui.js";
 import { askAgent, copyPrompt, openForm } from "./kit/agent.js";
-import { Notebooks } from "./notebooks.js";
 import { Library } from "./library.js";
 import { Models } from "./models.js";
 import { Tables } from "./tables.js";
@@ -103,13 +102,12 @@ export default class CaptainData extends View {
     this.preview = null;
     this.previewLogs = null;
     this.previewError = null;
-    this.nb = new Notebooks();
     this.lib = new Library(this);
     this.lib.load(cx);
     this.models = new Models(this);
     this.tables = new Tables(this);
     this.page = new DatasetPage(this);
-    // Layout props (a layout, or the real-window check): {tab: "notebooks", notebook, runAll, sqlTools}.
+    // Layout props (a layout, or the real-window check): {tab, dataset, pageTab, ...}.
     const p = layoutProps?.() ?? {};
     if (p.tab === "models" || p.tab === "labels" || p.tab === "tables") this.tab = p.tab;
     if (p.pageTab) this.page.tab = p.pageTab;
@@ -125,16 +123,8 @@ export default class CaptainData extends View {
     if (p.tab === "labels") this.loadLabels(cx);
     if (p.tab === "models") this.models.load(cx);
     if (p.tab === "models" && p.registryAttach) this.models.toggleAttach(cx); // the attach form, open on the bucket list
-    if (p.tab === "notebooks") {
-      this.tab = "notebooks";
-      this.nb.want = p.notebook ?? null;
-      this.nb.runOnOpen = !!p.runAll;
-      this.nb.toolsOnOpen = p.sqlTools ?? null; // {panel}: the first SQL cell's tools, open on that panel
-      this.nb.load(cx);
-    }
     this.load(cx);
-    // The notebook: autosave its draft, and keep a running cell's clock moving.
-    cx.timer.every(500, (cx) => { if (this.tab === "notebooks") this.nb.tick(cx); this.lib.tick(cx); if (this.models.job) this.models.tick(cx); if (this.tables.jobs.size) this.tables.tick(cx); });
+    cx.timer.every(500, (cx) => { this.lib.tick(cx); if (this.models.job) this.models.tick(cx); if (this.tables.jobs.size) this.tables.tick(cx); });
     // Pages the grid asked for while drawing are fetched here, outside render.
     // Until the backend answers, ask again every 3 s: the screen never stays on "starting" by itself.
     cx.timer.every(3000, (cx) => {
@@ -150,11 +140,10 @@ export default class CaptainData extends View {
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
       if (this.wantTab && this.detail?.name === this.wantTab.dataset) { const t = this.wantTab.tab; this.wantTab = null; this.page.open(cx, t); }
-      // {section: "data", view: notebooks | models | tables | labels, notebook?}: that tab of Data (a project's home).
+      // {section: "data", view: models | tables | labels}: that tab of Data (a project's home).
       if (o?.section === "data" && o.view && !o.dataset && o.at !== this.opened) {
         this.opened = o.at;
         this.tab = o.view;
-        if (o.view === "notebooks") { this.nb.want = o.notebook ?? null; this.nb.load(cx); }
         if (o.view === "models") this.models.load(cx);
         if (o.view === "tables") this.tables.show(cx);
         if (o.view === "labels") this.loadLabels(cx);
@@ -172,10 +161,9 @@ export default class CaptainData extends View {
         cx.notify();
       }
     });
-    // What this screen shows, for agents (cst app context): the tab, the dataset open and its tab, the notebook.
+    // What this screen shows, for agents (cst app context): the tab, the dataset open and its tab.
     watchView(cx, "data", () => ({ tab: this.tab, dataset: this.tab === "datasets" ? this.sel ?? null : null,
-      version: this.tab === "datasets" ? this.detail?.version ?? null : null, dataset_tab: this.tab === "datasets" && this.sel ? this.page?.tab ?? null : null,
-      notebook: this.tab === "notebooks" ? this.nb?.open?.name ?? null : null }));
+      version: this.tab === "datasets" ? this.detail?.version ?? null : null, dataset_tab: this.tab === "datasets" && this.sel ? this.page?.tab ?? null : null }));
     // The Explorer's pick (a brand, site, engine or project) filters every list: reload what's shown.
     watchScope(cx, (cx) => {
       this.load(cx);
@@ -187,22 +175,18 @@ export default class CaptainData extends View {
     // A database connected or removed anywhere in the app: relist it here.
     watchConnections(cx, (cx) => {
       if (this.tables.conns !== null || this.tab === "tables") this.tables.load(cx);
-      this.nb.loadConns(cx);
       cx.notify();
     });
     // Another space, another workspace: start over on its datasets and labels.
     watchWorkspace(cx, (cx) => {
       this.list = null; this.sel = null; this.detail = null; this.labels = null; this.labelSel = null; this.preview = null;
       this.cls = null; this.classes = [];
-      this.nb.kernel?.close();
-      this.nb = new Notebooks();
       this.lib = new Library(this);
       this.lib.load(cx);
       this.models = new Models(this);
       if (this.tab === "models") this.models.load(cx);
       this.tables = new Tables(this);
       if (this.tab === "tables") this.tables.load(cx);
-      if (this.tab === "notebooks") this.nb.load(cx);
       this.load(cx);
       cx.notify();
     });
@@ -300,10 +284,10 @@ export default class CaptainData extends View {
     const t = (id, label, icon) => h_flex().id(`tab-${id}`).h(28).px(12).gap(6).items_center().cursor_pointer()
       .border_r(1).border_color(c.grey300).text_size(12.5)
       .bg(this.tab === id ? c.navy : c.surface).text_color(this.tab === id ? c.surface : c.grey900)
-      .on_click((_e, cx) => { this.tab = id; if (id === "labels" && !this.labels) this.loadLabels(cx); if (id === "notebooks" && this.nb.list === null) this.nb.load(cx); if (id === "models" && this.models.regs === null) this.models.load(cx); if (id === "tables") this.tables.show(cx); if (id === "notebooks" && this.nb.list !== null) this.nb.loadConns(cx); cx.notify(); })
+      .on_click((_e, cx) => { this.tab = id; if (id === "labels" && !this.labels) this.loadLabels(cx); if (id === "models" && this.models.regs === null) this.models.load(cx); if (id === "tables") this.tables.show(cx); cx.notify(); })
       .child(this.icon(icon, 13)).child(div().child(label));
     return h_flex().flex_none().border_1().border_color(c.grey300)
-      .child(t("datasets", "Datasets", "table")).child(t("labels", "Labels", "tag")).child(t("tables", "Tables", "database")).child(t("notebooks", "Notebooks", "folder-open")).child(t("models", "Models", "lineage"));
+      .child(t("datasets", "Datasets", "table")).child(t("labels", "Labels", "tag")).child(t("tables", "Tables", "database")).child(t("models", "Models", "lineage"));
   }
 
   header(c) {
@@ -314,7 +298,7 @@ export default class CaptainData extends View {
       // What the tab holds, only when there's room: in a narrow pane it would push the buttons out of view.
       .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.grey900)
         .when((this.width ?? 0) < 1180, (e) => e.invisible())
-        .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your evaluations read." : this.tab === "notebooks" ? "SQL, Python, notes and charts, saved as versions." : this.tab === "models" ? "Trained models from your registries, and what each was built from." : this.tab === "tables" ? "Your databases' tables, their columns and rows, and how they're queried." : "Rules that turn logged events into judgments."))
+        .child(this.tab === "datasets" ? "Catalogs, queries, judgments and logs your evaluations read." : this.tab === "models" ? "Trained models from your registries, and what each was built from." : this.tab === "tables" ? "Your databases' tables, their columns and rows, and how they're queried." : "Rules that turn logged events into judgments."))
       .when(this.tab === "datasets", (e) => e
         .child(Button(c, "new-class", "New class", () => openForm("dataset-class"), { small: true }))
         .child(Button(c, "import-dataset", "Import a dataset", () => openImport(), { kind: "primary", small: true })))
@@ -322,7 +306,7 @@ export default class CaptainData extends View {
         .child(Button(c, "label-agent", "Ask an agent to define a label", (_e, cx) => cx.spawn(async (cx) => askAgent(cx, LABEL_PROMPT)), { small: true })))
       .child(div().id("data-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()
         .border_1().border_color(c.grey300).text_color(c.grey900).hover((s) => s.text_color(c.blue).border_color(c.blue))
-        .tooltip("Refresh").on_click((_e, cx) => { if (this.tab === "labels") this.loadLabels(cx); else if (this.tab === "notebooks") this.nb.load(cx); else if (this.tab === "models") this.models.load(cx); else if (this.tab === "tables") this.tables.load(cx); else { this.load(cx); this.lib.load(cx); } })
+        .tooltip("Refresh").on_click((_e, cx) => { if (this.tab === "labels") this.loadLabels(cx); else if (this.tab === "models") this.models.load(cx); else if (this.tab === "tables") this.tables.load(cx); else { this.load(cx); this.lib.load(cx); } })
         .child(this.icon("refresh", 14)));
   }
 
@@ -500,8 +484,6 @@ export default class CaptainData extends View {
     // Never blank: the header always shows, and the body says what is happening.
     const body = this.starting
       ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true))
-      : this.tab === "notebooks"
-        ? this.nb.render(c, w)
       : this.tab === "models"
         ? this.models.render(c, w)
       : this.tab === "tables"

@@ -227,10 +227,11 @@ the highlighted line shows where it will land.
 Each file is one whole window. `layout.switch` (`ctrl-shift-l`) cycles
 through them, `layout.switch {name}` picks one; `shared("layout")` is the
 shown one's name. Captain opens with `captain` ("Captain": the `captain-nav`
-sidebar with spaces, Experiments, Data and signals, Runs, Compare and
-Launch review; a `sections` stack of native screens, `captain-investigations`
-(Experiments), `captain-handoff` (Launch review) and the others; terminal tabs
-and panes on the right; see Words for what each screen word is called in the CLI).
+sidebar with the workspace, the Explorer and the views: Projects, Data, Notebooks,
+Runs, Deployments and Team; a `sections` stack of native screens, one per view
+(`captain-project`, `captain-data`, `captain-notebooks`, `captain-runs`, `captain-team`);
+terminal tabs and panes on the right; see The views for what each holds and Words
+for what each screen word is called in the CLI).
 Captain's screens read Captain's local services, which it starts at launch;
 a mod reaches them through shared `captain.daemon` (`{base, token}`). It also
 ships `main` ("Spaces": spaces by machine and the
@@ -1130,10 +1131,35 @@ different fonts, different styles". A render test counts the first two on the pr
    bare nouns ("Metrics", "Versions") as the first thing a person sees. Something behind "More" opens with one
    sentence saying what it is for.
 
+8. **Six views, two submenus.** The sidebar lists Projects, Data, Notebooks, Runs, Deployments and Team, and
+   nothing else under Views. A view has at most two submenus, drawn with the kit's `Submenus` (it refuses a
+   third, and `tests/mod-render/submenus.test.mjs` fails a view that draws its own strip). A record's page has
+   no strip of tabs either. Something that would be a third submenu becomes a kind or a filter in a list, a
+   section of a page, or a button that opens it.
+
 The evidence rules are not style and never bend to these: the evidence word (Simulated, LLM graded, Human graded,
 Real traffic) and "agrees with its own labeler" stay in a model's verdict sentence whenever they apply.
 
-## Captain project page (Home)
+## The views
+
+The owner walked the whole app on 2026-11-12 and asked for far fewer screens. These are all of them.
+
+| View | Section id, mod | What it holds |
+|---|---|---|
+| Projects | `project`, `captain-project` | Home. The app opens on **All projects**, and so do the sidebar's Projects and the logo. A project's page opens from there or from the Explorer |
+| Data | `data`, `captain-data` | The workspace's sources and every table Captain reads |
+| Notebooks | `notebooks`, `captain-notebooks` | SQL, Python, notes and charts, saved as versions. `cst app open notebook:<name>` opens one |
+| Runs | `runs`, `captain-runs` | Jobs and offline evaluations, and how a model compares with the one it is judged against |
+| Deployments | `deployments` | Every model that is running somewhere, across projects |
+| Team | `team`, `captain-team` | Shared records, drafts and review |
+
+**Experiments, Compare and Launch review are not screens any more.** Their work is still there from a terminal:
+`cst investigate`, `cst backtest` and `cst handoff` are unchanged, and so are their routes. An evaluation's
+comparison shows in Runs. `cst app open compare` and `comparison:<evaluation>` open Runs. `cst app open
+experiments` and `launch-review` say the screen is gone and name the command. Don't send a person to
+Experiments, Compare or Launch review: say what to do in Runs, or run the command for them.
+
+## Captain project page (Projects)
 
 The page is a header and three sections. The header is the project's icon and name, one muted line saying what
 it builds, and **More** (All projects, New project, Workflows, Set up with an agent, Change what you're
@@ -1153,8 +1179,8 @@ building, Import a model version, Ask the agent about this page, Change icon, De
 The older description below is kept for what each part does underneath.
 
 
-The sidebar's **Home** opens the current project's page (`captain-project`): the Explorer's pick, else the
-last project opened there. With no project it offers New project, which can pin a catalog at once.
+The sidebar's **Projects** opens the list of every project (`captain-project`); picking one, there or in the
+Explorer, opens its page. With no project it offers New project, which can pin a catalog at once.
 - **Inputs**: catalog, events, queries, labels and the sealed test set, each pinned to an exact version. A newer
   version shows as information with one action ("Use version 2"); a missing input asks to choose one.
 - **Train and compare**: candidates, each one trained version judged against the baseline on the sealed test set
@@ -1284,10 +1310,10 @@ word to a person, and type the CLI word.
 | Review before launch | `handoff` on the deployed model's screen (More) | Launch review, offered only once there is real traffic or a test result |
 | Check it uses the same numbers it was trained on | the served-features check (`cst projects staging-check`, `/staging/check`) | Compares the features the deployed model computes with the ones training computed. A launch gate |
 | Baseline | `champion` (`/api/projects/<id>/champion`, form task `champion`) | The version a project ships and judges candidates against |
-| Experiment | `investigation` (`cst investigate`, `/api/investigations`, `CST_INVESTIGATION`, section id `investigations`) | A hypothesis, its evaluations and a decision |
+| Experiment (terminal only: no screen since 2026-11-12) | `investigation` (`cst investigate`, `/api/investigations`, `CST_INVESTIGATION`) | A hypothesis, its evaluations and a decision |
 | Rating, rating queue, rater | `grading`, `grader` (`cst grade`, `/api/grading`) | People giving grades 0 to 3; the data stays "judgments" and "grades" |
-| Compare | section id `comparisons`, the `captain-compare` mod | One evaluation run read in depth; a single result is still a comparison |
-| Launch review, launch criteria | `handoff`, readiness gates (`cst handoff`, `/api/handoffs`, section id `handoff`) | A candidate checked and passed to your own deployment process |
+| Compare (inside Runs) | `cst backtest report`, `/api/runs/<name>`, `/api/compare-runs` | One evaluation read in depth, or two side by side. It shows in place in Runs, never as its own screen |
+| Launch review, launch criteria (not in the sidebar since 2026-11-12) | `handoff`, readiness gates (`cst handoff`, `/api/handoffs`) | A candidate checked and passed to your own deployment process |
 | Off-policy evaluation | `replay` (`cst replay`, `/api/replays`, the `replays` tab id) | Counterfactual replay of logged traffic |
 | Sealed test set | `holdout` (the `holdout` slot, the `:holdout` split, `--holdout`) | Queries no model trains on, kept to judge them |
 | Model version | `pipeline` version (`cst pipeline`, `/api/pipelines`, `name@vN`) | A version of a ranker; "search configuration" when it has no trained weights |

@@ -18,7 +18,8 @@ from ..workspace import Context
 
 # Lineage node kinds to registry kinds (lineage.py names nodes kind:name@vN).
 REGISTRY_KIND = {"dataset": "dataset", "pipeline": "pipeline", "run": "backtest-run"}
-SECTION = {"pipeline": "runs", "run": "comparisons", "dataset": "data", "environment": "runs"}
+# A run opens in Runs, with its comparison in place (the Compare screen left the app, 2026-11-12).
+SECTION = {"pipeline": "runs", "run": "runs", "dataset": "data", "environment": "runs"}
 
 
 def _iso(t) -> str | None:

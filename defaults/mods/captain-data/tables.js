@@ -11,6 +11,7 @@ import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { ResultGrid } from "./kit/grid.js";
 import { openForm } from "./kit/agent.js";
+import { setShared, run } from "herdr";
 import { Brand, engineTitle } from "./kit/brands.js";
 import { int } from "./kit/num.js";
 
@@ -188,11 +189,9 @@ export class Tables {
   /** An example query, as the first cell of a new notebook on that connection. */
   openInNotebook(cx, sql) {
     const s = this.sel;
-    this.host.nb.seedSql = { conn: s.conn, sql };
-    this.host.nb.newName.set_value(`${s.name}-query`);
-    this.host.tab = "notebooks";
-    if (this.host.nb.list === null) this.host.nb.load(cx);
-    this.host.nb.newNotebook(cx);
+    // Notebooks is its own view: it reads this and starts the notebook (captain-notebooks).
+    setShared("captain.open", { section: "notebooks", seedSql: { conn: s.conn, sql, name: `${s.name}-query` }, at: Date.now() });
+    run("layout.select", { stack: "sections", child: "notebooks" });
     cx.notify();
   }
 

@@ -109,7 +109,9 @@ def test_onboarding_reads_real_progress(ctx):
 
     s = OB.status(ctx)
     done = {x["id"]: x["done"] for x in s["steps"]}
-    assert done["workspace"] and done["data"] and done["pipeline"] and done["investigation"] and done["run"]
+    assert done["workspace"] and done["data"] and done["pipeline"] and done["run"]
+    # Experiments left the screens: the tour no longer asks for one or for a recorded decision.
+    assert "investigation" not in done and "decision" not in done
     assert s["counts"]["datasets"] > 0 and s["workspace"]["name"] == "t"
 
 

@@ -5,25 +5,26 @@
 # is drawn, and fails if the section stays blank. Everything it starts is stopped by pid.
 #
 #   tests/mod-render/shot-check.sh [captain-app binary] [mod ...]
-#   defaults: target/release/captain-app; captain-data captain-runs captain-compare (those present)
+#   defaults: target/release/captain-app; captain-data captain-notebooks captain-runs captain-compare (those present)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 BIN=${1:-target/release/captain-app}
 shift || true
 MODS=("$@")
 if [[ ${#MODS[@]} -eq 0 ]]; then
-  for m in captain-data captain-runs captain-compare; do [[ -d defaults/mods/$m ]] && MODS+=("$m"); done
+  for m in captain-data captain-notebooks captain-runs captain-compare; do [[ -d defaults/mods/$m ]] && MODS+=("$m"); done
 fi
-block_of() { case "$1" in captain-project) echo project ;; captain-data) echo data ;; captain-runs) echo runs ;; captain-compare) echo comparisons ;; captain-investigations) echo investigations ;; *) echo "" ;; esac; }
+block_of() { case "$1" in captain-project) echo project ;; captain-team) echo team ;; captain-nav) echo project ;; captain-data) echo data ;; captain-runs) echo runs ;; captain-compare) echo comparisons ;; captain-notebooks) echo notebooks ;; *) echo "" ;; esac; }
 # Extra views after the plain ones (the two that open the import wizard last, so it covers nothing after them): a query side by side (props the mods read at init).
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:notebook" "captain-data:chart" "captain-data:bignotebook" "captain-data:sqltools" "captain-data:sample" "captain-data:samplefiles" "captain-data:samplerow" "captain-data:pictures" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
+    captain-data) EXTRA+=("captain-data:sample" "captain-data:samplefiles" "captain-data:samplerow" "captain-data:pictures" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:models" "captain-data:tables" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
     # needs SHOT_PROJECT=1: a project with pins and experiments. captain-project:list (the project cards, nothing picked):
     # SHOT_ONLY, as two cards leave the column the blank check measures nearly empty.
     # captain-project:ship needs SHOT_STAGED=1 too: the Ship steps first on the page, with something staged.
     captain-project) EXTRA+=("captain-project:home" "captain-project:pins"); [[ -n "${SHOT_STAGED:-}" ]] && EXTRA+=("captain-project:ship" "captain-project:connect" "captain-project:ab" "captain-project:dep-copies" "captain-project:dep-metrics" "captain-project:dep-logs" "captain-project:dep-settings" "captain-project:dep-cost") ;;  # captain-project:dep-list: SHOT_ONLY (one card reads as too empty for the check)
+    captain-notebooks) EXTRA+=("captain-notebooks:notebook" "captain-notebooks:chart" "captain-notebooks:bignotebook" "captain-notebooks:sqltools") ;;
     captain-runs) EXTRA+=("captain-runs:jobs" "captain-runs:live") ;;  # captain-runs:grading: SHOT_ONLY (one card reads as too empty for the check)
     captain-compare) EXTRA+=("captain-compare:side" "captain-compare:imported" "captain-compare:imported-queries" "captain-compare:profile") ;;
   esac
@@ -280,7 +281,7 @@ covered && { echo "an overlay still covers the window: $(app status | python3 -c
 props_of() {
   case "$1" in
     captain-compare:side) python3 tests/mod-render/first-query.py "$CSTH" ;;
-    captain-data:notebook) echo '{"tab": "notebooks", "notebook": "shot-notebook", "runAll": true}' ;;
+    captain-notebooks:notebook) echo '{"notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:models) echo '{"tab": "models"}' ;;
     captain-data:samplerow) echo '{"pageTab":"sample","dataset":"shot-multifile","openRow":2}' ;;
     captain-data:pictures) echo '{"pageTab":"sample","dataset":"shot-pictures","openRow":1}' ;;
@@ -313,7 +314,7 @@ props_of() {
     captain-runs:grading) echo '{"tab": "grading"}' ;;
     captain-runs:jobs) echo '{"tab": "jobs"}' ;;
     captain-runs:live) echo '{"tab": "live"}' ;;
-    captain-data:chart) echo '{"tab": "notebooks", "notebook": "shot-chart", "runAll": true}' ;;
+    captain-notebooks:chart) echo '{"notebook": "shot-chart", "runAll": true}' ;;
     captain-data:import) echo '{"importWith": {"conn": "demo-store", "sql": "select * from products limit 1000", "name": "Hello World"}}' ;;
     captain-data:import-table) echo '{"importWith": {"conn": "demo-store", "table": "products", "name": "Products"}}' ;;
     captain-data:sample) echo '{"pageTab": "sample"}' ;;
@@ -321,8 +322,8 @@ props_of() {
     captain-data:wide40) echo '{"tab": "tables", "tablesTab": "rows", "tablesPick": "usage"}' ;;
     captain-data:wide13) echo '{"tab": "tables", "tablesTab": "rows", "tablesPick": "spend"}' ;;
     captain-data:tablerows) echo '{"tab": "tables", "tablesTab": "rows"}' ;;
-    captain-data:bignotebook) echo '{"tab": "notebooks", "notebook": "shot-big", "runAll": true}' ;;
-    captain-data:sqltools) echo '{"tab": "notebooks", "notebook": "shot-sql-tools", "sqlTools": {"panel": "filled"}}' ;;
+    captain-notebooks:bignotebook) echo '{"notebook": "shot-big", "runAll": true}' ;;
+    captain-notebooks:sqltools) echo '{"notebook": "shot-sql-tools", "sqlTools": {"panel": "filled"}}' ;;
     captain-compare:profile) echo '{"backtest": "demo-tuned-vs-bm25", "version": 1, "tab": "profile", "autoProfile": true}' ;;
     captain-compare:imported) echo '{"backtest": "demos/shot/imported-readout", "version": 1}' ;;
     captain-compare:imported-queries) echo '{"backtest": "demos/shot/imported-readout", "version": 1, "tab": "queries"}' ;;
@@ -367,7 +368,7 @@ EOF
   app do layout.select "{\"stack\":\"sections\",\"child\":\"$block\"}" >/dev/null
   ok=0
   # The notebook view runs every cell on a fresh Python first: give it time to finish before judging.
-  [[ "$view" == captain-data:notebook || "$view" == captain-data:chart || "$view" == captain-data:bignotebook ]] && sleep 25
+  [[ "$view" == captain-notebooks:notebook || "$view" == captain-notebooks:chart || "$view" == captain-notebooks:bignotebook ]] && sleep 25
   [[ "$view" == captain-data:import* || "$view" == captain-compare:profile || "$view" == captain-data:quality ]] && sleep 8
   [[ "$view" == captain-data:import-run ]] && sleep 14
   [[ "$view" == captain-data:models-attach ]] && sleep 25  # it lists every bucket of the login first

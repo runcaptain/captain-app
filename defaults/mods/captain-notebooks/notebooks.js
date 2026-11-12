@@ -406,8 +406,7 @@ export class Notebooks {
   // ---- drawing ---------------------------------------------------------------------------------------------------
 
   icon(name, size, color) {
-    // chevron-up isn't in the shared set yet: it ships with this mod.
-    return svg(name === "chevron-up" ? "mods/captain-data/icons/chevron-up.svg" : icon(name)).size(size).flex_none().when(!!color, (e) => e.text_color(color));
+    return svg(icon(name)).size(size).flex_none().when(!!color, (e) => e.text_color(color));
   }
 
   render(c, w) {
