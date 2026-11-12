@@ -1237,8 +1237,8 @@ def project_staging_metrics(pid: str, range: str = "1h"):  # noqa: A002  the que
     return _staging_call(OB.metrics, ctx(), pid, "staging", range)
 
 
-@app.get("/api/deployments", dependencies=A)
-def deployments(which: str = "live"):
+@app.get("/api/staging/deployments", dependencies=A)  # not /api/deployments: that is the deploy history, and stays
+def staged_deployments(which: str = "live"):
     """Every staged model across projects: {rows: [{project, name, model_version, state, status, where, by,
     since_text, copies, running, requests_24h, series, errors}]}. `which` is live, stopped or all."""
     from .staging import observe as OB

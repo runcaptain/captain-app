@@ -1109,7 +1109,7 @@ export class Ship {
   loadList(cx) {
     const which = this.listWhich;
     cx.spawn(async (cx) => {
-      const r = await api(`/api/deployments?which=${which}`, { scoped: false, timeout: 120 });
+      const r = await api(`/api/staging/deployments?which=${which}`, { scoped: false, timeout: 120 });
       if (this.listWhich !== which) return;
       this.listD = r.ok ? r.data : { rows: [], text: plainError(r.error, "The deployments couldn't be read.") };
       cx.notify();

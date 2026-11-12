@@ -218,3 +218,16 @@ def test_reading_a_page_never_wakes_a_host_that_sleeps(ws, monkeypatch):  # noqa
     monkeypatch.setattr(SG, "_awake", lambda ctx, rec: True, raising=False)  # a copy is up: it is asked again
     TF.requests(ws, "shop")
     assert sent[-1] == "flush"
+
+
+def test_no_address_is_registered_twice_and_the_deploy_history_keeps_its_own():
+    """Two routes on one address: the first wins and the second can never be reached. The list of staged models
+    once took /api/deployments from the deploy history that way."""
+    from collections import Counter
+
+    from captain_search import server
+
+    seen = Counter((m, r.path) for r in server.app.routes for m in (getattr(r, "methods", None) or []) if m != "HEAD")
+    assert not [k for k, n in seen.items() if n > 1], [k for k, n in seen.items() if n > 1]
+    by = {(m, r.path): r.endpoint.__name__ for r in server.app.routes for m in (getattr(r, "methods", None) or [])}
+    assert by[("GET", "/api/deployments")] == "deployments" and by[("GET", "/api/staging/deployments")] == "staged_deployments"

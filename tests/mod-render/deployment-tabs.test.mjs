@@ -38,7 +38,7 @@ globalThis.fetch = async (url, opts = {}) => {
   if (p === '/api/compute') return reply(200, []);
   if (p === '/api/cloud/summary') return reply(200, { active: null });
   if (p === '/api/costs/estimate') return reply(200, { free: true, available: true, text: 'Runs on this computer. No cloud cost.', basis: [] });
-  if (p === '/api/deployments') return reply(200, u.searchParams.get('which') === 'stopped'
+  if (p === '/api/staging/deployments') return reply(200, u.searchParams.get('which') === 'stopped'
     ? { which: 'stopped', text: '1 deployment.', rows: [{ project: 'old', name: 'Old shop', model_version: 'old/ranker@v1', state: 'stopped', status: 'Stopped', where: 'On aws-serving.', since_text: 'Stopped 2 h ago: stopped by maya', copies: 0, running: 0, requests_24h: 12, series: Array(30).fill(0), errors: Array(30).fill(0), line: 'Copies: 0 live. Requests: 0 running.' }] }
     : { which: 'live', text: '1 deployment.', rows: [{ project: 'shop', name: 'Shop', model_version: 'shop/starter-ranker@v2', state: 'idle', status: 'Idle', where: 'Running on this computer.', since_text: 'Staged by maya 6 min ago', copies: 1, running: 0, requests_24h: 48, series: Array.from({ length: 30 }, (_x, i) => (i === 29 ? 48 : 0)), errors: Array.from({ length: 30 }, (_x, i) => (i === 29 ? 1 : 0)), line: 'Copies: 1 live. Requests: 0 running.' }] });
   if (p.endsWith('/staging/live')) return reply(200, world.live);
