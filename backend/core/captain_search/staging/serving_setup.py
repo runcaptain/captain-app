@@ -38,6 +38,7 @@ import yaml
 from ..storage.backend import NotFound
 from ..storage.registry import dump_yaml
 from ..workspace import Context, whoami
+from . import timings as TM
 
 KEY = "serving/setup.yaml"
 TAGS = {"app": "captain", "captain:purpose": "serving"}
@@ -156,6 +157,18 @@ def login_policy(storage_uri: str, region: str, account: str, n: dict, image_sou
                                                                    "sagemaker:AddTags", "sagemaker:ListTags", "sagemaker:ListEndpoints",
                                                                    "sagemaker:ListEndpointConfigs", "sagemaker:ListModels"],
          "Resource": "*"}]
+    # More than one copy of a staged model (SageMaker's own scaling on requests per copy). Needed only when the most
+    # copies is more than the fewest. Without these a deploy still runs, on its fewest copies, and says so.
+    st[3]["Action"].append("sagemaker:UpdateEndpointWeightsAndCapacities")
+    st.append({"Sid": "MoreThanOneCopy", "Effect": "Allow",
+               "Action": ["application-autoscaling:RegisterScalableTarget", "application-autoscaling:DeregisterScalableTarget",
+                          "application-autoscaling:PutScalingPolicy", "application-autoscaling:DescribeScalableTargets",
+                          "application-autoscaling:DescribeScalingPolicies", "application-autoscaling:DescribeScalingActivities",
+                          "cloudwatch:PutMetricAlarm", "cloudwatch:DescribeAlarms", "cloudwatch:DeleteAlarms"],
+               "Resource": "*"})
+    st.append({"Sid": "ScalingServiceRole", "Effect": "Allow", "Action": "iam:CreateServiceLinkedRole",
+               "Resource": f"arn:aws:iam::{account}:role/aws-service-role/sagemaker.application-autoscaling.amazonaws.com/*",
+               "Condition": {"StringLike": {"iam:AWSServiceName": "sagemaker.application-autoscaling.amazonaws.com"}}})
     if image_source != "docker":
         st.append({"Sid": "ImageBuild", "Effect": "Allow", "Action": ["codebuild:CreateProject", "codebuild:StartBuild", "codebuild:BatchGetBuilds", "codebuild:DeleteProject"],
                    "Resource": f"arn:aws:codebuild:{region}:{account}:project/{n['build']}"})
@@ -281,7 +294,7 @@ def plan(ctx: Context, profile: str, region: str, *, name_prefix: str = "captain
         {"resource": "ECR repository", "name": n["repo"], "why": "Holds Captain's serving image in your account."}]
     if src != "docker":
         rows += [{"resource": "IAM role", "name": n["build_role"], "why": "The image build runs as this. It can read the build folder and push to that one repository."},
-                 {"resource": "CodeBuild project", "name": n["build"], "why": "Builds the serving image inside your account. It runs once, for about a minute and a half."}]
+                 {"resource": "CodeBuild project", "name": n["build"], "why": f"Builds the serving image inside your account. It runs once, for {TM.step_words('aws', 'image')}."}]
     if local:
         rows.append({"resource": "S3 bucket", "name": _where(storage)[0],
                      "why": "Your workspace's data stays on this computer. Only the serving bundle (the model and its catalog) and the "
@@ -291,7 +304,7 @@ def plan(ctx: Context, profile: str, region: str, *, name_prefix: str = "captain
     return {"profile": profile, "region": region, "account": account, "names": n, "image_source": src, "storage": storage,
             "local_workspace": local, "instance_type": instance_type, "creates": rows,
             "cost": {"setup_usd": build_cost,
-                     "text": ("Setting up costs about $" + f"{build_cost:.2f}" + f" once. Building the image takes about a minute and a half in AWS CodeBuild (the estimate allows {BUILD_MINUTES} minutes). "
+                     "text": ("Setting up costs about $" + f"{build_cost:.2f}" + f" once. Building the image takes {TM.step_words('aws', 'image')} in AWS CodeBuild (the estimate allows {BUILD_MINUTES} minutes). "
                               if src != "docker" else "Setting up costs nothing: this computer's Docker builds the image. ")
                              + "The role, the repository and the target cost nothing while idle. The image is under 1 GB, about $0.10 a month to "
                                "keep. An endpoint bills by the hour only while it is staged."},
@@ -435,7 +448,7 @@ def setup(ctx: Context, profile: str, region: str, *, name_prefix: str = "captai
         say(f"Creating the image build {n['build']}")
         step(f"create the image build {n['build']}", "codebuild:CreateProject", project)
         note("log-group", f"/aws/codebuild/{n['build']}")  # the build writes its log there: removed with the rest
-        say(f"Building the serving image in your account (about {BUILD_MINUTES} minutes)")
+        say("Building the serving image in your account" + TM.aside("aws", "image"))
         bid = step("start the image build", "codebuild:StartBuild", lambda: cb.start_build(projectName=n["build"]))["build"]["id"]
         while True:
             b0 = step("watch the image build", "codebuild:BatchGetBuilds", lambda: cb.batch_get_builds(ids=[bid]))["builds"][0]

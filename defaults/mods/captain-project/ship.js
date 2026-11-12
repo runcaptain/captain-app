@@ -207,10 +207,27 @@ export class Ship {
   }
 
   /** Redraw the countdown, and look again while something is running, starting, or being staged or stopped. */
+  /** Every few seconds, ask what is deployed. Always: a model can be deployed, stopped or replaced from a
+   *  terminal or another window, and what this page says must be the present, not what it last did itself. */
   tick(cx) {
+    if (!this.pid() || (this.busy && !this.busyFor)) return;
     const s = this.status?.status;
-    if (this.pid() && (this.busyFor || (!this.busy && (s === "running" || s === "starting")))) { this.load(cx); if (this.page.deployOpen) this.loadTab(cx); }
+    this.load(cx);
+    if (this.page.deployOpen && (s === "running" || s === "starting")) this.loadTab(cx);
   }
+
+  /** A deploy that failed earlier is the past. Once a model is running it is one line that can be dismissed,
+   *  never a panel over what is deployed. Returns whether a model is running. */
+  settlePast() {
+    if (this.djob?.failed && this.running() && this.staged()) {
+      this.dpast = { text: `An earlier deploy to ${this.djob.place?.label ?? "this place"} didn't finish${this.djob.failed.step ? `, at "${this.djob.failed.step}"` : ""}. This model is running.` };
+      this.djob = null;
+    }
+    return this.running();
+  }
+
+  /** Whether a deploy's own panel is on screen: one in progress, or one that failed with nothing running. */
+  jobShown() { this.settlePast(); return Boolean(this.djob); }
 
   running() { return this.status?.status === "running"; }
   staged() { return this.status?.staged ?? null; }
@@ -318,6 +335,7 @@ export class Ship {
   // ---- the steps, as plain data: the page draws them, and agents read them (cst app context) ---------------------
 
   steps() {
+    this.settlePast();
     const st = this.staged(), on = this.running();
     const cand = this.pick(), champ = this.page.exps?.champion ?? null;
     const what = st?.model_version ? short(st.model_version) : null;
@@ -665,7 +683,7 @@ export class Ship {
     get("/staging/live", (d) => { this.liveD = d; });
     get(`/staging/metrics?range=${this.range}`, (d) => { this.met = d; });
     if (this.tab === "requests") get("/staging/requests?limit=50", (d) => { this.reqs = d; });
-    if (this.tab === "versions") get("/staging/versions", (d) => { this.vers = d; });
+    if (this.tab === "versions") { get("/staging/versions", (d) => { this.vers = d; }); get("/staging/rollbacks", (d) => { this.backs = d; }); }
     if (this.tab === "copies") get("/staging/copies", (d) => { this.copiesD = d; });
     if (this.tab === "logs") get(`/staging/logs?limit=300${this.logBox.value().trim() ? `&q=${enc(this.logBox.value().trim())}` : ""}`, (d) => { this.logsD = d; });
     if (this.tab === "settings") get("/staging/settings", (d) => { this.setD = d; });
@@ -762,7 +780,7 @@ export class Ship {
     this.busyFor = { what: "stage", was: this.running() ? this.staged().id : null }; this.settled = null;
     cx.notify();
     cx.spawn(async (cx) => {
-      const r = await api(`/api/projects/${enc(this.pid())}/staging/versions/${n}/rollback`, { body: {}, scoped: false });
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/versions/${n}/rollback`, { body: { reason: this.verWhy ?? "" }, scoped: false });
       const done = r.ok ? await this.wait(r.data.job, 30) : { ok: false, error: plainError(r.error, "It couldn't be rolled back.") };
       this.busy = null; this.busyFor = null;
       this.note = done.ok ? { tone: "good", text: `Rolled back to version ${n}.` } : { tone: "fail", text: done.error };
@@ -780,13 +798,39 @@ export class Ship {
         .child(h_flex().gap(10).items_center().flex_wrap()
           .child(div().w(36).flex_none().text_size(12.5).font_semibold().child(`v${r.n}`))
           .child(div().flex_1().min_w(160).truncate().text_size(12.5).text_color(c.navy).child(short(r.model_version)))
-          .when(r.live, (e) => e.child(Badge(c, "Live", "good")))
+          .when(r.live, (e) => e.child(div().flex_none().text_size(12.5).text_color(c.good).child("Running now")))
           .child(div().flex_none().text_size(12.5).text_color(c.grey500).child(`${String(r.at).slice(0, 16).replace("T", " ")} by ${r.by ?? "someone"}`))
           .when(Boolean(r.can_roll_back) && !this.busy, (e) => e.child(Button(c, `dep-version-${r.n}-back`, "Roll back", (_e, cx) => { this.verAsk = r.n; cx.notify(); }, { small: true }))))
         .when(this.verAsk === r.n, (e) => e.child(h_flex().id("dep-version-ask").mt(6).p(8).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
-          .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child(`Put ${short(r.model_version)} back on the endpoint? What runs now is replaced.`))
-          .child(Button(c, "dep-version-yes", "Roll back", (_e, cx) => this.rollBackTo(cx, r.n), { small: true }))
-          .child(Button(c, "dep-version-no", "Not now", (_e, cx) => { this.verAsk = null; cx.notify(); }, { small: true }))))));
+          .child(v_flex().flex_1().min_w(0).gap(6)
+            .child(div().text_size(12.5).text_color(c.grey900).child(`Put ${short(r.model_version)} back? What runs now keeps answering until it does. Say why, so the next person knows.`))
+            .child(h_flex().gap(6).flex_wrap().children(["It gives worse results", "It is too slow", "It is failing requests", "Deployed by mistake"].map((why, i) =>
+              div().id(`dep-version-why-${i}`).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+                .border_color(this.verWhy === why ? c.blue : c.grey300).bg(this.verWhy === why ? c.blueLight : c.surface).text_color(this.verWhy === why ? c.blue : c.navy)
+                .on_click((_e, cx) => { this.verWhy = why; cx.notify(); }).child(why)))))
+          .child(Button(c, "dep-version-yes", "Roll back", (_e, cx) => this.rollBackTo(cx, r.n), { small: true, disabled: !this.verWhy }))
+          .child(Button(c, "dep-version-no", "Not now", (_e, cx) => { this.verAsk = null; this.verWhy = null; cx.notify(); }, { small: true }))))))
+      .child(this.rollbacksBox(c));
+  }
+
+  /** Who rolled back, when and why, and whether Captain does it by itself in a version's first minutes. */
+  rollbacksBox(c) {
+    const d = this.backs, auto = d?.auto ?? {};
+    const set = (minutes) => (_e, cx) => cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/rollbacks/auto`, { method: "PUT", body: { minutes }, scoped: false });
+      if (r.ok && this.backs) this.backs.auto = r.data;
+      cx.notify();
+    });
+    const chip = (id, label, on, click) => div().id(id).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+      .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).on_click(click).child(label);
+    return v_flex().id("dep-rollbacks").w_full().mt(10).pt(10).gap(6).border_t(1).border_color(c.rule)
+      .child(div().text_size(12.5).font_medium().text_color(c.navy).child("Roll back by itself when a new version is unhealthy"))
+      .child(h_flex().gap(6).flex_wrap()
+        .child(chip("dep-auto-off", "Off", !auto.on, set(0)))
+        .children([[10, "In its first 10 minutes"], [30, "In its first 30 minutes"], [60, "In its first hour"]].map(([m, label]) => chip(`dep-auto-${m}`, label, auto.minutes === m, set(m)))))
+      .child(div().id("dep-auto-text").text_size(12.5).text_color(c.grey500).child(auto.text ?? "Reading..."))
+      .children((d?.rows ?? []).slice(0, 5).map((r, i) => div().id(`dep-rollback-${i}`).text_size(12.5).text_color(c.grey900)
+        .child(`${String(r.at).slice(0, 16).replace("T", " ")} UTC, ${r.by} put ${short(r.to)} back in place of ${short(r.from)}. ${r.reason}`)));
   }
 
   /** The bottom of the project page: only where to deploy, or what is deployed (ship-view.js). */

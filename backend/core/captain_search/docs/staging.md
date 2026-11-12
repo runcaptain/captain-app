@@ -138,6 +138,29 @@ no cloud.
 above, with the lines under each. `GET /api/projects/{id}/deploy` says where the last deploy stands (each step, the
 one that failed, what exists now, `can: [retry, remove]`), and `DELETE` removes it.
 
+### How long it takes
+
+Measured on a real AWS account on 2026-11-12 (us-west-1, ml.t2.medium, the demo store's starter ranker beside its
+baseline): one command, from an account with nothing of Captain's in it to an endpoint that answers, took
+**3 minutes 50 seconds**.
+
+| Step | Seconds |
+|---|---|
+| Checking your account | under 1 |
+| Creating permissions (the bucket and the serving role) | 1.8 |
+| Building the model's image (repository, build role, build project, the build) | 91.9 |
+| Starting the model (package, register, start the endpoint) | 133.8 |
+| Checking it answers (5 test requests) | 0.9 |
+
+Right after it: 20 queries beside the baseline all answered, a median of 2.75 ms inside the endpoint, the served
+features matched training on 100% of 260 checked, and the copy used 205 MB.
+
+These numbers live in one table, `staging/timings.py`. The confirm ("About 4 minutes: about a minute and a half to
+build the image and about 2 minutes to start the model"), each step of the plan (`typical_s`, `typical`) and the
+lines a run prints ("Starting the endpoint (about 2 minutes)") all read it, and a test checks that the steps add
+up to the confirm's total. A step that has not been timed on a real account says so instead of guessing. Moving a
+running endpoint to a new version has not been timed yet.
+
 ### Which machine it runs on
 
 A deploy runs on the smallest machine the model fits on. Nobody has to choose one.
@@ -317,7 +340,40 @@ if the group holds anything Captain did not make.
 
 `--fewest 1` keeps one copy up, so no request waits for a cold start, and it bills while it is up. On Modal
 `--idle-seconds` sets how long an idle copy stays (2 to 1200). The app reads and sets the same through
-`GET` and `POST /api/projects/{id}/staging/scale`. On this computer and on SageMaker there is one copy.
+`GET` and `POST /api/projects/{id}/staging/scale`. On this computer there is one copy.
+
+**On SageMaker** an endpoint never sleeps, so the fewest is at least 1 and each copy bills by the hour. With the
+most above the fewest, Captain turns on SageMaker's own scaling: it adds a copy when one copy takes more than
+`requests_per_copy` requests a minute (3,000 unless the compute target says otherwise), waits 60 seconds before
+adding another, and 5 minutes before taking one away. A new copy takes a few minutes to arrive, so this follows a
+rise over minutes, not a spike. The target's `min_copies`, `max_copies` and `requests_per_copy` are what a deploy
+starts with. `staging-copies` changes a running endpoint, and a redeploy goes back to the target's settings.
+Written against a stand-in. Not run on a real account yet.
+
+A redeploy onto an endpoint that load has scaled out starts the new version on as many copies as are up, so a busy
+endpoint is not cut back in the middle of the switch. Scaling is taken off for the move and put back after it,
+because SageMaker does not move an endpoint while its scaling is on.
+
+The login needs a few more permissions for this (`MoreThanOneCopy` and `ScalingServiceRole` in the policy
+`cst compute setup serving aws --policy` prints). Without them the model still starts, on its fewest copies, and
+the run says scaling could not be turned on. The first time scaling is used in an account, AWS itself creates one
+role there, `AWSServiceRoleForApplicationAutoScaling_SageMakerEndpoint`. It is AWS's, shared by every endpoint in
+the account, and Captain does not remove it.
+
+**What does not depend on one copy** (tested with two copies over one store):
+
+- The request log. Each copy writes its own chunks under the same folder with create-only writes, so two copies
+  never overwrite each other. Each request row says which copy answered it (`copy`).
+- The split. A session's version is a hash of the experiment's salt and the session id, so every copy gives the
+  same session the same version.
+- Shadow mode. Every copy serves the baseline and logs the candidate's answer beside it.
+- Stopping when idle. A copy that has had no request for the idle limit asks the other copies when they were last
+  used before it stops the endpoint. Each copy leaves that in `staging/<project>/<env>/copies/<deployment>/`.
+  Before this, one quiet copy could delete an endpoint another copy was busy on.
+
+**What is per copy.** A change of traffic (the split, shadow mode, the idle limit) reaches the copy that was told at
+once and the others within 3 seconds. `flush` and `status` reach one copy, whichever the host picks, so the newest
+15 seconds of another copy's requests can be missing from a readout taken right after a flush.
 
 ## Cost, and stopping by itself
 
@@ -585,3 +641,61 @@ cst deployments rollback <project> [version]      put an earlier version back (d
 `cst projects stage`, `staging` and `unstage` do the same and stay. `cst deploy promote|rollback|status|history`
 are the gated environment commands and are unchanged: a project that has one of those names is staged with
 `cst deploy to-staging <project>`.
+
+## Health, and being told when it changes
+
+Captain keeps a deployed model's health as a fact on its record, and a file for every check it ran.
+
+**What a check asks.** Is it answering (one status call, five seconds at most). How many of the last 15 minutes'
+requests failed. How long 95 in 100 took at the endpoint. When the last request was.
+
+**What healthy means** is yours to set: `cst deployments health <project> --p95-ms 200 --error-rate 0.01`, or
+"Is it healthy?" on the deployed model's screen. Until you set one, a model is unhealthy when it stops answering
+or fails more than 5 in 100 requests, and response time is not judged. With fewer than 20 requests in the window
+the rates are not judged at all, and the health says so.
+
+**When it runs.** Once a minute while the app's service is open. `cst deployments watch` does the same for an
+agent or a server, and `cst deployments watch --once` checks once and exits 1 when anything is unhealthy, for a
+cron. `cst deployments health <project> --check` runs one now.
+
+**Unhealthy takes two bad checks in a row**, so one slow minute is not an alert. Recovering takes one good one.
+On either change a message goes out, once:
+- to the webhook you set (`cst deployments alerts --webhook https://...`): a JSON body with `text`, `project`,
+  `model_version`, `status`, `reasons` and `at`, which Slack and PagerDuty accept. The address can hold a secret:
+  it is never printed or sent to a screen, only whether one is set;
+- as a notification of the computer the service runs on (macOS), and in the app.
+
+**What a check never does.** It never wakes a host that sleeps when idle: with no copy up the health is "Asleep".
+It never alerts while a deploy is running on that project. It never calls a model healthy on numbers it doesn't
+have.
+
+`GET /api/projects/<id>/staging/health[?history=N]`, `POST .../health/check`, `PUT .../health/target`, and
+`GET /api/alerts` for every unhealthy model in the workspace.
+
+## Rolling back
+
+A roll back is a deploy of an earlier version to the same place, under the same login, through the same job
+every deploy runs. So it works on every host a deploy works on, and runs the same steps.
+
+- `cst deployments rollback <project> --reason "..."` puts back the version before the one running.
+  Add a number from `cst deployments history <project>` to pick another. A reason is required.
+- **What is running keeps answering during the switch.** The earlier version is started and checked first, and
+  only then is the other one stopped. If the earlier version fails to start, what was running stays up.
+- **The key stays the same** across a redeploy and a roll back, so a site's key keeps working.
+- **Who and why is kept.** `cst deployments rollback <project> --history` lists every roll back: when, who, from
+  which version to which, and the reason. It is also in the project's history.
+- **By itself, if you ask.** `cst deployments rollback <project> --auto 30`: for the first 30 minutes after each
+  deploy, when a health check finds the new version unhealthy, Captain puts the previous one back and says so in
+  the alert. It does this once per deploy, never without an earlier version, and never to the version it just put
+  back. `--auto 0` turns it off.
+
+One limit on this computer: each version gets a new port, so the address changes with the version. Requests made
+through Captain follow it. A program that saved the address must read it again. On a cloud the address stays.
+
+`POST /api/projects/<id>/staging/versions/<n>/rollback {reason}`, `GET .../staging/rollbacks`,
+`PUT .../staging/rollbacks/auto {minutes}`.
+
+## Which machine, in Settings
+
+`GET /api/serving/machines` lists, per cloud, the sizes on offer and the one chosen in place of the smallest that
+fits. `PUT /api/settings/serving {host, machine}` saves a choice. An empty machine goes back to the smallest.

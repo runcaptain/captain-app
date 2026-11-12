@@ -1127,13 +1127,13 @@ export default class ProjectHome extends View {
         .child(div().flex_1())
         .child(div().id("dep-all").text_color(c.blue).cursor_pointer().on_click((_e, cx) => this.shipPath.openList(cx)).child("All deployments")))
       // An open question (the confirm) or a deploy in progress takes the banner's place: one filled button.
-      .when(!this.shipPath.dconfirm && !this.shipPath.djob, (e) => e.child(this.nextLine(c)))
+      .when(!this.shipPath.dconfirm && !this.shipPath.jobShown(), (e) => e.child(this.nextLine(c)))
       .child(this.shipPath.deployed(c));
     else body = v_flex().gap(22)
       .when(Boolean(this.note), (e) => e.child(div().id("ph-note").px(12).py(8).text_size(12.5).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)
         .text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
       // The Next banner holds the page's one filled button. A question open in Ship takes its place.
-      .when(!this.shipPath.dconfirm && !this.shipPath.djob, (e) => e.child(this.nextLine(c)))
+      .when(!this.shipPath.dconfirm && !this.shipPath.jobShown(), (e) => e.child(this.nextLine(c)))
       .when(this.shipFirst, (e) => e.child(this.ship(c)))
       .child(this.part(c, "inputs", "Data", null, [], this.inputs(c)))
       .child(this.experiments(c))

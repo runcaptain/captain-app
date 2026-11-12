@@ -194,6 +194,16 @@ def state(ctx: Context, pid: str, env: str = ENV) -> dict | None:
     return ((PS.get(ctx, pid).get("staging") or {}).get(env)) or None
 
 
+def serving(ctx: Context, pid: str, env: str = ENV) -> dict | None:
+    """The record of what is answering requests right now. While a new version is starting that is the version it
+    replaces, which stays up until the new one answers."""
+    rec = state(ctx, pid, env)
+    old = (rec or {}).get("switching_from")
+    if rec and rec.get("status") == "starting" and old and old.get("status") == "running":
+        return old
+    return rec
+
+
 def _save(ctx: Context, pid: str, env: str, rec: dict | None = None, **fields) -> dict:
     def ch(doc):
         st = doc.setdefault("staging", {}) or {}
@@ -486,6 +496,14 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
            "idle_minutes": idle, "resources": [], "endpoint": None, "error": None, "check": None,
            "key_secret": key_name(pid, env), "previous": (old or {}).get("model_version") if old else None,
            "previous_bundle": (old or {}).get("bundle") if old else None}
+    # While the new version starts, what is up keeps answering: the record says where, so Captain's own requests
+    # go there until the switch is done (see `serving`).
+    if old and old.get("status") == "running":
+        rec["switching_from"] = {k: v for k, v in old.items() if k != "switching_from"}
+    # What a person set on this deployment, and its roll back history, outlive a redeploy.
+    for k in ("health_target", "auto_rollback", "rollbacks", "rolled_back"):
+        if old and old.get(k) is not None:
+            rec[k] = old[k]
     # The endpoint key: generated here and kept in the keychain. A machine with no keychain (CI, a headless server)
     # sets it in the environment under the same name instead, and that value is used as is.
     given = os.environ.get(rec["key_secret"], "").strip()
@@ -495,7 +513,9 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
             old_key = _key(old)  # kept, so a restage that fails can hand the endpoint its key back
         except ValueError:
             old_key = None
-    key = given or _secrets.token_urlsafe(32)
+    # The key stays the same from one version to the next: a redeploy or a roll back must not break a site's key.
+    # A new key is made only by asking for one (staging/keys.py).
+    key = given or old_key or _secrets.token_urlsafe(32)
     key_sha = hashlib.sha256(key.encode()).hexdigest()
 
     if p["how"] == "image":
@@ -545,9 +565,14 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
         if t["kind"] == "local":
             say("Starting the endpoint on this computer")
             ep = _start_local(ctx, rec["bundle"], rec["id"], key_sha)
-            if old and old.get("kind") == "local" and old.get("status") == "running":
-                _stop_local(old.get("endpoint") or {})
             rec.update(endpoint=ep, status="running")
+            rec.pop("switching_from", None)
+            if old and old.get("kind") == "local" and old.get("status") == "running":
+                # The new version answers. Point the record at it first, give a request already on its way to the
+                # old one a moment to finish, and only then stop the old one: no request lands on nothing.
+                _save(ctx, pid, env, rec)
+                time.sleep(0.5)
+                _stop_local(old.get("endpoint") or {})
         else:
             if old and old.get("kind") == "local" and old.get("status") == "running":
                 _stop_local(old.get("endpoint") or {})
@@ -557,6 +582,7 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
                                    if old and old.get("status") == "running" and old.get("target") == t["name"] else []},
                           progress=say)
             rec.update(endpoint=out["endpoint"], resources=out["resources"], status="running")
+            rec.pop("switching_from", None)
     except BaseException as e:
         left = getattr(e, "left_behind", None) or []
         # A restage that failed must not orphan the endpoint that was already up: it is still running, so the
@@ -574,6 +600,7 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
             _save(ctx, pid, env, {**old, "error": f"Restaging {p['model_version']} did not work, so {old['model_version']} "
                                                   f"is still running. {str(e)[:400]}"})
         else:
+            rec.pop("switching_from", None)
             _save(ctx, pid, env, rec, status="failed", error=str(e)[:600], resources=left, stopped_at=_now(),
                   stop_reason="it did not start")
         raise
@@ -652,7 +679,7 @@ def public(rec: dict | None) -> dict | None:
     """A staging record as the app and agents see it: nothing secret, nothing that names a key."""
     if not rec:
         return None
-    out = {k: v for k, v in rec.items() if k not in ("key_secret",)}
+    out = {k: v for k, v in rec.items() if k not in ("key_secret", "switching_from")}
     ep = dict(rec.get("endpoint") or {})
     out["endpoint"] = {k: ep.get(k) for k in ("name", "url", "region", "log", "environment", "private", "resource_group") if ep.get(k)} or None
     out["needs_key"] = bool(rec.get("key_secret"))
@@ -912,7 +939,7 @@ def _joined(ctx: Context, res: dict, catalog_of: str | None) -> list[dict]:
 def query(ctx: Context, pid: str, q: str, k: int = 10, env: str = ENV) -> dict:
     """Ask the staged endpoint for results, with the baseline's results for the same query beside them. Console
     requests are logged as test traffic, never as shoppers."""
-    rec = state(ctx, pid, env)
+    rec = serving(ctx, pid, env)
     if not rec or rec.get("status") != "running":
         raise ValueError("Staging is not running. Stage a model version first.")
     if not str(q or "").strip():

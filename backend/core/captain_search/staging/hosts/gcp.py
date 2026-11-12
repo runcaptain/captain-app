@@ -30,6 +30,7 @@ import zipfile
 
 from ... import price_table as PT
 from ...workspace import Context
+from .. import timings as TM
 from .base import Host, MissingPermission, now
 
 TARGET = "gcp-serving"
@@ -134,7 +135,7 @@ class GcpHost(Host):
             {"resource": "Artifact Registry repository", "name": n["repo"], "why": "Holds Captain's serving image in your project."},
             {"resource": "Service account", "name": n["build_account"], "why": "The image build runs as this. It may read the build folder, write its log beside it, "
                                                                                 "and push to that one repository."},
-            {"resource": "Cloud Build build", "name": f"{n['repo']} image", "why": f"Builds the serving image inside your project. It runs once, about {BUILD_MINUTES} minutes."},
+            {"resource": "Cloud Build build", "name": f"{n['repo']} image", "why": "Builds the serving image inside your project. It runs once. Not timed on a real account yet."},
             {"resource": "Captain compute target", "name": n["target"],
              "why": f"Cloud Run service, {o['cpu']:g} vCPU and {o['memory_mb'] / 1024:g} GB a copy, at most {o['max_copies']}, in {o['region']}. Staging uses it."}]
         later = [{"resource": "Cloud Run service", "name": f"{n['services']}-{{project}}-staging", "why": "The endpoint. Made when you stage a model, deleted when you unstage it."}]
@@ -142,7 +143,7 @@ class GcpHost(Host):
         return {"cloud": "gcp", "profile": o["profile"], "region": o["region"], "project": rest.project, "names": n, "storage": n["storage"], "options": o,
                 "apis_off": off, "creates": rows, "each_deploy": later,
                 "cost": {"setup_usd": round(build, 2), "hourly_awake_usd": round(hourly, 4),
-                         "text": f"Setting up costs about ${build:.2f} once: the image build runs about {BUILD_MINUTES} minutes in Cloud Build "
+                         "text": f"Setting up costs about ${build:.2f} once: the estimate allows {BUILD_MINUTES} minutes in Cloud Build, not timed on a real account yet "
                                  "(free inside Google's monthly allowance). The image is under 1 GB, about $0.10 a month to keep. "
                                  f"A copy costs about ${hourly:.3f} an hour while it is answering and nothing between requests"
                                  + (f", plus about ${kept:.3f} an hour for the {o['min_copies']} kept up" if kept else "")
@@ -269,7 +270,7 @@ class GcpHost(Host):
             step("upload the build folder", "storage.objects.create", lambda: rest.call(
                 "POST", f"https://storage.googleapis.com/upload/storage/v1/b/{n['bucket']}/o", params={"uploadType": "media", "name": key},
                 data=_tgz(folder), headers={"Content-Type": "application/gzip"}))
-            say(f"Building the serving image in your project (about {BUILD_MINUTES} minutes)")
+            say("Building the serving image in your project" + TM.aside("gcp", "image"))
             body = {"source": {"storageSource": {"bucket": n["bucket"], "object": key}},
                     "steps": [{"name": "gcr.io/cloud-builders/docker", "args": ["build", "-t", image, "."]}], "images": [image],
                     "serviceAccount": f"projects/{project}/serviceAccounts/{n['build_email']}",

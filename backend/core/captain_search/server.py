@@ -595,11 +595,19 @@ def services_list(check: bool = False):
     return SV.listing(ctx(), check)
 
 
+def _settings_out(d: dict) -> dict:
+    """Settings as the screens and agents get them: the alert webhook's address can hold a secret, so only whether
+    one is set leaves the service."""
+    out = dict(d)
+    out["alerts"] = {"webhook_set": bool((d.get("alerts") or {}).get("webhook_url"))}
+    return out
+
+
 @app.get("/api/settings", dependencies=A)
 def settings_get():
     from . import settings as ST
 
-    return ST.get(ctx())
+    return _settings_out(ST.get(ctx()))
 
 
 @app.put("/api/settings/compute", dependencies=A)
@@ -607,7 +615,20 @@ def settings_compute(body: dict):
     """{backtest?, serve?}: the compute targets backtests and serving use unless they name their own."""
     from . import settings as ST
 
-    return ST.set_compute(ctx(), body.get("backtest"), body.get("serve"), clear_serve="serve" in body and not body["serve"])
+    return _settings_out(ST.set_compute(ctx(), body.get("backtest"), body.get("serve"), clear_serve="serve" in body and not body["serve"]))
+
+
+@app.get("/api/serving/machines", dependencies=A)
+def serving_machines():
+    """For Settings: per cloud a model can be deployed to, the sizes on offer, cheapest first, and the one chosen
+    in place of the smallest that fits (null when none is). {hosts: [{host, label, chosen, machines: [{name,
+    memory_mb, hourly_usd, text}]}]}. Which sizes a model fits on depends on the model, so that is checked when a
+    deploy is planned."""
+    from . import settings as ST
+    from .staging import sizing as SZ
+
+    picked = ((ST.get(ctx()).get("serving") or {}).get("machine") or {})
+    return {"hosts": [{"host": h, "label": label, "chosen": picked.get(h), "machines": SZ.offered(h, None)} for h, label in SZ.WHERE.items()]}
 
 
 @app.put("/api/settings/serving", dependencies=A)
@@ -634,7 +655,7 @@ def settings_staging(body: dict):
     from . import settings as ST
 
     try:
-        return ST.set_local_limit(ctx(), body.get("local_limit_mb"))
+        return _settings_out(ST.set_local_limit(ctx(), body.get("local_limit_mb")))
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
 
@@ -644,7 +665,7 @@ def settings_costs(body: dict):
     """{confirm_above_usd}: the estimate above which a form asks again before starting work on a cloud."""
     from . import settings as ST
 
-    return ST.set_costs(ctx(), body.get("confirm_above_usd"))
+    return _settings_out(ST.set_costs(ctx(), body.get("confirm_above_usd")))
 
 
 @app.post("/api/costs/estimate", dependencies=A)
@@ -1369,6 +1390,68 @@ def project_staging_request(pid: str, rid: str):
     return _staging_call(TF.request, ctx(), pid, rid)
 
 
+@app.get("/api/projects/{pid}/staging/health", dependencies=A)
+def project_staging_health(pid: str, history: int = 0):
+    """The deployed model's health as last recorded: {status: healthy | unhealthy | unknown | asleep | stopped,
+    text, since, checked_at, answering, requests, errors, error_rate, p50_ms, p95_ms, target, reasons}. With
+    `history=N`, also the last N recorded checks. Never runs a check."""
+    from .staging import health as HL
+
+    c = ctx()
+    out = _staging_call(HL.get, c, pid)
+    return {**out, "history": HL.history(c, pid, limit=history)["rows"]} if history else out
+
+
+@app.post("/api/projects/{pid}/staging/health/check", dependencies=A)
+def project_staging_health_check(pid: str):
+    """Run one check now and record it. {…the health…, changed, alert: the message that went out, or null}."""
+    from .staging import health as HL
+
+    return _staging_call(HL.check, ctx(), pid)
+
+
+@app.put("/api/projects/{pid}/staging/health/target", dependencies=A)
+def project_staging_health_target(pid: str, body: dict):
+    """{p95_ms?, error_rate?}: what healthy means for this deployment."""
+    from .staging import health as HL
+
+    return _staging_call(HL.set_target, ctx(), pid, body.get("p95_ms"), body.get("error_rate"))
+
+
+@app.get("/api/alerts", dependencies=A)
+def alerts_get():
+    """{webhook_set, unhealthy: [{project, model_version, text, since}]}: whether a webhook is set (never its
+    address), and every deployed model that is unhealthy now. The app reads this to show a notification."""
+    from . import project_state as PS
+    from . import projects as PR
+    from . import settings as ST
+
+    c = ctx()
+    bad = []
+    for pr in PR.listing(c):
+        try:
+            for rec in (PS.read(c, pr["id"])[0].get("staging") or {}).values():
+                h = (rec or {}).get("health") or {}
+                if rec and rec.get("status") == "running" and h.get("status") == "unhealthy":
+                    bad.append({"project": pr["id"], "name": pr.get("name") or pr["id"], "model_version": rec.get("model_version"), "text": h.get("text"), "since": h.get("since")})
+        except Exception:  # noqa: BLE001
+            continue
+    return {"webhook_set": bool(((ST.get(c).get("alerts") or {}).get("webhook_url"))), "unhealthy": bad}
+
+
+@app.put("/api/settings/alerts", dependencies=A)
+def settings_alerts(body: dict):
+    """{webhook_url}: where a message goes when a deployed model turns unhealthy or recovers. "" turns it off.
+    Answers {webhook_set}: the address is never sent back."""
+    from . import settings as ST
+
+    try:
+        out = ST.set_alerts(ctx(), body.get("webhook_url"))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    return {"webhook_set": bool((out.get("alerts") or {}).get("webhook_url"))}
+
+
 @app.get("/api/projects/{pid}/staging/live", dependencies=A)
 def project_staging_live(pid: str):
     """The small card that follows every tab: {state: stopped | idle | handling, label, text, copies, running, line}."""
@@ -1449,13 +1532,36 @@ def project_staging_versions(pid: str):
 
 
 @app.post("/api/projects/{pid}/staging/versions/{n}/rollback", dependencies=A)
-def project_staging_rollback_to(pid: str, n: int):
-    """Put version n back on the endpoint, as a job."""
-    from .staging import traffic as TF
+def project_staging_rollback_to(pid: str, n: int, body: dict | None = None):
+    """{reason}: put version n back, through the same one-job deploy, as a job. The reason is required and kept
+    with who did it. Follow it with GET /api/projects/{pid}/deploy, like any deploy."""
+    from .staging import rollback as RB
 
     c = ctx()
-    _staging_call(TF.versions, c, pid)
-    return {"job": _job(lambda _p: TF.rollback_to(c, pid, n), f"rolling staging for {pid} back to version {n}")}
+    why = " ".join(str((body or {}).get("reason") or "").split())
+    if not why:
+        raise HTTPException(400, "Say why: a roll back is recorded with its reason.")
+    if not any(r["n"] == n for r in _staging_call(RB.earlier, c, pid)):
+        raise HTTPException(400, f"There is no earlier version {n} to go back to.")
+    return {"job": _job(lambda _p: RB.go(c, pid, n, why), f"rolling {pid} back to version {n}")}
+
+
+@app.get("/api/projects/{pid}/staging/rollbacks", dependencies=A)
+def project_staging_rollbacks(pid: str):
+    """Every roll back of this deployment, newest first: {rows: [{at, by, from, to, version, reason, auto}], auto:
+    {minutes, on, text}, text}."""
+    from .staging import rollback as RB
+
+    return _staging_call(RB.history, ctx(), pid)
+
+
+@app.put("/api/projects/{pid}/staging/rollbacks/auto", dependencies=A)
+def project_staging_rollback_auto(pid: str, body: dict):
+    """{minutes}: for the first so many minutes after each deploy, put the previous version back by itself when a
+    health check finds the new one unhealthy. 0 or null turns it off."""
+    from .staging import rollback as RB
+
+    return _staging_call(RB.set_auto, ctx(), pid, body.get("minutes"))
 
 
 @app.get("/api/projects/{pid}/shadow", dependencies=A)
@@ -2671,6 +2777,26 @@ def backtest(name: str):
     return m
 
 
+def _start_health_watch(every_s: float = 60.0) -> threading.Thread:
+    """While the service runs, check every deployed model once a minute and record the result. A model that turns
+    unhealthy sends its message from here, whether or not a window is open on it."""
+    def loop():
+        import time
+
+        from .staging import health as HL
+
+        while True:
+            time.sleep(every_s)
+            try:
+                HL.watch_once(ctx(), system=True)  # the app's service: a change is a notification on this computer
+            except Exception:  # noqa: BLE001  the watch never takes the service down
+                pass
+
+    th = threading.Thread(target=loop, daemon=True, name="cst-health-watch")
+    th.start()
+    return th
+
+
 def _job(fn, label: str) -> str:
     jid = uuid.uuid4().hex[:12]
     JOBS[jid] = {"id": jid, "status": "queued", "progress": 0.0, "message": label, "result": None, "log": [label], "compute": "local"}
@@ -3487,6 +3613,7 @@ def serve(host: str = "127.0.0.1", port: int = 0, token: str | None = None, ui: 
     from .workflows import start_scheduler
 
     start_scheduler(ctx)
+    _start_health_watch()
     config = uvicorn.Config(app, log_level="warning", ws_ping_interval=30)
     server = uvicorn.Server(config)
     import signal as _signal
