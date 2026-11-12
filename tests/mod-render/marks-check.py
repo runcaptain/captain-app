@@ -1,15 +1,16 @@
 """Exit 0 when every vendor mark in the marks strip drew, 1 when one is blank.
 
-shot-check.sh opens a helper dialog that draws six marks at 32 px, one per 64 px cell, on a pure magenta
+shot-check.sh opens a helper dialog that draws six marks at 32 px, one per cell, on a pure magenta
 background no real screen uses: AWS, Azure, Amazon Redshift, Amazon Athena and SQL Server (the five full-colour
 ones, drawn through image()), then Snowflake (a tinted one, drawn through svg(), as the control). This finds the
 magenta strip in the shot, cuts it into six cells, and counts the pixels in each that are not magenta. A drawn mark
-covers 10% to 25% of its cell. A blank one covers nothing.
+covers 10% to 25% of its cell. A blank cell reads 1% to 2% (the dialog's rounded corner). A blank one covers nothing.
 
 Why it exists: on 2026-11-12 the five full-colour marks were blank in every picture from the test window and
-nobody could tell from a pass. A full-colour mark is loaded in the background and is blank the first time a screen
-shows it. shot-check.sh opens this strip once after launch to load them, and again at the end for this check, so a
-blank here means a mark that cannot be drawn at all: a missing file, a file the app can't read, a broken decoder.
+nobody could tell from a pass. A full-colour mark is loaded in the background the first time a frame shows it,
+and a covered window draws only when a picture asks. shot-check.sh opens this strip fresh, leaves it alone for
+three seconds and takes one picture, so a blank here means either that a picture no longer waits for the files its
+frame started loading, or that a mark can't be drawn at all (a missing file, a broken decoder).
 """
 import sys
 
@@ -40,14 +41,14 @@ for i, name in enumerate(NAMES):
             total += 1
             other += 0 if magenta(px[x, y]) else 1
     share = other / max(1, total)
-    if share < 0.03:
+    if share < 0.05:
         blank.append(name)
     print(f"  {name}: {share:.0%} of its cell is drawn")
 if blank == [NAMES[-1]] or NAMES[-1] in blank and len(blank) == len(NAMES):
     print("the control mark is blank too: the strip itself did not draw, so this says nothing about the marks")
     sys.exit(1)
 if blank:
-    print(f"{sys.argv[1]}: drew blank: {', '.join(blank)}. They were loaded once before this picture, so this is not the "
-          "first-show blank: the mark's file is missing, unreadable, or the app can't decode it.")
+    print(f"{sys.argv[1]}: drew blank: {', '.join(blank)}. Either a picture no longer waits for the files its frame "
+          "started loading, or the mark's file is missing or can't be decoded.")
     sys.exit(1)
 print(f"{sys.argv[1]}: all six marks drew")

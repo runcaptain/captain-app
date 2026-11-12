@@ -3725,6 +3725,24 @@ impl AppWindow {
             Request::Control { cmd, reply } if cmd.get("shot").and_then(Value::as_str).is_some() => {
                 let path = cmd["shot"].as_str().unwrap_or_default().to_owned();
                 cx.spawn_in(window, async move |_, cx| {
+                    // CAPTAIN: a frame drawn on request is also what starts loading a full-colour image (a
+                    // vendor's mark) that no frame has shown yet, so the picture would have a gap where it goes:
+                    // every picture from a covered test window was missing the AWS and Azure marks. Draw, wait
+                    // for the loads that draw started, and draw again, until a frame starts none. Three rounds
+                    // and two seconds at most, so a load that never ends can't hold a picture up.
+                    for _ in 0..3 {
+                        let drew = cx.update(|window, cx| {
+                            window.refresh();
+                            window.draw(cx).clear(cx);
+                        });
+                        if drew.is_err() || gpui::pending_asset_loads() == 0 {
+                            break;
+                        }
+                        let waiting = Instant::now();
+                        while gpui::pending_asset_loads() > 0 && waiting.elapsed() < Duration::from_millis(700) {
+                            cx.background_executor().timer(Duration::from_millis(20)).await;
+                        }
+                    }
                     let saved = cx.update(|window, cx| {
                         window.refresh();
                         window.draw(cx).clear(cx);
