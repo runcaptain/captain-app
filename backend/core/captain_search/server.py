@@ -531,18 +531,45 @@ def projects_list():
 
 @app.post("/api/projects", dependencies=A)
 def project_create(body: dict):
-    """{name, description?, brands?, kind?, icon?}. With kind (a recipe id, GET /api/recipes) the project starts with that
-    recipe's input slots."""
+    """{name, description?, brands?, icon?, kind?, what?, slots?, trainer?}. `kind` is a recipe id (GET /api/recipes)
+    or "other" with `what`, the person's own description of what they are building. `slots` is the list of inputs
+    as the form was left: [{label, kind?, id?, required?, why?}], which replaces the recipe's when given. `trainer` is
+    {how: builtin | command | repo, command?, repo?}. Everything is checked before the project exists."""
     from . import project_state as PS
     from . import projects as PR
     from . import recipes as RC
 
     c = ctx()
     kind = body.get("kind") or None
-    if kind:
+    if kind and kind != PS.OTHER:
         RC.get(c, kind)  # an unknown kind fails before the project exists
+    custom = any(body.get(k) is not None for k in ("what", "slots", "trainer")) or kind == PS.OTHER
+    if custom:
+        try:  # the same checks `start` makes, on nothing, so a bad form leaves no half-made project
+            if kind == PS.OTHER and not str(body.get("what") or "").strip():
+                raise ValueError("Say what you are building, in a few words.")
+            seen = set()
+            for raw in body.get("slots") or []:
+                if not str((raw or {}).get("label") or "").strip():
+                    raise ValueError("Every input needs a name.")
+                got = RC.check_slot({**({"id": raw["id"]} if raw.get("id") else {}), "label": raw["label"], "accepts": [raw["kind"]] if raw.get("kind") else ["any"]})
+                if got["id"] in seen:
+                    raise ValueError(f"Two inputs are named {str(raw['label']).strip()!r}. Give each its own name.")
+                seen.add(got["id"])
+            t = body.get("trainer")
+            if t is not None and str((t or {}).get("how") or "") not in PS.TRAINERS:
+                raise ValueError("The trainer is one of: builtin, command or repo.")
+            if t and t.get("how") == "repo" and not str(t.get("repo") or "").strip():
+                raise ValueError("Give the address of your training repo.")
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
     p = PR.create(c, str(body.get("name", "")), body.get("description", ""), body.get("brands"), body.get("icon"))
-    if kind:
+    if custom:
+        try:
+            PS.start(c, p["id"], kind, body.get("what"), body.get("slots"), body.get("trainer"))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+    elif kind:
         PS.set_kind(c, p["id"], kind)
     return {**p, "kind": kind}
 

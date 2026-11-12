@@ -97,8 +97,11 @@ export default class CaptainForms extends View {
    *  the reload runs on its own task. Awaiting with the click's cx left the pick unshown: Edgar clicked Compare and
    *  With in "Run a backtest" and nothing changed. */
   pick(cx, f, o) {
+    const changed = this.values[f.key] !== o.value;
     this.values[f.key] = o.value;
     delete this.errors[f.key];
+    // A field whose starting value follows this pick (how a project trains follows what it builds) starts again.
+    if (changed) for (const g of this.task.fields) if (g.resetOn === f.key && typeof g.default === "function") this.values[g.key] = g.default(this.values);
     cx.notify();
     cx.spawn(async (cx) => this.loadOptions(cx));
   }
@@ -123,6 +126,7 @@ export default class CaptainForms extends View {
   /** Make the input state for every text field that's shown now. Never call it from render. */
   ensureStates() {
     for (const f of this.shown()) {
+      if (f.kind === "rows") { this.ensureRows(f); continue; }
       if (f.kind === "choice" || f.kind === "toggle" || f.kind === "note" || f.kind === "runs-on" || this.states[f.key]) continue;
       const long = f.kind === "long";
       // "e.g." so an example never reads as a value that's already filled in.
@@ -134,6 +138,61 @@ export default class CaptainForms extends View {
       st.on("change", () => { this.values[f.key] = st.value(); delete this.errors[f.key]; });
       this.states[f.key] = st;
     }
+  }
+
+  /** An editable list (a project's inputs): filled from what was picked above, and the person's from then on. It is
+   *  filled again only when that pick changes. Each row has its own text state. Never call it from render. */
+  ensureRows(f) {
+    this.rowStates ??= {}; this.rowSeed ??= {}; this.rowUid ??= 0;
+    const on = f.seedOn ? f.seedOn(this.values) : "";
+    if (this.values[f.key] === undefined || this.rowSeed[f.key] !== on) {
+      this.rowSeed[f.key] = on;
+      this.values[f.key] = (f.seed?.(this.ctx, this.values) ?? []).map((r) => ({ ...r, uid: ++this.rowUid }));
+    }
+    for (const row of this.values[f.key]) {
+      if (this.rowStates[row.uid]) continue;
+      const st = InputState.new({ placeholder: f.placeholder ? `e.g. ${f.placeholder}` : "" });
+      if (row.label) st.set_value(String(row.label));
+      st.on("change", () => { row.label = st.value(); delete this.errors[f.key]; });
+      this.rowStates[row.uid] = st;
+    }
+  }
+
+  /** One row more, or one fewer. */
+  rowAdd(cx, f) {
+    (this.values[f.key] ??= []).push({ label: "", kind: f.kinds?.at(-1)?.value ?? "any", uid: ++this.rowUid });
+    this.ensureRows(f);
+    cx.notify();
+  }
+
+  rowRemove(cx, f, uid) {
+    this.values[f.key] = (this.values[f.key] ?? []).filter((r) => r.uid !== uid);
+    delete this.rowStates[uid];
+    cx.notify();
+  }
+
+  rowsField(c, f) {
+    const rows = this.values[f.key] ?? [];
+    const kinds = f.kinds ?? [];
+    return v_flex().id(`f-${f.key}`).gap(6)
+      .children(rows.map((row, i) => v_flex().id(`f-${f.key}-row-${i}`).p(8).gap(6).border_1().border_color(c.rule).bg(c.surface)
+        .child(h_flex().gap(8).items_center()
+          .child(div().id(`f-${f.key}-row-${i}-name`).flex_1().min_w(0).h(30).px(10).flex().items_center().bg(c.surface).border_1().border_color(c.grey300).cursor_text()
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .child(this.rowStates?.[row.uid] ? Input.new(this.rowStates[row.uid]).w_full().text_size(13).text_color(c.navy) : div().h(14).w(120).bg(c.surface2)))
+          .child(div().id(`f-${f.key}-row-${i}-remove`).flex_none().px(8).h(26).flex().items_center().cursor_pointer().text_size(12.5).text_color(c.grey900).border_1().border_color(c.grey300)
+            .on_click((_e, cx) => this.rowRemove(cx, f, row.uid)).child("Remove")))
+        .when(kinds.length > 0, (e) => e.child(h_flex().flex_wrap().gap(6).items_center()
+          .child(div().text_size(12).text_color(c.grey500).child(f.kindLabel ?? "What it is"))
+          .children(kinds.map((k) => {
+            const on = row.kind === k.value;
+            return div().id(`f-${f.key}-row-${i}-kind-${k.value}`).h(24).px(8).flex().flex_none().items_center().cursor_pointer().text_size(12).border_1()
+              .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy)
+              .on_click((_e, cx) => { row.kind = k.value; cx.notify(); }).child(k.label);
+          }))))))
+      .when(!rows.length, (e) => e.child(div().id(`f-${f.key}-empty`).text_size(12.5).text_color(c.grey500).child(f.empty ?? "Nothing yet.")))
+      .child(h_flex().child(div().id(`f-${f.key}-add`).h(28).px(10).flex().items_center().cursor_pointer().text_size(12.5).text_color(c.navy).border_1().border_color(c.grey300)
+        .on_click((_e, cx) => this.rowAdd(cx, f)).child(f.addLabel ?? "Add one")));
   }
 
   // Fields shown now, with the services' own fields (a sign-in's, a compute kind's) expanded.
@@ -231,7 +290,8 @@ export default class CaptainForms extends View {
           .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(l.tone === "warn" ? c.warn : l.tone === "bad" ? c.fail : c.grey900).child(l.text))
           .when(Boolean(l.chip), (e) => e.child(Badge(c, l.chip, l.chip === "simulated" ? "warn" : "neutral")))));
     }
-    if (f.kind === "choice") {
+    if (f.kind === "rows") control = this.rowsField(c, f);
+    else if (f.kind === "choice") {
       const opts = this.options[f.key];
       control = !opts ? div().h(30).w(160).bg(c.surface2)
         : !opts.length ? div().text_size(12.5).text_color(c.grey500).child(f.empty ?? "Nothing to pick yet.")
@@ -268,6 +328,8 @@ export default class CaptainForms extends View {
     if (this.busy) return;
     this.errors = {};
     for (const f of this.shown()) {
+      // An editable list is read from its text boxes as they stand now, not from the last change heard.
+      if (f.kind === "rows") for (const row of this.values[f.key] ?? []) if (this.rowStates?.[row.uid]) row.label = this.rowStates[row.uid].value();
       const v = this.values[f.key];
       if (f.required && (v === undefined || v === null || String(v).trim() === "")) this.errors[f.key] = `${f.label} is needed.`;
     }
