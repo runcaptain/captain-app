@@ -20,7 +20,59 @@ from ..model.entities import Connection, DatasetKind, Network, Provenance
 from ..storage.backend import AlreadyExists, Conflict, NotFound
 from .. import workspace as wsp
 
-app = typer.Typer(no_args_is_help=True, add_completion=False, help="Captain Search Tools")
+class _App(typer.Typer):
+    """`cst` run as a program ends the moment its work is done and printed.
+
+    Without this, Python 3.14 can freeze on the way out. The library is Apache Arrow (pyarrow): it runs work on
+    its own C++ thread pool, Python 3.14 hangs any thread that touches Python once shutdown has begun
+    (PyThread_hang_thread), and the pool's destructor, run by exit(), then waits for that thread for ever
+    (arrow::internal::ThreadPool::Shutdown). Seen 2026-11-11: `cst projects staging-connect` printed its answer
+    and never returned, 9 runs in 24, which froze the script that ran it. With this, 0 in 50.
+
+    Everything a normal exit does that cst could rely on still happens, in the same order: threads that are not
+    daemons are waited for, exit hooks run, and what was printed is flushed. Only the interpreter's teardown and
+    the C++ destructors after it are skipped. Calls with arguments (tests, and code that embeds the app) are
+    untouched."""
+
+    def __call__(self, *args, **kwargs):
+        if args or kwargs:
+            return super().__call__(*args, **kwargs)
+        import os
+        import sys
+        import traceback
+
+        code = 0
+        try:
+            super().__call__()
+        except SystemExit as e:
+            code = e.code if isinstance(e.code, int) else 0 if e.code is None else 1
+            if e.code is not None and not isinstance(e.code, int):
+                print(e.code, file=sys.stderr)
+        except KeyboardInterrupt:
+            code = 130
+        except BaseException:  # noqa: BLE001  shown as Python would show it, then the same hard exit
+            traceback.print_exc()
+            code = 1
+        # Everything a normal exit does that cst could rely on, in the same order, and only then the hard exit:
+        # wait for threads that are not daemons, run the exit hooks (logging, executors), flush what was printed.
+        # What is skipped is the interpreter's teardown and the C++ destructors after it, where the freeze is.
+        import atexit
+        import threading
+
+        for step in (threading._shutdown, atexit._run_exitfuncs):
+            try:
+                step()
+            except BaseException:  # noqa: BLE001  a hook that fails must not hide the command's own result
+                traceback.print_exc()
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except Exception:  # noqa: BLE001  a closed pipe must not turn a finished command into a failure
+                pass
+        os._exit(code)
+
+
+app = _App(no_args_is_help=True, add_completion=False, help="Captain Search Tools")
 ws_app = typer.Typer(no_args_is_help=True, help="Workspaces (one per bucket prefix)")
 secret_app = typer.Typer(no_args_is_help=True, help="Secrets in the OS keychain")
 conn_app = typer.Typer(no_args_is_help=True, help="Database connections")

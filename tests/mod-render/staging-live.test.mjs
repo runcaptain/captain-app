@@ -130,12 +130,17 @@ t = h.text();
 const staged = (await get('/api/projects/outdoor/staging')).staged;
 assert.equal(staged.status, 'running'); assert.equal(staged.kind, 'local');
 assert.equal(byId(h, 'ship-name')[0].kids.join(''), staged.model_version.replace(/^.*\//, ''), 'the model version names the page');
+// The header is compact: how long it has been up, when it stops and what it costs here sit behind Details.
+assert.ok(!/Stops by itself in/.test(t), 'folded by default');
+await h.click('ship-details-toggle');
+t = h.text();
 assert.ok(/Stops by itself in (3 h 5\d min|4 h) if nobody uses it\./.test(t), 'the countdown to the automatic stop');
 // The cost line is the shared one (kit/cost.js, POST /api/costs/estimate): the same words every form uses.
 const est = await post('/api/costs/estimate', { kind: 'staging', where: 'local', size: {} });
 assert.ok(est.free && est.text, JSON.stringify(est));
 await until(h, () => byId(h, 'ship-cost-text').length === 1 && h.text().includes(est.text), `the shared cost line: ${est.text}`);
 assert.equal(byId(h, 'ship-cost-billing').length, 0, 'nothing bills on this computer');
+await h.click('ship-details-toggle'); // folded again, as a person finds it
 assert.equal((await published(h, (v) => v?.staging_cost?.free === true))?.staging_cost?.place, 'This computer', 'agents see where it runs and that it is free');
 assert.equal(h.byIdPrefix('ship-confirm').length, 0, 'nothing to confirm for this computer');
 // The header answers without a click: is it up, where, the address with Copy, the key, a ready test request.

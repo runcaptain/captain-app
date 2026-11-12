@@ -100,18 +100,39 @@ let h = await open();
 let t = h.text();
 assert.deepEqual(h.byIdPrefix('dep-tab-').map((e) => e.kids.find((k) => typeof k === 'string')), ['Requests', 'Try it', 'Traffic', 'Copies', 'Metrics', 'Versions', 'Logs', 'Settings', 'Cost'], 'the tabs, in the design order');
 assert.ok(t.includes('48 requests in the last hour, 1 error.'), `the chart says what it shows: ${t}`);
+// The chart is folded to one line on a tab other than Requests, so the tab's content is in view. Opening it is
+// remembered, and it then stays open on every tab.
+assert.equal(byId(h, 'dep-chart-bars').length, 0, 'folded on the Try it tab');
+assert.ok(t.includes('Show the chart') && byId(h, 'dep-range').length === 0, 'one line, with a way to open it');
+assert.equal(byId(h, 'dep-body').length, 1, "the tab's content scrolls by itself under a fixed header and tab bar");
+await h.click('dep-chart-toggle');
+t = h.text();
+assert.equal(store['captain.deployment.chart'], 'open', 'the choice is kept on this computer');
 assert.ok(bars(h, 'dep-chart-bars').length >= 4, 'two bars, the error mark and the version line');
 assert.ok(t.includes('highest 40'), 'the largest slice is printed, so the height means something');
-assert.ok(byId(h, 'dep-live-state')[0].kids.includes('Idle') && t.includes('Copies: 1 live. Requests: 0 running.'), 'the live card: idle is a state, not a fault');
+assert.ok(byId(h, 'dep-live-state')[0].kids.includes('Idle') && t.includes('1 copy live') && t.includes('0 requests running'), 'the live state in the header chips: idle is a state, not a fault');
+// Folded by default: how long it has been up and the cost line of a local endpoint sit behind Details.
+assert.deepEqual([byId(h, 'ship-status').length, byId(h, 'ship-line-cost').length, byId(h, 'ship-where').length], [0, 0, 1], 'a compact header');
+await h.click('ship-details-toggle');
+assert.deepEqual([byId(h, 'ship-status').length, byId(h, 'ship-line-cost').length, byId(h, 'ship-details-rows').length], [1, 1, 1], 'Details opens the rest');
+await h.click('ship-details-toggle');
 await h.click('dep-range-24h');
 for (let i = 0; i < 40 && !h.mod.ship.met; i++) await h.idle(30);
 assert.ok(sent.some((x) => x[1].endsWith('/staging/metrics?range=24h')) && h.text().includes('48 requests in the last 24 hours'), 'the time range is shared and asked again');
+
+// With no choice made, the chart is open on Requests and folded elsewhere. A person who folds it keeps it folded.
+delete store['captain.deployment.chart'];
+await tab(h, 'requests', (x) => x.reqs);
+assert.equal(byId(h, 'dep-chart-bars').length, 1, 'open on Requests by default');
+await h.click('dep-chart-toggle');
+assert.ok(store['captain.deployment.chart'] === 'folded' && byId(h, 'dep-chart-bars').length === 0 && h.text().includes('48 requests in the last 24 hours'), 'folded, and the sentence stays');
+delete store['captain.deployment.chart'];
 
 // Copies: the one copy with its startup time and what it handled, idle said in a sentence, and Stop asks first.
 await tab(h, 'copies', (s) => s.copiesD);
 t = h.text();
 assert.ok(t.includes('a1b2c3d4') && t.includes('0.412 s') && t.includes('212 MB') && t.includes('Idle and ready: nothing has called it for 10 min.'), `the copy: ${t}`);
-assert.ok(t.includes('Stopping the copy stops the endpoint.') && t.includes('Copies: 1 live. Requests: 0 running.'), 'what stopping means, and the live card is still there');
+assert.ok(t.includes('Stopping the copy stops the endpoint.') && byId(h, 'dep-live-state').length === 1, 'what stopping means, and the live state is still in view');
 await h.click('dep-copy-0-stop');
 assert.ok(h.text().includes('Stop staging? The endpoint goes away and its log is kept.'), 'Stop asks before it stops');
 h.mod.ship.stopAsk = false;

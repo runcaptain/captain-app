@@ -43,16 +43,21 @@ export function RangePicker(ship, c) {
       .on_click((_e, cx) => { ship.range = id; ship.met = null; ship.loadTab(cx); cx.notify(); }).child(label)));
 }
 
-/** The header's chart: requests over the chosen range, errors in red, a line where each version was staged. */
+/** The header's chart: requests over the chosen range, errors in red, a line where each version was staged. It is
+ *  short, and it folds to one line so a tab's content stays in view: open on Requests, folded on the other tabs,
+ *  and once a person opens or folds it themselves that choice is kept (ship.chartShown). */
 export function HeaderChart(ship, c) {
-  const m = ship.met;
+  const m = ship.met, open = ship.chartShown();
+  const toggle = div().id("dep-chart-toggle").flex_none().text_size(12).text_color(c.blue).cursor_pointer()
+    .on_click((_e, cx) => ship.setChart(cx, !open)).child(open ? "Hide the chart" : "Show the chart");
   return v_flex().id("dep-chart").w_full().gap(4)
-    .child(h_flex().gap(8).items_center().flex_wrap()
-      .child(div().text_size(12).font_medium().text_color(c.navy).child("Requests"))
-      .child(div().id("dep-chart-text").flex_1().min_w(160).text_size(12).text_color(c.grey500).child(m ? m.text : "Reading the request log..."))
-      .child(RangePicker(ship, c)))
-    .when(Boolean(m), (e) => e.child(Bars(c, "dep-chart-bars", m.buckets.map((b) => b.requests), {
-      over: m.buckets.map((b) => b.errors), marks: m.markers.map((k) => k.slot), from: when(m.start).slice(5), to: "now" })));
+    .child(h_flex().gap(8).items_center()
+      .child(div().flex_none().text_size(12).font_medium().text_color(c.navy).child("Requests"))
+      .child(div().id("dep-chart-text").flex_1().min_w(0).truncate().text_size(12).text_color(c.grey500).child(m ? m.text : "Reading the request log..."))
+      .when(open, (e) => e.child(RangePicker(ship, c)))
+      .child(toggle))
+    .when(open && Boolean(m), (e) => e.child(Bars(c, "dep-chart-bars", m.buckets.map((b) => b.requests), {
+      height: 52, over: m.buckets.map((b) => b.errors), marks: m.markers.map((k) => k.slot), from: when(m.start).slice(5), to: "now" })));
 }
 
 /** The small card that follows every tab: which of the three states it is in, and the live counts. */
