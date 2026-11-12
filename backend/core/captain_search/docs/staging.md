@@ -87,7 +87,8 @@ endpoint that runs out of memory while loading says so.
 the button on the deployment page) creates what a SageMaker staging target needs, after showing exactly what and
 a confirm: the role the endpoint runs as (it can read the serving bundle, write the request log, pull its image and
 delete its own endpoint, and nothing else), a repository for the serving image, the image, and the compute target.
-The image is built inside your account by AWS CodeBuild from the installed Captain (about 6 minutes, about $0.03),
+The image is built inside your account by AWS CodeBuild from the installed Captain (measured: 78 seconds, about
+$0.01),
 so no Docker is needed on your computer. Everything is named `<prefix>-serving...` and tagged `app=captain`.
 `--remove` takes it all away again and is refused while a model is staged there. `--policy` prints the exact
 policy your login needs, for an admin. A login that lacks a permission is told which step and which action.

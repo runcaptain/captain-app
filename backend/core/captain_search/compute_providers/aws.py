@@ -257,7 +257,10 @@ class SageMakerProvider(_AWS):
     kind, label = "aws-sagemaker", "AWS SageMaker endpoint"
     purposes = ["serve"]
     # Captain's AWS account, us-west-1, ml.t2.medium: demo-bm25@v1 deployed, /invocations matched local results, deleted.
-    live_tested = "2026-11-07"
+    # Staging, 2026-11-11, same account and region, ml.t2.medium: the guided setup built the serving image in the
+    # account (CodeBuild, 78 s), a starter ranker was staged beside its baseline (ready in 126 s), queried, checked,
+    # shadowed, split with simulated shoppers, ramped, rolled back and unstaged, and the setup was removed.
+    live_tested = "2026-11-11"
     can_logs = can_cancel = False
     fields = [
         {"name": "image", "label": "Serving image URI (ECR)", "required": True},
@@ -426,6 +429,11 @@ class SageMakerProvider(_AWS):
                 time.sleep(min(self.POLL_S, 5))
             else:
                 left.append({**r, "error": "SageMaker is still deleting it"})
+        # SageMaker writes lineage records for every endpoint by itself (a context and an action named after it, which
+        # inherit its tags). They cost nothing, but they are Captain's doing, so they go too. Best effort.
+        gone = [r["name"] for r in resources if r["type"] == "endpoint" and not any(x["name"] == r["name"] and x["type"] == "endpoint" for x in left)]
+        if gone:
+            _drop_lineage(sm, lambda name: any(name.startswith(g + "-") and name.endswith("-aws-endpoint") for g in gone))
         # The endpoint's own log group goes with it. Best effort: a login without logs:DeleteLogGroup leaves it, named.
         for r in resources:
             if r["type"] == "endpoint" and not any(x["name"] == r["name"] and x["type"] == "endpoint" for x in left):
@@ -503,3 +511,35 @@ def _aws_sentence(e: BaseException) -> str:
     if isinstance(resp, dict) and resp.get("Error"):
         return f"{getattr(e, 'operation_name', 'the call')}: {resp['Error'].get('Message') or resp['Error'].get('Code')}"
     return str(e) or type(e).__name__
+
+
+def _drop_lineage(sm, mine, artifacts=None) -> int:
+    """Delete SageMaker lineage contexts and actions whose name `mine` accepts, and artifacts whose source
+    `artifacts` accepts, with their associations. Never raises: this is tidying, not the work itself."""
+    n = 0
+
+    def unlink(arn: str) -> None:
+        for side in ("SourceArn", "DestinationArn"):
+            try:
+                for a in sm.list_associations(**{side: arn}).get("AssociationSummaries", []):
+                    sm.delete_association(SourceArn=a["SourceArn"], DestinationArn=a["DestinationArn"])
+            except Exception:  # noqa: BLE001
+                pass
+
+    try:
+        for lister, key, name, arn, deleter in (("list_contexts", "ContextSummaries", "ContextName", "ContextArn", "delete_context"),
+                                                ("list_actions", "ActionSummaries", "ActionName", "ActionArn", "delete_action")):
+            for item in getattr(sm, lister)(MaxResults=100).get(key, []):
+                if mine(item[name]):
+                    unlink(item[arn])
+                    getattr(sm, deleter)(**{name: item[name]})
+                    n += 1
+        if artifacts:
+            for item in sm.list_artifacts(MaxResults=100).get("ArtifactSummaries", []):
+                if artifacts(str((item.get("Source") or {}).get("SourceUri") or "")):
+                    unlink(item["ArtifactArn"])
+                    sm.delete_artifact(ArtifactArn=item["ArtifactArn"])
+                    n += 1
+    except Exception:  # noqa: BLE001
+        pass
+    return n

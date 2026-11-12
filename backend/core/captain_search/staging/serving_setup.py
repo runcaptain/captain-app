@@ -42,7 +42,9 @@ from ..workspace import Context, whoami
 KEY = "serving/setup.yaml"
 TAGS = {"app": "captain", "captain:purpose": "serving"}
 TRUST = lambda svc: {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": svc}, "Action": "sts:AssumeRole"}]}  # noqa: E731
-BUILD_MINUTES, BUILD_USD_PER_MIN = 6, 0.005  # general1.small on Linux, list price; measured build time goes in the record
+# general1.small on Linux, list price. Measured 2026-11-11 in us-west-1: the build itself took 78 seconds, and the
+# whole setup 94. The estimate stays at a cautious 3 minutes: a cold registry or a slow mirror takes longer.
+BUILD_MINUTES, BUILD_USD_PER_MIN = 3, 0.005
 DOCKERFILE = """FROM python:3.12-slim
 WORKDIR /app
 COPY captain_search /app/captain_search
@@ -492,6 +494,11 @@ def teardown(ctx: Context, progress=None) -> dict:
                 sess.client("logs").delete_log_group(logGroupName=name)
             elif t == "ecr-repository":
                 sess.client("ecr").delete_repository(repositoryName=name, force=True)
+                # SageMaker keeps a lineage record of each image an endpoint ran. Those of this repository go too.
+                from ..compute_providers.aws import _drop_lineage
+
+                repo_uri = f"{rec['account']}.dkr.ecr.{rec['region']}.amazonaws.com/{name}"
+                _drop_lineage(sess.client("sagemaker"), lambda _n: False, lambda uri: uri.startswith(repo_uri + ":") or uri.startswith(repo_uri + "@"))
             elif t == "iam-role":
                 iam = sess.client("iam")
                 try:

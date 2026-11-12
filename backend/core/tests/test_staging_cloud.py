@@ -33,6 +33,7 @@ class FakeAWS:
         self.fail_on = None       # a call name that raises
         self.endpoint_fails = False  # the endpoint is created, then goes Failed
         self.runtimes = {}
+        self.lineage = set()       # the lineage records SageMaker writes for endpoints
         self.role_denies = set()   # actions the execution role lacks
         self.iam_refuses = False   # Captain's own sign-in may not ask IAM
 
@@ -60,6 +61,7 @@ class FakeSM:
     def create_endpoint(self, **kw):
         self._do("create_endpoint", kw)
         self.w.endpoints[kw["EndpointName"]] = {**kw, "polls": 0}
+        self.w.lineage |= {f"{kw['EndpointName']}-1794442119-aws-endpoint", f"{kw['EndpointName']}-1794442119-1-aws-endpoint", "someone-elses-endpoint-1-aws-endpoint"}
 
     def update_endpoint(self, **kw):
         self._do("update_endpoint", kw)
@@ -101,6 +103,22 @@ class FakeSM:
 
     def delete_log_group(self, logGroupName):
         self.w.calls.append(("delete_log_group", {"name": logGroupName}))
+
+    # lineage: SageMaker makes a context and an action for every endpoint, by itself
+    def list_contexts(self, **kw):
+        return {"ContextSummaries": [{"ContextName": n, "ContextArn": f"context/{n}"} for n in self.w.lineage if n.endswith("-aws-endpoint") and "-1-" not in n]}
+
+    def list_actions(self, **kw):
+        return {"ActionSummaries": [{"ActionName": n, "ActionArn": f"action/{n}"} for n in self.w.lineage if "-1-aws-endpoint" in n]}
+
+    def list_associations(self, **kw):
+        return {"AssociationSummaries": []}
+
+    def delete_context(self, ContextName):
+        self.w.lineage.discard(ContextName)
+
+    def delete_action(self, ActionName):
+        self.w.lineage.discard(ActionName)
 
     def list_endpoints(self, **kw):
         return {"Endpoints": [{"EndpointName": n, "EndpointArn": f"endpoint/{n}"} for n in self.w.endpoints]}
@@ -194,6 +212,7 @@ def test_stage_query_and_unstage_leave_nothing_behind(ws, aws):  # noqa: F811
     from captain_search import cost_estimates as CE
     assert CE.estimate(ws, "staging", "sm", {"instances": 1, "instance_type": "ml.t2.medium"})["low"] == r["cost"]["hourly_usd"]
     assert ("delete_log_group", {"name": "/aws/sagemaker/Endpoints/captain-search-test-shop-staging"}) in aws.calls  # its log group too
+    assert aws.lineage == {"someone-elses-endpoint-1-aws-endpoint"}  # the lineage records SageMaker made for it go, and only those
     assert not aws.models and not aws.configs and not aws.endpoints
     assert C.tagged(ws, C.get(ws, "sm"), "shop", "staging") == []
 
