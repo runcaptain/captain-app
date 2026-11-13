@@ -231,10 +231,14 @@ export async function sendUndo(sessionId, editId, by = "you") {
   return api(`/api/weights/sessions/${enc(sessionId)}/undo`, { method: "POST", body: { edit: editId, by }, timeout: 30 });
 }
 
-/** What can be brought in from a folder or a storage address: {versions: [{path, address, name, description}],
- *  count}. The services only list and read there. */
-export async function readRegistry(from) {
-  return api(`/api/weights/registry?from=${enc(from)}`, { timeout: 60 });
+/** What can be brought in. With no `from`: from every model registry connected to the workspace, {registries:
+ *  [{id, name, read, versions: [{id, name, path, address, description, made, can_open, why_not, here}]}], count}.
+ *  A registry is named in words, never by its address. With a folder or a storage address: {versions: [{path,
+ *  address, name, description}], count}. The services only list and read there. */
+export async function readRegistry(from = null) {
+  // Two plain calls, so the services' address test reads each address where it is asked for.
+  if (from) return api(`/api/weights/registry?from=${enc(from)}`, { timeout: 60 });
+  return api("/api/weights/registry", { timeout: 60 });
 }
 
 /** Bring a trained model in: the services copy its files into this workspace under `name`. `address` is a

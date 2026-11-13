@@ -40,5 +40,14 @@ def rankers(model: str):
 
 
 @router.get("/registry")
-def registry(where: str = Query(..., alias="from")):
+def registry(where: str | None = Query(None, alias="from")):
+    """With no `from`: what can be brought in from every model registry attached to the workspace. With the id of
+    an attached registry: that one. With a folder or an address (from a terminal): the versions under it."""
+    c = _ctx()
+    if where in (None, ""):
+        return R.attached(c)
+    from .. import attach as AT
+
+    if any(r.get("id") == where for r in AT.registries(c)):
+        return R.attached(c, where)
     return R.registry(where)

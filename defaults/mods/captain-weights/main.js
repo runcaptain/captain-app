@@ -34,7 +34,7 @@ import { partsState, partsFacts, partsPin, openPart, loadPart, loadRanker, showV
 import { PartsCanvas, TreeCanvas, partsLayout } from "./partsdraw.js";
 import { AgentStrip, stripHeight } from "./program.js";
 import { SaveLine, saveShows, SAVE_H } from "./save.js";
-import { BringIn, list as listBringIn } from "./bringin.js";
+import { BringIn, list as listBringIn, openBringIn } from "./bringin.js";
 import { stagePartTyped, putBackPart, leavePart } from "./parthand.js";
 import { WalkButtons, walkWords, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
@@ -124,6 +124,8 @@ export default class CaptainWeights extends View {
     this.partInput.on("submit", (_e, ecx) => stagePartTyped(this, ecx ?? cx)); // Enter only stages, as for a neuron
     this.whereInput = InputState.new({ placeholder: "a folder or a storage address" }); // where trained models are kept, typed once (bringin.js)
     this.nameInput = InputState.new({ placeholder: "a name" }); // the name for a model being brought in
+    this.filterInput = InputState.new({ placeholder: "Filter by name" }); // narrows the versions listed in the picker
+    this.filterInput.on("change", (_e, ecx) => (ecx ?? cx).notify());
     this.bring = null;      // the picker for bringing in a trained model, while it is open (bringin.js)
     this.goalInput = InputState.new({ placeholder: "What should the agent fix?" }); // the goal for an agent (program.js)
     this.agentRun = null;   // an agent started from here: {state, goal, job, says} (program.js)
@@ -140,6 +142,7 @@ export default class CaptainWeights extends View {
     if (this.model) this.open(this.model, cx); else this.loadList(cx);
     // For the picture check only (see `show` above): the picker open on a place, as if it had been kept.
     if (this.show?.bringFrom) listBringIn(this, cx, String(this.show.bringFrom));
+    if (this.show?.bring) openBringIn(this, cx);
     this.takeOpen(cx);
     // A link on another screen, the palette or `cst app open` cannot reach this page's props: it sets the shared
     // "open" value and selects this block. Looked at a few times a second, as the other screens do. Reads no data.

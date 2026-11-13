@@ -493,7 +493,27 @@ ranker, named by what follows `rank_`. Any other file beside them (`blend.json` 
 under `other_files` and not read. A tensor that is not float32 (a `logit_scale` saved as float64) is read only: its
 part has `"editable": false` and an edit to it is refused in a sentence.
 
-**What can be brought in.** `cst weights registry <folder or s3://...>` and `GET /api/weights/registry?from=` list the
+**What can be brought in, from the workspace's model registries.** `cst weights registry` with no argument and
+`GET /api/weights/registry` with no `from` list every version in every model registry attached to the workspace,
+grouped by registry. It reads the copy of each registry's manifests and file listing that Captain already keeps, so
+storage is not listed a second time. A registry is named in words (its label when a person gave one, else "Model
+registry"), never by its address. `from=<registry id>` narrows it to one.
+
+```json
+{"count": 3, "can_open": 2, "read_only": true,
+ "registries": [{"id": "0f3a9c1e2b77", "name": "Model registry", "read": true, "count": 3, "says": "3 versions, 2 that can be opened here.",
+   "versions": [{"id": "shop@v2", "name": "shop, v2", "brand": "shop", "architecture": "arch-a", "version": "v2", "path": "arch-a/shop/v2",
+                 "address": "/registry/arch-a/shop/v2", "description": "wider, two layers", "made": "2026-11-12", "files": 10,
+                 "can_open": true, "why_not": null, "here": "shop-model"}]}],
+ "says": "3 versions in 1 model registry. 2 can be opened here. Nothing was written there."}
+```
+
+`can_open` is true when the version holds a session model file. When it is false, `why_not` is a sentence ("This
+version holds no session model file."). `here` is the name the version already has in this workspace, when it was
+brought in before, so a screen opens it and does not copy it again. Versions are newest first. A row's `address` is
+what `import` takes: a screen sends it and does not show it.
+
+**From a folder or an address.** `cst weights registry <folder or s3://...>` and `GET /api/weights/registry?from=` list the
 version folders under a folder or an address: every folder that holds `weights/sess.npz` or `weights/enc.npz`, with the one-line description
 from its `MANIFEST.yaml`. It only lists and reads. Nothing is written there. Each row's `address` is what `import` takes.
 
