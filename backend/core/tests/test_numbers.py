@@ -140,7 +140,21 @@ def test_a_model_that_ran_for_an_hour_and_stopped_did_not_cost_nothing(ws, aws):
     c = NB.cost(ws, "shop")
     assert c["source"] == "times" and c["month_usd"] == pytest.approx(hourly, abs=1e-3) and c["hourly_usd"] == 0.0
     assert "This month: about $0.07." in c["text"] and "from when Captain started and stopped it" in c["text"]
-    assert c["note"] == "AWS reported no hours for it this month" and c["not_from_cloud"].startswith("AWS reported no hours")
+    name = SG.state(ws, "shop")["endpoint"]["name"]
+    assert c["note"] == f"AWS reported no hours for it this month. AWS holds no numbers at all under the name {name}"
+    assert c["not_from_cloud"].startswith("AWS reported no hours")
+    # The answer says what AWS does hold, so the reason is read and not guessed: request numbers and no per-copy ones,
+    aws.metric_list = [{"Namespace": "AWS/SageMaker", "MetricName": "Invocations", "Dimensions": [{"Name": "EndpointName", "Value": name}, {"Name": "VariantName", "Value": "main"}]}]
+    NB.forget()
+    assert "holds its request numbers (Invocations) and none of the numbers each copy reports" in NB.cost(ws, "shop")["note"]
+    # or per-copy numbers kept under a dimension Captain did not ask with.
+    aws.metric_list = [{"Namespace": "/aws/sagemaker/Endpoints", "MetricName": "CPUUtilization",
+                        "Dimensions": [{"Name": "EndpointName", "Value": name}, {"Name": "VariantName", "Value": "AllTraffic"}]}]
+    NB.forget()
+    assert "AWS holds CPUUtilization for it under VariantName=AllTraffic, which is not how Captain asked for them" in NB.cost(ws, "shop")["note"]
+    aws.metric_list = []
+    NB.forget()
+    c = NB.cost(ws, "shop")
     # AWS can't be read at all: the same estimate, with the reason.
     aws.fail_on = "get_metric_data"
     NB.forget()

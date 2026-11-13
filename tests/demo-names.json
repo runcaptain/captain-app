@@ -1,0 +1,5 @@
+{
+  "why": "The only project names a sample, a fixture or a test may use. A name seen in a real account, a real workspace or a real run is never one of them: on 2026-11-12 a customer's project name reached a sample row that way, in a public repository. tests/mod-render/demo-names.test.mjs and backend/core/tests/test_demo_names.py fail on any other name. To use a new one, make it up and add it here.",
+  "ids": ["shop", "trail", "garden", "kids", "gifts", "outdoor", "acme", "bare", "other", "another", "p", "demo", "demo-project", "an-older-project", "another-workspaces-project", "sample", "toys", "books", "42"],
+  "labels": ["Demo shop", "Trail gear", "Garden centre", "Kids range", "Gift finder", "Outdoor store", "Toy shop", "Book shop", "Sample North Pole"]
+}

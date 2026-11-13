@@ -40,7 +40,8 @@ def test_list_show_and_sync_read_the_cloud(ws, aws):  # noqa: F811
     rec = SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
     FL.forget()
     code, out = cst("deployments", "list")
-    assert code == 0 and "Running" in out and "AWS, us-west-1, ml.t2.medium" in out and ws.candidate in out
+    assert code == 0 and "Running" in out and "AWS, us-west-1, ml.t2.medium" in out
+    assert FL.model_words(ws.candidate, "shop") in out and ws.candidate not in out  # the model without its project said twice
     code, out = cst("--json", "deployments", "list")
     rows = json.loads(out)["rows"]
     assert code == 0 and rows[0]["state"] == "running" and rows[0]["name"] == rec["endpoint"]["name"] and rows[0]["link"] == "linked"
@@ -70,7 +71,8 @@ def test_a_stopped_deployment_is_a_row_in_the_list_and_in_its_json(ws):  # noqa:
     SG.unstage(ws, "shop")
     FL.forget()
     code, out = cst("deployments", "list")
-    assert code == 0 and "Stopped" in out and version in out and "1 model, stopped." in out
+    assert code == 0 and "Stopped" in out and FL.model_words(version, "shop") in out and "1 model, stopped." in out
+    assert "This computer, This computer" not in out and "This computer" in out
     rows = json.loads(cst("--json", "deployments", "list")[1])["rows"]
     assert [(r["project"], r["state"]) for r in rows] == [("shop", "stopped")]
     assert json.loads(cst("--json", "deployments", "list", "--running")[1])["rows"] == []

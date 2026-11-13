@@ -140,7 +140,7 @@ def deployments_list(running: bool = typer.Option(False, "--running", help="only
     up = lambda r: r["state"] in UP or r["link"] == "unlinked"  # noqa: E731
     rows = [r for r in d["rows"] if every or not (running or stopped) or (running and up(r)) or (stopped and not up(r))]
     lines = [f"{(r['project_name'] or r['name'] or '')[:22]:22} {r['state_label'][:24]:24} {r['where'][:40]:40} "
-             f"{(r['model_version'] or 'not linked to a project')[:34]:34} {r['state_text']}" for r in rows]
+             f"{(r.get('model_label') or r['model_version'] or 'not linked to a project')[:34]:34} {r['state_text']}" for r in rows]
     lines += [f"Could not ask {a['cloud_label']} ({a['login'] or 'no login'}): {a['error']}" for a in d["asked"] if not a["ok"]]
     emit({**d, "rows": rows}, "\n".join(lines + ([d["text"]] if d["rows"] else [])) if lines else d["text"])
 
@@ -169,7 +169,7 @@ def deployments_show(name: str, span: str = typer.Option("1h", "--range", help="
     n = _do(NB.numbers, c, name, env, span)
     s, cost = n["summary"], n.get("cost") or {}
     lines = [f"{row['project_name']}: {row['state_text']}",
-             f"Model     {row['model_version'] or 'not known'}",
+             f"Model     {row.get('model_label') or row['model_version'] or 'not known'}",
              f"Where     {row['where']}" + (f" ({row['name']})" if row.get("name") else ""),
              f"Since     {row['since'] or 'not known'}" + (f", by {row['by']}" if row.get("by") else ""),
              f"Traffic   {n['text']}"]
