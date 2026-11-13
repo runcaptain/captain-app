@@ -85,9 +85,12 @@ export function partsFrom(d) {
       block: p.layer != null ? p.layer + 1 : undefined, heads: p.heads ?? null, side: p.side ?? null, embeds: p.embeds ?? null, guessed: p.meaning_from === "name",
       hidden: p.hidden ?? null, inputs: p.inputs ?? null, outputs: p.outputs ?? null, tensors };
   });
-  const from = typeof d.source === "string" ? d.source : d.source?.from ? `Brought in from ${d.source.from}` : "";
+  // Where it came from is a folder or a storage address. The page never shows it raw: it says which of the two
+  // it is, and keeps the address for a person to copy.
+  const address = typeof d.source === "string" ? "" : String(d.source?.from ?? "");
+  const from = typeof d.source === "string" ? d.source : !address ? "" : /^[a-z][a-z0-9+.-]*:\/\//i.test(address) ? "Brought in from your model storage" : "Brought in from a folder on this computer";
   return { id: d.id, name: d.name ?? d.id, kind: "parts", kind_words: cap(d.kind_says ?? d.kind_words ?? "trained model"), parameters: d.parameters, width: d.width ?? null,
-    source: from, read_only: d.can?.says ?? null, wiring: d.wiring_says ?? "", heads_words: d.heads ? "" : d.heads_says ?? "",
+    source: from, source_address: address, read_only: d.can?.says ?? null, wiring: d.wiring_says ?? "", heads_words: d.heads ? "" : d.heads_says ?? "",
     parts, rankers: (d.rankers ?? []).map((r) => ({ id: r.name, name: r.name, trees: r.trees ?? null, inputs_count: r.inputs ?? null })) };
 }
 
@@ -124,6 +127,23 @@ export async function readPartNearest(sessionId, t, row) {
   const r = await api(`/api/weights/sessions/${enc(sessionId)}/nearest?${query({ tensor: t.how.tensor, row, top: 8, watch: 1 })}`, { timeout: 30 });
   if (!r?.ok) return r ?? { ok: false };
   return { ok: true, data: { row: r.data?.row ?? row, name: r.data?.label ?? null, nearest: (r.data?.nearest ?? []).map((x) => ({ row: x.row, name: x.label ?? null, similarity: x.cosine })) } };
+}
+
+/** What each row of a table stands for, when the services know: {labels: [one per row] or null, says, sure}.
+ *  `says` is the services' sentence about where the names came from, and `sure` false means a row's place is a
+ *  guess. A route that is not there yet answers as no names. */
+export async function readPartLabels(sessionId, t) {
+  const r = await api(`/api/weights/sessions/${enc(sessionId)}/labels?${query({ tensor: t.how.tensor })}`, { timeout: 20 });
+  const d = r?.ok ? r.data ?? {} : {};
+  return { ok: true, data: { labels: Array.isArray(d.labels) ? d.labels : null, says: d.labels_says ?? "", sure: d.sure ?? null } };
+}
+
+/** A model's rankers side by side: {says, by: {input name: {used_by: [rankers], unused_by: [rankers]}}}. A
+ *  route that is not there yet answers as nothing known. */
+export async function readRankersCompared(model) {
+  const r = await api(`/api/weights/models/${enc(model)}/rankers`, { timeout: 20 });
+  const d = r?.ok ? r.data ?? {} : {};
+  return { ok: true, data: { says: d.unused_by_all_says ?? "", by: Object.fromEntries((d.inputs ?? []).map((i) => [i.name, { used_by: i.used_by ?? [], unused_by: i.unused_by ?? [] }])) } };
 }
 
 /** A tree as the services send it (a root with `left` and `right` inside it) as a flat list of nodes. A value at

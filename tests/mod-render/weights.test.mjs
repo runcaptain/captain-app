@@ -70,16 +70,29 @@ test('it is a page in the window\'s main slot beside the terminal, never a dialo
   delete globalThis.__shared['captain.open'];
 });
 
-test('at the width left beside the terminal the neuron panel shows only while a neuron is open; wide, it is always there', async () => {
+test('beside a terminal an open neuron sits under a shorter drawing, so both show; wide, the panel is always there', async () => {
   const h = await page(TINY);
   const canvasW = () => h.byIdPrefix('wt-canvas')[0].call('w')[0];
   assert.equal(h.mod.width, 820, 'the width it assumes until the block says its own');
   assert.equal(h.byIdPrefix('wt-side').filter((e) => e.call('id')[0] === 'wt-side').length, 0);
-  const full = canvasW();
+  const canvasH = () => h.byIdPrefix('wt-canvas')[0].call('h')[0];
+  const full = canvasW(), tall = canvasH();
   assert.equal(full, 780);
   await h.click('wt-n-1-1');
   assert.equal(h.byIdPrefix('wt-side').filter((e) => e.call('id')[0] === 'wt-side').length, 1);
-  assert.ok(canvasW() < full && canvasW() >= 440, `${canvasW()}`);
+  // Under the drawing: the drawing keeps its width and gives up some height. Both are on screen.
+  assert.equal(canvasW(), full);
+  assert.ok(canvasH() < tall && canvasH() >= 150, `${canvasH()}`);
+  assert.equal(h.byIdPrefix('wt-side')[0].call('w')[0], 820);
+  assert.equal(h.byIdPrefix('wt-side')[0].call('h')[0] + canvasH(), tall, 'the two share the drawing\'s room');
+  // The same at the width a 1,280 window leaves beside the terminal.
+  h.mod.width = 600; await h.idle(1);
+  assert.ok(h.byIdPrefix('wt-canvas').length === 1 && h.byIdPrefix('wt-hand').length > 0, 'the network and the hand tools together');
+  // Only a page too tight for both gives the drawing's place to the neuron.
+  h.mod.width = 500; await h.idle(1);
+  assert.equal(h.byIdPrefix('wt-canvas').length, 0);
+  assert.ok(h.byIdPrefix('wt-hand').length > 0);
+  h.mod.width = 820; await h.idle(1);
   await h.click('wt-side-close');
   assert.equal(h.mod.sel, null);
   assert.equal(canvasW(), full);

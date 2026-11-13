@@ -52,6 +52,10 @@ test('typing a value only stages it: nothing changes until "Set this value", whi
   // Staged: said in a line, previewed in the drawing and the cost (marked), and not in the network.
   assert.equal(textOf(h, 'wt-hand-unsaved'), 'Not saved. -12.00 will become -9.00.');
   assert.equal(textOf(h, 'wt-hand-target'), 'The bias of hidden neuron 2 is -12.00.', 'the saved value is still what the network holds');
+  // The neuron's sentence stays on the saved numbers. Only the figures labelled "if saved" preview the change.
+  assert.ok(textOf(h, 'wt-inspect-says').includes('Its bias is -12.00'), textOf(h, 'wt-inspect-says'));
+  assert.equal(textOf(h, 'wt-inspect-b'), '-9.00');
+  assert.ok(h.text().includes('Bias, if saved'));
   net.layers[0].b[1] = -9;
   assert.equal(textOf(h, 'wt-cost-input'), `if saved: ${cost3(refCost(net, [1, 1], [0]))}`);
   assert.equal(textOf(h, 'wt-cost-input-under'), `not saved. Now ${before}`);
