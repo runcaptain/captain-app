@@ -510,6 +510,18 @@ world.deployedFail = false;
 await tick(h); await tick(h);
 assert.ok(!h.text().includes('Not updating') && h.text().includes('Updated just now'), 'and recovers with the next good read');
 
+// ---- a sample that opens a model's page at once: the page opens before the channel does, and must not fail ----
+{
+  const { execFileSync } = await import('node:child_process');
+  const demo = JSON.parse(execFileSync('python3', ['tests/mod-render/deployments-demo.py', 'model-calls'], { encoding: 'utf8' }));
+  globalThis.__props = demo;
+  const hd = harness(Deployments);
+  await hd.start();
+  await hd.idle(150);
+  globalThis.__props = undefined;
+  assert.ok(hd.text().includes('Where it runs') && hd.text().includes('Calls a minute at the endpoint'), `the sample page draws: ${hd.text().slice(0, 200)}`);
+}
+
 // ---- live: the screen listens to the change feed, and asks nothing on a clock ----
 const tell = async (changed, more) => { const w = world.waiting; world.waiting = null; w(changed, more); await h.idle(150); };
 h = await open({ live: true, seq: 1000, deployed: RUNNING2, numbers: { shop: numbers(8640) } });
