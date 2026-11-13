@@ -222,14 +222,31 @@ console.log('lineage ranks: ok');
   assert.equal(Math.round(small.at(L, 'a').x * small.zoom + small.pan.x), 24, 'it starts at the left margin, not floating in the centre');
   const H = small.view.h, mid = (small.at(L, 'a').y + 26) * small.zoom + small.pan.y;
   assert.ok(Math.abs(mid - H / 2) < 2, 'at mid height');
+  // A chain too wide for the canvas opens at 100%, so its titles can be read, centred on the box the page is
+  // about. The canvas is at least 420 tall, the overview map shows there is more, and Fit shows the whole chain.
   const wide = { nodes: Array.from({ length: 9 }, (_x, i) => ({ id: `n${i}`, kind: 'dataset' })), edges: Array.from({ length: 8 }, (_x, i) => ({ from: `n${i}`, to: `n${i + 1}` })) };
   const big = new LineageGraph({ id: 'fit' });
-  big.set(wide, 'n0');
+  big.set(wide, 'n4');
   big.up = 9; big.down = 9; big.cache = null;
-  big.render(palette(false), { width: 900, height: 600 });
+  const tree = big.render(palette(false), { width: 900, height: 600 });
   const LB = big.layout();
-  assert.ok(big.zoom < 1 && big.zoom >= 0.3, `a wide graph shrinks: ${big.zoom}`);
-  const left = big.at(LB, 'n0').x * big.zoom + big.pan.x, right = (big.at(LB, [...LB.pos.keys()].at(-1)).x + 188) * big.zoom + big.pan.x;
+  assert.equal(big.zoom, 1, 'opens at 100%: a title is the size of body text');
+  const centre = big.at(LB, 'n4').x + 94 + big.pan.x;
+  assert.ok(Math.abs(centre - 450) < 1, `the focused box is in the middle: ${centre}`);
+  const ids = []; (function w(e) { if (!e || typeof e !== 'object') return; ids.push(String(e.call?.('id')?.[0] ?? '')); for (const k of e.kids ?? []) w(k); })(tree);
+  const canvas = (function find(e) { if (!e || typeof e !== 'object') return null; if (e.call?.('id')?.[0] === 'fit-canvas') return e; for (const k of e.kids ?? []) { const r = find(k); if (r) return r; } return null; })(tree);
+  assert.equal(canvas.call('h')[0], 420, 'room to pan in');
+  assert.ok(ids.includes('fit-minimap'), 'the overview map says there is more');
+  // The first box of a chain: the view starts at the graph's left edge, not with empty canvas beside it.
+  const first = new LineageGraph({ id: 'fit' });
+  first.set(wide, 'n0');
+  first.up = 9; first.down = 9; first.cache = null;
+  first.render(palette(false), { width: 900, height: 600 });
+  assert.equal(Math.round(first.at(first.layout(), 'n0').x + first.pan.x), 24, 'no empty canvas to the left of the first box');
+  // Fit shows the whole chain, smaller.
+  big.fit(LB, 900, 420);
+  assert.ok(big.zoom < 1 && big.zoom >= 0.3, `Fit shrinks a wide graph: ${big.zoom}`);
+  const left = big.at(LB, 'n0').x * big.zoom + big.pan.x, right = (big.at(LB, 'n8').x + 188) * big.zoom + big.pan.x;
   assert.ok(left >= 23 && right <= 900 - 23, `inside the canvas with a margin: ${left} to ${right}`);
 }
 
@@ -292,23 +309,27 @@ console.log('lineage ranks: ok');
 }
 console.log('lineage graph: ok');
 
-// The graph is fitted to the canvas it really has. A screen first draws at a guessed width and learns its real one
-// a moment later: the graph fits again, so its last column is never off the edge. Once the person pans or zooms,
-// the view is theirs and stays.
+// The graph is placed for the canvas it really has. A screen first draws at a guessed width and learns its real one
+// a moment later: the graph is placed again. On a canvas too narrow for it at 100% it stays at 100%, never
+// shrunk to names nobody can read, and its first box is in view. Once the person pans or zooms, the view is
+// theirs and stays.
 {
   const g2 = new LineageGraph({ id: 'fit' });
   g2.set(graph, null);
   const c2 = palette(true);
   g2.render(c2, { width: 1400, height: 500 });
   const wide = g2.zoom;
+  assert.ok(wide >= 1, 'room to spare: at least 100%');
   g2.render(c2, { width: 600, height: 500 });
   const L2 = g2.layout();
-  assert.ok(g2.zoom < wide, `narrower canvas, smaller graph: ${wide} then ${g2.zoom}`);
-  assert.ok(L2.width * g2.zoom <= 600, 'every column is inside the canvas');
+  assert.ok(g2.zoom <= wide && g2.zoom >= 1, `a narrower canvas is placed again, at 100%: ${wide} then ${g2.zoom}`);
+  const firstId = L2.columns[0][0];
+  const x0 = g2.at(L2, firstId).x * g2.zoom + g2.pan.x;
+  assert.ok(x0 >= 0 && x0 < 600, 'the first column is in view');
   g2.touched = true;
-  const mine = g2.zoom;
+  const mine = g2.zoom, pan = { ...g2.pan };
   g2.render(c2, { width: 1200, height: 500 });
-  assert.equal(g2.zoom, mine, 'after the person moved it, a resize leaves their view alone');
+  assert.deepEqual([g2.zoom, g2.pan], [mine, pan], 'after the person moved it, a resize leaves their view alone');
 }
 console.log('lineage fit: ok');
 
