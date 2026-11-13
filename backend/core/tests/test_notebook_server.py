@@ -207,6 +207,8 @@ def test_rename_changes_the_label_and_nothing_else(ctx):
     out = NB.rename(ctx, "demo-zero-results", "  Zero results,   by week ")
     assert out == {"name": "demo-zero-results", "label": "Zero results, by week", "changed": True}, "any words; the id is fixed for life"
     row = {n["name"]: n for n in NB.listing(ctx)}["demo-zero-results"]
+    stamp = row.pop("stamp")   # what the notebook is right now: its draft's own time, since it has one
+    assert stamp.startswith("draft:")
     assert row == {"name": "demo-zero-results", "label": "Zero results, by week", "latest": versions[-1], "has_draft": True}
     # Every version is still there, under the same id, and so is the unsaved work.
     assert ctx.registry.versions("notebook", "demo-zero-results") == versions
