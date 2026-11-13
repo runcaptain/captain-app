@@ -197,6 +197,8 @@ export default class CaptainRuns extends View {
       this.grader = null;
       this.opened1 = true;
       if (old) run("layout.select", { stack: "sections", child: "runs" });
+      // The sidebar's entry: Runs' home, the list. In a narrow pane a row's page gives way to it.
+      if (o.home) { this.opened1 = false; this.wantRun = null; this.showTab(cx, "runs"); return; }
       if (o.live) { this.tab = "runs"; this.kind = "live"; this.live.load(cx, o.live); }
       else if (o.backtest || o.replay) {
         const [kind, name] = o.replay ? ["replays", o.replay] : ["backtests", o.backtest];

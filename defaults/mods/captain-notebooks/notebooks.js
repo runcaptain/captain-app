@@ -98,6 +98,15 @@ export class Notebooks {
     });
   }
 
+  /** The list, with no notebook open: where the sidebar's entry lands. An unsaved draft is saved first. */
+  home(cx) {
+    if (this.dirty) this.flushDraft(cx);
+    this.open = null;
+    this.want = null;
+    this.exporting = false;
+    cx.notify();
+  }
+
   openNotebook(cx, name) {
     this.flushDraft(cx);
     this.kernel?.close();

@@ -133,6 +133,13 @@ export default class CaptainData extends View {
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
       if (this.wantTab && this.detail?.name === this.wantTab.dataset) { const t = this.wantTab.tab; this.wantTab = null; this.page.open(cx, t); }
+      // The sidebar's entry: Data's home, the tables' groups as the person left them.
+      if (o?.section === "data" && o.home && o.at !== this.opened) {
+        this.opened = o.at;
+        this.wanted = null; this.wantTab = null;
+        this.shown = null;
+        this.showTab(cx, "tables");
+      }
       // {section: "data", view: tables | sources (or an earlier tab's name)}: that submenu of Data.
       if (o?.section === "data" && o.view && !o.dataset && o.at !== this.opened) {
         this.opened = o.at;
