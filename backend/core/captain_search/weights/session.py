@@ -398,6 +398,23 @@ def session_for(ctx, model: str) -> dict:
     return session(ctx, have[0]["id"]) if have else open_session(ctx, model)
 
 
+def current_digest(ctx, sid: str) -> dict:
+    """A checksum of the session's numbers as they are now, and what it has to do with saved versions:
+    {digest, base, changed, saved: [refs], matches: the saved ref with these exact numbers, or None}.
+    For code that must not save the same numbers twice. It reads no number out, so it is not an event."""
+    def fn(st):
+        digest = WS.digest(st.cur)
+        match = None
+        for ref in reversed(st.doc.get("saved") or []):
+            name, version = WS.split_ref(ref)
+            if WS.manifest(ctx, name, version).get("sha256") == digest:
+                match = ref
+                break
+        return {"digest": digest, "base": WS.ref_of(st.model, st.doc["version"]), "changed": st.changed(),
+                "saved": list(st.doc.get("saved") or []), "matches": match}
+    return _do(ctx, sid, fn, watch="record")
+
+
 def session(ctx, sid: str) -> dict:
     return _do(ctx, sid, _session_out, watch="record")
 

@@ -56,6 +56,12 @@ def _key(name: str, version: int, fname: str = F.MANIFEST) -> str:
     return f"{ROOT}/{name}/v{version}/{fname}"
 
 
+def read_file(ctx, name: str, version: int, fname: str) -> bytes:
+    """One file of a version as it is stored: its manifest.json, or a tensor file its manifest names."""
+    check_name(name)
+    return ctx.store.get(_key(name, int(version), fname))
+
+
 def versions(ctx, name: str) -> list[int]:
     out = []
     for k in ctx.store.list(f"{ROOT}/{name}/"):

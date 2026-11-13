@@ -284,6 +284,9 @@ def test_a_saved_version_is_its_base_plus_patches_with_the_record_attached(ctx):
     cur, _ = _now(ctx, sid)
     _, opened = WS.load(ctx, "tiny", 2)
     assert all(np.array_equal(opened[k], cur[k]) for k in cur)
+    d = S.current_digest(ctx, sid)
+    assert d["matches"] == "tiny@v2" and d["saved"] == ["tiny@v2"] and d["changed"] == 1 and d["digest"] == m["sha256"]
+    assert WS.read_file(ctx, "tiny", 1, "tensors.safetensors")[:8] and b"layer1.weight" in WS.read_file(ctx, "tiny", 2, "manifest.json")
     assert WS.versions(ctx, "tiny") == [1, 2] and S.save(ctx, sid)["version"] == 3, "a save never overwrites"
     # A session can be opened on the saved version, and its diff is against that version.
     s2 = S.open_session(ctx, "tiny@v2")
