@@ -273,7 +273,7 @@ export default class NewEvaluation extends View {
   testOn(c) {
     const v = this.v;
     const pick = (id, list, value, onPick, empty) => (list.length
-      ? h_flex().id(id).flex_wrap().gap(6).children(list.map((d, i) => this.chip(c, `${id}-${i}`, d.label, value === d.value, (_e, cx) => onPick(d.value, cx), { sub: d.rows ? `${int(d.rows)} rows` : `v${d.version}` })))
+      ? h_flex().id(id).flex_wrap().gap(6).children(list.map((d, i) => this.chip(c, `${id}-${i}`, d.label, value === d.value, (_e, cx) => onPick(d.value, cx), { sub: d.rows ? `${int(d.rows)} ${d.rows === 1 ? "row" : "rows"}` : `v${d.version}` })))
       : div().id(`${id}-none`).text_size(12.5).text_color(c.grey900).child(empty));
     const out = [h_flex().id("ev-on").flex_wrap().gap(6).children(ON.map(([id, label]) => this.chip(c, `ev-on-${id}`, label, v.on === id, (_e, cx) => { v.on = id; cx.notify(); }))),
       div().text_size(12.5).text_color(c.grey900).child(ON.find(([id]) => id === v.on)[2])];
@@ -294,7 +294,7 @@ export default class NewEvaluation extends View {
         this.chip(c, `ev-src-${id}`, label, v.src === id, (_e, cx) => { v.src = id; this.preview = null; v.mapping = {}; this.loadPreview(cx); }))),
       v.src === "data"
         ? (tables.length ? h_flex().id("ev-tables").flex_wrap().gap(6).children(tables.slice(0, 40).map((d, i) => this.chip(c, `ev-table-${i}`, d.label, v.dataset === d.value,
-          (_e, cx) => { v.dataset = d.value; v.mapping = {}; this.loadPreview(cx); }, { sub: d.rows ? `${int(d.rows)} rows` : null })))
+          (_e, cx) => { v.dataset = d.value; v.mapping = {}; this.loadPreview(cx); }, { sub: d.rows ? `${int(d.rows)} ${d.rows === 1 ? "row" : "rows"}` : null })))
           : div().id("ev-tables-none").text_size(12.5).text_color(c.grey900).child("No tables in Data yet. Use a file on this computer."))
         : h_flex().gap(8).items_center()
           .child(this.field(c, "ev-file", this.inputs.file, 380))

@@ -443,6 +443,7 @@ cst_app app open compare >/dev/null && opened compare 'runs|*'
 if cst_app app open experiments >/dev/null 2>&1; then echo "cst app open experiments: opened something, expected it to say the screen is gone"; fail=1; else echo "cst app open experiments: says the screen is gone"; fi
 # A form, filled in for the person: the New evaluation form, on a name an agent gave it. Nothing is submitted.
 cst_app app open form:backtest --value "name=opened-by-an-agent" >/dev/null && opened form:backtest '*|backtest|-'
+sleep 4  # the form reads the models, the tables and the measures before it draws its steps
 app shot "$OUT/cst-app-open-form.png" >/dev/null || true
 app do overlay.close '{}' >/dev/null 2>&1 || true
 # Pinned things: `cst context add` puts them in this window's sidebar strip, and `cst context show` expands them.

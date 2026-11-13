@@ -80,6 +80,15 @@ assert.ok(text.includes('Import a dataset'), 'the one filled button brings data 
 // An icon on every row.
 for (const row of h.byIdPrefix('cat-row-')) assert.ok(h.has(row, 'svg') || h.has(row, 'image'), `icon on ${row.call('id')[0]}`);
 
+// Beside an open terminal column the list is narrow. The Versions column still shows, in shorter words, with the
+// full sentence on hover: it is the column that says a dataset is a table Captain keeps versions of.
+h.mod.width = 700;
+await h.layoutLists({});
+text = h.text();
+assert.ok(text.includes('Versions') && text.includes('2 kept') && text.includes('Live'), `narrow: ${text.slice(0, 500)}`);
+h.mod.width = 1000;
+await h.layoutLists({});
+
 // The kind filter keeps one of the two.
 await h.click('cat-kind-table');
 assert.equal(h.byIdPrefix('cat-row-').length, merged.rows.filter((r) => r.kind === 'table').length, 'only the database tables');

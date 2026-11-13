@@ -201,3 +201,23 @@ console.log('lineage ranks: ok');
   assert.equal(find2(tall.render(palette(false), { width: 900, height: 640 }), 'tall-canvas').call('h')[0], 640);
 }
 console.log('lineage graph: ok');
+
+// The graph is fitted to the canvas it really has. A screen first draws at a guessed width and learns its real one
+// a moment later: the graph fits again, so its last column is never off the edge. Once the person pans or zooms,
+// the view is theirs and stays.
+{
+  const g2 = new LineageGraph({ id: 'fit' });
+  g2.set(graph, null);
+  const c2 = palette(true);
+  g2.render(c2, { width: 1400, height: 500 });
+  const wide = g2.zoom;
+  g2.render(c2, { width: 600, height: 500 });
+  const L2 = g2.layout();
+  assert.ok(g2.zoom < wide, `narrower canvas, smaller graph: ${wide} then ${g2.zoom}`);
+  assert.ok(L2.width * g2.zoom <= 600, 'every column is inside the canvas');
+  g2.touched = true;
+  const mine = g2.zoom;
+  g2.render(c2, { width: 1200, height: 500 });
+  assert.equal(g2.zoom, mine, 'after the person moved it, a resize leaves their view alone');
+}
+console.log('lineage fit: ok');
