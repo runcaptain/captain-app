@@ -137,7 +137,7 @@ How soon a change is told:
 | Where the change was made | How soon |
 |---|---|
 | Through the app's service | Under 100 ms |
-| By another process on this computer (`cst` in a terminal, an agent) | About 1 second |
+| By another process on this computer (`cst` in a terminal, an agent) | About a third of a second: the workspace's folder is looked at three times a second |
 | By another machine, to a workspace in a bucket | 2 to 3 seconds, from the bucket's own listings: projects, datasets, runs, jobs, notebooks, settings and each model's deploy record. Not what a model writes about itself (its request log, its health checks) |
 | In a cloud (a model that stopped by itself, a copy added) | About 1 to 2 seconds, while someone listens to `deployed` or a `deployment:<project>` |
 

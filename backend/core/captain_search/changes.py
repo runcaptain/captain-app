@@ -293,11 +293,12 @@ def wrote(store, key: str) -> None:
 
 class Watcher:
     """Watches one workspace on this computer for writes this process did not make: a `cst` command in a terminal,
-    an agent. It looks at every folder's change time once a second, which is cheap (a folder's time moves when a
+    an agent. It looks at every folder's change time about three times a second, which is cheap (a folder's time moves when a
     file is added to it or replaced in it, and the stores only ever add or replace). A change is told within about
-    a second. It runs only while someone is listening."""
+    a third of a second, so a screen shows it inside one second. A look never takes more than half the time: on a
+    very large workspace the wait grows to as long as the look took. It runs only while someone is listening."""
 
-    EVERY_S = 1.0
+    EVERY_S = 0.3
     SKIP = ("objects",)   # blobs named by their hash: nothing a screen lists
 
     def __init__(self, root: str, uri: str):
@@ -366,7 +367,8 @@ class Watcher:
                     FEED.bump(*ts)
             except Exception:  # noqa: BLE001
                 pass
-            time.sleep(max(0.05, self.EVERY_S - (time.monotonic() - t0)))
+            took = time.monotonic() - t0
+            time.sleep(max(0.05, self.EVERY_S - took, took))
         with self.lock:
             self.thread, self.primed = None, False   # the next listener starts from a fresh look
 
@@ -547,8 +549,8 @@ def watch(store) -> None:
 
 class FolderWatch:
     """One folder on this computer that is not in the workspace, written by other processes: the live runs' folder,
-    the notebooks' drafts. While someone listens to one of `listens`, its files' change times are looked at once a
-    second, and `topics(name)` says what a changed file tells. `mine(name)` is true for a file this process just
+    the notebooks' drafts. While someone listens to one of `listens`, its files' change times are looked at about
+    three times a second, and `topics(name)` says what a changed file tells. `mine(name)` is true for a file this process just
     wrote and told about itself."""
 
     def __init__(self, path, topics, listens: tuple, mine=None):
@@ -588,7 +590,8 @@ class FolderWatch:
                     FEED.bump(*ts)
             except Exception:  # noqa: BLE001
                 pass
-            time.sleep(max(0.05, 1.0 - (time.monotonic() - t0)))
+            took = time.monotonic() - t0
+            time.sleep(max(0.05, 0.3 - took, took))
         self.thread, self.primed = None, False
 
     def ensure(self) -> None:
