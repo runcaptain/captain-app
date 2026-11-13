@@ -202,7 +202,8 @@ export class ModelPage {
       .child(Button(c, "model-close", "All deployments", (_e, cx) => { this.close(); cx.notify(); }, { small: true }))
       .child(r.cloud === "local" ? svg(icon("monitor")).size(16).text_color(c.navy) : Brand(c, r.cloud, 16))
       .child(div().id("model-title").text_size(18).font_semibold().text_color(c.navy).child(r.project_name ?? r.name ?? ""))
-      .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(r.model_label ?? r.model_version ?? ""))
+      // The model's name is on its card, just below: said once.
+      .child(div().flex_1())
       // The page keeps itself current, as the list does: when it was read, or that the cloud could not be reached.
       .child(Updated(c, "model-updated", { readAt: this.readAt, live: Boolean(this.isLive?.()), icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.refresh(cx),
         problem: this.where && this.where.from_cloud === false && /could not be asked/.test(this.where.text ?? "") ? `${r.cloud_label} could not be reached. Trying again.` : null }));

@@ -472,6 +472,9 @@ export default class CaptainDeployments extends View {
           : this.readAt && !this.demo && !this.live.up() && Date.now() - this.readAt > 15000 ? "Not updating. Refresh" : null,
         live: this.live.up() }));
     const none = !here.length;
+    // Nothing at all: no model, none stopped earlier, nothing set up in any account. The page is one quiet card
+    // that says what this screen is for and offers the one thing to do.
+    const bare = none && !earlier.length && !places.length;
     const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small });
     const n = earlier.length;
     const body = v_flex().gap(18)
@@ -486,12 +489,16 @@ export default class CaptainDeployments extends View {
           // The title already says "No models running.": saying it again here read as an echo.
           .child(div().id("dep-models-line").flex_1())
           // The next step, when nothing is answering. An open question takes the filled button in its place.
-          .when(none && !this.ask, (e) => e.child(deploy(true))))
+          .when(none && !this.ask && !bare, (e) => e.child(deploy(true))))
         .when(this.ask?.id === "deploy", (e) => e.child(this.question(c)))
         // With nothing at all (no model, none stopped earlier, nothing set up in any account), one line says what
         // this screen is for. With anything else on the page, the page says it.
-        .when(none && !n && !places.length, (e) => e.child(div().id("dep-what-for").text_size(13).line_height("19px").text_color(c.grey500)
-          .child("A model you deploy from a project's page shows here: where it runs, the address to call, its traffic and what it costs. You can stop it, start it again or remove it from here.")))
+        .when(bare, (e) => e.child(v_flex().id("dep-empty").w_full().items_center().gap(12).px(24).py(56).bg(c.surface).border_1().border_color(c.rule)
+          .child(svg(icon("rocket")).size(28).text_color(c.grey500))
+          .child(div().text_size(17).font_semibold().text_color(c.navy).child("Nothing is deployed yet"))
+          .child(div().id("dep-what-for").max_w(520).text_center().text_size(12.5).line_height("19px").text_color(c.grey500)
+            .child("A model you deploy from a project's page shows here: where it runs, the address to call, its traffic and what it costs. You can stop it, start it again or remove it from here."))
+          .when(!this.ask, (x) => x.child(div().pt(6).child(deploy(false))))))
         .child(none ? div() : this.filters(c, here))
         .child(v_flex().id("dep-list").gap(14)
           .children(rows.map((r) => this.row(c, r)))

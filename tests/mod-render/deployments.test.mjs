@@ -213,7 +213,7 @@ assert.equal(byId(h, 'dep-address-shop:staging').length, 1);
 assert.ok(t.includes('https://runtime.sagemaker.us-west-1.amazonaws.com/endpoints/captain-shop/invocations') && byId(h, 'dep-copy-shop:staging').length === 1, `the address, with Copy: ${t}`);
 assert.ok(t.includes('AWS, account ending 1234 · us-west-1 · ml.t2.medium: 2 virtual CPUs, 4 GB memory · 1 copy up now, may run 1 to 3 · Deployed by dana, 2 h ago'), `the system in one quiet line: ${t}`);
 // Traffic, Speed and Cost: one large figure each, with a small caption.
-for (const part of ['Traffic', '360', 'requests in the last hour, none failed', 'Speed', '3.1 ms', 'typical response time', 'Cost', '$0.07', 'an hour now, about $14.30 this month'])
+for (const part of ['Traffic', '360', 'requests in the last hour, none failed', 'Speed', '3.1 ms', 'typical response time', 'Cost', '$0.07', 'an hour · $14.30 this month'])
   assert.ok(t.includes(part), `the card says ${part}: ${t}`);
 for (const id of ['dep-dot-shop:staging', 'dep-traffic-shop:staging', 'dep-speed-shop:staging', 'dep-cost-shop:staging', 'dep-copy-request-shop:staging']) assert.equal(byId(h, id).length, 1, `the card has ${id}`);
 await h.click('dep-copy-shop:staging');

@@ -28,7 +28,7 @@ export function dotColor(c, r) {
 
 /** One labelled figure: a caption above, the figure large, a line of small words under it. */
 function Figure(c, id, label, figure, caption, extra) {
-  return v_flex().id(id).flex_1().min_w(140).gap(2)
+  return v_flex().id(id).flex_1().min_w(0).gap(2)
     .child(div().text_size(SMALL).text_color(c.grey500).child(label))
     .child(h_flex().gap(10).items_end()
       .child(div().id(`${id}-figure`).text_size(FIGURE).line_height("28px").font_medium().text_color(figure == null ? c.grey500 : c.navy).child(figure ?? "–"))
@@ -80,30 +80,35 @@ export function ModelCard(c, r, o = {}) {
   const hour = buckets.map((b) => b.requests ?? 0);
   const inHour = hour.reduce((a, b) => a + b, 0), failed = buckets.reduce((a, b) => a + (b.errors ?? 0), 0);
   const name = found ? r.name : (r.model_label ?? r.model_version ?? "Model version not known");
-  const small = found ? `Found in your ${r.cloud_label} account` : (r.project_name ?? r.project ?? "");
+  // Something found in a cloud has no project: the line under its name says what it is, once.
+  const small = found ? (r.state_text ?? `Found in your ${r.cloud_label} account.`) : (r.project_name ?? r.project ?? "");
   const state = deploying ? deployingWords(r.deploying) : r.remembered_text ? `${r.state_text} ${r.remembered_text}` : r.state_text;
+  // A short, ordinary state ("Running on 1 copy.") sits beside the project, under the name. Anything that needs
+  // reading (it failed, it is being deployed, it was stopped and why) gets a line of its own.
+  const plain = !wrong && !deploying && inCloud && !found && !o.busy && String(state ?? "").length <= 80;
   const when = ago(r.since);
   const who = r.by ? [`${deploying ? "Started" : "Deployed"} by ${r.by_name ?? r.by}`, when].filter(Boolean).join(", ") : when ? `Made ${when}` : null;
   const where = [[r.cloud_label, r.account].filter(Boolean).join(", "), r.cloud === "local" ? null : r.region,
     r.machine_words ?? (r.cloud === "local" ? null : r.machine), r.copies_words,
     r.version_n ? `version ${r.version_n} of this deployment` : null, who].filter(Boolean).join(" · ");
-  const actions = o.busy
-    ? [div().id(`dep-busy-${r.id}`).h(32).flex().items_center().gap(8)
-      .child(div().size(8).rounded_full().bg(c.warn))
-      .child(div().text_size(SMALL).text_color(c.navy).child(`${o.busy}...`))]
+  // While something is being done to it, no action is offered: what is being done is said on its own line.
+  const actions = o.busy ? []
     : [...(o.more ?? []).map((a) => Button(c, a.id, a.label, a.go, { kind: "quiet" })),
       ...(o.action ? [Button(c, o.action.id, o.action.label, o.action.go, { kind: "primary" })] : [])];
   const showNumbers = !found && !deploying && inCloud && Boolean(n);
-  return v_flex().id(`dep-row-${r.id}`).w_full().bg(c.surface).border_1().border_color(wrong ? c.fail : c.rule).p(20).gap(16)
+  return v_flex().id(`dep-row-${r.id}`).w_full().bg(c.surface).border_1().border_color(wrong ? c.fail : c.rule).p(20).gap(14)
     // Its state, its name, and the one action.
     .child(h_flex().gap(12).items_center()
-      .child(div().id(`dep-dot-${r.id}`).size(10).flex_none().rounded_full().bg(dotColor(c, r)))
+      .child(div().id(`dep-dot-${r.id}`).size(10).flex_none().rounded_full().bg(o.busy ? c.warn : dotColor(c, r)))
       .child(v_flex().flex_1().min_w(0).gap(2)
         .child(div().id(`dep-model-${r.id}`).truncate().text_size(NAME).line_height("22px").font_semibold().text_color(c.navy).child(name))
-        .child(div().id(`dep-name-${r.id}`).truncate().text_size(SMALL).text_color(c.grey500).child(small)))
+        .child(h_flex().gap(6).min_w(0).text_size(SMALL).text_color(c.grey500)
+          .child(div().id(`dep-name-${r.id}`).flex_none().child(small))
+          .when(plain && Boolean(state), (e) => e.child(div().flex_none().child("·")).child(div().id(`dep-state-${r.id}`).min_w(0).truncate().child(state)))))
       .when(!o.question, (e) => e.child(h_flex().flex_none().gap(4).items_center().children(actions))))
     // What it is doing, in one sentence. Red only for something in a cloud that is not answering.
-    .child(div().id(`dep-state-${r.id}`).text_size(SMALL).line_height("18px").text_color(wrong ? c.fail : deploying ? c.navy : c.grey900).child(state))
+    .when(Boolean(o.busy), (e) => e.child(div().id(`dep-busy-${r.id}`).text_size(SMALL).line_height("18px").font_medium().text_color(c.navy).child(`${o.busy}...`)))
+    .when(!plain && !found && !o.busy && Boolean(state), (e) => e.child(div().id(`dep-state-${r.id}`).text_size(SMALL).line_height("18px").text_color(wrong ? c.fail : deploying ? c.navy : c.grey900).child(state)))
     .when(Boolean(o.question), (e) => e.child(o.question))
     .when(Boolean(deploying), (e) => e.child(Steps(c, r)))
     // The address a site calls: one field, with Copy. The code font is for what a person copies, and nothing else.
@@ -116,16 +121,16 @@ export function ModelCard(c, r, o = {}) {
       .when(!found && Boolean(o.onCopy), (x) => x.child(Button(c, `dep-copy-request-${r.id}`, o.copied === "request" ? "Copied" : "Copy a test request",
         (ev, cx) => o.onCopy?.("request", ev, cx), { kind: "quiet" })))))
     // Traffic, Speed and Cost.
-    .when(showNumbers, (e) => e.child(h_flex().id(`dep-numbers-${r.id}`).gap(24).items_start().flex_wrap()
+    .when(showNumbers, (e) => e.child(h_flex().id(`dep-numbers-${r.id}`).gap(20).items_start()
       .child(Figure(c, `dep-traffic-${r.id}`, "Traffic", count(inHour),
         `request${inHour === 1 ? "" : "s"} in the last hour${inHour ? (failed ? `, ${count(failed)} failed` : ", none failed") : ""}`,
-        hour.some((v) => v > 0) ? Spark(c, `dep-spark-${r.id}`, hour, { height: 24 }) : null))
+        hour.some((v) => v > 0) ? Spark(c, `dep-spark-${r.id}`, hour, { height: 24, width: 84 }) : null))
       .child(Figure(c, `dep-speed-${r.id}`, "Speed", s.p50_ms != null ? ms(s.p50_ms) : null,
         s.p50_ms != null ? "typical response time" : "no requests to time yet"))
       .child(Figure(c, `dep-cost-${r.id}`, "Cost", n.cost?.hourly_usd ? money(n.cost.hourly_usd) : n.cost ? "$0" : null,
-        !n.cost ? "not known" : [n.cost.hourly_usd ? "an hour now" : "costs nothing now",
+        !n.cost ? "not known" : [n.cost.hourly_usd ? "an hour" : "costs nothing now",
           // Said only when there is something to say: a month's cost that is not known is not "$0.00".
-          n.cost.month_usd > 0 ? `about ${money(n.cost.month_usd)} this month` : null].filter(Boolean).join(", ")))))
+          n.cost.month_usd > 0 ? `${money(n.cost.month_usd)} this month` : null].filter(Boolean).join(" · ")))))
     .children((o.notes ?? []).map((x, i) => div().id(`dep-fixed-${r.id}-${i}`).text_size(SMALL).line_height("18px").text_color(c.grey500).child(x)))
     // Where it runs, quietly.
     .child(h_flex().id(`dep-system-${r.id}`).gap(8).items_center().pt(12).border_t(1).border_color(c.rule)
