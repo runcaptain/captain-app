@@ -40,6 +40,8 @@ export default class CaptainDeployments extends View {
       this.created = this.demo.created ?? null;
       this.nums = this.demo.numbers ?? {};
       this.shownEarlier = Boolean(this.demo.earlier);
+      this.busy = { ...(this.demo.busy ?? {}) };
+      this.readAt = Date.now();
       if (this.demo.open) this.openRow(this.d.rows.find((r) => r.id === this.demo.open), cx, this.demo.part ?? null);
       return;
     }

@@ -305,3 +305,43 @@ def _forget_kept_clients() -> None:
         aws.forget_clients()
     except Exception:  # noqa: BLE001
         pass
+
+
+# ---- checking a field of the cloud form while it is typed -------------------------------------------
+
+# What a region looks like in each cloud, for the two whose list of regions Captain does not hold.
+_REGION_SHAPE = {"gcp": (r"[a-z]+-[a-z]+[0-9]+", "us-central1"), "azure": (r"[a-z]+[a-z0-9]*", "eastus")}
+
+
+def check_field(provider: str, field: str, value: str) -> dict:
+    """Is this value of a cloud login's field one that can work? {ok, text}. Asked by the form as a person types,
+    so a mistake is said under the field and not after the button. Nothing here calls a cloud.
+
+    Only the region is checked. On AWS against the list of regions its own library ships with. On Google Cloud and
+    Azure Captain holds no list, so only the shape is checked: a wrong name there is still found on the first call.
+    An empty value is fine: a region is optional. A field that is not checked is always fine."""
+    import re
+
+    v = str(value or "").strip()
+    if field != "region" or not v:
+        return {"ok": True, "text": None}
+    if provider == "aws":
+        try:
+            import boto3
+
+            known = set(boto3.Session().get_available_regions("ec2")) | set(boto3.Session().get_available_regions("ec2", partition_name="aws-us-gov"))
+        except Exception:  # noqa: BLE001  without the library there is no list: say nothing rather than guess
+            return {"ok": True, "text": None}
+        if v in known:
+            return {"ok": True, "text": None}
+        near = sorted(r for r in known if r.startswith(v[:6]) or v.replace(" ", "-").lower() == r)[:3]
+        return {"ok": False, "text": f"AWS has no region called {v}." + (f" Did you mean {', '.join(near)}?" if near else " A region looks like us-west-1.")}
+    if provider in _REGION_SHAPE:
+        shape, sample = _REGION_SHAPE[provider]
+        label = {"gcp": "a Google Cloud", "azure": "an Azure"}[provider]
+        if re.fullmatch(shape, v):
+            return {"ok": True, "text": None}
+        return {"ok": False, "text": f"That does not look like {label} region. One looks like {sample}."}
+    if provider == "modal":
+        return {"ok": False, "text": "Modal has no regions to choose. Leave this empty."}
+    return {"ok": True, "text": None}
