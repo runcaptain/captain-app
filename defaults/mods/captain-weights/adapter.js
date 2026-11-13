@@ -11,7 +11,8 @@ import { localModels, localNetwork, localSession, localSessionById, localEdit, l
 const enc = encodeURIComponent;
 const isStarter = (model) => String(model ?? "").startsWith("starter:");
 const isLocalSession = (id) => String(id ?? "").startsWith("local-");
-const ok = (data) => (data == null ? { ok: false, error: "That network is not here." } : { ok: true, data });
+// A copy, as an answer from the services would be: what the page holds never changes behind its back.
+const ok = (data) => (data == null ? { ok: false, error: "That network is not here." } : { ok: true, data: JSON.parse(JSON.stringify(data)) });
 
 let ask = (path, opts) => api(path, opts);
 /** For tests: the request function. */

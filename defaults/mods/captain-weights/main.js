@@ -12,15 +12,17 @@ import { theme, props, closeOverlay } from "herdr";
 import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
 import { Button, Skeleton, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
-import { listNetworks, readNetwork, readSession, readTestCost, watchWeights } from "./adapter.js";
+import { listNetworks, readNetwork, readSession, readTestCost, watchWeights, sendUndo } from "./adapter.js";
 import { forward, backward, countOf } from "./net.js";
 import { PanZoom } from "./canvas.js";
 import { NetworkCanvas, layoutOf } from "./draw.js";
 import { Inspector } from "./inspect.js";
 import { CostPanel } from "./cost.js";
+import { Timeline } from "./timeline.js";
 import { WalkControls, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
 const SIDE_W = 340; // the panel beside the drawing
+const PULSE_MS = 2600; // how long touched neurons and weights pulse after an event
 const BAND_H = 178; // the cost and the timeline, under the drawing
 const count = (n) => Number(n).toLocaleString("en-US");
 
@@ -46,6 +48,9 @@ export default class CaptainWeights extends View {
     this.session = null;    // the session on this network: what the agent was allowed, and everything done
     this.test = null;       // the cost across the test set: {cost, right, of}
     this.openEdit = null;   // the edit opened in the timeline
+    this.pulse = null;      // what the last events touched, while it pulses: {neurons, weights, until, phase}
+    this.seen = null;       // the last event's number already on screen: newer ones pulse
+    this.busy = null;       // the edit being taken back
     this.reads = 0;         // how many times the network has been asked for: an older answer never replaces a newer
     this.stop = null;       // stops listening to the change feed
     this.pz = new PanZoom("wt");
@@ -53,6 +58,13 @@ export default class CaptainWeights extends View {
     if (this.model) this.open(this.model, cx); else this.loadList(cx);
     // The walk's clock: one step a beat while it plays. It moves the picture only, and reads nothing.
     cx.timer.every(1200, (cx) => { if (this.walk.playing) this.stepWalk(1, cx); });
+    // The pulse's clock: it beats while something pulses and is still otherwise.
+    cx.timer.every(120, (cx) => {
+      if (!this.pulse) return;
+      const left = this.pulse.until - Date.now();
+      if (left <= 0) this.pulse = null; else this.pulse.phase = 0.5 + 0.5 * Math.sin(left / 140);
+      cx.notify();
+    });
   }
 
   loadList(cx) {
@@ -62,7 +74,7 @@ export default class CaptainWeights extends View {
   /** Open a network: read its session and its numbers, run it on its first input, and listen for changes. */
   open(model, cx) {
     this.model = model; this.net = null; this.problem = null; this.sel = null; this.selW = null; this.inputAt = 0;
-    this.session = null; this.test = null; this.openEdit = null; this.readFor = null;
+    this.session = null; this.test = null; this.openEdit = null; this.readFor = null; this.seen = null; this.pulse = null; this.note = null;
     this.walk = { step: 0, playing: false }; this.mode = "values";
     this.pz = new PanZoom("wt");
     this.stop?.(); this.stop = null;
@@ -78,7 +90,7 @@ export default class CaptainWeights extends View {
     cx.spawn(async (cx) => {
       const s = await readSession(model);
       if (mine !== this.reads || model !== this.model) return;
-      if (s.ok) this.session = s.data;
+      if (s.ok) { this.session = s.data; this.noticeEvents(); }
       // The numbers are read again only when an edit or an undo has been recorded since they were last read.
       const changes = (this.session?.events ?? []).filter((e) => e.kind === "edit" || e.kind === "undo" || e.kind === "redo");
       const mark = changes.at(-1)?.id ?? "";
@@ -101,6 +113,37 @@ export default class CaptainWeights extends View {
         if (mine !== this.reads || model !== this.model) return;
         if (t.ok) this.test = t.data;
       }
+      cx.notify();
+    });
+  }
+
+  /** Events that arrived since the last read make what they touched pulse. The first read pulses nothing: it is
+   *  history, not something happening now. */
+  noticeEvents() {
+    const events = this.session?.events ?? [];
+    const last = events.reduce((m, e) => Math.max(m, e.seq ?? 0), 0);
+    if (this.seen != null && last > this.seen) {
+      const neurons = new Set(), weights = new Set();
+      for (const e of events) {
+        if ((e.seq ?? 0) <= this.seen) continue;
+        for (const [k, j] of e.touched?.neurons ?? []) neurons.add(`${k}:${j}`);
+        for (const [k, j, i] of e.touched?.weights ?? []) weights.add(`${k}:${j}:${i}`);
+      }
+      if (neurons.size || weights.size) this.pulse = { neurons, weights, until: Date.now() + PULSE_MS, phase: 1 };
+    }
+    this.seen = last;
+  }
+
+  /** Take an edit back, then read again. */
+  undo(id, cx) {
+    if (this.busy || !this.session) return;
+    this.busy = id;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await sendUndo(this.session.id, id, "you");
+      this.busy = null;
+      this.note = r.ok ? null : plainError(r.error, "Captain couldn't take that edit back.");
+      this.read(cx);
       cx.notify();
     });
   }
@@ -157,7 +200,7 @@ export default class CaptainWeights extends View {
 
   /** What the drawing needs to know. */
   drawing() {
-    return { net: this.net, run: this.run, grad: this.grad, sel: this.sel, selW: this.selW, mode: this.mode, walkedFrom: walkedFrom(this.net, this.walk.step), pulse: null };
+    return { net: this.net, run: this.run, grad: this.grad, sel: this.sel, selW: this.selW, mode: this.mode, walkedFrom: walkedFrom(this.net, this.walk.step), pulse: this.pulse };
   }
 
   header(c) {
@@ -221,6 +264,7 @@ export default class CaptainWeights extends View {
     const c = palette(isDark(theme()));
     const net = this.net;
     const cw = Math.max(320, this.width - SIDE_W - 41), ch = Math.max(180, this.height - 56 - 44 - BAND_H - 12);
+    const costW = Math.min(520, Math.max(380, Math.round(this.width * 0.4)));
     return v_flex().id("weights").size_full().bg(c.surface).rounded(RADIUS).text_color(c.navy).font_family(FONT)
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1 || Math.abs(size.height - this.height) > 1) { this.width = size.width; this.height = size.height; cx.notify(); } })
       .child(this.header(c))
@@ -238,6 +282,9 @@ export default class CaptainWeights extends View {
           .child(div().w(1).h_full().flex_none().bg(c.rule))
           .child(this.side(c)))
         .child(h_flex().id("wt-band").h(BAND_H).flex_none().border_t(1).border_color(c.rule)
-          .child(div().pl(20).pt(12).child(CostPanel(c, this, { width: Math.min(560, cw), height: BAND_H - 12 })))));
+          .child(div().pl(20).pt(12).child(CostPanel(c, this, { width: costW, height: BAND_H - 12 })))
+          .child(div().w(20).flex_none())
+          .child(div().w(1).h_full().flex_none().bg(c.rule))
+          .child(div().pl(16).pt(12).child(Timeline(c, this, { width: Math.max(260, this.width - costW - 77), height: BAND_H - 24 })))));
   }
 }
