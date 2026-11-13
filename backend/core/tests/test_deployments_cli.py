@@ -62,6 +62,21 @@ def test_list_show_and_sync_read_the_cloud(ws, aws):  # noqa: F811
     assert cst("deployments", "show", "nothing-here")[0] != 0
 
 
+def test_a_stopped_deployment_is_a_row_in_the_list_and_in_its_json(ws):  # noqa: F811
+    """On a real account on 2026-11-12 the list printed only "0 deployed, 1 not running." and its JSON had no rows:
+    it counted the stopped model and did not show it."""
+    SG.stage(ws, "shop", baseline=True, target="local", confirm=True)
+    version = SG.state(ws, "shop")["model_version"]
+    SG.unstage(ws, "shop")
+    FL.forget()
+    code, out = cst("deployments", "list")
+    assert code == 0 and "Stopped" in out and version in out and "0 deployed, 1 not running." in out
+    rows = json.loads(cst("--json", "deployments", "list")[1])["rows"]
+    assert [(r["project"], r["state"]) for r in rows] == [("shop", "stopped")]
+    assert json.loads(cst("--json", "deployments", "list", "--running")[1])["rows"] == []
+    assert len(json.loads(cst("--json", "deployments", "list", "--stopped")[1])["rows"]) == 1
+
+
 def test_something_found_in_the_cloud_is_listed_linked_or_removed(ws, aws):  # noqa: F811
     rid = _loose(aws)
     code, out = cst("deployments", "list")

@@ -1,6 +1,6 @@
 """Sample rows for the Deployments screen's pictures: props for `captain-deployments:<view>`, as JSON on stdout.
 Nothing is deployed and no cloud is asked: the screen draws what it is handed, and its buttons reach no service.
-Views: empty, leftover, one, several, failed, found, model. Demo names only."""
+Views: empty, leftover, stopped, one, several, failed, found, model. Demo names only."""
 import datetime as dt
 import json
 import math
@@ -68,8 +68,20 @@ CREATED = {"places": [
         {"kind": "resource-group", "kind_label": "Resource group", "name": "captain-serving", "what_for": "The folder in your account that holds everything else here, so it can be removed whole."},
         {"kind": "container-registry", "kind_label": "Image registry", "name": "captainserving", "what_for": "Holds the model's image in your account."}]}], "text": ""}
 
+KIDS_AWS = row("kids", "Kids range", "kids/starter-ranker@v1", "aws", "AWS", "us-west-1", "ml.t2.medium", "stopped", "Stopped.", stopped_at=ago(minutes=50), by="dana")
+LEFT = {"cloud": "aws", "cloud_label": "AWS", "login": "aws", "login_shown": None, "region": "us-west-1", "in_use_by": [], "can_remove": True, "text": "", "things": [
+    {"kind": "s3-bucket", "kind_label": "Bucket", "name": "captain-serving-000000000000-us-west-1", "short": "captain-serving-000000000000-us-west-1", "what_for": "Holds the model's files and its request log."},
+    {"kind": "iam-role", "kind_label": "Role", "name": "captain-serving", "short": "captain-serving", "what_for": "What a running model is allowed to do: read its own files and write its request log. Nothing else."},
+    {"kind": "ecr-repository", "kind_label": "Image repository", "name": "captain-serving", "short": "captain-serving", "what_for": "Holds the model's image in your account."},
+    {"kind": "iam-role", "kind_label": "Role for the image build", "name": "captain-serving-build", "short": "captain-serving-build", "what_for": "Lets the image build read its files and save the image. Nothing else."},
+    {"kind": "s3-object", "kind_label": "Build package", "name": "s3://captain-serving-000000000000-us-west-1/build/serving.zip", "short": "serving.zip", "what_for": "The files the model's image is built from. Kept so the image can be built again without sending them."},
+    {"kind": "codebuild-project", "kind_label": "Image build", "name": "captain-serving-build", "short": "captain-serving-build", "what_for": "Builds the model's image inside your account. It runs only when an image is built."},
+    {"kind": "log-group", "kind_label": "Build log", "name": "/aws/codebuild/captain-serving-build", "short": "captain-serving-build", "what_for": "What the image build printed while it ran. Kept so a build that failed can be read."}]}
+
 sets = {
-    "empty": ([], "Nothing is deployed. Deploy a model from a project's page to see it here.", None, "running"),
+    "empty": ([], "Nothing is deployed. Deploy a model from a project's page to see it here.", None, "all"),
+    # What Edgar's screen held on 2026-11-12: one model, stopped, and what its first deploy left in the account.
+    "stopped": ([KIDS_AWS], "0 deployed, 1 not running.", {"places": [LEFT], "text": ""}, "all"),
     # Nothing deployed, with what an earlier deploy left in the account: the page still has something to manage.
     "leftover": ([], "Nothing is deployed.", {"places": [{**CREATED["places"][0], "in_use_by": [], "can_remove": True}], "text": ""}, "running"),
     "one": ([SHOP], "1 deployed.", CREATED, "running"),

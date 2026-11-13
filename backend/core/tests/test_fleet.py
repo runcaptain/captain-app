@@ -331,3 +331,25 @@ def test_a_deploy_or_a_stop_a_moment_ago_shows_at_once(ws):  # noqa: F811
     assert [r["state"] for r in FL.deployed(ws)["rows"]] == ["running"]
     SG.unstage(ws, "shop")
     assert [r["state"] for r in FL.deployed(ws)["rows"]] == ["stopped"]
+
+
+def test_what_was_created_names_each_thing_and_leaves_out_captains_own_note(ws, monkeypatch):  # noqa: F811
+    """What a real AWS account held on 2026-11-12. Two things were labelled "Made by the first deploy", Captain's own
+    note of where to deploy was listed as if it were in the account, and the login "aws" was said beside "AWS"."""
+    from captain_search.staging import hosts as H
+
+    made = [{"type": "s3-bucket", "name": "captain-serving-000000000000-us-west-1"}, {"type": "iam-role", "name": "captain-serving"},
+            {"type": "ecr-repository", "name": "captain-serving"}, {"type": "iam-role", "name": "captain-serving-build"},
+            {"type": "s3-object", "name": "s3://captain-serving-000000000000-us-west-1/build/serving.zip"},
+            {"type": "codebuild-project", "name": "captain-serving-build"}, {"type": "log-group", "name": "/aws/codebuild/captain-serving-build"},
+            {"type": "compute-target", "name": "aws-serving"}]
+    monkeypatch.setattr(type(H.get("aws")), "status", lambda self, ctx: {"status": "ready", "profile": "aws", "region": "us-west-1", "created": made})
+    FL.forget()
+    place = FL.created(ws)["places"][0]
+    assert [t["kind_label"] for t in place["things"]] == ["Bucket", "Role", "Image repository", "Role for the image build", "Build package", "Image build", "Build log"]
+    by = {t["kind_label"]: t for t in place["things"]}
+    assert by["Build package"]["short"] == "serving.zip" and by["Build package"]["what_for"].startswith("The files the model's image is built from.")
+    assert by["Build log"]["what_for"].startswith("What the image build printed while it ran.")
+    assert not any("Made by the first deploy" in t["kind_label"] or "target" in t["kind"] for t in place["things"])  # Captain's note is not in the account
+    assert place["login"] == "aws" and place["login_shown"] is None and place["text"].startswith("7 things in your AWS account.")
+    assert FL._same_word("aws", "aws") and FL._same_word("AWS", "aws") and not FL._same_word("work-aws", "aws") and FL._same_word(None, "modal")

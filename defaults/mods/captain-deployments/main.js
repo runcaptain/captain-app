@@ -22,7 +22,7 @@ export default class CaptainDeployments extends View {
     this.problem = null;
     this.created = null;      // GET /api/deployed/created
     this.nums = {};           // project -> the last 24 hours of numbers
-    this.show = "running";
+    this.show = "all";        // every deployment at first: a stopped one is still there to start again or remove
     this.cloud = null;        // a cloud to show only, or null for all
     this.project = null;
     this.ask = null;          // an open question: {kind, id, text, yes}
@@ -39,7 +39,7 @@ export default class CaptainDeployments extends View {
       this.d = this.demo.deployed;
       this.created = this.demo.created ?? null;
       this.nums = this.demo.numbers ?? {};
-      this.show = this.demo.show ?? "running";
+      this.show = this.demo.show ?? "all";
       if (this.demo.open) this.openRow(this.d.rows.find((r) => r.id === this.demo.open), cx, this.demo.part ?? null);
       return;
     }
@@ -223,10 +223,11 @@ export default class CaptainDeployments extends View {
       .child(h_flex().gap(10).items_center()
         .child(Brand(c, place.cloud, 16))
         .child(div().text_size(14).font_semibold().text_color(c.navy).child(place.cloud_label))
-        .child(div().text_size(13).text_color(c.grey500).child([place.region, place.login].filter(Boolean).join(", "))))
+        // The login's name only when it says something the cloud's name does not ("aws" beside AWS says nothing).
+        .child(div().text_size(13).text_color(c.grey500).child([place.region, "login_shown" in place ? place.login_shown : place.login].filter(Boolean).join(", "))))
       .children(place.things.map((t, i) => h_flex().id(`dep-thing-${place.cloud}-${i}`).gap(8).items_start()
         .child(div().w(150).flex_none().truncate().text_size(12.5).text_color(c.grey500).child(t.kind_label ?? ""))
-        .child(div().w(230).flex_none().truncate().text_size(12.5).text_color(c.navy).child(t.name))
+        .child(div().w(230).flex_none().truncate().text_size(12.5).text_color(c.navy).child(t.short ?? t.name))
         .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey500).child(t.what_for))))
       .when(Boolean(place.in_use_by?.length), (e) => e.child(div().text_size(12.5).text_color(c.grey500)
         .child(`In use by ${place.in_use_by.join(", ")}. Stop that model first to remove these.`)))
@@ -281,6 +282,12 @@ export default class CaptainDeployments extends View {
       .when(Boolean(this.note), (e) => e.child(div().id("dep-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)))
       .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(13).line_height("19px").text_color(c.fail)
         .child(`Captain could not ask ${a.cloud_label}${a.login ? ` (${a.login})` : ""} just now: ${plainError(a.error, "no reason given")}. What is shown for it is Captain's own record.`)))
+      // Nothing answering right now, though there are deployments: say so, and offer the next step. The stopped
+      // ones are listed right below, each with Start again and Remove.
+      .when(Boolean(d.rows.length) && !d.rows.some((r) => UP.includes(r.state) && r.link !== "unlinked"), (e) => e.child(h_flex().id("dep-none-running").gap(12).items_center()
+        .child(div().text_size(14).font_semibold().text_color(c.navy).child("Nothing is running"))
+        .child(div().flex_1().text_size(13).text_color(c.grey500).child("Start a stopped model again below, or deploy one from a project's page."))
+        .when(!this.ask, (x) => x.child(Button(c, "dep-go-projects", "Deploy a model", () => run("layout.select", { stack: props()?.stack ?? "sections", child: "project" }), { kind: "primary", small: true })))))
       .child(d.rows.length ? this.filters(c, d.rows) : div())
       .child(v_flex().id("dep-list")
         .children(rows.map((r) => this.row(c, r)))
