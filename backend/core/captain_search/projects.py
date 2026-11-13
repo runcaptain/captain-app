@@ -377,6 +377,14 @@ class Resolver:
         return self._by_name(name)
 
 
+def rows(ctx: Context) -> list[dict]:
+    """Every project as projects.yaml has it: its id, name and the rest of its own record, and nothing counted.
+    One small file is read. `listing` also counts what each project holds, which lists every dataset, pipeline,
+    run, notebook and model of the workspace: use this where only the projects themselves are wanted, and always
+    in anything that runs on a clock."""
+    return [dict(p) for p in _read(ctx)[0]["projects"]]
+
+
 def listing(ctx: Context) -> list[dict]:
     r = Resolver(ctx)
     counts = {p["id"]: {k: 0 for k in KINDS} | {"models": 0} for p in r.doc["projects"]}

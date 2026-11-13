@@ -301,3 +301,37 @@ def test_an_idle_place_is_asked_at_once_when_a_deploy_to_it_starts(ws, aws, monk
     SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)   # something of Captain's is there now
     assert _until(lambda: any(w["cloud"] == "aws" and w["busy"] for w in WT.status(ws)), 2.0), "asked at once, not ten seconds later"
     SG.unstage(ws, "shop")
+
+
+# ---- what the watcher costs while nothing happens --------------------------------------------------------------------
+
+def test_an_idle_watcher_never_counts_what_the_projects_hold_and_costs_next_to_nothing(ws, aws, monkeypatch):  # noqa: F811
+    """On a real workspace the services sat at a third of a processor with nobody doing anything. The watcher read
+    Captain's deployment records every second through the list of projects that also counts what each project holds:
+    every dataset, run and model of the workspace, four times a second (81 ms each there). It reads the projects
+    alone now, and one read stands until something is written."""
+    from captain_search import projects as PR
+
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    counted = {"listing": 0, "records": 0}
+    real_listing, real_records = PR.listing, FL._records
+    monkeypatch.setattr(PR, "listing", lambda *a, **k: (counted.__setitem__("listing", counted["listing"] + 1), real_listing(*a, **k))[1])
+    monkeypatch.setattr(FL, "_records", lambda *a, **k: (counted.__setitem__("records", counted["records"] + 1), real_records(*a, **k))[1])
+    AN.listen("deployed")                       # a Deployments screen is open, and nothing happens
+    WT.start(ws)
+    assert _until(lambda: counted["records"] >= 1)
+    time.sleep(1.5)                             # the first looks, at the place and at the records
+    counted.update(listing=0, records=0)
+    cpu, secs = time.process_time(), 20.0
+    time.sleep(secs)
+    used = time.process_time() - cpu
+    AN.unlisten("deployed")
+    assert counted["listing"] == 0, f"the counted list of projects was read {counted['listing']} times by an idle watcher"
+    assert counted["records"] <= 3, f"Captain's records were read {counted['records']} times in {secs:.0f} idle seconds: a read stands until something is written"
+    # Under a second of processor for an idle minute, measured over a third of one.
+    assert used < 1.0 * secs / 60, f"{used:.2f} s of processor in {secs:.0f} idle seconds"
+    # And a write is still seen at once: the read does not stand past it.
+    before = counted["records"]
+    AN.listen("deployed")
+    SG._save(ws, "shop", "staging", status="stopped", stop_reason="stopped by dana@example.com")
+    assert _until(lambda: counted["records"] > before), "after a write the records are read again"

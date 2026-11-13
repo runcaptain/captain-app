@@ -280,6 +280,75 @@ def watch_threads() -> None:
     threading.excepthook, sys.excepthook = in_thread, at_top
 
 
+# ---- what every thread is doing, on request ---------------------------------------------------
+# When the services use a processor and nobody can say why, the answer is where their threads are. On SIGUSR1 the
+# services write every thread's Python stack into services.log. `cst app stacks` sends the signal and prints what
+# was written. The standard library does the writing (faulthandler), from inside the signal, so it works even when
+# the threads are stuck.
+
+_stacks_fh = None
+STACKS_MARK = "Thread 0x"   # how faulthandler begins each thread: "Thread 0x... (most recent call first):"
+
+
+def watch_stacks(path: str | None = None) -> bool:
+    """Write every thread's stack into the services' log when the process gets SIGUSR1. False where there is no
+    such signal (Windows). `path` is the log file (default: the one `start` opened, or log_dir()'s)."""
+    global _stacks_fh
+    import faulthandler
+    import signal
+
+    if not hasattr(signal, "SIGUSR1"):
+        return False
+    path = path or (getattr(_handler, "baseFilename", None) if _handler is not None else None) or os.path.join(log_dir(), "services.log")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if _stacks_fh is not None:
+        try:
+            faulthandler.unregister(signal.SIGUSR1)
+            _stacks_fh.close()
+        except Exception:  # noqa: BLE001
+            pass
+    _stacks_fh = open(path, "a", buffering=1, encoding="utf-8")   # its own handle, appended to: the log's lines are not disturbed
+    faulthandler.register(signal.SIGUSR1, file=_stacks_fh, all_threads=True, chain=False)
+    return True
+
+
+def ask_stacks(pid: int, path: str | None = None, wait_s: float = 2.0) -> str:
+    """Ask the running services (process `pid`) for every thread's stack, and return what they wrote. Thread names
+    are added from nothing: faulthandler writes thread ids, and the frames say which thread it is."""
+    import signal
+
+    if not hasattr(signal, "SIGUSR1"):
+        raise RuntimeError("This system has no signal to ask with.")
+    path = path or os.path.join(log_dir(), "services.log")
+    try:
+        before = os.path.getsize(path)
+    except OSError:
+        before = 0
+    os.kill(pid, signal.SIGUSR1)
+    end, text = time.monotonic() + wait_s, ""
+    while time.monotonic() < end:
+        time.sleep(0.05)
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                fh.seek(before)
+                text = fh.read()
+        except OSError:
+            text = ""
+        # Written in one go from inside the signal: once it is there and has stopped growing, that is all of it.
+        if STACKS_MARK in text and text.endswith("\n"):
+            time.sleep(0.1)
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                fh.seek(before)
+                again = fh.read()
+            if again == text:
+                break
+            text = again
+    i = text.find(STACKS_MARK)
+    j = text.find("Current thread 0x")
+    start_at = min(x for x in (i, j) if x >= 0) if (i >= 0 or j >= 0) else -1
+    return text[start_at:] if start_at >= 0 else ""
+
+
 # ---- what the process uses ---------------------------------------------------------------
 
 def cpu_seconds() -> float:

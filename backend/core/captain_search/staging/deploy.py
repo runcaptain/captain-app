@@ -813,7 +813,7 @@ def remove(ctx: Context, pid: str, env: str = ENV, progress=None) -> dict:
     if doc and doc.get("made_setup") and host and host != "local":
         hobj = H.get(host)
         st = _setup(ctx, hobj)
-        used = [pr["name"] for pr in PR.listing(ctx) if pr["id"] != pid
+        used = [pr["name"] for pr in PR.rows(ctx) if pr["id"] != pid
                 and any(s.get("status") in ("running", "starting") and s.get("target") == st.get("target") for s in (PS.read(ctx, pr["id"])[0].get("staging") or {}).values())]
         if st.get("status") not in ("none", "removed") and not used:
             n = len([x for x in st.get("created") or [] if "target" not in str(x.get("type") or "")])

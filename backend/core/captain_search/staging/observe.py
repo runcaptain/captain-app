@@ -408,7 +408,7 @@ def deployments(ctx: Context, which: str = "live") -> dict:
     except Exception:  # noqa: BLE001  a cloud that can't be asked never hides the list
         pass
     rows = []
-    for pr in PR.listing(ctx):
+    for pr in PR.rows(ctx):
         try:
             doc = PS.read(ctx, pr["id"])[0]
         except Exception:  # noqa: BLE001

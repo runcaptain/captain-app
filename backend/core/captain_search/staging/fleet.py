@@ -127,7 +127,7 @@ def _records(ctx: Context) -> list[tuple[dict, str, dict]]:
     from .. import projects as PR
 
     out = []
-    for pr in PR.listing(ctx):
+    for pr in PR.rows(ctx):
         try:
             doc = PS.read(ctx, pr["id"])[0]
         except Exception:  # noqa: BLE001
@@ -540,7 +540,7 @@ def _deploying(ctx: Context) -> dict:
 
     out = {}
     now = dt.datetime.now(dt.timezone.utc)
-    for pr in PR.listing(ctx):
+    for pr in PR.rows(ctx):
         try:
             doc, _ = DP._read(ctx, pr["id"], ENV)
         except Exception:  # noqa: BLE001
@@ -664,7 +664,7 @@ def link(ctx: Context, row_id: str, pid: str, env: str = ENV) -> dict:
     from . import _note, _save, state
 
     row, src = _found_row(ctx, row_id)
-    if not any(p["id"] == pid for p in PR.listing(ctx)):
+    if not any(p["id"] == pid for p in PR.rows(ctx)):
         raise ValueError(f"There is no project {pid}.")
     cur = state(ctx, pid, env)
     if cur and cur.get("status") in ("running", "starting"):
