@@ -27,7 +27,7 @@ export function tensorShapes({ tall = false } = {}) {
     [`L${k}.self_attn.in_proj_weight`]: [3 * W, W], [`L${k}.self_attn.in_proj_bias`]: [3 * W], [`L${k}.self_attn.out_proj.weight`]: [W, W], [`L${k}.self_attn.out_proj.bias`]: [W],
     [`L${k}.norm1.weight`]: [W], [`L${k}.norm1.bias`]: [W], [`L${k}.linear1.weight`]: [HIDDEN, W], [`L${k}.linear1.bias`]: [HIDDEN],
     [`L${k}.linear2.weight`]: [W, HIDDEN], [`L${k}.linear2.bias`]: [W], [`L${k}.norm2.weight`]: [W], [`L${k}.norm2.bias`]: [W] });
-  Object.assign(sh, { 'buy.weight': [1, W], 'buy.bias': [1], 'logit_scale': [] });
+  Object.assign(sh, { 'buy.weight': [1, W], 'buy.bias': [1], 'logit_scale': [], cn: [40, W] });
   return sh;
 }
 const numbers = (sh, names) => names.reduce((n, t) => n + (sh[t].length ? sh[t].reduce((a, b) => a * b, 1) : 1), 0);
@@ -59,6 +59,8 @@ export function partsModel(o = {}) {
     last = [`L${k}.norm2`];
   }
   parts.push(part('buy', 'head', 'head buy', `small head at the end: ${W} numbers in, 1 out. What it is for is not stated in the file.`, ['buy.weight', 'buy.bias'], last, { side: 'session', inputs: W, outputs: 1 }));
+  // An older layout: the catalog's item vectors on the candidate side, stored in a form that cannot be edited.
+  if (o.older) parts.push({ ...part('cn', 'items', 'item vectors', 'item vectors: one row per catalog item.', ['cn'], [], { side: 'candidate', rows: 40, width: W }), editable: false });
   parts.push(part('logit_scale', 'scale', 'score sharpness', 'one number: how sharply the scores of candidates are told apart.', ['logit_scale'], [], { side: null }));
   const parameters = parts.reduce((n, p) => n + p.parameters, 0);
   return { id: PARTS, name: PARTS, version: 1, says: `A session model, width ${W}, 2 layers, 2 heads, with 2 tree rankers.`, numbers: false, sizes: [], layers: [], examples: [], test: [],
@@ -71,6 +73,7 @@ export function partsModel(o = {}) {
       : { read: true, edit: false, run: false, deploy: false, says: 'This model can be read here, not changed or run yet.' } };
 }
 
+export const SOURCE_SAYS = 'Brought in from a training folder on this computer on 2026-11-13, 12 files kept unchanged.';
 export const NOT_MEASURED = 'Not measured: this model cannot be run here yet.';
 // What a test has changed in the made-up model: the numbers set, and the session's record. `partsReset()` clears it.
 const CHANGED = { numbers: new Map(), events: [], refuse: null };
@@ -149,7 +152,8 @@ export function partsRoutes(path, o = {}, opts = {}) {
   const [p, q = ''] = path.split('?');
   const arg = Object.fromEntries(q.split('&').filter(Boolean).map((kv) => kv.split('=').map(decodeURIComponent)));
   const m = partsModel(o), sh = tensorShapes(o);
-  if (p === '/api/weights/models') return { ok: true, data: [{ id: m.id, name: m.name, says: m.says, sizes: [], parameters: m.parameters, versions: [1], kind: m.kind, kind_says: m.kind_says }] };
+  if (p === '/api/weights/models') return { ok: true, data: [{ id: m.id, name: m.name, says: m.says, sizes: [], parameters: m.parameters, versions: [1], kind: m.kind, kind_says: m.kind_says, ...(o.sourced ? { source_says: SOURCE_SAYS } : {}) }] };
+  if (p === `/api/weights/models/${PARTS}` && o.sourced) return { ok: true, data: { ...m, source_says: SOURCE_SAYS } };
   if (p === `/api/weights/models/${PARTS}`) return { ok: true, data: m };
   if (p === `/api/weights/models/${PARTS}/session`) return { ok: true, data: { id: SESSION, model: PARTS, ledger: { raw_weights: true, weights_read: 0, changed: changedNow(), total: m.parameters }, events: CHANGED.events.map((e) => ({ ...e })) } };
   if (p === `/api/weights/sessions/${SESSION}/edits`) return o.edits ? editAnswer(sh, opts.body ?? {}) : { ok: false, error: 'This model can be read here, not changed or run yet.' };
@@ -167,6 +171,10 @@ export function partsRoutes(path, o = {}, opts = {}) {
       { name: 'items seen', group: 'items', by: {}, used_by: ['full'], unused_by: [] }],
     unused_by_all: ['hour of day'], unused_by_all_says: '1 input is used by no ranker: hour of day.', same_inputs: false } };
   // What each row stands for. The services name the item table's rows, with one row past the saved list.
+  // A tall table's names, for the rows asked for only.
+  if (p === `/api/weights/sessions/${SESSION}/labels` && arg.tensor === 'item.weight' && o.tall && o.named) { const [a, b] = span(arg.rows, 1000);
+    return { ok: true, data: { tensor: arg.tensor, rows: 1000, rows_shown: [a, b], labels: Array.from({ length: b - a }, (_x, i) => `thing ${a + i + 1}`), labels_says: '', sure: true } }; }
+  if (p === `/api/weights/sessions/${SESSION}/labels` && arg.tensor === 'cn') return { ok: true, data: { tensor: 'cn', rows: 40, labels: Array.from({ length: 40 }, (_x, i) => `item ${i + 1}, price bucket ${(i % 4) + 1}`), labels_says: '', sure: true } };
   if (p === `/api/weights/sessions/${SESSION}/labels`) return o.plain || arg.tensor !== 'item.weight' || o.tall ? { ok: true, data: { tensor: arg.tensor, labels: null, labels_says: '', sure: null } }
     : { ok: true, data: { tensor: arg.tensor, rows: ITEMS.length, labels: [...ITEMS.slice(0, -1), 'none or unknown'], labels_from: 'a saved list', extra_row: ITEMS.length - 1, sure: false,
       labels_says: 'The saved list is one name short of the rows. The last row is taken to be "none or unknown", which is a guess.' } };

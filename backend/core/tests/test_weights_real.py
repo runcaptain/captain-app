@@ -872,3 +872,155 @@ def test_cst_edits_takes_back_and_saves(tmp_path):
     out = words("weights", "save", "--as", "two rows cleared")
     assert "saved sample@v2: sample@v1 plus 9 changed numbers" in out
     assert cst("weights", "show", "sample")["base"] == "sample@v1" and "sample v2" in words("weights", "show", "sample")
+
+
+# ---- the older layout: enc.npz, item vectors, heads and layers stated in the file ------------------------------------------------
+
+ITEMS = 20
+
+
+def make_enc_folder(root: Path, seed: int = 3) -> tuple[Path, dict[str, np.ndarray]]:
+    """A made-up version folder in the older layout: weights/enc.npz with three layers, the item vectors `cn`, heads
+    and layers saved as single numbers, no candidate tensors but one, rankers under other names, and other files."""
+    w = root / "weights"
+    w.mkdir(parents=True, exist_ok=True)
+    a = arrays(8, 3, seed)
+    for k in [k for k in a if k.startswith(("c_text", "c_price", "c_cat", "cat.s")) or k == "cfg"]:
+        del a[k]
+    rng = np.random.default_rng(seed)
+    a["cat.store.weight"] = rng.standard_normal((7, 8)).astype("float32")
+    a["cat_vocab"] = np.array([f"category {i}" for i in range(7)])
+    a["layers"], a["heads"] = np.int64(3), np.int64(2)
+    a["logit_scale"] = np.float64(2.5)
+    cn = rng.standard_normal((ITEMS, 8)).astype("float32")
+    cn[1] = 3 * cn[0]            # item 1 points the same way as item 0
+    a["cn"] = cn
+    a["priceb"] = (np.arange(ITEMS) % 6).astype("int64")
+    a["catid"] = (np.arange(ITEMS) % 7).astype("int64")
+    np.savez(w / "enc.npz", **a)
+    for name in ("conv", "full_nopcat_v1"):
+        (w / f"rank_{name}.txt").write_text(TREES)
+        (w / f"rank_{name}.cols.json").write_text(json.dumps(COLS))
+    for name in ("blend.json", "icp.json", "offline_eval_a.json"):
+        (w / name).write_text(json.dumps({"made_up": True}))
+    (root / "MANIFEST.yaml").write_text("description: the older design\n")
+    return root, a
+
+
+def test_the_older_layout_is_listed_brought_in_described_and_read(svc):
+    root = svc.tmp / "both"
+    folder, a = make_enc_folder(root / "arch-old" / "shop" / "v1")
+    make_folder(root / "arch-new" / "shop" / "v1")
+    reg = svc.get("/api/weights/registry", **{"from": str(root)})
+    assert [(v["path"], v["description"]) for v in reg["versions"]] == [
+        ("arch-new/shop/v1", "architecture: made-up, version: v1, reproducibility: not-tested"), ("arch-old/shop/v1", "the older design")]
+    assert R.looks_real(str(folder)) and R.looks_real(str(folder / "weights"))
+    out = svc.post("/api/weights/import", {"folder": reg["versions"][1]["address"], "name": "older"})
+    assert (out["width"], out["depth"], out["heads"], out["rankers"], out["tables"]) == (8, 3, 2, ["conv", "full_nopcat_v1"], [])
+    m = WS.manifest(svc.ctx, "older")
+    for f in sorted((folder / "weights").iterdir()):
+        assert svc.ctx.store.get(f"weights/older/v1/files/{f.name}") == f.read_bytes()
+    # float64 and whole-number arrays: the float64 scalar is a tensor kept as float64, the whole numbers are facts
+    want = tensors_of(a)
+    assert "cn" in want and "logit_scale" in want and not {"layers", "heads", "priceb", "catid"} & set(want)
+    _, got = WS.load(svc.ctx, "older")
+    assert got["logit_scale"].dtype == np.float64 and got["cn"].tobytes() == a["cn"].tobytes() and WS.digest(got) == WS.digest(want) == m["sha256"]
+    assert (m["facts"]["heads"]["value"], m["facts"]["layers"]["value"], m["facts"]["catid"]["value"][:3]) == (2, 3, [0, 1, 2])
+    assert m["other_files"] == ["blend.json", "icp.json", "offline_eval_a.json"] and m["model_json"] is None
+    # the description: three layers, heads as the file says, the item vectors as their own part, no candidate text or price
+    d = svc.get("/api/weights/models/older")
+    assert (d["width"], d["depth"], d["heads"], d["heads_from"], d["session_file"]) == (8, 3, 2, "the file", "enc.npz")
+    assert d["heads_says"].startswith("2 heads, as the file says") and d["declared"] == {
+        "session_model": None, "layers": 3, "layers_from": "the file", "layers_agree": True}
+    parts = {p["id"]: p for p in d["parts"]}
+    assert sorted(t for p in d["parts"] for t in p["tensors"]) == sorted(want) and not [p for p in d["parts"] if p["kind"] == "other"]
+    cn = parts["cn"]
+    assert (cn["kind"], cn["name"], cn["rows"], cn["width"], cn["side"], cn["editable"]) == ("items", "item vectors", ITEMS, 8, "candidate", True)
+    assert "worked out ahead of time: one row" in cn["says"]
+    assert {p["id"] for p in d["parts"] if p["side"] == "candidate"} == {"cn", "c_rep"}
+    assert parts["cat.store"]["name"] == "category table" and parts["logit_scale"]["editable"] is False and parts["act"]["editable"] is True
+    assert [p["layer"] for p in d["parts"] if p["kind"] == "attention"] == [0, 1, 2] and parts["q"]["feeds_from"] == ["L2.norm2"]
+    assert [f["name"] for f in d["other_files"]] == m["other_files"] and all(f["says"] == "Kept unchanged. Not read." for f in d["other_files"])
+    assert {f["name"] for f in d["facts"]} == {"cat_vocab", "catid", "edges", "heads", "layers", "priceb"}
+    # reading it
+    sid = svc.post("/api/weights/sessions", {"model": "older"})["id"]
+    p = f"/api/weights/sessions/{sid}"
+    att = svc.get(p + "/attention", layer=2)
+    assert (att["part"], att["heads"], att["heads_from"], len(att["of"])) == ("L2.self_attn", 2, "the file", 2)
+    assert {t["table"] for t in att["of"][0]["reads"]} == {"act", "gap", "dur", "price", "rep", "pos", "cat.store"}     # not the item vectors
+    assert "the layers before this one" in att["reads_says"]
+    n = svc.get(p + "/nearest", tensor="cn", row=0, top=3)
+    assert n["rows"] == ITEMS and n["label"] == "item 0, price bucket 0, category category 0"
+    assert n["nearest"][0]["row"] == 1 and n["nearest"][0]["cosine"] == pytest.approx(1.0) and n["nearest"][0]["label"] == "item 1, price bucket 1, category category 1"
+    lab = svc.get(p + "/labels", tensor="cn")
+    assert len(lab["labels"]) == ITEMS and lab["labels"][13] == "item 13, price bucket 1, category category 6" and lab["labels_from"] == "priceb, catid"
+    assert "named from the rows of cat.store.weight" in lab["labels_says"]
+    assert svc.get(p + "/labels", tensor="cat.store.weight")["labels"][6] == "category 6"
+    assert svc.get(p + "/labels", tensor="price.weight")["labels"][1] == "below 1.00"
+    assert svc.get(p + "/directions", tensor="cn")["directions"][0]["strongest_rows"][0]["label"].startswith("item ")
+    assert svc.get(p + "/read", tensor="logit_scale")["dtype"] == "float64"
+    r = svc.get("/api/weights/models/older/rankers")
+    assert [k["name"] for k in r["rankers"]] == ["conv", "full_nopcat_v1"] and r["unused_by_all"] == ["s1_never"]
+    assert svc.get("/api/weights/models/older/trees", ranker="full_nopcat_v1")["trees"] == 3
+    # only float32 is edited: the float64 scalar is refused in a sentence, an item's row is changed and taken back
+    err = svc.post(p + "/edits", {"op": "set", "tensor": "logit_scale", "value": 3}, code=400)["error"]
+    assert "stored as float64" in err and "left alone" in err
+    plain(err)
+    assert svc.post(p + "/edits", {"op": "zero", "tensor": "cn", "neurons": [5]})["changed"] == 8
+    svc.post(p + "/undo")
+    assert WSN.current_digest(svc.ctx, sid)["digest"] == m["sha256"]
+
+
+def test_item_rows_are_numbered_by_category_when_names_cannot_be_matched_and_bare_without_the_lists(svc):
+    folder, a = make_enc_folder(svc.tmp / "plain")
+    del a["cat_vocab"], a["priceb"]
+    np.savez(folder / "weights" / "enc.npz", **a)
+    R.import_from(svc.ctx, str(folder), "plain")
+    sid = svc.post("/api/weights/sessions", {"model": "plain"})["id"]
+    lab = svc.get(f"/api/weights/sessions/{sid}/labels", tensor="cn")
+    assert lab["labels"][8] == "item 8, category 1" and "Categories are numbered" in lab["labels_says"]
+    del a["catid"], a["heads"]
+    np.savez(folder / "weights" / "enc.npz", **a)
+    R.import_from(svc.ctx, str(folder), "bare")
+    sid = svc.post("/api/weights/sessions", {"model": "bare"})["id"]
+    assert svc.get(f"/api/weights/sessions/{sid}/labels", tensor="cn")["labels"][8] == "item 8"
+    assert R.whole(svc.ctx, "bare")["heads"] is None
+
+
+def test_cst_reads_the_older_layout(tmp_path):
+    R._KINDS.clear()
+    cst("init", "demo", "--storage", str(tmp_path / "bucket"))
+    folder, _ = make_enc_folder(tmp_path / "old")
+    assert cst("weights", "registry", str(tmp_path))["versions"][0]["path"] == "old"
+    assert cst("weights", "import", str(folder), "--as", "older")["depth"] == 3
+    cst("weights", "open", "older")
+    text = words("weights", "show", "older")
+    for want in ("width 8, 3 layers, 2 heads", "2 heads, as the file says", "item vectors (cn): 20 by 8", "attention, layer 3",
+                 "tree ranker conv: 3 trees", "tree ranker full_nopcat_v1", "3 other files kept unchanged, not read"):
+        assert want in text, want
+    assert cst("weights", "attention", "--layer", "3")["layer"] == 2
+    assert "item 1, price bucket 1, category category 1" in words("weights", "nearest", "cn", "0")
+    assert "stored as float64" in words("weights", "edit", "set", "--tensor", "logit_scale", "--values", "3", code=1)
+
+
+def test_the_list_says_where_a_model_came_from_without_its_address_and_labels_can_be_read_by_range(svc, tmp_path):
+    folder, _ = make_enc_folder(svc.tmp / "somewhere-private")
+    R.import_from(svc.ctx, str(folder), "older")
+    rows = {r["id"]: r for r in svc.get("/api/weights/models")}
+    says = rows["older"]["source_says"]
+    assert re.fullmatch(r"Brought in from a training folder on this computer on \d{4}-\d\d-\d\d, 9 files kept unchanged\.", says), says
+    assert "somewhere-private" not in json.dumps(rows["older"]) and rows["tiny"]["source_says"] is None
+    assert svc.get("/api/weights/models/older")["source_says"] == says
+    m = WS.manifest(svc.ctx, "older")
+    assert R.source_says({**m, "source": {**m["source"], "from": "s3://made-up-models/arch/shop/v1"}}).startswith("Brought in from cloud storage on ")
+    sid = svc.post("/api/weights/sessions", {"model": "older"})["id"]
+    p = f"/api/weights/sessions/{sid}"
+    svc.post(p + "/edits", {"op": "zero", "tensor": "cn", "neurons": [0]})
+    svc.post(p + "/save")
+    assert "This version is older, version 1 with edits saved on " in {r["id"]: r for r in svc.get("/api/weights/models")}["older"]["source_says"]
+    part = svc.get(p + "/labels", tensor="cn", rows="5:8")
+    assert (part["rows"], part["rows_shown"]) == (ITEMS, [5, 8])
+    assert part["labels"] == ["item 5, price bucket 5, category category 5", "item 6, price bucket 0, category category 6", "item 7, price bucket 1, category category 0"]
+    assert svc.get(p + "/labels", tensor="cn")["rows_shown"] == [0, ITEMS] and len(svc.get(p + "/labels", tensor="cn", rows="3")["labels"]) == 1
+    assert svc.get(p + "/labels", tensor="act.weight", rows="0:2")["labels"] is None
+    assert "outside this tensor" in svc.get(p + "/labels", code=400, tensor="cn", rows="5:99")["error"]

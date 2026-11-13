@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { harness, shapesIn } from './harness.mjs';
 import { fakeFeed } from './fixtures/captain-weights/reference.mjs';
-import { PARTS, SESSION, partsModel, partsRoutes, partsReset, partsRefuse, matrix, NOT_MEASURED } from './fixtures/captain-weights/parts.mjs';
+import { PARTS, SESSION, partsModel, partsRoutes, partsReset, partsRefuse, matrix, NOT_MEASURED, SOURCE_SAYS } from './fixtures/captain-weights/parts.mjs';
 
 const { default: Weights } = await import('../../defaults/mods/captain-weights/main.js');
 const { weightsTransport, partsFrom, isParts } = await import('../../defaults/mods/captain-weights/adapter.js');
@@ -468,4 +468,46 @@ test('a refused edit stays staged, and leaving drops a staged change and says so
   await h.click('wt-back');
   assert.equal(textOf(h, 'wt-dropped'), 'Your unsaved change to Position table was dropped. Nothing was saved.');
   assert.equal(edits().length, sent, 'nothing was ever sent by leaving');
+});
+
+test('an older layout: item vectors are a table on the candidate side, and a part that cannot be changed says so', async () => {
+  const h = await page(PARTS, [1280, 800], { older: true, edits: true });
+  const L = partsLayout(h.mod.pm.model), box = (id) => L.boxes.find((b) => b.part.id === id);
+  assert.ok(box('cn').y > box('pos').y + box('pos').h, 'the candidate side is its own row, under the session side');
+  assert.ok(L.captions.some((c) => c.text === 'Candidate side: Item vectors'));
+  await h.click('wp-part-cn');
+  assert.equal(textOf(h, 'wt-part-says'), 'Item vectors: one row of 8 numbers for each of 40 items in the catalog. Items whose rows are alike are ones the model treats alike.');
+  // A table: a row picker, the rows most like the row, and the services' names for its rows.
+  assert.equal(textOf(h, 'wt-part-row-at'), 'Row 1 of 40: item 1, price bucket 1');
+  assert.ok(asked.some(([p]) => p === `${S}/nearest?tensor=cn&row=0&top=8&watch=1`) && asked.some(([p]) => p === `${S}/labels?tensor=cn`));
+  assert.ok(h.byIdPrefix('wt-part-near-').length > 0);
+  // Its tensor is not editable: no hand tools, and one line says why. Another part of the same model has them.
+  assert.equal(one(h, 'wt-phand').length, 0);
+  assert.equal(textOf(h, 'wt-part-fixed'), "This part's numbers are not stored in a form that can be changed here. It can be read.");
+  await h.click('wp-part-act');
+  assert.equal(one(h, 'wt-phand').length, 1);
+  assert.equal(h.byIdPrefix('wt-part-fixed').length, 0);
+});
+
+test('the services\' sentence about where a model came from shows on the list and on the page', async () => {
+  const h = await page(null, null, { sourced: true });
+  assert.equal(textOf(h, `wt-open-source-${PARTS}`), SOURCE_SAYS);
+  await h.click(`wt-open-btn-${PARTS}`);
+  assert.equal(textOf(h, 'wt-source'), SOURCE_SAYS, 'their sentence, in place of the page\'s own');
+  assert.equal(h.byIdPrefix('wt-source-copy').length, 1, 'the address can still be copied');
+  assert.ok(!h.text().includes('/models/demo'));
+});
+
+test('a tall table asks for the names of the rows on screen only', async () => {
+  const h = await page(PARTS, [1280, 800], { tall: true, named: true });
+  await h.click('wp-part-item');
+  assert.equal(asked.filter(([p]) => p.includes('/labels')).at(-1)[0], `${S}/labels?tensor=item.weight&rows=0%3A256`);
+  assert.equal(h.mod.pm.labels.item.labels.length, 256);
+  assert.equal(textOf(h, 'wt-part-row-at'), 'Row 1 of 1,000: thing 1');
+  h.mod.pm.row = 600; await h.idle(1);
+  await h.click('wt-part-row-next');
+  assert.equal(asked.filter(([p]) => p.includes('/labels')).at(-1)[0], `${S}/labels?tensor=item.weight&rows=473%3A729`);
+  assert.equal(textOf(h, 'wt-part-row-at'), 'Row 602 of 1,000: thing 602', 'a name is found by its row in the whole table');
+  const top = h.mod.pm.rows[0].row;
+  assert.equal(h.byIdPrefix(`wt-part-row-${top}`)[0].kids[0].kids[0], `thing ${top + 1}`);
 });

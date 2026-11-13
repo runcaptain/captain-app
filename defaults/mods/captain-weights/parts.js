@@ -41,11 +41,16 @@ export function partsFacts(m) {
   return Number.isFinite(m.parameters) ? `${kind}, ${countWords(m.parameters)}` : kind;
 }
 
+/** Whether a part is a table of rows that each stand for one thing: a lookup table, or the item vectors (one row
+ *  per catalog item). Such a part has a row picker, the rows most like a row, and names for its rows. */
+export const isTable = (p) => p?.kind === "embedding" || p?.kind === "items";
+
 /** What a part is, in one plain sentence, with the technical word first and plain words beside it. */
 export function partSentence(p) {
   const [rows, cols] = p.shape ?? [];
   switch (p.kind) {
     case "embedding": return `A lookup table (an embedding): one row of ${int(cols)} numbers for each of ${int(rows)} values${p.embeds ? `. It holds ${p.embeds.replace(/\.$/, "")}${p.guessed ? " (a guess from its name)" : ""}` : ""}. Rows that are alike stand for things the model treats alike.`;
+    case "items": return `Item vectors: one row of ${int(cols)} numbers for each of ${int(rows)} items in the catalog. Items whose rows are alike are ones the model treats alike.`;
     case "projection": return `A projection: it turns ${int(cols)} numbers from outside, such as a text's, into the ${int(rows)} numbers the model works in.`;
     case "attention": return `Attention: which earlier events this one looks at. ${p.heads ? `${int(p.heads)} ${p.heads === 1 ? "head" : "heads"}, each looking for something of its own.` : "The files do not say how many heads it has."}`;
     case "feed_forward": return `Feed-forward: after looking back, each event is worked on by itself, through a hidden step ${int(p.hidden ?? rows)} wide.`;
@@ -95,7 +100,7 @@ export function largestRows(values, from = 0, top = 8) {
 export function loadPart(v, cx) {
   const s = v.pm, p = partOf(v), t = tensorOf(v);
   if (!p || !t) return;
-  const mine = ++s.asks, table = p.kind === "embedding";
+  const mine = ++s.asks, table = isTable(p);
   cx.spawn(async (cx) => {
     if (!s.session) { const got = await readSession(v.model); if (v.pm !== s) return; if (got?.ok && got.data?.id) { s.session = got.data.id; v.session = got.data; } }
     if (mine !== s.asks) return;
@@ -104,7 +109,8 @@ export function loadPart(v, cx) {
     const [heat, near, names] = await Promise.all([
       readPartHeatmap(s.session, t, { head: s.head, rows }),
       table && s.row != null ? readPartNearest(s.session, t, s.row) : Promise.resolve(null),
-      table && !s.labels[p.id] ? readPartLabels(s.session, t) : Promise.resolve(null),
+      // Names for the rows on screen: the whole list once for a short table, the window's rows for a tall one.
+      table && !s.labels[p.id]?.whole ? readPartLabels(s.session, t, rows) : Promise.resolve(null),
     ]);
     if (v.pm !== s) return;
     if (names?.ok) s.labels[p.id] = names.data;
@@ -189,7 +195,7 @@ export function PartPanel(c, v, width) {
       .when(Boolean(s.model.wiring), (e) => e.child(div().id("wt-part-wiring").text_size(11.5).line_height("16px").text_color(c.grey500).child(s.model.wiring)))
       .child(ChangesList(c, v) ?? div());
   }
-  const t = tensorOf(v), table = p.kind === "embedding";
+  const t = tensorOf(v), table = isTable(p);
   const fact = (id, name, value) => v_flex().gap(2).child(label(c, name)).child(div().id(id).text_size(15).font_semibold().child(value));
   let out = v_flex().id("wt-part").gap(12)
     .child(div().id("wt-part-name").text_size(12.5).font_semibold().child(p.name))
@@ -225,6 +231,8 @@ export function PartPanel(c, v, width) {
   const known = table ? s.labels[p.id] ?? null : null, names = known?.labels ?? null;
   // The hand tools sit beside the picture where the panel is wide enough, so both are on screen together.
   const hand = PartHandBlock(c, v, names);
+  // A part the services cannot change says so once, where the hand tools would be.
+  if (!hand && s.model.can_edit && p.editable === false) out = out.child(div().id("wt-part-fixed").text_size(11.5).line_height("16px").text_color(c.grey500).child("This part's numbers are not stored in a form that can be changed here. It can be read."));
   out = out.child(hand && width >= 520 ? h_flex().gap(16).items_start().child(div().flex_none().max_w(Math.round(width * 0.5)).child(picture)).child(div().flex_1().min_w(0).child(hand))
     : hand ? v_flex().gap(12).child(picture).child(hand) : picture);
   if (rows.length) out = out.child(v_flex().id("wt-part-rows").gap(2)
