@@ -1192,12 +1192,18 @@ def project_deploy(pid: str, body: dict | None = None):
         raise HTTPException(400, p["fit"]["text"])
     if p["needs_confirm"] and not b.get("confirm"):
         return JSONResponse({"detail": "Confirm first. " + p["cost"]["text"], "needs_confirm": True, "plan": p}, status_code=409)
-    lr = LV.start("custom", f"Deploying {p['model_version']} to {p['label']}", of=pid, source="deploy")
+    # The run a person watches: its title in plain words ("Deploying starter-ranker, version 2 to AWS"), its kind
+    # "deploy", and its steps with what each usually takes, so the screen can count time while a step is quiet.
+    mname, _, mver = str(p["model_version"]).rpartition("@v")
+    model_words = f"{(mname or str(p['model_version'])).split('/')[-1]}" + (f", version {mver}" if mname and mver else "")
+    lr = LV.start("deploy", f"Deploying {model_words} to {p['label']}", of=pid, source="deploy")
+    lr.plan([{"title": s.get("title"), "seconds": s.get("typical_s"), "usually": s.get("typical")} for s in p.get("steps") or []])
 
     def go(prog):
         def hear(kind, **d):
             if kind == "step":
                 lr.stage(d["title"], d["index"], d["of"])
+                lr.progress((d["index"] - 1) / d["of"])
                 prog((d["index"] - 1) / d["of"])
                 JOBS[jid].update(message=d["title"], step=d["id"])
                 JOBS[jid]["log"].append(d["title"])

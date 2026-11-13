@@ -6,6 +6,7 @@
 // words ("Cost about $0.42 (12 min on aws-batch)"), with the machine and its price behind "How this was worked out".
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
+import { hideAccount } from "./kit/words.js";
 import { api } from "./kit/cst.js";
 import { MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
@@ -183,6 +184,6 @@ export class Jobs {
         .child(v_flex().id(`job-log-${j.id}`).flex_1().min_h(0).overflow_y_scrollbar().p(10)
           .when(!!l.error, (e) => e.child(div().text_size(12).text_color(c.fail).child(l.error)))
           .when(!l.lines.length && !l.error, (e) => e.child(div().text_size(12).text_color(c.grey500).child(live ? "No log lines yet." : "This job wrote no log.")))
-          .children(l.lines.slice(-300).map((x) => div().text_size(11.5).font_family(MONO).text_color(c.navy).child(String(x.message ?? ""))))));
+          .children(l.lines.slice(-300).map((x) => div().text_size(11.5).font_family(MONO).text_color(c.navy).child(hideAccount(x.message))))));
   }
 }

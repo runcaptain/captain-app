@@ -10,12 +10,12 @@ import { h_flex, v_flex } from "gpui-base";
 import { api } from "./kit/cst.js";
 import { MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
-import { metricWords } from "./kit/words.js";
+import { metricWords, hideAccount, clockWords } from "./kit/words.js";
 import { int } from "./kit/num.js";
 import { costText } from "./kit/cost.js";
 
 const ICON = (n) => `mods/captain-runs/icons/${n}.svg`;
-const KIND = { backtest: ["backtest", "Offline evaluation"], training: ["pipeline", "Training"], sweep: ["sim", "Settings sweep"], custom: ["run", "Run"] };
+const KIND = { backtest: ["backtest", "Offline evaluation"], training: ["pipeline", "Training"], sweep: ["sim", "Settings sweep"], deploy: ["deploy", "Deploy"], custom: ["run", "Run"] };
 const STATUS = { queued: ["queued", "Waiting to start"], running: ["running", "Running"], done: ["done", "Finished"], failed: ["failed", "Failed"], stopped: ["x", "Stopped"] };
 const KEEP = { shoppers: 240, logs: 400, points: 600 };
 const PCT = new Set(["conversion", "ctr", "zero_result_rate", "judged@10", "coverage"]);
@@ -28,6 +28,43 @@ const bare = (ref) => String(ref ?? "").split("@")[0];
 const secs = (s) => (s == null || !Number.isFinite(s) ? "" : s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
 const fmt = (name, v) => (v == null ? "" : PCT.has(name) ? `${(v * 100).toFixed(1)}%` : /revenue|rpv|usd|\$/.test(name) ? `$${Number(v).toFixed(2)}` : Math.abs(v) >= 1000 ? int(v) : Number(v).toFixed(Math.abs(v) < 1 ? 4 : 2));
 const label = (name) => { const w = metricWords(name); return w && w !== name ? w : String(name).replace(/_/g, " "); };
+
+/** Where a run stands on the page's own clock: {elapsed, step, stepElapsed, usual, usually, progress}. A running run
+ *  counts from when it started, whether or not anything new was heard from it, so its time never stands still.
+ *  `last` is the time of the last thing heard (seconds since the start), used once the run is over.
+ *  Progress comes from the run when it says, and is filled in between from its steps: the steps done, plus the
+ *  running step's share by what it usually takes (never the whole of it until it is done). */
+export function clock(head, last = 0, now = Date.now()) {
+  const h = head ?? {};
+  const started = Date.parse(h.started ?? "");
+  const on = going(h.status);
+  const elapsed = on && Number.isFinite(started) ? Math.max(last, (now - started) / 1000) : last;
+  const steps = h.steps?.length ? h.steps : (h.stages ?? []).map((title) => ({ title }));
+  const i = steps.findIndex((s) => s.title === h.stage);
+  const step = i >= 0 ? steps[i] : null;
+  const stepElapsed = on && step && typeof h.stage_at === "number" ? Math.max(0, elapsed - h.stage_at) : null;
+  const usual = step && Number(step.seconds) > 0 ? Number(step.seconds) : null;
+  let progress = typeof h.progress === "number" ? h.progress : null;
+  if (h.status === "done") progress = 1;
+  else if (steps.length && i >= 0) {
+    const all = steps.every((s) => Number(s.seconds) > 0);
+    const w = (s) => (all ? Number(s.seconds) : 1);
+    const total = steps.reduce((t, s) => t + w(s), 0) || 1;
+    const before = steps.slice(0, i).reduce((t, s) => t + w(s), 0);
+    const share = on && stepElapsed != null ? Math.min(0.95, usual ? stepElapsed / usual : stepElapsed / (stepElapsed + 60)) : 0;
+    progress = Math.max(progress ?? 0, (before + w(step) * share) / total);
+  }
+  return { elapsed, index: i, step, stepElapsed, usual, usually: step?.usually ?? null, progress };
+}
+
+/** The quiet line under the log while the running step says nothing: "Still building the model's image. 48 s so
+ *  far, usually about a minute and a half." Drawn from the page's clock, not from anything the run sends. */
+export function stillWords(k) {
+  if (!k?.step || k.stepElapsed == null) return null;
+  const t = String(k.step.title ?? "").trim().replace(/[.]+$/, "");
+  const doing = t ? t[0].toLowerCase() + t.slice(1) : "working";
+  return `Still ${doing}. ${clockWords(k.stepElapsed)} so far${k.usually ? `, usually ${k.usually}` : ""}.`;
+}
 
 /** What one simulated shopper did, in a few words: "clicked #2, bought $89", "rephrased to 'x', left". */
 export function shopperWords(s) {
@@ -114,6 +151,8 @@ export class Live {
 
   /** New events since the last ask. Called every second while the open run is going. */
   tick(cx) {
+    // A running run's time counts up every second on the page's own clock, heard from or not.
+    if (this.run && !this.run.error && going(this.run.head?.status)) cx.notify();
     if (!this.sel || this.busy) return;
     if (this.run && !this.run.error && !going(this.run.head.status)) { this.askCost(cx); return; }
     this.fetch(cx);
@@ -184,34 +223,41 @@ export class Live {
     const icon = this.host.icon.bind(this.host);
     const [ic, kindWord] = KIND[h.kind] ?? KIND.custom;
     const [sic, sword] = STATUS[h.status] ?? STATUS.running;
-    const pct = typeof h.progress === "number" ? h.progress : null;
-    const left = h.status === "running" && pct && pct > 0.02 ? (run.last / pct) * (1 - pct) : null;
+    const k = clock(h, run.last);
+    const pct = k.progress;
+    const left = h.status === "running" && pct && pct > 0.02 ? (k.elapsed / pct) * (1 - pct) : null;
+    // When the last log line came, against the clock: a step silent for a while gets the quiet line under the log.
+    const heard = run.logs.length ? Number(run.logs[run.logs.length - 1].at ?? 0) : (h.stage_at ?? 0);
+    const still = going(h.status) && k.elapsed - Math.max(heard, h.stage_at ?? 0) >= 8 ? stillWords(k) : null;
     const arms = h.arms?.length ? h.arms : [...new Set([...run.metrics.values()].map((m) => m.arm).filter(Boolean))];
     return v_flex().id("live-detail").flex_1().min_w(0).h_full().overflow_y_scrollbar().px(20).py(14).gap(14)
       // What it is and where it stands.
       .child(h_flex().gap(8).items_center().flex_wrap()
         .child(icon(ic, 16, c.navy))
-        .child(div().min_w(0).truncate().text_size(15).font_medium().font_family(MONO).child(h.title))
-        .child(this.host.badge(c, kindWord))
+        // A deploy's title is a sentence, in the page's font. A run named after a thing keeps that name in the code font.
+        .child(div().id("live-title").min_w(0).truncate().text_size(15).font_medium().when(h.kind !== "deploy", (x) => x.font_family(MONO)).child(h.title))
+        .when(h.kind !== "deploy", (x) => x.child(this.host.badge(c, kindWord)))
         .child(h_flex().gap(4).items_center().text_size(12).text_color(h.status === "failed" ? c.fail : going(h.status) ? c.blue : c.grey900)
           .child(icon(sic, 13)).child(div().child(h.where && h.where !== "local" ? `${sword}, on ${h.where}` : sword)))
         .child(div().flex_1())
-        .child(div().text_size(12).text_color(c.grey500).child([run.last ? `${secs(run.last)} in` : null, left != null ? `about ${secs(left)} left` : null].filter(Boolean).join(", ")))
+        .child(div().text_size(12).text_color(c.grey500).child([k.elapsed ? `${clockWords(k.elapsed)} in` : null, left != null ? `about ${secs(left)} left` : null].filter(Boolean).join(", ")))
         .when(!going(h.status) && h.kind === "backtest" && !!h.of, (e) => e.child(Button(c, "live-open-result", "Open the result", (_e, cx) => this.host.openBacktest(cx, h.of), { small: true }))))
       .when(arms.length > 0, (e) => e.child(h_flex().flex_wrap().gap(14).text_size(12).text_color(c.grey900)
         .children(arms.map((a, i) => h_flex().gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(div().font_family(MONO).text_color(c.navy).child(a))))))
-      .child(this.progress(c, h, pct))
+      .child(this.progress(c, h, pct, k))
       .when(!!h.error || !!h.note, (e) => e.child(div().text_size(12.5).text_color(h.error ? c.fail : c.grey900).child(h.error ?? h.note)))
       .when(Boolean(costText(run.cost)), (e) => e.child(h_flex().id("live-cost").gap(6).items_center().text_size(12.5).text_color(c.navy)
         .child(icon(run.cost.free ? "compute" : "cloud", 13, c.grey500)).child(div().child(costText(run.cost)))))
       .when(run.metrics.size > 0, (e) => e.child(this.metrics(c, run, arms)))
       .when(run.shoppers.length > 0, (e) => e.child(this.shoppers(c, run, arms, w)))
       .when(run.logs.length > 0, (e) => e.child(this.logs(c, run)))
+      .when(!!still, (e) => e.child(h_flex().id("live-still").gap(6).items_center().text_size(12.5).text_color(c.grey900)
+        .child(icon("running", 12, c.blue)).child(div().child(still))))
       .when(!!run.result?.summary, (e) => e.child(div().text_size(12.5).text_color(c.navy).child(run.result.summary)));
   }
 
-  progress(c, h, pct) {
-    const stages = h.stages ?? [];
+  progress(c, h, pct, k) {
+    const stages = h.steps?.length ? h.steps.map((s) => s.title) : h.stages ?? [];
     const cur = stages.indexOf(h.stage);
     const icon = this.host.icon.bind(this.host);
     return v_flex().gap(8)
@@ -224,7 +270,10 @@ export class Live {
         const now = i === cur && h.status === "running";
         return h_flex().id(`live-stage-${i}`).h(24).px(8).gap(6).items_center().text_size(11.5)
           .border_1().border_color(now ? c.blue : c.rule).bg(now ? c.blueLight : c.surface).text_color(now ? c.blue : done ? c.navy : c.grey500)
-          .child(icon(done ? "done" : now ? "running" : "queued", 12)).child(div().child(s));
+          .child(icon(done ? "done" : now ? "running" : "queued", 12)).child(div().child(s))
+          // The running step's own time, and what is usual for it when the run says.
+          .when(now && k?.stepElapsed != null, (x) => x.child(div().id("live-stage-time").text_color(c.grey900)
+            .child(`${clockWords(k.stepElapsed)}${k.usually ? `, usually ${k.usually}` : ""}`)));
       }))));
   }
 
@@ -293,7 +342,7 @@ export class Live {
       .child(v_flex().id("live-log").max_h(220).overflow_y_scrollbar().p(8).gap(1).border_1().border_color(c.rule).bg(c.surface2)
         .children(run.logs.slice(-120).map((l, i) => h_flex().id(`live-log-${i}`).gap(8).text_size(11.5).font_family(MONO)
           .child(div().w(54).flex_none().text_right().text_color(c.grey500).child(`${Number(l.at ?? 0).toFixed(1)}s`))
-          .child(div().flex_1().min_w(0).text_color(l.level === "error" ? c.fail : c.navy).child(String(l.text ?? ""))))));
+          .child(div().flex_1().min_w(0).text_color(l.level === "error" ? c.fail : c.navy).child(hideAccount(l.text))))));
   }
 }
 
