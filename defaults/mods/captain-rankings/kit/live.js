@@ -40,6 +40,7 @@ const S = {
   failures: 0,
   lastFallback: 0,
   pumping: false,
+  // address: GET /api/changes   (built in livePump: read by backend/core/tests/addresses.py, which checks it is served)
   ask: (path, opts) => api(path, opts), // the request (a test puts its own here)
   now: () => Date.now(),
 };

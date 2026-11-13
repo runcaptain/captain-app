@@ -26,7 +26,11 @@ def test_every_address_a_screen_names_is_served_with_the_method_it_is_called_wit
     assert not lost, "\n".join(lost)
     # Calls that pass a variable can't be read as text. They are helpers that are handed an address named
     # elsewhere, and a few addresses the services hand out. If this grows, look at what was added.
-    assert variable <= 40, f"{variable} calls pass their address as a variable, which this test can't read"
+    # A helper that builds an address can name it beside the call (`// address: GET /api/changes`), and a wrapper
+    # that puts a fixed start before what it is given is listed in addresses.WRAPPERS: both are then checked like
+    # any other. The ceiling is what was left on 2026-11-13. It only goes down: name the address, don't raise it.
+    assert variable <= 15, (f"{variable} calls pass their address as a variable, which this test can't read. Name the address beside the call "
+                            "(`// address: GET /api/...`) or list the wrapper in tests/addresses.py WRAPPERS. Do not raise this number.")
 
 
 def test_the_check_itself_rejects_a_wrong_address_and_a_wrong_method():
