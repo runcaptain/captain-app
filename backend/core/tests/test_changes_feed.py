@@ -35,6 +35,11 @@ def svc(tmp_path, monkeypatch):
     CH.reset_for_tests()
 
 
+def _t(answer) -> list[str]:
+    """The names of the topics an answer says changed."""
+    return [c["topic"] for c in answer["changed"]]
+
+
 def _waiter(svc, since, topics):
     """A client held on the long poll, in its own thread. Returns (thread, box): box gets the answer and when."""
     box: dict = {}
@@ -91,9 +96,9 @@ def test_every_stores_writes_tell_the_feed_so_no_caller_can_forget():
 def test_the_first_call_answers_at_once_and_a_quiet_wait_ends_with_nothing(svc):
     t0 = time.perf_counter()
     a = svc.get("/api/changes")
-    assert time.perf_counter() - t0 < 0.5 and a["changed"] == [] and a["seq"] > 0 and "reset" not in a and a["at"].endswith("Z")
-    b = svc.get("/api/changes", since=a["seq"], topics="projects", hold=0.3)
-    assert b == {"seq": a["seq"], "changed": [], "at": b["at"]}, "nothing changed: the same sequence, and nothing to read"
+    assert time.perf_counter() - t0 < 0.5 and a["changed"] == [] and a["seq"] > 0 and a["reset"] is False and a["at"].endswith("Z")
+    b = svc.get("/api/changes", since=a["seq"], topics="projects", wait=0.3)
+    assert b == {"seq": a["seq"], "changed": [], "reset": False, "at": b["at"]}, "nothing changed: the same sequence, and nothing to read"
     assert svc.c.get("/api/changes").status_code == 401, "it needs the token, like every other address"
 
 
@@ -104,7 +109,7 @@ def test_a_write_through_the_service_wakes_a_waiting_client_within_100_ms(svc):
     assert svc.c.post("/api/projects", headers=svc.hd, json={"name": "Demo shop"}).status_code == 200
     t.join(3)
     took = box["at"] - wrote
-    assert "projects" in box["answer"]["changed"] and box["answer"]["seq"] > seq, box
+    assert "projects" in _t(box["answer"]) and box["answer"]["seq"] > seq, box
     assert took < 0.1 + 0.15, f"woken {took * 1000:.0f} ms after the request that wrote began (the write itself is inside that)"
     # measured from the write itself, not from the start of the request around it
     seq = box["answer"]["seq"]
@@ -112,7 +117,7 @@ def test_a_write_through_the_service_wakes_a_waiting_client_within_100_ms(svc):
     wrote = time.perf_counter()
     svc.ctx.store.put_new("projects/demo-shop/notes.yaml", b"x: 1\n")
     t.join(3)
-    assert box["answer"]["changed"] == ["project:demo-shop"], "only the topics it listed"
+    assert _t(box["answer"]) == ["project:demo-shop"], "only the topics it listed"
     assert box["at"] - wrote < 0.1, f"woken {(box['at'] - wrote) * 1000:.0f} ms after the write"
 
 
@@ -124,7 +129,7 @@ def test_a_client_is_not_woken_by_a_topic_it_did_not_list(svc):
     assert "answer" not in box, "a project changed, and it listens to notebooks"
     svc.ctx.store.put_new("notebooks/zero-results/v1.yaml", b"x: 1\n")
     t.join(3)
-    assert box["answer"]["changed"] == ["notebooks"]
+    assert _t(box["answer"]) == ["notebooks"]
 
 
 def test_a_write_by_another_process_to_the_same_workspace_wakes_it_within_a_second_and_a_half(svc):
@@ -141,7 +146,7 @@ def test_a_write_by_another_process_to_the_same_workspace_wakes_it_within_a_seco
     done = time.perf_counter()
     t.join(4)
     assert "answer" in box, "the other process's write was never seen"
-    assert "project:demo-shop" in box["answer"]["changed"] and "projects" in box["answer"]["changed"], box["answer"]
+    assert "project:demo-shop" in _t(box["answer"]) and "projects" in _t(box["answer"]), box["answer"]
     assert box["at"] - done < 1.5, f"woken {(box['at'] - done):.2f} s after the other process finished ({done - wrote:.2f} s to start and write)"
 
 
@@ -153,8 +158,33 @@ def test_this_process_own_write_is_told_once_not_again_by_the_folder_watch(svc):
     t.join(3)
     seq = box["answer"]["seq"]
     time.sleep(2.2)   # two more looks by the folder watch
-    again = svc.get("/api/changes", since=seq, topics="projects,project:demo-shop", hold=0.1)
+    again = svc.get("/api/changes", since=seq, topics="projects,project:demo-shop", wait=0.1)
     assert again["changed"] == [], f"the folder watch reported this process's own write a second time: {again}"
+
+
+def test_no_listeners_is_cheap_and_a_topic_stops_counting_ten_seconds_after_its_last_request(svc, monkeypatch):
+    assert CH.LINGER_S == 10.0, "a client that vanishes simply stops asking: ten seconds later nobody is listening"
+    assert not CH.listening() and not CH.listening("deployed"), "nobody has asked yet"
+    w = CH._WATCHERS[svc.ctx.store.uri] if CH._WATCHERS else None
+    assert w is None or w.thread is None, "with no listeners nothing watches the workspace's folder"
+    t0 = time.perf_counter()
+    for i in range(10000):
+        CH.bump("jobs", f"job:{i}")
+    assert time.perf_counter() - t0 < 0.5, "a bump with nobody listening costs next to nothing"
+    monkeypatch.setattr(CH, "LINGER_S", 0.4)
+    seq = svc.get("/api/changes")["seq"]
+    t, box = _waiter(svc, seq, "deployed,deployment:shop")
+    assert CH.listening("deployed") and CH.listening("deployment:") and not CH.listening("notebooks"), "while its request is open"
+    CH.bump("deployed")
+    t.join(3)
+    assert CH.listening("deployed"), "its request just ended: it still counts, since a long poll comes straight back"
+    time.sleep(0.6)
+    assert not CH.listening("deployed") and not CH.listening(), "and no longer once the time has passed"
+    # a client that polls without waiting counts the same way
+    svc.get("/api/changes", since=seq, topics="runs", wait=0)
+    assert CH.listening("runs")
+    time.sleep(0.6)
+    assert not CH.listening("runs")
 
 
 def test_a_missed_sequence_gets_reset(svc):
@@ -167,9 +197,9 @@ def test_a_missed_sequence_gets_reset(svc):
     for i in range(12):
         small.bump(f"project:p{i}")
     a = small.answer(start, None)
-    assert a.get("reset") is True and a["changed"] == [] and a["seq"] == start + 12
-    b = small.answer(start + 9, None)
-    assert "reset" not in b and b["changed"] == ["project:p10", "project:p11", "project:p9"]
+    assert a["reset"] is True and a["changed"] == [] and a["seq"] == start + 12
+    b = small.answer(start + 10, None)
+    assert b["reset"] is False and b["changed"] == [{"topic": "project:p10", "seq": start + 11}, {"topic": "project:p11", "seq": start + 12}], "each with the sequence of its latest change"
     # a reset answers at once: it is not held
     t0 = time.perf_counter()
     assert svc.get("/api/changes", since=1, topics="projects")["reset"] is True and time.perf_counter() - t0 < 0.5
@@ -185,17 +215,17 @@ def test_a_job_and_a_live_run_and_a_login_tell_the_feed_without_a_store_write(sv
         if server.JOBS[jid]["status"] == "done":
             break
         time.sleep(0.02)
-    a = svc.get("/api/changes", since=seq, topics=f"jobs,job:{jid}", hold=0.1)
-    assert a["changed"] == [f"job:{jid}", "jobs"], a
+    a = svc.get("/api/changes", since=seq, topics=f"jobs,job:{jid}", wait=0.1)
+    assert _t(a) == [f"job:{jid}", "jobs"], a
     seq = a["seq"]
     run = LV.start("custom", "A demo run", of="shop")
     run.log("one line")
-    a = svc.get("/api/changes", since=seq, topics=f"runs,run:{run.id}", hold=0.1)
-    assert a["changed"] == [f"run:{run.id}", "runs"], a
+    a = svc.get("/api/changes", since=seq, topics=f"runs,run:{run.id}", wait=0.1)
+    assert _t(a) == [f"run:{run.id}", "runs"], a
     run.end("done")
     seq = svc.get("/api/changes")["seq"]
     W.save_config(W.load_config())
-    assert svc.get("/api/changes", since=seq, topics="logins", hold=0.1)["changed"] == ["logins"]
+    assert _t(svc.get("/api/changes", since=seq, topics="logins", wait=0.1)) == ["logins"]
 
 
 def test_the_socket_carries_the_same_messages(svc):
@@ -206,10 +236,10 @@ def test_the_socket_carries_the_same_messages(svc):
         wrote = time.perf_counter()
         svc.ctx.store.put_new("projects/demo-shop/state.yaml", b"x: 1\n")
         got = ws.receive_json()
-        assert got["changed"] == ["project:demo-shop", "projects"] and got["seq"] > first["seq"] and time.perf_counter() - wrote < 0.1
+        assert _t(got) == ["project:demo-shop", "projects"] and got["seq"] > first["seq"] and time.perf_counter() - wrote < 0.1
         svc.ctx.store.put_new("notebooks/a/v1.yaml", b"x: 1\n")       # not listed: nothing arrives for it
         ws.send_json({"topics": ["notebooks"], "since": got["seq"]})   # change what it listens to
-        assert ws.receive_json()["changed"] == ["notebooks"], "what it missed since, for the topics it now lists"
+        assert _t(ws.receive_json()) == ["notebooks"], "what it missed since, for the topics it now lists"
         ws.send_json({"topics": ["notebooks"], "since": 1})
         assert ws.receive_json()["reset"] is True
     with pytest.raises(Exception):  # noqa: B017,PT011  no token, no connection
