@@ -38,14 +38,16 @@ from .net import WeightsError
 
 KIND = "session-ranker"
 KIND_SAYS = "session model with rankers"
-NOT_YET = "This model can be read here, not changed or run yet."
+NOT_YET = "This model can be read and changed here, not run yet."
+NOT_MEASURED = "Not measured: this model cannot be run here yet."
+TREES_CANNOT = "A tree ranker can be read here, not changed or run."
 FILES = "files"
 SESSION_FILE = "sess.npz"
 READ_CAP = 200_000       # the most numbers one read or one heatmap sends
 FACT_CAP = 5000          # a fact longer than this keeps its shape and not its values
 ROWS_CAP = 4096
-CANNOT = ("template", "forward", "activations", "gradients", "trace", "cost_slice", "set_sets", "evaluate", "edit", "undo", "redo",
-          "save", "export")
+CANNOT = ("template", "forward", "activations", "gradients", "trace", "cost_slice", "set_sets", "evaluate", "export")
+EDIT_OPS = ("set", "scale", "zero", "add")
 WIRING = ("The order of the parts is PyTorch's usual one for these names: the tables and the text projection are added "
           "together, then each layer is attention, a norm, feed-forward, a norm. The file holds numbers, not wiring, so "
           "this order is a reading of the names and is not confirmed.")
@@ -343,6 +345,13 @@ def _file(ctx, m: dict, rel: str) -> bytes:
 
 def load(ctx, m: dict) -> tuple[dict, dict[str, np.ndarray]]:
     """A version's manifest and its tensors, each in the number type it was saved with."""
+    if m.get("base"):    # saved from a session: its base, then its edits, checked against the digest it was saved with
+        bname, bver = WS.split_ref(m["base"])
+        _, tensors = WS.load(ctx, bname, bver)
+        WS.apply_patches(tensors, m.get("patches") or [])
+        if m.get("sha256") and WS.digest(tensors) != m["sha256"]:
+            raise WeightsError(f"{WS.ref_of(m['name'], m['version'])} does not match the numbers recorded when it was saved.")
+        return m, tensors
     out: dict[str, np.ndarray] = {}
     for fname in sorted({t["file"] for t in m["tensors"].values()}):
         got, _ = _arrays(_file(ctx, m, fname), fname)
@@ -527,7 +536,7 @@ def describe(m: dict) -> dict:
                          "layers_agree": None if declared_layers is None else declared_layers == len(ids)},
             "parts": parts, "wiring_says": WIRING, "facts": facts,
             "rankers": [{**r, "says": T.SAYS} for r in m.get("rankers") or []], "tables": m.get("tables") or [],
-            "can": {"read": True, "edit": False, "run": False, "deploy": False, "says": NOT_YET}}
+            "can": {"read": True, "edit": True, "run": False, "deploy": False, "says": NOT_YET, "edits_say": NOT_MEASURED}}
 
 
 def whole(ctx, model: str, sid: str | None = None) -> dict | None:
@@ -541,7 +550,7 @@ def whole(ctx, model: str, sid: str | None = None) -> dict | None:
     src = m.get("source") or {}
     out = {"id": m["name"], "name": m["name"], "version": m.get("version"), "says": m.get("says") or "", "numbers": False,
            "sizes": [], "layers": [], "examples": [], "test": [], "synthetic": False, "data_note": (m.get("data") or {}).get("note") or "",
-           "base": None, "cost": None, "sha256": m.get("sha256"),
+           "base": m.get("base"), "note": m.get("note") or "", "cost": None, "sha256": m.get("sha256"),
            "source": {"from": src.get("from"), "read_at": src.get("read_at"), "files": src.get("files") or {},
                       "manifest_yaml": bool(src.get("manifest_yaml"))}, **d}
     if sid:
@@ -907,7 +916,242 @@ def attention(ctx, sid: str, layer=0, head=None, heads=None, matrix: str | None 
     return S._do(ctx, sid, fn, watch)
 
 
-OPS = {"layers": layers, "session_layers": _no_layers, "read": read, "stats": stats, "heatmap": heatmap}
+# ---- changing it: exact patches, never measured ---------------------------------------------------------------------------------
+
+def _positions(req: dict, tensor: str, t: np.ndarray) -> np.ndarray:
+    """The numbers an edit names, as positions in the flattened tensor: `indices`, whole rows (`neurons`), or
+    `rows` and `cols` ranges. With none of them, the whole tensor."""
+    if req.get("layer") is not None or req.get("neuron") is not None:
+        raise WeightsError("This model has parts, not numbered layers. Name a tensor, with rows and columns or with positions.")
+    if req.get("indices") is not None:
+        try:
+            idx = [[int(v) for v in (ix if isinstance(ix, (list, tuple)) else [ix])] for ix in req["indices"]]
+        except (TypeError, ValueError):
+            raise WeightsError("Positions are whole numbers, counted from 0.") from None
+        if not idx or any(len(ix) != max(t.ndim, 1) or any(not 0 <= v < s for v, s in zip(ix, t.shape or (1,))) for ix in idx):
+            raise WeightsError(f"{tensor} has the shape {list(t.shape) or 'of a single number'}. A position names one number inside it, counted from 0.")
+        flat = np.ravel_multi_index(np.asarray(idx).T, t.shape) if t.ndim else np.zeros(len(idx), dtype=np.int64)
+    elif t.ndim == 2:
+        if req.get("neurons") is not None:
+            try:
+                rs = sorted({int(r) for r in req["neurons"]})
+            except (TypeError, ValueError):
+                raise WeightsError("Rows are whole numbers, counted from 0.") from None
+            if not rs or not all(0 <= r < t.shape[0] for r in rs):
+                raise WeightsError(f"{tensor} has {t.shape[0]:,} rows, counted from 0.")
+        else:
+            r0, r1 = S._span(req.get("rows"), t.shape[0], "Rows")
+            rs = list(range(r0, r1))
+        c0, c1 = S._span(req.get("cols"), t.shape[1], "Columns")
+        flat = (np.asarray(rs)[:, None] * t.shape[1] + np.arange(c0, c1)[None, :]).reshape(-1)
+    else:
+        if req.get("cols") not in (None, ""):
+            raise WeightsError(f"{tensor} is one list of numbers. It has rows and no columns.")
+        r0, r1 = S._span(req.get("rows"), max(t.size, 1), "Rows")
+        flat = np.arange(r0, r1)
+    flat = np.asarray(flat, dtype=np.int64)
+    if len(np.unique(flat)) != len(flat):
+        raise WeightsError("An edit names each number once.")
+    if len(flat) > READ_CAP:
+        raise WeightsError(f"That is {len(flat):,} numbers. One edit changes at most {READ_CAP:,}.")
+    return flat
+
+
+def _amounts(req: dict, n: int, what: str) -> np.ndarray:
+    vals = req.get("values") if req.get("values") is not None else req.get("value")
+    if vals is None:
+        raise WeightsError(f"Give {what}: `value` for all of them, or `values` with one number each.")
+    try:
+        v = np.asarray(vals, dtype=np.float64).reshape(-1)
+    except (TypeError, ValueError):
+        raise WeightsError("The numbers to write are numbers.") from None
+    if len(v) not in (1, n):
+        raise WeightsError(f"This edit names {n:,} numbers and gives {len(v):,} values. Give one for all, or one each.")
+    return np.broadcast_to(v, (n,))
+
+
+def _listed(t: np.ndarray, tensor: str, part: dict, frm: str, to: str) -> list[dict]:
+    out = []
+    for f, a, b in list(zip(part["indices"], part[frm], part[to]))[:S.LIST_CAP]:
+        at = [int(v) for v in np.unravel_index(int(f), t.shape)] if t.ndim else []
+        out.append({"tensor": tensor, "index": at, "old": a, "new": b})
+    return out
+
+
+def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
+    """Change numbers of one tensor: set, scale, zero or add. The edit is an exact patch, so it can be taken back to
+    the bit. It is not measured: this kind cannot be run here yet."""
+    if not isinstance(req, dict):
+        raise WeightsError("An edit is an object with `op` and what to change.")
+    by = by if by is not None else req.get("by")
+
+    def fn(st):
+        st.open_for_changes()
+        why = str(req.get("why") or req.get("hypothesis") or "").strip()
+        if S._by(by, st.who) == "agent" and not why:
+            raise WeightsError("An agent's edit needs `why`: one sentence saying what it expects the edit to do, given before the edit.")
+        op = str(req.get("op") or "").replace("-", "_")
+        if op not in EDIT_OPS:
+            raise WeightsError(f"The edits this model takes are: {', '.join(EDIT_OPS)}.")
+        tensor = req.get("tensor")
+        t = _tensor(st, tensor)
+        if t.dtype != np.float32:
+            raise WeightsError(f"{tensor} is stored as {t.dtype} numbers. Edits here are exact for float32 only, so it is left alone.")
+        flat = _positions(req, tensor, t)
+        cur = t.reshape(-1)[flat]
+        with np.errstate(over="ignore", invalid="ignore"):    # a number too large for float32 becomes infinite, and is refused below
+            if op == "zero":
+                new = np.zeros(len(flat), dtype=np.float32)
+            elif op == "scale":
+                try:
+                    new = (cur * np.float32(float(req["factor"]))).astype(np.float32)
+                except (KeyError, TypeError, ValueError):
+                    raise WeightsError("To scale, give `factor`: the number to multiply by.") from None
+            elif op == "set":
+                new = _amounts(req, len(flat), "the number to write").astype(np.float32)
+            else:
+                new = (cur + _amounts(req, len(flat), "the amount to add").astype(np.float32)).astype(np.float32)
+        if not np.isfinite(new).all():
+            raise WeightsError("This edit would write a number that is not finite.")
+        moved = cur != new
+        if not moved.any():
+            raise WeightsError("This edit changes nothing: every number it names already has that value.")
+        part = {"tensor": tensor, "indices": flat[moved].tolist(), "old": cur[moved].astype(float).tolist(), "new": new[moved].astype(float).tolist()}
+        n = len(st.doc["edits"]) + 1
+        key = f"patches/{n}-{S.secrets.token_hex(3)}.json"
+        patch = {"n": n, "parts": [part]}
+        st.new_patches[key] = patch
+        st._put(patch, "new")
+        changed = len(part["indices"])
+        verb = {"set": "set", "scale": "scaled", "zero": "set to zero", "add": "added to"}[op]
+        ev = st.event("edit", f"{S._Who(st, by)} {verb} {S._plural(changed, 'number')} in {tensor}. {NOT_MEASURED}", by, op=op, tensor=tensor,
+                      tensors=[tensor], factor=float(req["factor"]) if op == "scale" else None, why=why,
+                      args={k: v for k, v in req.items() if k not in ("why", "hypothesis", "by", "values", "indices")},
+                      changes=_listed(t, tensor, part, "old", "new"), changed=changed, share=round(changed / st.total(), 6),
+                      undone=False, measured=False, not_measured=NOT_MEASURED)
+        st.doc["edits"].append({"n": n, "event": ev["id"], "op": op, "tensors": [tensor], "why": why, "by": ev["by"], "state": "applied",
+                                "changed": changed, "patch": key})
+        st.doc["actions"].append(["apply", n])
+        ev["ledger"] = {"changed": st.changed(), "total": st.total()}
+        return st.show(ev)
+    return S._do(ctx, sid, fn)
+
+
+def _flip(ctx, sid: str, edit_id, by, kind: str) -> dict:
+    def fn(st):
+        st.open_for_changes()
+        e = S._pick(st, edit_id, "applied" if kind == "undo" else "undone")
+        patch = st.patch(e["n"])
+        if kind == "undo":
+            later = [o for o in st.doc["edits"] if o["state"] == "applied" and o is not e
+                     and S._last_apply(st, o["n"]) > S._last_apply(st, e["n"]) and S._overlap(st.patch(o["n"]), patch)]
+            if later:
+                raise WeightsError(f"Take back edit {later[0]['event']} first: it changed the same numbers after edit {e['event']}.")
+        else:
+            for part in patch["parts"]:
+                now = st.cur[part["tensor"]].reshape(-1)[np.asarray(part["indices"], dtype=np.int64)]
+                if not np.array_equal(now, np.asarray(part["old"], dtype=np.float32)):
+                    raise WeightsError(f"Edit {e['event']} cannot be put back: the numbers it started from have changed since.")
+        frm, to = ("new", "old") if kind == "undo" else ("old", "new")
+        st._put(patch, to)
+        e["state"] = "undone" if kind == "undo" else "applied"
+        st.doc["actions"].append([kind, e["n"]])
+        for ev in st.doc["events"]:
+            if ev["id"] == e["event"]:
+                ev["undone"] = kind == "undo"
+        part = patch["parts"][0]
+        words = "took back" if kind == "undo" else "put back"
+        ev = st.event(kind, f"{S._Who(st, by)} {words} edit {e['event']}: {S._plural(e['changed'], 'number')} in {part['tensor']}. {NOT_MEASURED}",
+                      by, op=e["op"], **{"undoes" if kind == "undo" else "redoes": e["event"]}, tensor=part["tensor"], tensors=e["tensors"],
+                      changes=_listed(st.cur[part["tensor"]], part["tensor"], part, frm, to), changed=e["changed"], measured=False,
+                      not_measured=NOT_MEASURED)
+        ev["ledger"] = {"changed": st.changed(), "total": st.total()}
+        return st.show(ev)
+    return S._do(ctx, sid, fn)
+
+
+def undo(ctx, sid: str, edit_id=None, by: str | None = None) -> dict:
+    return _flip(ctx, sid, edit_id, by, "undo")
+
+
+def redo(ctx, sid: str, edit_id=None, by: str | None = None) -> dict:
+    return _flip(ctx, sid, edit_id, by, "redo")
+
+
+def _diff(st, listed: int = S.LIST_CAP) -> dict:
+    by_tensor, changes = [], []
+    changed = total = 0
+    for name, b in st.base.items():
+        c = st.cur[name]
+        moved = np.flatnonzero((b != c).reshape(-1))
+        total += int(b.size)
+        changed += len(moved)
+        if not len(moved):
+            continue
+        by_tensor.append({"tensor": name, "changed": len(moved), "total": int(b.size), "share": round(len(moved) / b.size, 6),
+                          "largest_change": float(np.abs(c.astype(float) - b.astype(float)).max())})
+        for f in moved[:max(0, listed - len(changes))]:
+            changes.append({"tensor": name, "index": [int(v) for v in np.unravel_index(int(f), b.shape)] if b.ndim else [],
+                            "old": float(b.reshape(-1)[f]), "new": float(c.reshape(-1)[f])})
+    return {"base": WS.ref_of(st.model, st.doc["version"]), "changed": changed, "total": total,
+            "share": round(changed / total, 6) if total else 0.0, "by_tensor": by_tensor, "changes": changes}
+
+
+def diff(ctx, sid: str, by: str | None = None, watch: bool = False) -> dict:
+    def fn(st):
+        out = _diff(st)
+        if not st.watch:
+            st.event("read", f"{S._Who(st, by)} compared the model with its base: {out['changed']:,} of {out['total']:,} numbers differ.", by, op="diff")
+        return out
+    return S._do(ctx, sid, fn, watch)
+
+
+def report(ctx, sid: str) -> dict:
+    def fn(st):
+        out = S._session_out(st, events=0)
+        out["events"] = [st.show(e) for e in st.doc["events"]]
+        out["passes"] = st.doc["used"]["passes"]
+        out["diff"] = _diff(st, listed=0)
+        out["kept"] = [e for e in out["edits"] if e["state"] == "applied"]
+        out["taken_back"] = [e for e in out["edits"] if e["state"] != "applied"]
+        return out
+    return S._do(ctx, sid, fn, watch="record")
+
+
+def save(ctx, sid: str, note: str = "", by: str | None = None) -> dict:
+    """Save the model as it is now as a new version: its base plus the changed numbers, with the session's record.
+    The new version keeps no files of its own. Nothing is overwritten."""
+    def fn(st):
+        patches = []
+        for name in st.base:
+            moved = np.flatnonzero((st.base[name] != st.cur[name]).reshape(-1))
+            if len(moved):
+                patches.append({"tensor": name, "indices": moved.tolist(), "old": st.base[name].reshape(-1)[moved].astype(float).tolist(),
+                                "new": st.cur[name].reshape(-1)[moved].astype(float).tolist()})
+        if not patches:
+            raise WeightsError("There is nothing to save: the model is the same as its base.")
+        led = S.ledger(st)
+        record = {"session": st.sid, "who": st.doc["who"], "opened_at": st.doc["opened_at"], "ledger": led, "edits": S._edits_out(st),
+                  "passes": [], "measured": False, "not_measured": NOT_MEASURED,
+                  "events": [{k: v for k, v in e.items() if k != "changes"} for e in st.doc["events"]]}
+        base_ref = WS.ref_of(st.model, st.doc["version"])
+        base = WS.manifest(ctx, st.model, st.doc["version"])
+        keep = {k: v for k, v in base.items() if k not in ("version", "created_at", "created_by", "sha256", "patches", "record", "note", "base")}
+        m = WS.save_packed(ctx, st.model, {**keep, "base": base_ref, "files_at": base.get("files_at") or base_ref, "patches": patches,
+                                           "record": record, "note": str(note or ""), "sha256": WS.digest(st.cur)}, None)
+        ref = WS.ref_of(st.model, m["version"])
+        st.doc["saved"].append(ref)
+        st.event("save", f"{S._Who(st, by)} saved the model as {ref}: {base_ref} plus {S._plural(led['changed'], 'changed number')}. {NOT_MEASURED}",
+                 by, op="save", ref=ref, args={"note": note})
+        return {"model": st.model, "version": m["version"], "ref": ref, "base": base_ref,
+                "patches": sum(1 for e in st.doc["edits"] if e["state"] == "applied"), "changed": led["changed"], "share": led["share"],
+                "label": led["label"], "weights_alone": led["weights_alone"], "note": str(note or ""), "scores_shown_now": False,
+                "measured": False, "not_measured": NOT_MEASURED, "sha256": m["sha256"]}
+    return S._do(ctx, sid, fn)
+
+
+OPS = {"layers": layers, "session_layers": _no_layers, "read": read, "stats": stats, "heatmap": heatmap, "edit": edit, "undo": undo,
+       "redo": redo, "diff": diff, "report": report, "save": save}
 
 
 # ---- the tree rankers ------------------------------------------------------------------------------------------------------------
@@ -1046,4 +1290,4 @@ def trees(ctx, model: str, ranker: str | None = None, trees: int = T.TREES_SHOWN
     out = _ranker(ctx, m, pick, trees)
     return {"model": name, "version": v, "ranker": pick["name"], "rankers": names, "names_from": pick.get("names_from"),
             "file": pick["file"].split("/")[-1], "sha256": ((m.get("source") or {}).get("files") or {}).get(pick["file"].split("/")[-1], {}).get("sha256"),
-            **out, "cannot": NOT_YET}
+            **out, "cannot": TREES_CANNOT}

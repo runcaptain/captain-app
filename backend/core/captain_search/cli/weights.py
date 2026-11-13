@@ -500,6 +500,8 @@ def edit(op: str = typer.Argument(..., help="set, scale, zero, add, add-directio
          along: Optional[str] = typer.Option(None, "--along", help="for add-direction: inputs (default) or outputs"),
          example: Optional[str] = typer.Option(None, "--example", help="for step: the examples to train on, counted from 1"),
          rate: Optional[float] = typer.Option(None, "--rate", help="for step: the learning rate"),
+         rows: Optional[str] = typer.Option(None, "--rows", help="with --tensor on a trained session model: a row or a range, counted from 0"),
+         cols: Optional[str] = typer.Option(None, "--cols", help="with --rows: a column or a range, counted from 0"),
          why: Optional[str] = typer.Option(None, "--why", help="one sentence: what you expect this edit to do. An agent must give it"),
          session: Optional[str] = SESSION):
     """Change numbers. The edit is stored as a patch and measured on the three sets before and after."""
@@ -507,7 +509,7 @@ def edit(op: str = typer.Argument(..., help="set, scale, zero, add, add-directio
            "bias": bias or None,
            "tensor": tensor, "indices": [_ints(i, "--index") for i in index] or None, "values": _nums(values, "--values"),
            "neurons": _ones(neurons, "--neurons"), "direction": _nums(direction, "--direction"), "scale": scale, "along": along,
-           "example": _ones(example, "--example"), "rate": rate, "why": why}
+           "example": _ones(example, "--example"), "rate": rate, "rows": rows, "cols": cols, "why": why}
     req = {k: v for k, v in req.items() if v is not None}
     if tensor and neuron is not None and "neurons" not in req:
         req["neurons"] = [req.pop("neuron")]

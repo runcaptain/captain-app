@@ -7,8 +7,8 @@ Everything here is one set of operations with three faces: Python functions in `
 under `/api/weights/`, and `cst weights` commands. Every command takes `--json` (before the command:
 `cst --json weights layers`) and prints the same shape the route returns.
 
-Fully connected networks can be read, run and changed. A trained session model with its tree rankers can be read, and
-not yet run or changed: see "A trained session model with rankers". The code is numpy alone.
+Fully connected networks can be read, run and changed. A trained session model with its tree rankers can be read and
+changed, and not yet run: see "A trained session model with rankers". The code is numpy alone.
 
 ## Words used in every shape
 
@@ -506,9 +506,10 @@ one digest over all the tensors. A version is written once. Arrays that are text
  "sha256": "88342a41...", "files": {"sess.npz": "5d0c..."}, "from": "/models/v3", "says": "A session model, width 8, 1 layer, 2 heads, with 3 tree rankers."}
 ```
 
-**This kind can be read here, not changed or run yet.** `edit`, `undo`, `redo`, `forward`, `activations`,
-`gradients`, `trace`, `slice`, `template`, `sets`, `evaluate`, `save`, `export` and a deploy all answer status 400
-with `{"error": "This model can be read here, not changed or run yet."}`.
+**This kind can be read and changed here, not run yet.** `forward`, `activations`, `gradients`, `trace`, `slice`,
+`template`, `sets`, `evaluate`, `export` and a deploy all answer status 400 with `{"error": "This model can be read and
+changed here, not run yet."}`. Its numbers can be edited, taken back and saved as a new version (see "Changing it"),
+and no edit is ever measured, because measuring means running the model.
 
 ### Its parts
 
@@ -540,7 +541,9 @@ nothing else. No number is in it.
  "rankers": [{"name": "full", "objective": "lambdarank", "trees": 3, "inputs": 5, "names_from": "the cols file"}],
  "tables": [{"name": "covisit", "arrays": [{"name": "pairs", "shape": [3, 2], "dtype": "int32"}]}],
  "source": {"from": "/models/v3", "read_at": "2026-11-13T10:00:00Z", "files": {"sess.npz": {"sha256": "5d0c...", "bytes": 21034}}},
- "can": {"read": true, "edit": false, "run": false, "deploy": false, "says": "This model can be read here, not changed or run yet."},
+ "can": {"read": true, "edit": true, "run": false, "deploy": false, "says": "This model can be read and changed here, not run yet.",
+         "edits_say": "Not measured: this model cannot be run here yet."},
+ "base": null,
  "sizes": [], "layers": [], "examples": [], "test": []}
 ```
 
@@ -628,6 +631,44 @@ It leaves out the norms and biases between, and for a layer after the first it i
 `head` and `matrix=query_key` or `matrix=output_value`, that head also carries `matrix: {which, grid, scale}`. When
 the files do not say how many heads there are, give `heads`.
 
+### Changing it
+
+The same four routes as any model: `POST /api/weights/sessions/{s}/edits`, `/undo`, `/redo` and `/save`, with `cst
+weights edit`, `undo`, `redo`, `save`, `diff` and `report`. An edit names a tensor and the numbers in it. `op` is `set`,
+`scale`, `zero` or `add`:
+
+```json
+{"op": "set", "tensor": "act.weight", "rows": "0", "cols": "0:3", "value": 0.5, "why": "..."}
+{"op": "scale", "tensor": "act.weight", "neurons": [1], "factor": 2}
+{"op": "zero", "tensor": "L0.self_attn.in_proj_bias", "rows": "8:16"}
+{"op": "add", "tensor": "q.weight", "indices": [[0, 0], [7, 7]], "values": [1.0, -1.0]}
+```
+
+The numbers are named by `indices` (positions, counted from 0), by `neurons` (whole rows), or by `rows` and `cols`
+ranges. With none of them the whole tensor is meant. `set` and `add` take `value` for all or `values` with one each.
+`cst weights edit zero --tensor act.weight --rows 0:2 --cols 0:4` is the same from a terminal. An agent must give `why`.
+Only float32 tensors are edited, so that taking an edit back returns the exact bits.
+
+Nothing is measured. The event has no `cost`. It has `"measured": false` and `"not_measured": "Not measured: this
+model cannot be run here yet."`, and its sentence ends with that:
+
+```json
+{"id": "e2", "kind": "edit", "op": "set", "tensor": "act.weight", "tensors": ["act.weight"], "why": "...",
+ "changes": [{"tensor": "act.weight", "index": [0, 0], "old": 0.1257, "new": 0.5}], "changed": 3, "share": 0.0013,
+ "undone": false, "measured": false, "not_measured": "Not measured: this model cannot be run here yet.",
+ "ledger": {"changed": 3, "total": 2281},
+ "sentence": "You set 3 numbers in act.weight. Not measured: this model cannot be run here yet."}
+```
+
+`changes` lists at most 200 numbers, each by its `index` in the tensor. Undo and redo follow the same rules as for
+any model and put back the exact old numbers. `diff` and `report` have the usual shape, with `index` in place of
+`k`, `j`, `i`. No score is ever shown, so the session's label stays "from the weights alone".
+
+The base is never changed. `save` writes a new version that is the base plus the changed numbers, with the record
+attached and the answer's usual fields plus `"measured": false`, `not_measured` and `sha256`. The new version keeps
+no files of its own: its manifest names its `base` and `files_at`, the version whose files it reads. Opening it
+applies the patches and checks the digest it was saved with.
+
 ### Its tree rankers
 
 **These are trees, not neurons.** A tree asks yes or no questions about the inputs and ends at a leaf, and the answer
@@ -648,7 +689,7 @@ LightGBM's text format, read with plain Python.
                                     "right": {"leaf": 1, "value": -0.2, "count": 20}},
                            "right": {"leaf": 2, "value": 0.3, "count": 30}}}],
  "rule": "At each question, a value at or below the threshold goes left. Anything else goes right.",
- "cannot": "This model can be read here, not changed or run yet."}
+ "cannot": "A tree ranker can be read here, not changed or run."}
 ```
 
 `groups` folds the inputs by the start of their names, up to the first underscore (`s1_pos` is in `s1_`), largest
@@ -698,7 +739,7 @@ history is kept in the manifest under `training.cost` as `[step, cost]` pairs.
 ## Limits
 
 - Only fully connected networks are run and changed. No convolutions.
-- A session model with rankers is read only. Its attention is read from its matrices and never run.
+- A session model with rankers is never run. Its attention is read from its matrices, and its edits are not measured.
 - The whole-network route sends at most 200,000 numbers.
 - The digits starter is trained on synthetic pictures.
 - Two networks trained separately cannot be compared weight by weight. The same network can be written with its

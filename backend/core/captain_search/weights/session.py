@@ -440,6 +440,7 @@ def events(ctx, sid: str, since: int = 0) -> dict:
     return _do(ctx, sid, fn, watch="record")
 
 
+@_by_kind
 def report(ctx, sid: str) -> dict:
     """The whole record: the allowances, what was used, every operation, every edit kept or taken back, and the label."""
     def fn(st):
@@ -1509,6 +1510,7 @@ def _diff(st: State, listed: int = LIST_CAP) -> dict:
     return {"base": WS.ref_of(st.model, st.doc["version"]), **_diff_tensors(st.where, st.base, st.cur, listed)}
 
 
+@_by_kind
 def diff(ctx, sid: str, by: str | None = None, watch: bool = False) -> dict:
     """What differs between the network now and its base, counted from the tensors themselves."""
     def fn(st):
