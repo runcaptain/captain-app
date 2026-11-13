@@ -863,6 +863,7 @@ def call(ctx: Context, rec: dict, op: str, body: dict, arm: str | None = None, t
 
 
 _products: dict[str, tuple[dict, str, list]] = {}
+_CONNECTED: set = set()  # deployments this process has already called: the first call to one is timed apart
 
 
 def read_flush(ctx: Context, rec: dict | None) -> bool:
@@ -948,11 +949,25 @@ def query(ctx: Context, pid: str, q: str, k: int = 10, env: str = ENV) -> dict:
     serve = rec.get("serve") or next(iter(arms))
     cat_of = next((r for r in (arms.get("baseline"), arms.get("candidate")) if r and servable_quiet(ctx, r) == "captain"), None)
 
+    # The first call from a process signs in to the cloud and opens a connection, which can take several times as
+    # long as the request itself. So it is made on its own, with a call that asks nothing of the model, and timed
+    # apart: the round trips below are then what a site that keeps its connection open would see.
+    first_ms = None
+    if rec.get("kind") != "local" and rec.get("id") not in _CONNECTED:
+        t0 = time.perf_counter()
+        try:
+            call(ctx, rec, "status", {})
+            first_ms = round((time.perf_counter() - t0) * 1000, 1)
+            _CONNECTED.add(rec.get("id"))
+        except Exception:  # noqa: BLE001  the rank call below says what is wrong, in its own words
+            first_ms = None
+
     def side(arm: str) -> dict:
         from .traffic import signal_label
 
         t0 = time.perf_counter()
         res = call(ctx, rec, "rank", {**body, "explain": True}, arm=None if rec.get("how") == "image" else arm)
+        trip = round((time.perf_counter() - t0) * 1000, 1)  # the call alone: joining the catalog below is this computer's work
         rows = _joined(ctx, res, cat_of)
         imp = res.get("importance") or {}
         top = [n for n, _ in sorted(imp.items(), key=lambda kv: -kv[1])[:4]]
@@ -961,11 +976,15 @@ def query(ctx: Context, pid: str, q: str, k: int = 10, env: str = ENV) -> dict:
             x["why"] = ([{"signal": n, "label": signal_label(n), "value": sig.get(n), "weight": imp[n]} for n in top if n in sig]
                         if sig else None)
         return {"arm": arm, "model_version": res["model_version"], "ms": res["ms"],
-                "round_trip_ms": round((time.perf_counter() - t0) * 1000, 1), "request_id": res["request_id"],
+                "round_trip_ms": trip, "request_id": res["request_id"],
                 "results": rows,
                 "why_note": None if imp else "This version ranks by keyword match alone: there is no trained model to explain."}
 
     out = {"project": pid, "query": q, "k": int(k), "staged": side(serve), "baseline": None, "traffic": "test"}
+    warm = out["staged"]["round_trip_ms"]
+    out["timing"] = {"first_call_ms": first_ms, "warm_ms": warm, "inside_ms": out["staged"]["ms"],
+                     "text": (f"The first call took {first_ms:.0f} ms: it signs in to your cloud and opens the connection. " if first_ms is not None else "")
+                             + f"With the connection open, a request takes {warm:.0f} ms from this computer, {out['staged']['ms']:.1f} ms of it inside the model."}
     if not rec.get("tried"):
         _save(ctx, pid, env, tried=True)
     if serve != "baseline" and arms.get("baseline") and rec.get("how") != "image":

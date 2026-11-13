@@ -18,7 +18,7 @@ import hashlib
 import time
 
 from . import ProviderError
-from .serving import HttpServing, clean_name
+from .serving import HttpServing, clean_name, deployed_base, kept_name
 
 ARM = "https://management.azure.com"
 APP_API = "2024-03-01"
@@ -97,7 +97,7 @@ class Arm:
 
 def app_name(prefix: str, project: str, env: str) -> str:
     """A container app's name: at most 32 characters. A long one keeps its start and gains a short hash."""
-    full = clean_name(f"{prefix}-{project}-{env}", 200)
+    full = clean_name(deployed_base(prefix, project, env), 200)
     if len(full) <= 32:
         return full
     return clean_name(full[:25], 25) + "-" + hashlib.sha256(full.encode()).hexdigest()[:6]
@@ -122,7 +122,7 @@ class ContainerAppsServing(HttpServing):
         return f"{self._group(arm)}/providers/Microsoft.App/containerApps/{name}"
 
     def _names(self, st: dict) -> dict:
-        return {"app": app_name((self.config.get("name_prefix") or "captain").strip("-"), st["project"], st["env"])}
+        return {"app": kept_name(st, "container-app") or app_name((self.config.get("name_prefix") or "captain").strip("-"), st["project"], st["env"])}
 
     def _size(self) -> dict:
         c = self.config
@@ -173,7 +173,7 @@ class ContainerAppsServing(HttpServing):
     def stage(self, st: dict, progress=None) -> dict:
         say = progress or (lambda _t: None)
         if st.get("image"):
-            raise ProviderError("A container image of your own can't be staged on Container Apps from Captain yet. Use an endpoint you already run.")
+            raise ProviderError("A container image of your own can't be deployed on Container Apps from Captain yet. Use an endpoint you already run.")
         arm = self._arm()
         n = self._names(st)
         res = {"type": "container-app", "name": n["app"], "resource_group": self.config["resource_group"]}
@@ -281,6 +281,33 @@ class ContainerAppsServing(HttpServing):
         return {"lines": [], "next": since,
                 "note": "Setup makes no log workspace, to keep the group small. The app's own lines, from a terminal: "
                         f"az containerapp logs show -n {name} -g {self.config.get('resource_group')} --follow"}
+
+    def found(self, prefix: str = "captain") -> list[dict]:
+        """Every container app in Captain's resource group that Captain made, whatever project made it: by Captain's
+        tag, or by the name prefix. Reads the list and the count of copies up. It never calls an app."""
+        arm = self._arm()
+        start = prefix.strip("-") + "-"
+        got = arm.call("GET", f"{self._group(arm)}/providers/Microsoft.App/containerApps", api=APP_API, ok_missing=True) or {}
+        out = []
+        for a in got.get("value") or []:
+            t, name, p = a.get("tags") or {}, a["name"], a.get("properties") or {}
+            if t.get("app") != "captain" and not name.startswith(start):
+                continue
+            ps = p.get("provisioningState")
+            state = "failed" if ps in ("Failed", "Canceled") else "starting" if ps not in ("Succeeded", None) else "running"
+            copies = self._copies(arm, name, a) if state == "running" else None
+            c = (((p.get("template") or {}).get("containers") or [{}])[0].get("resources") or {})
+            sc = (p.get("template") or {}).get("scale") or {}
+            out.append({"type": "container-app", "name": name, "region": a.get("location") or self.region,
+                        "resources": [{"type": "container-app", "name": name, "resource_group": self.config["resource_group"]}],
+                        "state": "asleep" if state == "running" and copies == 0 else state,
+                        "reason": f"the container app ended {ps}" if state == "failed" else ps if state == "starting" else None,
+                        "machine": (f"{c.get('cpu'):g} vCPU, {c.get('memory')}" if c.get("cpu") and c.get("memory") else None),
+                        "copies_now": copies, "copies_min": sc.get("minReplicas"), "copies_max": sc.get("maxReplicas"),
+                        "since": (a.get("systemData") or {}).get("createdAt"), "changed": (a.get("systemData") or {}).get("lastModifiedAt"),
+                        "project": t.get("project"), "env": t.get("env"), "stage": t.get("stage") or t.get("captain-stage"),
+                        "by": (a.get("systemData") or {}).get("createdBy"), "by_tag": t.get("app") == "captain", "by_prefix": name.startswith(start)})
+        return out
 
     def tagged(self, project: str, env: str) -> list[dict]:
         arm = self._arm()

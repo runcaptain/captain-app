@@ -1075,7 +1075,7 @@ def project_unstage(pid: str, body: dict | None = None):
 
     c, env = ctx(), (body or {}).get("env") or "staging"
     if not SG.state(c, pid, env):
-        raise HTTPException(400, f"Nothing is staged for {pid}.")
+        raise HTTPException(400, f"Nothing is deployed for {pid}.")
     return {"job": _job(lambda _p: SG.unstage(c, pid, env), f"stopping staging for {pid}")}
 
 
@@ -1478,6 +1478,75 @@ def project_staging_metrics(pid: str, range: str = "1h"):  # noqa: A002  the que
     from .staging import observe as OB
 
     return _staging_call(OB.metrics, ctx(), pid, "staging", range)
+
+
+@app.get("/api/deployed", dependencies=A)
+def deployed(fresh: bool = False):
+    """What is deployed, as each connected cloud reports it, with Captain's records corrected from that:
+    {rows, asked, text, read_at}. One row per deployed model across projects and clouds: project, model_version,
+    cloud, region, machine, copies, state (starting, running, asleep, stopped, failed, gone, unknown) with the
+    cloud's reason, since, by, and `link`: linked, unlinked (in the cloud, no project knows it), gone (removed
+    outside Captain), local, or unknown (the cloud could not be asked). Kept for a few seconds. `fresh=true` asks now."""
+    from .staging import fleet as FL
+
+    return FL.deployed(ctx(), fresh=fresh)
+
+
+@app.get("/api/projects/{pid}/deployed/numbers", dependencies=A)
+def deployed_numbers(pid: str, range: str = "1h", env: str = "staging"):  # noqa: A002
+    """Traffic and numbers for one deployment, from the cloud's own metrics, with the request log as the second
+    source: {source, source_text, buckets, summary, cost, not_read, text}. `range` is 15m, 1h, 24h or 7d. Each
+    bucket: {t, requests, errors, p50_ms, p95_ms, cpu, memory, copies}. `cost`: {hourly_usd, today_usd, month_usd,
+    text}. What a host does not report is said in `not_read`, never shown as a zero."""
+    from .staging import numbers as NB
+
+    try:
+        return NB.numbers(ctx(), pid, env, range)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.post("/api/deployed/link", dependencies=A)
+def deployed_link(body: dict):
+    """{id, project}: give a project something found in a cloud that no project knows (a row of GET /api/deployed
+    whose `link` is unlinked). Captain does not know its model version or its key, and the answer says so."""
+    from .staging import fleet as FL
+
+    try:
+        return FL.link(ctx(), str(body.get("id") or ""), str(body.get("project") or ""), str(body.get("env") or "staging"))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.post("/api/deployed/remove", dependencies=A)
+def deployed_remove(body: dict):
+    """{id, confirm}: remove from the cloud something Captain made that no project knows. Without `confirm` it
+    answers 409 with what would be deleted. It cannot be undone."""
+    from .staging import fleet as FL
+
+    try:
+        return FL.remove_found(ctx(), str(body.get("id") or ""), confirm=bool(body.get("confirm")))
+    except ValueError as e:
+        raise HTTPException(409 if str(e).startswith("Confirm first") else 400, str(e)) from None
+
+
+@app.get("/api/deployed/created", dependencies=A)
+def deployed_created():
+    """What Captain created in each cloud account the first time a model was deployed there, with what each thing
+    is for: {places: [{cloud, cloud_label, login, region, things: [{kind, name, what_for}], in_use_by, can_remove,
+    text}], text}. `DELETE /api/serving/setup?cloud=` removes one place's."""
+    from .staging import fleet as FL
+
+    return FL.created(ctx())
+
+
+@app.get("/api/deployed/differences", dependencies=A)
+def deployed_differences():
+    """What differs between Captain's records and the cloud, after correcting it: {corrected, unlinked, not_asked,
+    in_sync, text}."""
+    from .staging import fleet as FL
+
+    return FL.differences(ctx())
 
 
 @app.get("/api/staging/deployments", dependencies=A)  # not /api/deployments: that is the deploy history, and stays

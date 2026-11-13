@@ -398,6 +398,12 @@ def deployments(ctx: Context, which: str = "live") -> dict:
 
     if which not in ("live", "stopped", "all"):
         raise ValueError("which is live, stopped or all")
+    try:  # set Captain's records right from the cloud first, so what is listed below is what is deployed
+        from . import fleet as FL
+
+        FL.deployed(ctx)
+    except Exception:  # noqa: BLE001  a cloud that can't be asked never hides the list
+        pass
     rows = []
     for pr in PR.listing(ctx):
         try:

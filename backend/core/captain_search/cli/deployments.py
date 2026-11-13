@@ -21,7 +21,7 @@ from .main import S, app, ctx, emit, fail
 from .more import deploy_app
 from .projects import _do, _staging_errors, stage, unstage
 
-deployments_app = typer.Typer(no_args_is_help=True, help="Staged models: list them, read their history and log, stop one or roll it back")
+deployments_app = typer.Typer(no_args_is_help=True, help="Deployed models: list them as each cloud reports them, read their traffic, cost, history and log, stop, start, roll back or remove one")
 app.add_typer(deployments_app, name="deployments")
 
 
@@ -44,14 +44,14 @@ deploy_app.info.help = ("Deploys. `cst deploy <project>` stages the project's ca
 @deploy_app.command("to-staging", hidden=True)
 def deploy(name: str,
            candidate: Optional[str] = typer.Option(None, "--candidate", help="a candidate id or model version; default the newest judged candidate"),
-           baseline: bool = typer.Option(False, "--baseline", help="stage the baseline itself"),
+           baseline: bool = typer.Option(False, "--baseline", help="deploy the baseline itself"),
            env: str = typer.Option("staging", "--env"),
            target: Optional[str] = typer.Option(None, "--target", help="compute target, or `local` for this computer; default the workspace's serving target"),
            on: Optional[str] = typer.Option(None, "--on", help="where to run it: local, aws, modal, gcp or azure. The first time on a cloud, what it needs there is set up as part of the deploy"),
            login: Optional[str] = typer.Option(None, "--login", help="with --on: which connected cloud login, when there is more than one"),
            remove: bool = typer.Option(False, "--remove", help="stop the model, and remove the first-time setup too when this deploy made it and nothing else uses it"),
            idle_minutes: Optional[float] = typer.Option(None, "--idle-minutes", help="stop by itself after this long with no requests; default 240"),
-           allow_large: bool = typer.Option(False, "--allow-large", help="stage on this computer even when the model is over the size limit for it"),
+           allow_large: bool = typer.Option(False, "--allow-large", help="deploy on this computer even when the model is over the size limit for it"),
            yes: bool = typer.Option(False, "--yes", "-y", help="confirm the cost of a cloud deploy")):
     """Stage the project's current candidate as a live endpoint. The last line printed is its address."""
     from .. import staging as SG
@@ -122,16 +122,135 @@ def _deploy_on(name, on, login, candidate, baseline, env, allow_large, yes, remo
     emit(r, f"Deployed {r['model_version']} to {r['label']}.\n{r.get('address') or ''}")
 
 
-@deployments_app.command("list")
-def deployments_list(stopped: bool = typer.Option(False, "--stopped", help="the stopped ones"),
-                     every: bool = typer.Option(False, "--all", help="live and stopped")):
-    """Every staged model across projects: state, copies, where, and since when."""
-    from ..staging import observe as OB
+UP = ("running", "asleep", "starting", "unknown")
 
-    d = _do(OB.deployments, ctx(), "all" if every else "stopped" if stopped else "live")
-    lines = [f"{r['name'][:22]:22} {r['status'][:18]:18} copies {r['copies']}  {r['where'][:44]:44} {r['since_text']}"
-             + (f"  ({r['requests_24h']:,} requests in 24 h)" if r.get("requests_24h") else "") for r in d["rows"]]
-    emit(d, "\n".join(lines) if lines else d["text"])
+
+@deployments_app.command("list")
+def deployments_list(stopped: bool = typer.Option(False, "--stopped", help="the ones that are not running"),
+                     every: bool = typer.Option(False, "--all", help="running and not"),
+                     fresh: bool = typer.Option(False, "--fresh", help="ask the clouds now, not the answer from a few seconds ago")):
+    """Every deployed model across projects and clouds, as each cloud reports it. Captain's records are corrected
+    from the clouds first. Things found in a cloud that no project knows are listed too."""
+    from ..staging import fleet as FL
+
+    d = _do(FL.deployed, ctx(), fresh)
+    rows = [r for r in d["rows"] if every or ((r["state"] in UP or r["link"] == "unlinked") != stopped)]
+    lines = [f"{(r['project_name'] or r['name'] or '')[:22]:22} {r['state_label'][:24]:24} {r['where'][:40]:40} "
+             f"{(r['model_version'] or 'not linked to a project')[:34]:34} {r['state_text']}" for r in rows]
+    lines += [f"Could not ask {a['cloud_label']} ({a['login'] or 'no login'}): {a['error']}" for a in d["asked"] if not a["ok"]]
+    emit({**d, "rows": rows}, "\n".join(lines) if lines else ("Nothing is deployed." if not d["rows"] else d["text"]))
+
+
+@deployments_app.command("sync")
+def deployments_sync():
+    """Ask every connected cloud what is deployed, correct Captain's records from the answer, and print what
+    differed: what was corrected, what a cloud has that no project knows, and which clouds could not be asked."""
+    from ..staging import fleet as FL
+
+    d = _do(FL.differences, ctx())
+    emit(d, d["text"])
+
+
+@deployments_app.command("show")
+def deployments_show(name: str, span: str = typer.Option("1h", "--range", help="15m, 1h, 24h or 7d"),
+                     env: str = typer.Option("staging", "--env")):
+    """One project's deployment: its state as the cloud reports it, where it runs, its traffic and what it costs."""
+    from ..staging import fleet as FL
+    from ..staging import numbers as NB
+
+    c = ctx()
+    row = _do(FL.one, c, name, env, True)
+    if row is None:
+        fail(f"{name} has nothing deployed. Deploy it with: cst deploy {name} --on <aws|modal|gcp|azure|local>")
+    n = _do(NB.numbers, c, name, env, span)
+    s, cost = n["summary"], n.get("cost") or {}
+    lines = [f"{row['project_name']}: {row['state_text']}",
+             f"Model     {row['model_version'] or 'not known'}",
+             f"Where     {row['where']}" + (f" ({row['name']})" if row.get("name") else ""),
+             f"Since     {row['since'] or 'not known'}" + (f", by {row['by']}" if row.get("by") else ""),
+             f"Traffic   {n['text']}"]
+    if s.get("requests"):
+        lines.append(f"          {s['per_minute']:g} requests a minute on average, {s['per_minute_peak']:g} at the busiest.")
+    if s.get("cpu") is not None:
+        lines.append(f"Machine   CPU {s['cpu']:g}% on average, {s['cpu_peak']:g}% at the most. Memory {s['memory']:g}%."
+                     + (f" Copies: {s['copies_now']} now, {s['copies_peak']} at the most." if s.get("copies_now") else ""))
+    lines.append(f"Cost      {cost.get('text') or 'not known'}")
+    lines.append(f"Source    {n['source_text']}")
+    lines += [f"Not read  {x}" for x in n["not_read"]] + [f"Corrected {x}" for x in row["corrected"]]
+    emit({"deployment": row, "numbers": n}, "\n".join(lines))
+
+
+@deployments_app.command("start")
+def deployments_start(name: str, env: str = typer.Option("staging", "--env"),
+                      yes: bool = typer.Option(False, "--yes", "-y", help="confirm the cost of a cloud deploy")):
+    """Start a stopped deployment again: the same model version, in the same place."""
+    from ..staging import deploy as DP
+    from ..staging import fleet as FL
+
+    c = ctx()
+    row = _do(FL.one, c, name, env, True)
+    if row is None:
+        fail(f"{name} has nothing to start again. Deploy it with: cst deploy {name} --on <place>")
+    if row["state"] in ("running", "asleep", "starting"):
+        fail(f"{name} is already deployed: {row['state_text']}")
+    if not row.get("model_version"):
+        fail("Captain does not know which model version this ran, so it can't start it again. Deploy a version with: cst deploy " + name)
+    if S.dry_run:
+        emit({"dry_run": True, "model_version": row["model_version"], "where": row["where"]}, f"Would start {row['model_version']} again on {row['where']}.")
+        return
+    try:
+        r = DP.run(c, name, row["cloud"], row["login"], candidate=row["model_version"], env=env, confirm=yes)
+    except _staging_errors() as e:
+        fail(str(e))
+    FL.forget(c)
+    emit(r, f"Started {row['model_version']} again on {row['where']}.")
+
+
+@deployments_app.command("remove")
+def deployments_remove(name: str = typer.Argument(..., help="a project, or the id of something found in a cloud with no project (from `cst deployments list --json`)"),
+                       env: str = typer.Option("staging", "--env"),
+                       yes: bool = typer.Option(False, "--yes", "-y", help="confirm: this cannot be undone")):
+    """Remove a deployment from the cloud: stop the model, and take away the first-time setup too when this
+    workspace made it and nothing else uses it. With the id of something found in a cloud, remove that."""
+    from ..staging import deploy as DP
+    from ..staging import fleet as FL
+
+    c = ctx()
+    if name.startswith("cloud:"):
+        if S.dry_run:
+            emit({"dry_run": True, "id": name}, f"Would remove {name.rsplit(':', 1)[-1]} from the cloud.")
+            return
+        try:
+            r = FL.remove_found(c, name, confirm=yes)
+        except ValueError as e:
+            fail(str(e))
+        emit(r, r["text"])
+        return
+    if not yes and not S.dry_run:
+        fail(f"Confirm with --yes. This stops {name}'s model and removes what Captain made for it in the cloud. It cannot be undone.")
+    if S.dry_run:
+        emit({"dry_run": True, "project": name}, f"Would stop {name}'s model and remove what Captain made for it in the cloud.")
+        return
+    try:
+        r = DP.remove(c, name, env)
+    except _staging_errors() as e:
+        fail(str(e))
+    FL.forget(c)
+    emit(r, r.get("text") or f"Removed {name}'s deployment.")
+
+
+@deployments_app.command("link")
+def deployments_link(found: str = typer.Argument(..., help="the id of something found in a cloud with no project (from `cst deployments list --json`)"),
+                     project: str = typer.Argument(..., help="the project to give it to")):
+    """Give a project something found in a cloud that no project knows, so it can be watched, stopped and removed
+    from there."""
+    from ..staging import fleet as FL
+
+    try:
+        r = FL.link(ctx(), found, project)
+    except ValueError as e:
+        fail(str(e))
+    emit(r, r["text"])
 
 
 @deployments_app.command("history")
@@ -173,8 +292,27 @@ def deployments_logs(name: str,
 
 @deployments_app.command("stop")
 def deployments_stop(name: str, env: str = typer.Option("staging", "--env")):
-    """Stop the project's endpoint and remove every resource Captain created for it."""
-    unstage(name, env)
+    """Stop the project's deployed model. It stops answering and stops billing. What the first deploy created in
+    your cloud account stays, so the next deploy is quick: `cst deployments remove` takes that away too."""
+    from .. import staging as SG
+    from ..staging import fleet as FL
+
+    c = ctx()
+    rec = SG.public(_do(SG.state, c, name, env))
+    if not rec or rec.get("status") not in ("running", "starting", "failed"):
+        fail(f"{name} has no model deployed, so there is nothing to stop.")
+    made = ", ".join(f"{r['type']} {r['name']}" for r in rec.get("resources") or [])
+    if S.dry_run:
+        emit({"dry_run": True, "would_remove": rec.get("resources") or [], "deployed": rec}, f"Would stop {name}'s model" + (f" and remove {made}." if made else "."))
+        return
+    try:
+        r = SG.unstage(c, name, env)
+    except _staging_errors() as e:
+        fail(str(e))
+    FL.forget(c)
+    left = r.get("resources") or []
+    emit(r, f"Stopped {name}'s model. It no longer answers or bills." + (f" Removed {made}." if made and not left else "")
+         + (" Could not remove: " + ", ".join(f"{x.get('type')} {x.get('name')} ({x.get('error', 'still there')})" for x in left) + "." if left else ""))
 
 
 @deployments_app.command("rollback")

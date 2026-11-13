@@ -289,7 +289,7 @@ def test_google_image_build_that_fails_says_where_its_log_is(ws, google):  # noq
 def test_google_stage_query_and_unstage_leave_nothing_behind(ws, google):  # noqa: F811
     _gcp(ws)
     r = SG.stage(ws, "shop", target="gcp-serving", confirm=True)
-    name = "captain-search-test-ab12cd-shop-staging"
+    name = "captain-search-test-ab12cd-shop"
     assert r["status"] == "running" and r["scale_to_zero"] and r["endpoint"]["url"].endswith(".run.app") and not r["endpoint"].get("private")
     svc = google.services[name]
     assert svc["public"] and svc["labels"]["app"] == "captain" and svc["labels"]["project"] == "shop"
@@ -327,7 +327,7 @@ def test_google_organization_that_forbids_public_services_keeps_it_private(ws, g
 
 def test_google_never_touches_a_service_it_did_not_make(ws, google):  # noqa: F811
     _gcp(ws)
-    name = "captain-search-test-ab12cd-shop-staging"
+    name = "captain-search-test-ab12cd-shop"
     google.services[name] = {"labels": {"team": "someone-else"}, "uri": "https://theirs.run.app"}
     with pytest.raises(ProviderError, match="already exists here and Captain did not make it"):
         SG.stage(ws, "shop", target="gcp-serving", confirm=True)
@@ -340,7 +340,7 @@ def test_google_copies_can_be_changed_and_the_idle_time_cannot(ws, google):  # n
     SG.stage(ws, "shop", target="gcp-serving", confirm=True)
     t, rec = C.get(ws, "gcp-serving"), SG.state(ws, "shop")
     out = C.set_staged_scale(ws, t, rec, min_copies=1, max_copies=2)
-    assert google.services["captain-search-test-ab12cd-shop-staging"]["template"]["scaling"] == {"minInstanceCount": 1, "maxInstanceCount": 2}
+    assert google.services["captain-search-test-ab12cd-shop"]["template"]["scaling"] == {"minInstanceCount": 1, "maxInstanceCount": 2}
     assert "Keeps 1 up" in out["text"]
     with pytest.raises(ValueError, match="Cloud Run decides how long an idle copy stays up"):
         C.set_staged_scale(ws, t, rec, idle_seconds=60)

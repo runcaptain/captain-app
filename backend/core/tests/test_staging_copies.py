@@ -1,5 +1,5 @@
-"""More than one copy of a staged model: the request log, the quiet test and stopping when idle must not
-depend on one process. Two runtimes over the same bundle and the same store stand in for two copies."""
+"""More than one copy of a staged model: the request log, each model's own address, shadow mode and stopping when
+idle must not depend on one process. Two runtimes over the same bundle and the same store stand in for two copies."""
 import json
 
 from captain_search.staging import logs as L
@@ -42,15 +42,15 @@ def test_two_copies_write_one_log_and_lose_nothing(ws):  # noqa: F811
     assert len(chunks) == 2 and {r.get("copy") for r in got["requests"]} == {a.copy, b.copy}
 
 
-def test_a_split_left_by_an_older_version_is_ignored_on_every_copy(ws):  # noqa: F811
-    """Captain runs no A/B tests: no copy assigns a shopper to anything, whatever an old control document says."""
+def test_each_models_own_address_answers_the_same_on_every_copy(ws):  # noqa: F811
+    """A customer who splits traffic in their own system calls each model by its own address. Whichever copy the
+    host hands the request to, that address gives that model."""
     a, b = _two(ws)
-    _control(a, split=0.5, salt="ab-1", serve="candidate")
-    a.control(force=True)
-    b.control(force=True)
-    arms_a = [a.rank({"query": "tent", "session_id": f"s{i}", "traffic": "test"})["arm"] for i in range(200)]
-    arms_b = [b.rank({"query": "tent", "session_id": f"s{i}", "traffic": "test"})["arm"] for i in range(200)]
-    assert set(arms_a) == set(arms_b) == {"candidate"}
+    for arm in ("candidate", "baseline"):
+        got = [rt.rank({"query": "tent", "session_id": f"s{i}", "traffic": "test"}, arm) for i, rt in enumerate([a, b, a, b])]
+        assert {g["arm"] for g in got} == {arm} and len({g["model_version"] for g in got}) == 1
+        assert len({tuple(g["ids"]) for g in got}) == 1  # the same query, the same model, the same answer from either copy
+    assert a.rank({"query": "tent", "traffic": "test"}, "candidate")["model_version"] != a.rank({"query": "tent", "traffic": "test"}, "baseline")["model_version"]
 
 
 def test_shadow_mode_on_two_copies_serves_the_baseline_and_logs_both(ws):  # noqa: F811

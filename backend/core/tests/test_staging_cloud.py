@@ -38,6 +38,13 @@ class FakeAWS:
         self.iam_refuses = False   # Captain's own sign-in may not ask IAM
         self.scaling = {}          # endpoint resource id -> {min, max, policy}: SageMaker's scaling on an endpoint
         self.copies = {}           # endpoint -> copies up now
+        # What CloudWatch reports: 120 requests a minute, none failing, 3 ms median and 9 ms 95th percentile inside
+        # the model, 20% of a core, 5% of memory, one copy reporting once a minute.
+        self.metric = lambda name, stat, t, period: {
+            ("Invocations", "Sum"): 120.0 * period / 60, ("Invocation4XXErrors", "Sum"): 0.0, ("Invocation5XXErrors", "Sum"): 0.0,
+            ("ModelLatency", "p50"): 3000.0, ("ModelLatency", "p95"): 9000.0, ("OverheadLatency", "p50"): 800.0,
+            ("CPUUtilization", "Average"): 20.0, ("CPUUtilization", "Maximum"): 35.0, ("MemoryUtilization", "Average"): 5.0,
+            ("MemoryUtilization", "Maximum"): 6.0, ("CPUUtilization", "SampleCount"): period / 60.0}.get((name, stat))
 
     def client(self, name):
         return self
@@ -151,6 +158,28 @@ class FakeSM:
     def list_endpoints(self, **kw):
         return {"Endpoints": [{"EndpointName": n, "EndpointArn": f"endpoint/{n}"} for n in self.w.endpoints]}
 
+    # cloudwatch: the endpoint's own numbers, one value a bucket. `w.metric` decides them: (metric name, statistic,
+    # time) -> value or None.
+    def get_metric_data(self, MetricDataQueries, StartTime, EndTime, ScanBy="TimestampDescending", **kw):
+        import datetime as dt
+
+        self._do("get_metric_data", {"n": len(MetricDataQueries), "start": StartTime, "end": EndTime})
+        out = []
+        for q in MetricDataQueries:
+            m, period = q["MetricStat"], q["MetricStat"]["Period"]
+            ts, vs, t = [], [], StartTime
+            while t < EndTime:
+                v = self.w.metric(m["Metric"]["MetricName"], m["Stat"], t, period)
+                if v is not None:
+                    ts.append(t)
+                    vs.append(v)
+                t += dt.timedelta(seconds=period)
+            out.append({"Id": q["Id"], "Timestamps": ts, "Values": vs})
+        return {"MetricDataResults": out}
+
+    def describe_endpoint_config(self, EndpointConfigName):
+        return self.w.configs[EndpointConfigName]
+
     def list_endpoint_configs(self, **kw):
         return {"EndpointConfigs": [{"EndpointConfigName": n, "EndpointConfigArn": f"config/{n}"} for n in self.w.configs]}
 
@@ -212,7 +241,7 @@ def test_stage_query_and_unstage_leave_nothing_behind(ws, aws):  # noqa: F811
     said = []
     r = SG.stage(ws, "shop", target="sm", confirm=True, progress=said.append)
     assert r["status"] == "running" and r["kind"] == "aws-sagemaker"
-    assert r["endpoint"] == {"name": "captain-search-test-shop-staging", "region": "us-west-1"}
+    assert r["endpoint"] == {"name": "captain-search-test-shop", "region": "us-west-1"}
     assert [x["type"] for x in r["resources"]] == ["endpoint", "model", "endpoint-config"]
     assert any(s == "Starting the endpoint (about 2 minutes)" for s in said)  # the measured time, from the one table
     # every resource carries Captain's tags, so it can be found and removed without Captain's own records
@@ -239,7 +268,7 @@ def test_stage_query_and_unstage_leave_nothing_behind(ws, aws):  # noqa: F811
     assert out["spent"]["text"].startswith("Cost ") and out["spent"]["usd"] >= 0  # what it cost while it was up
     from captain_search import cost_estimates as CE
     assert CE.estimate(ws, "staging", "sm", {"instances": 1, "instance_type": "ml.t2.medium"})["low"] == r["cost"]["hourly_usd"]
-    assert ("delete_log_group", {"name": "/aws/sagemaker/Endpoints/captain-search-test-shop-staging"}) in aws.calls  # its log group too
+    assert ("delete_log_group", {"name": "/aws/sagemaker/Endpoints/captain-search-test-shop"}) in aws.calls  # its log group too
     assert aws.lineage == {"someone-elses-endpoint-1-aws-endpoint"}  # the lineage records SageMaker made for it go, and only those
     assert not aws.models and not aws.configs and not aws.endpoints
     assert C.tagged(ws, C.get(ws, "sm"), "shop", "staging") == []
@@ -337,7 +366,7 @@ def test_a_role_that_cannot_stop_its_own_endpoint_is_warned_about_before_the_con
     assert p["preflight"]["checked"] and p["preflight"]["can_delete"] is False and p["preflight"]["can_write"] is True
     assert p["warnings"] == [warn] and p["text"].endswith(warn)
     asked = {c[1]["action"]: c[1]["resource"] for c in aws.calls}
-    assert asked["sagemaker:DeleteEndpoint"].endswith(":endpoint/captain-search-test-shop-staging")
+    assert asked["sagemaker:DeleteEndpoint"].endswith(":endpoint/captain-search-test-shop")
     assert asked["s3:PutObject"] == "arn:aws:s3:::captain-test/cst/staging/preflight"
     with pytest.raises(SG.NeedsConfirm, match="can't stop itself when idle") as e:
         SG.stage(ws, "shop", target="sm")
@@ -465,3 +494,68 @@ def test_a_login_that_may_not_scale_still_gets_a_running_model_and_is_told(ws, a
     assert any("scaling with load could not be turned on" in str(x) for x in said)
     aws.fail_on = None
     SG.unstage(ws, "shop")
+
+
+# ---- one client, and the first call timed apart ---------------------------------------------------
+
+
+def test_calls_reuse_one_client_instead_of_signing_in_each_time(ws, aws, monkeypatch):  # noqa: F811
+    from captain_search import cloud
+    from captain_search.compute_providers import aws as AWSP
+
+    made = []
+    real = cloud.aws_session
+    monkeypatch.setattr(cloud, "aws_session", lambda profile, region=None: made.append(profile) or real(profile, region))
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    made.clear()
+    for q in ("jacket", "tent", "boots"):
+        SG.query(ws, "shop", q)
+    assert made == []  # the stage call's client is kept: three queries sign in zero more times
+    AWSP.forget_clients()
+    SG.query(ws, "shop", "jacket")
+    assert len(made) == 1  # a changed login starts again, once
+    SG.unstage(ws, "shop")
+
+
+def test_a_query_times_the_first_call_apart_from_a_warm_one(ws, aws):  # noqa: F811
+    SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
+    before = [c for c, _ in aws.calls].count("invoke_endpoint") if any(c == "invoke_endpoint" for c, _ in aws.calls) else 0
+    first = SG.query(ws, "shop", "jacket")
+    t = first["timing"]
+    assert t["first_call_ms"] is not None and t["warm_ms"] == first["staged"]["round_trip_ms"] and t["inside_ms"] == first["staged"]["ms"]
+    assert t["text"].startswith("The first call took ") and "it signs in to your cloud and opens the connection" in t["text"]
+    assert "With the connection open, a request takes" in t["text"]
+    again = SG.query(ws, "shop", "tent")["timing"]
+    assert again["first_call_ms"] is None and again["text"].startswith("With the connection open, a request takes")
+    # The call made to open the connection asks nothing of the model: it is not a logged request.
+    SG.call(ws, SG.state(ws, "shop"), "flush", {})
+    from captain_search.staging import logs as L
+    reqs = L.read(ws, "shop", "staging", SG.state(ws, "shop")["id"])["requests"]
+    assert len(reqs) == 4 and before == 0  # two queries, each beside the baseline
+    SG.unstage(ws, "shop")
+
+
+# ---- the name in the cloud --------------------------------------------------------------------------
+
+
+def test_a_new_deployment_is_named_for_its_project_and_an_old_one_keeps_its_name(ws, aws):  # noqa: F811
+    """`<prefix>-<project>`, with no "staging" in it. A deployment already running under the older name keeps that
+    name when a new version is deployed onto it: a new name would start a second endpoint and leave the first billing."""
+    from captain_search.compute_providers.serving import deployed_base
+
+    assert deployed_base("captain", "shop", "staging") == "captain-shop" and deployed_base("captain", "shop", "eu") == "captain-shop-eu"
+    rec = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    assert rec["endpoint"]["name"] == "captain-search-test-shop"
+    SG.unstage(ws, "shop")
+    # An endpoint from before the change, still running under its old name.
+    rec = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    old = "captain-search-test-shop-staging"
+    aws.endpoints[old] = aws.endpoints.pop(rec["endpoint"]["name"])
+    aws.endpoints[old]["EndpointName"] = old
+    SG._save(ws, "shop", "staging", endpoint={"name": old, "region": "us-west-1"},
+             resources=[{**r, "name": old} if r["type"] == "endpoint" else r for r in SG.state(ws, "shop")["resources"]])
+    again = SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
+    assert again["endpoint"]["name"] == old and sorted(aws.endpoints) == [old]  # moved in place: one endpoint, not two
+    assert [c for c, _ in aws.calls].count("update_endpoint") == 1
+    SG.unstage(ws, "shop")
+    assert not aws.endpoints

@@ -76,6 +76,7 @@ def get_profile(name: str) -> dict:
 
 
 def add_profile(name: str, provider: str, auth: str, region: str | None, fields: dict, secrets: dict) -> dict:
+    _forget_kept_clients()
     check_name(name)
     spec = _spec(provider, auth)
     allowed = {f["name"]: f for f in spec["fields"]}
@@ -107,6 +108,7 @@ def add_profile(name: str, provider: str, auth: str, region: str | None, fields:
 
 
 def delete_profile(name: str) -> None:
+    _forget_kept_clients()
     import keyring
 
     p = get_profile(name)
@@ -269,3 +271,13 @@ def summary(ctx) -> dict:
             "can_run_in_cloud": any(t["kind"] != "local" for t in targets),
             "notes": ([] if any(t["kind"] != "local" for t in targets) else
                       ["No cloud compute target yet: offline evaluations run on this computer. Add one with `cst compute add`."])}
+
+
+def _forget_kept_clients() -> None:
+    """A changed or removed login must not go on being used through a client kept from before."""
+    try:
+        from .compute_providers import aws
+
+        aws.forget_clients()
+    except Exception:  # noqa: BLE001
+        pass

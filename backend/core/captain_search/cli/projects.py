@@ -666,8 +666,9 @@ def staging_query(name: str, query: str, k: int = typer.Option(10, "-k"), env: s
     for side in (r["staged"], r["baseline"]):
         if not side:
             continue
-        lines.append(f"{side['arm'].capitalize()} ({side['model_version']}), {side['ms']:.1f} ms")
+        lines.append(f"{side['arm'].capitalize()} ({side['model_version']}), {side['ms']:.1f} ms inside the model, {side['round_trip_ms']:.0f} ms round trip")
         lines += [f"  {x['position']:>2}. {x['title'][:70]}" for x in side["results"]]
+    lines.append(r["timing"]["text"])
     emit(r, "\n".join(lines))
 
 
