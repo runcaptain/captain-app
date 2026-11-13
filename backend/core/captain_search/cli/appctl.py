@@ -603,6 +603,47 @@ def app_open(target: str = typer.Argument(..., help="A screen (projects, data, n
     emit({"opened": what}, f"Opened {target} in Captain." + (" The form is filled in and waiting for the person: nothing was submitted." if "form" in what else ""))
 
 
+@app_app.command("logs")
+def app_logs(follow: bool = typer.Option(False, "--follow", "-f", help="Keep printing new lines until interrupted"),
+             since: Optional[str] = typer.Option(None, "--since", help="Only the last so long: 30m, 1h, 2d"),
+             which: str = typer.Option("all", "--which", help="app, services, crash or all"),
+             bundle: bool = typer.Option(False, "--bundle", help="Write one zip for a bug report to the Desktop and print its path"),
+             last: bool = typer.Option(False, "--last", help="What happened last time: the last run's crash record, else the end of its log"),
+             to: Optional[str] = typer.Option(None, "--to", help="With --bundle: the folder to write the zip in")):
+    """Print Captain's logs: the app's (app.log), the services' (services.log) and crash records.
+
+    They live in ~/Library/Logs/Captain on a Mac ($CAPTAIN_LOG_DIR picks another folder). Secrets are taken out
+    when a line is written, and again when a bundle is made, so a bundle can go into a bug report."""
+    from .. import applog
+
+    if which not in ("app", "services", "crash", "all"):
+        fail("--which takes app, services, crash or all")
+    if bundle:
+        path = applog.bundle(to)
+        emit({"path": path}, path)
+        return
+    if last:
+        typer.echo(applog.what_happened(), nl=False)
+        return
+    try:
+        seconds = applog.since_seconds(since) if since else None
+    except ValueError as e:
+        fail(str(e))
+    text = applog.read(which, seconds)
+    if S.json and not follow:
+        emit({"folder": applog.log_dir(), "which": which, "text": text})
+        return
+    if text:
+        typer.echo(text, nl=False)
+    elif not follow:
+        typer.secho(f"no log lines in {applog.log_dir()}" + (f" in the last {since}" if since else ""), err=True)
+    if follow:
+        try:
+            applog.follow(which)
+        except KeyboardInterrupt:
+            pass
+
+
 @app_app.command("check")
 def app_check(folder: str):
     """Load a mod once, render it, and exit nonzero with the exact error. Run after every change to a mod."""
