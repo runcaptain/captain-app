@@ -51,6 +51,8 @@ const asked = [{ cloud: 'aws', cloud_label: 'AWS', login: 'work-aws', region: 'u
 const { default: Deployments } = await import(path.join(dir, 'main.js'));
 const open = async (w) => { world = w; sent = []; const h = harness(Deployments); await h.start(); for (let i = 0; i < 60 && !h.mod.d; i++) await h.idle(30); await h.idle(120); return h; };
 const byId = (h, id) => h.byIdPrefix(id).filter((e) => e.call('id')?.[0] === id);
+// The harness runs a screen's timers only when asked: this is one tick of them, then whatever they started.
+const tick = async (h) => { await h.layoutLists({}); await h.idle(80); };
 const shown = (h) => ['shop', 'trail', 'kids', 'gifts'].filter((p) => byId(h, `dep-row-${p}:staging`).length === 1).join(' ');
 const filled = (h) => h.byIdPrefix('').filter((e) => e.calls?.some?.((x) => x[0] === 'bg' && x[1]?.[0] === h.palette?.solid));
 
@@ -223,6 +225,25 @@ h = await open({ deployed: { rows: [SHOP], asked, text: '1 deployed.', read_at: 
 await h.idle(150);
 assert.ok(h.text().includes('All deployments') && byId(h, 'submenu-traffic').length === 1, 'opens that model\'s page');
 globalThis.__props = undefined;
+// The way a link on another screen really asks: the shared "open" value, then this place is selected. Handled once.
+h = await open({ deployed: { rows: [SHOP, TRAIL], asked, text: '2 deployed.', read_at: '' }, numbers: { shop: numbers(8640) } });
+assert.ok(h.text().includes('Ask the clouds again'), 'the list first');
+globalThis.__shared['captain.open'] = { section: 'deployments', open: 'trail:staging', at: 1001 };
+await tick(h);
+assert.ok(h.text().includes('All deployments') && h.text().includes('Trail gear') && byId(h, 'submenu-traffic').length === 1, `the shared value opens that model's page: ${h.text().slice(0, 200)}`);
+await h.click('model-close');
+await tick(h);
+assert.ok(h.text().includes('Ask the clouds again'), 'closing it stays closed: the same request is not handled twice');
+globalThis.__shared['captain.open'] = { section: 'runs', open: 'shop:staging', at: 1002 };
+await tick(h);
+assert.ok(h.text().includes('Ask the clouds again'), 'a request for another screen is not this screen\'s');
+globalThis.__shared['captain.open'] = { section: 'deployments', open: 'shop:staging', at: 1003 };
+await tick(h);
+assert.ok(h.text().includes('All deployments') && h.text().includes('Demo shop'), 'a newer request opens the other model');
+globalThis.__shared['captain.open'] = { section: 'deployments', at: 1004 };
+await tick(h);
+assert.ok(h.text().includes('Ask the clouds again') && byId(h, 'submenu-traffic').length === 0, '"All deployments" with no model shows the list');
+delete globalThis.__shared['captain.open'];
 
 // ---- the screen rules ----
 for (const f of ['main.js', 'model.js', 'words.js']) {
