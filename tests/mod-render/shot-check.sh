@@ -84,6 +84,24 @@ trap cleanup EXIT
 echo "seeding a scratch workspace"
 # The backend the seeding and the window use: $CST_BIN (this repo's backend/core, say), else cst on PATH.
 CSTCMD=${CST_BIN:-cst}
+# The backend must be this tree's. A `cst` installed from another worktree runs that worktree's code, and the
+# pictures then show an older backend behind the current screens: a live view once read "Updated just now" where
+# this tree says "Live", and nothing said why. This tree's backend/core goes first on the Python path, and the
+# check stops if what would run is still not from here. SHOT_ANY_BACKEND=1 skips the check, on purpose.
+if [[ -d "$PWD/backend/core/captain_search" ]]; then
+  export PYTHONPATH="$PWD/backend/core${PYTHONPATH:+:$PYTHONPATH}"
+  CST_PY_CHECK=$(head -1 "$(command -v "$CSTCMD")" | sed 's/^#!//')
+  RUNS_FROM=$("$CST_PY_CHECK" -c "import captain_search, os; print(os.path.realpath(os.path.dirname(captain_search.__file__)))" 2>/dev/null || echo "unknown")
+  WANT_FROM=$(python3 -c "import os; print(os.path.realpath('$PWD/backend/core/captain_search'))")
+  if [[ "$RUNS_FROM" != "$WANT_FROM" && -z "${SHOT_ANY_BACKEND:-}" ]]; then
+    echo "STOP: the backend these pictures would run is not this tree's."
+    echo "  it runs from: $RUNS_FROM"
+    echo "  this tree is: $WANT_FROM"
+    echo "  Point CST_BIN at a cst whose Python can import this tree, or set SHOT_ANY_BACKEND=1 to shoot anyway."
+    exit 2
+  fi
+  echo "backend: $RUNS_FROM"
+fi
 # SHOT_CST_HOME: shoot against an existing backend home (a copy of someone's workspace) instead of a seeded one.
 if [[ -n "${SHOT_CST_HOME:-}" ]]; then
   CSTH=$SHOT_CST_HOME

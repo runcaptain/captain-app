@@ -29,8 +29,10 @@ export default class CaptainDeployments extends View {
     this.busy = {};           // row id -> what is being done to it, in words
     this.following = {};      // row id -> the job doing it: {job, words, kind, read, heard, polling}
     // For the picture check only, which can't click: do one action as if its button were pressed, once the list
-    // is read. "stop" or "remove", on the first model that is in a cloud or on this computer.
-    this.press = props()?.press ?? null;
+    // is read. "stop" or "remove", on the first model that is in a cloud or on this computer. Honoured only in the
+    // app's test window (the app sets `app.testWindow` at each start): in a person's app it does nothing, so a
+    // layout or a link can never stop or remove a model by naming this.
+    this.press = shared("app.testWindow") === true ? (props()?.press ?? null) : null;
     this.note = null;         // what the last action said
     this.projects = null;     // for "Link to a project"
     this.page = null;         // the model page, when a row is open

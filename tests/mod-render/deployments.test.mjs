@@ -522,6 +522,25 @@ assert.ok(!h.text().includes('Not updating') && h.text().includes('Updated just 
   assert.ok(hd.text().includes('Where it runs') && hd.text().includes('Calls a minute at the endpoint'), `the sample page draws: ${hd.text().slice(0, 200)}`);
 }
 
+// ---- the picture check's `press` does nothing in a person's app ----
+// It stops or removes a model as if a button were pressed. Only the app's test window may do that.
+{
+  const stops = () => sent.filter((x) => x[0] === 'POST' && x[1].endsWith('/unstage')).length;
+  globalThis.__props = { press: 'stop' };
+  let hp = await open({ deployed: RUNNING2, stopJob: 'job-p', jobs: { 'job-p': [{ status: 'running', message: TITLE, log: [TITLE] }] } });
+  await tick(hp); await tick(hp);
+  assert.ok(stops() === 0 && byId(hp, 'dep-stop-shop:staging').length === 1, 'in a person\'s app nothing is pressed: the model keeps running and keeps its button');
+  (globalThis.__shared ??= {})['app.testWindow'] = false;
+  hp = await open({ deployed: RUNNING2, stopJob: 'job-p', jobs: { 'job-p': [{ status: 'running', message: TITLE, log: [TITLE] }] } });
+  await tick(hp);
+  assert.equal(stops(), 0, 'nor when the app says it is not the test window');
+  globalThis.__shared['app.testWindow'] = true;
+  hp = await open({ deployed: RUNNING2, stopJob: 'job-p', jobs: { 'job-p': [{ status: 'running', message: TITLE, log: [TITLE] }] } });
+  await tick(hp);
+  assert.equal(stops(), 1, `in the test window it presses once: ${JSON.stringify(sent.slice(0, 6))} ${hp.text().slice(0, 200)}`);
+  globalThis.__props = undefined; delete globalThis.__shared['app.testWindow'];
+}
+
 // ---- live: the screen listens to the change feed, and asks nothing on a clock ----
 const tell = async (changed, more) => { const w = world.waiting; world.waiting = null; w(changed, more); await h.idle(150); };
 h = await open({ live: true, seq: 1000, deployed: RUNNING2, numbers: { shop: numbers(8640) } });
