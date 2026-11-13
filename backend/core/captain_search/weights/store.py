@@ -274,7 +274,7 @@ def whole(m: dict, tensors: dict[str, np.ndarray], ctx=None) -> dict:
             else:
                 want = np.atleast_1d(yi).astype(float).tolist()
                 label = None
-            out["examples"].append({"name": f"practice {i}" + (f": {label}" if label is not None else ""),
+            out["examples"].append({"name": f"example {i + 1}" + (f": {label}" if label is not None else ""),
                                     "x": np.round(x[i], 4).tolist(), "y": want})
     return out
 

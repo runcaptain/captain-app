@@ -21,7 +21,13 @@ Only fully connected networks are supported. The code is numpy alone.
 | `a` | A neuron's activation, after it. |
 | `dcost_da` | How much the cost changes per unit change of that activation. |
 | `wanted_nudge` | The negative of `dcost_da`. Positive means the cost falls if the neuron is more active. |
+| examples | A couple of dozen labelled inputs that come with a model, for a person to pick and look at. They are never part of a score. |
 | `dcost_dz`, `da_dz`, `a_before` | The other chain-rule numbers. A weight's gradient is `a_before * da_dz * dcost_da`. |
+
+**Counting.** In every field, here and in `--json`, layers, neurons, outputs and examples count from 0. The one
+exception is `layer` when it names a neuron's place (in an edit, an event and `touched.neurons`): there it is the
+column, so 1 is the first layer after the input. In every sentence a person reads (an event's `sentence`, what
+`cst weights` prints without `--json`, a refusal) layers and neurons count from 1: "layer 2, neuron 7".
 
 ## The two starter networks
 
@@ -89,32 +95,46 @@ cst weights open tiny --agent --name claude --forward-passes 20 --no-sandbox
     "raw_weights": true, "weights_read": 0,
     "sandbox": false, "sandbox_used": false,
     "forward_allowed": 20, "forward_used": 0, "pass_inputs": 32,
-    "gradients_computed": false, "evaluations": 0,
+    "gradients_computed": false, "evaluations": 0, "training_steps": 0,
     "changed": 0, "total": 13, "share": 0.0,
+    "feedback": true, "scores_shown": false, "first_score": null,
+    "screen_looks": 0, "screen_numbers": 0,
     "weights_alone": true,
     "label": "from the weights alone"
   },
   "sets": {
-    "target": {"defined": true, "of": 1, "says": "practice example 0, by default. Name the real one with `cst weights sets`"},
-    "should_not_change": {"defined": true, "of": 23, "says": "every practice example but 0, by default. Name the real one with `cst weights sets`"},
+    "target": {"defined": false},
+    "should_not_change": {"defined": false},
     "held_out": {"defined": true, "of": 300, "says": "the model's held-out set"}
   },
   "edits": [],
   "events": [],
   "event_count": 1,
-  "saved": []
+  "saved": [],
+  "closed": false
 }
 ```
 
-`weights_alone` is true only when no sandbox was allowed and no forward pass was used. It is worked out from the
-record each time. The label is one of "from the weights alone", "from the weights, with code, network not run" or
-"with 3 of 20 forward passes". A training step adds ", and 1 training step".
+`weights_alone` is true only when all three hold: no sandbox was allowed, no forward pass was used, and no score
+was shown to the caller before its last edit. It is worked out from the record each time. The label is one of
+"from the weights alone", "from the weights, with code, network not run", "from the weights, with scores shown
+along the way" or "with 3 of 20 forward passes". A training step adds ", and 1 training step".
+
+**Scores are feedback.** A score shown after an edit is information from running the network. So:
+
+- In an ordinary session an edit, an undo, a redo and `evaluate` return their scores. The first one returned
+  ends "from the weights alone". `ledger.first_score` names the event and the operation that did it.
+- A session opened blind (`"feedback": false`, `cst weights open <model> --blind`) measures and stores every
+  score and shows none. An edit's event comes back without `cost`, `cost_before`, `cost_after` or `predicted`
+  and with `"scores": "hidden"`. `evaluate` answers `{"measured": true, "scores": "hidden", "says": "..."}`.
+  No route shows them. When the session is saved (`save`) or closed (`close`), every stored score is shown from
+  then on. Only a blind session can make edits and keep the label. Editing again after the scores are shown
+  ends it.
 
 A person's session gets 50 forward passes unless told otherwise. An agent's gets none: say how many with
 `--forward-passes`. `events` in a session answer holds the last 100. The whole record is in `report`.
 
-Until the sets are named, the target is practice example 0 and "should not change" is the other practice
-examples. A model with no practice examples has no target until one is named.
+Until the sets are named with `sets`, an edit is scored on the held-out set alone.
 
 ### Something refused
 
@@ -130,8 +150,13 @@ edit that changes nothing) is status 400 with `{"error": "..."}` and exit code 1
 
 ### A screen looking
 
-Add `watch=1` to a read or a run (or `"watch": true` in a body) when a screen draws a session for a person who is
-looking on. Nothing is recorded, counted or refused, and the feed is not told. `cst weights` has no such switch.
+Add `watch=1` to a read of the weights (`layers`, `read`, `stats`, `heatmap`, `template`, `diff`, and
+`GET /api/weights/models/{model}?session=`) when a screen shows a session to a person looking on. The look is not
+an event, is not held to the session's allowances, and does not tell the feed. It is counted beside the record:
+`ledger.screen_looks` is how many looks there were and `ledger.screen_numbers` how many numbers they showed.
+
+Nothing that runs the network takes `watch`. `forward`, `activations`, `gradients`, `trace` and `slice` always
+count against the session. A screen works out activations and gradients itself from the weights it was sent.
 
 `cst weights` commands act on the session opened last. Name another with `--session ws-...`.
 
@@ -163,11 +188,12 @@ The whole network, for a screen (`GET /api/weights/models/{model}`, at most 200,
 {"id": "tiny", "name": "tiny", "version": 1, "sizes": [2, 3, 1], "squish": "sigmoid", "cost": "cross_entropy",
  "layers": [{"W": [[5.1, -4.9], [4.8, 5.0], [-3.2, 3.1]], "b": [0.2, -7.1, 0.4], "activation": "sigmoid"}],
  "inputNames": ["x1", "x2"], "outputNames": ["exactly one is high"],
- "examples": [{"name": "practice 0", "x": [0.9, 0.1], "y": [1.0]}],
+ "examples": [{"name": "example 1: 1", "x": [0.9, 0.1], "y": [1.0]}],
  "test": [], "synthetic": true}
 ```
 
-`examples` are practice inputs anyone may look at. `test` is always empty: the held-out examples are never sent.
+`examples` are the model's couple of dozen labelled inputs for a person to pick and look at (24 for `tiny`, 40
+for `digits`). They are never part of a score. `test` is always empty: the held-out examples are never sent.
 Scores on them come from `evaluate`. Add `?session={s}` to get the numbers as the session has edited them.
 
 `layers`:
@@ -219,7 +245,8 @@ they are refused. One pass may hold up to `pass_inputs` inputs.
 | `cst weights trace --example 3 [--path 0,2,0]` | `POST /api/weights/sessions/{s}/trace` | the chain rule along one path |
 | `cst weights slice <tensor> <index> --example 3` | `POST /api/weights/sessions/{s}/slice` | the cost as one number moves |
 
-Bodies take `{"inputs": [[0.9, 0.1]], "targets": [[1]]}` or `{"example": 3}` (a practice example by number).
+Bodies take `{"inputs": [[0.9, 0.1]], "targets": [[1]]}` or `{"example": 3}` (one of the model's examples, by
+number from 0).
 
 ```json
 {"outputs": [[0.97]], "predicted": [1], "cost": 0.03, "forward_used": 1, "forward_left": 19}
@@ -298,6 +325,7 @@ point, so it costs `points` forward passes, and it is refused whole when fewer a
 | `cst weights redo [<edit>]` | `POST /api/weights/sessions/{s}/redo` | an event |
 | `cst weights evaluate` | `POST /api/weights/sessions/{s}/evaluate` | the three sets and the drift |
 | `cst weights save --as <note>` | `POST /api/weights/sessions/{s}/save` | the new version |
+| `cst weights close` | `POST /api/weights/sessions/{s}/close` | the session, closed. Nothing more can be run or changed in it |
 | `cst weights report` | `GET /api/weights/sessions/{s}/report` | the whole record |
 | `cst weights events` | `GET /api/weights/sessions/{s}/events?since=` | the short event list |
 | `cst weights export <file>` | `POST /api/weights/sessions/{s}/export` | writes the tensors to a file |
@@ -318,7 +346,7 @@ Here `layer` is the neuron's column, so 1 is the first layer after the input. `f
 `add_direction` adds `scale * direction` to the incoming weights of each named neuron (all of them when none is
 named). With `"along": "outputs"` the direction has one number per neuron of the layer and is added to the weights
 leaving each named input. An agent must give `why`.
-`{"op": "step", "example": [0, 1, 2], "rate": 0.5}` takes one gradient step on practice examples. It is an edit like
+`{"op": "step", "example": [0, 1, 2], "rate": 0.5}` takes one gradient step on the model's examples. It is an edit like
 any other, costs a forward pass, and puts "training step" in the session's label.
 
 The event that comes back, also what `events` lists:
@@ -332,7 +360,7 @@ The event that comes back, also what `events` lists:
  "cost": {"target": {"name": "target", "of": 40, "before": 0.61, "after": 0.22, "right_before": 21, "right_after": 37, "answers_changed": 16},
           "keep": {"name": "should not change", "of": 160, "before": 0.08, "after": 0.09, "right_before": 158, "right_after": 158, "answers_changed": 0},
           "test": {"name": "held out", "of": 200, "before": 0.19, "after": 0.12, "right_before": 179, "right_after": 195, "answers_changed": 16}},
- "sentence": "The agent set 1 number in layer1.bias (neuron 2 of column 1). Cost on the target went from 0.61 to 0.22."}
+ "sentence": "The agent set 1 number in layer1.bias (layer 1, neuron 3). Cost on the target went from 0.61 to 0.22."}
 ```
 
 Once a session has computed gradients, an edit's event also has `predicted`: what the gradient on the target set
@@ -343,16 +371,17 @@ said the edit would do, beside what it did. A large `gap` means the edit was not
 ```
 
 `kind` is one of `open`, `read`, `run`, `gradients`, `edit`, `undo`, `redo`, `evaluate`, `save`, `export`, `sets`,
-`refused`. Every event has `sentence`. Events that measured something have `cost_before` and `cost_after`.
+`close`, `refused`. Every event has `sentence`. Events that scored something have `cost_before` and `cost_after`.
+A run's own cost is `run_cost`.
 
 In an edit's `cost`, `before` is the network just before this edit and `after` is just after it. A set that is not
-defined is left out of `cost`. Send `"target": 3` with an edit to measure that one edit against practice example 3
-and the other practice examples. `touched.neurons` are `[column, index]`. `touched.weights` are `[layer, to, from]`. `changes` and
+defined is left out of `cost`. `touched.neurons` are `[column, index]`. `touched.weights` are `[layer, to, from]`. `changes` and
 `touched.weights` list at most 200 entries. `changed` is the true count. An undone edit stays in the list with
 `"undone": true`, and the undo is an event of its own with `"undoes": "e4"`.
 
 `undo` with no edit named takes back the last edit still applied. An edit other than the last can be taken back
-only if no later edit changed the same numbers. Undo and redo put back the exact old numbers.
+only if no later edit changed the same numbers. The refusal says which: "Take back edit e5 first: it changed the
+same numbers after edit e3." Undo and redo put back the exact old numbers.
 
 `diff`:
 
@@ -375,7 +404,7 @@ session never sees:
 
 `target` is what the edit should fix. `should_not_change` holds the neighbours it must leave alone. The held-out
 set is the model's own and cannot be changed. A set may also be given whole as `{"inputs": [...], "targets":
-[...]}`.
+[...]}`. The model's examples cannot be made into a scored set.
 
 `evaluate`:
 
@@ -393,14 +422,21 @@ set is the model's own and cannot be changed. A set may also be given whole as `
 `before` is the base and `after` is the base with the edits now applied, on the same examples. `drift` says how
 far each column's activations moved from the base on the same inputs: the mean size of the change, the change
 relative to the base's size, and the cosine similarity. Evaluations are run by the tool and are counted apart from
-forward passes.
+forward passes, as `ledger.evaluations`. In a blind session the answer holds no scores (see "Scores are feedback").
 
 `save` writes a new version that is the base plus the applied patches, with the record attached:
 
 ```json
 {"model": "tiny", "version": 2, "ref": "tiny@v2", "base": "tiny@v1", "patches": 1, "changed": 1, "share": 0.0769,
- "label": "with 3 of 20 forward passes"}
+ "label": "with 3 of 20 forward passes", "weights_alone": false, "note": "", "scores_shown_now": false}
 ```
+
+## A pinned neuron
+
+The page can pin a network, a neuron or one weight for an agent. The ref is `weights:<model>`,
+`weights:<model>@layer=2,neuron=6` or `weights:<model>@layer=2,neuron=6,from=3`, with `layer` from 1 and `neuron`
+and `from` from 0. `cst context show` then gives the model, the layer and neuron counted from 1, its bias, its
+five largest incoming and outgoing weights, and the `cst weights` commands that read more.
 
 ## Live
 

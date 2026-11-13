@@ -117,6 +117,9 @@ def _ledger_lines(led: dict) -> list[str]:
             f"forward passes: {led['forward_used']} of {led['forward_allowed']} used",
             f"gradients computed: {'yes' if led['gradients_computed'] else 'no'}",
             f"evaluations run by the tool: {led['evaluations']}",
+            "scores: " + ("hidden until the session is saved or closed" if not led["feedback"] and not led["scores_shown"]
+                          else f"first shown by {led['first_score']['op']} ({led['first_score']['event']})" if led["scores_shown"] else "none shown yet"),
+            f"looked at by the screen: {led['screen_looks']} times, {led['screen_numbers']:,} numbers",
             f"changed: {led['changed']:,} of {led['total']:,} numbers ({led['share'] * 100:.2f}%)"]
 
 
@@ -138,7 +141,7 @@ def _cost_lines(cost: dict) -> list[str]:
 
 
 def _event_text(ev: dict) -> str:
-    return "\n".join([f"{ev['id']}  {ev['sentence']}", *_cost_lines(ev.get("cost") or {})])
+    return "\n".join([f"{ev['id']}  {ev['sentence']}", *_cost_lines(ev.get("cost") or {}), *([f"  {WSN.BLIND}"] if ev.get("scores") == "hidden" else [])])
 
 
 # ---- models and sessions -------------------------------------------------------------------------------------------------
@@ -166,12 +169,13 @@ def open_(model: str = typer.Argument(..., help="a model, or one version of it: 
           raw_weights: Optional[bool] = typer.Option(None, "--raw-weights/--no-raw-weights", help="may raw numbers be shown (default yes)"),
           sandbox: Optional[bool] = typer.Option(None, "--sandbox/--no-sandbox", help="may code work on the tensors (default no)"),
           forward_passes: Optional[int] = typer.Option(None, "--forward-passes", help="how many times the network may be run (default 50 for a person, 0 for an agent)"),
-          pass_inputs: Optional[int] = typer.Option(None, "--pass-inputs", help="how many inputs one pass may hold (default 32)")):
+          pass_inputs: Optional[int] = typer.Option(None, "--pass-inputs", help="how many inputs one pass may hold (default 32)"),
+          blind: bool = typer.Option(False, "--blind", help="measure and keep every score, and show none until the session is saved or closed")):
     """Open a session. What it is allowed is fixed here and recorded."""
     if S.dry_run:
         return emit({"dry_run": True, "would": f"open a session on {model}"}, f"would open a session on {model}")
     s = _do(WSN.open_session, ctx(), model, by="agent" if agent else "you", name=name, raw_weights=raw_weights, sandbox=sandbox,
-            forward_passes=forward_passes, pass_inputs=pass_inputs)
+            forward_passes=forward_passes, pass_inputs=pass_inputs, feedback=not blind)
     os.makedirs(wsp.home(), exist_ok=True)
     with open(_last_path(), "w") as f:
         f.write(s["id"])
@@ -216,7 +220,7 @@ def layers(session: Optional[str] = SESSION):
     """The layers: sizes, activation, tensor names and how many numbers each holds."""
     r = _do(WSN.layers, ctx(), _sid(session))
     lines = [f"{'-'.join(str(s) for s in r['sizes'])}, {r['parameters']:,} numbers, {r['cost']} cost"]
-    lines += [f"layer {ly['layer']} (column {ly['column']}): {ly['inputs']} in, {ly['outputs']} out, {ly['activation']}, "
+    lines += [f"layer {ly['layer'] + 1}: {ly['inputs']} in, {ly['outputs']} out, {ly['activation']}, "
               f"{ly['weight']['tensor']} and {ly['bias']['tensor']}, {ly['parameters']:,} numbers" for ly in r["layers"]]
     emit(r, "\n".join(lines))
 
@@ -238,7 +242,7 @@ def stats(tensor: Optional[str] = typer.Argument(None), neurons: bool = typer.Op
     r = _do(WSN.stats, ctx(), _sid(session), tensor, neurons)
     lines = [f"{t['tensor']:16} n={t['count']:<6} mean {_f(t['mean'])}  variance {_f(t['variance'])}  min {_f(t['min'])}  median {_f(t['median'])}  "
              f"max {_f(t['max'])}  zeros {t['zero_share'] * 100:.0f}%  distinct {t['distinct']}" for t in r["tensors"]]
-    lines += [f"column {n['column']} neuron {n['neuron']}: bias {_f(n['bias'])}, weight size {_f(n['weight_norm'])}, "
+    lines += [f"layer {n['layer'] + 1}, neuron {n['neuron'] + 1}: bias {_f(n['bias'])}, weight size {_f(n['weight_norm'])}, "
               f"from {_f(n['weight_min'])} to {_f(n['weight_max'])}" + (", every weight is zero" if n["dead"] else "") for n in r.get("neurons", [])]
     lines.append(f"bias range: first layer {_f(r['bias_range']['first'])}, last layer {_f(r['bias_range']['last'])}")
     emit(r, "\n".join(lines))
@@ -249,7 +253,7 @@ def heatmap(layer: int = typer.Option(0, "--layer", help="the layer, from 0"), n
             session: Optional[str] = SESSION):
     """A layer's weights per input as grids, one per neuron."""
     r = _do(WSN.heatmap, ctx(), _sid(session), layer, neuron)
-    emit(r, f"layer {r['layer']}: {len(r['grids'])} grids of {r['grid_shape'][0]} by {r['grid_shape'][1]}, largest weight {_f(r['scale'])}. "
+    emit(r, f"layer {r['layer'] + 1}: {len(r['grids'])} grids of {r['grid_shape'][0]} by {r['grid_shape'][1]}, largest weight {_f(r['scale'])}. "
             "Use --json for the numbers.")
 
 
@@ -257,7 +261,7 @@ def heatmap(layer: int = typer.Option(0, "--layer", help="the layer, from 0"), n
 def template(output: int = typer.Argument(0), session: Optional[str] = SESSION):
     """One output's incoming weights: which neurons before it vote for this output."""
     r = _do(WSN.template, ctx(), _sid(session), output)
-    emit(r, f"output {r['output']} ({r['name']}): bias {_f(r['bias'])}\n" + "  ".join(f"{v: .3f}" for v in r["weights"]))
+    emit(r, f"output {r['output'] + 1} ({r['name']}): bias {_f(r['bias'])}\n" + "  ".join(f"{v: .3f}" for v in r["weights"]))
 
 
 # ---- run -------------------------------------------------------------------------------------------------------------------
@@ -265,7 +269,14 @@ def template(output: int = typer.Argument(0), session: Optional[str] = SESSION):
 INPUT = typer.Option([], "--input", "-i", help="one input as numbers with commas: 0.9,0.1. Repeat for more")
 INPUT_FILE = typer.Option(None, "--input-file", help="a JSON file: a list of inputs, or {inputs, targets}")
 TARGET = typer.Option(None, "--target", "-t", help="the wanted output, as numbers with commas or one class number per input")
-EXAMPLE = typer.Option(None, "--example", "-e", help="a practice example by number, or several: 3 or 0,1,2")
+EXAMPLE = typer.Option(None, "--example", "-e", help="one of the model's examples by number from 0, or several: 3 or 0,1,2")
+
+
+def _pos(layer: int, index: list) -> str:
+    """One number by where it sits, counted from 1."""
+    if len(index) == 1:
+        return f"the bias of layer {layer + 1}, neuron {index[0] + 1}"
+    return f"the weight into layer {layer + 1}, neuron {index[0] + 1} from neuron {index[1] + 1}"
 
 
 def _passes(r: dict) -> str:
@@ -286,7 +297,7 @@ def activations(input: list[str] = INPUT, input_file: Optional[str] = INPUT_FILE
                 session: Optional[str] = SESSION):
     """Every neuron's weighted sum and activation for one input. Costs one forward pass."""
     r = _do(WSN.activations, ctx(), _sid(session), **_run_args(input, input_file, target, example))
-    emit(r, "\n".join(f"column {c['column']}: " + "  ".join(f"{v:.3f}" for v in c["a"]) for c in r["columns"])
+    emit(r, "\n".join(f"layer {c['column']}: " + "  ".join(f"{v:.3f}" for v in c["a"]) for c in r["columns"])
             + f"\nanswer {r['predicted']}" + (f", cost {_f(r['cost'])}" if "cost" in r else "") + "\n" + _passes(r))
 
 
@@ -297,8 +308,8 @@ def gradients(input: list[str] = INPUT, input_file: Optional[str] = INPUT_FILE, 
     """The cost and its gradient for every weight and bias, and what each neuron wants. Costs one forward pass."""
     r = _do(WSN.gradients, ctx(), _sid(session), layer=layer, neuron=neuron, **_run_args(input, input_file, target, example))
     lines = [f"cost {_f(r['cost'])} over {r['examples']} example{'s' if r['examples'] != 1 else ''}", "the numbers the cost is most sensitive to:"]
-    lines += [f"  {t['tensor']}{t['index']}: value {_f(t['value'])}, gradient {_f(t['gradient'])}" for t in r["top"][:10]]
-    lines += [f"column {ly['column']} wants: " + "  ".join(f"{v:+.3g}" for v in ly["wanted_nudge"]) for ly in r["layers"]]
+    lines += [f"  {_pos(t['layer'], t['index'])}: value {_f(t['value'])}, gradient {_f(t['gradient'])}" for t in r["top"][:10]]
+    lines += [f"layer {ly['column']} wants: " + "  ".join(f"{v:+.3g}" for v in ly["wanted_nudge"]) for ly in r["layers"]]
     emit(r, "\n".join(lines + [_passes(r)]))
 
 
@@ -307,9 +318,9 @@ def trace(input: list[str] = INPUT, input_file: Optional[str] = INPUT_FILE, targ
           path: Optional[str] = typer.Option(None, "--path", help="one neuron per column, input first: 0,2,0"), session: Optional[str] = SESSION):
     """The chain rule along one path: for each layer, the three factors and their product. Costs one forward pass."""
     r = _do(WSN.trace, ctx(), _sid(session), path=_ints(path, "--path"), **_run_args(input, input_file, target, example))
-    lines = [f"path {', '.join(str(p) for p in r['path'])}, cost {_f(r['cost'])}"]
+    lines = [f"path through neurons {', '.join(str(p + 1) for p in r['path'])} (input first), cost {_f(r['cost'])}"]
     for s in r["steps"]:
-        lines.append(f"layer {s['layer']}, {s['weight']['tensor']}{s['weight']['index']} = {_f(s['weight']['value'])}: "
+        lines.append(f"{_pos(s['layer'], s['weight']['index'])} = {_f(s['weight']['value'])}: "
                      f"neuron before {_f(s['a_before'])} times steepness {_f(s['da_dz'])} times how far off {_f(s['dcost_da'])} "
                      f"gives gradient {_f(s['gradient'])}" + ("" if s["product_is_exact"] else " (softmax: the product is not exact here)"))
     lines.append(f"this path adds {_f(r['path_product'])} to its first weight's gradient of {_f(r['first_weight_gradient'])}, "
@@ -327,7 +338,7 @@ def slice_(tensor: str, index: str = typer.Argument(..., help="the number's posi
     r = _do(WSN.cost_slice, ctx(), _sid(session), tensor, _ints(index, "the position"), span=span, points=points,
             **_run_args(input, input_file, target, example))
     low = min(range(len(r["costs"])), key=lambda i: r["costs"][i])
-    emit(r, f"{r['tensor']}{r['index']} is {_f(r['value'])}, where the cost is {_f(r['cost'])} and its slope is {_f(r['slope'])}.\n"
+    emit(r, f"{r['tensor']} at {r['index']} is {_f(r['value'])}, where the cost is {_f(r['cost'])} and its slope is {_f(r['slope'])}.\n"
             f"Over {_f(r['values'][0])} to {_f(r['values'][-1])} the cost is lowest at {_f(r['values'][low])}: {_f(r['costs'][low])}.\n"
             f"This is a slice through 1 of {r['dimensions']:,} dimensions.\n" + _passes(r))
 
@@ -337,12 +348,10 @@ def slice_(tensor: str, index: str = typer.Argument(..., help="the number's posi
 @weights_app.command("sets")
 def sets(target: Optional[str] = typer.Option(None, "--target", help="classes the edits should fix: 9 or 4,9"),
          keep: Optional[str] = typer.Option(None, "--keep", help="classes the edits must leave alone: 0,1,2"),
-         target_examples: Optional[str] = typer.Option(None, "--target-examples", help="practice examples as the target instead"),
-         keep_examples: Optional[str] = typer.Option(None, "--keep-examples", help="practice examples to leave alone instead"),
          session: Optional[str] = SESSION):
     """Name the target set and the "should not change" set. With nothing given: show the three sets."""
-    t = {"classes": _ints(target, "--target")} if target else {"examples": _ints(target_examples, "--target-examples")} if target_examples else None
-    k = {"classes": _ints(keep, "--keep")} if keep else {"examples": _ints(keep_examples, "--keep-examples")} if keep_examples else None
+    t = {"classes": _ints(target, "--target")} if target else None
+    k = {"classes": _ints(keep, "--keep")} if keep else None
     if t is None and k is None:
         r = _do(WSN.session, ctx(), _sid(session))["sets"]
     else:
@@ -364,16 +373,15 @@ def edit(op: str = typer.Argument(..., help="set, scale, zero, add, add-directio
          direction: Optional[str] = typer.Option(None, "--direction", help="for add-direction: numbers with commas"),
          scale: Optional[float] = typer.Option(None, "--scale", help="for add-direction: how much of the direction to add"),
          along: Optional[str] = typer.Option(None, "--along", help="for add-direction: inputs (default) or outputs"),
-         example: Optional[str] = typer.Option(None, "--example", help="for step: the practice examples to train on"),
+         example: Optional[str] = typer.Option(None, "--example", help="for step: the examples to train on"),
          rate: Optional[float] = typer.Option(None, "--rate", help="for step: the learning rate"),
-         target: Optional[int] = typer.Option(None, "--target", help="measure this edit against one practice example"),
          why: Optional[str] = typer.Option(None, "--why", help="one sentence: what you expect this edit to do. An agent must give it"),
          session: Optional[str] = SESSION):
     """Change numbers. The edit is stored as a patch and measured on the three sets before and after."""
     req = {"op": op, "layer": layer, "neuron": neuron, "from": from_, "value": value, "factor": factor, "bias": bias or None,
            "tensor": tensor, "indices": [_ints(i, "--index") for i in index] or None, "values": _nums(values, "--values"),
            "neurons": _ints(neurons, "--neurons"), "direction": _nums(direction, "--direction"), "scale": scale, "along": along,
-           "example": _ints(example, "--example"), "rate": rate, "target": target, "why": why}
+           "example": _ints(example, "--example"), "rate": rate, "why": why}
     req = {k: v for k, v in req.items() if v is not None}
     if tensor and neuron is not None and "neurons" not in req:
         req["neurons"] = [req.pop("neuron")]
@@ -419,13 +427,15 @@ def compare(a: str, b: str):
 def evaluate(session: Optional[str] = SESSION):
     """The base against the network now, on the three sets, and how far each layer's outputs moved."""
     r = _do(WSN.evaluate, ctx(), _sid(session))
+    if r.get("scores") == "hidden":
+        return emit(r, f"measured against {r['before_is']}, {r['changed']:,} of {r['total']:,} numbers changed. {r['says']}")
     lines = [f"{r['before_is']} against the network now, {r['changed']:,} of {r['total']:,} numbers changed"]
     for v in r["sets"].values():
         lines.append(f"  {v['name']}: " + (f"cost {_f(v['before'])} to {_f(v['after'])}, right {v['right_before']} to {v['right_after']} of {v['of']}, "
                                            f"{v['answers_changed']} answers changed ({v['says']})" if v["defined"] else "not defined"))
     if r["drift"]:
-        lines.append(f"how far each column moved from the base, on the {r['drift_on']} set:")
-        lines += [f"  column {d['column']}: mean change {_f(d['mean_change'])}, relative {_f(d['relative'])}, similarity {_f(d['similarity'])}" for d in r["drift"]]
+        lines.append(f"how far each layer's outputs moved from the base, on the {r['drift_on']} set:")
+        lines += [f"  layer {d['column']}: mean change {_f(d['mean_change'])}, relative {_f(d['relative'])}, similarity {_f(d['similarity'])}" for d in r["drift"]]
     emit(r, "\n".join(lines))
 
 
@@ -435,7 +445,15 @@ def save(note: str = typer.Option("", "--as", "--note", help="a note saying what
     if S.dry_run:
         return emit({"dry_run": True, "would": "save a new version"}, "would save a new version")
     r = _do(WSN.save, ctx(), _sid(session), note)
-    emit(r, f"saved {r['ref']}: {r['base']} plus {_n(r['changed'], 'changed number')} ({r['share'] * 100:.2f}%). Label: {r['label']}.")
+    emit(r, f"saved {r['ref']}: {r['base']} plus {_n(r['changed'], 'changed number')} ({r['share'] * 100:.2f}%). Label: {r['label']}."
+            + (" The scores can be read now: `cst weights evaluate`." if r["scores_shown_now"] else ""))
+
+
+@weights_app.command("close")
+def close(session: Optional[str] = SESSION):
+    """End the session. Nothing more can be run or changed in it. A blind session's scores are shown from here on."""
+    s = _do(WSN.close, ctx(), _sid(session))
+    emit(s, "closed.\n" + _session_text(s))
 
 
 @weights_app.command("export")

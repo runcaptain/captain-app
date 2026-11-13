@@ -1,7 +1,8 @@
 """The weights operations as routes under /api/weights. Shapes are in docs/weights.md.
 
-Every route is a thin call into session.py or store.py. `watch=1` on a read or a run is a screen looking at a
-session: it is not recorded, not counted, and not held to the session's allowances.
+Every route is a thin call into session.py or store.py. `watch=1` on a read of the weights is a screen showing a
+session to a person looking on: it is not an event and not held to the session's allowances, and it is counted
+beside the record as a look by the screen. Nothing that runs the network takes it.
 """
 from __future__ import annotations
 
@@ -83,7 +84,8 @@ def open_session(body: dict):
     if not b.get("model"):
         raise S.WeightsError("Name the model to open.")
     return S.open_session(_ctx(), str(b["model"]), by=b.get("by") or "you", name=b.get("name"), raw_weights=b.get("raw_weights"),
-                          sandbox=b.get("sandbox"), forward_passes=b.get("forward_passes"), pass_inputs=b.get("pass_inputs"))
+                          sandbox=b.get("sandbox"), forward_passes=b.get("forward_passes"), pass_inputs=b.get("pass_inputs"),
+                          feedback=b.get("feedback"))
 
 
 @router.get("/sessions/{sid}")
@@ -131,40 +133,39 @@ def diff(sid: str, by: str | None = None, watch: bool = False):
     return S.diff(_ctx(), sid, by, watch)
 
 
-def _run(fn, sid: str, body, watch: bool, **more):
+def _run(fn, sid: str, body, **more):
     b = _body(body)
     return fn(_ctx(), sid, inputs=b.get("inputs"), targets=b.get("targets"), example=b.get("example"), by=b.get("by"),
-              watch=bool(watch or b.get("watch")), **{k: b.get(k) for k in more})
+              **{k: b.get(k) for k in more})
 
 
 @router.post("/sessions/{sid}/forward")
-def forward(sid: str, body: dict, watch: bool = False):
-    return _run(S.forward, sid, body, watch)
+def forward(sid: str, body: dict):
+    return _run(S.forward, sid, body)
 
 
 @router.post("/sessions/{sid}/activations")
-def activations(sid: str, body: dict, watch: bool = False):
-    return _run(S.activations, sid, body, watch)
+def activations(sid: str, body: dict):
+    return _run(S.activations, sid, body)
 
 
 @router.post("/sessions/{sid}/gradients")
-def gradients(sid: str, body: dict, watch: bool = False):
-    return _run(S.gradients, sid, body, watch, layer=None, neuron=None)
+def gradients(sid: str, body: dict):
+    return _run(S.gradients, sid, body, layer=None, neuron=None)
 
 
 @router.post("/sessions/{sid}/trace")
-def trace(sid: str, body: dict, watch: bool = False):
-    return _run(S.trace, sid, body, watch, path=None)
+def trace(sid: str, body: dict):
+    return _run(S.trace, sid, body, path=None)
 
 
 @router.post("/sessions/{sid}/slice")
-def cost_slice(sid: str, body: dict, watch: bool = False):
+def cost_slice(sid: str, body: dict):
     b = _body(body)
     if not b.get("tensor") or b.get("index") is None:
         raise S.WeightsError("A slice names one number: `tensor` and `index`.")
     return S.cost_slice(_ctx(), sid, str(b["tensor"]), b["index"], inputs=b.get("inputs"), targets=b.get("targets"),
-                        example=b.get("example"), span=b.get("span"), points=int(b.get("points") or 21), by=b.get("by"),
-                        watch=bool(watch or b.get("watch")))
+                        example=b.get("example"), span=b.get("span"), points=int(b.get("points") or 21), by=b.get("by"))
 
 
 @router.post("/sessions/{sid}/sets")
@@ -199,6 +200,11 @@ def evaluate(sid: str, body: dict | None = None):
 def save(sid: str, body: dict | None = None):
     b = _body(body)
     return S.save(_ctx(), sid, str(b.get("note") or ""), b.get("by"))
+
+
+@router.post("/sessions/{sid}/close")
+def close(sid: str, body: dict | None = None):
+    return S.close(_ctx(), sid, _body(body).get("by"))
 
 
 @router.post("/sessions/{sid}/export")

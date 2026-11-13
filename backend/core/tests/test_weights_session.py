@@ -33,7 +33,7 @@ def test_a_session_records_who_opened_it_and_what_they_were_allowed(ctx):
 
 
 def test_weights_alone_is_worked_out_from_the_record_and_no_caller_can_set_it(ctx):
-    plain = S.open_session(ctx, "tiny", by="agent", forward_passes=2)["id"]
+    plain = S.open_session(ctx, "tiny", by="agent", forward_passes=2, feedback=False)["id"]
     S.read(ctx, plain, "layer1.weight")
     S.stats(ctx, plain, neurons=True)
     S.edit(ctx, plain, {"op": "set", "layer": 1, "neuron": 0, "from": None, "value": 0.5, "why": "a guess", "weights_alone": True})
@@ -76,10 +76,16 @@ def test_raw_weights_are_refused_when_not_allowed_and_a_watching_screen_is_not_c
             call()
     assert S.stats(ctx, sid)["tensors"][0]["count"] == 6   # numbers about the numbers are not raw weights
     before = len(S._load(ctx, sid).doc["events"])
-    assert len(S.heatmap(ctx, sid, watch=True)["grids"]) == 3 and S.forward(ctx, sid, example=0, watch=True)["forward_used"] == 0
+    assert len(S.heatmap(ctx, sid, watch=True)["grids"]) == 3
     assert S.whole(ctx, "tiny", sid)["layers"][0]["W"]
     doc = S._load(ctx, sid).doc
     assert len(doc["events"]) == before and doc["used"]["weights_read"] == 0 and doc["used"]["forward_used"] == 0
+    # A look by the screen is no event, and it is not traceless either: it is counted beside the record.
+    led = S.session(ctx, sid)["ledger"]
+    assert led["screen_looks"] == 2 and led["screen_numbers"] == 9 + 13
+    # Nothing that runs the network can be done as a look.
+    for run in (S.forward, S.activations, S.gradients, S.trace, S.cost_slice):
+        assert "watch" not in run.__code__.co_varnames[:run.__code__.co_argcount + run.__code__.co_kwonlyargcount]
 
 
 def test_gradients_match_the_network_code_and_mark_the_session(ctx):
@@ -107,7 +113,7 @@ def test_every_kind_of_edit_is_a_patch_with_old_and_new_numbers_and_the_share_co
     assert ev["kind"] == "edit" and ev["op"] == "set" and ev["tensor"] == "layer1.bias" and ev["by"] == "you" and ev["why"] == "turn it down"
     assert ev["changes"] == [{"tensor": "layer1.bias", "k": 0, "j": 2, "i": None, "old": float(base["layer1.bias"][2]), "new": -1.5}]
     assert ev["touched"] == {"neurons": [[1, 2]], "weights": []} and ev["changed"] == 1 and ev["share"] == round(1 / 13, 6)
-    assert "set 1 number in layer1.bias (neuron 2 of column 1)" in ev["sentence"]
+    assert "set 1 number in layer1.bias (layer 1, neuron 3)" in ev["sentence"]
 
     ev = S.edit(ctx, sid, {"op": "scale", "layer": 1, "neuron": 0, "factor": 0.5})
     assert ev["touched"]["weights"] == [[0, 0, 0], [0, 0, 1]] and [c["new"] for c in ev["changes"]] == [float(np.float32(v * 0.5)) for v in base["layer1.weight"][0]]
@@ -132,9 +138,9 @@ def test_every_kind_of_edit_is_a_patch_with_old_and_new_numbers_and_the_share_co
 
 @pytest.mark.parametrize("req,words", [
     ({"op": "melt", "layer": 1, "neuron": 0}, "An edit is one of"),
-    ({"op": "set", "layer": 1, "neuron": 7, "value": 1}, "no neuron 7"),
-    ({"op": "set", "layer": 0, "neuron": 0, "value": 1}, "columns 1 to 2"),
-    ({"op": "set", "layer": 1, "neuron": 0, "from": 5, "value": 1}, "no weight 5"),
+    ({"op": "set", "layer": 1, "neuron": 7, "value": 1}, "`neuron` goes from 0 to 2"),
+    ({"op": "set", "layer": 0, "neuron": 0, "value": 1}, "in layer 1 to 2, and `layer` was 0"),
+    ({"op": "set", "layer": 1, "neuron": 0, "from": 5, "value": 1}, "`from` goes from 0 to 1"),
     ({"op": "set", "layer": 1, "neuron": 0}, "needs `value`"),
     ({"op": "set", "layer": 1, "neuron": 0, "value": float("nan")}, "finite"),
     ({"op": "set", "tensor": "nope", "indices": [[0]], "values": [1]}, "no tensor named"),
@@ -197,8 +203,9 @@ def test_an_edit_under_a_later_one_on_the_same_numbers_cannot_be_taken_back_firs
     sid = S.open_session(ctx, "tiny")["id"]
     a = S.edit(ctx, sid, {"op": "set", "layer": 1, "neuron": 0, "from": 0, "value": 1.0})
     b = S.edit(ctx, sid, {"op": "scale", "layer": 1, "neuron": 0, "factor": 2.0})
-    with pytest.raises(N.WeightsError, match=f"{b['id']} changed the same numbers after it"):
+    with pytest.raises(N.WeightsError) as e:
         S.undo(ctx, sid, a["id"])
+    assert str(e.value) == f"Take back edit {b['id']} first: it changed the same numbers after edit {a['id']}."
     S.undo(ctx, sid, b["id"])
     S.undo(ctx, sid, a["id"])
     S.edit(ctx, sid, {"op": "set", "layer": 1, "neuron": 0, "from": 0, "value": 9.0})
@@ -218,6 +225,7 @@ def test_an_edit_is_measured_on_three_named_sets_before_and_after(ctx):
     assert c["keep"]["right_after"] == c["keep"]["right_before"] and c["keep"]["answers_changed"] == 0
     assert c["test"]["right_before"] - c["test"]["right_after"] == 40 and c["test"]["of"] == 400
     assert ev["cost_before"] == c["target"]["before"] and ev["cost_after"] == c["target"]["after"] and "Cost on the target went from" in ev["sentence"]
+    assert "(layer 3, neuron 10)" in ev["sentence"]
 
     r = S.evaluate(ctx, sid)
     assert list(r["sets"]) == ["target", "should_not_change", "held_out"] and r["before_is"] == "digits@v1"
@@ -225,12 +233,16 @@ def test_an_edit_is_measured_on_three_named_sets_before_and_after(ctx):
     assert t["defined"] and t["right_before"] == 40 and t["right_after"] == 0 and "classes 9" in t["says"]
     # Tool-run evaluations are counted apart, never return an example, and do not cost a forward pass.
     led = S.session(ctx, sid)["ledger"]
-    assert led["evaluations"] == 1 and led["forward_used"] == 0 and led["weights_alone"] is True
+    assert led["evaluations"] == 1 and led["forward_used"] == 0
     assert "inputs" not in str(r) and "examples" not in r
 
-    # One practice example as the target, as a screen sends it.
-    ev = S.edit(ctx, sid, {"op": "scale", "layer": 1, "neuron": 0, "factor": 0.9, "target": 3, "by": "you"})
-    assert ev["cost"]["target"]["of"] == 1 and ev["cost"]["keep"]["of"] == 39
+    # The examples shown with a network are for looking at. They cannot be made into a scored set.
+    with pytest.raises(N.WeightsError, match="never scored"):
+        S.set_sets(ctx, sid, target={"examples": [3]})
+    fresh = S.open_session(ctx, "digits")
+    assert fresh["sets"]["target"] == {"defined": False} and fresh["sets"]["should_not_change"] == {"defined": False}
+    ev = S.edit(ctx, fresh["id"], {"op": "scale", "layer": 1, "neuron": 0, "factor": 0.9, "target": 3})
+    assert set(ev["cost"]) == {"test"}, "with no sets named, only the held-out set is scored"
 
 
 def test_drift_says_how_far_each_layers_outputs_moved_from_the_base_on_the_same_inputs(ctx):
@@ -260,7 +272,7 @@ def test_a_saved_version_is_its_base_plus_patches_with_the_record_attached(ctx):
     S.undo(ctx, sid)
     r = S.save(ctx, sid, note="one weight")
     assert r == {"model": "tiny", "version": 2, "ref": "tiny@v2", "base": "tiny@v1", "patches": 1, "changed": 1, "share": round(1 / 13, 6),
-                 "label": "with 1 of 3 forward passes", "weights_alone": False, "note": "one weight"}
+                 "label": "with 1 of 3 forward passes", "weights_alone": False, "note": "one weight", "scores_shown_now": False}
     m = WS.manifest(ctx, "tiny", 2)
     assert m["base"] == "tiny@v1" and len(m["patches"]) == 1 and m["patches"][0]["new"] == [0.75]
     assert not ctx.store.exists("weights/tiny/v2/tensors.safetensors"), "a saved version holds patches, not tensors"
@@ -362,11 +374,11 @@ def test_the_quantities_a_lesson_draws_are_returned_by_name(ctx):
     with pytest.raises(S.Refused, match="runs the network 30 times"):
         S.cost_slice(ctx, sid, "layer1.bias", 0, example=0, points=30)
     assert S.session(ctx, sid)["ledger"]["forward_used"] == 14, "a slice that does not fit is refused whole"
-    assert len(S.cost_slice(ctx, sid, "layer1.bias", 0, example=0, points=30, watch=True)["costs"]) == 30
 
 
 def test_an_edit_after_gradients_carries_what_the_gradient_predicted_beside_what_happened(ctx):
     sid = S.open_session(ctx, "tiny", forward_passes=5)["id"]
+    S.set_sets(ctx, sid, target={"classes": [1]}, should_not_change={"classes": [0]})
     ev = S.edit(ctx, sid, {"op": "add", "layer": 2, "neuron": 0, "from": None, "value": 0.001})
     assert "predicted" not in ev, "no gradients were computed in this session yet"
     S.gradients(ctx, sid, example=0)
@@ -374,3 +386,93 @@ def test_an_edit_after_gradients_carries_what_the_gradient_predicted_beside_what
     assert small["on"] == "target" and small["change"] == pytest.approx(small["actual_change"], rel=0.05)
     big = S.edit(ctx, sid, {"op": "add", "layer": 2, "neuron": 0, "from": None, "value": -25.0})["predicted"]
     assert abs(big["gap"]) > 10 * abs(small["gap"]), "a large edit lands far from the straight-line prediction"
+
+
+def test_a_score_shown_to_the_caller_ends_from_the_weights_alone_and_the_record_says_which_operation(ctx):
+    sid = S.open_session(ctx, "tiny", by="agent")["id"]
+    assert S.session(ctx, sid)["ledger"]["weights_alone"] is True, "reading alone shows no score"
+    S.read(ctx, sid, "layer1.weight")
+    ev = S.edit(ctx, sid, {"op": "add", "layer": 2, "neuron": 0, "from": None, "value": 0.1, "why": "a nudge"})
+    assert "cost" in ev and "Cost on the held-out set went from" in ev["sentence"]
+    led = S.session(ctx, sid)["ledger"]
+    assert led["weights_alone"] is False and led["label"] == "from the weights, with scores shown along the way"
+    assert led["feedback"] is True and led["scores_shown"] is True and led["first_score"] == {"event": ev["id"], "op": "edit"}
+
+    by_eval = S.open_session(ctx, "tiny", by="agent")["id"]
+    S.evaluate(ctx, by_eval)
+    led = S.session(ctx, by_eval)["ledger"]
+    assert led["weights_alone"] is False and led["first_score"]["op"] == "evaluate"
+
+
+def test_a_blind_session_keeps_every_score_and_shows_none_until_it_is_saved_or_closed(ctx):
+    s = S.open_session(ctx, "digits", by="agent", feedback=False)
+    sid = s["id"]
+    assert s["ledger"]["feedback"] is False and "hidden until it is saved or closed" in s["events"][0]["sentence"]
+    S.set_sets(ctx, sid, target={"classes": [9]}, should_not_change={"classes": [0, 1, 2, 3, 4, 5, 6, 7, 8]})
+    ev = S.edit(ctx, sid, {"op": "set", "layer": 3, "neuron": 9, "from": None, "value": -30.0, "why": "switch the nine output off"})
+    for key in ("cost", "cost_before", "cost_after", "predicted"):
+        assert key not in ev
+    assert ev["scores"] == "hidden" and "Cost" not in ev["sentence"] and ev["changed"] == 1 and ev["changes"][0]["new"] == -30.0
+    r = S.evaluate(ctx, sid)
+    assert r["measured"] is True and r["scores"] == "hidden" and r["says"] == S.BLIND and "sets" not in r and "drift" not in r
+    u = S.undo(ctx, sid)
+    assert "cost" not in u and u["scores"] == "hidden"
+    S.redo(ctx, sid)
+    seen = str(S.session(ctx, sid)) + str(S.events(ctx, sid)) + str(S.report(ctx, sid))
+    assert "right_after" not in seen and "Cost on" not in seen and "similarity" not in seen, "no route shows a score while it is blind"
+    led = S.session(ctx, sid)["ledger"]
+    assert led["weights_alone"] is True and led["label"] == "from the weights alone" and led["scores_shown"] is False and led["evaluations"] == 1
+    # The scores were measured and stored all along.
+    stored = S._load(ctx, sid).doc["events"]
+    assert next(e for e in stored if e["id"] == ev["id"])["cost"]["target"]["right_after"] == 0
+
+    saved = S.save(ctx, sid, note="blind fix")
+    assert saved["weights_alone"] is True and saved["label"] == "from the weights alone" and saved["scores_shown_now"] is True
+    assert WS.manifest(ctx, "digits", 2)["record"]["ledger"]["weights_alone"] is True
+    shown = next(e for e in S.events(ctx, sid)["events"] if e["id"] == ev["id"])
+    assert shown["cost"]["target"]["right_after"] == 0 and "Cost on the target went from" in shown["sentence"]
+    assert S.evaluate(ctx, sid)["sets"]["target"]["right_after"] == 0
+    led = S.session(ctx, sid)["ledger"]
+    assert led["weights_alone"] is True and led["first_score"]["op"] == "save", "saved work keeps its label after its scores are shown"
+    # Going on editing after seeing the scores is no longer blind work.
+    S.edit(ctx, sid, {"op": "set", "layer": 3, "neuron": 9, "from": None, "value": -1.0, "why": "a second try, having seen the score"})
+    led = S.session(ctx, sid)["ledger"]
+    assert led["weights_alone"] is False and led["label"] == "from the weights, with scores shown along the way"
+
+
+def test_a_closed_session_shows_its_scores_and_takes_no_more_changes(ctx):
+    sid = S.open_session(ctx, "tiny", by="agent", feedback=False, forward_passes=2)["id"]
+    ev = S.edit(ctx, sid, {"op": "add", "layer": 2, "neuron": 0, "from": None, "value": 0.1, "why": "a nudge"})
+    s = S.close(ctx, sid)
+    assert s["closed"] is True and s["ledger"]["weights_alone"] is True and s["events"][-1]["kind"] == "close"
+    assert "cost" in next(e for e in s["events"] if e["id"] == ev["id"])
+    for call in (lambda: S.edit(ctx, sid, {"op": "zero", "layer": 1, "neuron": 0, "why": "x"}), lambda: S.undo(ctx, sid),
+                 lambda: S.forward(ctx, sid, example=0), lambda: S.close(ctx, sid)):
+        with pytest.raises(N.WeightsError, match="This session is closed"):
+            call()
+    assert S.read(ctx, sid, "layer1.bias")["count"] == 3 and S.report(ctx, sid)["ledger"]["changed"] == 1
+
+
+def test_a_pinned_neuron_is_summarised_for_an_agent_counted_from_one(ctx):
+    from captain_search import agent_context as AC
+    from captain_search.weights import pins as P
+
+    WS.ensure_starters(ctx)
+    item = AC.resolve(ctx, "weights:digits@layer=2,neuron=6")
+    assert item == {"ref": "weights:digits@layer=2,neuron=6", "kind": "weights", "label": "digits: layer 2, neuron 7"}
+    out = AC.expand(ctx, item)
+    _, t = WS.load(ctx, "digits")
+    row = t["layer2.weight"][6].astype(float)
+    assert out["model"] == "digits@v1" and (out["layer"], out["neuron"], out["of"]) == (2, 7, 16) and out["incoming_weights"] == 16
+    assert out["bias"] == pytest.approx(float(t["layer2.bias"][6]), abs=1e-6)
+    top = out["largest_incoming"][0]
+    assert top["from_neuron"] == int(np.abs(row).argmax()) + 1 and top["weight"] == pytest.approx(float(row[np.abs(row).argmax()]), abs=1e-6)
+    assert len(out["largest_incoming"]) == 5 and len(out["largest_outgoing"]) == 5 and "not handwriting" in out["data"]
+    assert "cst weights heatmap --layer 1 --neuron 6" in out["read_more"] and out["read_more"][0].startswith("cst weights open digits --agent")
+    one = AC.expand(ctx, AC.resolve(ctx, "weights:tiny@layer=1,neuron=2,from=0"))
+    assert one["weight"]["from_neuron"] == 1 and "largest_outgoing" in one
+    whole = AC.expand(ctx, AC.resolve(ctx, "weights:tiny"))
+    assert whole["layers"][0] == "layer 1: 2 in, 3 out, sigmoid" and "problem" not in whole
+    assert "problem" in AC.expand(ctx, {"ref": "weights:tiny@layer=9,neuron=0"}) and "unknown kind" not in str(AC.expand(ctx, {"ref": "weights:tiny@layer=9,neuron=0"}))
+    with pytest.raises(N.WeightsError, match="`neuron` goes from 0 to 2"):
+        P.resolve(ctx, "tiny@layer=1,neuron=5")

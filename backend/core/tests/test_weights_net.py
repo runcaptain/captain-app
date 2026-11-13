@@ -110,7 +110,7 @@ def test_class_numbers_are_read_as_one_hot_rows_and_the_score_counts_right_answe
     (lambda: N.init([2, 3, 1], ["softmax", "sigmoid"]), "only supported on the last layer"),
     (lambda: N.init([2, 3], "relu", "cross_entropy"), "probabilities"),
     (lambda: N.forward(N.init([2, 3]), [1.0, 2.0, 3.0]), "takes 2 numbers"),
-    (lambda: N.trace(N.init([2, 3, 1]), [1.0, 2.0], [1.0], [0, 9, 0]), "no neuron 9"),
+    (lambda: N.trace(N.init([2, 3, 1]), [1.0, 2.0], [1.0], [0, 9, 0]), "a number from 0 to 2"),
 ])
 def test_what_it_refuses_it_refuses_in_a_sentence(make, words):
     with pytest.raises(N.WeightsError, match=words):

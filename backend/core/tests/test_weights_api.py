@@ -68,11 +68,12 @@ def test_the_routes_answer_in_the_documented_shapes(svc):
     has(net["layers"][0], "W", "b", "activation")
     assert net["test"] == []
 
-    s = svc.post("/api/weights/sessions", {"model": "tiny", "by": "agent", "name": "claude", "forward_passes": 5})
+    s = svc.post("/api/weights/sessions", {"model": "tiny", "by": "agent", "name": "claude", "forward_passes": 8})
     sid = s["id"]
     has(s, "id", "model", "version", "who", "ledger", "sets", "edits", "events")
     has(s["ledger"], "raw_weights", "weights_read", "sandbox", "sandbox_used", "forward_allowed", "forward_used", "pass_inputs",
-        "gradients_computed", "evaluations", "changed", "total", "share", "weights_alone", "label")
+        "gradients_computed", "evaluations", "changed", "total", "share", "feedback", "scores_shown", "first_score", "screen_looks",
+        "screen_numbers", "weights_alone", "label")
     assert svc.get("/api/weights/models/tiny/session")["id"] == sid and svc.get(f"/api/weights/sessions/{sid}")["id"] == sid
     assert svc.get("/api/weights/models/tiny/sessions")[0]["id"] == sid
     p = f"/api/weights/sessions/{sid}"
@@ -92,7 +93,7 @@ def test_the_routes_answer_in_the_documented_shapes(svc):
     has(svc.get(p + "/template", output=0), "layer", "output", "name", "bias", "weights", "grid_shape", "grid")
 
     f = svc.post(p + "/forward", {"inputs": [[0.9, 0.1]], "targets": [[1]]})
-    assert set(f) == {"outputs", "predicted", "cost", "forward_used", "forward_left"} and f["forward_left"] == 4
+    assert set(f) == {"outputs", "predicted", "cost", "forward_used", "forward_left"} and f["forward_left"] == 7
     a = svc.post(p + "/activations", {"example": 3})
     has(a, "input", "columns", "output", "predicted", "wanted", "cost", "forward_used", "forward_left")
     has(a["columns"][0], "column", "z", "a")
@@ -129,6 +130,15 @@ def test_the_routes_answer_in_the_documented_shapes(svc):
     rep = svc.get(p + "/report")
     has(rep, "ledger", "events", "edits", "kept", "taken_back", "passes", "diff", "saved")
     assert svc.get("/api/weights/compare", a="tiny@v1", b="tiny@v2")["changed"] == 1
+    sl = svc.post(p + "/slice", {"tensor": "layer1.bias", "index": [0], "example": [0, 1], "points": 3})
+    has(sl, "tensor", "index", "value", "cost", "slope", "values", "costs", "examples", "dimensions", "forward_used", "forward_left")
+    blind = svc.post("/api/weights/sessions", {"model": "tiny", "by": "agent", "feedback": False})["id"]
+    ev2 = svc.post(f"/api/weights/sessions/{blind}/edits", {"op": "zero", "layer": 1, "neuron": 0, "why": "blind"})
+    assert ev2["scores"] == "hidden" and "cost" not in ev2
+    hidden = svc.post(f"/api/weights/sessions/{blind}/evaluate")
+    assert hidden["scores"] == "hidden" and hidden["measured"] is True and "sets" not in hidden
+    closed = svc.post(f"/api/weights/sessions/{blind}/close")
+    assert closed["closed"] is True and closed["ledger"]["weights_alone"] is True and "cost" in closed["events"][1]
     assert svc.get("/api/weights/models/tiny", session=sid)["layers"][0]["b"][2] == -1.5
 
 
@@ -139,7 +149,9 @@ def test_a_refusal_is_a_plain_sentence_with_its_own_status(svc):
     assert r == {"error": "This session was opened with no forward passes, so the network cannot be run in it.", "refused": True}
     assert svc.get(p + "/read", code=403, tensor="layer1.weight")["refused"] is True
     assert svc.get(p + "/heatmap", watch=1)["grids"], "a screen looking is not the agent"
-    assert svc.post(p + "/forward", {"example": 0, "watch": True})["forward_used"] == 0
+    assert svc.post(p + "/forward", {"example": 0, "watch": True}, code=403)["refused"] is True, "a run cannot be passed off as a look"
+    assert svc.c.post(p + "/activations?watch=1", headers=svc.hd, json={"example": 0}).status_code == 403
+    assert svc.get(f"/api/weights/sessions/{sid}")["ledger"]["screen_looks"] == 1
     assert "needs `why`" in svc.post(p + "/edits", {"op": "zero", "layer": 1, "neuron": 0}, code=400)["error"]
     assert "no weights session" in svc.get("/api/weights/sessions/ws-nope", code=404)["error"]
     assert "no weights model named nope" in svc.get("/api/weights/models/nope", code=404)["error"]
@@ -289,6 +301,12 @@ def test_the_commands_print_the_same_shapes_and_follow_the_session_opened_last(t
     other = cst("weights", "open", "tiny@v2")
     assert other["base"] == "tiny@v2" and cst("weights", "session")["id"] == other["id"]
     assert cst("weights", "session", "--session", s["id"])["id"] == s["id"]
+    b = cst("weights", "open", "tiny", "--agent", "--blind")
+    assert b["ledger"]["feedback"] is False
+    assert cst("weights", "edit", "zero", "--layer", "1", "--neuron", "0", "--why", "blind")["scores"] == "hidden"
+    assert cst("weights", "evaluate")["scores"] == "hidden"
+    assert cst("weights", "close")["ledger"]["label"] == "from the weights alone"
+    assert "closed" in cst("weights", "undo", code=1)["error"]
     assert cst("weights", "sessions", "tiny")[0]["id"] in (s["id"], other["id"])
 
 
@@ -298,7 +316,7 @@ def test_the_plain_output_is_sentences_and_the_guide_is_shipped(tmp_path):
     out = R.invoke(cli, ["weights", "open", "digits"]).output
     assert "label: from the weights alone" in out and "forward passes: 0 of 50 used" in out
     out = R.invoke(cli, ["weights", "edit", "scale", "--layer", "2", "--neuron", "3", "--factor", "0.5"]).output
-    assert re.search(r"e\d+  You scaled 16 numbers in layer2\.weight \(neuron 3 of column 2\)\. Cost on the target went from", out), out
+    assert re.search(r"e\d+  You scaled 16 numbers in layer2\.weight \(layer 2, neuron 4\)\. Cost on the held-out set went from", out), out
     assert "held out: cost" in out
     out = R.invoke(cli, ["weights", "--json", "diff"]).output
     assert json.loads(out)["changed"] == 16
