@@ -99,6 +99,15 @@ def topics_for(key: str) -> set[str]:
 
 # ---- the feed ------------------------------------------------------------------------------------------------------
 
+def covered(changed, want) -> set[str]:
+    """The changed topics a client's list covers. A listed topic covers itself, and one that ends in a colon
+    covers every topic that starts with it: "run:" is every run. No list covers everything."""
+    if want is None:
+        return set(changed)
+    pre = tuple(w for w in want if w.endswith(":"))
+    return {t for t in changed if t in want or (pre and t.startswith(pre))}
+
+
 class Feed:
     """The sequence, what changed at each step, and who is listening."""
 
@@ -152,7 +161,7 @@ class Feed:
         for seq, ts in reversed(self.log):   # newest first, so the first time a topic is met is its latest change
             if seq <= since:
                 break
-            for t in ts if want is None else (ts & want):
+            for t in covered(ts, want):
                 hit.setdefault(t, seq)
         return [{"topic": t, "seq": hit[t]} for t in sorted(hit)], False
 

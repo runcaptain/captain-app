@@ -187,6 +187,19 @@ def test_no_listeners_is_cheap_and_a_topic_stops_counting_ten_seconds_after_its_
     assert not CH.listening("runs")
 
 
+def test_a_topic_that_ends_in_a_colon_covers_every_one_of_its_kind(svc):
+    """The kit's watcher can list "run:" for every run, in place of each run's own topic."""
+    seq = svc.get("/api/changes")["seq"]
+    t, box = _waiter(svc, seq, "run:,notebooks")
+    svc.ctx.store.put_new("projects/demo-shop/state.yaml", b"x: 1\n")
+    time.sleep(0.2)
+    assert "answer" not in box, "a project is not a run"
+    svc.ctx.store.put_new("backtest-runs/tuned-vs-current/v1.yaml", b"x: 1\n")
+    t.join(3)
+    assert _t(box["answer"]) == ["run:tuned-vs-current"], "the run's own topic is what comes back, so the screen knows which"
+    assert CH.covered({"run:a", "runs", "job:b"}, {"run:", "jobs"}) == {"run:a"} and CH.covered({"a"}, None) == {"a"}
+
+
 def test_a_missed_sequence_gets_reset(svc):
     seq = svc.get("/api/changes")["seq"]
     assert svc.get("/api/changes", since=seq - 10 ** 9, topics="projects")["reset"] is True, "from before this service started"

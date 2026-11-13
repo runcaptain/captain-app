@@ -3354,7 +3354,7 @@ async def changes_ws(ws: WebSocket):
             except asyncio.TimeoutError:
                 await ws.send_json({"ping": True, "seq": CH.FEED.seq})
                 continue
-            hit = sorted(topics if not want else topics & want)
+            hit = sorted(CH.covered(topics, want or None))
             if hit:
                 await ws.send_json({"seq": seq, "changed": [{"topic": t, "seq": seq} for t in hit], "reset": False, "at": CH._now()})
             if reader.done():
