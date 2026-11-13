@@ -750,6 +750,23 @@ class SageMakerProvider(_AWS):
             out[key] = got
         return out
 
+    def range_latency(self, endpoint: str, start, end) -> dict:
+        """The response time inside the model over a whole range, as CloudWatch works it out from every call:
+        {p50_us, p95_us}, either None when there were no calls. A percentile over the range is asked for as one,
+        because the percentile of each minute's percentiles is not one."""
+        cw = self._client("cloudwatch")
+        dims = [{"Name": "EndpointName", "Value": endpoint}, {"Name": "VariantName", "Value": self.VARIANT}]
+        whole = max(60, int((end - start).total_seconds() // 60) * 60)
+        queries = [{"Id": i, "ReturnData": True, "MetricStat": {"Metric": {"Namespace": "AWS/SageMaker", "MetricName": "ModelLatency", "Dimensions": dims},
+                                                                "Period": whole, "Stat": stat}} for i, stat in (("p50_us", "p50"), ("p95_us", "p95"))]
+        r = cw.get_metric_data(MetricDataQueries=queries, StartTime=start, EndTime=end, ScanBy="TimestampAscending")
+        out = {"p50_us": None, "p95_us": None}
+        for res in r.get("MetricDataResults", []):
+            vals = res.get("Values") or []
+            if vals:
+                out[res["Id"]] = float(vals[-1] if res["Id"] == "p50_us" else max(vals))
+        return out
+
     def found(self, prefix: str = "captain") -> list[dict]:
         """Every SageMaker endpoint here that Captain made, whatever project made it: found by Captain's tag, or by
         the name prefix. Reads only, and never calls a model. One row each: the name, the state as SageMaker reports
