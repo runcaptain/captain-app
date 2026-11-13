@@ -22,7 +22,8 @@ VALID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # What an unnamed thing of each kind is called, and the word for it in a sentence.
 KINDS = {"cloud": ("login", "cloud account"), "project": ("project", "project"), "compute": ("place", "place to run work"),
          "input": ("input", "input"), "dataset": ("dataset", "dataset"), "folder": ("folder", "folder"), "model": ("model", "model"),
-         "test": ("test", "test"), "notebook": ("notebook", "notebook"), "connection": ("connection", "connection")}
+         "test": ("test", "comparison"), "notebook": ("notebook", "notebook"), "connection": ("connection", "connection"),
+         "class": ("class", "dataset class"), "rating": ("rating", "rating")}
 
 
 def make_id(label, fallback: str = "item") -> str:
