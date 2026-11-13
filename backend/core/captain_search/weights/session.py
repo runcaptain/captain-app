@@ -158,7 +158,16 @@ class State:
     # the record
     @property
     def who(self) -> str:
+        # An agent that Captain started on a person's session says so through its environment (program.py).
+        if os.environ.get("CST_WEIGHTS_BY") == "agent":
+            return "agent"
         return "agent" if self.doc["who"]["kind"] == "agent" else "you"
+
+    @property
+    def program(self) -> dict | None:
+        """The agent run Captain started on this session and has not ended, if there is one."""
+        p = self.doc.get("program")
+        return p if p and p.get("active") else None
 
     def changed(self) -> int:
         return int(sum(int((self.cur[k] != self.base[k]).sum()) for k in self.base))
@@ -208,7 +217,7 @@ class State:
 def _by(by, default: str) -> str:
     if by in (None, ""):
         return default
-    if by in ("agent", "you"):
+    if by in ("agent", "you", "captain"):
         return by
     if by == "person":
         return "you"
@@ -456,7 +465,8 @@ def report(ctx, sid: str) -> dict:
 # ---- words --------------------------------------------------------------------------------------------------------------
 
 def _Who(st: State, by: str | None = None) -> str:
-    return "The agent" if _by(by, st.who) == "agent" else "You"
+    who = _by(by, st.who)
+    return "The agent" if who == "agent" else "Captain" if who == "captain" else "You"
 
 
 def _g(x) -> str:
@@ -1024,6 +1034,8 @@ def set_sets(ctx, sid: str, target=None, should_not_change=None, by: str | None 
             if (target if which == "target" else should_not_change) is not None and not out[which]["defined"]:
                 raise WeightsError(f"The {SET_NAMES[which]} set would be empty. Nothing in the pool matches it.")
         st.open_for_changes()
+        if st.program and _by(by, st.who) == "agent":
+            raise Refused("The sets for this run were named by Captain before the agent started, and the agent may not change them.")
         st.event("sets", f"{_Who(st, by)} named the sets: target is {out['target'].get('says', 'not defined')}, should not change is "
                          f"{out['should_not_change'].get('says', 'not defined')}.", by, op="sets",
                  args={"target": st.doc["sets"]["target"], "should_not_change": st.doc["sets"]["should_not_change"]})
@@ -1037,12 +1049,13 @@ def _measure(net: N.Network, x, y) -> dict:
     out = N.predict(net, xb)
     answers = np.array([_answer(r) for r in out])
     wanted = np.array([_answer(r) for r in yb])
-    return {"cost": float(N.cost_each(net, out, yb).mean()), "right": int((answers == wanted).sum()), "answers": answers}
+    return {"cost": float(N.cost_each(net, out, yb).mean()), "right": int((answers == wanted).sum()), "answers": answers, "wanted": wanted}
 
 
 def _both(a: dict, b: dict, name: str, of: int, says: str | None = None) -> dict:
     out = {"name": name, "of": of, "before": a["cost"], "after": b["cost"], "right_before": a["right"], "right_after": b["right"],
-           "answers_changed": int((a["answers"] != b["answers"]).sum())}
+           "answers_changed": int((a["answers"] != b["answers"]).sum()),
+           "broke": int(((a["answers"] == a["wanted"]) & (b["answers"] != b["wanted"])).sum())}
     if says:
         out["says"] = says
     return out
@@ -1346,6 +1359,9 @@ def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
         if who == "agent" and not why:
             raise WeightsError("An agent's edit needs `why`: one sentence saying what it expects the edit to do, given before the edit.")
         op = str(req.get("op") or "").replace("-", "_")
+        run = st.program
+        if run and who == "agent" and len(st.doc["edits"]) - run["edits_at_start"] >= run["max_edits"]:
+            raise Refused(f"This run may make {_plural(run['max_edits'], 'edit')} and has made them. Take one back, or stop and report.")
         named = None
         if isinstance(req.get("target"), dict):
             # "Fix this one": the inputs and the wanted output, given whole. It becomes the session's target set.
@@ -1478,6 +1494,98 @@ def undo(ctx, sid: str, edit_id=None, by: str | None = None) -> dict:
 def redo(ctx, sid: str, edit_id=None, by: str | None = None) -> dict:
     """Put back an edit that was taken back: the one taken back last, or the one named."""
     return _flip(ctx, sid, edit_id, by, "redo")
+
+
+# ---- notes, and a run Captain starts ----------------------------------------------------------------------------------------
+
+def note(ctx, sid: str, text: str, by: str | None = None) -> dict:
+    """Put a thought in the record: a hypothesis before an edit, a conclusion after. It shows on the live feed."""
+    text = " ".join(str(text or "").split())
+    if not text:
+        raise WeightsError("A note needs some words.")
+
+    def fn(st):
+        who = _by(by, st.who)
+        lead = "The agent thinks" if who == "agent" else "Captain notes" if who == "captain" else "You noted"
+        return st.show(st.event("note", f"{lead}: {text[:1000]}", by, op="note", text=text[:1000]))
+    return _do(ctx, sid, fn)
+
+
+def program_begin(ctx, sid: str, info: dict) -> dict:
+    """Captain is starting an agent on this session. The record says which agent, its goal, its edit cap and whether
+    the agent's own command line could be held to `cst weights` commands."""
+    def fn(st):
+        st.open_for_changes()
+        if st.program:
+            raise WeightsError("An agent is already working in this session. Stop it first.")
+        st.doc["program"] = {**info, "active": True, "edits_at_start": len(st.doc["edits"]), "actions_at_start": len(st.doc["actions"]),
+                             "started_at": WS.now()}
+        limits = "held to cst weights commands" if info.get("restricted") else "not held to cst weights commands by its own settings"
+        ev = st.event("program", f"Captain started the agent {info['agent']} with the goal: {info['goal']} It may make "
+                                 f"{_plural(info['max_edits'], 'edit')} and is {limits}.", "captain", op="start",
+                      program={k: info.get(k) for k in ("agent", "goal", "max_edits", "restricted", "restriction", "time_limit_s")})
+        st.doc["program"]["seq"] = ev["seq"]
+        return st.show(ev)
+    return _do(ctx, sid, fn)
+
+
+def _start_net(st: State) -> N.Network:
+    """The network as it was when the run began: the base plus the edits that were already there."""
+    run = st.doc.get("program") or {}
+    t = {k: v.copy() for k, v in st.base.items()}
+    for kind, n in st.doc["actions"][:run.get("actions_at_start", 0)]:
+        for part in st.patch(n)["parts"]:
+            t[part["tensor"]].reshape(-1)[np.asarray(part["indices"], dtype=np.int64)] = np.asarray(part["old" if kind == "undo" else "new"], dtype=np.float32)
+    return F.network_from(st.manifest, t)
+
+
+def program_scores(ctx, sid: str) -> dict:
+    """For Captain's verdict: the three sets, the network when the run began against the network now, and what the
+    run changed. Not an event and not shown to the agent: Captain reads it after the agent has stopped."""
+    def fn(st):
+        run = st.doc.get("program")
+        if not run:
+            raise WeightsError("No agent run was started in this session.")
+        start, now = _start_net(st), st.net()
+        mine = [e for e in st.doc["edits"] if e["n"] > run["edits_at_start"]]
+        moved = int(sum(int((a != b).sum()) for a, b in zip(start.tensors().values(), now.tensors().values())))
+        return {"scores": _three(st, start, now), "edits": [{"id": e["event"], "n": e["n"], "op": e["op"], "why": e.get("why") or "",
+                                                           "state": e["state"], "changed": e["changed"]} for e in mine],
+                "changed": moved, "total": st.total(), "share": round(moved / st.total(), 6), "ledger": ledger(st),
+                "notes": [e["text"] for e in st.doc["events"] if e["kind"] == "note" and e["seq"] > run.get("seq", 0)],
+                "sentences": {e["id"]: e["sentence"] for e in st.doc["events"] if e["kind"] == "edit" and e["seq"] > run.get("seq", 0)},
+                "refused": [e["sentence"] for e in st.doc["events"] if e["kind"] == "refused" and e["seq"] > run.get("seq", 0)]}
+    return _do(ctx, sid, fn, watch="record")
+
+
+def program_undo(ctx, sid: str) -> int:
+    """Take back, whole, every edit the run made that is still applied. Returns how many were taken back."""
+    done = 0
+    while True:
+        st = _load(ctx, sid)
+        run = st.doc.get("program") or {}
+        left = [e for e in st.doc["edits"] if e["n"] > run.get("edits_at_start", 0) and e["state"] == "applied"]
+        if not left:
+            return done
+        last = max(left, key=lambda e: _last_apply(st, e["n"]))
+        undo(ctx, sid, last["event"], by="captain")
+        done += 1
+
+
+def program_end(ctx, sid: str, verdict: dict) -> dict:
+    """The run is over. Captain's verdict goes in the record: kept or taken back, and why."""
+    def fn(st):
+        run = st.doc.get("program")
+        if not run:
+            raise WeightsError("No agent run was started in this session.")
+        run["active"] = False
+        run["ended_at"] = WS.now()
+        run["verdict"] = {k: verdict.get(k) for k in ("kept", "reason", "stopped", "timed_out", "agent_exit")}
+        scores = verdict.get("scores") or {}
+        return st.show(st.event("program", f"Captain's verdict: {verdict['reason']}", "captain", score_sentence=_cost_words(scores),
+                                op="end", kept=bool(verdict.get("kept")), cost=scores or None,
+                                cost_before=_first_cost(scores, "before"), cost_after=_first_cost(scores, "after")))
+    return _do(ctx, sid, fn)
 
 
 # ---- diff, save, export -----------------------------------------------------------------------------------------------------

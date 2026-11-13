@@ -206,6 +206,58 @@ def save(sid: str, body: dict | None = None):
     return S.save(_ctx(), sid, str(b.get("note") or ""), b.get("by"))
 
 
+@router.post("/sessions/{sid}/note")
+def note(sid: str, body: dict):
+    b = _body(body)
+    return S.note(_ctx(), sid, str(b.get("text") or ""), b.get("by"))
+
+
+@router.post("/sessions/{sid}/program")
+def program(sid: str, body: dict):
+    """Start an agent on this session with a goal. Returns a job: {job, session, agent}. The job's result is the
+    report. The run tells `jobs`, `job:<id>` and `weights-session:<id>` as it goes.
+
+    A result Captain keeps stays in the session and is NOT saved as a new version, unless the body says
+    `"save": true`: from a page, nothing is saved until the person saves it."""
+    from .. import server
+    from . import program as WPG
+
+    b = _body(body)
+    c = _ctx()
+    plan = WPG.prepare(c, None, str(b.get("goal") or ""), session=sid, agent=b.get("agent"), max_edits=int(b.get("max_edits") or 5),
+                       target_example=b.get("target_example"), target_input=b.get("target_input"), target_output=b.get("target_output"),
+                       should_not_change=b.get("should_not_change"), time_limit_s=int(b.get("time_limit_s") or WPG.TIME_LIMIT_S),
+                       dry_run=bool(b.get("dry_run")))
+    if b.get("dry_run"):
+        return plan
+    keep = b.get("keep")
+
+    box: dict = {}
+
+    def say(text: str) -> None:
+        job = server.JOBS.get(box.get("jid"))
+        if job is not None:
+            job["log"].append(text)
+            job["message"] = text
+
+    def work(progress):
+        return WPG.run(c, plan, keep=keep if isinstance(keep, bool) else None, save=b.get("save") is True, say=say)
+
+    jid = server._job(work, f"{plan['agent']} is working on {S.session(c, sid)['base']}: {plan['goal']}", topics=(f"weights-session:{sid}",))
+    box["jid"] = jid
+    return {"job": jid, "session": sid, "agent": plan["agent"], "goal": plan["goal"]}
+
+
+@router.post("/sessions/{sid}/program/stop")
+def program_stop(sid: str):
+    """Stop the agent working in this session. Captain then gives its verdict on what was done so far."""
+    from . import program as WPG
+
+    if not WPG.stop(sid):
+        raise S.WeightsError("No agent is working in this session.")
+    return {"session": sid, "stopping": True}
+
+
 @router.post("/sessions/{sid}/close")
 def close(sid: str, body: dict | None = None):
     return S.close(_ctx(), sid, _body(body).get("by"))
