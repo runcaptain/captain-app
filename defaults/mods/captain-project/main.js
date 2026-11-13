@@ -14,6 +14,7 @@ import { theme, shared, setShared, run, openOverlay, props as layoutProps } from
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { api, watchScope, watchWorkspace, watchRecords } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
+import { watchLive } from "./kit/live.js";
 import { SendToAgent, pin } from "./kit/context.js";
 import { Badge, Button, Empty, Skeleton, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -156,19 +157,50 @@ export default class ProjectHome extends View {
     });
     let rev = shared("captain.explorer.rev") ?? null;
     cx.timer.every(1000, (cx) => { const r = shared("captain.explorer.rev") ?? null; if (r !== rev) { rev = r; this.load(cx); } });
-    // The list of projects stays live: every few seconds it reads again, so a model deployed or stopped from
-    // another screen or a terminal shows on its card with no manual refresh.
-    cx.timer.every(5000, (cx) => { if (!this.pid() && this.projects && !this.inFlight) this.load(cx); });
+    // Everything here stays current from the one live channel (kit/live.js): the list of projects, the project's
+    // page and its deployed model read again the moment one of them changes, whoever changed it (this screen,
+    // another screen, a terminal, the cloud). No timer re-reads Captain's data.
+    watchLive(cx, ["projects", "deployed", "project:", "deployment:", "runs"], (cx, why, topics) => this.changed(cx, why, topics));
+    // One clock stays: once a minute while a model is deployed, for the words that depend on the time (how long
+    // until it stops by itself), which come from the services and move with no change to tell.
+    cx.timer.every(60000, (cx) => { if (this.pid() && this.shipPath.staged()) this.shipPath.tick(cx); });
     // Until the first answer (the services may still be starting), ask again every 3 s.
     cx.timer.every(3000, (cx) => {
       const pid = this.pid();
       if (this.inFlight) return; // an answer is on its way: asking again would only throw it away
       if ((!pid && this.projects === null && !this.listProblem) || (pid && !this.stages && (!this.problem || this.problem.starting))) this.load(cx);
     });
-    // While something is staged: look again, so the status and the time left stay true.
-    cx.timer.every(5000, (cx) => this.shipPath.tick(cx));
-    // While an experiment is being judged, read again until its run lands.
-    cx.timer.every(4000, (cx) => { if ((this.exps?.experiments ?? []).some((e) => e.status === "backtesting")) this.load(cx); });
+  }
+
+  /** The live channel says something changed (`why` "changed", with the topics), or that something may have been
+   *  missed ("reset", "reconnected", and "fallback" every two seconds while the channel is down): read again what
+   *  this page shows of it. A read already on its way is not thrown away: one more follows it. */
+  changed(cx, why, topics = []) {
+    const pid = this.pid(), all = why !== "changed";
+    const has = (...ts) => all || ts.some((t) => topics.includes(t));
+    if (!pid) {
+      if (this.projects && has("projects", "deployed")) this.readSoon(cx);
+      return;
+    }
+    // The deployed model: its status, its time left, and the open tab of its own page.
+    if (has(`deployment:${pid}`)) this.shipPath.tick(cx);
+    // The project: its steps, its candidates (one being judged lands as a run), its inputs.
+    if (this.stages && has(`project:${pid}`, "runs")) this.readSoon(cx);
+  }
+
+  /** Read the page again, now, or right after the read that is on its way (`load` looks at `readAgain` when
+   *  its answer lands). */
+  readSoon(cx) {
+    if (this.inFlight) this.readAgain = true;
+    else this.load(cx);
+  }
+
+  /** A read's answer landed. If something changed while it was on its way, read once more. */
+  landed(cx) {
+    this.inFlight = false;
+    if (!this.readAgain) return;
+    this.readAgain = false;
+    Promise.resolve().then(() => this.load(cx));
   }
 
   /** The project shown: the Explorer's pick, else the last one opened here. */
@@ -202,7 +234,7 @@ export default class ProjectHome extends View {
       cx.spawn(async (cx) => {
         const r = await api("/api/projects", { scoped: false });
         if (seq !== this.seq) return;
-        this.inFlight = false;
+        this.landed(cx);
         // Still starting is not "no projects": keep waiting (the retry timer asks again), and only an answer that
         // lists nothing shows the empty state. Home is the first screen, so it often asks before the services are up.
         if (r.ok) { this.projects = Array.isArray(r.data) ? r.data : r.data?.projects ?? []; this.listProblem = null; this.loadSummaries(cx, seq); }
@@ -229,7 +261,7 @@ export default class ProjectHome extends View {
         api(`/api/projects/${enc(pid)}/proposals`, { scoped: false }),
       ]);
       if (seq !== this.seq) return;
-      this.inFlight = false;
+      this.landed(cx);
       if (sd?.ok) this.state = sd.data;
       const rl = rc?.ok ? (Array.isArray(rc.data) ? rc.data : rc.data?.recipes) : null;
       if (Array.isArray(rl)) this.recipes = rl;
