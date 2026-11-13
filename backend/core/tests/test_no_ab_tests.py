@@ -194,12 +194,36 @@ def test_an_open_project_page_makes_no_call_to_a_cloud_model_over_sixty_seconds(
     c.get("/api/projects/shop/staging/logs?refresh=true", headers=hd)
     assert calls == ["flush", "flush"]
     calls.clear()
-    assert c.post("/api/projects/shop/staging/health/check", headers=hd, json={}).status_code == 200
-    assert calls == ["status"], "Check now asks the model once"
-    # and the scheduled check asks at its own rate: a second one inside the minute does not call again
+    # The scheduled health check never calls a model in a cloud, however many times it runs. It says what the
+    # cloud's state and the request log can tell: running, and nothing yet to judge by.
+    for _ in range(5):
+        h = HL.check(ws, "shop", notify=False)
+    assert calls == [], f"the scheduled check called the model: {calls}"
+    n0 = h["requests"]   # the few test requests the deploy itself sent
+    assert h["status"] == "unknown" and h["text"] == (f"Running. Only {n0} requests in the last 15 minutes, too few to judge by." if n0 else "Running, no requests to judge by."), h["text"]
+    assert HL.words({}, {**h, "requests": 0}) == "Running, no requests to judge by."
+    assert not h["alert"], "no traffic is not an alert"
+    # "Check now" is a person asking: the model itself is asked, once.
+    got = c.post("/api/projects/shop/staging/health/check", headers=hd, json={})
+    assert got.status_code == 200 and calls == ["status"], "Check now asks the model once"
+    assert got.json()["status"] == "healthy" and got.json()["answering"] is True
     calls.clear()
+    # With requests in the log, the scheduled check judges them, still with no call: failures over the target are
+    # unhealthy on the second check, and enough good ones are healthy.
+    import datetime as dt
+
+    from captain_search.staging import logs as L
+
+    now = dt.datetime.now(dt.timezone.utc)
+    store, base = L.shared(ws, "shop", "staging"), L.prefix("shop", "staging", SG.state(ws, "shop")["id"])
+    ts = lambda i: (now - dt.timedelta(seconds=i)).isoformat(timespec="milliseconds").replace("+00:00", "Z")  # noqa: E731
+    store.put_new(base + "requests-good.jsonl", "\n".join(json.dumps({"request_id": f"g{i}", "ts": ts(i), "query": "jacket", "ms": 4.0, "ids": ["p1"], "traffic": "real"}) for i in range(30)).encode())
+    h = HL.check(ws, "shop", notify=False)
+    assert calls == [] and h["status"] == "healthy" and h["text"].startswith(f"Healthy. 0 of its last {30 + n0} requests failed"), h["text"]
+    store.put_new(base + "lines-bad.jsonl", "\n".join(json.dumps({"ts": ts(i), "text": "Ranking 'x' with the candidate failed: boom", "level": "error"}) for i in range(30)).encode())
     HL.check(ws, "shop", notify=False)
-    assert calls == []
+    h = HL.check(ws, "shop", notify=False)
+    assert calls == [] and h["status"] == "unhealthy" and f"30 of its last {60 + n0} requests failed" in h["text"], h["text"]
     # after that, the page's read can show what the check last heard, still without calling
     assert c.get("/api/projects/shop/staging", headers=hd).status_code == 200 and calls == []
     SG.forget_asked()

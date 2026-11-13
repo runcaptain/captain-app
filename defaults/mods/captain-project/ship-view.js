@@ -385,7 +385,7 @@ function moreItems(ship) {
   return [
     { id: "requests", label: "Requests it has answered", text: "Each request it answered: what was asked, what it returned, and how long it took. Pick one to see it in full." },
     base ? { id: "differ", label: "Where the two models disagree", text: `Searches where this model and ${base} return the most different results. Pick one to run it.` } : null,
-    { id: "health", label: "Is it healthy?", text: "Captain checks once a minute that it answers, how many requests fail and how fast it is, against the targets you set. It tells you when that changes." },
+    { id: "health", label: "Is it healthy?", text: "Captain checks once a minute how many requests fail and how fast they are, against the targets you set, and tells you when that changes. On a cloud it reads the cloud's own state and the request log. It calls the model only when you press Check now." },
     { id: "check", label: "Check it uses the same numbers it was trained on", text: "A model can be fed different numbers when it runs than when it was trained, and then it ranks worse than its tests said. This compares the two. It should pass before you put it in production." },
     { id: "traffic", label: "Use it from your site", text: "The code your site pastes, the address of each model, and the key. You can test it quietly with a copy of your site's requests first." },
     { id: "versions", label: "Earlier versions", text: "Every version deployed here, newest first, and a way to put an earlier one back." },
