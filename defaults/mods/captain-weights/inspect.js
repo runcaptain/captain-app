@@ -116,7 +116,8 @@ export function Inspector(c, v, slot = null) {
   const title = f.name.charAt(0).toUpperCase() + f.name.slice(1);
   let out = v_flex().id("wt-inspect").gap(12)
     .child(div().id("wt-inspect-name").text_size(12.5).font_semibold().child(title))
-    .child(div().id("wt-inspect-says").text_size(12.5).line_height("18px").text_color(c.navy).child(selW ? weightSentence(net, selW) : neuronSentence(net, f)));
+    .child(div().id("wt-inspect-says").text_size(12.5).line_height("18px").text_color(c.navy)// The sentence is about the network as it is saved. Only the figures labelled "if saved" preview a staged change.
+      .child(selW ? weightSentence(v.net, selW) : neuronSentence(v.net, v.staged ? neuronFacts(v.net, null, null, sel) : f)));
   // The three numbers of the neuron itself.
   // The neuron's own three numbers. Each term says what it is on hover, in plain words.
   const fact = (id, name, value, tip) => v_flex().id(`${id}-box`).gap(2).tooltip(tip).child(label(c, name)).child(big(c, id, value));

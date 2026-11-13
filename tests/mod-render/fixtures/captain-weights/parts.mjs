@@ -74,15 +74,15 @@ const leaf = (n, value) => ({ leaf: n, value, count: 10 });
 const ask = (input, name, threshold, left, right, more = {}) => ({ input, name, threshold, gain: 5, categorical: false, missing_goes: 'left', left, right, ...more });
 /** The services' answer for one ranker (`GET /api/weights/models/demo-session/trees?ranker=`). A value at or below
  *  the threshold goes left. */
-export function rankerAnswer(ranker = 'full') {
+export function rankerAnswer(ranker = 'full', o = {}) {
   if (ranker === 'quick') return { model: PARTS, version: 1, ranker: 'quick', rankers: ['full', 'quick'], kind: 'trees', objective: 'binary', trees: 25, inputs: 2, unused: [],
     by_input: [{ input: 0, name: 'model score', splits: 40, gain: 70, share: 0.7, trees: 25 }, { input: 1, name: 'price', splits: 12, gain: 30, share: 0.3, trees: 9 }],
     first_trees: [{ tree: 0, leaves: 2, depth: 1, root: ask(0, 'model score', 0.5, leaf(0, -0.2), leaf(1, 0.3)) }] };
   return { model: PARTS, version: 1, ranker: 'full', rankers: ['full', 'quick'], names_from: 'the cols file', kind: 'trees', objective: 'lambdarank', trees: 40, inputs: 4,
-    unused: [{ input: 3, name: 'hour of day', constant: true }],
+    unused: o.many ? Array.from({ length: 18 }, (_x, i) => ({ input: 12 + i, name: `input ${13 + i}`, constant: false })) : [{ input: 3, name: 'hour of day', constant: true }],
     unused_says: '1 of 4 inputs are never asked about by any tree, so changing them cannot change the answer: hour of day.',
     // As the services send it: in the inputs' own order, not by gain.
-    by_input: [{ input: 0, name: 'items seen', splits: 18, gain: 25, share: 0.25, trees: 12 }, { input: 1, name: 'price', splits: 31, gain: 46, share: 0.46, trees: 30 },
+    by_input: o.many ? Array.from({ length: 30 }, (_x, i) => ({ input: i, name: `input ${i + 1}`, splits: i < 12 ? 30 - i : 0, gain: i < 12 ? 30 - i : 0, share: i < 12 ? (30 - i) / 294 : 0, trees: 1 })) : [{ input: 0, name: 'items seen', splits: 18, gain: 25, share: 0.25, trees: 12 }, { input: 1, name: 'price', splits: 31, gain: 46, share: 0.46, trees: 30 },
       { input: 2, name: 'days since last visit', splits: 22, gain: 29, share: 0.29, trees: 20 }, { input: 3, name: 'hour of day', splits: 0, gain: 0, share: 0, trees: 0 }],
     first_trees: [
       { tree: 0, leaves: 4, depth: 2, root: ask(1, 'price', 12.5, ask(0, 'items seen', 3, leaf(0, -0.05), leaf(1, 0.21)), ask(2, 'days since last visit', 7, leaf(2, 0.09), leaf(3, -0.18))) },
@@ -104,7 +104,16 @@ export function partsRoutes(path, o = {}) {
   if (p === '/api/weights/models') return { ok: true, data: [{ id: m.id, name: m.name, says: m.says, sizes: [], parameters: m.parameters, versions: [1], kind: m.kind, kind_says: m.kind_says }] };
   if (p === `/api/weights/models/${PARTS}`) return { ok: true, data: m };
   if (p === `/api/weights/models/${PARTS}/session`) return { ok: true, data: { id: SESSION, model: PARTS, ledger: { raw_weights: true, weights_read: 0, changed: 0, total: m.parameters }, events: [] } };
-  if (p === `/api/weights/models/${PARTS}/trees`) return ['full', 'quick', undefined].includes(arg.ranker) ? { ok: true, data: rankerAnswer(arg.ranker) } : { ok: false, error: `${PARTS} has no ranker named '${arg.ranker}'.` };
+  if (p === `/api/weights/models/${PARTS}/trees`) return ['full', 'quick', undefined].includes(arg.ranker) ? { ok: true, data: rankerAnswer(arg.ranker, o) } : { ok: false, error: `${PARTS} has no ranker named '${arg.ranker}'.` };
+  if (p === `/api/weights/models/${PARTS}/rankers`) return o.plain ? { ok: false, error: 'Not Found' } : { ok: true, data: { model: PARTS, version: 1,
+    rankers: [{ name: 'full', trees: 40, inputs: 4, used: 3, unused: ['hour of day'] }, { name: 'quick', trees: 25, inputs: 2, used: 2, unused: [] }],
+    inputs: [{ name: 'price', group: 'price', by: {}, used_by: ['full', 'quick'], unused_by: [] }, { name: 'hour of day', group: 'hour', by: {}, used_by: [], unused_by: ['full'] },
+      { name: 'items seen', group: 'items', by: {}, used_by: ['full'], unused_by: [] }],
+    unused_by_all: ['hour of day'], unused_by_all_says: '1 input is used by no ranker: hour of day.', same_inputs: false } };
+  // What each row stands for. The services name the item table's rows, with one row past the saved list.
+  if (p === `/api/weights/sessions/${SESSION}/labels`) return o.plain || arg.tensor !== 'item.weight' || o.tall ? { ok: true, data: { tensor: arg.tensor, labels: null, labels_says: '', sure: null } }
+    : { ok: true, data: { tensor: arg.tensor, rows: ITEMS.length, labels: [...ITEMS.slice(0, -1), 'none or unknown'], labels_from: 'a saved list', extra_row: ITEMS.length - 1, sure: false,
+      labels_says: 'The saved list is one name short of the rows. The last row is taken to be "none or unknown", which is a guess.' } };
   const at = new RegExp(`^/api/weights/sessions/${SESSION}/(heatmap|nearest|attention)$`).exec(p);
   if (!at) return undefined;
   if (at[1] === 'attention') {

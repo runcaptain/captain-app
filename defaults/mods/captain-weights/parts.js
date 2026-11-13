@@ -11,7 +11,7 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { int } from "./kit/num.js";
 import { Skeleton, plainError } from "./kit/ui.js";
-import { readPartHeatmap, readPartNearest, readRanker, readSession } from "./adapter.js";
+import { readPartHeatmap, readPartNearest, readPartLabels, readRanker, readRankersCompared, readSession } from "./adapter.js";
 import { signed, plain } from "./inspect.js";
 import { Heat, reduceGrid, shapeWords, countWords, HEAT_MAX } from "./partsdraw.js";
 import { serviceName } from "./hand.js";
@@ -23,7 +23,10 @@ const SEND_MOST = 200000;       // the most numbers the services send in one rea
 /** What the page keeps for an open model of parts. */
 export function partsState(model) {
   return { model, view: "model", sel: null, head: 0, tensor: null, row: null, rowName: null, heat: null, rows: null, near: null, problem: null, asks: 0,
-    session: null, rankerAt: 0, treeAt: 0, rankers: {}, rankerProblem: null };
+    session: null, rankerAt: 0, treeAt: 0, rankers: {}, rankerProblem: null,
+    labels: {},          // what each row of a table stands for, by part: {labels, says, sure} (asked for once)
+    compared: null,      // the rankers side by side: which use each input
+    allInputs: false, allUnused: false, copied: false };
 }
 
 /** "Session model with rankers, 2,146 numbers": the model in one line, for the list and the top of the page. A
@@ -93,11 +96,14 @@ export function loadPart(v, cx) {
     if (mine !== s.asks) return;
     if (!s.session) { s.problem = "Captain couldn't open this model to read its numbers."; return cx.notify(); }
     const rows = windowOf(t.shape ?? p.shape, s.row);
-    const [heat, near] = await Promise.all([
+    const [heat, near, names] = await Promise.all([
       readPartHeatmap(s.session, t, { head: s.head, rows }),
       table && s.row != null ? readPartNearest(s.session, t, s.row) : Promise.resolve(null),
+      table && !s.labels[p.id] ? readPartLabels(s.session, t) : Promise.resolve(null),
     ]);
-    if (v.pm !== s || mine !== s.asks) return;
+    if (v.pm !== s) return;
+    if (names?.ok) s.labels[p.id] = names.data;
+    if (mine !== s.asks) return;
     s.problem = heat?.ok ? null : plainError(heat?.error, "Captain couldn't read that part.");
     if (heat?.ok) { s.heat = { ...heat.data, grid: reduceGrid(heat.data.values) }; s.rows = largestRows(heat.data.values, heat.data.from ?? 0); }
     s.near = near == null ? null : near.ok ? near.data.nearest ?? [] : [];
@@ -109,6 +115,7 @@ export function loadPart(v, cx) {
 /** Read the ranker that is showing, once. */
 export function loadRanker(v, cx) {
   const s = v.pm, r = s.model.rankers?.[s.rankerAt];
+  if (!s.compared) { s.compared = {}; cx.spawn(async (cx) => { const got = await readRankersCompared(v.model); if (v.pm !== s) return; s.compared = got.data; cx.notify(); }); }
   if (!r || s.rankers[r.id]) return;
   cx.spawn(async (cx) => {
     const got = await readRanker(v.model, r.id);
@@ -121,7 +128,7 @@ export function loadRanker(v, cx) {
 
 /** Show the model or its rankers. */
 export function showView(v, view, cx) { v.pm.view = view; if (view === "rankers") loadRanker(v, cx); cx.notify(); }
-export function pickRanker(v, n, cx) { v.pm.rankerAt = n; v.pm.treeAt = 0; v.treePz = null; v.pm.rankerProblem = null; loadRanker(v, cx); cx.notify(); }
+export function pickRanker(v, n, cx) { v.pm.rankerAt = n; v.pm.treeAt = 0; v.treePz = null; v.pm.rankerProblem = null; v.pm.allInputs = false; v.pm.allUnused = false; loadRanker(v, cx); cx.notify(); }
 
 /** Open a part (or close it, on a second click with no head named). */
 export function openPart(v, id, head, cx) {
@@ -148,7 +155,8 @@ const chip = (c, id, text, on, go, tip = null) => div().id(id).h(26).px(9).flex(
   .when(Boolean(tip), (e) => e.tooltip(tip)).on_click(go).child(text);
 const label = (c, text) => div().text_size(11.5).text_color(c.grey500).child(text);
 const heading = (text) => div().text_size(12.5).font_semibold().child(text);
-const rowName = (r) => (r.name ? `${r.name}` : `Row ${int(r.row + 1)}`);
+const rowName = (r, names = null) => (r.name ?? names?.[r.row] ? String(r.name ?? names[r.row]) : `Row ${int(r.row + 1)}`);
+const ROW_H = 24, SHOWN_ROWS = 10; // a long list shows about ten rows and scrolls by itself
 
 /** A row of a list with a bar: a name, a bar for its size against the largest, and a number in words. */
 function barRow(c, id, name, share, right, { on = false, go = null, tip = null } = {}) {
@@ -198,12 +206,14 @@ export function PartPanel(c, v, width) {
       .child(`Each cell is one number: blue is positive, red is negative, stronger is larger, blank is near zero.${part ? ` Rows ${int(first + 1)} to ${int(first + sent)} of ${int(R)} are drawn, around the picked row.` : ""}${g.reduced ? ` Shown reduced: ${shapeWords([sent, C])} drawn as ${shapeWords([g.rows, g.cols])}, each cell an average.` : ""}`)));
   // The largest rows, by their length as a vector. In a table a click picks the row.
   const rows = s.rows ?? [], top = Math.max(1e-12, ...rows.map((r) => r.norm ?? 0));
+  // What the rows stand for, where the services know (category names, price ranges).
+  const known = table ? s.labels[p.id] ?? null : null, names = known?.labels ?? null;
   if (rows.length) out = out.child(v_flex().id("wt-part-rows").gap(2)
     .child(h_flex().pb(2).child(div().flex_1().text_size(12.5).font_semibold().child(part ? "Largest rows of those drawn" : "Largest rows")).child(label(c, "size, and its largest number")))
-    .children(rows.map((r) => barRow(c, `wt-part-row-${r.row}`, rowName(r), (r.norm ?? 0) / top, `${plain(r.norm)}, ${plain(r.largest)}`,
+    .children(rows.map((r) => barRow(c, `wt-part-row-${r.row}`, rowName(r, names), (r.norm ?? 0) / top, `${plain(r.norm)}, ${plain(r.largest)}`,
       { on: table && r.row === s.row, go: table ? (_e, cx) => pickRow(v, r.row, cx) : null, tip: table ? "Pick this row" : `Row ${int(r.row + 1)}: its size is its length as a vector` }))));
   if (table) {
-    const named = s.rowName ?? rows.find((r) => r.row === s.row)?.name ?? null;
+    const named = s.rowName ?? names?.[s.row] ?? null;
     const step = (id, text, to, off) => div().id(id).h(26).px(9).flex().flex_none().items_center().text_size(12.5).border_1().bg(c.surface).border_color(c.grey300).text_color(off ? c.grey500 : c.navy)
       .when(!off, (e) => e.cursor_pointer().hover((x) => x.border_color(c.blue).text_color(c.blue)).on_click((_e, cx) => pickRow(v, to, cx))).child(text);
     out = out.child(v_flex().id("wt-part-near").gap(4)
@@ -215,8 +225,10 @@ export function PartPanel(c, v, width) {
         .child(step("wt-part-row-next", "Next row", s.row + 1, s.row >= R - 1)))
       .when(!s.near, (e) => e.child(Skeleton(c, 3)))
       .when(Boolean(s.near) && s.near.length === 0, (e) => e.child(label(c, "No other row to compare it with.")))
-      .children((s.near ?? []).map((r) => barRow(c, `wt-part-near-${r.row}`, rowName(r), Math.max(0, r.similarity), `alike ${signed(r.similarity)}`,
-        { go: (_e, cx) => pickRow(v, r.row, cx), tip: "How alike two rows are, from -1 (opposite) to +1 (the same direction). Click to pick this row" }))));
+      .children((s.near ?? []).map((r) => barRow(c, `wt-part-near-${r.row}`, rowName(r, names), Math.max(0, r.similarity), `alike ${signed(r.similarity)}`,
+        { go: (_e, cx) => pickRow(v, r.row, cx), tip: "How alike two rows are, from -1 (opposite) to +1 (the same direction). Click to pick this row" })))
+      // Where the names came from, in the services' own sentence, when a row's place is a guess.
+      .when(Boolean(known?.says) && known.sure === false, (e) => e.child(div().id("wt-part-labels-says").text_size(11.5).line_height("16px").text_color(c.grey500).child(known.says))));
   }
   return out;
 }
@@ -253,17 +265,29 @@ export function RankerPanel(c, v) {
   if (!r) return out.child(Skeleton(c, 5));
   const unused = r.unused ?? [], inputs = (r.inputs ?? []).slice().sort((a, b) => (b.gain_share ?? 0) - (a.gain_share ?? 0));
   const top = Math.max(1e-12, ...inputs.map((i) => i.gain_share ?? 0));
-  const NAMED = 8, named = unused.slice(0, NAMED).join(", ") + (unused.length > NAMED ? ` and ${int(unused.length - NAMED)} more` : "");
+  const NAMED = 8, more = unused.length - NAMED;
+  const named = (s.allUnused ? unused : unused.slice(0, NAMED)).join(", ") + (more > 0 && !s.allUnused ? ` and ${int(more)} more` : "");
+  const quiet = (id, text, go) => div().id(id).flex_none().text_size(11.5).text_color(c.blue).cursor_pointer().hover((x) => x.text_color(c.navy)).on_click(go).child(text);
+  const long = inputs.length > SHOWN_ROWS;
+  const usedBy = (i) => { const u = s.compared?.by?.[i.name]; return u && (u.used_by.length || u.unused_by.length) ? `Used by: ${u.used_by.join(", ") || "no ranker"}.${u.unused_by.length ? ` Not used by: ${u.unused_by.join(", ")}.` : ""}` : null; };
+  const list = v_flex().gap(2).children(inputs.map((i, n) => barRow(c, `wt-ranker-input-${n}`, i.name, (i.gain_share ?? 0) / top, gainWords(i), { tip: usedBy(i) })));
   return out
     .child(div().id("wt-ranker-name").text_size(12.5).font_semibold().child(`Ranker ${r.name}`))
     .child(div().id("wt-ranker-says").text_size(12.5).line_height("18px").text_color(c.navy)
       .child(`A ranker made of ${int(r.trees ?? (r.shown ?? []).length)} small decision trees. Each tree asks a few yes or no questions about an item and adds a little to its score.`))
-    .child(div().id("wt-ranker-unused").p(8).bg(c.surface2).text_size(12.5).line_height("18px").text_color(c.navy)
-      .child(unused.length ? `Never used by this ranker: ${int(unused.length)} ${unused.length === 1 ? "input" : "inputs"} (${named}). Changing ${unused.length === 1 ? "it" : "them"} cannot change its answer.` : "Every input is used by this ranker."))
+    .child(v_flex().p(8).gap(4).bg(c.surface2)
+      .child(div().id("wt-ranker-unused").text_size(12.5).line_height("18px").text_color(c.navy)
+        .child(unused.length ? `Never used by this ranker: ${int(unused.length)} ${unused.length === 1 ? "input" : "inputs"} (${named}). Changing ${unused.length === 1 ? "it" : "them"} cannot change its answer.` : "Every input is used by this ranker."))
+      .when(more > 0, (e) => e.child(h_flex().child(quiet("wt-ranker-unused-all", s.allUnused ? `Show only the first ${int(NAMED)}` : `Show all ${int(unused.length)} unused inputs`, (_e, cx) => { s.allUnused = !s.allUnused; cx.notify(); }))))
+      // The rankers side by side, in the services' own sentence: the inputs none of them uses.
+      .when(Boolean(s.compared?.says), (e) => e.child(div().id("wt-ranker-compared").text_size(11.5).line_height("16px").text_color(c.grey500).child(s.compared.says))))
     .child(v_flex().id("wt-ranker-inputs").gap(2)
-      .child(h_flex().pb(2).child(div().flex_1().text_size(12.5).font_semibold().child(`Inputs (${int(inputs.length)})`)).child(label(c, "share of gain")))
+      .child(h_flex().pb(2).gap(8).items_center().child(div().flex_1().text_size(12.5).font_semibold().child(`Inputs (${int(inputs.length)})`))
+        .when(long, (e) => e.child(quiet("wt-ranker-inputs-all", s.allInputs ? `Show about ${int(SHOWN_ROWS)} at a time` : `Show all ${int(inputs.length)}`, (_e, cx) => { s.allInputs = !s.allInputs; cx.notify(); })))
+        .child(label(c, "share of gain")))
       .child(div().pb(2).text_size(11.5).line_height("16px").text_color(c.grey500).child("Gain is how much an input's questions improved the ranker while it was trained. A split is one question."))
-      .children(inputs.map((i, n) => barRow(c, `wt-ranker-input-${n}`, i.name, (i.gain_share ?? 0) / top, gainWords(i)))));
+      // A long list keeps to about ten rows and scrolls by itself, so it never pushes the tree away.
+      .child(long && !s.allInputs ? div().id("wt-ranker-inputs-box").h(SHOWN_ROWS * (ROW_H + 2)).flex_none().overflow_y_scroll().child(list) : list));
 }
 
 export { HEAT_MAX };

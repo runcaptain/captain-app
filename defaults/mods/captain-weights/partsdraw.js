@@ -129,7 +129,7 @@ export function PartsCanvas(c, model, o) {
 
 // ---- One tree of a ranker ---------------------------------------------------------------------------------------
 
-const NODE_W = 172, NODE_H = 40, LEAF_W = 84, LEAF_H = 30, LEVEL = 86, SIDE = 18;
+const NODE_W = 156, NODE_H = 36, LEAF_W = 72, LEAF_H = 28, LEVEL = 72, SIDE = 8; // close together: a real tree has dozens of leaves
 
 /** A threshold as a person would write it: 12.5, 3, 0.0312. */
 export function thresholdWords(v) {
@@ -182,7 +182,8 @@ export function treeLayout(nodes) {
 export function TreeCanvas(c, tree, o) {
   const pz = o.pz, L = treeLayout(tree?.nodes);
   const w = Math.max(200, o.width), h = Math.max(140, o.height);
-  pz.settle(L.width, L.height, w, h, { x: L.width / 2, y: 0 });
+  // It opens fitted to the box, whole. A tree too wide to read that small is a zoom or a drag away.
+  pz.settle(L.width, L.height, w, h, null);
   const z = pz.zoom, over = [];
   for (const b of L.boxes) {
     const [x, y] = pz.at(b.x, b.y);

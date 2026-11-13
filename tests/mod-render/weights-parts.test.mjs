@@ -37,7 +37,9 @@ const S = `/api/weights/sessions/${SESSION}`;
 test('the services\' description becomes the page\'s parts, with plain names', () => {
   assert.ok(isParts(D) && isParts({ kind: 'session-ranker' }) && !isParts({ kind: 'dense', sizes: [2, 3, 1] }) && !isParts(null));
   assert.equal(M.kind_words, 'Session model with rankers');
-  assert.equal(M.source, 'Brought in from /models/demo/v1');
+  // Where it came from is never shown raw: a folder or a storage address is said in words, and kept to copy.
+  assert.deepEqual([M.source, M.source_address], ['Brought in from a folder on this computer', '/models/demo/v1']);
+  assert.equal(partsFrom({ ...D, source: { from: 's3://a-made-up-place/demo/v1' } }).source, 'Brought in from your model storage');
   assert.equal(M.parts.reduce((n, p) => n + p.parameters, 0), D.parameters, 'every number belongs to one part');
   const attn = M.parts.find((p) => p.id === 'L0.self_attn');
   assert.deepEqual(attn.tensors.map((t) => t.name), ['Query-key', 'Output-value', 'Query', 'Key', 'Value', 'Output']);
@@ -64,7 +66,12 @@ test('the list says what a trained model is, in words, and it opens with where i
   await h.click(`wt-open-btn-${PARTS}`);
   assert.equal(h.mod.kind, 'parts');
   assert.equal(textOf(h, 'wt-facts'), partsFacts(M));
-  assert.equal(textOf(h, 'wt-source'), 'Brought in from /models/demo/v1');
+  assert.equal(textOf(h, 'wt-source'), 'Brought in from a folder on this computer');
+  assert.ok(!h.text().includes('/models/demo'), 'the address itself is not on screen');
+  h.cx.write_to_clipboard = (t) => { globalThis.__clipboard = t; };
+  await h.click('wt-source-copy');
+  assert.equal(globalThis.__clipboard, '/models/demo/v1');
+  assert.equal(textOf(h, 'wt-source-copy'), 'Copied where it came from');
 });
 
 test('it opens as blocks left to right, read only: nothing is written, edited, run or deployed', async () => {
@@ -153,6 +160,43 @@ test('an embedding table has a row picker and the rows most like the row', async
   assert.equal(h.mod.pm.row, h.mod.pm.rows[0].row);
 });
 
+test('rows read their names where the services give them, and a guess is said', async () => {
+  const h = await page(PARTS, [1280, 800]);
+  await h.click('wp-part-item');
+  assert.equal(asked.filter(([p]) => p === `${S}/labels?tensor=item.weight`).length, 1);
+  const top = h.mod.pm.rows[0].row, names = h.mod.pm.labels.item.labels;
+  assert.equal(h.byIdPrefix(`wt-part-row-${top}`)[0].kids[0].kids[0], names[top], '"Largest rows" reads names');
+  assert.ok(!/Row \d+ \|/.test(h.text().split('Largest rows')[1].split('Rows most like')[0]), 'no bare row numbers in the list');
+  assert.ok(textOf(h, 'wt-part-labels-says').endsWith('which is a guess.'), 'the services\' sentence about a guessed row');
+  await h.click('wt-part-row-next');
+  assert.equal(asked.filter(([p]) => p.includes('/labels')).length, 1, 'the names are asked for once');
+  // A table the services have no names for keeps "Row N", and services without the route do too.
+  await h.click('wp-part-pos');
+  assert.equal(textOf(h, 'wt-part-row-at'), 'Row 1 of 6');
+  const plain = await page(PARTS, [1280, 800], { plain: true });
+  await plain.click('wp-part-item');
+  assert.ok(plain.text().includes('Largest rows') && plain.byIdPrefix('wt-part-labels-says').length === 0);
+});
+
+test('a long list of inputs shows about ten and scrolls by itself, and both lists open whole', async () => {
+  const h = await page(PARTS, [600, 760], { many: true });
+  await h.click('submenu-rankers');
+  assert.equal(h.byIdPrefix('wt-ranker-inputs-box').length, 1);
+  assert.equal(h.byIdPrefix('wt-ranker-inputs-box')[0].call('h')[0], 260, 'about ten rows');
+  assert.equal(textOf(h, 'wt-ranker-inputs-all'), 'Show all 30');
+  assert.ok(textOf(h, 'wt-ranker-unused').startsWith('Never used by this ranker: 18 inputs (input 13, ') && textOf(h, 'wt-ranker-unused').includes('input 20 and 10 more)'));
+  await h.click('wt-ranker-unused-all');
+  assert.ok(textOf(h, 'wt-ranker-unused').includes('input 30)') && !textOf(h, 'wt-ranker-unused').includes('more'));
+  await h.click('wt-ranker-inputs-all');
+  assert.equal(h.byIdPrefix('wt-ranker-inputs-box').length, 0);
+  assert.equal(h.byIdPrefix('wt-ranker-input-').length, 30);
+  // The inputs and the tree are one column that scrolls: the tree keeps a height of its own.
+  assert.equal(h.byIdPrefix('wt-rankers-column').length, 1);
+  assert.ok(h.byIdPrefix('wr-canvas')[0].call('h')[0] >= 280);
+  // The rankers side by side, in the services' sentence, and on each input which rankers use it.
+  assert.equal(textOf(h, 'wt-ranker-compared'), '1 input is used by no ranker: hour of day.');
+});
+
 test('a table too tall to draw whole is read a window at a time, drawn reduced, and says both', async () => {
   assert.equal(windowOf([12, 8], 3), null);
   assert.deepEqual(windowOf([1000, 8], 0), [0, WINDOW]);
@@ -216,14 +260,20 @@ test('the rankers: inputs by share of gain, the unused ones said plainly, and on
   assert.ok(h.byIdPrefix('wp-part-').length > 0);
 });
 
-test('beside a terminal the open part takes the drawing\'s place, with a way back', async () => {
+test('beside a terminal the open part sits under a shorter diagram, and takes its place only on a tight page', async () => {
   const h = await page(PARTS, [600, 760]);
   assert.equal(h.byIdPrefix('wt-side').length, 0, 'nothing open: the drawing has the room');
+  const tall = h.byIdPrefix('wp-canvas')[0].call('h')[0];
   await h.click('wp-part-text');
+  assert.equal(h.byIdPrefix('wp-canvas').length, 1, 'the diagram is still there');
+  assert.ok(h.byIdPrefix('wp-canvas')[0].call('h')[0] < tall);
+  assert.equal(textOf(h, 'wt-part-name'), 'Text projection');
+  h.mod.width = 500; await h.idle(1);
   assert.equal(h.byIdPrefix('wp-canvas').length, 0);
   assert.equal(textOf(h, 'wt-part-name'), 'Text projection');
   await h.click('wt-side-close');
   assert.equal(h.byIdPrefix('wp-canvas').length, 1);
+  h.mod.width = 600; await h.idle(1);
   // The rankers there: the inputs over the tree.
   await h.click('submenu-rankers');
   assert.ok(h.byIdPrefix('wt-ranker-unused').length === 1 && h.byIdPrefix('wr-canvas').length === 1);

@@ -36,7 +36,19 @@ import { AgentStrip, stripHeight } from "./program.js";
 import { WalkButtons, walkWords, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
 const TIGHT = 640; // under this width nothing fits side by side: an open neuron takes the drawing's place, and the cost is one line
-const WIDE = 1100; // from this width the neuron panel is always beside the drawing; below it, only while a neuron is open
+const WIDE = 1100; // from this width the neuron panel is always beside the drawing
+const REPLACE = 520; // under this width an open neuron takes the drawing's place. From here to WIDE it sits under a shorter drawing, so both show
+
+/** Where the drawing and the panel go on a page `W` wide with `ch` of height for the two: {mode, rail, cw, drawH,
+ *  panelH}. "beside": the panel is always there, to the right. "under": while something is open the panel sits
+ *  under a shorter drawing. "replace": while something is open the panel takes the drawing's place. */
+export function splitOf(W, ch, open) {
+  if (W >= WIDE) return { mode: "beside", rail: 340, cw: Math.max(200, W - 40 - 341), drawH: ch, panelH: ch };
+  const cw = Math.max(200, W - 40);
+  if (W < REPLACE) return { mode: "replace", rail: 0, cw, drawH: ch, panelH: ch };
+  const drawH = open ? Math.max(150, Math.round(ch * 0.45)) : ch;
+  return { mode: "under", rail: 0, cw, drawH, panelH: Math.max(0, ch - drawH) };
+}
 const PULSE_BEAT_MS = 120, PULSE_BEATS = 22; // touched neurons and weights pulse for about 2.6 seconds after an event
 const BAND_H = 190; // the cost and the timeline, under the drawing
 const count = (n) => int(n);
@@ -497,7 +509,11 @@ export default class CaptainWeights extends View {
       // A model of parts: what it is and how many numbers, then where it came from.
       .when(Boolean(pm), (e) => e
         .child(div().id("wt-facts").min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(partsFacts(pm.model)))
-        .when(Boolean(pm.model.source), (x) => x.child(div().id("wt-source").min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(pm.model.source))))
+        // Where it came from, in words. The address itself is never on screen: it can be copied.
+        .when(Boolean(pm.model.source), (x) => x.child(h_flex().gap(10).items_center()
+          .child(div().id("wt-source").flex_none().text_size(11.5).text_color(c.grey500).child(pm.model.source))
+          .when(Boolean(pm.model.source_address), (y) => y.child(div().id("wt-source-copy").flex_none().text_size(11.5).text_color(c.blue).cursor_pointer().hover((st) => st.text_color(c.navy))
+            .on_click((_e, cx) => { cx.write_to_clipboard?.(pm.model.source_address); pm.copied = true; cx.notify(); }).child(pm.copied ? "Copied where it came from" : "Copy where it came from"))))))
       .when(Boolean(net), (e) => e
         .child(h_flex().gap(10).items_center()
           .child(div().id("wt-facts").min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(factsOf(net)))
@@ -578,10 +594,10 @@ export default class CaptainWeights extends View {
       .child(pick("wt-mode-nudges", "What the cost wants", "nudges", "Each line is the nudge the cost wants for that weight on this input (its gradient, turned around): blue is up, red is down"));
   }
 
-  /** The neuron panel, beside the drawing. On a narrow page it is there only while a neuron is open, with a way
-   *  to close it, so the drawing keeps its room. */
-  side(c, w, narrow) {
-    return div().id("wt-side").w(w).flex_none().h_full().overflow_y_scroll().child(v_flex().p(14).gap(12)
+  /** The neuron panel. Beside the drawing on a wide page. On a narrower one it is there only while a neuron is
+   *  open, under the drawing (`h` is then its height) or in its place, with a way to close it. */
+  side(c, w, narrow, h = null) {
+    return div().id("wt-side").w(w).flex_none().when(h == null, (e) => e.h_full()).when(h != null, (e) => e.h(h).border_t(1).border_color(c.rule)).overflow_y_scroll().child(v_flex().p(14).gap(12)
       .when(narrow, (e) => e.child(h_flex().child(div().flex_1()).child(div().id("wt-side-close").text_size(11.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
         .on_click((_e, cx) => this.closeNeuron(cx)).child("Close this neuron"))))
       .child(Inspector(c, this, [ChainBlock(c, this), HandBlock(c, this)])));
@@ -590,16 +606,14 @@ export default class CaptainWeights extends View {
   /** A model of parts, under the header: the diagram of its parts with the open part beside it, or its rankers:
    *  one tree drawn, with the inputs by share of gain beside it. Nothing here edits or runs the model. */
   partsBody(c, W, H) {
-    const pm = this.pm, narrow = W < WIDE, tight = W < TIGHT;
+    const pm = this.pm, narrow = W < WIDE;
     const rankers = pm.model.rankers ?? [], onRankers = pm.view === "rankers" && rankers.length > 0;
-    const open = onRankers || Boolean(pm.sel);
-    const rail = tight ? (open ? W - 40 : 0) : narrow ? (open ? Math.min(296, Math.round(W * 0.4)) : 0) : 340;
     const ch = Math.max(180, H - 84 - 44 - 14);
-    const cw = Math.max(200, W - 40 - (rail && !tight ? rail + 1 : 0));
+    const sp = splitOf(W, ch, Boolean(pm.sel)), cw = sp.cw;
     const strip = h_flex().id("wt-parts-bar").h(44).flex_none().px(20).gap(10).items_center()
       .when(rankers.length > 0, (e) => e.child(Submenus(c, [{ id: "model", label: "Model" }, { id: "rankers", label: "Rankers" }], onRankers ? "rankers" : "model", (id, cx) => showView(this, id, cx))))
       .child(div().id("wt-read-only").flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(pm.model.read_only ?? READ_ONLY));
-    const panel = (inner, close) => div().id("wt-side").w(tight ? W : rail).flex_none().h_full().overflow_y_scroll().child(v_flex().p(14).gap(12)
+    const panel = (inner, close, w, h = null) => div().id("wt-side").w(w).flex_none().when(h == null, (e) => e.h_full()).when(h != null, (e) => e.h(h).border_t(1).border_color(c.rule)).overflow_y_scroll().child(v_flex().p(14).gap(12)
       .when(Boolean(close) && narrow, (e) => e.child(h_flex().child(div().flex_1()).child(div().id("wt-side-close").text_size(11.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
         .on_click((_e, cx) => { pm.sel = null; cx.notify(); }).child("Close this part"))))
       .child(inner));
@@ -607,19 +621,23 @@ export default class CaptainWeights extends View {
     if (onRankers) {
       const r = rankerOf(this), tree = r?.shown?.[pm.treeAt] ?? null, waiting = !r && !pm.rankerProblem;
       this.treePz ??= new PanZoom("wr");
-      // On a page too tight for both side by side, the inputs sit over the tree.
+      // On a page too narrow for both side by side, the inputs sit over the tree.
       const half = Math.round(ch * 0.46), BAR = 36;
       const drawn = (w, h) => v_flex().w(w).child(TreeBar(c, this)).child(tree ? TreeCanvas(c, tree, { id: "wr", pz: this.treePz, width: w, height: h - BAR })
         : div().id("wr-none").w(w).text_size(12.5).line_height("18px").text_color(c.grey500).child(waiting ? "Reading the ranker." : "No tree of this ranker was sent to draw."));
       return v_flex().flex_1().min_h(0).child(strip)
-        .when(!tight, (e) => e.child(h_flex().flex_1().min_h(0).child(div().pl(20).child(drawn(cw, ch))).child(rule).child(panel(RankerPanel(c, this), false))))
-        .when(tight, (e) => e.child(div().h(half).flex_none().overflow_y_scroll().child(div().px(20).pb(10).child(RankerPanel(c, this)))).child(div().pl(20).child(drawn(W - 40, ch - half))));
+        .when(!narrow, (e) => e.child(h_flex().flex_1().min_h(0).child(div().pl(20).child(drawn(cw, ch))).child(rule).child(panel(RankerPanel(c, this, sp.rail - 30), false, sp.rail))))
+        // Narrower: one column that scrolls, the inputs first and the tree under them, so neither hides the other.
+        .when(narrow, (e) => e.child(div().id("wt-rankers-column").flex_1().min_h(0).overflow_y_scroll().child(v_flex().px(20).pb(14).gap(10)
+          .child(RankerPanel(c, this, W - 40)).child(drawn(W - 40, Math.max(half, 320))))));
     }
-    return v_flex().flex_1().min_h(0).child(strip)
-      .child(h_flex().flex_1().min_h(0)
-        .when(!(tight && rail > 0), (x) => x.child(div().pl(20).child(PartsCanvas(c, pm.model, { id: "wp", pz: this.pz, layout: this.partsLayout, width: cw, height: ch, sel: pm.sel, head: pm.head,
-          onPart: (id, head, cx) => openPart(this, id, head, cx) }))))
-        .when(rail > 0, (x) => x.when(!tight, (y) => y.child(rule)).child(panel(PartPanel(c, this, (tight ? W : rail) - 30), true))));
+    const canvas = (h) => div().pl(20).child(PartsCanvas(c, pm.model, { id: "wp", pz: this.pz, layout: this.partsLayout, width: cw, height: h, sel: pm.sel, head: pm.head,
+      onPart: (id, head, cx) => openPart(this, id, head, cx) }));
+    const body = sp.mode === "beside" ? h_flex().flex_1().min_h(0).child(canvas(ch)).child(rule).child(panel(PartPanel(c, this, sp.rail - 30), true, sp.rail))
+      : sp.mode === "replace" ? h_flex().flex_1().min_h(0).child(pm.sel ? panel(PartPanel(c, this, W - 30), true, W) : canvas(ch))
+        // Between: the open part sits under a shorter diagram, so both show.
+        : v_flex().flex_1().min_h(0).child(canvas(sp.drawH)).when(Boolean(pm.sel), (e) => e.child(panel(PartPanel(c, this, W - 30), true, W, sp.panelH)));
+    return v_flex().flex_1().min_h(0).child(strip).child(body);
   }
 
   render() {
@@ -627,16 +645,17 @@ export default class CaptainWeights extends View {
     const net = this.net, W = this.width, H = this.height;
     const narrow = W < WIDE, tight = W < TIGHT;
     const served = Boolean(this.session) && !String(this.model ?? "").startsWith("starter:");
-    // The neuron panel: always beside the drawing on a wide page; beside it only while a neuron is open on a
-    // narrow one; and in the drawing's place on a page too tight for both.
-    const rail = tight ? (this.sel ? W - 40 : 0) : narrow ? (this.sel ? Math.min(296, Math.round(W * 0.4)) : 0) : 340;
     const headH = net || this.pm ? 84 : 46;
-    const cw = Math.max(200, W - 40 - (rail && !tight ? rail + 1 : 0));
     // While the error walks backward, a strip under the drawing says what the step shows. It is never laid over
     // the drawing, where it hid the network's last column.
     const walking = Boolean(net) && this.walk.step > 0 && Boolean(this.grad);
     const saysH = walking ? (W < 560 ? 76 : 58) : 0;
     const ch = Math.max(180, H - headH - 44 - (tight ? 72 : 38) - (this.askOpen ? (served ? stripHeight(W) : 42) : 0) - (this.deploy ? 34 : 0) - BAND_H - 14 - saysH);
+    // The neuron panel: always beside the drawing on a wide page; under a shorter drawing while a neuron is open
+    // on a narrower one; and in the drawing's place only on a page too tight for both.
+    const sp = splitOf(W, ch, Boolean(this.sel));
+    const canvas = (h) => div().pl(20).child(NetworkCanvas(c, this.drawing(), { id: "wt", pz: this.pz, layout: this.layout, width: sp.cw, height: h, focus: this.sel, keep: this.keep,
+      onNeuron: (at, cx) => this.pickNeuron(at, cx), onWeight: (at, cx) => this.pickWeight(at, cx) }));
     const costW = Math.min(520, Math.max(300, Math.round((W - 40) * 0.45)));
     return v_flex().id("weights").size_full().bg(c.canvas).text_color(c.navy).font_family(FONT)
       .when(Boolean(this.handle), (e) => e.track_focus(this.handle))
@@ -655,12 +674,9 @@ export default class CaptainWeights extends View {
         .when(this.askOpen, (x) => x.child(served ? AgentStrip(c, this) : this.askStrip(c)))
         .child(this.inputs(c))
         .child(this.controls(c))
-        .child(h_flex().flex_1().min_h(0)
-          .when(!(tight && rail > 0), (x) => x.child(div().pl(20).child(NetworkCanvas(c, this.drawing(), { id: "wt", pz: this.pz, layout: this.layout, width: cw, height: ch, focus: this.sel, keep: this.keep,
-            onNeuron: (at, cx) => this.pickNeuron(at, cx), onWeight: (at, cx) => this.pickWeight(at, cx) }))))
-          .when(rail > 0, (x) => x
-            .when(!tight, (y) => y.child(div().w(1).h_full().flex_none().bg(c.rule)))
-            .child(this.side(c, tight ? W : rail, narrow))))
+        .child(sp.mode === "beside" ? h_flex().flex_1().min_h(0).child(canvas(ch)).child(div().w(1).h_full().flex_none().bg(c.rule)).child(this.side(c, sp.rail, false))
+          : sp.mode === "replace" ? h_flex().flex_1().min_h(0).child(this.sel ? this.side(c, W, true) : canvas(ch))
+            : v_flex().flex_1().min_h(0).child(canvas(sp.drawH)).when(Boolean(this.sel), (x) => x.child(this.side(c, W, true, sp.panelH))))
         .when(walking, (x) => x.child(div().id("wt-walk-says").h(saysH).flex_none().px(20).pt(6).overflow_hidden().text_size(12.5).line_height("18px")
           .child(walkWords(this.shown ?? net, this.run, this.grad, this.walk.step, net.examples[this.inputAt].y))))
         .when(!tight, (x) => x.child(h_flex().id("wt-band").h(BAND_H).flex_none().border_t(1).border_color(c.rule).bg(c.surface)
