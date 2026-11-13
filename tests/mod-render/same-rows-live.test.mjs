@@ -72,7 +72,7 @@ globalThis.__props = { tab: 'tables' };
 const data = harness(Data);
 await data.start();
 await until(data, () => (data.mod.catalog.rows ?? []).some((r) => r.kind === 'table' && r.name === 'products'), 'the database table is in the one list');
-await data.click(`cat-row-${data.mod.catalog.rows.findIndex((r) => r.kind === 'table' && r.name === 'products')}`);
+data.mod.catalog.openRow(data.cx, data.mod.catalog.rows.find((r) => r.kind === 'table' && r.name === 'products'));
 await until(data, () => !!data.mod.tables.page?.columns, 'the table page');
 assert.equal(data.mod.tables.sel.schema, schema);
 await data.click('ttab-rows');

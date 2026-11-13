@@ -72,6 +72,17 @@ const order = h.byIdPrefix('').map((e) => String(e.call('id')?.[0] ?? '')).filte
 assert.equal(order[0], 'live-live-1', `the run that is going is first: ${order.slice(0, 3)}`);
 assert.ok(text.includes('Running, 42%'), 'and says how far it is');
 
+// A kind the workspace has none of gets no filter chip.
+{
+  const had = h.mod.data.replays;
+  h.mod.data.replays = [];
+  await h.layoutLists({});
+  h.mod.data.replays = [];
+  assert.equal(h.byIdPrefix('runs-kind-replays').length, 0, 'no Off-policy chip with no off-policy evaluations');
+  assert.equal(h.byIdPrefix('runs-kind-backtests').length, 1);
+  h.mod.data.replays = had;
+}
+
 // The filters keep one kind.
 await h.click('runs-kind-jobs');
 assert.equal(h.byIdPrefix('backtests-').length, 0, 'only jobs');

@@ -1,7 +1,9 @@
 // captain-ui: "Where this came from", drawn as a graph (Edgar, 2026-11-12: "a React Flow-like setup where it shows
 // you the whole lineage of the model or where the data went"). Boxes are sources, tables, model versions, models,
-// evaluations and deployments; an arrow runs from what was read to what was made from it. No library: the layout
-// is written here and the lines are drawn with the app's own path painter.
+// evaluations and deployments: rounded, with an icon in the kind's colour, a title and the kind in words. A smooth
+// curve runs from the right edge of what was read to the left edge of what was made from it, with a dot where it
+// joins each box and an arrowhead at the far end. The canvas has a dotted grid. No library: the layout is written
+// here and everything is drawn with the app's own path painter.
 //
 //   const lin = new LineageGraph({ id: "lin", onOpen: (node, cx) => true | false, onFocus, onColumn });
 //   lin.set({ nodes: [{id, kind, label, version?, columns?}], edges: [{from, to}] }, focusId);
@@ -28,7 +30,10 @@ const NODE_H = 52;
 const GAP_X = 84; // room for an arrow to bend and for its head
 const GAP_Y = 16;
 const PAD = 20;
-const ARROW = 11; // the arrowhead's length, in layout units
+const ARROW = 9; // the arrowhead's length, in layout units
+const DOT = 4; // the radius of the dot where a connector joins a box
+const GRID = 22; // the spacing of the canvas's dotted grid
+const RADIUS = 8; // a box's corners
 const ALL = 99; // every step, each way: the whole chain
 
 // [the word for the kind, its icon, the palette colour of its edge stripe].
@@ -258,16 +263,27 @@ export class LineageGraph {
     a = T(a); b = T(b);
     const x1 = a.x + NODE_W * z, y1 = a.y + NODE_H * z / 2, x2 = b.x, y2 = b.y + NODE_H * z / 2;
     const dx = Math.max(24, (x2 - x1) / 2);
-    // The line stops where the arrowhead starts, so the head's point touches the box.
-    const end = x2 - ARROW * z;
+    // The line stops where the arrowhead starts; the head's point touches the dot on the box's edge.
+    const end = x2 - (ARROW + DOT) * z;
     return p.move_to(x1, y1).cubic_bezier_to(end, y2, x1 + dx, y1, end - dx, y2);
   }
 
   /** The arrowhead at the box an edge points to: a small filled triangle, its point on the box's left edge. */
   head(b) {
     const z = this.zoom;
-    const x = b.x * z + this.pan.x, y = b.y * z + this.pan.y + NODE_H * z / 2;
+    const x = b.x * z + this.pan.x - DOT * z, y = b.y * z + this.pan.y + NODE_H * z / 2;
     return [[x, y], [x - ARROW * z, y - ARROW * z * 0.55], [x - ARROW * z, y + ARROW * z * 0.55]];
+  }
+
+  /** The canvas's dotted grid, as one filled path: it moves with the pan and spreads with the zoom, so the canvas
+   *  reads as a surface the boxes sit on. Left out when zoomed so far out that the dots would touch. */
+  grid(w, h) {
+    const step = GRID * this.zoom;
+    if (!(w > 0 && h > 0) || step < 9) return null;
+    let p = PathBuilder.fill();
+    const x0 = ((this.pan.x % step) + step) % step, y0 = ((this.pan.y % step) + step) % step;
+    for (let y = y0; y < h; y += step) for (let x = x0; x < w; x += step) p = p.add_polygon([[x, y], [x + 1.5, y], [x + 1.5, y + 1.5], [x, y + 1.5]], true);
+    return p.build();
   }
 
   icon(name, size, color) {
@@ -386,15 +402,14 @@ export class LineageGraph {
       const picked = id === this.sel;
       const viaColumn = colNodes.has(id);
       const dim = !!path && !inPath(id);
-      return v_flex().id(`${this.id}-node-${id}`).absolute().left(at.x * z + this.pan.x).top(at.y * z + this.pan.y).w(NODE_W * z).h(NODE_H * z)
-        .px(10 * z).py(6 * z).gap(2 * z).justify_center().cursor_pointer().overflow_hidden()
+      // A rounded box: an icon in the kind's colour, the title, and the kind in words under it.
+      return h_flex().id(`${this.id}-node-${id}`).absolute().left(at.x * z + this.pan.x).top(at.y * z + this.pan.y).w(NODE_W * z).h(NODE_H * z)
+        .px(10 * z).gap(9 * z).items_center().cursor_pointer().overflow_hidden().rounded(RADIUS * z)
         .bg(picked || on ? c.blueLight : c.surface).border_1().when(picked, (e) => e.border_2())
         .border_color(picked || on || viaColumn || (inPath(id) && !picked) ? c.blue : c.grey300)
         .when(dim, (e) => e.opacity(0.45))
         .hover((s) => s.border_color(c.blue))
         .tooltip(`${kindWord}: ${n.label ?? id}${n.version ? ` v${n.version}` : ""}`)
-        // The kind's colour, down the box's left edge.
-        .child(div().absolute().left(0).top(0).bottom(0).w(3 * z).bg(c[stripe] ?? c.grey300))
         .on_hover((over, cx) => { if (over) { if (this.hover !== id) { this.hover = id; cx.notify(); } } else if (this.hover === id) { this.hover = null; cx.notify(); } })
         .on_mouse_down("left", (e, cx) => {
           cx.stop_propagation?.();
@@ -409,12 +424,25 @@ export class LineageGraph {
           this.sel = this.sel === id ? null : id;
           cx.notify();
         })
-        .child(h_flex().gap(6 * z).items_center()
-          .child(this.icon(ic, 13 * z, on || picked ? c.blue : c.navy))
-          .child(div().flex_1().min_w(0).truncate().text_size(12.5 * z).font_medium().text_color(on || picked ? c.blue : c.navy).child(n.label ?? id))
-          .when(n.version != null, (e) => e.child(div().flex_none().px(4 * z).border_1().border_color(c.grey300).text_size(10 * z).text_color(c.grey900).child(`v${n.version}`))))
-        .child(div().truncate().text_size(10.5 * z).text_color(c.grey500).child(viaColumn && this.column ? `${kindWord}, column ${this.columnAt(id) ?? this.column}` : kindWord));
+        .child(div().size(28 * z).flex().flex_none().items_center().justify_center().rounded(6 * z).bg(c.surface2)
+          .child(this.icon(ic, 14 * z, c[stripe] ?? c.grey500)))
+        .child(v_flex().flex_1().min_w(0).gap(1 * z)
+          .child(h_flex().gap(6 * z).items_center()
+            .child(div().flex_1().min_w(0).truncate().text_size(12.5 * z).font_medium().text_color(on || picked ? c.blue : c.navy).child(n.label ?? id))
+            .when(n.version != null, (e) => e.child(div().flex_none().px(4 * z).rounded(3 * z).border_1().border_color(c.grey300).text_size(10 * z).text_color(c.grey900).child(`v${n.version}`))))
+          .child(div().truncate().text_size(10.5 * z).text_color(c.grey500).child(viaColumn && this.column ? `${kindWord}, column ${this.columnAt(id) ?? this.column}` : kindWord)));
     });
+    // The dots where connectors join the boxes: one on the right edge of a box something reads from, one on the
+    // left edge of a box made from something.
+    const outs = new Set(L.edges.map(([a]) => a)), ins = new Set(L.edges.map(([, b]) => b));
+    const dot = (id, side) => {
+      const at = this.at(L, id);
+      const cx0 = (at.x + (side === "out" ? NODE_W : 0)) * z + this.pan.x, cy0 = (at.y + NODE_H / 2) * z + this.pan.y;
+      const lit = !!path && inPath(id);
+      return div().id(`${this.id}-dot-${side}-${id}`).absolute().left(cx0 - DOT * z).top(cy0 - DOT * z).size(DOT * 2 * z).rounded_full()
+        .bg(c.surface).border_1().border_color(lit ? c.blue : c.grey500).when(!!path && !lit, (e) => e.opacity(0.45));
+    };
+    const dots = [...[...outs].map((id) => dot(id, "out")), ...[...ins].map((id) => dot(id, "in"))];
     const view = (e) => { if (e?.bounds) this.view = { w: e.bounds.width, h: e.bounds.height }; };
     const zoomBtn = (k, text, tip, go) => div().id(`${this.id}-zoom-${k}`).h(24).min_w(24).px(6).flex().items_center().justify_center().cursor_pointer()
       .bg(c.surface).border_1().border_color(c.grey300).text_size(12).text_color(c.navy).hover((s) => s.border_color(c.blue).text_color(c.blue))
@@ -471,9 +499,11 @@ export class LineageGraph {
           } else this.pan = { x: this.pan.x + d.x, y: this.pan.y + d.y };
           cx.notify();
         })
+        .child((() => { const g = paint ? this.grid(vw || opts.width || 0, vh) : null; return g ? div().id(`${this.id}-grid`).absolute().inset_0().child(paint(g, c.grey300)) : div(); })())
         .child(layer(plain, c.grey500, 1.5) ?? div())
         .child(layer(lit, c.blue, 2.5) ?? div())
         .children(nodes)
+        .children(dots)
         .child(this.details(c, L) ?? div())
         .child(this.minimap(c, L, vw, vh) ?? div())
         .child(h_flex().absolute().top(8).right(8).gap(4)
@@ -483,6 +513,6 @@ export class LineageGraph {
       .child(div().id(`${this.id}-hint`).text_size(11).text_color(c.grey500).child("Hover a box to see what feeds it and what it feeds. Click one to open it. Drag to move, Command and scroll to zoom."))
       .child(h_flex().flex_wrap().gap(12).text_size(11).text_color(c.grey500)
         .children([...new Set([...L.pos.keys()].map((id) => L.byId.get(id)?.kind))].filter(Boolean).map((k) =>
-          h_flex().gap(4).items_center().child(div().w(3).h(11).bg(c[(KINDS[k] ?? [])[2]] ?? c.grey300)).child(this.icon((KINDS[k] ?? [k, "layers"])[1], 11, c.grey500)).child(div().child((KINDS[k] ?? [k])[0])))));
+          h_flex().gap(4).items_center().child(this.icon((KINDS[k] ?? [k, "layers"])[1], 12, c[(KINDS[k] ?? [])[2]] ?? c.grey500)).child(div().child((KINDS[k] ?? [k])[0])))));
   }
 }

@@ -54,12 +54,15 @@ await until((t) => /Added 2, 1 skipped\./.test(t), 'import summary');
 let t = h.text();
 assert.ok(t.includes("isn't a table"), `skipped reason: ${t.slice(0, 400)}`);
 assert.ok(t.includes('shop') && t.includes('queries'), 'imported rows listed');
-await until((t) => t.includes('drop/catalogs/shop') && t.includes('Captain, folder drop/catalogs') && t.includes('Captain keeps 1 version'), 'the one list shows the new dataset, its folder and that Captain keeps versions of it');
+// The folder it landed in is a group of the list; opened, it shows the new table and that Captain keeps versions of it.
+await until(() => (h.mod.catalog.groups ?? []).some((g) => g.id === 'folder:drop/catalogs'), 'its folder is a group');
+await h.click('cat-group-folder:drop/catalogs');
+await until((t) => t.includes('shop') && t.includes('Captain keeps 1 version'), 'the group shows the new table and that Captain keeps versions of it');
 
 // 3. The same file, changed, dropped on the dataset's own page: it lands in its folder, so it is a new version.
 fs.writeFileSync(path.join(drop, 'catalogs', 'shop.csv'), 'id,title,price\n1,Sofa,100\n2,Lamp,20\n3,Rug,55\n');
-const row = () => h.mod.catalog.rows.findIndex((r) => r.name === 'drop/catalogs/shop');
-await h.click(`cat-row-${row()}`);
+const row = () => h.mod.catalog.rows.find((r) => r.name === 'drop/catalogs/shop');
+h.mod.catalog.openRow(h.cx, row());
 await until(() => h.mod.detail?.name === 'drop/catalogs/shop', 'its page');
 assert.equal(h.mod.page.folder(), 'drop/catalogs');
 await h.fire('dataset-page', 'on_drop', { paths: [path.join(drop, 'catalogs', 'shop.csv')] });
@@ -76,10 +79,12 @@ await h.click('ds-move-new-go');
 await until((t) => t.includes('Moved to Catalogs.'), 'moved');
 await until((t) => t.includes('Captain keeps it, in the folder Catalogs.'), 'the page says its new folder');
 await h.click('crumb-tables');
-await until((t) => t.includes('Captain, folder Catalogs') && t.includes('Captain keeps 2 versions'), 'the list says where it lives now, and that there are two versions');
+await until(() => (h.mod.catalog.groups ?? []).some((g) => g.id === 'folder:Catalogs'), 'the folder it moved to is a group now');
+await h.click('cat-group-folder:Catalogs');
+await until((t) => t.includes('Captain keeps 2 versions'), 'and it says there are two versions');
 
 // 5. And back to the top level, by picking it.
-await h.click(`cat-row-${row()}`);
+h.mod.catalog.openRow(h.cx, row());
 await until(() => h.mod.detail?.name === 'drop/catalogs/shop', 'its page again');
 await h.click('dtab-about');
 await h.click('ds-move');

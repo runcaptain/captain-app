@@ -20,7 +20,7 @@ globalThis.__routes = [
   [/\/rows\?.*where=/, 'bad-where'],
   [/\/rows\?.*offset=200(&|$)/, 'rows1'],
   [/\/rows\?/, 'rows0'],
-  [/^\/api\/data\/tables/, 'data-tables'],
+  [/^\/api\/data\/tables/, 'data-tables-big'],
   [/^\/api\/datasets(\?|$)/, 'datasets'],
   [/^\/api\/datasets\/[^?]+$/, 'detail'],
 ];
@@ -45,7 +45,7 @@ const rows1 = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'rows1
 const datasets = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'datasets.json'), 'utf8'));
 
 const { readWords, versionWords } = await import(path.join(work, 'catalog.js'));
-const merged = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'data-tables.json'), 'utf8'));
+const merged = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'data-tables-big.json'), 'utf8'));
 
 // Two submenus, Tables first, and no Labels, Datasets, Notebooks or Models tab.
 assert.deepEqual(h.byIdPrefix('submenu-').map((e) => e.call('id')[0]), ['submenu-tables', 'submenu-sources']);
@@ -55,19 +55,70 @@ if (process.env.SHOW) console.log(text.slice(0, 1500));
 assert.ok(!/\bLabels\b/.test(text), 'Labels left the screen');
 assert.ok(!h.asked().some((p) => p.startsWith('/api/labels')), 'and nothing asks for labels');
 
-// Tables: one row per dataset and per database table, in one list, with the five columns.
+// Tables: grouped by where the tables live, every group closed at first. No wall of tables.
+const { groupsOf, plainTip, PAGE, BY_SCHEMA_OVER } = await import(path.join(work, 'catalog.js'));
+assert.equal(PAGE, 5);
+assert.equal(h.byIdPrefix('cat-row-').length, 0, 'no table shows until a group is opened');
+const groups = groupsOf(merged.rows);
+assert.deepEqual(groups.map((g) => g.id), ['db:demo-store', 'db:warehouse', 'folder:demo-historic-replay', 'folder:logs', 'folder:'], 'databases first, then the folders of what Captain keeps');
+for (const g of groups) assert.equal(h.byIdPrefix(`cat-group-${g.id}`).filter((e) => e.call('id')[0] === `cat-group-${g.id}`).length, 1, `a heading for ${g.id}`);
+assert.ok(text.includes('warehouse') && text.includes('Databricks') && text.includes('39 tables'), `a database's name, its kind and its count: ${text.slice(0, 400)}`);
+assert.ok(text.includes('logs') && text.includes('2 tables') && text.includes('Kept in Captain'), 'folders are the groups for the tables Captain keeps');
+assert.ok(text.includes(`${merged.rows.length} tables in ${groups.length} places`), 'the count');
+// A database's own mark is on its heading.
+assert.ok(h.has(h.byIdPrefix('cat-group-db:warehouse')[0], 'svg') || h.has(h.byIdPrefix('cat-group-db:warehouse')[0], 'image'), 'the mark');
+
+// Open a folder: its tables, with the five columns. A dataset is a table Captain keeps versions of: the Versions
+// column says so. There is no separate Datasets screen.
+await h.click('cat-group-folder:');
+text = h.text();
 for (const col of ['Name', 'Where it lives', 'Rows', 'Versions', 'Last read']) assert.ok(text.includes(col), `column ${col}`);
-assert.equal(h.byIdPrefix('cat-row-').length, merged.rows.length, 'every dataset and every database table has a row');
-for (const d of datasets) assert.ok(text.includes(d.name), `the list shows the dataset ${d.name}`);
-for (const t of merged.rows.filter((r) => r.kind === 'table')) assert.ok(text.includes(t.name) && text.includes(t.where), `the list shows the database table ${t.name}`);
-// A dataset is a table Captain keeps versions of: the Versions column says so. A database table says it is read
-// where it lives. There is no separate Datasets screen.
-assert.ok(text.includes('Captain keeps 1 version') && text.includes('Captain keeps 2 versions') && text.includes('Read where it lives'), 'the Versions column tells the two apart');
+assert.equal(h.byIdPrefix('cat-row-').length, 3, 'three tables in no folder: all shown, no pager needed');
+assert.equal(h.byIdPrefix('cat-next-').length, 0, 'no pager for five or fewer');
+assert.ok(text.includes('Captain keeps 1 version') && text.includes('Captain keeps 2 versions'), 'the Versions column');
+assert.ok(text.includes('Captain, a saved query on demo-store'), 'where it lives, in words');
 assert.equal(versionWords({ kind: 'dataset', versions: 3 }), 'Captain keeps 3 versions');
 assert.equal(versionWords({ kind: 'table', versions: null }), 'Read where it lives');
-assert.ok(text.includes('Captain, folder logs') && text.includes('Captain, a saved query on demo-store'), 'where it lives, in words');
-assert.ok(text.includes('60,000'), 'rows');
-assert.ok(text.includes(`${merged.rows.length} tables`), 'the count');
+// The open groups are remembered for the workspace.
+assert.deepEqual(Object.values(globalThis.__shared['captain.data.groups'])[0], ['folder:'], 'remembered');
+
+// A big database is grouped again by schema, and each schema shows five tables at a time with a pager.
+assert.ok(39 > BY_SCHEMA_OVER);
+await h.click('cat-group-db:warehouse');
+assert.deepEqual(groups.find((g) => g.id === 'db:warehouse').parts.map((p) => [p.label, p.rows.length]), [['main.finance', 12], ['main.sales', 14], ['main.web', 13]]);
+assert.equal(h.byIdPrefix('cat-row-table-warehouse').length, 0, 'its schemas first, closed');
+await h.click('cat-group-db:warehouse/main.sales');
+assert.equal(h.byIdPrefix('cat-row-table-warehouse').length, 5, 'five at a time');
+text = h.text();
+assert.ok(text.includes('1 to 5 of 14') && text.includes('Previous') && text.includes('Next'), `the pager: ${text.slice(-400)}`);
+assert.equal(h.byIdPrefix('cat-prev-db:warehouse/main.sales')[0].call('on_click'), undefined, 'Previous is off on the first page');
+await h.click('cat-next-db:warehouse/main.sales');
+assert.ok(h.text().includes('6 to 10 of 14'), 'the next five');
+await h.click('cat-next-db:warehouse/main.sales');
+assert.ok(h.text().includes('11 to 14 of 14'), 'the last four');
+assert.equal(h.byIdPrefix('cat-next-db:warehouse/main.sales')[0].call('on_click'), undefined, 'Next is off on the last page');
+// The group's own search narrows it, and starts again at the first page.
+h.mod.catalog.finds.get('db:warehouse/main.sales').set_value('order');
+h.mod.catalog.finds.get('db:warehouse/main.sales').handlers?.change?.({}, h.cx);
+await h.layoutLists({});
+assert.deepEqual(h.byIdPrefix('cat-row-table-warehouse').map((e) => e.call('id')[0].split('/').pop()), ['order_items', 'orders'], 'the group\'s own search');
+assert.ok(h.text().includes('1 to 2 of 2'));
+// A small database is not split by schema: the schema is its "Where it lives".
+await h.click('cat-group-db:demo-store');
+assert.equal(groups.find((g) => g.id === 'db:demo-store').parts, undefined);
+assert.ok(h.text().includes('demo-store.main') && h.text().includes('Read where it lives'), 'the schema, and that Captain keeps no versions');
+
+// A description shows as plain words, about two lines: never raw markdown across the window.
+await h.click('cat-group-db:warehouse/main.finance');
+await h.click('cat-next-db:warehouse/main.finance');
+await h.click('cat-next-db:warehouse/main.finance');
+const usage = h.byIdPrefix('cat-row-table-warehouse/main.finance/usage')[0];
+assert.ok(usage, 'the usage table is on the last page');
+const tip = usage.call('tooltip')[0];
+assert.ok(tip.startsWith('Billed usage per team. See the attributed usage table for how it is split.'), `links become their words: ${tip}`);
+assert.ok(!/[\[\]()]|https?:/.test(tip) && !tip.includes('\n') && tip.length <= 150, `plain, one string, two lines at most: ${tip.length}`);
+assert.equal(plainTip('**Bold** `code` [a link](https://example.com/x) and https://example.com/y'), 'Bold code a link and');
+assert.equal(plainTip(null), '');
 // Last read, in words.
 const now = Date.parse('2026-11-12T12:00:00Z');
 assert.equal(readWords('2026-11-12', now), 'Today');
@@ -75,13 +126,10 @@ assert.equal(readWords('2026-11-11', now), 'Yesterday');
 assert.equal(readWords('2026-11-05T08:00:00+00:00', now), '7 days ago');
 assert.equal(readWords('2026-08-01', now), 'Aug 1, 2026');
 assert.equal(readWords(null, now), 'Not read yet');
-assert.ok(!/@v\d/.test(text), 'no raw name@v ref anywhere');
-assert.ok(text.includes('Import a dataset'), 'the one filled button brings data in');
-// An icon on every row.
-for (const row of h.byIdPrefix('cat-row-')) assert.ok(h.has(row, 'svg') || h.has(row, 'image'), `icon on ${row.call('id')[0]}`);
+assert.ok(!/@v\d/.test(h.text()), 'no raw name@v ref anywhere');
+assert.ok(h.text().includes('Import a dataset'), 'the one filled button brings data in');
 
-// Beside an open terminal column the list is narrow. The Versions column still shows, in shorter words, with the
-// full sentence on hover: it is the column that says a dataset is a table Captain keeps versions of.
+// Beside an open terminal column the list is narrow. The Versions column still shows, in shorter words.
 h.mod.width = 700;
 await h.layoutLists({});
 text = h.text();
@@ -89,23 +137,19 @@ assert.ok(text.includes('Versions') && text.includes('2 kept') && text.includes(
 h.mod.width = 1000;
 await h.layoutLists({});
 
-// The kind filter keeps one of the two.
-await h.click('cat-kind-table');
-assert.equal(h.byIdPrefix('cat-row-').length, merged.rows.filter((r) => r.kind === 'table').length, 'only the database tables');
-await h.click('cat-kind-dataset');
-assert.equal(h.byIdPrefix('cat-row-').length, datasets.length, 'only the tables Captain keeps versions of');
-await h.click('cat-kind-all');
-
-// A search asks the services (so a column's name finds its table).
+// The search at the top asks the services (so a column's name finds its table) and opens every group with a match.
 h.mod.catalog.find.set_value('price');
 h.mod.catalog.find.handlers?.submit?.({}, h.cx);
 await h.idle(30);
 assert.ok(h.asked().some((p) => p === '/api/data/tables?q=price'), `the search is asked of the services: ${h.asked().filter((p) => p.includes('data/tables'))}`);
+assert.ok(h.mod.catalog.groups.every((g) => h.mod.catalog.isOpen(g.id)), 'every group with a match is open');
 h.mod.catalog.find.set_value('');
+h.mod.catalog.load(h.cx);
+await h.idle(30);
+assert.ok(h.mod.catalog.isOpen('folder:') && !h.mod.catalog.isOpen('folder:logs'), 'cleared: back to the groups the person opened');
 
 // A row opens that table's page in place: a crumb back to the list, one line saying what it is, and two views.
-const at = merged.rows.findIndex((r) => r.name === 'demo-catalog');
-await h.click(`cat-row-${at}`);
+await h.click('cat-row-dataset-demo-catalog');
 await h.idle(50);
 text = h.text({ 'grid-ds-rows': [0, 30] });
 assert.ok(h.byIdPrefix('crumb-tables').length === 1, 'a crumb back to Tables');
@@ -159,7 +203,7 @@ assert.ok(h.asked().slice(beforeQuality).some((p) => p.startsWith('/api/profile'
 
 // Back to the one list.
 await h.click('crumb-tables');
-assert.equal(h.byIdPrefix('cat-row-').length, merged.rows.length, 'the list again');
+assert.ok(h.byIdPrefix('cat-group-folder:').length >= 1 && h.byIdPrefix('crumb-tables').length === 0, 'the groups again');
 
 // Sources: the databases Captain reads tables from, and the model registries.
 await h.click('submenu-sources');
