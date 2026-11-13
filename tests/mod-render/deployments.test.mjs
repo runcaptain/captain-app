@@ -445,7 +445,9 @@ assert.equal(numberReads(), beforeNumbers, 'the numbers stay on their one-minute
 // list read was switched off while an action ran.
 const { readFileSync, readdirSync } = await import('node:fs');
 for (const f of readdirSync('defaults/mods/captain-deployments').filter((x) => x.endsWith('.js')))
-  assert.ok(!/\bset(Timeout|Interval)\s*\(/.test(readFileSync(`defaults/mods/captain-deployments/${f}`, 'utf8')), `${f} waits on a timer the app does not have`);
+  for (const [what, re] of [['a timer the app does not have', /\b(set|clear)(Timeout|Interval)\s*\(|\b(setImmediate|requestAnimationFrame|queueMicrotask)\s*\(/],
+    ['`require`, which the app does not have', /\brequire\s*\(/], ['a browser object the app does not have', /\b(window|document|localStorage|navigator|process)\./]])
+    assert.ok(!re.test(readFileSync(`defaults/mods/captain-deployments/${f}`, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')), `${f} uses ${what}`);
 const listReads = () => sent.filter((x) => x[1].startsWith('/api/deployed') && !x[1].includes('created')).length;
 const STOPPED = { rows: [{ ...SHOP, state: 'stopped', state_text: 'Stopped by dana, just now.', in_cloud: false, remembered_text: 'Nothing of it is running in AWS and nothing is billing. Captain remembers it so you can start it again.' }, TRAIL],
   asked, text: '1 model running.', stopped_earlier: 1, read_at: '' };
@@ -530,6 +532,25 @@ assert.ok(!h.text().includes('Not updating') && h.text().includes('Updated just 
   assert.ok(hd.text().includes('Where it runs') && hd.text().includes('Calls a minute at the endpoint'), `the sample page draws: ${hd.text().slice(0, 200)}`);
 }
 
+// ---- the picture check's `press` does nothing in a person's app ----
+// It stops or removes a model as if a button were pressed. Only the app's test window may do that.
+{
+  const stops = () => sent.filter((x) => x[0] === 'POST' && x[1].endsWith('/unstage')).length;
+  globalThis.__props = { press: 'stop' };
+  let hp = await open({ deployed: RUNNING2, stopJob: 'job-p', jobs: { 'job-p': [{ status: 'running', message: TITLE, log: [TITLE] }] } });
+  await tick(hp); await tick(hp);
+  assert.ok(stops() === 0 && byId(hp, 'dep-stop-shop:staging').length === 1, 'in a person\'s app nothing is pressed: the model keeps running and keeps its button');
+  (globalThis.__shared ??= {})['app.testWindow'] = false;
+  hp = await open({ deployed: RUNNING2, stopJob: 'job-p', jobs: { 'job-p': [{ status: 'running', message: TITLE, log: [TITLE] }] } });
+  await tick(hp);
+  assert.equal(stops(), 0, 'nor when the app says it is not the test window');
+  globalThis.__shared['app.testWindow'] = true;
+  hp = await open({ deployed: RUNNING2, stopJob: 'job-p', jobs: { 'job-p': [{ status: 'running', message: TITLE, log: [TITLE] }] } });
+  await tick(hp);
+  assert.equal(stops(), 1, `in the test window it presses once: ${JSON.stringify(sent.slice(0, 6))} ${hp.text().slice(0, 200)}`);
+  globalThis.__props = undefined; delete globalThis.__shared['app.testWindow'];
+}
+
 // ---- live: the screen listens to the change feed, and asks nothing on a clock ----
 // The feed answers the request it holds, and the kit opens the next one on its own timer.
 const tell = async (changed, more) => { const w = world.waiting; world.waiting = null; w(changed, more); await h.idle(150); await tick(h); };
@@ -595,6 +616,19 @@ world.deployedFail = false;
 quietReads = listReads();
 await tick(h);
 assert.ok(listReads() > quietReads, 'the fallback reads while the channel is down');
+// An open model's page is not read again on every fallback tick: it is five reads, one of them to the cloud.
+await h.click('dep-open-shop:staging');
+await h.idle(150);
+// (The harness fires the page's own once-a-minute timer on every tick, so what is counted is a page read made
+// by the channel's call, and why it called.)
+{
+  let inHeard = null; const byWhy = {};
+  const heard = h.mod.heard.bind(h.mod), refresh = h.mod.page.refresh.bind(h.mod.page);
+  h.mod.heard = (cx, changed, reset, fallback) => { inHeard = fallback ? 'fallback' : reset ? 'reset' : 'changed'; try { return heard(cx, changed, reset, fallback); } finally { inHeard = null; } };
+  h.mod.page.refresh = (cx) => { if (inHeard) byWhy[inHeard] = (byWhy[inHeard] ?? 0) + 1; return refresh(cx); };
+  await tick(h); await tick(h); await tick(h);
+  assert.ok(!byWhy.fallback, `fallback ticks do not read the page: ${JSON.stringify(byWhy)}`);
+}
 world.stopJob = null; world.jobs = null; world.seq = 1000;
 
 // ---- requests come from the request log, and the cloud's chart is named for what it is ----

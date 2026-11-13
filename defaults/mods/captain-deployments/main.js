@@ -29,8 +29,10 @@ export default class CaptainDeployments extends View {
     this.busy = {};           // row id -> what is being done to it, in words
     this.following = {};      // row id -> the job doing it: {job, words, kind, read, heard, polling}
     // For the picture check only, which can't click: do one action as if its button were pressed, once the list
-    // is read. "stop" or "remove", on the first model that is in a cloud or on this computer.
-    this.press = props()?.press ?? null;
+    // is read. "stop" or "remove", on the first model that is in a cloud or on this computer. Honoured only in the
+    // app's test window (the app sets `app.testWindow` at each start): in a person's app it does nothing, so a
+    // layout or a link can never stop or remove a model by naming this.
+    this.press = shared("app.testWindow") === true ? (props()?.press ?? null) : null;
     this.note = null;         // what the last action said
     this.projects = null;     // for "Link to a project"
     this.page = null;         // the model page, when a row is open
@@ -90,26 +92,22 @@ export default class CaptainDeployments extends View {
     else { this.wanted = o.open; this.load(cx, true); }  // not read yet, or made a moment ago: ask, then open it
   }
 
-  /** What this screen shows now, as topics on the change feed. */
-  topics() {
-    return ["deployed", ...(this.page?.row?.project ? [`deployment:${this.page.row.project}`] : []),
-      ...Object.values(this.following).map((f) => `job:${f.job}`)];
-  }
-
   /** The kit's one live channel (kit/live.js), in the shape this screen uses: `up()` says whether it is alive.
    *  It watches the list, and every deployed model and every job by kind, and `heard` picks its own from them, so
    *  a page opened or a job started is listened to already. While the channel is down the kit calls every two
-   *  seconds, which reads the list, the open page and the jobs again. */
+   *  seconds ("fallback"), which reads the list and the jobs again. */
   listen(cx) {
-    watchLive(cx, ["deployed", "deployment:", "job:"], (cx, why, topics) => this.heard(cx, why === "changed" ? topics : [], why !== "changed"));
+    watchLive(cx, ["deployed", "deployment:", "job:"], (cx, why, topics) => this.heard(cx, why === "changed" ? topics : [], why !== "changed", why === "fallback"));
     return { up: () => liveState().state === "live", kick() {} };
   }
 
   /** Something this screen shows changed. `reset` is the first answer, or a feed that lost track: read it all. */
-  heard(cx, changed, reset) {
+  heard(cx, changed, reset, fallback = false) {
     if (reset || changed.includes("deployed")) this.load(cx);
     if (reset || changed.some((t) => t.startsWith("job:"))) this.follow(cx, reset ? null : changed);
-    if (this.page && (reset || changed.includes(`deployment:${this.page.row.project}`))) this.page.refresh(cx);
+    // An open model's page is five reads, one of them to the cloud. While the feed is down this is called every
+    // two seconds: the list and the jobs are read then, and the page keeps to its own once-a-minute read.
+    if (this.page && !fallback && (reset || changed.includes(`deployment:${this.page.row.project}`))) this.page.refresh(cx);
   }
 
   deployingNow() {

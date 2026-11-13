@@ -98,7 +98,7 @@ def test_with_nobody_listening_nothing_is_asked(ws, aws, monkeypatch):  # noqa: 
 def test_an_endpoint_that_disappears_is_told_within_two_seconds(ws, aws, monkeypatch):  # noqa: F811
     """A model stopped in the cloud's own console, or by another computer: nothing here did it, and a screen that is
     looking still hears within two seconds."""
-    monkeypatch.setattr(WT, "EVERY_S", 0.1)
+    monkeypatch.setattr(WT, "SCALE", 0.1)
     rec = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
     AN.listen("deployed")
     WT.start(ws)
@@ -127,8 +127,9 @@ def test_an_endpoint_that_disappears_is_told_within_two_seconds(ws, aws, monkeyp
 
 
 def test_a_cloud_that_says_slow_down_is_asked_less_and_the_list_says_so(ws, aws, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(WT, "EVERY_S", 0.05)
+    monkeypatch.setattr(WT, "SCALE", 0.05)
     monkeypatch.setattr(WT, "SLOW_MIN_S", 0.6)
+    monkeypatch.setattr(WT, "SLOW_MAX_S", 0.6)
     SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
     AN.listen("deployed")
     real = FL._ask
@@ -153,7 +154,7 @@ def test_a_cloud_that_says_slow_down_is_asked_less_and_the_list_says_so(ws, aws,
     assert next(a for a in d["asked"] if a["cloud"] == "aws")["watching"] == w["text"]
     # When the cloud answers again it goes back to once a second.
     throttled["on"] = False
-    assert _until(lambda: not any(x["slowed"] for x in WT.status(ws)) and all(x["every_s"] == WT.EVERY_S for x in WT.status(ws)), 3.0)
+    assert _until(lambda: not any(x["slowed"] for x in WT.status(ws)) and all(x["every_s"] == WT.every(x["cloud"]) for x in WT.status(ws)), 3.0)
     SG.unstage(ws, "shop")
 
 
@@ -164,7 +165,7 @@ def test_a_plain_error_backs_off_and_is_not_called_slowed():
 
 def test_a_change_in_captains_own_records_is_told_too(ws, aws, monkeypatch):  # noqa: F811
     """A model on this computer, or stopped from a terminal: no cloud says so, the record does."""
-    monkeypatch.setattr(WT, "EVERY_S", 0.1)
+    monkeypatch.setattr(WT, "SCALE", 0.1)
     SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
     AN.listen("deployment:shop")
     stop = threading.Event()
@@ -210,7 +211,8 @@ def test_a_job_announces_every_step_line_and_its_end(ws, aws, monkeypatch):  # n
     assert len(said) == n
     hold.set()
     assert _until(lambda: SV.JOBS[jid]["status"] == "done")
-    assert len(said) > n and AN.seq(f"job:{jid}") == len(said) == AN.seq("deployed")
+    # The job's last words come a moment after its status: wait for the counts to agree, not for one instant.
+    assert _until(lambda: len(said) > n and AN.seq(f"job:{jid}") == len(said) == AN.seq("deployed"))
     # It still reads as a plain record for the route that returns it.
     import json
     assert json.loads(json.dumps(SV.JOBS[jid]))["result"] == {"text": "Stopped."}
@@ -230,7 +232,8 @@ def test_a_job_that_fails_announces_that_too(monkeypatch):
 def test_each_cloud_has_its_own_pace_and_a_slow_ask_is_never_more_than_half_the_time(ws, aws, monkeypatch):  # noqa: F811
     """Asking Modal what is there starts a process that takes about a second and real CPU: every two seconds, not
     one. And any place whose listing is slow is left alone for at least as long as the ask took."""
-    assert (WT.every("aws"), WT.every("gcp"), WT.every("azure"), WT.every("modal")) == (1.0, 1.0, 1.0, 2.0)
+    assert [WT.every(c) for c in ("aws", "gcp", "azure", "modal")] == [1.0, 1.0, 1.0, 5.0]             # something of Captain's is there
+    assert [WT.every(c, False) for c in ("aws", "gcp", "azure", "modal")] == [15.0, 15.0, 15.0, 60.0]  # nothing is
     SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
     real = FL._ask
 
@@ -239,7 +242,7 @@ def test_each_cloud_has_its_own_pace_and_a_slow_ask_is_never_more_than_half_the_
         return real(ctx, src)
 
     monkeypatch.setattr(FL, "_ask", slow)
-    monkeypatch.setattr(WT, "EVERY_S", 0.05)
+    monkeypatch.setattr(WT, "SCALE", 0.05)
     src = next(x for x in FL.sources(ws) if x["cloud"] == "aws")
     WT.look(ws, src)
     with WT._lock:
@@ -263,3 +266,38 @@ def test_errors_wait_two_four_eight_and_up_to_a_minute(ws, aws, monkeypatch):  #
     WT.stop_all()
     WT.look(ws, src)
     assert WT.status(ws)[0]["every_s"] == 15.0 and WT.status(ws)[0]["slowed"]
+
+
+def test_a_login_with_nothing_deployed_is_asked_every_fifteen_seconds_and_every_second_once_something_is(ws, aws, monkeypatch):  # noqa: F811
+    """Most logins have nothing of Captain's on them most of the time. A listing every second for nothing is waste:
+    such a place is asked every 15 seconds, only to find things made there with no project."""
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    src = next(x for x in FL.sources(ws) if x["cloud"] == "aws")
+    assert WT.busy(ws, src)
+    WT.look(ws, src)
+    st = WT.status(ws)[0]
+    assert (st["busy"], st["every_s"]) == (True, 1.0)
+    SG.unstage(ws, "shop")   # stopped: Captain remembers it, and nothing of it is in the cloud
+    assert not WT.busy(ws, src)
+    WT.look(ws, src)
+    st = WT.status(ws)[0]
+    assert (st["busy"], st["every_s"]) == (False, 15.0) and st["text"] is None
+    # A Modal login with nothing on it: once a minute.
+    modal_src = {"cloud": "modal", "login": "modal", "region": None, "target": src["target"]}
+    assert not WT.busy(ws, modal_src) and WT.every("modal", WT.busy(ws, modal_src)) == 60.0
+
+
+def test_an_idle_place_is_asked_at_once_when_a_deploy_to_it_starts(ws, aws, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(WT, "SCALE", 0.02)   # idle: every 0.3 s. busy: every 0.02 s
+    monkeypatch.setitem(WT.IDLE_S, "aws", 500.0)   # idle on AWS: 10 s in this test, far longer than the test
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    SG.unstage(ws, "shop")
+    AN.listen("deployed")
+    WT.start(ws)
+    assert _until(lambda: any(w["cloud"] == "aws" and not w["busy"] for w in WT.status(ws)))
+    asked = _asks()
+    time.sleep(0.3)
+    assert _asks() == asked   # idle: not asked again for a long while
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)   # something of Captain's is there now
+    assert _until(lambda: any(w["cloud"] == "aws" and w["busy"] for w in WT.status(ws)), 2.0), "asked at once, not ten seconds later"
+    SG.unstage(ws, "shop")
