@@ -3,7 +3,7 @@
 // {state: "ready", base, token, home, cst}, or {state: "starting" | "missing" | "failed", error}.
 // Requests go through fetch, in-process, so the token never shows up in `ps`.
 // Where they listen comes only from the app (shared "captain.daemon").
-import { shared, setShared } from "herdr";
+import { shared, setShared, layout } from "herdr";
 
 // When this copy of the mod started: services get ~15 s to come up before a screen says so.
 const BORN = Date.now();
@@ -146,6 +146,40 @@ export function watchRecords(cx, fn) {
     if ((now?.at ?? null) === last) return;
     last = now?.at ?? null;
     fn(cx, now?.what);
+  });
+}
+
+/** Whether a view is the one shown in the app's stack of views. True when the layout can't say. */
+export function viewShown(section, stack = "sections") {
+  const find = (n) => (n?.id === stack ? n : (n?.children ?? []).map(find).find(Boolean) ?? null);
+  let node = null;
+  try { node = find(layout()); } catch { return true; }
+  if (!node) return true;
+  return (node.active ?? node.children?.[0]?.id) === section;
+}
+
+export const FRESH_SECONDS = 5;
+
+/** Keep a view's lists current by themselves (the owner: "everything needs to refresh live"). `fn(cx, why)` reloads
+ *  quietly: it must not blank what is drawn, or move the person's place. It is called
+ *    - every FRESH_SECONDS while the view is the one shown ("timer"),
+ *    - at once when the view comes back into view ("shown"),
+ *    - at once when a form anywhere changes records, or a connection is saved or removed ("changed").
+ *  There is no change stream from the services for lists, so the timer is what catches a change made from a
+ *  terminal. Runs' live runs and jobs have their own, faster timers. */
+export function keepFresh(cx, section, fn, seconds = FRESH_SECONDS) {
+  let was = viewShown(section), due = Date.now() + seconds * 1000;
+  let rec = shared("captain.records.changed")?.at ?? null, con = shared("captain.connections.changed") ?? null;
+  cx.timer.every(300, (cx) => {
+    const now = viewShown(section);
+    const r = shared("captain.records.changed")?.at ?? null, k = shared("captain.connections.changed") ?? null;
+    const changed = r !== rec || k !== con;
+    rec = r; con = k;
+    const why = changed ? "changed" : now && !was ? "shown" : now && Date.now() >= due ? "timer" : null;
+    was = now;
+    if (!why) return;
+    due = Date.now() + seconds * 1000;
+    fn(cx, why);
   });
 }
 

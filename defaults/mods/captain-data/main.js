@@ -11,7 +11,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { theme, shared, props as layoutProps } from "herdr";
-import { api, retry, details, watchWorkspace, watchScope, watchConnections } from "./kit/cst.js";
+import { api, retry, details, watchWorkspace, watchScope, watchConnections, keepFresh } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
 import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
@@ -125,6 +125,9 @@ export default class CaptainData extends View {
       // The one list, until it loads (while the services start, or after a failure that wasn't an answer).
       if (this.catalog.rows === null || (this.catalog.error && !this.catalog.error.status)) this.catalog.load(cx);
     });
+    // The lists stay current by themselves: every few seconds while Data is shown, at once when it comes back into
+    // view, and at once when a form changes something. A page that is open is left alone.
+    keepFresh(cx, "data", (cx) => this.refreshLists(cx));
     // "Open <dataset>" from the palette: captain-go sets shared "captain.open" {section: "data", dataset, tab?, at}.
     // tab (a dataset page tab: health, insights, quality...) opens once that dataset is on the page.
     // Shared values outlive the app: an open from before this screen started (the last session's import) is done.
@@ -196,6 +199,13 @@ export default class CaptainData extends View {
     if (id === "sources") { this.tables.show(cx); if (this.models.regs === null) this.models.load(cx); }
     else this.catalog.load(cx);
     cx.notify();
+  }
+
+  /** Reload what is listed, quietly: the groups stay as they are, and so does the page of each. */
+  refreshLists(cx) {
+    if (this.shown || this.graph || this.catalog.rows === null) return;
+    if (this.tab === "sources") { this.tables.load(cx); if (this.models.regs !== null && !this.models.job) this.models.load(cx); }
+    else this.catalog.refresh(cx);
   }
 
   /** A dataset's page, over the list. */

@@ -1171,6 +1171,16 @@ One mechanism (`openEntry` in captain-nav): the entry sets shared `captain.open`
 sets the same value without `home` and names what to open. A new view must honour `home`, and
 `tests/mod-render/sidebar-home.test.mjs` has a block per view.
 
+### Lists refresh by themselves
+
+The owner: "I think everything needs to refresh live." A list is never older than the person's last action.
+`keepFresh(cx, section, fn)` in the kit calls `fn` every 5 seconds while the view is shown, at once when the view
+comes back into view, and at once when a form changes records (`recordsChanged`) or a connection changes. The
+reload must be quiet: nothing drawn goes blank, open groups stay open, the page of a list stays, a search being
+typed is not interrupted, and an open page or notebook is not reloaded under the person. The services have no
+change stream for lists, so the timer is what catches a change made with `cst` in a terminal. A form that
+makes or changes something calls `recordsChanged` after its submit succeeds.
+
 ### Data: tables, grouped by where they live
 
 A dataset is a table Captain keeps versions of. A database's table is one Captain reads where it lives. Tables
