@@ -39,7 +39,7 @@ const until = async (ok, what) => {
 };
 // The screen opens on the one list of tables; a row opens the dataset's page.
 await until(() => (h.mod.catalog.rows ?? []).some((r) => r.name === 'demo-catalog'), 'the list of tables');
-await h.click(`cat-row-${h.mod.catalog.rows.findIndex((r) => r.name === 'demo-catalog')}`);
+h.mod.catalog.openRow(h.cx, h.mod.catalog.rows.find((r) => r.name === 'demo-catalog'));
 await until(() => h.mod.detail?.name === 'demo-catalog', 'demo-catalog open');
 
 await h.click('ds-lineage-open');
