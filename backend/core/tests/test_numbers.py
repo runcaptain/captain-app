@@ -93,7 +93,7 @@ def test_when_cloudwatch_cannot_be_read_the_request_log_answers_and_says_so(ws, 
     n = NB.numbers(ws, "shop")
     assert n["source"] == "log" and n["summary"]["requests"] == 3 and n["summary"]["cpu"] is None
     assert "Captain couldn't read AWS's own metrics just now" in n["not_read"][0] and "from the request log" in n["not_read"][0]
-    assert n["cost"]["source"] == "record"
+    assert n["cost"]["source"] in ("record", "times") and "couldn't read AWS's own numbers" in n["cost"]["note"]
     aws.fail_on = None
 
 
@@ -103,7 +103,7 @@ def test_modal_says_what_it_does_not_read_and_uses_the_request_log(ws, logins, m
     n = NB.numbers(ws, "shop")
     assert n["source"] == "log" and n["summary"]["requests"] >= 5  # the deploy's own test requests
     assert n["not_read"] == [NB.NOT_READ["modal"]] and n["summary"]["cpu"] is None and all(b["cpu"] is None for b in n["buckets"])
-    assert n["cost"]["source"] == "record" and "not from the cloud" in n["cost"]["text"]
+    assert n["cost"]["source"] in ("record", "times") and "Not from the cloud's own numbers." in n["cost"]["text"] and "the most it can have cost" in n["cost"]["text"]
 
 
 def test_nothing_deployed_and_this_computer(ws):  # noqa: F811
@@ -115,3 +115,35 @@ def test_nothing_deployed_and_this_computer(ws):  # noqa: F811
     n = NB.numbers(ws, "shop")
     assert n["source"] == "log" and n["summary"]["requests"] == 1 and n["not_read"] == []
     SG.unstage(ws, "shop")
+
+
+def test_a_model_that_ran_for_an_hour_and_stopped_did_not_cost_nothing(ws, aws):  # noqa: F811
+    """On a real account on 2026-11-12 a stopped model that had run for an hour at about 7 cents showed "Costs nothing
+    now, $0.00 this month". Whether AWS counts the hours or not, the month's cost is not zero."""
+    import datetime as dt
+
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    hourly = next(s for s in SZ.sizes("aws", "us-west-1") if s["name"] == "ml.t2.medium")["hourly_usd"]
+    now = dt.datetime.now(dt.timezone.utc)
+    SG._save(ws, "shop", "staging", status="stopped", started_at=(now - dt.timedelta(hours=1, minutes=20)).isoformat(timespec="seconds"),
+             stopped_at=(now - dt.timedelta(minutes=20)).isoformat(timespec="seconds"), stop_reason="stopped by dana@example.com")
+    # AWS has the hour: one copy reported for 60 minutes of this month, and nothing else.
+    aws.metric = lambda name, stat, t, period: (60.0 if (name, stat) == ("CPUUtilization", "SampleCount") and t.hour == (now - dt.timedelta(hours=1)).hour
+                                               and t.date() == (now - dt.timedelta(hours=1)).date() else None)
+    NB.forget()
+    c = NB.cost(ws, "shop")
+    assert c["source"] == "cloud" and c["hourly_usd"] == 0.0 and c["month_usd"] == pytest.approx(hourly, abs=1e-3) and c["copy_hours_month"] == 1.0
+    assert c["text"].startswith("Stopped, so it costs nothing now.") and "This month: about $0.07." in c["text"]
+    # AWS answers and has no hours for it: the record's own times are used, and it says so. Still not zero.
+    aws.metric = lambda name, stat, t, period: None
+    NB.forget()
+    c = NB.cost(ws, "shop")
+    assert c["source"] == "times" and c["month_usd"] == pytest.approx(hourly, abs=1e-3) and c["hourly_usd"] == 0.0
+    assert "This month: about $0.07." in c["text"] and "from when Captain started and stopped it" in c["text"]
+    assert c["note"] == "AWS reported no hours for it this month" and c["not_from_cloud"].startswith("AWS reported no hours")
+    # AWS can't be read at all: the same estimate, with the reason.
+    aws.fail_on = "get_metric_data"
+    NB.forget()
+    c = NB.cost(ws, "shop")
+    assert c["source"] == "times" and c["month_usd"] > 0 and "couldn't read AWS's own numbers" in c["note"]
+    aws.fail_on = None

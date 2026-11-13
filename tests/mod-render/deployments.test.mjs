@@ -31,9 +31,9 @@ globalThis.fetch = async (url, opts = {}) => {
   if (p.endsWith('/staging/scale')) return reply(200, { text: 'Keeps 1 up at all times. It never sleeps, and bills for each copy by the hour. 1 up now.' });
   return reply(200, { text: 'Done.' });
 };
-const row = (o) => ({ env: 'staging', login: 'work-aws', copies: { now: 1, min: null, max: null }, since: new Date(Date.now() - 7200000).toISOString(), by: 'dana', link: 'linked',
+const row = (o) => ({ env: 'staging', login: 'work-aws', copies: { now: 1, min: null, max: null }, since: new Date(Date.now() - 7200000).toISOString(), by: 'dana@example.com', by_name: 'dana', link: 'linked',
   corrected: [], sleeps: false, address: null, state_label: 'Running', can: [], ...o });
-const SHOP = row({ id: 'shop:staging', project: 'shop', project_name: 'Demo shop', model_version: 'shop/starter-ranker@v2', cloud: 'aws', cloud_label: 'AWS', region: 'us-west-1',
+const SHOP = row({ id: 'shop:staging', project: 'shop', project_name: 'Demo shop', model_version: 'shop/starter-ranker@v2', model_label: 'starter-ranker, version 2', cloud: 'aws', cloud_label: 'AWS', region: 'us-west-1',
   machine: 'ml.t2.medium', where: 'AWS, us-west-1, ml.t2.medium', name: 'captain-shop-staging', state: 'running', state_text: 'Running on 1 copy.' });
 const TRAIL = row({ id: 'trail:staging', project: 'trail', project_name: 'Trail gear', model_version: 'trail/starter-ranker@v1', cloud: 'modal', cloud_label: 'Modal', login: 'modal', region: null,
   machine: '1 CPU, 2 GB', where: 'Modal, 1 CPU, 2 GB', name: 'captain-trail-staging', state: 'asleep', state_text: 'Asleep. It wakes on the next request and bills nothing until then.',
@@ -102,6 +102,15 @@ assert.ok(t.indexOf('Kids range') < t.indexOf('Set up in your AWS account'), 'th
 await h.click('dep-setup-show-aws');
 t = h.text();
 assert.equal(shown(h), 'kids', 'the stopped model is right there, not behind a filter');
+assert.equal(byId(h, `dep-spark-${OLD.id}`).length, 0, 'no small chart for a model with no requests in the last hour');
+assert.ok(!h.text().includes('$0.00 this month'), 'a cost that is not known is not shown as nothing');
+// "Deploy a model" with several projects asks which, and goes to that project.
+await h.click('dep-go-projects');
+await h.idle(80);
+assert.ok(h.text().includes("Which project's model do you want to deploy?") && byId(h, 'dep-deploy-in-shop').length === 1 && byId(h, 'dep-deploy-in-trail').length === 1, `asks which project: ${h.text().slice(0, 300)}`);
+await h.click('dep-deploy-in-trail');
+assert.deepEqual(globalThis.__shared['captain.scope'], { kind: 'project', id: 'trail', label: 'Trail gear' }, 'and goes to it');
+assert.equal(byId(h, 'dep-ask').length, 0, 'the question closes');
 assert.ok(byId(h, `dep-start-${OLD.id}`).length === 1 && byId(h, `dep-remove-${OLD.id}`).length === 1, 'with Start again and Remove from the cloud');
 assert.ok(t.includes('Build package') && t.includes('serving.zip') && t.includes('Build log') && !t.includes('| Made by the first deploy |') && !t.includes('s3://'), `each thing is named for what it is: ${t}`);
 assert.ok(t.includes('us-west-1') && !/us-west-1, aws\b/.test(t), 'a login named for its cloud is not repeated');
@@ -112,9 +121,10 @@ await h.click('dep-ask-no');
 // ---- one running ----
 h = await open({ deployed: { rows: [SHOP], asked, text: '1 deployed.', read_at: '' }, numbers: { shop: numbers(8640) } });
 t = h.text();
-assert.ok(t.includes('Demo shop') && t.includes('shop/starter-ranker@v2') && t.includes('Running on 1 copy.'), `the model, its version and its state in words: ${t}`);
+assert.ok(t.includes('Demo shop') && t.includes('starter-ranker, version 2') && !t.includes('shop/starter-ranker@v2') && t.includes('Running on 1 copy.'), `the model without its project said twice, and its state in words: ${t}`);
+assert.ok(t.includes('Deployed by dana, 2 h ago') && !t.includes('@example.com'), 'a person by the name before the @');
 assert.ok(t.includes('AWS, us-west-1, ml.t2.medium') && t.includes('8,640 requests in 24 hours, none failed, typically 3.1 ms'), `where, and its traffic: ${t}`);
-assert.ok(t.includes('$0.07 an hour, $14.30 this month') && t.includes('Deployed by dana, 2 h ago'), `cost and who: ${t}`);
+assert.ok(t.includes('$0.07 an hour, about $14.30 this month') && t.includes('Deployed by dana, 2 h ago'), `cost and who: ${t}`);
 assert.equal(byId(h, 'dep-spark-shop:staging').length, 1, 'a small chart of the last hour');
 for (const id of ['dep-open-shop:staging', 'dep-stop-shop:staging', 'dep-back-shop:staging']) assert.equal(byId(h, id).length, 1, `a running model has ${id}`);
 assert.ok(t.includes('Go back to an earlier version') && !t.includes('Start again') && !t.includes('Remove from the cloud'), 'a running model is stopped before it is removed');

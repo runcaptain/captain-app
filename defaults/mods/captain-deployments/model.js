@@ -173,7 +173,7 @@ export class ModelPage {
       .child(Button(c, "model-close", "All deployments", (_e, cx) => { this.close(); cx.notify(); }, { small: true }))
       .child(r.cloud === "local" ? svg(icon("monitor")).size(16).text_color(c.navy) : Brand(c, r.cloud, 16))
       .child(div().id("model-title").text_size(18).font_semibold().text_color(c.navy).child(r.project_name ?? r.name ?? ""))
-      .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(r.model_version ?? ""));
+      .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(r.model_label ?? r.model_version ?? ""));
     const top = v_flex().gap(6)
       .child(div().id("model-state").text_size(14).line_height("20px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
       .child(div().text_size(12.5).line_height("18px").text_color(c.grey500)

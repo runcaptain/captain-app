@@ -234,6 +234,17 @@ def cost(ctx: Context, pid: str, env: str = ENV, rec: dict | None = None) -> dic
     return _keep((ctx.workspace.name, pid, env, "cost", rec.get("id")), KEEP_COST_S, lambda: _cost(ctx, pid, env, rec))
 
 
+def _run_hours(rec: dict, since: dt.datetime, now: dt.datetime) -> float:
+    """The hours the record's last run was up after `since`, from when Captain started it to when it stopped (or to
+    now, while it runs). The fallback when a cloud does not say."""
+    try:
+        a = dt.datetime.fromisoformat(str(rec.get("started_at")))
+        b = now if rec.get("status") == "running" else dt.datetime.fromisoformat(str(rec.get("stopped_at")))
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, (b - max(a, since)).total_seconds() / 3600.0)
+
+
 def _cost(ctx: Context, pid: str, env: str, rec: dict) -> dict:
     from . import observe as OB
 
@@ -242,32 +253,52 @@ def _cost(ctx: Context, pid: str, env: str, rec: dict) -> dict:
     now = _now()
     day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     month = day.replace(day=1)
-    if cloud == "aws" and prov is not None and name and callable(getattr(prov, "metrics", None)):
+    up = rec.get("status") == "running"
+    machine = ((target or {}).get("config") or {}).get("instance_type")
+    rate = _hourly(ctx, cloud, target, rec, machine)
+    said_now = (f"About ${rate:.2f} an hour for each copy while it is up. " if up and rate else "Stopped, so it costs nothing now. " if not up else "")
+    why_not = None  # why the cloud's own count of hours was not used
+    if cloud == "aws" and prov is not None and name and callable(getattr(prov, "metrics", None)) and rate is not None:
         try:
             got = prov.metrics(name, month, now.replace(minute=0, second=0, microsecond=0) + dt.timedelta(hours=1), 3600, only=("reports",))
             reports = got.get("reports") or {}
             # One report a minute from each copy: 60 reports are one copy up for one hour.
             hours_month = sum(reports.values()) / 60.0
             hours_today = sum(v for t, v in reports.items() if t >= day.isoformat(timespec="seconds")) / 60.0
-            machine = ((target or {}).get("config") or {}).get("instance_type")
-            hourly = _hourly(ctx, "aws", target, rec, machine)
-            if hourly is not None:
-                up = rec.get("status") == "running"
-                return {"hourly_usd": round(hourly, 4) if up else 0.0, "rate_usd": round(hourly, 4), "today_usd": round(hours_today * hourly, 4),
-                        "month_usd": round(hours_month * hourly, 4), "copy_hours_today": round(hours_today, 2), "copy_hours_month": round(hours_month, 2),
-                        "machine": machine, "source": "cloud",
-                        "text": (f"About ${hourly:.2f} an hour for each copy while it is up. " if up else "Stopped, so it costs nothing now. ")
-                                + f"Today: {_money(hours_today * hourly)}. This month: {_money(hours_month * hourly)}. "
-                                  f"Worked out from the {hours_month:.1f} hours AWS saw a copy up this month, at the list price for {machine}. "
-                                  "Your AWS bill is the final word."}
-        except Exception:  # noqa: BLE001  fall through to Captain's own record
-            pass
+            if hours_month > 0:
+                return {"hourly_usd": round(rate, 4) if up else 0.0, "rate_usd": round(rate, 4), "today_usd": round(hours_today * rate, 4),
+                        "month_usd": round(hours_month * rate, 4), "copy_hours_today": round(hours_today, 2), "copy_hours_month": round(hours_month, 2),
+                        "machine": machine, "source": "cloud", "note": None,
+                        "text": said_now + f"Today: about {_money(hours_today * rate)}. This month: about {_money(hours_month * rate)}. "
+                                           f"Worked out from the {hours_month:.1f} hours AWS saw a copy up this month, at the list price for {machine}. "
+                                           "Your AWS bill is the final word."}
+            # AWS answered and counted no hours. For a model that ran, that is AWS not having the numbers (they
+            # can take a while, and a deleted endpoint's can be thin), not the model costing nothing.
+            why_not = "AWS reported no hours for it this month"
+        except Exception as e:  # noqa: BLE001
+            why_not = f"Captain couldn't read AWS's own numbers ({str(e)[:140]})"
     try:
         c = OB.cost(ctx, pid, env)
     except Exception:  # noqa: BLE001
         c = {}
-    hourly = c.get("hourly_usd") if c.get("hourly_usd") is not None else (rec.get("cost") or {}).get("hourly_usd")
-    return {"hourly_usd": hourly, "rate_usd": hourly, "today_usd": c.get("day_usd", c.get("last_24h_usd")), "month_usd": c.get("month_usd"),
-            "copy_hours_today": None, "copy_hours_month": None, "machine": None, "source": "record",
-            "text": (c.get("text") or "Captain has no cost for this deployment yet.")
-                    + ("" if cloud in ("local", "aws") else " Worked out from Captain's own record of when it was up, not from the cloud.")}
+    month_usd, today_usd, source = c.get("month_usd"), c.get("day_usd", c.get("last_24h_usd")), "record"
+    # Captain's own ledger can be empty for a run (it is written when a run is closed). The record still says when
+    # the model was started and stopped, and the rate is known: a model that ran for an hour did not cost nothing.
+    if rate and not month_usd:
+        h_month, h_today = _run_hours(rec, month, now), _run_hours(rec, day, now)
+        if h_month > 0:
+            month_usd, today_usd, source = round(h_month * rate, 4), round(h_today * rate, 4), "times"
+    shown = c.get("hourly_usd") if c.get("hourly_usd") is not None else (rec.get("cost") or {}).get("hourly_usd")
+    how = ("Worked out from when Captain started and stopped it, at the list price" + (f" for {machine}" if machine else "") + "."
+           if source == "times" else "Worked out from Captain's own record of when it was up.")
+    if cloud not in ("local", "aws"):
+        how += " Not from the cloud's own numbers."
+    if rec.get("scale_to_zero") and cloud != "local":  # Captain knows how long it was deployed, not how long a copy was awake
+        how += " It bills only while a copy is awake, so this is the most it can have cost."
+    return {"hourly_usd": (shown if up else 0.0) if cloud != "local" else shown, "rate_usd": rate if rate is not None else shown,
+            "today_usd": today_usd, "month_usd": month_usd, "copy_hours_today": None, "copy_hours_month": None, "machine": machine,
+            "source": source, "note": why_not,
+            "text": (c.get("text") if cloud == "local" or (not month_usd and not rate) else
+                     said_now + (f"Today: about {_money(today_usd)}. " if today_usd else "") + (f"This month: about {_money(month_usd)}. " if month_usd else "") + how)
+                    or "Captain has no cost for this deployment yet.",
+            **({"not_from_cloud": f"{why_not[0].upper()}{why_not[1:]}, so this is an estimate from Captain's own record."} if why_not else {})}

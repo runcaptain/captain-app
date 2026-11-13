@@ -195,12 +195,13 @@ def _row(pr: dict | None, env: str | None, rec: dict | None, cloud: str, login: 
     elif state == "starting":
         text = "Starting" + (f": {reason}" if reason else ".")
     elif state == "stopped":
-        text = "Stopped" + (f": {reason}" if reason else ".")
+        text = _stopped_words(reason, (rec or {}).get("stopped_at"))
     else:
         text = "Running" + (f" on {copies_now} " + ("copy" if copies_now == 1 else "copies") if copies_now else "") + "."
     return {"id": f"{pr['id']}:{env}" if pr else f"cloud:{cloud}:{login or ''}:{region or ''}:{name}",
             "project": pr["id"] if pr else (thing or {}).get("project"), "project_name": (pr.get("name") or pr["id"]) if pr else None,
             "env": env or (thing or {}).get("env"), "model_version": (rec or {}).get("model_version") if link != "unlinked" else None,
+            "model_label": model_words((rec or {}).get("model_version"), pr["id"] if pr else None) if link != "unlinked" else None,
             "cloud": cloud, "cloud_label": CLOUDS.get(cloud, cloud), "login": login, "region": region, "machine": machine, "where": where,
             "name": name, "thing": THING.get(cloud),
             "copies": {"now": copies_now, "min": (thing or {}).get("copies_min"), "max": (thing or {}).get("copies_max")},
@@ -208,11 +209,61 @@ def _row(pr: dict | None, env: str | None, rec: dict | None, cloud: str, login: 
             "since": (thing or {}).get("since") or (rec or {}).get("started_at"),
             "stopped_at": (rec or {}).get("stopped_at") if state in ("stopped", "gone") else None,
             "by": (rec or {}).get("started_by") or (thing or {}).get("by"),
+            "by_name": short_name((rec or {}).get("started_by") or (thing or {}).get("by")),
             "link": link, "record_status": (rec or {}).get("status"), "corrected": corrected,
             "resources": (thing or {}).get("resources") or [],
             "sleeps": bool((rec or {}).get("scale_to_zero")), "address": ((rec or {}).get("endpoint") or {}).get("url"),
             "can": ([] if link == "unknown" else ["link", "remove"] if link == "unlinked" else
                     ["open", "stop", "rollback"] if state in ("running", "asleep", "starting") else ["open", "start", "remove"])}
+
+
+def short_name(who) -> str | None:
+    """A person as a row says them: the part of an address before the @. The whole address is in `by`."""
+    w = str(who or "").strip()
+    return (w.split("@", 1)[0] or w) if w else None
+
+
+def model_words(version, project=None) -> str | None:
+    """A model version as a person reads it beside its project's name: "shop/starter-ranker@v2" is "starter-ranker,
+    version 2". The project is not said twice, and the version is a word."""
+    v = str(version or "").strip()
+    if not v:
+        return None
+    name, _, n = v.partition("@")
+    if project and name.startswith(f"{project}/"):
+        name = name[len(project) + 1:]
+    n = n[1:] if n[:1] == "v" and n[1:].isdigit() else n
+    return f"{name}, version {n}" if n else name
+
+
+def ago_words(when) -> str | None:
+    """How long ago, in words: "just now", "20 minutes ago", "3 hours ago", "2 days ago"."""
+    try:
+        s = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(str(when))).total_seconds()
+    except (TypeError, ValueError):
+        return None
+    if s < 90:
+        return "just now"
+    for size, word in ((86400, "day"), (3600, "hour"), (60, "minute")):
+        if s >= size:
+            n = int(s // size)
+            return f"{n} {word}{'s' if n != 1 else ''} ago"
+    return "just now"
+
+
+def _stopped_words(reason, when) -> str:
+    """One sentence for a stopped model: who or what stopped it, and when. The record's reason is a note
+    ("stopped by dana@example.com", "stopped by itself: no requests for 240 minutes"), not a sentence."""
+    r, ago = str(reason or "").strip().rstrip("."), ago_words(when)
+    when_said = f", {ago}" if ago else ""
+    if r.lower().startswith("stopped by itself"):
+        why = r.partition(":")[2].strip()
+        return f"Stopped by itself{when_said}" + (f": {why}." if why else ".")
+    if r.lower().startswith("stopped by "):
+        return f"Stopped by {short_name(r[len('stopped by '):])}{when_said}."
+    if r:
+        return f"Stopped{when_said}: {r[0].lower() + r[1:] if r[:2] != 'It' else r}."
+    return f"Stopped{when_said}." if ago else "Stopped."
 
 
 def _correct(ctx: Context, pr: dict, env: str, rec: dict, thing: dict | None, asked_ok: bool, region: str | None) -> tuple[dict, list[str]]:
