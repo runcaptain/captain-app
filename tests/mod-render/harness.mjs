@@ -1,6 +1,16 @@
 // A tiny host for a gpui-kit mod in Node (with stubs/register.mjs): a fake cx whose spawned tasks and timers the
 // test runs by hand, a render that walks the recorded element tree, virtual lists drawn for a chosen range, and
 // clicks by element id.
+// The most path operations one draw may build, over everything it paints. The app stops a draw that takes too long
+// and shows "This view could not be re-rendered"; a draw that built several thousand shapes did exactly that in a
+// real window while every render test passed. Counted on every draw the harness makes.
+export const SHAPES_PER_DRAW = 2000;
+export function shapesIn(tree) {
+  let n = 0;
+  (function w(e) { if (!e || typeof e !== 'object') return; if (e.kind === 'path') n += e.args?.[0]?.ops?.length ?? 0; for (const k of e.kids ?? []) w(k); })(tree);
+  return n;
+}
+
 export function harness(Mod) {
   const pending = [];
   const timers = [];
@@ -27,6 +37,8 @@ export function harness(Mod) {
     globalThis.__rendering = true;
     try { tree = mod.render(cx); } finally { globalThis.__rendering = false; }
     timings.push(performance.now() - t0);
+    const shapes = shapesIn(tree);
+    if (shapes > SHAPES_PER_DRAW) throw new Error(`one draw built ${shapes} shapes (the ceiling is ${SHAPES_PER_DRAW}): the app would stop it and show "This view could not be re-rendered"`);
     return tree;
   }
   function walk(e, f, ranges = {}) {

@@ -87,6 +87,7 @@ export default class NewEvaluation extends View {
       measure: "ndcg@10", mde: "0.003", population_size: "4000", expect: "", depths: {},
       // Measures left out of the run (none: every one the data allows), and what to slice by (null: the usual).
       skip: [], slices: null };
+    this.startAt = Math.max(1, Math.min(5, Number(given.step) || 1)); // the first step shown open
     this.sliceChoices = null; // a saved set's choices, from GET /api/evaluations/slices
     this.slicesFor = null;
     this.depthInputs = {}; // a field per measure that has a depth, made when the options arrive (never while drawing)
@@ -329,11 +330,16 @@ export default class NewEvaluation extends View {
   }
 
   section(c, id, n, title, ...children) {
+    // Opened at a later step (values.step, from a link or an agent that filled the earlier ones): the steps before
+    // it show their heading only, with a way to open them.
+    const folded = n < this.startAt;
     return v_flex().id(`ev-${id}`).flex_none().gap(8).pb(18)
       .child(h_flex().gap(8).items_center()
         .child(div().size(20).flex().flex_none().items_center().justify_center().bg(c.blueLight).text_color(c.blue).text_size(11.5).font_medium().child(String(n)))
-        .child(div().text_size(14).font_semibold().child(title)))
-      .children(children.flat().filter(Boolean));
+        .child(div().text_size(14).font_semibold().child(title))
+        .when(folded, (e) => e.child(div().id(`ev-show-${id}`).text_size(12).text_color(c.blue).cursor_pointer().hover((s) => s.underline())
+          .on_click((_e, cx) => { this.startAt = n; cx.notify(); }).child("Show"))))
+      .when(!folded, (e) => e.children(children.flat().filter(Boolean)));
   }
 
   label(c, text) { return div().text_size(12).text_color(c.grey500).child(text); }

@@ -34,6 +34,10 @@ const ARROW = 9; // the arrowhead's length, in layout units
 const DOT = 4; // the radius of the dot where a connector joins a box
 const GRID = 22; // the spacing of the canvas's dotted grid
 const GRID_DOTS = 500; // the most dots the grid draws
+const LANE = "\u0001"; // marks the id of a lane: the slot a connector takes through a column it skips
+const LANE_H = 10, LANE_GAP = 6; // a lane's height, and the space around it
+const MAX_FIT = 1.25; // Fit enlarges a small graph up to here: a box's title is then the size of body text
+const MARGIN = 24; // the space Fit leaves around the graph
 const RADIUS = 8; // a box's corners
 const ALL = 99; // every step, each way: the whole chain
 
@@ -136,11 +140,16 @@ export function untangle(cols, edges) {
       here.sort((x, y) => (score.get(x) - score.get(y)) || (was.get(x) - was.get(y)));
     }
   };
-  const fwd = out.map((_c, i) => i);
-  sweep(fwd);
-  sweep([...fwd].reverse());
-  sweep(fwd);
-  return out;
+  const fwd = out.map((_c, i) => i), back = [...fwd].reverse();
+  // Sweep back and forth, and keep the order with the fewest crossings seen: a sweep can make things worse before
+  // the next makes them better, and a few passes are not always enough for a wide middle.
+  let best = out.map((c) => [...c]), least = crossings(best, edges);
+  for (let pass = 0; pass < 12 && least > 0; pass++) {
+    sweep(pass % 2 ? back : fwd);
+    const n = crossings(out, edges);
+    if (n < least) { least = n; best = out.map((c) => [...c]); }
+  }
+  return best;
 }
 
 /** How many pairs of edges between neighbouring columns cross, for a layout: fewer is easier to read. */
@@ -214,10 +223,19 @@ export class LineageGraph {
   }
 
   /** Zoom and pan so the whole graph fits the canvas. */
+  /** The zoom that shows the whole graph in a canvas w by h with a margin: a big graph shrinks to fit, and a small
+   *  one grows to fill the canvas, up to MAX_FIT, never left tiny in the middle. */
+  fitZoom(L, w, h) {
+    return Math.max(0.3, Math.min(MAX_FIT, (w - MARGIN * 2) / Math.max(1, L.width - PAD * 2), (h - MARGIN * 2) / Math.max(1, L.height - PAD * 2)));
+  }
+
   fit(L, w, h) {
-    const z = Math.min(1, Math.max(0.3, Math.min((w - 16) / Math.max(1, L.width), (h - 16) / Math.max(1, L.height))));
+    const z = this.fitZoom(L, w, h);
     this.zoom = z;
-    this.pan = { x: (w - L.width * z) / 2, y: (h - L.height * z) / 2 };
+    // Centred when it fills the width; a graph narrower than the canvas starts at the left, at mid height, where
+    // reading starts.
+    const gw = (L.width - PAD * 2) * z, gh = (L.height - PAD * 2) * z;
+    this.pan = { x: (gw >= w - MARGIN * 2 - 1 ? (w - gw) / 2 : MARGIN) - PAD * z, y: (h - gh) / 2 - PAD * z };
   }
 
   /** The layout's size with dragged nodes counted. */
@@ -241,25 +259,49 @@ export class LineageGraph {
     const cols = new Map();
     for (const [id, l] of level) if (byId.has(id)) { if (!cols.has(l)) cols.set(l, []); cols.get(l).push(byId.get(id)); }
     const order = [...cols.keys()].sort((a, b) => a - b);
-    const tallest = Math.max(1, ...[...cols.values()].map((v) => v.length));
-    const height = PAD * 2 + tallest * NODE_H + (tallest - 1) * GAP_Y;
     const pos = new Map();
     // By name first, so the same graph always starts the same; then untangled.
     const named = order.map((l) => cols.get(l).sort((a, b) => String(a.label ?? a.id).localeCompare(String(b.label ?? b.id))).map((n) => n.id));
-    const all0 = (this.graph.edges ?? []).map(ends);
-    const sorted = untangle(named, all0);
-    order.forEach((l, ci) => {
-      const col = sorted[ci].map((id) => byId.get(id));
-      const colH = col.length * NODE_H + (col.length - 1) * GAP_Y;
-      const top = PAD + (height - PAD * 2 - colH) / 2;
-      col.forEach((n, i) => pos.set(n.id, { x: PAD + ci * (NODE_W + GAP_X), y: top + i * (NODE_H + GAP_Y), level: l }));
+    const colOf = new Map();
+    named.forEach((col, ci) => col.forEach((id) => colOf.set(id, ci)));
+    const edges = (this.graph.edges ?? []).map(ends).filter(([a, b]) => colOf.has(a) && colOf.has(b));
+    // A connector that skips a column gets a lane in each column it passes: a thin slot between the boxes, ordered
+    // with them, so it runs through a gap and never across a box.
+    const lanes = new Map(); // "a\u0000b" -> the lane ids, left to right
+    const chain = [];
+    for (const [a, b] of edges) {
+      const ca = colOf.get(a), cb = colOf.get(b);
+      if (cb - ca <= 1) { chain.push([a, b]); continue; }
+      const ids = [];
+      // One lane per box per column it skips: every connector leaving that box for a far column shares it, as one
+      // line, and they fan out after the last one. Five long connectors from one model are one lane, not five.
+      for (let ci = ca + 1; ci < cb; ci++) { const id = `${LANE}${a}${LANE}${ci}`; ids.push(id); if (!named[ci].includes(id)) named[ci].push(id); }
+      lanes.set(`${a}\u0000${b}`, ids);
+      [a, ...ids, b].forEach((x, i, all) => { if (i) chain.push([all[i - 1], x]); });
+    }
+    const sorted = untangle(named, chain);
+    const tall = (id) => (id.startsWith(LANE) ? LANE_H : NODE_H);
+    const gap = (id) => (id.startsWith(LANE) ? LANE_GAP : GAP_Y);
+    const colH = (col) => col.reduce((t, id, i) => t + tall(id) + (i ? Math.max(gap(id), gap(col[i - 1])) : 0), 0);
+    const height = PAD * 2 + Math.max(NODE_H, ...sorted.map(colH));
+    const via = new Map(); // a lane's place: {x, y} of its left end, y at its middle
+    sorted.forEach((col, ci) => {
+      let y = PAD + (height - PAD * 2 - colH(col)) / 2;
+      col.forEach((id, i) => {
+        if (i) y += Math.max(gap(id), gap(col[i - 1]));
+        const x = PAD + ci * (NODE_W + GAP_X);
+        if (id.startsWith(LANE)) via.set(id, { x, y: y + LANE_H / 2 });
+        else pos.set(id, { x, y, level: order[ci] });
+        y += tall(id);
+      });
     });
+    const routes = new Map([...lanes].map(([k, ids]) => [k, ids.map((id) => via.get(id))]));
+    const columns = sorted.map((col) => col.filter((id) => !id.startsWith(LANE)));
     const width = PAD * 2 + order.length * NODE_W + Math.max(0, order.length - 1) * GAP_X;
-    const edges = (this.graph.edges ?? []).map(ends).filter(([a, b]) => pos.has(a) && pos.has(b));
     const hidden = { up: 0, down: 0 };
     const all = this.focus ? levels(this.graph, this.focus, 99, 99) : new Map();
     for (const [, l] of all) { if (l < -this.up) hidden.up++; if (l > this.down) hidden.down++; }
-    this.cache = { key, pos, width, height, edges, byId, hidden, columns: sorted };
+    this.cache = { key, pos, width, height, edges, byId, hidden, columns, routes };
     return this.cache;
   }
 
@@ -272,7 +314,7 @@ export class LineageGraph {
     return null;
   }
 
-  curve(p, a, b) {
+  curve(p, a, b, lanes = []) {
     // On screen: layout coordinates scaled by the zoom and moved by the pan.
     const z = this.zoom, T = (q) => ({ x: q.x * z + this.pan.x, y: q.y * z + this.pan.y });
     a = T(a); b = T(b);
@@ -282,9 +324,18 @@ export class LineageGraph {
     // Forward, the curve leans half the gap. A box that reads from one beside it or behind it (same column, or an
     // earlier one) gets a wide loop out to the right and back in from the left: with a short lean it drew as a
     // straight slash across the boxes.
-    const gap = end - x1;
-    const dx = gap >= 24 * z ? Math.max(24 * z, gap / 2) : Math.max(70 * z, Math.abs(gap) / 2 + 50 * z);
-    return p.move_to(x1, y1).cubic_bezier_to(end, y2, x1 + dx, y1, end - dx, y2);
+    const lean = (from, to) => { const g = to - from; return g >= 24 * z ? Math.max(24 * z, g / 2) : Math.max(70 * z, Math.abs(g) / 2 + 50 * z); };
+    p = p.move_to(x1, y1);
+    let cx = x1, cy = y1;
+    // A connector that skips columns bends into its lane in each one, runs straight through the gap between the
+    // boxes there, and bends out again.
+    for (const v of lanes) {
+      const q = T(v), d = lean(cx, q.x);
+      p = p.cubic_bezier_to(q.x, q.y, cx + d, cy, q.x - d, q.y).line_to(q.x + NODE_W * z, q.y);
+      cx = q.x + NODE_W * z; cy = q.y;
+    }
+    const d = lean(cx, end);
+    return p.cubic_bezier_to(end, y2, cx + d, cy, end - d, y2);
   }
 
   /** The arrowhead at the box an edge points to: a small filled triangle, its point on the box's left edge. */
@@ -384,7 +435,11 @@ export class LineageGraph {
     const paint = globalThis.window?.paint_path;
     // Before the zoom is read: the fit sets it.
     // As tall as the host gives it, so the chain has room; else sized to the graph.
-    const H = opts.height > 0 ? Math.max(300, opts.height) : Math.max(320, Math.min(620, L.height + 16));
+    // The canvas is as tall as the graph needs at the size it will be drawn (a short chain gets a short canvas),
+    // within what the host has room for.
+    const room = opts.height > 0 ? Math.max(260, opts.height) : 620;
+    const zw = opts.width > 0 ? Math.min(MAX_FIT, (opts.width - MARGIN * 2) / Math.max(1, L.width - PAD * 2)) : 1;
+    const H = Math.round(Math.max(220, Math.min(room, (L.height - PAD * 2) * Math.max(0.3, zw) + MARGIN * 2 + 24)));
     if (opts.width > 0) {
       this.view = { w: opts.width, h: H };
       // Fitted when it first has boxes, and again whenever the canvas changes size or the graph grows (a screen
@@ -394,9 +449,7 @@ export class LineageGraph {
       if (L.pos.size && (!this.fitted || (!this.touched && sized !== this.fitFor))) {
         this.fitted = true;
         this.fitFor = sized;
-        const E = this.extent(L);
-        if (E.w > opts.width || E.h > H) this.fit(L, opts.width, H);
-        else { this.zoom = 1; this.pan = { x: Math.max(0, (opts.width - E.w) / 2), y: Math.max(0, (H - E.h) / 2) }; }
+        this.fit(L, opts.width, H);
       }
     }
     const z = this.zoom;
@@ -417,7 +470,7 @@ export class LineageGraph {
       if (!paint || !list.length) return null;
       let p = PathBuilder.stroke(width);
       let heads = PathBuilder.fill();
-      for (const [a, b] of list) { p = this.curve(p, this.at(L, a), this.at(L, b)); heads = heads.add_polygon(this.head(this.at(L, b)), true); }
+      for (const [a, b] of list) { p = this.curve(p, this.at(L, a), this.at(L, b), L.routes.get(`${a}\u0000${b}`) ?? []); heads = heads.add_polygon(this.head(this.at(L, b)), true); }
       return div().absolute().top(0).left(0).size_full()
         .child(div().absolute().inset_0().child(paint(p.build(), color)))
         .child(div().absolute().inset_0().child(paint(heads.build(), color)));
@@ -484,7 +537,7 @@ export class LineageGraph {
         .children(cols.map((col) => {
           const name = typeof col === "string" ? col : col.name;
           const on = this.column === name;
-          return div().id(`${this.id}-col-${name}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer().font_family(MONO)
+          return div().id(`${this.id}-col-${name}`).h(22).px(6).flex().flex_none().items_center().cursor_pointer()
             .border_1().border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.grey900)
             .on_click((_e, cx) => { this.column = on ? null : name; if (on) this.colEdges = []; this.cache = null; this.onColumn?.(this.column, cx); cx.notify(); })
             .child(name);
