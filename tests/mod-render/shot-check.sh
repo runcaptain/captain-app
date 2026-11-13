@@ -390,6 +390,10 @@ def find(n):
         if r: return r
 n = find(d)
 n["content"] = {"mod": mod, "props": json.loads(props)} if json.loads(props) else {"mod": mod}
+# SHOT_THEME=captain-light or captain-dark: the view in that theme, so every state is seen in both.
+import os
+if os.environ.get("SHOT_THEME"):
+    d["theme"] = os.environ["SHOT_THEME"]
 json.dump(d, open(p, "w"), indent=2)
 EOF
   sleep 2

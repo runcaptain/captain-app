@@ -9,7 +9,7 @@ import * as UI from "./kit/ui.js";
 import { Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
-import { ago, money, ms, count, BarChart, Updated } from "./words.js";
+import { ago, money, ms, count, BarChart, Updated, middle } from "./words.js";
 
 const RANGES = [["15m", "15 minutes"], ["1h", "1 hour"], ["24h", "24 hours"], ["7d", "7 days"]];
 // Two submenus, never more: the numbers, and everything else about this model on one scrolling page.
@@ -195,41 +195,56 @@ export class ModelPage {
     return this.part === "traffic" ? this.traffic(c) : this.details(c);
   }
 
-  render(c, _cx) {
+  render(c, _cx, card = null) {
     const r = this.row;
     const wrong = r.state === "failed" || r.state === "gone";
     const head = h_flex().h(56).flex_none().px(24).gap(12).items_center().border_b(1).border_color(c.rule)
       .child(Button(c, "model-close", "All deployments", (_e, cx) => { this.close(); cx.notify(); }, { small: true }))
       .child(r.cloud === "local" ? svg(icon("monitor")).size(16).text_color(c.navy) : Brand(c, r.cloud, 16))
       .child(div().id("model-title").text_size(18).font_semibold().text_color(c.navy).child(r.project_name ?? r.name ?? ""))
-      .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(r.model_label ?? r.model_version ?? ""))
+      // The model's name is on its card, just below: said once.
+      .child(div().flex_1())
       // The page keeps itself current, as the list does: when it was read, or that the cloud could not be reached.
       .child(Updated(c, "model-updated", { readAt: this.readAt, live: Boolean(this.isLive?.()), icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.refresh(cx),
         problem: this.where && this.where.from_cloud === false && /could not be asked/.test(this.where.text ?? "") ? `${r.cloud_label} could not be reached. Trying again.` : null }));
+    // The page opens with the model's own card, the same one the list shows.
     const top = v_flex().gap(6)
-      .child(div().id("model-state").text_size(14).line_height("20px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
-      .children((r.corrected ?? []).map((x) => div().text_size(12.5).line_height("18px").text_color(c.grey500).child(x)))
+      .child(card ?? div().id("model-state").text_size(14).line_height("20px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
       .when(Boolean(this.busy), (e) => e.child(div().id("model-busy").text_size(13).text_color(c.navy).child(`${this.busy}...`)))
       .when(Boolean(this.note), (e) => e.child(div().id("model-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)));
     const parts = h_flex().id("model-parts").child(Submenus(c, PARTS, this.part, (id, cx) => { this.part = id; cx.notify(); }));
     // Where it runs: first on the page, as a small table. Each value says whether it was read from the cloud or
     // comes from Captain's record. What a person copies (the address, a test request, the log's name) has Copy.
     const w = this.where;
-    const where = v_flex().id("model-where").gap(2)
-      .child(div().pb(4).text_size(14).font_semibold().text_color(c.navy).child("Where it runs"))
-      .children((w?.facts ?? []).map((f) => h_flex().id(`model-where-${f.id}`).gap(12).py(5).items_start().border_b(1).border_color(c.rule)
-        .child(div().w(128).flex_none().text_size(12.5).line_height("18px").text_color(c.grey500).child(f.label))
-        .child(f.copy
-          // The code font only for what is copied. A request of several lines shows its first, and Copy takes it all.
-          // An address or a name wraps and is never cut: in a narrow window the address read "https://ru..." and
-          // said nothing. A command stays on one line, because wrapped it ran to ten.
-          ? div().id(`model-where-${f.id}-value`).flex_1().min_w(0).when(/\s/.test(String(f.value).trim()), (e) => e.truncate()).text_size(12.5).line_height("18px").font_family(MONO).text_color(c.navy)
-            .child(String(f.value).split("\n").find((x) => x.trim() && !x.trim().startsWith("#")) ?? String(f.value))
-          : div().id(`model-where-${f.id}-value`).flex_1().min_w(0).text_size(13).line_height("18px").text_color(c.navy).child(String(f.value)))
-        .when(Boolean(f.copy), (e) => e.child(Button(c, `model-where-${f.id}-copy`, this.copiedFact === f.id ? "Copied" : "Copy",
-          (_e, cx) => { cx.write_to_clipboard?.(String(f.value)); this.copiedFact = f.id; cx.notify(); }, { small: true })))
-        .child(div().w(128).flex_none().text_size(12).line_height("18px").text_color(c.grey500).child(f.source_text ?? ""))))
-      .child(div().id("model-where-text").pt(6).text_size(12.5).line_height("18px").text_color(c.grey500).child(w ? (w.text ?? "") : "Reading where it runs..."));
+    // What a person copies (the address, a test request, the log's name) is a row of its own, the full width,
+    // with a Copy icon. Every other fact is a label over its value, two to a row. Each says where it was read from.
+    const facts = w?.facts ?? [];
+    const from = (f) => (f.source_text ? ` · ${String(f.source_text).replace(/^From /, "from ")}` : "");
+    const label = (f) => div().text_size(12.5).line_height("18px").text_color(c.grey500).child(`${f.label}${from(f)}`);
+    const copyRow = (f) => v_flex().id(`model-where-${f.id}`).gap(4)
+      .child(label(f))
+      .child(h_flex().h(34).pl(12).pr(4).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
+        // A request of several lines shows its first, and Copy takes it all.
+        .child(div().id(`model-where-${f.id}-value`).flex_1().min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(c.navy)
+          // Never wrapped: a long one is cut in its middle, so its start and the part that names the thing show.
+          .child(middle(String(f.value).split("\n").find((x) => x.trim() && !x.trim().startsWith("#")) ?? String(f.value), 76)))
+        .child(div().id(`model-where-${f.id}-copy`).size(26).flex().flex_none().items_center().justify_center().cursor_pointer()
+          .text_color(this.copiedFact === f.id ? c.good : c.grey500).hover((x) => x.text_color(c.navy))
+          .accessibility_label(`Copy ${String(f.label).toLowerCase()}`).tooltip(this.copiedFact === f.id ? "Copied" : "Copy")
+          .on_click((_e, cx) => { cx.write_to_clipboard?.(String(f.value)); this.copiedFact = f.id; cx.notify(); })
+          .child(svg(icon(this.copiedFact === f.id ? "check" : "copy")).size(14))));
+    const plain = facts.filter((f) => !f.copy);
+    const pairs = [];
+    for (let i = 0; i < plain.length; i += 2) pairs.push(plain.slice(i, i + 2));
+    const cell = (f) => v_flex().id(`model-where-${f.id}`).flex_1().min_w(0).gap(2)
+      .child(label(f))
+      .child(div().id(`model-where-${f.id}-value`).text_size(13).line_height("19px").text_color(c.navy).child(String(f.value)));
+    const where = v_flex().id("model-where").w_full().bg(c.surface).border_1().border_color(c.rule).p(20).gap(16)
+      .child(div().text_size(14).font_semibold().text_color(c.navy).child("Where it runs"))
+      .children(facts.filter((f) => f.copy).map(copyRow))
+      .children(pairs.map((pair) => h_flex().gap(24).items_start().children(pair.map(cell)).when(pair.length === 1, (e) => e.child(div().flex_1()))))
+      .child(div().id("model-where-text").pt(12).border_t(1).border_color(c.rule).text_size(12.5).line_height("18px").text_color(c.grey500)
+        .child(w ? (w.text ?? "") : "Reading where it runs..."));
     return v_flex().id("model-page").size_full().child(head)
       .child(div().id("model-body").flex_1().min_h(0).overflow_y_scroll().px(24).py(18).child(v_flex().gap(18).child(top).child(where).child(parts).child(this.body(c))));
   }

@@ -85,6 +85,9 @@ globalThis.fetch = async (url, opts = {}) => {
   if (/\/ab(\/|$)/.test(p)) return reply(404, { detail: 'Not Found' });
   if (p.endsWith('/staging/query')) return reply(200, { query: body.query, same_order: false, moved: 2, staged: { model_version: 'shop/starter-ranker@v2', ms: 2.7, results: [{ id: 'p1', position: 1, title: 'Rain Jacket' }] },
     baseline: { model_version: 'shop/keyword-baseline@v1', ms: 0.3, results: [{ id: 'p2', position: 1, title: 'Wind Jacket' }] } });
+  // The Deployments list and a model's numbers: what the model's own card is drawn from.
+  if (p === '/api/deployed') return world.deployed ? reply(200, world.deployed) : reply(404, { detail: 'not here' });
+  if (p.endsWith('/deployed/numbers')) return reply(200, world.numbers ?? { buckets: [], summary: {}, cost: null });
   if (p.endsWith('/staging')) return reply(200, world.staging);
   return reply(200, {});
 };
@@ -489,6 +492,27 @@ h = await open({ places: [LOCAL, AWS], staging: STOPPED }, true);
 t = h.text();
 assert.ok(t.includes('Stopped. Nothing is running and nothing is billing.') && byId(h, 'ship-stop').length === 0 && byId(h, 'ship-address').length === 0, `stopped: ${t}`);
 assert.ok(t.includes('Where should starter-ranker@v2 run?') && byId(h, 'ship-deploy-aws:aws-main').length === 1, 'and it can be deployed again from the same screen');
+
+// Once deployed, the section is the model's own card and nothing else: the same card the Deployments screen shows.
+{
+  const pid = h.mod.ship.pid();
+  const CARD = { id: `${pid}:staging`, project: pid, project_name: 'Demo shop', env: 'staging', model_version: 'shop/starter-ranker@v2', model_label: 'starter-ranker, version 2',
+    cloud: 'aws', cloud_label: 'AWS', region: 'us-west-1', state: 'running', state_text: 'Running on 1 copy.', in_cloud: true, link: 'linked', by: 'dana@example.com', by_name: 'dana',
+    since: new Date(Date.now() - 7200000).toISOString(), address: 'https://runtime.sagemaker.us-west-1.amazonaws.com/endpoints/captain-shop/invocations',
+    account: 'account ending 1234', machine_words: 'ml.t2.medium: 2 virtual CPUs, 4 GB memory', copies_words: '1 copy up now' };
+  const hc = await open({ places: [LOCAL, AWS], staging: RUN, deployed: { rows: [CARD] },
+    numbers: { buckets: Array.from({ length: 12 }, () => ({ requests: 10, errors: 0 })), summary: { p50_ms: 3.1 }, cost: { hourly_usd: 0.066, month_usd: 14.3 } } });
+  await wait(hc, () => hc.mod.ship.depRow && hc.mod.ship.depNums, 'the card\'s row and numbers are read');
+  await hc.idle(30);
+  const tc = hc.text();
+  for (const id of ['ship-deployed', `dep-row-${CARD.id}`, `dep-dot-${CARD.id}`, `dep-traffic-${CARD.id}`, `dep-cost-${CARD.id}`, 'ship-stop', 'ship-open-in-deployments'])
+    assert.equal(byId(hc, id).length, 1, `the model's card on the project page has ${id}`);
+  for (const part of ['starter-ranker, version 2', 'Running on 1 copy.', 'Traffic', '120', 'Speed', '3.1 ms', 'Cost', '$0.07', 'Details', 'Stop', 'dana, '])
+    assert.ok(tc.includes(part), `the card says ${part}: ${tc.slice(0, 600)}`);
+  assert.ok(byId(hc, 'ship-places').length === 0 && !tc.includes('Where should'), 'and nothing else: no places to deploy while it is deployed');
+  await hc.click('ship-stop');
+  assert.ok(sent.some((x) => x[0] === 'POST' && x[1].endsWith('/unstage')), 'Stop on the card stops it');
+}
 
 for (const w of [{}, { places: [LOCAL, AWS] }]) assert.ok(!/[←-⇿—–]/.test((await open(w)).text()), 'plain punctuation only');
 console.log('ship section render test: ok');
