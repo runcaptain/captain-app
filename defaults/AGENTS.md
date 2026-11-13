@@ -1195,6 +1195,11 @@ Explorer, opens its page. With no project it offers New project, which can pin a
   logged clicks where under half of a candidate's top 10 has grades reads "Too few judged results to call". Import
   a model version brings one from MLflow or a registry. Rows open to: the comparison, Rerun with changes, Judge against the baseline,
   Make it the baseline (with its evidence) and Publish to the registry.
+- **New project**: name first, then "What are you building?" (search ranking from events, search ranking with
+  judgments, recommendations, your own pipeline, or "Something else" with the person's own description), then
+  the inputs as a list to add to, rename and remove before creating (filled from the kind, never locked), then
+  how it trains: Captain's built-in ranker, their own training command, or their own repo.
+  `POST /api/projects {name, kind, what?, slots?, trainer?}`. A wrong form makes no project.
 - **Ship, in short**: 1 Deploy, 2 Try it, 3 Use it from your site. It ends at a running endpoint with its address. The Deploy row says
   where the model runs and who can reach it ("Running on this computer. Only this computer can reach it."). Step
   3 shows the code a site pastes (`cst projects staging-connect <project> --code python`), a Copy button for the

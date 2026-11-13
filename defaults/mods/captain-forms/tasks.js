@@ -84,6 +84,9 @@ export async function recipes() {
   return (Array.isArray(list) && list.length ? list : FALLBACK_RECIPES).map((x) => ({ ...x, title: x.label ?? x.title, about: x.description ?? x.about, needs: needsOf(x),
     icon: RECIPE_ICONS[x.id] ?? (x.source && x.source !== "builtin" ? "users" : "workflow"), team: Boolean(x.source && x.source !== "builtin") }));
 }
+// What an input can be, in the words the page uses, with the dataset kind the services know it by.
+const INPUT_KINDS = [{ value: "catalog", label: "Products" }, { value: "events", label: "Events" }, { value: "queries", label: "Queries" },
+  { value: "judgments", label: "Labels" }, { value: "generic", label: "A table" }, { value: "any", label: "Something else" }];
 const recipeOptions = (ctx) => (ctx.recipes ?? []).map((r) => ({ value: r.id, label: r.title, about: r.about, needs: r.needs, icon: r.icon, chip: r.team ? "your team's" : null }));
 // A project's inputs: each slot's title and the dataset kinds it takes (project_state.SLOTS).
 const SLOT_WORDS = { catalog: ["Catalog", ["catalog"]], events: ["Events", ["events", "logs"]], queries: ["Queries", ["queries"]],
@@ -180,21 +183,43 @@ export const TASKS = [
   },
   {
     id: "project", label: "New project", icon: "workflow",
-    about: "Start with what you're building. It decides which inputs the project asks for, and you can add or remove inputs later.",
+    about: "Name it, say what you're building, and list what it reads. Nothing here is fixed: inputs and the trainer can be changed on the project's page.",
     load: async () => ({ recipes: await recipes() }),
     fields: [
-      { key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true, options: recipeOptions },
       { key: "name", label: "Name", placeholder: "Outdoor store search", required: true },
+      { key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true,
+        options: (ctx) => [...recipeOptions(ctx), { value: "other", label: "Something else", icon: "plus", about: "Any other model. Say what it is, then list what it reads.", needs: "whatever your training reads." }] },
+      { key: "what", label: "What is it?", required: true, placeholder: "A fraud score for each payment, from past chargebacks", when: (v) => v.recipe === "other",
+        help: "In your own words." },
+      // The inputs, filled from the kind picked above and then the person's: add, rename and remove before creating.
+      { key: "inputs", label: "Inputs", kind: "rows", when: (v) => Boolean(v.recipe), seedOn: (v) => v.recipe, placeholder: "Product embeddings",
+        seed: (ctx, v) => ((ctx.recipes ?? []).find((r) => r.id === v.recipe)?.slots ?? []).map((x) => ({ id: x.id, label: x.label ?? x.id, kind: (x.accepts ?? ["any"])[0], required: Boolean(x.required) })),
+        kinds: INPUT_KINDS, addLabel: "Add an input", empty: "No inputs yet. Add what your training reads, or add them later on the project's page.",
+        help: "What training reads. Rename one, remove one, or add your own. You choose the data for each on the project's page." },
+      { key: "trainer", label: "How is it trained?", kind: "choice", required: true, default: (v) => (String(v.recipe ?? "").startsWith("search-") ? "builtin" : "command"), resetOn: "recipe",
+        when: (v) => Boolean(v.recipe),
+        options: [{ value: "builtin", label: "Captain's built-in ranker" }, { value: "command", label: "My own training command" }, { value: "repo", label: "My own repo" }],
+        help: (_ctx, v) => (v.trainer === "builtin" ? "A search ranker Captain trains from products and search events. It needs both among the inputs."
+          : v.trainer === "repo" ? "Captain runs the command in your repo. It reads the inputs and reports its results."
+          : "Any command. It reads the inputs and reports its results.") },
+      { key: "repo", label: "Repo address", required: true, placeholder: "https://github.com/your-team/ranker.git", when: (v) => v.trainer === "repo" },
+      { key: "command", label: "Training command", placeholder: "python train.py", optional: true, when: (v) => v.trainer === "command" || v.trainer === "repo" },
       { key: "description", label: "What it's for", optional: true, placeholder: "Product search for the outdoor storefront" },
     ],
     submit: async (v) => {
-      const r = await api("/api/projects", { body: { name: v.name.trim(), kind: v.recipe, ...(v.description ? { description: v.description.trim() } : {}) } });
+      const inputs = (v.inputs ?? []).map((x) => ({ ...(x.id ? { id: x.id } : {}), label: String(x.label ?? "").trim(), kind: x.kind, ...(x.required ? { required: true } : {}) }));
+      if (inputs.some((x) => !x.label)) return { ok: false, error: "Every input needs a name. Name it, or remove it." };
+      // Only what the form was given is sent: with no list of inputs the kind's own are used, as before.
+      const body = { name: v.name.trim(), kind: v.recipe, ...(v.inputs !== undefined ? { slots: inputs } : {}),
+        ...(v.trainer ? { trainer: { how: v.trainer, ...(v.command && v.trainer !== "builtin" ? { command: v.command.trim() } : {}), ...(v.trainer === "repo" ? { repo: String(v.repo ?? "").trim() } : {}) } } : {}),
+        ...(v.recipe === "other" ? { what: String(v.what ?? "").trim() } : {}), ...(v.description ? { description: v.description.trim() } : {}) };
+      const r = await api("/api/projects", { body });
       const made = ok(r, "");
       if (!made.ok) return made;
       setShared("captain.explorer.rev", Date.now()); // the Explorer lists it now
       setShared("captain.scope", { kind: "project", id: r.data?.id, label: r.data?.name ?? v.name.trim() });
       runCommand("layout.select", { stack: "sections", child: "project" });
-      return { ok: true, message: `Project ${v.name.trim()} made. Its inputs come next.` };
+      return { ok: true, message: `Project ${v.name.trim()} made. Choose the data for its inputs next.` };
     },
   },
   // ---- a project's own tasks: opened from its page with its values preset (project, pins, champion, registry) ----
