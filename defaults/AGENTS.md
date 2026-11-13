@@ -1243,10 +1243,18 @@ runs, and the name it is saved under.
 - **The setup is saved under its name as a test.** The same name again is the same test on another model, and
   its runs line up in Runs, Compare. "Run it on another model" on an evaluation opens the form on that test:
   pick the model and run. `cst app open form:backtest --value test=<name>` does the same for a person.
-- Three things the owner asked for are not something a run can do, so the form says them instead of drawing a
-  control that does nothing: how many results deep (each measure looks 10 deep, recall 50), which slices (a
-  run always reports by group and by traffic), and which measures to compute (all of them).
-  `GET /api/evaluations/options` lists these under `not_yet`, with the reason.
+- **How many results deep each measure looks is a field** under Limits: nDCG, Precision, Recall and MRR, each
+  starting at its usual depth (10, 10, 50, 50), up to 200. The plan keeps what differs (`depths`,
+  `cst`'s `POST /api/backtests {depths: {"ndcg@10": 20}}`), the run records every depth it looked, and the
+  measure's key keeps its usual name. So read a run's `depths` before its numbers: `ndcg@10` in a run with
+  `depths["ndcg@10"] == 20` is nDCG at 20, and the screens say "nDCG@20".
+- **A run measured at other depths says so in its verdict sentence** ("... on nDCG@20. nDCG looks 20 results
+  deep, not the usual 10. Human graded."), in its warnings and in its report. Two runs at different depths are
+  never compared as the same measure: `GET /api/compare-runs` lists it as `different-depth`. Say the depth
+  whenever you quote such a number.
+- Two things the owner asked for are not something a run can do yet, so the form says them instead of drawing
+  a control that does nothing: which slices (a run always reports by group and by traffic), and which measures
+  to compute (all of them). `GET /api/evaluations/options` lists these under `not_yet`, with the reason.
 - From a terminal the same thing is `cst backtest plan` then `cst backtest run`.
 
 ## Captain project page (Projects)

@@ -95,7 +95,9 @@ def test_the_form_offers_only_what_a_run_can_do(ctx):
             ops.backtest_plan(ctx, "opt-check", ["demo-bm25", "demo-tuned"], "demo-queries", "demo-judgments", None, "x", m["id"], 0.003, dry_run=True)
     assert {x["id"] for x in o["limits"]} == {"mde", "population_size"} and all("default" in x for x in o["limits"])
     # What was asked for and a run can't do is named, with the reason, instead of being a control that does nothing.
-    assert {x["what"] for x in o["not_yet"]} == {"How many results deep", "Which slices", "Which measures to compute"}
+    assert {x["what"] for x in o["not_yet"]} == {"Which slices", "Which measures to compute"}
+    # Depth is real now: a field per measure that has one, starting at the usual depth.
+    assert {d["id"]: d["default"] for d in o["depths"]} == M.DEFAULT_DEPTHS and all(d["max"] == M.MAX_DEPTH for d in o["depths"])
 
 
 def test_routes(ctx, pairs, monkeypatch):

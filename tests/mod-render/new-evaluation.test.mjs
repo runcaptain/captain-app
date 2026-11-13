@@ -24,6 +24,7 @@ globalThis.__routes = [
   [/^\/api\/backtests$/, 'plan', 'POST'],
   [/^\/api\/backtests$/, 'backtests'],
   [/^\/api\/backtests\/[^?]+\/run$/, 'started', 'POST'],
+  [/^\/api\/backtests\/deep-test$/, 'backtest-deep'],
   [/^\/api\/backtests\/[^?]+$/, 'backtest'],
   [/^\/api\/testsets\/preview$/, 'preview', 'POST'],
   [/^\/api\/testsets$/, 'made', 'POST'],
@@ -112,10 +113,27 @@ assert.equal(h.byIdPrefix('ev-measure-ctr')[0].call('on_click'), undefined, 'not
 await h.click('ev-measure-mrr');
 assert.equal(h.mod.v.measure, 'mrr');
 await h.click('ev-measure-ndcg@10');
-// Depth and slices are fixed by the runner: said, never drawn as a control that does nothing.
+// Slices are fixed by the runner: said, never drawn as a control that does nothing.
 assert.ok(t.includes('first 10') && t.includes('first 50'), 'each measure says how deep it looks');
 assert.ok(t.includes('Each run also reports its results by group') && t.includes('by traffic'), 'the slices a run reports');
-assert.equal(h.byIdPrefix('ev-depth').length + h.byIdPrefix('ev-slice-').length, 0, 'no depth or slice control');
+assert.equal(h.byIdPrefix('ev-slice-').length, 0, 'no slice control');
+
+// How many results deep each measure looks: a field per measure that has a depth, starting at the usual one.
+assert.deepEqual(h.byIdPrefix('ev-depth-in-').map((e) => e.call('id')[0]), opts.depths.map((d) => `ev-depth-in-${d.id}`));
+assert.deepEqual(opts.depths.map((d) => h.mod.depthInputs[d.id].value()), ['10', '10', '50', '50'], 'the usual depths');
+assert.ok(t.includes('nDCG looks this many results deep') && t.includes('Usually 10. Up to 200.') && t.includes('Usually 50. Up to 200.'));
+assert.equal(h.byIdPrefix('ev-depth-note').length, 0, 'nothing to say while the depths are the usual ones');
+h.mod.depthInputs['ndcg@10'].set_value('20'); h.mod.v.depths['ndcg@10'] = '20';
+await h.layoutLists({});
+t = h.text();
+assert.ok(t.includes('These are not the usual depths. The result will say so, and it can only be compared with runs measured at the same depths.'), 'it says what a changed depth means');
+assert.ok(t.includes('nDCG@20') && t.includes('near the top of the first 20'), `the measure is named and described at its depth: ${t.slice(t.indexOf('What decides it'), t.indexOf('What decides it') + 300)}`);
+// A depth that is not a whole number from 1 to 200 is said, and nothing starts.
+h.mod.v.depths['r@50'] = '0';
+assert.ok(missing({ ...h.mod.v, name: 'x', models: ['a@v1'], against: 'b@v1' }, { preview: pv, opts }).includes('Recall looks this many results deep: a whole number from 1 to 200.'));
+h.mod.v.depths['r@50'] = '2.5';
+assert.ok(missing({ ...h.mod.v, name: 'x', models: ['a@v1'], against: 'b@v1' }, { preview: pv, opts }).some((m) => m.startsWith('Recall looks')));
+h.mod.v.depths['r@50'] = '50';
 
 // 4. Limits: fields a person can change, each with its default said. Nothing is capped out of sight.
 assert.equal(h.mod.inputs.mde.value(), '0.003');
@@ -151,6 +169,7 @@ assert.deepEqual(plan.arms, ['demo-bm25@v1', 'demo-tuned@v1', 'demo-ranker@v1'],
 assert.deepEqual([plan.name, plan.mode, plan.queries, plan.judgments, plan.primary, plan.mde], ['shop-test', 'simulated', 'shop-test/questions@v1', 'shop-test/answers@v1', 'ndcg@10', 0.01]);
 assert.equal(plan.hypothesis, 'Nothing was written down before the run.', 'an empty expectation is said to be empty, not invented');
 assert.equal(plan.population_size, undefined, 'a limit that does not apply is not sent');
+assert.deepEqual(plan.depths, { 'ndcg@10': 20, 'p@10': 10, 'r@50': 50, mrr: 50 }, 'the depth of every measure is sent, the changed one too');
 assert.equal(posted('/api/backtests/shop-test/run').length, 1, 'and it runs');
 assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections', child: 'runs' }]);
 assert.equal(globalThis.__shared['captain.open'].live, 'live-9', 'Runs opens on it, live');
@@ -193,6 +212,12 @@ assert.equal(h.mod.v.name, 'demo-tuned-vs-bm25', 'the same name: the run joins t
 assert.deepEqual([h.mod.v.against, h.mod.v.models, h.mod.v.on, h.mod.v.queries, h.mod.v.judgments], [saved.arms[0], saved.arms.slice(1), 'saved', saved.queries, saved.judgments]);
 assert.equal(h.mod.v.measure, saved.preregistration.primary_metric);
 assert.equal(h.mod.inputs.mde.value(), String(saved.preregistration.mde));
+// A saved test's depths come with it, so the new model is measured the same way.
+{
+  const withDepth = await mount({ test: 'deep-test' });
+  assert.deepEqual([withDepth.mod.v.depths['ndcg@10'], withDepth.mod.depthInputs['ndcg@10'].value()], ['20', '20'], 'the saved depth fills its field');
+  assert.equal(withDepth.mod.v.depths['r@50'], '50', 'the rest stay at the usual depth');
+}
 assert.ok(t.includes('A test with this name exists. This run joins its history'), 'and says so');
 await h.click('ev-model-1'); // the old model off
 await h.click('ev-model-2'); // the new one on

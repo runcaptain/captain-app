@@ -17,7 +17,7 @@ import { MONO } from "./kit/tokens.js";
 import { Skeleton, Button } from "./kit/ui.js";
 import { askAgent, copyPrompt } from "./kit/agent.js";
 import { metricWords, warningIcon } from "./kit/words.js";
-import { runFacts, runVerdict, VERDICT_WORDS } from "./kit/verdict.js";
+import { runFacts, runVerdict, metricAt, VERDICT_WORDS } from "./kit/verdict.js";
 import { icon as kitIcon } from "./kit/icons.js";
 import { int } from "./kit/num.js";
 import { Profiler } from "./profile.js";
@@ -277,7 +277,7 @@ export class Comparison {
         .child(div().id("cmp-verdict-sentence").flex_1().min_w(240).text_size(13).line_height("19px").child(v.sentence)))
       .when(f.delta != null, (e) => e.child(h_flex().flex_wrap().gap(10).items_center().text_size(12).text_color(c.grey900)
         .child(this.icon(f.delta > 0 ? "up" : f.delta < 0 ? "down" : "flat", 14, col))
-        .child(div().id("primary-metric").tooltip(f.metric).child(`${metricWords(f.metric)}, B minus A`))
+        .child(div().id("primary-metric").tooltip(f.metric).child(`${metricWords(metricAt(f.metric, f.depths))}, B minus A`))
         .child(div().font_family(MONO).text_color(c.navy).child(fmtD(f.delta)))
         .child(div().font_family(MONO).child(`[${fmtD(f.ci_low)}, ${fmtD(f.ci_high)}]`))));
   }
@@ -322,7 +322,7 @@ export class Comparison {
         .children(cmps.map((x, i) => h_flex().id(`cmp-${i}`).h(30).items_center().border_b(1).border_color(c.rule).text_size(12.5).whitespace_nowrap()
           .child(h_flex().flex_1().min_w(160).px(10).gap(6).items_center()
             .child(this.icon(x.delta > 0 ? "up" : x.delta < 0 ? "down" : "flat", 13, x.verdict === "win" ? c.blue : x.verdict === "loss" ? c.fail : c.grey500))
-            .child(div().id(`metric-${i}`).min_w(0).truncate().tooltip(x.metric).child(metricWords(x.metric))).when(!!x.primary, (e) => e.child(div().text_size(10.5).text_color(c.blue).child("primary"))))
+            .child(div().id(`metric-${i}`).min_w(0).truncate().tooltip(x.metric).child(metricWords(metricAt(x.metric, r.depths)))).when(!!x.primary, (e) => e.child(div().text_size(10.5).text_color(c.blue).child("primary"))))
           .child(div().w(90).flex_none().px(8).text_right().font_family(MONO).child(fmtD(x.delta)))
           .child(div().w(170).flex_none().px(8).text_right().font_family(MONO).text_color(c.grey900).child(`[${fmtD(x.ci_low)}, ${fmtD(x.ci_high)}]`))
           .child(h_flex().w(170).flex_none().px(8).justify_end().child(div().text_color(x.verdict === "win" ? c.good : x.verdict === "loss" ? c.fail : c.grey900).child(VERDICT_WORDS[x.verdict] ?? x.verdict ?? "")))))))
@@ -353,7 +353,7 @@ export class Comparison {
     return div().id("arms-x").w_full().overflow_x_scrollbar().child(v_flex().min_w(width).border_1().border_color(c.rule)
       .child(h_flex().h(28).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().whitespace_nowrap()
         .child(h_flex().flex_1().min_w(200).px(10).gap(6).child(this.icon("arms", 13, c.grey500)).child(div().child("Arm")))
-        .children(metrics.map((m) => div().id(`armh-${m}`).w(104).flex_none().px(8).text_right().truncate().tooltip(m).child(metricWords(m))))
+        .children(metrics.map((m) => div().id(`armh-${m}`).w(104).flex_none().px(8).text_right().truncate().tooltip(m).child(metricWords(metricAt(m, r.depths)))))
         .child(div().w(84).flex_none().px(8).text_right().child("judged@10"))
         .child(div().w(96).flex_none().px(8).text_right().child("per 1k"))
         .child(div().w(110).flex_none().px(8).text_right().child("p50 / p99 ms")))

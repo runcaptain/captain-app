@@ -252,6 +252,9 @@ class Backtest(VersionBase):
     )
     preregistration: Preregistration
     surfaces: list[Surface] = Field(default_factory=list)
+    # How many results deep each measure looks: {"ndcg@10": 20, ...}. Empty means the usual depths
+    # (eval/metrics.py DEFAULT_DEPTHS). The measure names keep their usual depth in them; this says the real one.
+    depths: dict[str, int] = Field(default_factory=dict)
 
 
 class ArmResult(BaseModel):
@@ -275,6 +278,7 @@ class BacktestRun(VersionBase):
     compute: str = "local"
     arms: list[ArmResult]
     comparisons: list[dict[str, Any]] = Field(default_factory=list)  # paired CI, p
+    depths: dict[str, int] = Field(default_factory=dict)  # the depth each measure looked, as run. Empty on runs from before depths: the usual ones
     independent: bool = True  # False when the click model reads the scoring judgments
     complete: bool = True  # False when any arm has judged@10 under 0.9
     cost_usd: float = 0.0

@@ -593,6 +593,15 @@ Lists are sorted, filtered and paged on the server, because native mods must not
   no product or a grade outside 0 to 3 is skipped and counted.
 - `POST /api/backtests` also takes `population_size`: how many simulated shoppers a replay of logged searches makes
   (4000 unless given).
+- `POST /api/backtests` also takes `depths`: how many results deep each measure looks, `{"ndcg@10": 20, "p@10": 20,
+  "r@50": 100, "mrr": 20}`, a whole number from 1 to 200 each, the usual depth (10, 10, 50, 50) for any left out. The
+  plan keeps only what differs. A run records every depth it looked in `depths`, ranks at least that deep, and scores
+  its slices, surfaces and per-query numbers at the same depths. The keys keep their usual names: `ndcg@10` in a run
+  with `depths["ndcg@10"] == 20` is nDCG at 20. `GET /api/runs/{name}` and each row of `GET /api/regression` carry
+  `depths` and `not_usual` (sentences such as "nDCG looks 20 results deep, not the usual 10."). `/compatibility`
+  warns with code `depth`, and `GET /api/compare-runs` lists `different-depth` when two runs differ. A run recorded
+  before depths existed has none and reads as the usual depths. `GET /api/evaluations/options` lists the fields
+  under `depths`: `{id, label, default, max}`.
 
 ## Regression testing (the Runs screen's Compare)
 
