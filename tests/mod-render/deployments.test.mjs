@@ -246,8 +246,9 @@ assert.ok(t.includes('captain-old-experiment-staging') && t.includes('Found in y
 assert.ok(t.includes('Link to a project') && byId(h, `dep-remove-${FOUND.id}`).length === 1, 'and can be linked or removed');
 assert.ok(t.includes('Stopped earlier: 1 model.') && byId(h, `dep-start-${OLD.id}`).length === 0, 'the stopped one is behind its line');
 // Something in a cloud that failed: the card says what happened, and the one thing to do is deploy it again.
-// It can also be looked at and removed from the cloud.
-assert.ok(byId(h, `dep-open-${BAD.id}`).length === 1 && byId(h, `dep-remove-${BAD.id}`).length === 1 && byId(h, `dep-start-${BAD.id}`).length === 1 && h.text().includes('Deploy again'), 'a failed one in the cloud');
+// Removing it is behind Details, on its own page. A failed model shows no figures: it is not answering.
+assert.ok(byId(h, `dep-open-${BAD.id}`).length === 1 && byId(h, `dep-remove-${BAD.id}`).length === 0 && byId(h, `dep-start-${BAD.id}`).length === 1 && h.text().includes('Deploy again'), 'a failed one in the cloud');
+assert.ok(byId(h, `dep-traffic-${BAD.id}`).length === 0 && byId(h, `dep-address-${BAD.id}`).length === 0, 'a failed card says what happened and what to do, and no more');
 // Two pickers at the right, and no chips for the state. A picker's choices show only once it is opened.
 assert.ok(byId(h, 'dep-pick-cloud').length === 1 && byId(h, 'dep-pick-project').length === 1 && byId(h, 'dep-cloud-aws').length === 0 && byId(h, 'dep-show-all').length === 0, 'two pickers, closed');
 assert.ok(h.text().includes('Every cloud') && h.text().includes('Every project'), 'each says what it shows now');
@@ -264,7 +265,9 @@ assert.equal(shown(h), 'shop', 'one project at a time');
 await h.click('dep-pick-project');
 await h.click('dep-project-all');
 
-// A removal from the cloud asks first, and the question holds the only filled button on the screen.
+// A removal from the cloud is on the model's own page, behind Details. It asks first.
+await h.click(`dep-open-${BAD.id}`);
+await h.idle(120);
 await h.click(`dep-remove-${BAD.id}`);
 t = h.text();
 assert.ok(t.includes("Remove Gift finder's model from AWS? It stops answering, and what Captain made for it there is deleted. It cannot be undone."), `the question: ${t}`);
@@ -273,6 +276,7 @@ assert.ok(!sent.some((x) => x[0] === 'DELETE'), 'nothing is removed before the a
 await h.click('dep-ask-yes');
 await h.idle(60);
 assert.ok(sent.some((x) => x[0] === 'DELETE' && x[1].startsWith('/api/projects/gifts/deploy')), 'then it is removed');
+if (byId(h, 'model-close').length) { await h.click('model-close'); await h.idle(60); }
 // Linking picks a project.
 await h.click(`dep-link-${FOUND.id}`);
 await h.idle(60);
@@ -316,13 +320,13 @@ assert.ok(t.indexOf('Where it runs') < t.indexOf('Traffic and cost'), 'before th
 for (const label of ['Address', 'How to call it', 'Cloud and account', 'Region', 'Machine', 'Copies', 'Image', 'Model files', 'Role it runs as', 'Logs', 'Stops by itself after', 'Deployed by', 'Version'])
   assert.ok(t.includes(label), `Where it runs has ${label}`);
 assert.ok(t.includes('AWS, account ending 1234') && t.includes('ml.t2.medium: 2 virtual CPUs, 4 GB memory, about $0.07 an hour for each copy') && t.includes('1 up now. Fewest 1, most 3'), `the system: ${t}`);
-assert.ok(t.includes('From AWS') && t.includes("From Captain's record") && t.includes('Read from AWS just now.'), 'each value says where it came from');
+assert.ok(t.includes('Address · from AWS') && t.includes("Region · from Captain's record") && t.includes('Read from AWS just now.'), `each value says where it came from, beside its label: ${t.slice(0, 900)}`);
 // What a person copies has Copy: the address, a test request, the log's name. A request of several lines shows its first.
 for (const id of ['address', 'call', 'logs']) assert.equal(byId(h, `model-where-${id}-copy`).length, 1, `${id} can be copied`);
 assert.equal(byId(h, 'model-where-region-copy').length, 0, 'a region is read, not copied');
 assert.ok(t.includes('aws sagemaker-runtime invoke-endpoint --region us-west-1 --endpoint-name captain-shop') && !t.includes('# Get a ranking.'), 'the request by its first real line');
 await h.click('model-where-call-copy');
-assert.ok(h.text().includes('Copied'), 'Copy says it copied');
+assert.equal(h.mod.page.copiedFact, 'call', 'Copy marks it copied (the icon turns to a tick)');
 for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time', 'Processor in use', 'Memory in use'])
   assert.ok(t.includes(label), `the model page has ${label}`);
 // Copies are said in words, from the cloud's count now and its settings. No chart: no history of them is kept.

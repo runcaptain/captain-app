@@ -95,7 +95,8 @@ export function ModelCard(c, r, o = {}) {
   const actions = o.busy ? []
     : [...(o.more ?? []).map((a) => Button(c, a.id, a.label, a.go, { kind: "quiet" })),
       ...(o.action ? [Button(c, o.action.id, o.action.label, o.action.go, { kind: "primary" })] : [])];
-  const showNumbers = !found && !deploying && inCloud && Boolean(n);
+  // Figures are for a model that is answering. One that failed says what happened and what to do, and no more.
+  const showNumbers = !found && !deploying && inCloud && !wrong && Boolean(n);
   return v_flex().id(`dep-row-${r.id}`).w_full().bg(c.surface).border_1().border_color(wrong ? c.fail : c.rule).p(20).gap(14)
     // Its state, its name, and the one action.
     .child(h_flex().gap(12).items_center()
@@ -112,7 +113,7 @@ export function ModelCard(c, r, o = {}) {
     .when(Boolean(o.question), (e) => e.child(o.question))
     .when(Boolean(deploying), (e) => e.child(Steps(c, r)))
     // The address a site calls: one field, with Copy. The code font is for what a person copies, and nothing else.
-    .when(Boolean(r.address) && inCloud && !deploying, (e) => e.child(h_flex().gap(12).items_center()
+    .when(Boolean(r.address) && inCloud && !deploying && !wrong, (e) => e.child(h_flex().gap(12).items_center()
       .child(h_flex().id(`dep-address-field-${r.id}`).flex_1().min_w(0).h(34).pl(12).pr(4).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
         .child(div().id(`dep-address-${r.id}`).flex_1().min_w(0).truncate().text_size(SMALL).font_family(MONO).text_color(c.navy).child(String(r.address)))
         .child(div().id(`dep-copy-${r.id}`).size(26).flex().flex_none().items_center().justify_center().cursor_pointer().text_color(o.copied === "address" ? c.good : c.grey500)

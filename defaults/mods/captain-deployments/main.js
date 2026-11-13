@@ -355,7 +355,8 @@ export default class CaptainDeployments extends View {
     else if (r.link === "unknown") more = [details];
     else if (up) { action = a("stop", "Stop", (_e, cx) => this.stop(r, cx)); more = [details]; }
     // In a cloud and not answering: the one thing to do is deploy it again. It can also be removed.
-    else if (inCloud) { action = start("Deploy again"); more = [remove, details]; }
+    // Removing it is behind Details, on its own page.
+    else if (inCloud) { action = start("Deploy again"); more = page ? [remove] : [details]; }
     // Stopped earlier: nothing of it is in a cloud. It can be started again, or forgotten.
     else { action = start("Start again"); more = [a("forget", "Forget it", (_e, cx) => this.forgetIt(r, cx))]; }
     if (page) more = more.filter((x) => x !== details);
