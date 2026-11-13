@@ -118,6 +118,12 @@ export default class ProjectHome extends View {
     if (demo?.deploying) this.shipPath.djob = { ...demo.deploying, started: Date.now() - 121000 };
     if ((layoutProps?.() ?? {}).depMore) this.shipPath.more = (layoutProps?.() ?? {}).depMore; // the real-window check: open that "More" item
     if ((layoutProps?.() ?? {}).depList) { this.shipPath.listOpen = true; this.shipPath.loadList(cx); } // the real-window check: the list of deployments
+    // The real-window check names the project to show. Honoured only in the app's test window: the Explorer's pick
+    // is not kept across the check's views, and without it the page falls back to the list of projects.
+    if (shared("app.testWindow") === true && (layoutProps?.() ?? {}).project) {
+      const id = String((layoutProps?.() ?? {}).project);
+      setShared("captain.scope", { kind: "project", id, label: id });
+    }
     this.load(cx);
     if ((layoutProps?.() ?? {}).chooseModels) { this.everything = true; this.toggleChoosing(cx); }
     this.openFirst = Boolean((layoutProps?.() ?? {}).openExperiment); // a layout, or the real-window check: open a row

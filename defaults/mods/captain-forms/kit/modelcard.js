@@ -55,7 +55,7 @@ function Steps(c, r) {
           : st.status === "running" && began(st) != null ? spanWords(began(st)) : ""))
       .child(div().w(190).flex_none().text_size(SMALL).text_color(c.grey500)
         .child(st.status !== "done" && st.typical ? `usually ${st.typical}` : ""))))
-    .when(Boolean(g.last_line), (e) => e.child(div().id(`dep-line-${r.id}`).pl(28).text_size(SMALL).line_height("18px").text_color(c.grey500).child(String(g.last_line))));
+;  // The job's own last line is not shown: it repeats the sentence above and runs a few seconds behind it.
 }
 
 /**

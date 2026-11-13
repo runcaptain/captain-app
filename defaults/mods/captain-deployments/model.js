@@ -219,8 +219,11 @@ export class ModelPage {
     // What a person copies (the address, a test request, the log's name) is a row of its own, the full width,
     // with a Copy icon. Every other fact is a label over its value, two to a row. Each says where it was read from.
     const facts = w?.facts ?? [];
-    const from = (f) => (f.source_text ? ` · ${String(f.source_text).replace(/^From /, "from ")}` : "");
-    const label = (f) => div().text_size(12.5).line_height("18px").text_color(c.grey500).child(`${f.label}${from(f)}`);
+    // Where each fact was read from is not said on every label: on twelve of them it is noise. Only a fact where
+    // the cloud and Captain's record disagree says so, on its own row (`differs`, from the services).
+    const label = (f) => h_flex().gap(6).text_size(12.5).line_height("18px")
+      .child(div().text_color(c.grey500).child(f.label))
+      .when(Boolean(f.differs), (e) => e.child(div().id(`model-where-${f.id}-differs`).text_color(c.warn).child(String(f.differs))));
     const copyRow = (f) => v_flex().id(`model-where-${f.id}`).gap(4)
       .child(label(f))
       .child(h_flex().h(34).pl(12).pr(4).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
