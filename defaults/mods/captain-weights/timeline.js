@@ -1,7 +1,8 @@
-// CAPTAIN: what the agent is doing, as it does it. Every read, run and edit in the session's record is one line in
-// words, newest first. An edit opens to its old and new values and can be taken back. The header is the session's
-// ledger: what the agent was allowed, what it used, and the share of numbers changed. "From the weights alone" is
-// said only when the ledger shows no sandbox and no forward pass.
+// CAPTAIN: what was done to the network, as it happens. Every read, run and edit in the session's record is one
+// line in words, newest first, the agent's and the person's alike. An edit opens to its old and new values and can
+// be taken back. `ledgerFacts` turns the session's ledger into the words the page's header shows: what the agent
+// was allowed, what it used, and the share of numbers changed. "From the weights alone" is said only when the
+// ledger shows no sandbox and no forward pass.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { Button } from "./kit/ui.js";
@@ -76,8 +77,7 @@ function changeName(net, c) {
 /** The panel. `v` is the page: {net, session, openEdit, busy} with openTimeline(id, cx) and undo(id, cx). */
 export function Timeline(c, v, { width, height }) {
   const s = v.session;
-  const facts = ledgerFacts(s?.ledger);
-  const events = (s?.events ?? []).slice().reverse();
+    const events = (s?.events ?? []).slice().reverse();
   const row = (ev) => {
     const open = ev.id === v.openEdit, isEdit = ev.kind === "edit";
     let el = v_flex().id(`wt-ev-${ev.id}`).px(8).py(5).gap(4).when(open, (e) => e.bg(c.surface2))
@@ -98,13 +98,7 @@ export function Timeline(c, v, { width, height }) {
     return el;
   };
   return v_flex().id("wt-timeline").w(width).h(height).flex_none().gap(6)
-    .child(h_flex().gap(8).items_center()
-      .child(div().text_size(12.5).font_semibold().child("What the agent is doing"))
-      .when(facts.alone, (e) => e.child(div().id("wt-alone").flex_none().px(6).h(20).flex().items_center().bg(c.goodLight).text_color(c.good).text_size(11.5).font_medium()
-        .tooltip("The record shows no sandbox was allowed and the network was never run").child("From the weights alone")))
-      .child(div().flex_1())
-      .when(Boolean(facts.changed), (e) => e.child(div().id("wt-ledger-changed").flex_none().text_size(11.5).text_color(c.grey500).child(facts.changed))))
-    .when(facts.allowed.length > 0, (e) => e.child(div().id("wt-ledger").text_size(11.5).line_height("16px").text_color(c.grey500).child(`${facts.allowed.join(". ")}.`)))
+    .child(div().text_size(12.5).font_semibold().child("What was done"))
     .when(Boolean(v.undoNote), (e) => e.child(div().id("wt-note").text_size(12.5).text_color(c.fail).child(v.undoNote)))
     .child(div().id("wt-events").flex_1().min_h(0).overflow_y_scroll().border_1().border_color(c.rule)
       .child(events.length

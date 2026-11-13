@@ -407,6 +407,9 @@ def test_app_open_sends_the_window_what_to_show(app_home, ws):
     assert r.invoke(app, ["app", "open", "comparison:demo-tuned-vs-bm25@v1"]).exit_code == 0
     assert sent() == {"section": "runs", "backtest": "demo-tuned-vs-bm25", "version": 1}
     assert r.invoke(app, ["app", "open", "settings:structure"]).exit_code == 0 and sent() == {"settings": "structure"}
+    # The Weights page is not a sidebar view, but an agent can show it, on its list or on one network.
+    assert r.invoke(app, ["app", "open", "weights"]).exit_code == 0 and sent() == {"section": "weights"}
+    assert r.invoke(app, ["app", "open", "weights:tiny"]).exit_code == 0 and sent() == {"section": "weights", "model": "tiny"}
     # A form, filled in for the person. It opens; nothing is submitted.
     out = r.invoke(app, ["app", "open", "form:investigation", "--value", "title=Do long queries regress?"])
     assert out.exit_code == 0 and "nothing was submitted" in out.output

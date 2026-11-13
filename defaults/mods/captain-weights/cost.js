@@ -85,7 +85,7 @@ export function CostPanel(c, v, { width, height }) {
     .child(div().text_size(11.5).text_color(c.grey500).child(label))
     .child(div().id(id).text_size(15).font_semibold().child(value))
     .child(div().id(`${id}-under`).text_size(11.5).text_color(c.grey500).child(under));
-  const curveW = Math.max(120, Math.min(260, width - 290));
+  const curveW = Math.max(90, Math.min(260, width - 250));
   return v_flex().id("wt-cost").w(width).h(height).flex_none().gap(8)
     .child(h_flex().gap(6).items_center()
       .child(div().text_size(12.5).font_semibold().child("Cost"))
@@ -97,7 +97,7 @@ export function CostPanel(c, v, { width, height }) {
     .when(rows.length > 0, (el) => el.child(v_flex().id("wt-cost-edit").gap(2)
       .child(div().text_size(11.5).text_color(c.grey500).child(focus.id === v.openEdit ? "The edit that is open" : "The last edit"))
       .children(rows.map((r) => h_flex().id(`wt-cost-${r.id}`).gap(8).items_center().text_size(12.5)
-        .child(div().w(190).flex_none().truncate().text_color(c.navy).child(r.name))
-        .child(div().w(120).flex_none().font_medium().child(`${cost3(r.before)} to ${cost3(r.after)}`))
+        .child(div().w(Math.min(190, Math.round(width * 0.42))).flex_none().truncate().text_color(c.navy).child(r.name))
+        .child(div().w(104).flex_none().font_medium().child(`${cost3(r.before)} to ${cost3(r.after)}`))
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(r.says))))));
 }

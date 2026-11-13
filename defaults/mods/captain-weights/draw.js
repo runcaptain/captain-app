@@ -64,6 +64,24 @@ export function layoutOf(net) {
   return { cols, r, pitch, width, height, centre };
 }
 
+/** A palette colour at a strength: "#0043ca" and "80" give "#0043ca80". A colour that is not six hex digits (a
+ *  short form, one that already has a strength, a name) is used as it is, never glued into something invalid. */
+export function tint(colour, strength) {
+  const hex = String(colour ?? "");
+  return /^#[0-9a-fA-F]{6}$/.test(hex) ? `${hex}${strength}` : /^#[0-9a-fA-F]{3}$/.test(hex) ? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}${strength}` : hex;
+}
+
+export const MIN_LINE_PX = 0.5; // the thinnest a line is ever drawn on screen
+
+/** A line as the four corners of a thin polygon ON SCREEN. Its width follows the zoom gently (between 0.6 and 1.6
+ *  times) and is never under MIN_LINE_PX, however far the view is zoomed out. */
+export function lineQuad(item, pz) {
+  const [ax, ay] = pz.at(item.line[0], item.line[1]), [bx, by] = pz.at(item.line[2], item.line[3]);
+  const hw = Math.max(MIN_LINE_PX, item.w * Math.min(1.6, Math.max(0.6, pz.zoom))) / 2;
+  const len = Math.hypot(bx - ax, by - ay) || 1, nx = (-(by - ay) / len) * hw, ny = ((bx - ax) / len) * hw;
+  return [[ax + nx, ay + ny], [bx + nx, by + ny], [bx - nx, by - ny], [ax - nx, ay - ny]];
+}
+
 const SHADE = ["40", "80", "bf", "ff"]; // an activation's four shades
 const STRENGTH = ["38", "80", "e6"]; // a weight's three strengths
 const level = (m, n) => Math.min(n - 1, Math.floor(m * n));
@@ -88,9 +106,9 @@ export function lineValue(s, k, j, i) {
   return nudges ? -s.grad.dW[k][j][i] : s.net.layers[k].W[j][i];
 }
 
-/** Every shape of one draw, grouped by colour: {groups: Map(colour -> [polygon]), count, dropped}. Polygons are
- *  in the drawing's units; `s` is {net, run, grad, sel, selW, mode, walkedFrom, pulse}. */
-export function shapesFor(L, s, c, lineScale = 1) {
+/** Every shape of one draw, grouped by colour: {groups: Map(colour -> [shape]), count, dropped}. A shape is a
+ *  polygon (a list of points) or a line ({line: [x1, y1, x2, y2], w}), in the drawing's units; `s` is {net, run, grad, sel, selW, mode, walkedFrom, pulse}. */
+export function shapesFor(L, s, c) {
   const groups = new Map();
   let count = 0, dropped = 0;
   const add = (colour, poly) => {
@@ -104,16 +122,16 @@ export function shapesFor(L, s, c, lineScale = 1) {
   for (const col of L.cols) {
     const a = run?.a?.[col.k];
     if (col.kind === "image") {
-      if (a) cells(col.rows, col.across, (i) => (a[i] > 0.04 ? `${c.navy}${SHADE[level(a[i], 4)]}` : null), col.x, col.top, CELL, add);
+      if (a) cells(col.rows, col.across, (i) => (a[i] > 0.04 ? tint(c.navy, SHADE[level(a[i], 4)]) : null), col.x, col.top, CELL, add);
       if (sel && sel.k === 1) {
         const row = Array.from({ length: col.n }, (_v, i) => lineValue(s, 0, sel.j, i));
         const top = Math.max(1e-12, ...row.map(Math.abs));
-        cells(col.rows, col.across, (i) => { const m = Math.abs(row[i]) / top; return m < 0.08 ? null : `${row[i] > 0 ? c.blue : c.fail}${STRENGTH[level(m, 3)]}`; }, col.x, col.top + col.heatTop, CELL, add);
+        cells(col.rows, col.across, (i) => { const m = Math.abs(row[i]) / top; return m < 0.08 ? null : tint(row[i] > 0 ? c.blue : c.fail, STRENGTH[level(m, 3)]); }, col.x, col.top + col.heatTop, CELL, add);
       }
     } else if (col.kind === "strip" && a) {
       const sum = new Array(col.bins).fill(0), n = new Array(col.bins).fill(0);
       for (let j = 0; j < col.n; j++) { const b = Math.floor(j * col.bins / col.n); sum[b] += a[j]; n[b]++; }
-      cells(col.bins, 1, (b) => { const v = Math.min(1, Math.max(0, sum[b] / n[b])); return v > 0.04 ? `${c.navy}${SHADE[level(v, 4)]}` : null; }, col.x, col.top, STRIP_CELL, (colour, p) => add(colour, p.map(([x, y], q) => [q === 1 || q === 2 ? col.x + STRIP_W : x, y])));
+      cells(col.bins, 1, (b) => { const v = Math.min(1, Math.max(0, sum[b] / n[b])); return v > 0.04 ? tint(c.navy, SHADE[level(v, 4)]) : null; }, col.x, col.top, STRIP_CELL, (colour, p) => add(colour, p.map(([x, y], q) => [q === 1 || q === 2 ? col.x + STRIP_W : x, y])));
     }
   }
   // Lines. Between two columns of circles: every weight. To or from a strip: only the selected neuron's
@@ -147,10 +165,10 @@ export function shapesFor(L, s, c, lineScale = 1) {
     // Dimmed: while the error walks backward, the layers it has not reached; otherwise, with a neuron open, the
     // lines that are not its own.
     const dim = !pulsed && (s.walkedFrom != null ? l.k < s.walkedFrom : !!sel && !l.attached);
-    const hw = ((0.6 + 3.4 * l.m) * (pulsed ? 1.6 + 0.8 * (s.pulse.phase ?? 0) : chosen ? 1.5 : 1) * lineScale) / 2;
-    const len = Math.hypot(x2 - x1, y2 - y1) || 1, nx = (-(y2 - y1) / len) * hw, ny = ((x2 - x1) / len) * hw;
-    const colour = pulsed ? c.warn : `${l.v >= 0 ? c.blue : c.fail}${dim ? "1f" : STRENGTH[level(l.m, 3)]}`;
-    add(colour, [[x1 + nx, y1 + ny], [x2 + nx, y2 + ny], [x2 - nx, y2 - ny], [x1 - nx, y1 - ny]]);
+    const colour = pulsed ? tint(c.warn, "ff") : tint(l.v >= 0 ? c.blue : c.fail, dim ? "1f" : STRENGTH[level(l.m, 3)]);
+    // A line is kept as its two ends and its width on screen at 100%. It becomes a polygon only when it is
+    // mapped through the view (lineQuad), so its width never depends on the zoom twice.
+    add(colour, { line: [x1, y1, x2, y2], w: (0.6 + 3.4 * l.m) * (pulsed ? 1.6 + 0.8 * (s.pulse.phase ?? 0) : chosen ? 1.5 : 1) });
   }
   // Nudge marks: a small triangle beside a neuron, pointing up (blue) when the cost wants it brighter and down
   // (red) when it wants it dimmer, larger for a larger wish. Shown for the columns the backward walk has reached,
@@ -166,7 +184,7 @@ export function shapesFor(L, s, c, lineScale = 1) {
         if (m < 0.03) continue;
         const p = L.centre(col.k, j), size = L.r * (0.35 + 0.55 * m), x = p.x - L.r - size * 0.9, up = wish[j] > 0;
         const tip = up ? p.y - size * 0.6 : p.y + size * 0.6, base = up ? p.y + size * 0.4 : p.y - size * 0.4;
-        add(`${up ? c.blue : c.fail}${col.k === net.layers.length ? "ff" : "99"}`, [[x, tip], [x + size * 0.55, base], [x - size * 0.55, base]]);
+        add(tint(up ? c.blue : c.fail, col.k === net.layers.length ? "ff" : "99"), [[x, tip], [x + size * 0.55, base], [x - size * 0.55, base]]);
       }
     }
   }
@@ -176,18 +194,27 @@ export function shapesFor(L, s, c, lineScale = 1) {
 const two = (v) => (Object.is(Number(v.toFixed(2)), -0) ? "0.00" : v.toFixed(2));
 
 /** The canvas: the shapes under, the circles and their words over them. `o` is {id, pz, width, height, onNeuron,
- *  onWeight, extra: elements laid over the drawing} and the drawing state `s` (see shapesFor). */
+ *  onWeight, extra: elements laid over the drawing, focus: the neuron to open the view on, keep: an object
+ *  the caller holds, where the shapes are kept between draws} and the drawing state `s` (see shapesFor). */
 export function NetworkCanvas(c, s, o) {
   const { net, run, sel } = s, pz = o.pz;
   const L = o.layout ?? layoutOf(net);
   const w = Math.max(200, o.width), h = Math.max(160, o.height);
-  pz.settle(L.width, L.height, w, h);
+  // Where the view opens: on the open neuron when the whole network would not fit readably.
+  const f = o.focus && L.cols[o.focus.k]?.kind !== "image" ? L.centre(o.focus.k, o.focus.j) : null;
+  pz.settle(L.width, L.height, w, h, f);
   const z = pz.zoom, paint = globalThis.window?.paint_path;
-  const { groups } = shapesFor(L, s, c, Math.min(1.6, Math.max(0.6, z)));
+  // The shapes depend on the network, the input, what is open, the mode and the pulse, never on the view. They
+  // are worked out once and kept until one of those changes: panning and zooming only map points.
+  const key = [s.net, s.run, s.grad, sel?.k, sel?.j, s.selW?.k, s.selW?.j, s.selW?.i, s.mode, s.walkedFrom, s.pulse, s.pulse?.phase, c.dark];
+  const kept = o.keep;
+  let groups;
+  if (kept && kept.key && kept.key.length === key.length && kept.key.every((v, n) => v === key[n])) groups = kept.groups;
+  else { groups = shapesFor(L, s, c).groups; if (kept) { kept.key = key; kept.groups = groups; kept.built = (kept.built ?? 0) + 1; } }
   const layers = [];
-  if (paint) for (const [colour, polys] of groups) {
+  if (paint) for (const [colour, shapes] of groups) {
     let p = PathBuilder.fill();
-    for (const poly of polys) p = p.add_polygon(poly.map(([x, y]) => pz.at(x, y)), true);
+    for (const sh of shapes) p = p.add_polygon(sh.line ? lineQuad(sh, pz) : sh.map(([x, y]) => pz.at(x, y)), true);
     layers.push(div().absolute().inset_0().child(paint(p.build(), colour)));
   }
   const over = [];
@@ -229,7 +256,7 @@ export function NetworkCanvas(c, s, o) {
         .tooltip(`${label ?? `${name}, neuron ${j + 1}`}: activation ${a ? two(a[j]) : "not run"}`)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation?.())
         .on_click((_e, cx) => o.onNeuron?.({ k: col.k, j }, cx))
-        .child(div().absolute().inset_0().rounded_full().bg(`${c.navy}${alpha}`))
+        .child(div().absolute().inset_0().rounded_full().bg(tint(c.navy, alpha)))
         .when(L.r >= 20 && !!a, (e) => e.child(div().absolute().inset_0().flex().items_center().justify_center().text_size(11.5 * z).font_medium()
           .text_color(v > 0.55 ? c.surface : c.navy).child(two(a[j])))));
       if (showBias) {

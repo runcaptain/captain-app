@@ -15,11 +15,13 @@ const { walkedFrom, stepsOf, walkWords, chainRows, steepestWeight } = await impo
 const { lineValue, layoutOf, shapesFor } = await import('../../defaults/mods/captain-weights/draw.js');
 const { signed, plain } = await import('../../defaults/mods/captain-weights/inspect.js');
 const { forward, backward } = await import('../../defaults/mods/captain-weights/net.js');
-const { starter, TINY, DIGITS } = await import('../../defaults/mods/captain-weights/starters.js');
+const { starter: tinyStarter, TINY } = await import('../../defaults/mods/captain-weights/starters.js');
+const { DIGITS, digitsNet, digitsRoutes } = await import('./fixtures/captain-weights/digits.mjs');
+const starter = (id) => (id === DIGITS ? digitsNet() : tinyStarter(id));
 const { liveTransport, liveReset } = await import('../../defaults/mods/captain-weights/kit/live.js');
 const { palette } = await import('../../defaults/mods/captain-weights/kit/tokens.js');
 
-weightsTransport(async () => ({ ok: false, error: 'Not Found' }));
+weightsTransport(async (path) => digitsRoutes(path) ?? { ok: false, error: 'Not Found' });
 async function page(model) {
   localReset(); liveReset(); fakeFeed(liveTransport);
   globalThis.__props = { model };

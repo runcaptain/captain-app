@@ -1449,9 +1449,10 @@ cst projects generate-events my-project --sessions 20000 --days 30
 
 ### Weights: a network, drawn (`captain-weights`)
 
-Not a sidebar view. It opens from the palette entry "Open a network's weights", as a large dialog, on a list of
-networks. A mod can open it straight on one network with the overlay `{ mod: "captain-weights", kind: "dialog",
-props: { model: "<name>" } }`. `cst app open` has no target for it yet: tell the person to use the palette.
+Not a sidebar view, and not a dialog: a page in the window's main slot, beside the terminal you run in, so the
+person can watch the network while you work on it. Show it with `cst app open weights` (the list of networks) or
+`cst app open weights:<model>` (one network, by the name `cst weights models` lists). A person opens it from the
+palette entry "Open a network's weights". The word "Weights" at the top of the page goes back to the list.
 
 What a person sees, so you can tell them where to look:
 
@@ -1468,7 +1469,7 @@ What a person sees, so you can tell them where to look:
   named factors.
 - **"What the agent is doing"**: every read, run and edit of the session as a sentence, newest first. What you
   touch pulses in the drawing as you touch it. Each edit opens to its old and new values and can be taken back.
-  The header is the session's ledger. "From the weights alone" shows only when the ledger says no sandbox was
+  The top of the page is the session's ledger. "From the weights alone" shows only when the ledger says no sandbox was
   allowed and no forward pass was used: you cannot set it, and you should never claim it when it is not shown.
 - **By hand**: a person can type or drag a weight or a bias, halve, double or zero a neuron, and take it back.
   Their edits are in the same record as yours, marked "You".
@@ -1477,12 +1478,13 @@ The page listens to the change feed topics `weights:<model>` and `weights-sessio
 `cst weights` shows there the moment you do it. The page works out activations and gradients itself from the
 numbers it was sent: a person looking never spends your forward passes.
 
-"Send to agent" on that page pins the selection as `weights:<model>@layer=<column>,neuron=<index>` (the column
+"Send to agent" at the top of that page pins the selection as `weights:<model>@layer=<column>,neuron=<index>` (the column
 counted from the input as 0, the index from 0) and may add `,from=<index>` for one weight. On the page, neurons
 are numbered from 1: "layer 1, neuron 2" on screen is `layer=1,neuron=1`.
 
-When Captain's services have no weights routes, the page still opens two starter networks it keeps itself
-("Tiny network" and "Digit reader", made in code from a seed). Edits to those live only while the page is open.
+When Captain's services are not answering, the page still opens one tiny network it keeps itself (2-3-1, 13
+numbers, with one bias set wrong on purpose). Edits to it live only while the page is open. The digit reader is
+made by the services and shows when they answer.
 
 ## Words
 

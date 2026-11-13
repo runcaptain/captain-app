@@ -6,7 +6,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { forward, backward, costOf, costOver, chain, countOf, seededNet, steepness, answerOf } from '../../defaults/mods/captain-weights/net.js';
-import { starter, TINY, DIGITS, digitSet, unpack } from '../../defaults/mods/captain-weights/starters.js';
+import { starter as tinyStarter, TINY } from '../../defaults/mods/captain-weights/starters.js';
+import { DIGITS, digitsNet, digitSet } from './fixtures/captain-weights/digits.mjs';
+const starter = (id) => (id === DIGITS ? digitsNet() : tinyStarter(id));
 import { refForward, refCost, measured } from './fixtures/captain-weights/reference.mjs';
 
 const close = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol * Math.max(1, Math.abs(a), Math.abs(b)), `${what}: ${a} against ${b}`);
@@ -120,26 +122,4 @@ test('the made-up digits are repeatable, differ from each other, and are not bla
   for (const e of a) { const lit = e.x.filter((v) => v > 0).length; assert.ok(lit > 15 && lit < 400, `${e.name}: ${lit} lit pixels`); assert.equal(e.y.reduce((s, v) => s + v, 0), 1); }
   assert.notDeepEqual(a[1].x, a[11].x, 'two pictures of a 1 differ');
   assert.deepEqual(seededNet([3, 2], 9), seededNet([3, 2], 9));
-});
-
-test('the digit reader was trained on made-up digits, stopped early: most right, a few wrong to find', () => {
-  const net = starter(DIGITS);
-  const t = costOver(net, net.test), shown = costOver(net, net.examples);
-  assert.deepEqual([t.right, t.of], [48, 50]);
-  assert.deepEqual([shown.right, shown.of], [9, 10]);
-  // The one a person can pick and fix: the picture of a 3 is read as a 4.
-  assert.equal(answerOf(forward(net, net.examples[3].x).a.at(-1)), 4);
-  // The test pictures are not the ones shown, nor the ones it was trained on.
-  const key = (e) => e.x.join('');
-  const seen = new Set([...net.examples, ...digitSet(101, 60)].map(key));
-  assert.ok(net.test.every((e) => !seen.has(key(e))), 'the test set is kept apart');
-});
-
-test('packed numbers unpack to the same network, layer by layer', () => {
-  // Two layers, 2-2-1: weights row by row, then biases, as 16-bit steps of 0.5. Packed by Node, unpacked by hand.
-  const ints = [2, -4, 6, 8, 1, -1, 3, -3, 5];
-  const buf = Buffer.alloc(ints.length * 2);
-  ints.forEach((v, n) => buf.writeInt16LE(v, n * 2));
-  assert.deepEqual(unpack(buf.toString('base64'), 0.5, [2, 2, 1]), [{ W: [[1, -2], [3, 4]], b: [0.5, -0.5] }, { W: [[1.5, -1.5]], b: [2.5] }]);
-  assert.deepEqual(countOf(starter(DIGITS)).total, 13002);
 });

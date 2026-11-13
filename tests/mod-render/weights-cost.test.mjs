@@ -11,10 +11,12 @@ const { default: Weights } = await import('../../defaults/mods/captain-weights/m
 const { weightsTransport } = await import('../../defaults/mods/captain-weights/adapter.js');
 const { localReset, localEdit, localUndo, localSession } = await import('../../defaults/mods/captain-weights/local.js');
 const { costSteps, threeNumbers, cost3 } = await import('../../defaults/mods/captain-weights/cost.js');
-const { starter, TINY, DIGITS } = await import('../../defaults/mods/captain-weights/starters.js');
+const { starter: tinyStarter, TINY } = await import('../../defaults/mods/captain-weights/starters.js');
+const { DIGITS, digitsNet, digitsRoutes } = await import('./fixtures/captain-weights/digits.mjs');
+const starter = (id) => (id === DIGITS ? digitsNet() : tinyStarter(id));
 const { liveTransport, liveReset } = await import('../../defaults/mods/captain-weights/kit/live.js');
 
-weightsTransport(async () => ({ ok: false, error: 'Not Found' }));
+weightsTransport(async (path) => digitsRoutes(path) ?? { ok: false, error: 'Not Found' });
 let feed;
 async function page(model) {
   localReset(); liveReset();

@@ -5,7 +5,6 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex, Input } from "gpui-base";
 import { Button } from "./kit/ui.js";
-import { SendToAgent } from "./kit/context.js";
 import { neuronName, signed, plain } from "./inspect.js";
 import { answerOf } from "./net.js";
 
@@ -93,15 +92,4 @@ export function HandBlock(c, v) {
       .child(Button(c, "wt-hand-zero", "Set this neuron to zero", (_e, cx) => v.editNeuron({ op: "zero" }, cx), { small: true, disabled: busy }))))
     .when(Boolean(mine), (e) => e.child(h_flex().child(Button(c, "wt-hand-undo", "Take back my last edit", (_e, cx) => v.undo(mine.id, cx), { small: true, disabled: busy }))))
     .when(Boolean(v.note), (e) => e.child(div().id("wt-hand-note").text_size(12.5).line_height("17px").text_color(c.fail).child(v.note)));
-}
-
-/** Hand what is selected to an agent: pin it, or start the agent on one of three tasks. */
-export function AgentBlock(c, v) {
-  const pin = selectionPin(v);
-  return v_flex().id("wt-agent").gap(6).pt(4)
-    .child(h_flex().items_center()
-      .child(div().flex_1().text_size(12.5).font_semibold().child("Ask an agent"))
-      .child(SendToAgent(c, "wt-send", pin)))
-    .child(div().id("wt-agent-about").text_size(11.5).line_height("16px").text_color(c.grey500).child(`It will be told about ${pin.label.replace(/^[^:]*: /, "")}.`))
-    .children(starters(v).map((s) => h_flex().child(Button(c, `wt-ask-${s.id}`, s.label, (_e, cx) => v.ask(s, cx), { small: true, disabled: Boolean(s.needs) }))));
 }

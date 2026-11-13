@@ -12,9 +12,11 @@ const { weightsTransport } = await import('../../defaults/mods/captain-weights/a
 const { localReset } = await import('../../defaults/mods/captain-weights/local.js');
 const { neuronFacts, neuronSentence, weightSentence, signed, plain } = await import('../../defaults/mods/captain-weights/inspect.js');
 const { forward, backward } = await import('../../defaults/mods/captain-weights/net.js');
-const { starter, TINY, DIGITS } = await import('../../defaults/mods/captain-weights/starters.js');
+const { starter: tinyStarter, TINY } = await import('../../defaults/mods/captain-weights/starters.js');
+const { DIGITS, digitsNet, digitsRoutes } = await import('./fixtures/captain-weights/digits.mjs');
+const starter = (id) => (id === DIGITS ? digitsNet() : tinyStarter(id));
 
-weightsTransport(async () => ({ ok: false, error: 'Not Found' }));
+weightsTransport(async (path) => digitsRoutes(path) ?? { ok: false, error: 'Not Found' });
 async function page(model) {
   localReset();
   globalThis.__props = { model };

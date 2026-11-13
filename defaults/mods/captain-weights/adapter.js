@@ -19,14 +19,14 @@ let ask = (path, opts) => api(path, opts);
 /** For tests: the request function. */
 export function weightsTransport(fn) { ask = fn ?? ((path, opts) => api(path, opts)); }
 
-/** The networks that can be opened. Captain's services make their own "tiny" and "digits" the first time
- *  weights are opened in a workspace, so when they answer, the list is theirs. When they do not, the two starters
- *  kept in this mod stand in, so the page always has something to open. */
+/** The networks that can be opened: {networks, fromServices}. Captain's services make their own "tiny" and
+ *  "digits" the first time weights are opened in a workspace, so when they answer, the list is theirs. When they
+ *  do not, the one tiny network kept in this mod stands in, so the page always has something to open. */
 export async function listNetworks() {
   let r;
   try { r = await ask("/api/weights/models", { timeout: 10 }); } catch { r = { ok: false }; }
   const theirs = r?.ok && Array.isArray(r.data) ? r.data.filter((m) => m && typeof m.id === "string") : [];
-  return { ok: true, data: theirs.length ? theirs : localModels() };
+  return { ok: true, data: { networks: theirs.length ? theirs : localModels(), fromServices: theirs.length > 0 } };
 }
 
 /** A network, whole. With a session, the numbers as that session has edited them. */

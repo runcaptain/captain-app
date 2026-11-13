@@ -10,14 +10,16 @@ import { wideNet } from './fixtures/captain-weights/reference.mjs';
 const { default: Weights, factsOf } = await import('../../defaults/mods/captain-weights/main.js');
 const { weightsTransport } = await import('../../defaults/mods/captain-weights/adapter.js');
 const { localReset } = await import('../../defaults/mods/captain-weights/local.js');
-const { layoutOf, shapesFor, MAX_SHAPES, DOTS_MAX } = await import('../../defaults/mods/captain-weights/draw.js');
+const { layoutOf, shapesFor, lineQuad, tint, MIN_LINE_PX, MAX_SHAPES, DOTS_MAX } = await import('../../defaults/mods/captain-weights/draw.js');
 const { forward, backward, seededNet } = await import('../../defaults/mods/captain-weights/net.js');
-const { starter, TINY, DIGITS } = await import('../../defaults/mods/captain-weights/starters.js');
+const { starter: tinyStarter, TINY } = await import('../../defaults/mods/captain-weights/starters.js');
+const { DIGITS, digitsNet, digitsRoutes } = await import('./fixtures/captain-weights/digits.mjs');
+const starter = (id) => (id === DIGITS ? digitsNet() : tinyStarter(id));
 const { palette } = await import('../../defaults/mods/captain-weights/kit/tokens.js');
 
 // Captain's services know no networks here: only the starters show.
 const served = { '/api/weights/models': { ok: false } };
-weightsTransport(async (path) => served[path] ?? { ok: false, error: 'Not Found' });
+weightsTransport(async (path) => served[path] ?? digitsRoutes(path) ?? { ok: false, error: 'Not Found' });
 
 async function page(model) {
   localReset();
@@ -26,15 +28,67 @@ async function page(model) {
   await h.start();
   return h;
 }
+const harnessTree = (h) => { const out = []; (function w(e) { if (!e || typeof e !== 'object') return; out.push(e); for (const k of e.kids ?? []) w(k); })(h.mod.render(h.cx)); return out; };
 const paths = (h) => { const out = []; (function w(e) { if (!e || typeof e !== 'object') return; if (e.kind === 'path') out.push(e); for (const k of e.kids ?? []) w(k); })(h.mod.render(h.cx)); return out; };
 
-test('with nothing open, the two starter networks are offered and nothing is filled', async () => {
+test('with nothing open and no services, the tiny network is offered and the digit reader is said to need them', async () => {
   const h = await page(null);
   const text = h.text();
-  assert.ok(text.includes('Tiny network') && text.includes('Digit reader'), text);
-  assert.equal(h.byIdPrefix('wt-open-btn-').length, 2);
+  assert.ok(text.includes('Tiny network'), text);
+  assert.equal(h.byIdPrefix('wt-open-btn-').length, 1, 'the page ships one network: the services make the digit reader');
+  assert.ok(text.includes("The digit reader (784 inputs, 13,002 numbers) needs Captain's services, which are not answering."), text);
   await h.click('wt-open-btn-starter:tiny');
-  assert.ok(h.text().includes('Weights of Tiny network'));
+  assert.equal(h.byIdPrefix('wt-title')[0].kids.join(''), 'Tiny network');
+  // The way back is the breadcrumb: "Weights" returns to the list.
+  await h.click('wt-back');
+  assert.equal(h.byIdPrefix('wt-open-btn-').length, 1);
+  assert.equal(h.byIdPrefix('wt-title').length, 0);
+});
+
+test('it is a page in the window\'s main slot beside the terminal, never a dialog, and another screen can open a network in it', async () => {
+  const fs = await import('node:fs');
+  const layout = JSON.parse(fs.readFileSync('defaults/layouts/captain.json', 'utf8'));
+  const find = (n, id) => (n?.id === id ? n : (n?.children ?? []).map((k) => find(k, id)).find(Boolean));
+  assert.equal(find(layout, 'sections').children.find((k) => k.id === 'weights')?.content.mod, 'captain-weights');
+  assert.ok(!('overlay' in JSON.parse(fs.readFileSync('defaults/mods/captain-weights/mod.json', 'utf8'))), 'no dialog size: it is not one');
+  const { staticEntries, ITEMS } = await import('../../defaults/mods/captain-nav/main.js');
+  const entry = staticEntries(ITEMS).find((e) => e.title === "Open a network's weights");
+  assert.deepEqual([entry.overlay.mod, entry.overlay.props.section], ['captain-go', 'weights'], 'the palette selects the page');
+  assert.ok(!ITEMS.some((i) => i.id === 'weights'), 'not a sidebar view');
+  for (const f of fs.readdirSync('defaults/mods/captain-weights').filter((x) => x.endsWith('.js'))) assert.ok(!/closeOverlay|kind:\s*"dialog"/.test(fs.readFileSync(`defaults/mods/captain-weights/${f}`, 'utf8')), f);
+  // `cst app open weights:<model>` and links set shared "captain.open": the page opens that network, once.
+  const h = await page(null);
+  globalThis.__shared = { ...(globalThis.__shared ?? {}), 'captain.open': { section: 'weights', model: TINY, at: 5 } };
+  await h.layoutLists({});
+  assert.equal(h.mod.model, TINY);
+  await h.click('wt-back');
+  await h.layoutLists({});
+  assert.equal(h.mod.model, null, 'a request is handled once');
+  globalThis.__shared['captain.open'] = { section: 'deployments', open: 'x', at: 6 };
+  await h.layoutLists({});
+  assert.equal(h.mod.model, null, 'a request for another screen is not this page\'s');
+  delete globalThis.__shared['captain.open'];
+});
+
+test('at the width left beside the terminal the neuron panel shows only while a neuron is open; wide, it is always there', async () => {
+  const h = await page(TINY);
+  const canvasW = () => h.byIdPrefix('wt-canvas')[0].call('w')[0];
+  assert.equal(h.mod.width, 820, 'the width it assumes until the block says its own');
+  assert.equal(h.byIdPrefix('wt-side').filter((e) => e.call('id')[0] === 'wt-side').length, 0);
+  const full = canvasW();
+  assert.equal(full, 780);
+  await h.click('wt-n-1-1');
+  assert.equal(h.byIdPrefix('wt-side').filter((e) => e.call('id')[0] === 'wt-side').length, 1);
+  assert.ok(canvasW() < full && canvasW() >= 440, `${canvasW()}`);
+  await h.click('wt-side-close');
+  assert.equal(h.mod.sel, null);
+  assert.equal(canvasW(), full);
+  // The cost and what was done are under the drawing at every width.
+  assert.ok(h.byIdPrefix('wt-cost').length > 0 && h.byIdPrefix('wt-timeline').length > 0);
+  h.mod.width = 1300; h.mod.height = 860;
+  h.mod.render(h.cx);
+  const wide = harnessTree(h);
+  assert.ok(wide.some((e) => e.call?.('id')?.[0] === 'wt-side'), 'wide: the panel is there with nothing open');
 });
 
 test('the tiny network: 6 circles, 9 lines, every weight and bias as a number', async () => {
@@ -110,6 +164,81 @@ test('a column above 64 neurons is a strip, and only the open neuron\'s stronges
   assert.equal(lines(closed), 0, 'no lines to a strip until a neuron is open');
   const open = shapesFor(L, { net, run, sel: { k: 2, j: 1 }, mode: 'values' }, c);
   assert.equal(lines(open), 24, 'the 24 strongest of its 100');
+});
+
+test('a line is never thinner than half a pixel on screen, however far out the view is', async () => {
+  const { PanZoom } = await import('../../defaults/mods/captain-weights/canvas.js');
+  const width = (item, zoom) => { const pz = new PanZoom('t'); pz.zoom = zoom; pz.pan = { x: 7, y: 3 }; const q = lineQuad(item, pz); return Math.hypot(q[0][0] - q[3][0], q[0][1] - q[3][1]); };
+  const faint = { line: [0, 0, 100, 40], w: 0.6 }, strong = { line: [0, 0, 100, 40], w: 4 };
+  for (const zoom of [0.3, 0.5, 1, 2.5]) {
+    assert.ok(width(faint, zoom) >= MIN_LINE_PX - 1e-9, `the faintest line at zoom ${zoom}: ${width(faint, zoom)} px`);
+    assert.ok(width(strong, zoom) > width(faint, zoom), 'a larger weight is still thicker');
+  }
+  // The width follows the zoom gently, never with its square: at 0.3 a strong line keeps 0.6 of its width.
+  assert.ok(Math.abs(width(strong, 0.3) - 4 * 0.6) < 1e-9, `${width(strong, 0.3)}`);
+  assert.ok(Math.abs(width(strong, 1) - 4) < 1e-9);
+  assert.ok(Math.abs(width(strong, 2.5) - 4 * 1.6) < 1e-9);
+  // And the lines the drawing really makes: the digit network's faintest, zoomed all the way out.
+  const net = starter(DIGITS), s = shapesFor(layoutOf(net), { net, run: forward(net, net.examples[0].x), sel: null, mode: 'values' }, palette(false));
+  const lines = [...s.groups.values()].flat().filter((x) => x.line);
+  assert.equal(lines.length, 416);
+  assert.ok(Math.min(...lines.map((l) => width(l, 0.3))) >= MIN_LINE_PX - 1e-9);
+});
+
+test('a colour is only given a strength when it is six hex digits', () => {
+  assert.equal(tint('#0043ca', '80'), '#0043ca80');
+  assert.equal(tint('#fff', '40'), '#ffffff40');
+  assert.equal(tint('#0043ca26', '80'), '#0043ca26', 'one that already has a strength is left alone');
+  assert.equal(tint('red', '80'), 'red');
+  for (const dark of [true, false]) for (const k of ['navy', 'blue', 'fail', 'warn']) assert.match(tint(palette(dark)[k], '80'), /^#[0-9a-f]{8}$/i, `${k} in ${dark ? 'dark' : 'light'}`);
+});
+
+test('the shapes are built once and kept: panning and zooming only map points', async () => {
+  const h = await page(DIGITS);
+  const built = () => h.mod.keep.built;
+  const n0 = built();
+  h.mod.pz.pan = { x: 40, y: -12 }; h.mod.pz.touched = true;
+  h.mod.render(h.cx);
+  h.mod.pz.zoomBy(1.4, 100, 100);
+  h.mod.render(h.cx);
+  assert.equal(built(), n0, 'no rebuild for a pan or a zoom');
+  await h.click('wt-n-2-3');
+  assert.equal(built(), n0 + 1, 'a new selection rebuilds once');
+  h.mod.render(h.cx);
+  assert.equal(built(), n0 + 1);
+  await h.click('wt-in-4');
+  assert.equal(built(), n0 + 2, 'a new input rebuilds once');
+  await h.click('wt-mode-nudges');
+  assert.equal(built(), n0 + 3, 'a new mode rebuilds once');
+});
+
+test('a network too big to read whole opens at 100% on the open neuron; one that fits is fitted', async () => {
+  const { PanZoom } = await import('../../defaults/mods/captain-weights/canvas.js');
+  // Fits: fitted whole, enlarged a little, centred.
+  let pz = new PanZoom('t');
+  pz.settle(400, 300, 800, 500);
+  assert.ok(pz.zoom > 1 && Math.abs(pz.pan.x - (800 - 400 * pz.zoom) / 2) < 1e-9);
+  // Would have to shrink below what is readable: 100%, with the focus in the middle.
+  pz = new PanZoom('t');
+  pz.settle(1400, 600, 600, 400, { x: 900, y: 300 });
+  assert.equal(pz.zoom, 1);
+  assert.deepEqual(pz.at(900, 300), [300, 200], 'the open neuron is in the middle of the canvas');
+  // Never past the drawing's own edge: a focus at the far left starts at the left margin.
+  pz = new PanZoom('t');
+  pz.settle(1400, 600, 600, 400, { x: 10, y: 300 });
+  assert.equal(pz.pan.x, 24);
+  // The person's own pan is kept when the canvas changes size, and Fit shows it all again.
+  pz.touched = true; pz.pan = { x: -333, y: 5 };
+  pz.settle(1400, 600, 500, 400, { x: 900, y: 300 });
+  assert.equal(pz.pan.x, -333);
+  // On the page: the digit network beside an open neuron's panel is too wide for what is left.
+  const h = await page(DIGITS);
+  await h.click('wt-n-3-9');
+  assert.equal(h.mod.pz.zoom, 1, 'opened at 100%');
+  const L = layoutOf(starter(DIGITS)), p = L.centre(3, 9), cw = h.byIdPrefix('wt-canvas')[0].call('w')[0];
+  const [sx] = h.mod.pz.at(p.x, p.y);
+  assert.ok(sx > 0 && sx < cw, `the open neuron is on screen: ${sx} of ${cw}`);
+  assert.ok(h.byIdPrefix('wt-minimap').length === 1, 'the overview map says there is more');
 });
 
 test('the words: no arrows, no long dashes, no backend words', async () => {

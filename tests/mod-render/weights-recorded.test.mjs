@@ -88,7 +88,7 @@ test('an agent opens a newer session and edits: the page moves to it and says wh
   feed.tell('weights:tiny');
   await h.layoutLists({});
   assert.equal(h.mod.session.id, data('session:after-edit').id, 'the newest session on the model');
-  assert.equal(h.mod.drawing().pulse, null, 'another session\'s history does not pulse as if it just happened');
+  assert.equal(h.mod.pulsed ?? null, null, 'another session\'s history does not pulse as if it just happened');
   const ev = data('edit:scale');
   const text = h.text();
   assert.ok(text.includes(`Agent scaled 2 weights into layer 1, neuron 2, by 0.5. Cost on the test set: ${ev.cost.test.before.toFixed(3)} to ${ev.cost.test.after.toFixed(3)}.`), text);
@@ -122,8 +122,8 @@ test('an agent opens a newer session and edits: the page moves to it and says wh
   assert.ok(end.includes('You took back an edit to layer 1, neuron 2.'));
   assert.ok(end.includes('Agent scaled 2 weights into layer 1, neuron 2, by 0.5.') && end.includes('Taken back.'));
   assert.ok(end.includes('You set the bias of layer 1, neuron 2 from'));
-  const p = h.mod.drawing().pulse;
-  assert.ok(p && p.neurons.has('1:1'), 'what the new events touched pulses');
+  const p = h.mod.pulsed;
+  assert.ok(p && p.neurons.has('1:1'), 'what the new events touched pulsed');
   assert.equal(h.byIdPrefix('wt-cost-mark-').length, 3, 'a mark for the edit, the hand edit and the undo');
 });
 

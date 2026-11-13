@@ -59,8 +59,14 @@ test('an agent\'s read, run and edit appear as lines the moment the feed tells, 
   await h.layoutLists({});
   assert.equal(liveState().state, 'live');
   assert.ok(h.text().includes('Agent read 2 weights of layer 1.'), h.text());
-  let p = h.mod.drawing().pulse;
-  assert.deepEqual([[...p.neurons], [...p.weights].sort()], [['1:1'], ['0:1:0', '0:1:1']], 'the neuron and the two weights it read pulse');
+  // What it touched pulsed. The harness runs the page's timers to their end, so the pulse has also finished:
+  // its clock beat a fixed number of times and then armed nothing more.
+  let p = h.mod.pulsed;
+  assert.deepEqual([[...p.neurons], [...p.weights].sort()], [['1:1'], ['0:1:0', '0:1:1']], 'the neuron and the two weights it read pulsed');
+  assert.equal(h.mod.drawing().pulse, null, 'and the pulse ended by itself');
+  const beats = h.mod.beats;
+  await h.layoutLists({});
+  assert.equal(h.mod.beats, beats, 'no timer is armed while nothing pulses');
 
   localNote(sid, { kind: 'run', input: 'Both on', touched: { neurons: [[2, 0]], weights: [] } });
   const ev = localEdit(sid, { op: 'set', layer: 1, neuron: 1, from: null, value: -9, target: 3, by: 'agent', why: 'the bias keeps this neuron half off when both inputs are on' });
@@ -69,8 +75,9 @@ test('an agent\'s read, run and edit appear as lines the moment the feed tells, 
   const text = h.text();
   assert.ok(text.includes('Agent ran the network on "Both on".'));
   assert.ok(text.includes(`Agent set the bias of layer 1, neuron 2 from -12.00 to -9.00. Cost on the test set: ${ev.cost.test.before.toFixed(3)} to ${ev.cost.test.after.toFixed(3)}.`), text);
-  p = h.mod.drawing().pulse;
-  assert.ok(p.neurons.has('1:1') && p.neurons.has('2:0'), 'the edited neuron and the output that was run pulse');
+  p = h.mod.pulsed;
+  assert.ok(p.neurons.has('1:1') && p.neurons.has('2:0'), 'the edited neuron and the output that was run pulsed');
+  assert.ok(h.mod.beats > beats, 'the clock ran again for the new pulse');
   // Newest first.
   const lines = h.byIdPrefix('wt-ev-line-').map((e) => e.call('id')[0]);
   assert.deepEqual(lines, ['wt-ev-line-e3', 'wt-ev-line-e2', 'wt-ev-line-e1']);
@@ -126,7 +133,7 @@ test('"From the weights alone" shows only when the ledger says no sandbox and no
   assert.ok(textOf(h, 'wt-ledger').includes('A sandbox (code run on the numbers): not allowed'));
   assert.ok(textOf(h, 'wt-ledger').includes('Forward passes (runs of the network): 0 of 20 used'));
   // The services' own network drew: cross-entropy, their names, and the test set scored by them.
-  assert.ok(h.text().includes('Weights of tiny') && h.text().includes('exactly one is high'));
+  assert.ok(textOf(h, 'wt-title') === 'tiny' && h.text().includes('exactly one is high'));
   assert.equal(textOf(h, 'wt-cost-test'), '0.190');
   assert.ok(h.text().includes('Test set (200 inputs)') && h.text().includes('179 of 200 right'));
   assert.ok(textOf(h, 'wt-cost-says').includes('cross-entropy'));
@@ -188,4 +195,16 @@ test('a network with many inputs shows ten at a time', async () => {
   await h.click('wt-in-earlier');
   assert.ok(h.text().includes('Input 20 of 23'));
   served = {};
+});
+
+test('while a pulse lasts, the touched neuron is ringed and its lines are drawn in the pulse colour', async () => {
+  const { layoutOf, shapesFor, tint } = await import('../../defaults/mods/captain-weights/draw.js');
+  const { palette } = await import('../../defaults/mods/captain-weights/kit/tokens.js');
+  const { forward } = await import('../../defaults/mods/captain-weights/net.js');
+  const net = starter(TINY), c = palette(false);
+  const pulse = { neurons: new Set(['1:1']), weights: new Set(['0:1:0', '0:1:1']), left: 10, phase: 1 };
+  const s = shapesFor(layoutOf(net), { net, run: forward(net, net.examples[0].x), sel: null, mode: 'values', pulse }, c);
+  assert.equal(s.groups.get(tint(c.warn, 'ff')).length, 2, 'the two weights that were read');
+  const plain = shapesFor(layoutOf(net), { net, run: forward(net, net.examples[0].x), sel: null, mode: 'values', pulse: null }, c);
+  assert.ok(!plain.groups.has(tint(c.warn, 'ff')));
 });

@@ -527,13 +527,15 @@ def context_clear():
 # "compare" still opens something: an evaluation's comparison shows in place in Runs.
 SECTIONS = {"projects": "project", "home": "project", "project": "project", "data": "data", "data-and-signals": "data",
             "notebooks": "notebooks", "runs": "runs", "compare": "runs", "comparisons": "runs",
-            "deployments": "deployments", "team": "team"}
+            "deployments": "deployments", "team": "team",
+            # Not a sidebar view: a network drawn neuron by neuron, beside the terminal (the captain-weights mod).
+            "weights": "weights"}
 # Screens that left the app on 2026-11-12, and the command that still does the work.
 GONE = {"experiments": "cst investigate", "investigations": "cst investigate", "launch-review": "cst handoff", "handoff": "cst handoff"}
 
 
 @app_app.command("open")
-def app_open(target: str = typer.Argument(..., help="A screen (projects, data, notebooks, runs, deployments, team), project:<id>, dataset:<name>, run:<evaluation>, comparison:<evaluation>[@vN], notebook:<name>, form:<task>, settings[:<section>]"),
+def app_open(target: str = typer.Argument(..., help="A screen (projects, data, notebooks, runs, deployments, team, weights), weights:<model>, project:<id>, dataset:<name>, run:<evaluation>, comparison:<evaluation>[@vN], notebook:<name>, form:<task>, settings[:<section>]"),
              value: list[str] = typer.Option([], "--value", "-v", help="For form:<task>: field=value to fill in, repeatable. The person confirms; nothing is submitted"),
              tab: Optional[str] = typer.Option(None, "--tab", help="A tab on the screen opened (a dataset's sample, a comparison's queries)")):
     """Show the person something in Captain: a screen, a project, a dataset, a run and its comparison, a notebook,
@@ -556,6 +558,9 @@ def app_open(target: str = typer.Argument(..., help="A screen (projects, data, n
         what = {"section": SECTIONS[head]}
     elif head == "notebook" and rest:
         what = {"section": "notebooks", "notebook": rest}
+    elif head == "weights" and rest:
+        # One network on the Weights page, by the name `cst weights models` lists. The page says so if there is none.
+        what = {"section": "weights", "model": rest}
     elif head == "settings":
         what = {"settings": rest or None}
     elif head == "form":
@@ -588,7 +593,8 @@ def app_open(target: str = typer.Argument(..., help="A screen (projects, data, n
             what = {"section": "runs", "backtest": name, **({"version": version} if version else {})}
     else:
         fail(f"don't know how to open {target!r}. Try a screen (projects, data, notebooks, runs, deployments, team), "
-             "project:<id>, dataset:<name>, run:<evaluation>, comparison:<evaluation>, notebook:<name>, form:<task> or settings")
+             "project:<id>, dataset:<name>, run:<evaluation>, comparison:<evaluation>, notebook:<name>, weights:<model>, "
+             "form:<task> or settings")
     if tab:
         what["tab"] = tab
     if S.dry_run:

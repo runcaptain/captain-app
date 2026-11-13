@@ -8,6 +8,7 @@ import { h_flex } from "gpui-base";
 const MIN_ZOOM = 0.3, MAX_ZOOM = 2.5;
 const MAX_FIT = 1.6; // Fit enlarges a small drawing up to here
 const MARGIN = 24; // the space Fit leaves around the drawing
+const READABLE = 0.8; // below this zoom the words on the drawing are too small: open at 100% instead
 const MAP_W = 160, MAP_H = 100, MAP_MARGIN = 12;
 
 export class PanZoom {
@@ -37,11 +38,23 @@ export class PanZoom {
     this.pan = { x: (w - cw * z) / 2, y: (h - ch * z) / 2 };
   }
 
-  /** Fitted when first drawn, and again when the canvas or the drawing changes size, until the person moves it. */
-  settle(cw, ch, w, h) {
+  /** How the view opens, and opens again when the canvas or the drawing changes size, until the person moves it.
+   *  A drawing that fits at READABLE or more is fitted whole. One that would have to shrink further opens at 100%,
+   *  so its words stay the size of body text, centred on `focus` ({x, y} in the drawing's units, the open neuron)
+   *  or on the drawing's middle. The rest is a drag away, the overview map says there is more, and Fit shows it
+   *  all. Words too small to read are worse than a drawing that needs a drag. */
+  settle(cw, ch, w, h, focus = null) {
     this.view = { w, h };
     const key = `${Math.round(w)}x${Math.round(h)}:${Math.round(cw)}x${Math.round(ch)}`;
-    if (!this.touched && key !== this.fitFor) { this.fitFor = key; this.fit(cw, ch, w, h); }
+    if (this.touched || key === this.fitFor) return;
+    this.fitFor = key;
+    const whole = Math.min((w - MARGIN * 2) / Math.max(1, cw), (h - MARGIN * 2) / Math.max(1, ch));
+    if (whole >= READABLE) return this.fit(cw, ch, w, h);
+    this.zoom = 1;
+    const fx = focus?.x ?? cw / 2, fy = focus?.y ?? ch / 2;
+    // Centred on the focus, but never past the drawing's own edges.
+    const within = (want, size, room) => (size <= room - MARGIN * 2 ? (room - size) / 2 : Math.min(MARGIN, Math.max(room - MARGIN - size, want)));
+    this.pan = { x: within(w / 2 - fx, cw, w), y: within(h / 2 - fy, ch, h) };
   }
 
   /** Give a canvas element the gestures. */

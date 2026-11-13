@@ -12,11 +12,13 @@ const { weightsTransport } = await import('../../defaults/mods/captain-weights/a
 const { localReset, localSession, localNetwork } = await import('../../defaults/mods/captain-weights/local.js');
 const { handTarget, selectionPin, starters, dragSpan, TRACK_W } = await import('../../defaults/mods/captain-weights/hand.js');
 const { cost3 } = await import('../../defaults/mods/captain-weights/cost.js');
-const { starter, TINY, DIGITS } = await import('../../defaults/mods/captain-weights/starters.js');
+const { starter: tinyStarter, TINY } = await import('../../defaults/mods/captain-weights/starters.js');
+const { DIGITS, digitsNet, digitsRoutes } = await import('./fixtures/captain-weights/digits.mjs');
+const starter = (id) => (id === DIGITS ? digitsNet() : tinyStarter(id));
 const { liveTransport, liveReset } = await import('../../defaults/mods/captain-weights/kit/live.js');
 
 let served = {}, asked = [];
-weightsTransport(async (path, opts) => { asked.push([path, opts]); return served[path.split('?')[0]] ?? { ok: false, error: 'Not Found' }; });
+weightsTransport(async (path, opts) => { asked.push([path, opts]); return served[path.split('?')[0]] ?? digitsRoutes(path) ?? { ok: false, error: 'Not Found' }; });
 async function page(model) {
   localReset(); liveReset(); fakeFeed(liveTransport); asked = [];
   globalThis.__props = { model }; globalThis.__runs = []; globalThis.__toasts = []; globalThis.__agents = []; globalThis.__agentList = []; globalThis.__files = {};
@@ -140,6 +142,10 @@ test('"Send to agent" pins what is selected, and the three starters are written 
   let s = starters(h.mod);
   assert.deepEqual(s.map((x) => x.label), ['Find what this neuron detects', 'Fix this wrong answer with the smallest edit', 'Explain this layer']);
   assert.equal(s[0].needs, 'Open a neuron first.');
+  // The three things to ask sit with "Send to agent" at the top of the page, behind one button.
+  assert.equal(h.byIdPrefix('wt-ask-').length, 0);
+  await h.click('wt-ask');
+  assert.equal(h.byIdPrefix('wt-ask-').length, 3);
   assert.ok(!h.byIdPrefix('wt-ask-detects')[0].call('on_click'), 'the first starter waits for a neuron');
   await h.click('wt-n-1-1');
   assert.deepEqual(selectionPin(h.mod), { ref: 'weights:tiny@layer=1,neuron=1', kind: 'weights', label: 'Tiny network: hidden neuron 2 (bias -12.00)' });
@@ -176,5 +182,6 @@ test('one filled button at most, on every state of the page', async () => {
   const h = await page(DIGITS);
   await h.click('wt-n-2-3');
   await h.click('wt-walk-next');
+  await h.click('wt-ask');
   assert.ok(h.byIdPrefix('wt-hand').length > 0 && h.byIdPrefix('wt-chain').length > 0 && h.byIdPrefix('wt-ask-').length === 3);
 });
