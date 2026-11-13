@@ -20,7 +20,7 @@ const SHOWN_CHANGES = 5;
  *  yet. {t, row, col, value, R, C} with `value` undefined when the row is outside the rows on screen. */
 export function partTarget(v) {
   const s = v.pm, p = s && partOf(v), t = p && tensorOf(v, p);
-  if (!p || !t || !s.model.can_edit || !t.how?.tensor || !s.heat || s.problem) return null;
+  if (!p || !t || !s.model.can_edit || p.editable === false || !t.how?.tensor || !s.heat || s.problem) return null;
   const [R, C] = s.heat.shape ?? [0, 0];
   const row = Math.max(0, Math.min(R - 1, s.row ?? 0)), col = Math.max(0, Math.min(C - 1, s.col ?? 0));
   return { p, t, row, col, R, C, value: s.heat.values[row - (s.heat.from ?? 0)]?.[col] };

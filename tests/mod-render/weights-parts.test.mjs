@@ -469,3 +469,22 @@ test('a refused edit stays staged, and leaving drops a staged change and says so
   assert.equal(textOf(h, 'wt-dropped'), 'Your unsaved change to Position table was dropped. Nothing was saved.');
   assert.equal(edits().length, sent, 'nothing was ever sent by leaving');
 });
+
+test('an older layout: item vectors are a table on the candidate side, and a part that cannot be changed says so', async () => {
+  const h = await page(PARTS, [1280, 800], { older: true, edits: true });
+  const L = partsLayout(h.mod.pm.model), box = (id) => L.boxes.find((b) => b.part.id === id);
+  assert.ok(box('cn').y > box('pos').y + box('pos').h, 'the candidate side is its own row, under the session side');
+  assert.ok(L.captions.some((c) => c.text === 'Candidate side: Item vectors'));
+  await h.click('wp-part-cn');
+  assert.equal(textOf(h, 'wt-part-says'), 'Item vectors: one row of 8 numbers for each of 40 items in the catalog. Items whose rows are alike are ones the model treats alike.');
+  // A table: a row picker, the rows most like the row, and the services' names for its rows.
+  assert.equal(textOf(h, 'wt-part-row-at'), 'Row 1 of 40: item 1, price bucket 1');
+  assert.ok(asked.some(([p]) => p === `${S}/nearest?tensor=cn&row=0&top=8&watch=1`) && asked.some(([p]) => p === `${S}/labels?tensor=cn`));
+  assert.ok(h.byIdPrefix('wt-part-near-').length > 0);
+  // Its tensor is not editable: no hand tools, and one line says why. Another part of the same model has them.
+  assert.equal(one(h, 'wt-phand').length, 0);
+  assert.equal(textOf(h, 'wt-part-fixed'), "This part's numbers are not stored in a form that can be changed here. It can be read.");
+  await h.click('wp-part-act');
+  assert.equal(one(h, 'wt-phand').length, 1);
+  assert.equal(h.byIdPrefix('wt-part-fixed').length, 0);
+});

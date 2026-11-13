@@ -81,6 +81,27 @@ def ws(tmp_path, monkeypatch):
     return w
 
 
+LONG = "600"    # how long a fake agent "hangs". Every test that uses it ends the agent, so it is never waited out.
+
+
+def _until(cond, what: str, limit: float = 180.0):
+    """Wait for something to be true in the record. The limit only stops a broken run from hanging the suite: no
+    test passes or fails by how long a step took."""
+    t0 = time.time()
+    while True:
+        got = cond()
+        if got:
+            return got
+        if time.time() - t0 > limit:
+            raise AssertionError(f"never happened within {limit:.0f} s: {what}")
+        time.sleep(0.1)
+
+
+def _job_done(c, hd, jid):
+    return _until(lambda: (lambda j: j if j["status"] in ("done", "failed") else None)(c.get(f"/api/jobs/{jid}", headers=hd).json()),
+                  "the job finished")
+
+
 FIX = ["cst", "weights", "edit", "set", "--layer", "2", "--neuron", "1", "--value", "{good}", "--why", "the output bias keeps it off"]
 GOAL = "The network never says yes. Make it say yes when exactly one input is high"
 
@@ -190,17 +211,14 @@ def test_a_blind_run_keeps_from_the_weights_alone_and_the_agent_saw_no_score(ws)
 
 def _stop_after_first_edit(ws, **run_kw):
     stop, box = threading.Event(), {}
-    ws.plan([_fix(ws), ["sleep", "60"], ["cst", "weights", "edit", "zero", "--layer", "1", "--neuron", "1", "--why", "never reached"]])
+    ws.plan([_fix(ws), ["sleep", LONG], ["cst", "weights", "edit", "zero", "--layer", "1", "--neuron", "1", "--why", "never reached"]])
     plan = P.prepare(ws.ctx, "tiny@v2", GOAL, target_input=[0.9, 0.1], target_output=[1])
     t = threading.Thread(target=lambda: box.update(r=P.run(ws.ctx, plan, stop_event=stop, **run_kw)))
-    t0 = time.time()
     t.start()
-    while time.time() - t0 < 20 and not S.session(ws.ctx, plan["session"])["edits"]:
-        time.sleep(0.1)
-    assert S.session(ws.ctx, plan["session"])["edits"], "the first edit landed"
+    _until(lambda: S.session(ws.ctx, plan["session"])["edits"], "the agent's first edit is in the record")
     stop.set()
-    t.join(20)
-    assert time.time() - t0 < 30
+    t.join(240)
+    assert not t.is_alive() and "r" in box, "the run ended once it was asked to stop, long before the agent's own sleep"
     return box["r"]
 
 
@@ -221,32 +239,41 @@ def test_a_stopped_run_takes_its_edits_back_and_saves_nothing_even_when_the_edit
 
 
 def test_ctrl_c_on_the_command_stops_the_agent_takes_its_edit_back_and_exits(ws, tmp_path):
-    ws.plan([_fix(ws), ["sleep", "60"]])
+    ws.plan([_fix(ws), ["sleep", LONG]])
     p = subprocess.Popen([sys.executable, "-c", "from captain_search.cli.main import main; main()", "weights", "program", "tiny@v2", "--goal", GOAL,
                           "--target-input", "0.9,0.1", "--target-output", "1"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                          env=dict(os.environ))
-    t0 = time.time()
-    while time.time() - t0 < 30 and not (ws.agent_dir / "results.json").exists():
-        time.sleep(0.2)
-    assert (ws.agent_dir / "results.json").exists(), "the agent made its edit"
-    time.sleep(1.0)
-    p.send_signal(signal.SIGINT)
-    out, _ = p.communicate(timeout=30)
+    def edited():
+        # The interrupt is sent only once the agent's edit is in the record, so the command is in its watching loop.
+        mine = [x for x in S.sessions(ws.ctx, "tiny") if x["who"]["name"] == "claude, started by Captain"]
+        return mine and S.session(ws.ctx, mine[0]["id"])["edits"]
+
+    try:
+        _until(edited, "the agent's edit is in the record")
+        p.send_signal(signal.SIGINT)
+        out, _ = p.communicate(timeout=240)
+    finally:
+        if p.poll() is None:
+            p.kill()
     assert p.returncode == 130, out
     assert "Stopped. The agent's command line was ended." in out and "Verdict: Stopped. Nothing was kept." in out and "Saved as: nothing" in out
     sid = next(s for s in S.sessions(ws.ctx, "tiny") if s["who"]["name"] == "claude, started by Captain")["id"]
+    # The command has exited, so the take-back and the close are already written: read, do not wait.
     rep = S.report(ws.ctx, sid)
+    assert [e["kind"] for e in rep["events"]][-3:] == ["undo", "program", "close"], [e["kind"] for e in rep["events"]]
     assert rep["closed"] is True and S._load(ws.ctx, sid).doc["program"]["active"] is False
     assert rep["saved"] == [] and rep["ledger"]["changed"] == 0 and [e["state"] for e in rep["edits"]] == ["undone"]
     assert WS.versions(ws.ctx, "tiny") == [1, 2]
-    left = subprocess.run(["pgrep", "-f", str(ws.bin / "claude")], capture_output=True, text=True).stdout.strip()
-    assert left == "", "the agent's process is gone"
+    _until(lambda: subprocess.run(["pgrep", "-f", str(ws.bin / "claude")], capture_output=True, text=True).stdout.strip() == "",
+           "the agent's process is gone", 30)
 
 
 def test_the_time_limit_stops_an_agent_that_does_not_finish(ws):
-    r, said, _ = _go(ws, [_fix(ws), ["sleep", "60"]], time_limit_s=6)
+    r, said, _ = _go(ws, [_fix(ws), ["sleep", LONG]], time_limit_s=6)
     assert r["timed_out"] is True and r["kept"] is False and any("The time limit of 6 seconds is up." in line for line in said)
-    assert r["reason"] == "Stopped at the time limit. Nothing was kept." and r["taken_back"] == 1 and r["saved"] is None
+    # On a busy machine the fake agent may not have made its edit inside 6 seconds. Either way nothing is left applied.
+    assert r["reason"] == "Stopped at the time limit. Nothing was kept." and r["taken_back"] == len(r["edits"]) and r["saved"] is None
+    assert S.report(ws.ctx, r["session"])["ledger"]["changed"] == 0
     assert WS.versions(ws.ctx, "tiny") == [1, 2]
     assert "The agent ran out of time." in P.report_text(r)
 
@@ -254,14 +281,13 @@ def test_the_time_limit_stops_an_agent_that_does_not_finish(ws):
 def test_an_agent_that_says_it_is_done_and_does_not_exit_is_ended_and_judged_as_finished(ws):
     """Seen on two real runs: the agent finished in about half a minute, and its command line stayed open for six more.
     It writes its answer only as it exits, so the signal is its own last command, `cst weights done`."""
-    ws.plan([_fix(ws), ["cst", "weights", "done", "I set the output bias back. One edit, not confirmed by a run."], ["sleep", "120"]])
+    ws.plan([_fix(ws), ["cst", "weights", "done", "I set the output bias back. One edit, not confirmed by a run."], ["sleep", LONG]])
     plan = P.prepare(ws.ctx, "tiny@v2", GOAL, target_input=[0.9, 0.1], target_output=[1])
     assert 'Your last command must be `cst weights done' in plan["prompt"] and "Stop, and say you are done" in plan["prompt"]
     plan["grace_s"] = 2
     said = []
-    t0 = time.time()
-    r = P.run(ws.ctx, plan, say=said.append)
-    assert time.time() - t0 < 40 and r["ended_after_done"] is True and r["timed_out"] is False and r["stopped"] is False
+    r = P.run(ws.ctx, plan, say=said.append)     # it returns at all only because Captain ended the agent: the agent sleeps for LONG
+    assert r["ended_after_done"] is True and r["timed_out"] is False and r["stopped"] is False
     assert r["kept"] is True and r["saved"] == "tiny@v3" and r["agent_exit"] == 0, "a finished run, judged and kept"
     assert r["agent_said"] == "I set the output bias back. One edit, not confirmed by a run."
     assert any("The agent says it is done: I set the output bias back." in line for line in said)
@@ -269,11 +295,11 @@ def test_an_agent_that_says_it_is_done_and_does_not_exit_is_ended_and_judged_as_
     assert "The agent said it was done and its command line stayed open, so Captain ended it." in P.report_text(r)
     assert [e["kind"] for e in S.report(ws.ctx, r["session"])["events"]].count("done") == 1
     # An agent that never says it is done runs to the time limit, and that is a stopped run: nothing is kept.
-    ws.plan([_fix(ws), ["sleep", "120"]])
+    ws.plan([_fix(ws), ["sleep", LONG]])
     plan = P.prepare(ws.ctx, "tiny@v2", GOAL, target_input=[0.9, 0.1], target_output=[1], time_limit_s=6)
     plan["grace_s"] = 2
     r = P.run(ws.ctx, plan)
-    assert r["ended_after_done"] is False and r["timed_out"] is True and r["kept"] is False
+    assert r["ended_after_done"] is False and r["timed_out"] is True and r["kept"] is False and r["taken_back"] == len(r["edits"])
     # One that says it is done and exits by itself needs no ending.
     ws.plan([_fix(ws), ["cst", "weights", "done", "Done."]])
     plan = P.prepare(ws.ctx, "tiny@v2", GOAL, target_input=[0.9, 0.1], target_output=[1])
@@ -342,10 +368,7 @@ def test_the_page_starts_and_stops_a_run_as_a_job_on_the_feed(ws, monkeypatch):
     assert r.status_code == 200, r.text
     job = r.json()
     assert job["session"] == sid and job["agent"] == "claude"
-    t0 = time.time()
-    while time.time() - t0 < 30 and c.get(f"/api/jobs/{job['job']}", headers=hd).json()["status"] not in ("done", "failed"):
-        time.sleep(0.2)
-    j = c.get(f"/api/jobs/{job['job']}", headers=hd).json()
+    j = _job_done(c, hd, job["job"])
     assert j["status"] == "done", j
     assert any("The agent set 1 number" in line for line in j["log"])
     # From the page a good result is kept in the session and nothing is saved until the person saves it.
@@ -358,26 +381,19 @@ def test_the_page_starts_and_stops_a_run_as_a_job_on_the_feed(ws, monkeypatch):
     s = S.session(ws.ctx, sid)
     assert s["closed"] is False and [e["by"] for e in s["events"] if e["kind"] == "edit"] == ["agent"], "the person's session, with the agent's edit marked as the agent's"
     # Stop: a run that would go on is ended, and Captain's verdict follows.
-    ws.plan([_fix(ws), ["sleep", "60"]])
+    ws.plan([_fix(ws), ["sleep", LONG]])
     sid2 = S.open_session(ws.ctx, "tiny@v2")["id"]
     job = c.post(f"/api/weights/sessions/{sid2}/program", headers=hd, json={"goal": GOAL}).json()
-    t0 = time.time()
-    while time.time() - t0 < 20 and not S.session(ws.ctx, sid2)["edits"]:
-        time.sleep(0.1)
+    _until(lambda: S.session(ws.ctx, sid2)["edits"], "the agent's edit is in the record")
     assert c.post(f"/api/weights/sessions/{sid2}/program/stop", headers=hd).json() == {"session": sid2, "stopping": True}
-    while time.time() - t0 < 40 and c.get(f"/api/jobs/{job['job']}", headers=hd).json()["status"] not in ("done", "failed"):
-        time.sleep(0.2)
-    res = c.get(f"/api/jobs/{job['job']}", headers=hd).json()["result"]
+    res = _job_done(c, hd, job["job"])["result"]
     assert res["stopped"] is True and res["kept"] is False and res["reason"] == "Stopped. Nothing was kept." and res["saved"] is None
     assert S.session(ws.ctx, sid2)["ledger"]["changed"] == 0, "back to how the session was before the run"
     # Asked to save, the route saves a good result at once.
     ws.plan([_fix(ws)])
     sid3 = S.open_session(ws.ctx, "tiny@v2")["id"]
     job3 = c.post(f"/api/weights/sessions/{sid3}/program", headers=hd, json={"goal": GOAL, "save": True, "target_input": [0.9, 0.1], "target_output": [1]}).json()
-    t0 = time.time()
-    while time.time() - t0 < 30 and c.get(f"/api/jobs/{job3['job']}", headers=hd).json()["status"] not in ("done", "failed"):
-        time.sleep(0.2)
-    assert c.get(f"/api/jobs/{job3['job']}", headers=hd).json()["result"]["saved"] == "tiny@v4"
+    assert _job_done(c, hd, job3["job"])["result"]["saved"] == "tiny@v4"
     assert c.post(f"/api/weights/sessions/{sid2}/program/stop", headers=hd).status_code == 400
     plan = c.post(f"/api/weights/sessions/{sid2}/program", headers=hd, json={"goal": GOAL, "dry_run": True}).json()
     assert plan["dry_run"] is True and plan["agent"] == "claude"

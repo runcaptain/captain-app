@@ -33,10 +33,12 @@ export function partsLayout(model) {
   const boxes = [], at = new Map(), captions = [];
   let top = PAD, width = PAD * 2;
   sides.forEach((parts, n) => {
-    const tables = parts.filter((p) => p.kind === "embedding"), rest = parts.filter((p) => p.kind !== "embedding");
+    // Tables stack in the first column: the lookup tables, and the item vectors (one row per catalog item).
+    const isTable = (p) => p.kind === "embedding" || p.kind === "items";
+    const tables = parts.filter(isTable), rest = parts.filter((p) => !isTable(p));
     const most = Math.max(1, ...tables.map((p) => p.shape?.[0] ?? 1));
     // A table's height follows its rows, between a block that still holds its three lines and one twice that.
-    const heightOf = (p) => (p.kind === "embedding" ? Math.round(58 + 62 * Math.sqrt((p.shape?.[0] ?? 1) / most))
+    const heightOf = (p) => (isTable(p) ? Math.round(58 + 62 * Math.sqrt((p.shape?.[0] ?? 1) / most))
       : p.kind === "attention" ? 72 + Math.max(1, p.heads ?? 1) * (HEAD_H + 4) : p.kind === "norm" ? 58 : 64);
     const total = (list) => list.reduce((h, p) => h + heightOf(p), 0) + Math.max(0, list.length - 1) * 14;
     // Heads at the end sit one under another, like the tables at the start.
@@ -59,7 +61,7 @@ export function partsLayout(model) {
     stack(heads);
     // Names over the columns: the tables, each layer's blocks, the heads.
     const side = sides.length > 1 ? (n === 0 ? "Session side: " : "Candidate side: ") : "";
-    if (tables.length) captions.push({ text: `${side}Lookup tables`, x: at.get(tables[0].id).x, y: top, w: BLOCK_W + GAP });
+    if (tables.length) captions.push({ text: `${side}${tables.every((p) => p.kind === "items") ? "Item vectors" : "Lookup tables"}`, x: at.get(tables[0].id).x, y: top, w: BLOCK_W + GAP });
     const groups = new Map();
     for (const p of rest) if (p.block != null) { const b = at.get(p.id), g = groups.get(p.block) ?? { x0: b.x, x1: b.x + b.w }; g.x0 = Math.min(g.x0, b.x); g.x1 = Math.max(g.x1, b.x + b.w); groups.set(p.block, g); }
     for (const [k, g] of groups) captions.push({ text: `Layer ${int(k)}`, x: g.x0, y: top, w: g.x1 - g.x0 });
