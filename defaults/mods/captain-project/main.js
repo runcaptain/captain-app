@@ -938,47 +938,35 @@ export default class ProjectHome extends View {
     return { label: "New candidate", task: "experiment" };
   }
 
+  /** One project, as a card: its name, what it is, how many models, its state in one plain sentence (the sentence
+   *  the project's own page uses), and where it is deployed. The whole card opens the project. */
   projectCard(c, p, i) {
     const sum = this.summaries?.[p.id];
     const ready = sum && !sum.failed;
     const exps = ready ? sum.exps.experiments ?? [] : [];
-    const champ = ready ? sum.exps.champion : null;
-    const champExp = exps.find((e) => e.is_champion);
-    // The verdict worth showing: the champion's own, else the newest challenger judged against it.
-    const judged = [...exps].reverse().find((e) => !e.is_champion && e.evaluation);
-    const shown = champExp?.evaluation ? { who: "Baseline", v: verdictOf(champExp.evaluation) } : judged ? { who: parseRef(judged.pipeline).name, v: verdictOf(judged.evaluation) } : null;
-    const tone = shown ? { good: c.good, bad: c.fail, warn: c.warn, neutral: c.grey500 }[shown.v.tone] : c.grey500;
-    const next = ready ? this.nextOf(sum) : null;
-    const cr = parseRef(champ);
+    const champ = ready && sum.exps.champion ? inProject(parseRef(sum.exps.champion).name) : null;
+    // The model worth a sentence: the newest one judged against the compared model, else the compared model itself.
+    const told = [...exps].reverse().find((e) => !e.is_champion && e.evaluation) ?? exps.find((e) => e.is_champion) ?? exps.at(-1) ?? null;
+    const state = !told ? "No model yet." : `${inProject(parseRef(told.pipeline).name)}: ${verdictSentence(told, champ).replace(/^./, (x) => x.toLowerCase())}`;
+    const rec = ready ? sum.stages.ship?.staging ?? null : null;
+    const place = { local: "this computer", aws: "AWS", modal: "Modal", gcp: "Google Cloud", azure: "Azure" }[rec?.host ?? (rec?.kind === "local" ? "local" : "")] ?? null;
+    const deployed = rec?.status === "running" ? `Running on ${place ?? "your cloud"}` : "Not deployed";
+    const what = p.description || (ready ? sum.stages.recipe?.label : null) || "";
     return v_flex().id(`ph-p-${i}`).w(300).min_h(176).flex_none().p(14).gap(8).bg(c.surface).border_1().border_color(c.rule).cursor_pointer()
       .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => this.pickProject(cx, p))
       .child(h_flex().gap(10).items_center()
         .child(ProjectBadge(c, p, 28))
         .child(v_flex().flex_1().min_w(0)
-          .child(div().truncate().text_size(15).font_semibold().child(p.name))
-          .child(div().truncate().text_size(12.5).text_color(c.grey500).child(p.description || "No description"))))
+          .child(div().id(`ph-p-${i}-name`).truncate().text_size(15).font_semibold().child(p.name))
+          .when(Boolean(what), (e) => e.child(div().id(`ph-p-${i}-what`).truncate().text_size(12.5).text_color(c.grey500).child(what)))))
       .child(!sum ? div().text_size(12.5).text_color(c.grey500).child("Reading...")
         : sum.failed ? div().text_size(12.5).text_color(c.grey500).child("Couldn't read this project. Open it to try again.")
-        : v_flex().gap(5)
-          .child(h_flex().gap(6).items_center().min_w(0)
-            .child(svg(icon("trophy")).size(13).flex_none().text_color(champ ? c.blue : c.grey300))
-            .child(champ
-              ? h_flex().gap(6).items_center().min_w(0).child(div().min_w(0).truncate().font_family(MONO).text_size(12.5).child(cr.name)).when(cr.version != null, (e) => e.child(Badge(c, `v${cr.version}`)))
-              : div().text_size(12.5).text_color(c.grey500).child("No baseline yet")))
-          .child(h_flex().gap(6).items_center().min_w(0)
-            .child(svg(icon(shown ? shown.v.icon : "clock")).size(13).flex_none().text_color(tone))
-            .child(div().min_w(0).truncate().text_size(12.5).text_color(tone).child(shown ? `${shown.who}: ${shown.v.text.toLowerCase()}` : "Nothing judged yet")))
-          .child(h_flex().gap(6).items_center()
-            .child(svg(icon("flask-conical")).size(13).flex_none().text_color(c.grey500))
-            .child(div().text_size(12.5).text_color(c.grey900).child(`${int(exps.length)} candidate${exps.length === 1 ? "" : "s"}`))))
+        : v_flex().gap(4)
+          .child(div().id(`ph-p-${i}-models`).text_size(12.5).text_color(c.grey900).child(`${int(exps.length)} model${exps.length === 1 ? "" : "s"}`))
+          .child(div().id(`ph-p-${i}-state`).text_size(12.5).line_height("18px").text_color(c.grey900).child(state))
+          .child(div().id(`ph-p-${i}-deployed`).text_size(12.5).text_color(c.grey900).child(deployed)))
       .child(div().flex_1())
-      .when(Boolean(next), (e) => e.child(h_flex().child(Button(c, `ph-p-${i}-next`, next.label, (_e, cx) => {
-        this.pickProject(cx, p);
-        const pins = Object.fromEntries(sum.stages.inputs.map((x) => [x.slot, x.pinned]));
-        if (next.task === "input") pickInput(p.id, next.slot);
-        else if (next.task === "pin") form("pin", { project: p.id, pins, slot: next.slot });
-        else if (next.task === "experiment") form("experiment", { project: p.id, pins, champion: champ });
-      }, { small: true }))));
+      .child(h_flex().child(Button(c, `ph-p-${i}-open`, "Open", (_e, cx) => this.pickProject(cx, p), { small: true })));
   }
 
   /** 1. What you're building: the recipe that decided the inputs. */
@@ -1087,11 +1075,8 @@ export default class ProjectHome extends View {
     if (this.listProblem) return Problem(c, this.listProblem, (cx) => { this.listProblem = null; this.load(cx); });
     if (ps === null) return Skeleton(c, 4);
     const newBtn = Button(c, "ph-empty-new", "New project", () => form("project"), { kind: "primary" });
-    if (!ps.length) return Empty(c, "Start with a project", "A project holds one search you're improving: its catalog, the labels that grade it, the candidates you train and the baseline you ship.", newBtn);
+    if (!ps.length) return Empty(c, "Start with a project", "A project holds one model you're building: its data, the models you train and compare, and where it's deployed.", newBtn);
     return v_flex().gap(10)
-      .child(v_flex().gap(1)
-        .child(div().text_size(15).font_semibold().child("Projects"))
-        .child(div().text_size(12.5).text_color(c.grey500).child("Each one is a search you're improving. Open one to see its inputs, candidates and baseline.")))
       .child(h_flex().id("ph-projects").flex_wrap().items_start().gap(10).children(ps.map((p, i) => this.projectCard(c, p, i))));
   }
 
@@ -1102,9 +1087,9 @@ export default class ProjectHome extends View {
     // The name comes first: its block never goes under 220 px, and the actions drop to a second row when the row is
     // narrow (a terminal column open) instead of squeezing the name to "S...".
     const head = h_flex().min_h(56).py(8).flex_none().px(24).gap(10).items_center().border_b(1).border_color(c.rule)
-      .child(pid ? ProjectBadge(c, { id: pid, icon: p?.icon ?? null }, 28) : div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("house")).size(15)))
+      .child(pid ? ProjectBadge(c, { id: pid, icon: p?.icon ?? null }, 28) : div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("folder")).size(15)))
       .child(v_flex().flex_1().min_w(160)
-        .child(div().id("ph-name").text_size(18).font_semibold().truncate().child(p?.name ?? (pid ? shared("captain.scope")?.label ?? pid : "Home")))
+        .child(div().id("ph-name").text_size(18).font_semibold().truncate().child(p?.name ?? (pid ? shared("captain.scope")?.label ?? pid : "Projects")))
         // What it builds, as one line. Nothing else sits under the name.
         .when(Boolean(pid) && Boolean(this.recipe()), (e) => e.child(div().id("ph-building").text_size(12.5).text_color(c.grey500).truncate().child(this.recipe()))))
       .when(Boolean(pid), (e) => e.child(this.moreMenu(c)))
