@@ -78,3 +78,29 @@ export async function sendUndo(sessionId, editId, by = "you") {
 export function watchWeights(cx, model, sessionId, onChange) {
   return watchLive(cx, [`weights:${model}`, sessionId ? `weights-session:${sessionId}` : null], onChange);
 }
+
+// ---- Deploying the edited network -------------------------------------------------------------------------------
+
+/** The project a network is in, or null. A deployment belongs to a project. */
+export async function projectOf(model) {
+  if (isStarter(model)) return { ok: true, data: null };
+  const r = await api("/api/weights/models", { timeout: 15 });
+  if (!r?.ok || !Array.isArray(r.data)) return { ok: false, error: r?.error };
+  return { ok: true, data: r.data.find((m) => m?.id === model)?.project ?? null };
+}
+
+/** Save the session as a new version and deploy that version to `host` ("local" is this computer), as one job.
+ *  Resolves to {job, run, plan, saved: {ref, text}, session}. A refusal is a sentence. */
+export async function sendDeploy(project, sessionId, host = "local") {
+  return api(`/api/projects/${enc(project)}/deploy`, { method: "POST", body: { session: sessionId, host, by: "you" }, timeout: 60 });
+}
+
+/** Where the project's last deploy stands: {status: none | running | done | failed, error, env, staged, text}. */
+export async function readDeploy(project) {
+  return api(`/api/projects/${enc(project)}/deploy`, { timeout: 20 });
+}
+
+/** Hear when what is deployed from a project changes. Returns the stop. */
+export function watchDeploy(cx, project, onChange) {
+  return watchLive(cx, ["deployed", `deployment:${project}`], onChange);
+}

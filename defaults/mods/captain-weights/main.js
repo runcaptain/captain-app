@@ -29,6 +29,7 @@ import { CostPanel } from "./cost.js";
 import { Timeline, ledgerFacts } from "./timeline.js";
 import { HandBlock, handTarget, dragSpan, TRACK_W, selectionPin, starters } from "./hand.js";
 import { askAgent } from "./kit/agent.js";
+import { DeployLine, startDeploy } from "./deploy.js";
 import { WalkButtons, walkWords, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
 const TIGHT = 640; // under this width nothing fits side by side: an open neuron takes the drawing's place, and the cost is one line
@@ -89,6 +90,7 @@ export default class CaptainWeights extends View {
     this.pz = new PanZoom("wt");
     this.width = 820; this.height = 760; // until the block says its size: about what is left beside the terminal
     this.askOpen = false;   // whether the three things to ask an agent are showing
+    this.deploy = null;     // a deploy started from here: {state, project, ref, address, text} (deploy.js)
     this.asked = 0;         // the `at` of the last request from another screen that was handled
     this.readAt = 0;        // when the page last read
     if (this.model) this.open(this.model, cx); else this.loadList(cx);
@@ -119,6 +121,7 @@ export default class CaptainWeights extends View {
     this.model = model; this.net = null; this.problem = null; this.sel = null; this.selW = null; this.inputAt = 0;
     this.session = null; this.test = null; this.openEdit = null; this.readFor = null; this.seen = null; this.pulse = null; this.note = null; this.undoNote = null; this.drag = null;
     this.walk = { step: 0, playing: false }; this.mode = "values";
+    this.stopDeploy?.(); this.stopDeploy = null; this.deploy = null;
     this.pz = new PanZoom("wt");
     this.stop?.(); this.stop = null;
     this.read(cx);
@@ -376,7 +379,10 @@ export default class CaptainWeights extends View {
         .child(div().flex_1())
         .when(Boolean(net), (e) => e
           .child(SendToAgent(c, "wt-send", selectionPin(this)))
-          .child(Button(c, "wt-ask", this.askOpen ? "Hide what to ask" : "Ask an agent", (_e, cx) => { this.askOpen = !this.askOpen; cx.notify(); }, { small: true })))
+          .child(Button(c, "wt-ask", this.askOpen ? "Hide what to ask" : "Ask an agent", (_e, cx) => { this.askOpen = !this.askOpen; cx.notify(); }, { small: true }))
+          // The services' networks can be deployed. The tiny network kept in this page lives only while it is open.
+          .when(!starterModel && Boolean(this.session), (x) => x.child(Button(c, "wt-deploy-go", "Deploy this version", (_e, cx) => startDeploy(this, cx),
+            { small: true, disabled: this.deploy?.state === "asking" || this.deploy?.state === "running" }))))
         .when(Boolean(live), (e) => e.child(div().id("wt-live").flex_none().text_size(11.5).text_color(c.grey500).child(live))))
       .when(Boolean(net), (e) => e
         .child(h_flex().gap(10).items_center()
@@ -474,7 +480,7 @@ export default class CaptainWeights extends View {
     // the drawing, where it hid the network's last column.
     const walking = Boolean(net) && this.walk.step > 0 && Boolean(this.grad);
     const saysH = walking ? (W < 560 ? 76 : 58) : 0;
-    const ch = Math.max(180, H - headH - 44 - (tight ? 72 : 38) - (this.askOpen ? 42 : 0) - BAND_H - 14 - saysH);
+    const ch = Math.max(180, H - headH - 44 - (tight ? 72 : 38) - (this.askOpen ? 42 : 0) - (this.deploy ? 34 : 0) - BAND_H - 14 - saysH);
     const costW = Math.min(520, Math.max(300, Math.round((W - 40) * 0.45)));
     return v_flex().id("weights").size_full().bg(c.canvas).text_color(c.navy).font_family(FONT)
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1 || Math.abs(size.height - this.height) > 1) { this.width = size.width; this.height = size.height; cx.notify(); } })
@@ -485,6 +491,7 @@ export default class CaptainWeights extends View {
         .child(div().text_size(12.5).line_height("19px").text_color(c.fail).child(this.problem))
         .child(Button(c, "wt-retry", "Try again", (_e, cx) => this.open(this.model, cx), { small: true }))))
       .when(Boolean(net), (e) => e
+        .when(Boolean(this.deploy), (x) => x.child(DeployLine(c, this)))
         .when(this.askOpen, (x) => x.child(this.askStrip(c)))
         .child(this.inputs(c))
         .child(this.controls(c))

@@ -904,7 +904,9 @@ export default class ProjectHome extends View {
           () => openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: p.name } })),
         `No model versions yet. ${joins}`))
       .child(this.section(c, "models", "Models", models,
-        (m, i) => this.row(c, `ph-md-${i}`, m.model ?? m.name ?? m.brand ?? m.id ?? "", m.pipeline ? `${m.from}, served by ${m.pipeline}` : [m.from, m.architecture, m.status_kind].filter(Boolean).join(", "), [m.version != null ? (/^\d+$/.test(String(m.version)) ? `v${m.version}` : String(m.version)) : null], "package", () => go("data", { view: "models" })),
+        (m, i) => this.row(c, `ph-md-${i}`, m.model ?? m.name ?? m.brand ?? m.id ?? "", m.pipeline ? `${m.from}, served by ${m.pipeline}` : [m.from, m.architecture, m.status_kind, m.from === "Weights" ? "opens its weights" : null].filter(Boolean).join(", "), [m.version != null ? (/^\d+$/.test(String(m.version)) ? `v${m.version}` : String(m.version)) : null], "package",
+          // A network opens on the Weights page, drawn. Any other model opens in Data.
+          () => (m.from === "Weights" ? go("weights", { model: m.name ?? String(m.id ?? "").replace(/^weights:/, "") }) : go("data", { view: "models" }))),
         "No models yet. Choose models, or tick a registry brand to bring all of its models.",
         Button(c, "ph-choose-models", this.choosing ? "Done" : "Choose models", (_e, cx) => this.toggleChoosing(cx), { small: true, kind: this.choosing ? "primary" : "secondary" }),
         this.choosing ? this.chooser(c) : null))

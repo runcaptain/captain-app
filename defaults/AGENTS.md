@@ -1478,6 +1478,11 @@ What a person sees, so you can tell them where to look:
 - **By hand**: a person can type or drag a weight or a bias, halve, double or zero a neuron, and take it back.
   Their edits are in the same record as yours, marked "You".
 
+- **"Deploy this version"** at the top: one press saves the session as a new version and deploys it to this
+  computer (`POST /api/projects/<project>/deploy` with the session). A line then says the address it answers at,
+  with a link to its card on Deployments. It needs a project: the network's own, or the one picked in the Explorer.
+- A network a project holds is listed in that project's Models, and its row opens it here.
+
 The page listens to the change feed topics `weights:<model>` and `weights-session:<id>`, so what you do with
 `cst weights` shows there the moment you do it. The page works out activations and gradients itself from the
 numbers it was sent, and it never asks the services for a score: a person looking never spends your forward
