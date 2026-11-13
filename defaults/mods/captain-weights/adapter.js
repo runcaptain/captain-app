@@ -57,7 +57,7 @@ export const isParts = (d) => Boolean(d) && (d.kind === "session-ranker" || d.ki
 /** A tensor's name in plain words. The services name tensors as the training code does ("L0.linear1.weight"). */
 function tensorWords(kind, name) {
   const last = String(name).split(".").slice(-2).join(".");
-  if (kind === "embedding") return "The table";
+  if (kind === "embedding" || kind === "items") return "The table";
   if (kind === "norm") return /bias$/.test(last) ? "Shift" : "Scale";
   if (/linear1\.weight$/.test(last)) return "Into the hidden step";
   if (/linear2\.weight$/.test(last)) return "Out of the hidden step";
@@ -83,7 +83,9 @@ export function partsFrom(d) {
     if (tensors.length && !tensors[0].shape) tensors[0].shape = shape;
     return { id: p.id, kind: p.kind, name: cap(p.name ?? p.id), says: p.says ?? "", technical: p.technical ?? p.id, shape, parameters: p.parameters ?? 0, feeds_from: p.feeds_from ?? [],
       block: p.layer != null ? p.layer + 1 : undefined, heads: p.heads ?? null, side: p.side ?? null, embeds: p.embeds ?? null, guessed: p.meaning_from === "name",
-      hidden: p.hidden ?? null, inputs: p.inputs ?? null, outputs: p.outputs ?? null, tensors };
+      hidden: p.hidden ?? null, inputs: p.inputs ?? null, outputs: p.outputs ?? null,
+      // False when one of its tensors is not stored as plain decimals: the services refuse an edit to it.
+      editable: p.editable !== false, tensors };
   });
   // Where it came from is a folder or a storage address. The page never shows it raw: it says which of the two
   // it is, and keeps the address for a person to copy.
