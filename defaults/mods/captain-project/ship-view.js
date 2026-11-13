@@ -185,6 +185,7 @@ async function follow(ship, cx, place, planned) {
   }
   if (ship.djob && !ship.djob.failed) ship.djob = null;
   ship.load(cx); loadPlaces(ship, cx);
+  ship.page.reload?.(cx); // the Next banner and the steps follow what was just done
   ship.page.reload?.(cx);
   cx.notify();
 }
