@@ -102,7 +102,9 @@ export function Timeline(c, v, { width, height }) {
       .child(h_flex().gap(8).items_start()
         .child(div().id(`wt-ev-line-${ev.id}`).flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(ev.undone ? c.grey500 : c.navy)
           .when(isEdit, (e) => e.cursor_pointer().hover((st) => st.text_color(c.blue)).tooltip(open ? "Close this edit" : "See the old and new values").on_click((_e, cx) => v.openTimeline(ev.id, cx)))
-          .child(`${eventWords(ev)}${ev.undone ? " Taken back." : ""}`)));
+          .child(`${eventWords(ev)}${ev.undone ? " Taken back." : ""}`))
+        // On the edit's first line, at the right: never under the band's edge, however tall the opened edit is.
+        .when(open && isEdit && !ev.undone, (e) => e.child(Button(c, `wt-ev-undo-${ev.id}`, v.busy === ev.id ? "Taking it back" : "Take this edit back", (_e, cx) => v.undo(ev.id, cx), { small: true, disabled: v.busy === ev.id }))));
     if (open && isEdit) {
       const changes = ev.changes ?? [], total = ev.changed ?? changes.length;
       el = el
@@ -110,8 +112,7 @@ export function Timeline(c, v, { width, height }) {
         .child(v_flex().id(`wt-ev-changes-${ev.id}`).gap(1).children(changes.slice(0, SHOWN_CHANGES).map((ch, n) => h_flex().id(`wt-ev-change-${ev.id}-${n}`).gap(8).text_size(12.5)
           .child(div().w(210).flex_none().truncate().text_color(c.navy).child(changeName(v.net, ch)))
           .child(div().flex_none().font_medium().child(`${signed(ch.old)} to ${signed(ch.new)}`))))
-          .when(total > SHOWN_CHANGES, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`and ${count(total - SHOWN_CHANGES)} more`))))
-        .when(!ev.undone, (e) => e.child(h_flex().pt(2).child(Button(c, `wt-ev-undo-${ev.id}`, v.busy === ev.id ? "Taking it back" : "Take this edit back", (_e, cx) => v.undo(ev.id, cx), { small: true, disabled: v.busy === ev.id }))));
+          .when(total > SHOWN_CHANGES, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`and ${count(total - SHOWN_CHANGES)} more`))));
     }
     return el;
   };

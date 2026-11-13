@@ -199,6 +199,22 @@ export function shapesFor(L, s, c) {
 
 const two = (v) => (Object.is(Number(v.toFixed(2)), -0) ? "0.00" : v.toFixed(2));
 
+/** Where each weight's number goes, in the drawing's units: [{k, j, i, v, x, y, hidden}], in the order given
+ *  (strongest first). A third of the way along its line; two thirds if a number already placed is there; hidden
+ *  (shown on hover) if both are taken. Two numbers share a spot when their boxes, about 36 by 15, would touch. */
+export function placeNumbers(L, weights) {
+  const placed = [];
+  const clash = (x, y) => placed.some((p) => !p.hidden && Math.abs(p.x - x) < 36 && Math.abs(p.y - y) < 15);
+  for (const w of weights) {
+    const a = L.centre(w.k, w.i), b = L.centre(w.k + 1, w.j);
+    const at = (t) => ({ x: a.x + L.r + (b.x - a.x - L.r * 2) * t, y: a.y + (b.y - a.y) * t });
+    let spot = at(1 / 3), hidden = false;
+    if (clash(spot.x, spot.y)) { spot = at(2 / 3); if (clash(spot.x, spot.y)) { spot = at(1 / 3); hidden = true; } }
+    placed.push({ ...w, x: spot.x, y: spot.y, hidden });
+  }
+  return placed;
+}
+
 /** The canvas: the shapes under, the circles and their words over them. `o` is {id, pz, width, height, onNeuron,
  *  onWeight, extra: elements laid over the drawing, focus: the neuron to open the view on, keep: an object
  *  the caller holds, where the shapes are kept between draws} and the drawing state `s` (see shapesFor). */
@@ -288,22 +304,26 @@ export function NetworkCanvas(c, s, o) {
       }
     }
   }
-  // On a network small enough, each weight's number sits on its line, a third of the way along, and picks it.
+  // On a network small enough, each weight's number sits on its line, a third of the way from the neuron it
+  // leaves, and picks it. Lines cross, so a number that would land on one already placed moves to two thirds of
+  // its line. The stronger weight is placed first, so it is the fainter one that moves. One that still finds no
+  // free spot shows only when the pointer is on it.
   if (few) {
-    for (let k = 0; k < net.layers.length; k++) for (let j = 0; j < net.layers[k].W.length; j++) for (let i = 0; i < net.layers[k].W[j].length; i++) {
-      const a = L.centre(k, i), b = L.centre(k + 1, j);
-      // Lines from different neurons cross: numbers from the first sit nearer their start than numbers from the
-      // second, so two never land on the same spot.
-      // Staggered by where the line starts and where it ends, so no two numbers share a spot.
-      const t = 0.18 + 0.13 * (i % 2) + 0.06 * (j % 3);
-      const [x, y] = pz.at(a.x + L.r + (b.x - a.x - L.r * 2) * t, a.y + (b.y - a.y) * t);
+    const all = [];
+    for (let k = 0; k < net.layers.length; k++) for (let j = 0; j < net.layers[k].W.length; j++) for (let i = 0; i < net.layers[k].W[j].length; i++) all.push({ k, j, i, v: lineValue(s, k, j, i) });
+    all.sort((p, q) => Math.abs(q.v) - Math.abs(p.v));
+    for (const pl of placeNumbers(L, all)) {
+      const { k, j, i } = pl;
+      const [x, y] = pz.at(pl.x, pl.y);
       const on = s.selW && s.selW.k === k && s.selW.j === j && s.selW.i === i;
-      over.push(div().id(`${o.id}-w-${k}-${j}-${i}`).absolute().left(x - 16 * z).top(y - 8 * z).px(3 * z).bg(c.surface2).cursor_pointer()
-        .border_1().border_color(on ? c.blue : "#00000000").text_size(10 * z).text_color(on ? c.blue : c.grey900)
+      const shown = !pl.hidden || on;
+      over.push(div().id(`${o.id}-w-${k}-${j}-${i}`).absolute().left(x - 16 * z).top(y - 8 * z).px(3 * z).cursor_pointer()
+        .bg(shown ? c.surface2 : "#00000000").border_1().border_color(on ? c.blue : "#00000000").text_size(10 * z).text_color(on ? c.blue : shown ? c.navy : "#00000000")
+        .when(!shown, (e) => e.hover((st) => st.bg(c.surface2).text_color(c.navy)))
         .tooltip("Pick this weight")
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation?.())
         .on_click((_e, cx) => o.onWeight?.({ k, j, i }, cx))
-        .child(two(lineValue(s, k, j, i))));
+        .child(two(pl.v)));
     }
   }
   const marks = L.cols.map((col) => ({ x: col.x, y: col.top, w: col.w, h: col.h, on: sel?.k === col.k }));
