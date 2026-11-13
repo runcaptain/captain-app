@@ -44,7 +44,7 @@ PROVIDERS = [
     # Modal signs in by itself on this computer (`modal token new`), so the login holds no secret: connecting it
     # here is how a person says "offer Modal in this Captain", and which Modal environment to use.
     {"provider": "modal", "label": "Modal", "auth": [
-        {"mode": "local", "label": "This computer's Modal sign-in (modal token new)", "fields": [
+        {"mode": "local", "label": "This computer's Modal sign-in", "fields": [
             {"name": "environment", "label": "Modal environment (blank for your default)", "secret": False, "required": False}]}]},
 ]
 
@@ -103,6 +103,16 @@ def add_profile(name: str, provider: str, auth: str, region: str | None, fields:
     cfg.setdefault("profiles", {})[name] = {"provider": provider, "auth": auth, "region": region,
                                             "fields": {k: v for k, v in fields.items() if str(v).strip()},
                                             "secret_fields": sorted(k for k, v in secrets.items() if str(v).strip())}
+    save_config(cfg)
+    return get_profile(name)
+
+
+def set_label(name: str, label: str) -> dict:
+    """The words a person named this login with ("GPU cloud"), kept beside the id Captain made from them."""
+    cfg = load_config()
+    if name not in (cfg.get("profiles") or {}):
+        raise ValueError(f"no cloud account named {name}")
+    cfg["profiles"][name]["label"] = " ".join(str(label or "").split())[:80] or None
     save_config(cfg)
     return get_profile(name)
 
@@ -235,6 +245,20 @@ def _test_modal() -> dict:
     if config.get("token_id") and config.get("token_secret"):
         return {"ok": True, "identity": "this computer's Modal sign-in"}
     return {"ok": False, "error": "This computer isn't signed in to Modal. Run `modal token new` in a terminal."}
+
+
+def signin_found(provider: str, auth: str) -> dict:
+    """For the Connect a cloud account form, which checks by itself: is the sign-in this choice relies on there?
+    {found, text}. Only a sign-in kept on this computer can be looked for without a secret: Modal's. For anything
+    else `found` is None, and nothing is said."""
+    if provider == "modal" and auth == "local":
+        try:
+            ok = bool(_test_modal().get("ok"))
+        except Exception:  # noqa: BLE001  the Modal package is not installed here
+            ok = False
+        return {"found": ok, "text": None if ok else
+                "No Modal sign-in on this computer yet. Run `modal token new` in a terminal, then come back."}
+    return {"found": None, "text": None}
 
 
 def provider_of(uri: str) -> str:
