@@ -669,6 +669,23 @@ class SageMakerProvider(_AWS):
             if not token:
                 return out
 
+    def metric_names(self, endpoint: str) -> dict:
+        """Which numbers CloudWatch holds for an endpoint, by where it keeps them: {"copies": [...], "requests":
+        [...]}, each a list of {metric, dimensions}. Read-only. Asked only when the numbers expected are not there,
+        to say why: nothing under that name at all, or numbers kept under other dimensions than Captain asks for."""
+        cw = self._client("cloudwatch")
+        out = {}
+        for key, ns in (("copies", "/aws/sagemaker/Endpoints"), ("requests", "AWS/SageMaker")):
+            got, token = [], None
+            while True:
+                r = cw.list_metrics(Namespace=ns, Dimensions=[{"Name": "EndpointName", "Value": endpoint}], **({"NextToken": token} if token else {}))
+                got += [{"metric": m["MetricName"], "dimensions": {d["Name"]: d["Value"] for d in m.get("Dimensions") or []}} for m in r.get("Metrics", [])]
+                token = r.get("NextToken")
+                if not token or len(got) > 200:
+                    break
+            out[key] = got
+        return out
+
     def found(self, prefix: str = "captain") -> list[dict]:
         """Every SageMaker endpoint here that Captain made, whatever project made it: found by Captain's tag, or by
         the name prefix. Reads only, and never calls a model. One row each: the name, the state as SageMaker reports

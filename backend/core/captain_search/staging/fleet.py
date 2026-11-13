@@ -180,7 +180,7 @@ def _local_state(rec: dict) -> tuple[str, str | None]:
 def _row(pr: dict | None, env: str | None, rec: dict | None, cloud: str, login: str | None, region: str | None, thing: dict | None,
          state: str, reason: str | None, link: str, machine: str | None, corrected: list[str]) -> dict:
     name = (thing or {}).get("name") or ((rec or {}).get("endpoint") or {}).get("name")
-    where = CLOUDS.get(cloud, cloud) + (f", {region}" if region else "") + (f", {machine}" if machine else "")
+    where = CLOUDS.get(cloud, cloud) + (f", {region}" if region else "") + (f", {machine}" if machine and machine != CLOUDS.get(cloud) else "")
     copies_now = (thing or {}).get("copies_now")
     if link == "unlinked":
         text = f"Found in your {CLOUDS.get(cloud, cloud)} account, not linked to a project."

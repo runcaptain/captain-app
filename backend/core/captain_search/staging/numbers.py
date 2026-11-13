@@ -245,6 +245,27 @@ def _run_hours(rec: dict, since: dt.datetime, now: dt.datetime) -> float:
     return max(0.0, (b - max(a, since)).total_seconds() / 3600.0)
 
 
+def _why_no_hours(prov, name: str) -> str:
+    """When AWS counts no hours for a model that ran, look at what it does hold under that name and say so, so the
+    reason can be read from the answer and not guessed: nothing at all, or numbers kept some other way."""
+    look = getattr(prov, "metric_names", None)
+    if not callable(look):
+        return ""
+    try:
+        got = look(name)
+    except Exception as e:  # noqa: BLE001
+        return f". Captain could not look at what AWS holds for it ({str(e)[:120]})"
+    copies, requests = got.get("copies") or [], got.get("requests") or []
+    if not copies and not requests:
+        return f". AWS holds no numbers at all under the name {name}"
+    if not copies:
+        return (f". AWS holds its request numbers ({', '.join(sorted({m['metric'] for m in requests})[:4])}) and none of the "
+                "numbers each copy reports, which the hours are counted from")
+    kept = sorted({m["metric"] for m in copies})
+    dims = sorted({f"{k}={v}" for m in copies for k, v in m["dimensions"].items() if k != "EndpointName"})
+    return f". AWS holds {', '.join(kept[:4])} for it under {', '.join(dims[:4]) or 'no other dimension'}, which is not how Captain asked for them"
+
+
 def _cost(ctx: Context, pid: str, env: str, rec: dict) -> dict:
     from . import observe as OB
 
@@ -274,7 +295,7 @@ def _cost(ctx: Context, pid: str, env: str, rec: dict) -> dict:
                                            "Your AWS bill is the final word."}
             # AWS answered and counted no hours. For a model that ran, that is AWS not having the numbers (they
             # can take a while, and a deleted endpoint's can be thin), not the model costing nothing.
-            why_not = "AWS reported no hours for it this month"
+            why_not = "AWS reported no hours for it this month" + _why_no_hours(prov, name)
         except Exception as e:  # noqa: BLE001
             why_not = f"Captain couldn't read AWS's own numbers ({str(e)[:140]})"
     try:
