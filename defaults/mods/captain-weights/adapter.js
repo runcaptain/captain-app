@@ -20,6 +20,10 @@ let api = servicesApi;
 /** For tests: the request function. */
 export function weightsTransport(fn) { api = fn ?? servicesApi; }
 
+/** For the picture check only, which has no services that hold a model of parts: answers by address, {path:
+ *  answer}. Any address not in it is asked of the services as usual. */
+export function weightsCanned(answers) { api = async (path, opts) => answers[path] ?? servicesApi(path, opts); }
+
 /** The networks that can be opened: {networks, fromServices}. Captain's services make their own "tiny" and
  *  "digits" the first time weights are opened in a workspace, so when they answer, the list is theirs. When they
  *  do not, the one tiny network kept in this mod stands in, so the page always has something to open. */
@@ -35,6 +39,119 @@ export async function listNetworks() {
 export async function readNetwork(model, sessionId) {
   if (isStarter(model)) return ok(localNetwork(model));
   return api(`/api/weights/models/${enc(model)}${sessionId ? `?session=${enc(sessionId)}&watch=1` : ""}`, { timeout: 30 });
+}
+
+// ---- A model of parts: a trained model too big to draw neuron by neuron ------------------------------------------
+// The services call this kind "session-ranker": a small transformer with tree rankers (docs/weights.md there, "A
+// trained session model with rankers"). It is read, never edited or run. Its description holds no numbers. Its
+// numbers are read through a session as a screen's look (`watch=1`), which is counted as the screen's and never
+// against what an agent was allowed. Everything below turns the services' shapes into the page's (shapes.js
+// PartsModel and the rest), so this is the one place that changes when theirs do.
+
+const cap = (text) => { const t = String(text ?? ""); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; };
+const query = (o) => Object.entries(o).filter(([, v]) => v != null && v !== "").map(([k, v]) => `${k}=${enc(v)}`).join("&");
+
+/** Whether a description, or a row of the list, is a model of parts. */
+export const isParts = (d) => Boolean(d) && (d.kind === "session-ranker" || d.kind === "parts" || (Array.isArray(d.parts) && d.parts.length > 0));
+
+/** A tensor's name in plain words. The services name tensors as the training code does ("L0.linear1.weight"). */
+function tensorWords(kind, name) {
+  const last = String(name).split(".").slice(-2).join(".");
+  if (kind === "embedding") return "The table";
+  if (kind === "norm") return /bias$/.test(last) ? "Shift" : "Scale";
+  if (/linear1\.weight$/.test(last)) return "Into the hidden step";
+  if (/linear2\.weight$/.test(last)) return "Out of the hidden step";
+  if (/linear1\.bias$/.test(last)) return "Hidden step biases";
+  if (/linear2\.bias$/.test(last)) return "Output biases";
+  return /bias$/.test(last) ? "Biases" : /weight$/.test(last) ? "Weights" : String(name);
+}
+const two = (shape) => (!Array.isArray(shape) || !shape.length ? [1, 1] : shape.length === 1 ? [1, shape[0]] : [shape[0], shape[1]]);
+
+/** The services' description of a trained model, as the page's PartsModel. */
+export function partsFrom(d) {
+  const parts = (d.parts ?? []).map((p) => {
+    const tensors = [];
+    if (p.kind === "attention") {
+      const w = p.width ?? p.shape?.[1] ?? 0;
+      // What a head looks for and what it copies are composed by the services, and need the number of heads.
+      if (p.heads && p.layer != null) tensors.push(
+        { id: "qk", name: "Query-key", shape: [w, w], per_head: true, how: { attention: p.layer, matrix: "query_key" } },
+        { id: "ov", name: "Output-value", shape: [w, w], per_head: true, how: { attention: p.layer, matrix: "output_value" } });
+      for (const m of p.matrices ?? []) tensors.push({ id: m.role, name: cap(m.role), technical: m.tensor, shape: two(m.shape), how: { tensor: m.tensor, rows: m.rows } });
+    } else for (const t of p.tensors ?? []) tensors.push({ id: t, name: tensorWords(p.kind, t), technical: t, how: { tensor: t } });
+    const shape = p.kind === "attention" && p.width ? [p.width, p.width] : two(p.shape);
+    if (tensors.length && !tensors[0].shape) tensors[0].shape = shape;
+    return { id: p.id, kind: p.kind, name: cap(p.name ?? p.id), says: p.says ?? "", technical: p.technical ?? p.id, shape, parameters: p.parameters ?? 0, feeds_from: p.feeds_from ?? [],
+      block: p.layer != null ? p.layer + 1 : undefined, heads: p.heads ?? null, side: p.side ?? null, embeds: p.embeds ?? null, guessed: p.meaning_from === "name",
+      hidden: p.hidden ?? null, inputs: p.inputs ?? null, outputs: p.outputs ?? null, tensors };
+  });
+  const from = typeof d.source === "string" ? d.source : d.source?.from ? `Brought in from ${d.source.from}` : "";
+  return { id: d.id, name: d.name ?? d.id, kind: "parts", kind_words: cap(d.kind_says ?? d.kind_words ?? "trained model"), parameters: d.parameters, width: d.width ?? null,
+    source: from, read_only: d.can?.says ?? null, wiring: d.wiring_says ?? "", heads_words: d.heads ? "" : d.heads_says ?? "",
+    parts, rankers: (d.rankers ?? []).map((r) => ({ id: r.name, name: r.name, trees: r.trees ?? null, inputs_count: r.inputs ?? null })) };
+}
+
+/** What a model is, without its numbers: {ok, data} where data is the services' own answer (for a model of parts,
+ *  see partsFrom). A starter has none. */
+export async function readDescription(model) {
+  if (isStarter(model)) return { ok: true, data: null };
+  return api(`/api/weights/models/${enc(model)}`, { timeout: 20 });
+}
+
+/** One matrix of a part as a grid of numbers (shapes.js Heatmap). `t` is one of the part's tensors (partsFrom).
+ *  For a head's query-key or output-value matrix give `head`. `rows` is [first, end) within the matrix, for a
+ *  table too tall to send whole. */
+export async function readPartHeatmap(sessionId, t, { head = 0, rows = null } = {}) {
+  const base = `/api/weights/sessions/${enc(sessionId)}`;
+  if (t.how.attention != null) {
+    const r = await api(`${base}/attention?${query({ layer: t.how.attention, head, matrix: t.how.matrix, watch: 1 })}`, { timeout: 30 });
+    if (!r?.ok) return r ?? { ok: false };
+    const of = Array.isArray(r.data?.of) ? r.data.of : [], one = of.find((h) => h.head === head && h.matrix) ?? of.find((h) => h.matrix);
+    if (!one?.matrix?.grid) return { ok: false, error: "The services did not send that head's matrix." };
+    const g = one.matrix.grid;
+    return { ok: true, data: { tensor: t.id, shape: [g.length, g[0]?.length ?? 0], from: 0, values: g } };
+  }
+  const off = t.how.rows?.[0] ?? 0, span = rows ? [off + rows[0], off + rows[1]] : t.how.rows ?? null;
+  const r = await api(`${base}/heatmap?${query({ tensor: t.how.tensor, rows: span ? `${span[0]}:${span[1]}` : null, watch: 1 })}`, { timeout: 30 });
+  if (!r?.ok) return r ?? { ok: false };
+  const g = Array.isArray(r.data?.grid) ? r.data.grid : [];
+  const full = t.how.rows ? [t.how.rows[1] - t.how.rows[0], g[0]?.length ?? 0] : two(r.data?.shape);
+  return { ok: true, data: { tensor: t.id, shape: full, from: rows ? rows[0] : 0, values: g } };
+}
+
+/** The rows of a table most like one row, by cosine (shapes.js NearRows). */
+export async function readPartNearest(sessionId, t, row) {
+  const r = await api(`/api/weights/sessions/${enc(sessionId)}/nearest?${query({ tensor: t.how.tensor, row, top: 8, watch: 1 })}`, { timeout: 30 });
+  if (!r?.ok) return r ?? { ok: false };
+  return { ok: true, data: { row: r.data?.row ?? row, name: r.data?.label ?? null, nearest: (r.data?.nearest ?? []).map((x) => ({ row: x.row, name: x.label ?? null, similarity: x.cosine })) } };
+}
+
+/** A tree as the services send it (a root with `left` and `right` inside it) as a flat list of nodes. A value at
+ *  or below the threshold goes left, so "above the threshold" is yes to the right. */
+function flatTree(root) {
+  const nodes = [];
+  const walk = (n) => {
+    const id = nodes.length;
+    if (!n || n.left == null || n.right == null) { nodes.push({ id, leaf: n?.value ?? 0 }); return id; }
+    const me = { id, input: n.name ?? `input ${(n.input ?? 0) + 1}`, threshold: n.threshold, categorical: Boolean(n.categorical) };
+    nodes.push(me);
+    me.no = walk(n.left); me.yes = walk(n.right);
+    return id;
+  };
+  walk(root);
+  return nodes;
+}
+
+/** One tree ranker of a model (shapes.js Ranker): its inputs by share of gain, the inputs no tree asks about,
+ *  and its first trees. */
+export async function readRanker(model, ranker) {
+  const r = await api(`/api/weights/models/${enc(model)}/trees?${query({ ranker, trees: 3 })}`, { timeout: 30 });
+  if (!r?.ok) return r ?? { ok: false };
+  const d = r.data ?? {};
+  return { ok: true, data: { id: d.ranker ?? ranker, name: d.ranker ?? ranker, trees: d.trees ?? null,
+    inputs: (d.by_input ?? []).map((i) => ({ name: i.name, splits: i.splits ?? 0, gain_share: i.share ?? 0 })),
+    unused: (d.unused ?? []).map((u) => u.name), names_from: d.names_from ?? null,
+    shown: (d.first_trees ?? []).map((t) => ({ tree: t.tree, nodes: flatTree(t.root) })) } };
 }
 
 /** The cost across the test set, as the numbers are now: {cost, right, of}, or null when it is not known. Only

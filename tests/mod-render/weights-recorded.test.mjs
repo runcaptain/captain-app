@@ -56,7 +56,10 @@ test('their tiny network opens through a session, as a screen\'s look, and nothi
   const h = await page('tiny');
   const net = data('whole:start');
   assert.equal(data('whole:no-session').numbers, false, 'the fixture: no numbers without a session');
-  assert.deepEqual(asked.map(([p, m]) => `${m} ${p}`), ['GET /api/weights/models/tiny/session', `GET /api/weights/models/tiny?session=${personal}&watch=1`]);
+  assert.deepEqual(asked.map(([p, m]) => `${m} ${p}`), [
+    // What kind of model it is, asked without a session: a description, no numbers, nothing recorded.
+    'GET /api/weights/models/tiny',
+    'GET /api/weights/models/tiny/session', `GET /api/weights/models/tiny?session=${personal}&watch=1`]);
   assert.equal(textOf(h, 'wt-facts'), '2 in, 1 out, 13 numbers (9 weights and 4 biases). Made-up data');
   assert.ok(h.text().includes('Input 1 of 24') && h.text().includes('Input 2') && !h.text().includes(net.examples[0].name), 'their numbered names are said plainly');
   assert.equal(h.byIdPrefix('wt-n-').length, 6);
