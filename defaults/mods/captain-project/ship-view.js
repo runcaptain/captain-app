@@ -26,6 +26,7 @@ import { Brand } from "./kit/brands.js";
 import { ModelCard } from "./kit/modelcard.js";
 import { SendToAgent } from "./kit/context.js";
 import { LogsTab, SettingsTab, CopiesTab, ProtectBox, Bars } from "./deploy-tabs.js";
+import { hear } from "./kit/live.js";
 
 const enc = encodeURIComponent;
 const short = (ref) => String(ref ?? "").replace(/^.*\//, "");
@@ -143,12 +144,15 @@ function removeCreated(ship, cx) {
     const pid = ship.pid();
     const r = await api(`/api/projects/${enc(pid)}/deploy`, { method: "DELETE", scoped: false, timeout: 60 });
     let left = null, said = null;
-    for (let i = 0; r.ok && i < 600 && ship.pid() === pid; i++) {
+    // What is being removed tells the live channel as it goes: read when it does. At the latest every five
+    // seconds, in case a step in the cloud says nothing.
+    const ear = hear(cx, [`deployment:${pid}`, "deployed", "job:"]);
+    try { for (let i = 0; r.ok && i < 6000 && ship.pid() === pid; i++) {
       const s = await api(`/api/projects/${enc(pid)}/deploy`, { scoped: false });
       // What was removed, in the services' own sentence ("Removed from AWS: the endpoint and the 7 things ...").
       if (s.ok) { left = s.data?.exists_now ?? []; if (s.data?.status === "removed") said = s.data.text ?? null; if (s.data?.status !== "running" && (s.data?.status !== "failed" || !left.length)) break; }
-      try { await exec("sleep", ["1"]); } catch { break; }
-    }
+      await ear.next(5000);
+    } } finally { ear.stop(); }
     ship.removing = false;
     const gone = r.ok && !(left ?? []).length;
     if (gone && ship.djob?.failed) ship.djob = { ...ship.djob, failed: { ...ship.djob.failed, exists: [], can: (ship.djob.failed.can ?? []).filter((x) => x !== "remove") } };
@@ -165,7 +169,11 @@ async function follow(ship, cx, place, planned) {
   const pid = ship.pid();
   ship.djob = { place, steps: planned.map((x) => ({ ...x, status: "pending" })), started: Date.now() };
   cx.notify();
-  for (let i = 0; i < 30 * 120 && ship.pid() === pid; i++) {
+  // Each step of a deploy tells the live channel: read when it does. Its end is told by the job that runs it,
+  // whatever it is deploying to, so every job is listened to as well. At the latest every five seconds.
+  const ear = hear(cx, [`deployment:${pid}`, "deployed", "job:"]);
+  const until = Date.now() + 30 * 60000;
+  try { for (let i = 0; Date.now() < until && ship.pid() === pid; i++) {
     const r = await api(`/api/projects/${enc(pid)}/deploy`, { scoped: false });
     if (r.ok && r.data) {
       const d = r.data;
@@ -183,8 +191,8 @@ async function follow(ship, cx, place, planned) {
       if (d.status === "failed") { ship.djob = { ...ship.djob, failed: { text: plainError(d.error, "It didn't finish."), step: d.failed_step?.title ?? null, policy: d.policy ?? null, can: d.can ?? ["retry"], exists: d.exists_now ?? [], fix: d.fix_text ?? null } }; break; }
       cx.notify();
     }
-    try { await exec("sleep", ["0.5"]); } catch { break; }
-  }
+    await ear.next(i < 3 ? 600 : 5000); // the first looks are close together: a deploy that never began reads "none"
+  } } finally { ear.stop(); }
   if (ship.djob && !ship.djob.failed) ship.djob = null;
   ship.load(cx); loadPlaces(ship, cx);
   ship.page.reload?.(cx); // the Next banner and the steps follow what was just done

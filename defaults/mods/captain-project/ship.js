@@ -16,7 +16,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { exec, appHome, openOverlay, run } from "herdr";
 import { MONO } from "./kit/tokens.js";
 import { api } from "./kit/cst.js";
-import { watchLive } from "./kit/live.js";
+import { watchLive, hear } from "./kit/live.js";
 import { Badge, Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { costState, costSlice } from "./kit/cost.js";
@@ -265,6 +265,17 @@ export class Ship {
       const row = (r.data?.rows ?? []).find((x) => x.project === pid && x.link !== "unlinked" && x.in_cloud !== false) ?? null;
       this.depRow = row;
       cx.notify();
+      // The list can still say "deploying" for a moment after the deploy's own record says it is done. Nothing
+      // more is told after that, so the row would stay "Deploying" on the card. While no deploy is being followed
+      // here and the row says one is under way, it is read again when the channel next says something, and a
+      // second later at the latest, until the two agree.
+      if (row && (row.state === "deploying" || row.deploying) && !this.djob && !this.rowAgain) {
+        this.rowAgain = true;
+        const ear = hear(cx, [`deployment:${pid}`, "deployed", "job:"]);
+        try { await ear.next(1000); } finally { ear.stop(); this.rowAgain = false; }
+        if (this.pid() === pid) this.loadRow(cx, pid);
+        return;
+      }
       if (!row || (this.depNums && Date.now() - (this.depNumsAt ?? 0) < 60000)) return;  // the numbers are paid reads: once a minute
       this.depNumsAt = Date.now();
       const n = await api(`/api/projects/${enc(pid)}/deployed/numbers?range=24h&env=${enc(row.env ?? "staging")}`, { scoped: false, timeout: 60 });

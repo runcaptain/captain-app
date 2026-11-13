@@ -48,6 +48,12 @@ def _template(src: str, i: int) -> tuple[str, int]:
     return "".join(out), i + 1
 
 
+# Helpers that put a fixed start before the address they are given: {(file, how the call begins): the start}.
+WRAPPERS = {
+    ("mods/captain-deployments/model.js", "this.url("): "/api/projects/\x00",   # url(path): `/api/projects/${project}${path}`
+}
+
+
 def named(files) -> tuple[dict[tuple[str, str], list[str]], int]:
     """Every address given to api(...) as text in these files: {(method, address): [file:line]}, and how many
     calls pass a variable, which can't be read here. In an address, \\x00 stands for a value filled in at run
@@ -66,6 +72,40 @@ def named(files) -> tuple[dict[tuple[str, str], list[str]], int]:
                 j = src.index(src[i], i + 1) + 1
                 path = src[i + 1:j - 1]
             else:
+                before = src[src.rfind("\n", 0, m.start()) + 1:m.start()]
+                # Not a call: the function's own definition, or the word in a comment ("resolves like api()").
+                if before.rstrip().endswith("function") or src[i] == ")" or "//" in before or before.lstrip().startswith(("*", "/*")):
+                    continue
+                line = src[:m.start()].count("\n") + 1
+                where = f"{f.relative_to(DEFAULTS)}:{line}"
+                # A helper that builds the address may say what it builds, so it is checked like any other:
+                #   // address: GET /api/changes          on the call's line or the one above it
+                near = src[src.rfind("\n", 0, max(0, src.rfind("\n", 0, m.start()))) + 1:src.find("\n", i) if src.find("\n", i) >= 0 else len(src)]
+                said = re.findall(r"address:\s*([A-Z]+)\s+(/api/[^\s,;*]+)", near)
+                # A wrapper that puts a fixed start before what it is given: api(this.url(`/staging/logs?...`)).
+                wrap = next((start for (name, call), start in WRAPPERS.items() if f.as_posix().endswith(name) and src.startswith(call, i)), None)
+                if wrap is not None:
+                    call = next(c for (name, c) in WRAPPERS if f.as_posix().endswith(name) and src.startswith(c, i))
+                    k = i + len(call)
+                    while k < len(src) and src[k] in " \n":
+                        k += 1
+                    if k < len(src) and src[k] == "`":
+                        rest, k2 = _template(src, k)
+                    elif k < len(src) and src[k] in "\"'":
+                        k2 = src.index(src[k], k + 1) + 1
+                        rest = src[k + 1:k2 - 1]
+                    else:
+                        variable += 1
+                        continue
+                    tail = src[k2:k2 + 400]
+                    mm = re.search(r"\bmethod:\s*[\"'`]([A-Z]+)", tail.split("\n")[0])
+                    method = mm.group(1) if mm else "POST" if re.search(r"\)\s*,\s*\{[^}\n]*\bbody\b", tail.split("\n")[0]) else "GET"
+                    found.setdefault((method, (wrap + rest).split("?")[0]), []).append(where)
+                    continue
+                if said:
+                    for method, path in said:
+                        found.setdefault((method, path.replace("{}", "\x00").split("?")[0]), []).append(where)
+                    continue
                 variable += 1
                 continue
             if not path.startswith("/api/"):
@@ -107,4 +147,5 @@ def screen_files() -> list[Path]:
     """Every screen's own code and the shared kit. Each mod carries a copy of the kit: the kit is read once, from
     where it is kept."""
     mods = [f for f in DEFAULTS.glob("mods/**/*.js") if "/kit/" not in f.as_posix()]
-    return sorted(mods + list(DEFAULTS.glob("captain/kit/*.js")) + list(DEFAULTS.glob("frame/**/*.js")))
+    frame = [f for f in DEFAULTS.glob("frame/**/*.js") if "/kit/" not in f.as_posix()]  # a frame's kit/ is a copy too
+    return sorted(mods + list(DEFAULTS.glob("captain/kit/*.js")) + frame)

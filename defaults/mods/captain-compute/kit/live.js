@@ -31,6 +31,8 @@ const S = {
   state: "connecting", // connecting | live | reconnecting
   since: 0, // when the state last changed
   asking: false,
+  cx: null, // a view of this mod with a pump: used by a wait that has no view of its own in reach
+  deadlines: new Set(), // {at, wake}: a wait that must wake by a time even if nothing is told
   gen: 0, // rises when the topics change: an answer to an older request is dropped
   askedFor: null, // the topics of the request that is open
   client: `m${Math.random().toString(36).slice(2, 10)}`, // this mod's name to the feed, so it lets an older request go
@@ -38,6 +40,7 @@ const S = {
   failures: 0,
   lastFallback: 0,
   pumping: false,
+  // address: GET /api/changes   (built in livePump: read by backend/core/tests/addresses.py, which checks it is served)
   ask: (path, opts) => api(path, opts), // the request (a test puts its own here)
   now: () => Date.now(),
 };
@@ -50,6 +53,8 @@ export function liveTransport(ask, now) { if (ask) S.ask = ask; if (now) S.now =
 /** Forget everything (a test starting over). */
 export function liveReset() {
   S.watchers.clear();
+  S.deadlines.clear();
+  S.cx = null;
   PUMPED = new WeakSet();
   Object.assign(S, { seq: null, state: "connecting", since: 0, asking: false, gen: 0, askedFor: null, nextAsk: 0, failures: 0, lastFallback: 0, pumping: false });
 }
@@ -96,8 +101,9 @@ function topicsAsked() {
 
 /** One step, from the timer: ask the feed if it is time, and re-read on the fallback clock while it is down. */
 export function livePump(cx) {
-  if (!S.watchers.size) return;
   const now = S.now();
+  for (const d of [...S.deadlines]) if (now >= d.at) { S.deadlines.delete(d); d.wake(); }
+  if (!S.watchers.size) return;
   if (S.state === "reconnecting" && now - S.lastFallback >= FALLBACK_MS) {
     S.lastFallback = now;
     tell("fallback");
@@ -161,6 +167,9 @@ function retopic(cx) {
  *  is the two-second re-read). Returns a function that stops watching. The first watcher in a mod starts the mod's
  *  one connection; when the view goes away its timer goes with it. */
 export function watchLive(cx, topics, onChange) {
+  cx = cx ?? S.cx;
+  if (!cx) throw new Error("watchLive: this mod has no live channel yet. Call liveStart(cx) in its init.");
+  S.cx = cx;
   const w = { topics: [...new Set((Array.isArray(topics) ? topics : [topics]).filter(Boolean).map(String))], fn: onChange, cx };
   S.watchers.add(w);
   // One pump for each view that watches: a view's timer goes away with the view, so a view opened later must
@@ -174,6 +183,38 @@ export function watchLive(cx, topics, onChange) {
   return () => { S.watchers.delete(w); retopic(cx); };
 }
 
+/** Start this mod's line to the live channel from a view that will stay (its init), so code with no view in reach
+ *  (a form's task) can wait on a job. */
+export function liveStart(cx) {
+  S.cx = cx;
+  if (!PUMPED.has(cx)) {
+    PUMPED.add(cx);
+    S.pumping = true;
+    cx.timer.every(PUMP_MS, (cx) => livePump(cx));
+  }
+}
+
+/** Wait for a job the services run. It is read once now, and once each time the job says something on the live
+ *  channel (a step, a progress line, its end): never on a clock. `onStep(job)` gets every read while it runs.
+ *  Returns {ok: true, result}, or {ok: false, failed: true, message, job} when it failed, or {ok: false,
+ *  timedOut: true} after `minutes`. `cx` may be null in a mod that called liveStart. */
+export async function jobDone(cx, id, { minutes = 30, onStep = null, read = null } = {}) {
+  if (!id) return { ok: false, failed: true, message: "It didn't start.", job: null };
+  const until = S.now() + minutes * 60000;
+  const ear = hear(cx, [`job:${id}`]); // listen first, then read: a job that ends fast is not missed
+  try {
+    while (S.now() < until) {
+      const r = await (read ? read(id) : api(`/api/jobs/${encodeURIComponent(id)}`, { scoped: false }));
+      if (r.ok && r.data?.status === "done") return { ok: true, result: r.data.result ?? {}, job: r.data };
+      if (r.ok && r.data?.status === "failed") return { ok: false, failed: true, message: r.data.message ?? r.data.error ?? null, job: r.data };
+      if (r.status === 404) return { ok: false, failed: true, gone: true, message: null, job: null }; // the services restarted
+      if (r.ok && onStep && onStep(r.data) === false) return { ok: false, stopped: true };
+      await ear.next(Math.min(60000, Math.max(250, until - S.now())));
+    }
+  } finally { ear.stop(); }
+  return { ok: false, timedOut: true };
+}
+
 /** For a loop that waits on something (a job): `const ear = hear(cx, ["job:" + id])` BEFORE the first read, then
  *  read, and `await ear.next()` before reading again. `next()` resolves the moment a topic is told, and at once
  *  if it was told while the loop was reading, so nothing said between two reads is lost. `ear.stop()` when done.
@@ -182,9 +223,14 @@ export function hear(cx, topics) {
   let told = false, wake = null;
   const stop = watchLive(cx, topics, () => { told = true; wake?.(); });
   return {
-    next() {
+    /** Resolves when told, or after `ms` at the latest when given (looked at by the kit's own pump). */
+    next(ms = null) {
       if (told) { told = false; return Promise.resolve(); }
-      return new Promise((resolve) => { wake = () => { wake = null; told = false; resolve(); }; });
+      return new Promise((resolve) => {
+        const d = ms === null ? null : { at: S.now() + ms, wake: () => wake?.() };
+        if (d) S.deadlines.add(d);
+        wake = () => { wake = null; told = false; if (d) S.deadlines.delete(d); resolve(); };
+      });
     },
     stop,
   };

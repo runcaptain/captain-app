@@ -14,12 +14,12 @@ import { api } from "./kit/cst.js";
 import { Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { int } from "./kit/num.js";
+import { hear } from "./kit/live.js";
 
 const NEEDED = [["query_id", "Query id"], ["arm", "System or version"], ["item_id", "Result id"]];
 const RANKING = [["rank", "Rank (1 is the top)"], ["score", "Score (higher is better)"]];
 const OPTIONAL = [["query", "Query text"], ["label", "Label, 0 to 3"], ["segment", "Segment"], ["weight", "Weight"]];
 const LABELS_FROM = [["human", "People"], ["llm", "An LLM"], ["clicks", "Clicks"], ["heuristic", "A heuristic"]];
-const sleep = (cx, ms) => new Promise((r) => cx.timer.after(ms, () => r()));
 const stem = (p) => String(p ?? "").split("/").pop().replace(/\.[a-z0-9]+$/i, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
 export default class Rankings extends View {
@@ -91,7 +91,9 @@ export default class Rankings extends View {
     cx.spawn(async (cx) => {
       const r = await api("/api/rankings/import", { body });
       if (!r.ok || !r.data?.job) { this.busy = false; this.error = plainError(r.error, "Captain couldn't start the import."); cx.notify(); return; }
-      for (let i = 0; i < 900; i++) {
+      // The job says so itself on the live channel: it is read when it does, not on a clock.
+      const ear = hear(cx, [`job:${r.data.job}`]);
+      try { for (let i = 0; i < 9000; i++) {
         const j = await api(`/api/jobs/${encodeURIComponent(r.data.job)}`);
         const st = j.ok ? j.data?.status : null;
         if (st === "done") {
@@ -107,8 +109,8 @@ export default class Rankings extends View {
         }
         if (st === "failed") { this.busy = false; this.error = plainError(j.data?.message ?? j.data?.error, "The import didn't finish."); cx.notify(); return; }
         if (j.ok) { this.progress = j.data?.progress ?? null; cx.notify(); }
-        await sleep(cx, 600);
-      }
+        await ear.next(60000);
+      } } finally { ear.stop(); }
       this.busy = false; this.error = "This took too long."; cx.notify();
     });
   }

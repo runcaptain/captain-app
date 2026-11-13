@@ -78,16 +78,21 @@ clean(t.split('Ship').slice(-1)[0], 'in the Ship section');
 
 // One button. On this computer there is nothing to confirm: it runs, and then the page says what is deployed.
 await h.click('ship-deploy-local');
-await until(h, () => byId(h, 'ship-deployed').length === 1 && h.mod.shipPath.running(), 'deployed on this computer');
+// The model's card follows the deploy to its end by itself: nothing is clicked, and no load is called here.
+await until(h, () => byId(h, 'ship-deployed').length === 1 && h.mod.shipPath.running() && h.mod.shipPath.depRow?.state === 'running' && !h.mod.shipPath.djob, 'deployed on this computer, and the model\'s card says so');
 assert.equal(byId(h, 'ship-confirm').length, 0, 'nothing to confirm for this computer');
 t = h.text();
-assert.ok(/Running on this computer\./.test(t) && /http:\/\/127\.0\.0\.1:\d+/.test(t) && t.includes('Open it'), `the project page says it is deployed, and where: ${t.slice(-600)}`);
+// Once deployed, the section is the model's card (kit/modelcard.js), the same one the Deployments screen shows. This
+// used to read the card the page draws for the moment before the model's row has loaded, and passed only when it
+// got there first.
+assert.ok(t.includes('Running.') && !t.includes('Deploying to') && /http:\/\/127\.0\.0\.1:\d+/.test(t) && t.includes('Details') && t.includes('Stop'), `the project page says it is deployed, and where: ${t.slice(-600)}`);
 const staged = (await get('/api/projects/outdoor/staging')).staged;
 assert.equal(staged.status, 'running'); assert.equal(staged.kind, 'local');
 assert.ok(staged.host === 'local', 'the record says which place it runs on');
 
-// Open it: one plain screen.
-await h.click('ship-open');
+// Its own page inside the project: one plain screen. (The card's Details goes to the Deployments screen. This
+// page is what a link to the project's deployed model opens.)
+h.mod.openDeployment(h.cx);
 await until(h, () => byId(h, 'deployed').length === 1 && Boolean(h.mod.shipPath.met) && Boolean(h.mod.shipPath.conn), 'the deployed screen opens with its numbers');
 t = h.text();
 assert.equal(byId(h, 'ship-name')[0].kids.join(''), staged.model_version.replace(/^.*\//, ''), 'the model names the screen');

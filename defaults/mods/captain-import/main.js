@@ -17,7 +17,6 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, EditorState, Editor, Popup } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay, pickFolder, home, shared, setShared, notify, run } from "herdr";
 import { api, query, watchConnections } from "./kit/cst.js";
-import { watchLive } from "./kit/live.js";
 import { watchView, publishView } from "./kit/view.js";
 import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
@@ -26,6 +25,7 @@ import { Brand, engineTitle } from "./kit/brands.js";
 import { ResultGrid } from "./kit/grid.js";
 import { int } from "./kit/num.js";
 import { costState, refreshEstimate, CostLine } from "./kit/cost.js";
+import { hear, watchLive } from "./kit/live.js";
 
 const enc = encodeURIComponent;
 const fmtInt = (n) => int(n ?? 0);
@@ -292,6 +292,7 @@ export default class CaptainImport extends View {
       const r = await api(`/api/tables/${enc(conn)}/pull`, { body: {} });
       if (!r.ok) { this.reading = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't read its tables.", tone: "fail" }; cx.notify(); return; }
       this.pullJob = r.data.job;
+      this.followJobs(cx); // read it once now: a job that ends fast must not be missed
       cx.notify();
     });
   }
@@ -476,6 +477,7 @@ export default class CaptainImport extends View {
       const r = await api("/api/prepare/import", { body: { source: p.source, role: p.role, mapping: p.mapping, options: p.options, name: this.finalName, folder: this.target, project: dest.kind === "project" ? dest.id : undefined } });
       if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't start the import.", tone: "fail" }; cx.notify(); return; }
       this.prepJob = r.data.job;
+      this.followJobs(cx);
       cx.notify();
     });
     cx.notify();
@@ -517,6 +519,7 @@ export default class CaptainImport extends View {
       const r = await api("/api/datasets/import", { body: { paths, folder: folderShown(this.newFolder.value()) || this.folder, project: this.dest.kind === "project" ? this.dest.id : undefined } });
       if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't start the import.", tone: "fail" }; cx.notify(); return; }
       this.importJob = r.data.job;
+      this.followJobs(cx);
       cx.notify();
     });
     cx.notify();
@@ -535,12 +538,13 @@ export default class CaptainImport extends View {
     if (r.data?.job) {
       this.note = { text: "Taking the snapshot. This can take a minute for a big table.", tone: "muted" };
       cx.notify();
-      for (let i = 0; i < 600; i++) {
+      const ear = hear(cx, [`job:${r.data.job}`]); // the job says so itself: read when it does, not on a clock
+      try { for (let i = 0; i < 6000; i++) {
         const j = await api(`/api/jobs/${enc(r.data.job)}`, { scoped: false });
         if (j.ok && j.data?.status === "done") break;
         if (j.ok && j.data?.status === "failed") { this.busy = false; this.note = { text: sentence(j.data.message ?? j.data.error) || "The snapshot stopped.", tone: "fail" }; cx.notify(); return; }
-        await new Promise((res) => cx.timer.after(500, () => res()));
-      }
+        await ear.next(60000);
+      } } finally { ear.stop(); }
     }
     this.busy = false;
     setShared("captain.explorer.rev", Date.now()); // the project page reads its inputs again

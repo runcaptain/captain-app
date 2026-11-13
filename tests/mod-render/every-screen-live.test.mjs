@@ -2,8 +2,8 @@
 // once through the services and once by a second process (a `cst` command in a terminal), and it must show the
 // change by itself: no click, no timer of its own, only the one live channel (kit/live.js).
 //
-// How soon: a change through the services within one second. A change by another process within two: the
-// services look at the workspace's folder once a second for writes they did not make, then the screen reads.
+// How soon: within one second, either way. For a write they did not make, the services look at the workspace's
+// folder about three times a second, then the screen reads.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/every-screen-live.test.mjs
 import fs from 'node:fs';
 import os from 'node:os';
@@ -73,7 +73,7 @@ const shows = async (screen, how, h, write, ok, limit) => {
   console.log(`  ${screen.padEnd(22)} ${how.padEnd(22)} ${String(Math.round(ms)).padStart(5)} ms  (limit ${limit})`);
   assert.ok(ms < limit, `${screen}, changed ${how}: shown after ${Math.round(ms)} ms, over ${limit}`);
 };
-const SERVICE = 1000, PROCESS = 2000;
+const SERVICE = 1000, PROCESS = 1000;
 console.log('every screen live: how long each screen took to show a change it was not told about');
 
 // ---- Projects: the list of every project ---------------------------------------------------------------------

@@ -132,7 +132,7 @@ def test_a_client_is_not_woken_by_a_topic_it_did_not_list(svc):
     assert _t(box["answer"]) == ["notebooks"]
 
 
-def test_a_write_by_another_process_to_the_same_workspace_wakes_it_within_a_second_and_a_half(svc):
+def test_a_write_by_another_process_to_the_same_workspace_wakes_it_well_inside_a_second(svc):
     """A `cst` command in a terminal, or an agent, writes straight to the workspace's folder."""
     PR.create(svc.ctx, "Demo shop")
     seq = svc.get("/api/changes")["seq"]
@@ -147,7 +147,7 @@ def test_a_write_by_another_process_to_the_same_workspace_wakes_it_within_a_seco
     t.join(4)
     assert "answer" in box, "the other process's write was never seen"
     assert "project:demo-shop" in _t(box["answer"]) and "projects" in _t(box["answer"]), box["answer"]
-    assert box["at"] - done < 1.5, f"woken {(box['at'] - done):.2f} s after the other process finished ({done - wrote:.2f} s to start and write)"
+    assert box["at"] - done < 0.8, f"woken {(box['at'] - done):.2f} s after the other process finished ({done - wrote:.2f} s to start and write)"
 
 
 def test_this_process_own_write_is_told_once_not_again_by_the_folder_watch(svc):
@@ -256,7 +256,7 @@ def test_a_live_run_tells_its_end_at_once_and_one_written_by_another_process_is_
     t.join(4)
     rid = out.stdout.strip().splitlines()[-1]
     assert "answer" in box and set(_t(box["answer"])) == {"runs", f"run:{rid}"}, box
-    assert box["at"] - done < 1.5, f"told {box['at'] - done:.2f} s after the other process wrote it"
+    assert box["at"] - done < 0.8, f"told {box['at'] - done:.2f} s after the other process wrote it"
 
 
 def test_a_missed_sequence_gets_reset(svc):
