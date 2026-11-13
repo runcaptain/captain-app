@@ -101,7 +101,7 @@ export function Timeline(c, v, { width, height }) {
       .child(div().flex_1())
       .when(Boolean(facts.changed), (e) => e.child(div().id("wt-ledger-changed").flex_none().text_size(11.5).text_color(c.grey500).child(facts.changed))))
     .when(facts.allowed.length > 0, (e) => e.child(div().id("wt-ledger").text_size(11.5).line_height("16px").text_color(c.grey500).child(`${facts.allowed.join(". ")}.`)))
-    .when(Boolean(v.note), (e) => e.child(div().id("wt-note").text_size(12).text_color(c.fail).child(v.note)))
+    .when(Boolean(v.undoNote), (e) => e.child(div().id("wt-note").text_size(12).text_color(c.fail).child(v.undoNote)))
     .child(div().id("wt-events").flex_1().min_h(0).overflow_y_scroll().border_1().border_color(c.rule)
       .child(events.length
         ? v_flex().children(events.map(row))

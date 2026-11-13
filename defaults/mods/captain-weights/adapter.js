@@ -58,6 +58,9 @@ export async function readSessionById(id) {
 /** Change numbers: one EditRequest (shapes.js). Resolves to the event that records it. */
 export async function sendEdit(sessionId, req) {
   if (isLocalSession(sessionId)) return ok(localEdit(sessionId, req));
+  // The services name an edit's target with their own sets, not with one of the page's inputs.
+  const { target: _target, ...body } = req;
+  req = body;
   return ask(`/api/weights/sessions/${enc(sessionId)}/edits`, { method: "POST", body: req, timeout: 30 });
 }
 

@@ -7,18 +7,20 @@
 // when it opens, again the moment the model's or the session's topic changes on the app's change feed, and again
 // right after its own action returns. It has no timer that reads data.
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { h_flex, v_flex, InputState } from "gpui-base";
 import { theme, props, closeOverlay } from "herdr";
 import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
 import { Button, Skeleton, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
-import { listNetworks, readNetwork, readSession, readTestCost, watchWeights, sendUndo } from "./adapter.js";
+import { listNetworks, readNetwork, readSession, readTestCost, watchWeights, sendUndo, sendEdit } from "./adapter.js";
 import { forward, backward, countOf } from "./net.js";
 import { PanZoom } from "./canvas.js";
 import { NetworkCanvas, layoutOf } from "./draw.js";
 import { Inspector } from "./inspect.js";
 import { CostPanel } from "./cost.js";
 import { Timeline } from "./timeline.js";
+import { HandBlock, AgentBlock, handTarget, dragSpan, TRACK_W } from "./hand.js";
+import { askAgent } from "./kit/agent.js";
 import { WalkControls, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
 const SIDE_W = 340; // the panel beside the drawing
@@ -50,7 +52,11 @@ export default class CaptainWeights extends View {
     this.openEdit = null;   // the edit opened in the timeline
     this.pulse = null;      // what the last events touched, while it pulses: {neurons, weights, until, phase}
     this.seen = null;       // the last event's number already on screen: newer ones pulse
-    this.busy = null;       // the edit being taken back
+    this.busy = null;       // the edit being taken back, or "hand" while a change by hand is sent
+    this.note = null;       // why the last change by hand could not be made
+    this.drag = null;       // a number being dragged: {x0, from, k, j, i}
+    this.handInput = InputState.new({ placeholder: "a number" }); // the value typed for the picked number
+    this.handInput.on("submit", (_e, ecx) => this.setTyped(ecx ?? cx));
     this.reads = 0;         // how many times the network has been asked for: an older answer never replaces a newer
     this.stop = null;       // stops listening to the change feed
     this.pz = new PanZoom("wt");
@@ -74,7 +80,7 @@ export default class CaptainWeights extends View {
   /** Open a network: read its session and its numbers, run it on its first input, and listen for changes. */
   open(model, cx) {
     this.model = model; this.net = null; this.problem = null; this.sel = null; this.selW = null; this.inputAt = 0;
-    this.session = null; this.test = null; this.openEdit = null; this.readFor = null; this.seen = null; this.pulse = null; this.note = null;
+    this.session = null; this.test = null; this.openEdit = null; this.readFor = null; this.seen = null; this.pulse = null; this.note = null; this.undoNote = null; this.drag = null;
     this.walk = { step: 0, playing: false }; this.mode = "values";
     this.pz = new PanZoom("wt");
     this.stop?.(); this.stop = null;
@@ -142,7 +148,7 @@ export default class CaptainWeights extends View {
     cx.spawn(async (cx) => {
       const r = await sendUndo(this.session.id, id, "you");
       this.busy = null;
-      this.note = r.ok ? null : plainError(r.error, "Captain couldn't take that edit back.");
+      this.undoNote = r.ok ? null : plainError(r.error, "Captain couldn't take that edit back.");
       this.read(cx);
       cx.notify();
     });
@@ -157,6 +163,7 @@ export default class CaptainWeights extends View {
     this.layout = layoutOf(net);
     this.inputAt = Math.min(this.inputAt, Math.max(0, net.examples.length - 1));
     this.rerun();
+    if (!this.drag) this.syncInput();
   }
 
   rerun() {
@@ -194,8 +201,64 @@ export default class CaptainWeights extends View {
   setMode(mode, cx) { this.mode = mode; if (mode === "nudges") this.walk = { step: 0, playing: false }; this.rerun(); cx.notify(); }
 
   pickInput(n, cx) { this.inputAt = n; this.rerun(); cx.notify(); }
-  pickNeuron(at, cx) { this.sel = this.sel && this.sel.k === at.k && this.sel.j === at.j ? null : at; this.selW = null; cx.notify(); }
-  pickWeight(at, cx) { this.selW = at; this.sel = { k: at.k + 1, j: at.j }; cx.notify(); }
+  pickNeuron(at, cx) { this.sel = this.sel && this.sel.k === at.k && this.sel.j === at.j ? null : at; this.selW = null; this.syncInput(); cx.notify(); }
+  pickWeight(at, cx) { this.selW = at; this.sel = { k: at.k + 1, j: at.j }; this.syncInput(); cx.notify(); }
+
+  /** The typed value starts as the number it would change. */
+  syncInput() { const t = handTarget(this); this.note = null; if (t) this.handInput.set_value(String(Number(t.value.toFixed(4)))); }
+
+  /** Send one change by hand through the adapter, then read again: it lands in the timeline like the agent's. */
+  commit(req, cx, undoLocal = null) {
+    if (this.busy || !this.session) return;
+    this.busy = "hand"; this.note = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await sendEdit(this.session.id, { ...req, target: this.inputAt, by: "you" });
+      this.busy = null;
+      if (!r.ok) { undoLocal?.(); this.rerun(); this.note = plainError(r.error, "Captain couldn't make that change."); }
+      this.read(cx);
+      cx.notify();
+    });
+  }
+
+  /** Set the picked number to the value typed. */
+  setTyped(cx) {
+    const t = handTarget(this), text = String(this.handInput.value() ?? "").trim(), value = Number(text);
+    if (!t) return;
+    if (!text || !Number.isFinite(value)) { this.note = "Type a number, such as -1.5."; return cx.notify(); }
+    if (value === t.value) return;
+    this.commit({ op: "set", layer: t.k + 1, neuron: t.j, from: t.i, value }, cx);
+  }
+
+  /** Halve, double or zero the open neuron. */
+  editNeuron(what, cx) {
+    if (!this.sel || this.sel.k === 0) return;
+    this.commit({ ...what, layer: this.sel.k, neuron: this.sel.j }, cx);
+  }
+
+  /** Dragging a number: the page's own copy of the network follows the pointer, so the drawing and the cost for
+   *  this input move at once. The edit is sent when the drag ends. */
+  dragStart(x, cx) { const t = handTarget(this); if (!t || this.busy) return; this.drag = { x0: x, from: t.value, k: t.k, j: t.j, i: t.i }; cx.notify(); }
+  put(d, value) { if (d.i == null) this.net.layers[d.k].b[d.j] = value; else this.net.layers[d.k].W[d.j][d.i] = value; }
+  dragMove(x, cx) {
+    const d = this.drag;
+    if (!d) return;
+    this.put(d, Number((d.from + ((x - d.x0) / TRACK_W) * dragSpan(d.from)).toFixed(3)));
+    this.rerun();
+    cx.notify();
+  }
+  dragEnd(cx) {
+    const d = this.drag;
+    if (!d) return;
+    this.drag = null;
+    const value = d.i == null ? this.net.layers[d.k].b[d.j] : this.net.layers[d.k].W[d.j][d.i];
+    this.syncInput();
+    if (value === d.from) return cx.notify();
+    this.commit({ op: "set", layer: d.k + 1, neuron: d.j, from: d.i, value }, cx, () => this.put(d, d.from));
+  }
+
+  /** Start an agent on one of the three tasks, with what is selected written into the prompt. */
+  ask(starter, cx) { cx.spawn(async (cx) => { await askAgent(cx, starter.prompt); }); }
   back(cx) { this.stop?.(); this.stop = null; this.model = null; this.net = null; this.session = null; this.problem = null; if (!this.list) this.loadList(cx); cx.notify(); }
 
   /** What the drawing needs to know. */
@@ -257,7 +320,10 @@ export default class CaptainWeights extends View {
   }
 
   side(c) {
-    return div().id("wt-side").w(SIDE_W).flex_none().h_full().overflow_y_scroll().child(div().p(16).child(Inspector(c, this, ChainBlock(c, this))));
+    return div().id("wt-side").w(SIDE_W).flex_none().h_full().overflow_y_scroll().child(v_flex().p(16).gap(14)
+      .child(Inspector(c, this, [ChainBlock(c, this), HandBlock(c, this)]))
+      .child(div().h(1).w_full().bg(c.rule))
+      .child(AgentBlock(c, this)));
   }
 
   render() {

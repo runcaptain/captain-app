@@ -1447,6 +1447,43 @@ cst projects generate-events my-project --sessions 20000 --days 30
   provenance records them all, and lineage links the events to the catalog version.
 - It refuses a project with no catalog, and a dataset that isn't a catalog.
 
+### Weights: a network, drawn (`captain-weights`)
+
+Not a sidebar view. It opens from the palette entry "Open a network's weights", as a large dialog, on a list of
+networks. A mod can open it straight on one network with the overlay `{ mod: "captain-weights", kind: "dialog",
+props: { model: "<name>" } }`. `cst app open` has no target for it yet: tell the person to use the palette.
+
+What a person sees, so you can tell them where to look:
+
+- **The drawing.** Columns left to right. A circle is a neuron and its fill is its activation for the chosen
+  input. A line is a weight: blue is positive, red is negative, thicker is larger. A bias is a small number on its
+  neuron. A picture input (28 by 28) is drawn as the picture, and the weights into an open first-column neuron as
+  a second picture under it, labelled "What neuron N responds to". Trained weights often look close to random:
+  don't promise a person a clean shape there.
+- **A neuron, opened** (click a circle): one sentence, its activation, weighted sum and bias, the weights coming
+  in and going out. "Lines show: What the cost wants" adds the nudge the cost wants and each weight's gradient.
+- **The cost**: one number for the chosen input, one for the test set, a curve with a mark per edit, and for an
+  edit its three numbers: the target, "should not change", and the test set.
+- **"Walk the error back"**: backpropagation one step at a time, and the chain rule for a picked weight as three
+  named factors.
+- **"What the agent is doing"**: every read, run and edit of the session as a sentence, newest first. What you
+  touch pulses in the drawing as you touch it. Each edit opens to its old and new values and can be taken back.
+  The header is the session's ledger. "From the weights alone" shows only when the ledger says no sandbox was
+  allowed and no forward pass was used: you cannot set it, and you should never claim it when it is not shown.
+- **By hand**: a person can type or drag a weight or a bias, halve, double or zero a neuron, and take it back.
+  Their edits are in the same record as yours, marked "You".
+
+The page listens to the change feed topics `weights:<model>` and `weights-session:<id>`, so what you do with
+`cst weights` shows there the moment you do it. The page works out activations and gradients itself from the
+numbers it was sent: a person looking never spends your forward passes.
+
+"Send to agent" on that page pins the selection as `weights:<model>@layer=<column>,neuron=<index>` (the column
+counted from the input as 0, the index from 0) and may add `,from=<index>` for one weight. On the page, neurons
+are numbered from 1: "layer 1, neuron 2" on screen is `layer=1,neuron=1`.
+
+When Captain's services have no weights routes, the page still opens two starter networks it keeps itself
+("Tiny network" and "Digit reader", made in code from a seed). Edits to those live only while the page is open.
+
 ## Words
 
 The screens use the words search and recommendation teams use. The CLI, the API, the files and the ids keep
