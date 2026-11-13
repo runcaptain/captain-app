@@ -1079,7 +1079,7 @@ def project_stage(pid: str, body: dict | None = None):
                         args[5], confirm=True, idle_minutes=b.get("idle_minutes") or None, progress=say,
                         allow_large=bool(b.get("allow_large")))
 
-    jid = _job(go, f"staging {p['model_version']} for {pid}")
+    jid = _job(go, f"deploying {p['model_version']} for {pid}")
     JOBS[jid]["compute"] = p["target"]
     return {"job": jid, "plan": p}
 
@@ -1092,7 +1092,7 @@ def project_unstage(pid: str, body: dict | None = None):
     c, env = ctx(), (body or {}).get("env") or "staging"
     if not SG.state(c, pid, env):
         raise HTTPException(400, f"Nothing is deployed for {pid}.")
-    return {"job": _job(lambda _p: SG.unstage(c, pid, env), f"stopping staging for {pid}")}
+    return {"job": _job(lambda _p: SG.unstage(c, pid, env), f"stopping the deployed model of {pid}")}
 
 
 @app.post("/api/projects/{pid}/staging/query", dependencies=A)
