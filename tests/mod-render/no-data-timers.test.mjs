@@ -27,7 +27,7 @@ const LEDGER = [
   ['captain-data/main.js', 'shared("captain.open")', 'a link from another screen to open a table', 'signal'],
   ['captain-runs/main.js', 'this.priceNow(cx)', 'the price of a run where it is set to run, asked again when the choice changes', 'typing'],
   ['captain-runs/main.js', 'placeChanged()', 'the place to run work picked on the cloud chip', 'signal'],
-  ['captain-runs/main.js', 'this.cmp.tick(cx)', "the comparison's search box and the pages its grid asked for while drawing; and a profile job it started", 'todo'],
+  ['captain-runs/main.js', 'this.cmp.tick(cx)', "the comparison's search box, and the pages its grid asked for while drawing", 'typing'],
   ['captain-runs/main.js', 'this.live.clock(cx)', "the page clock: a running run's and a running job's elapsed time; a finished run's cost asked a few times", 'clock'],
   ['captain-runs/main.js', 'shared("captain.open")', 'a link from another screen to open a run', 'signal'],
   ['captain-notebooks/main.js', 'this.nb.tick(cx)', "saving a draft a moment after typing stops, a running cell's clock, a typed path looked for", 'typing'],
@@ -45,14 +45,14 @@ const LEDGER = [
   ['captain-engine/main.js', 'this.asking', 'the price of a training run while its form is open', 'typing'],
   ['captain-engine/main.js', 'captain.explorer.rev', 'a form said the Explorer changed', 'signal'],
   ['captain-evaluation/main.js', 'this.previewDue', 'a table previewed a moment after its path is typed, and the price of the run', 'typing'],
-  ['captain-import/main.js', 'this.tick(cx)', 'the import wizard: its job, and names checked as they are typed', 'todo'],
+  ['captain-import/main.js', 'this.tick(cx)', 'the import wizard: a price and a name checked as they are typed', 'typing'],
   ['captain-forms/main.js', 'this.priceNow(cx)', 'the price of what a form is about to start', 'typing'],
   ['captain-forms/main.js', 'this.watch(cx)', 'every field looked at a few times a second, to check it as it is typed', 'typing'],
 ];
 // A mod moved to the live channel has nothing left to do: no `todo` of its own.
-const DONE = ['captain-deployments', 'captain-data', 'captain-notebooks', 'captain-project', 'captain-cloud', 'captain-handoff', 'captain-team'];
+const DONE = ['captain-deployments', 'captain-data', 'captain-runs', 'captain-import', 'captain-notebooks', 'captain-project', 'captain-cloud', 'captain-handoff', 'captain-team'];
 // The most timers still reading data. It only goes down.
-const TODO_MAX = 4;
+const TODO_MAX = 2;
 
 const found = [];
 for (const mod of fs.readdirSync(mods).filter((m) => m.startsWith('captain-')).sort()) {

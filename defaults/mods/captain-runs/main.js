@@ -222,7 +222,8 @@ export default class CaptainRuns extends View {
         this.live.load(cx);
         if (this.tab === "compare") this.reg.load(cx);
       }
-      if (all || topics.includes("jobs")) { this.pollJob(cx); this.jobs.changed(cx); }
+      if (all || topics.includes("jobs")) { this.pollJob(cx); this.jobs.changed(cx); this.cmp.followJobs(cx); }
+      if (all) this.cmp.retry(cx);
     });
     watchLive(cx, ["run:"], (cx, why, topics) => {
       if (this.kind === "live" && this.live.sel && (why !== "changed" || topics.includes(`run:${this.live.sel}`))) this.live.tick(cx);
