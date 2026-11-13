@@ -100,7 +100,7 @@ await hd.start();
 // Data opens on the one list of tables; opening a row's page is what selects a dataset.
 for (let i = 0; i < 80 && !(hd.mod.catalog.rows ?? []).some((r) => r.kind === 'dataset'); i++) { await hd.layoutLists({}); await hd.idle(150); }
 assert.equal(shared('captain.view.data')?.dataset ?? null, null, 'nothing is selected on the list');
-await hd.click(`cat-row-${hd.mod.catalog.rows.findIndex((r) => r.kind === 'dataset')}`);
+hd.mod.catalog.openRow(hd.cx, hd.mod.catalog.rows.find((r) => r.kind === 'dataset'));
 for (let i = 0; i < 80 && !shared('captain.view.data')?.dataset; i++) { await hd.layoutLists({}); await hd.idle(150); }
 const dv = shared('captain.view.data');
 assert.equal(dv?.tab, 'tables', JSON.stringify(dv));

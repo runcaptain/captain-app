@@ -108,6 +108,7 @@ export default class CaptainData extends View {
     if (Number.isInteger(p.openRow)) this.page.openRow = p.openRow; // a sample row to open, for screenshots
     if (p.dataset) this.wanted = String(p.dataset); // a dataset to open on its page
     if (p.find) this.catalog.find.set_value(String(p.find)); // a search to start with
+    if (Array.isArray(p.openGroups)) for (const g of p.openGroups) this.catalog.open.add(String(g)); // groups to show open (the real-window check)
     if (p.tablesTab) this.tables.tab = p.tablesTab === "rows" ? "rows" : "about";
     if (p.tablesPick) this.tables.want = p.tablesPick; // a database table to open on its page, by name
     // {importWith: {conn, sql, name}}: the import wizard, open on that query (a layout, or the real-window check).
@@ -210,11 +211,11 @@ export default class CaptainData extends View {
   /** Sources, from the list's "its tables haven't been read yet" line. */
   showSources(cx) { this.showTab(cx, "sources"); }
 
-  /** The one list, searched for a database's name: "See its tables" on a source's card. */
+  /** Tables, with that database's group open: "See its tables" on a source's card. */
   showTablesOf(cx, conn) {
     this.shown = null;
-    this.catalog.kind = "table";
-    this.catalog.find.set_value(conn);
+    this.catalog.find.set_value("");
+    this.catalog.reveal(`db:${conn}`);
     this.showTab(cx, "tables");
   }
 

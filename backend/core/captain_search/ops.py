@@ -379,7 +379,10 @@ def population_create(ctx, name: str, simulator: str, size: int, seed: int, clic
 def backtest_plan(ctx, name: str, arms: list[str], queries: str | None, judgments: str | None, population: str | None,
                   hypothesis: str, primary: str = "ndcg@10", mde: float = 0.003, dry_run=False, mode: str = "simulated",
                   logs: str | None = None, compute: str | None = None, population_size: int = 4000,
-                  surfaces: list[dict] | None = None) -> Backtest:
+                  surfaces: list[dict] | None = None, depths: dict | None = None) -> Backtest:
+    # How deep each measure looks: checked now, so a bad depth is refused before anything is made.
+    depths = M.check_depths(depths) if depths else {}
+    depths = {k: v for k, v in depths.items() if v != M.DEFAULT_DEPTHS[k]}  # only what differs is kept: empty reads "the usual depths"
     if len(arms) < 2:
         raise ValueError("an offline evaluation needs at least two arms. The first is the baseline.")
     if compute:
@@ -426,7 +429,8 @@ def backtest_plan(ctx, name: str, arms: list[str], queries: str | None, judgment
         raise ValueError(f"{primary} needs --population: it only comes from simulated shoppers")
     m = Backtest(**_base(ctx), name=check_name(name), version=0, mode=mode, logs=lpin, compute=compute,
                  arms=pinned, queries=qpin, judgments=jpin, surfaces=[_pin_surface(ctx, sf) for sf in (surfaces or [])],
-                 population=ppin, preregistration=Preregistration(hypothesis=hypothesis, primary_metric=primary, mde=mde))
+                 population=ppin, preregistration=Preregistration(hypothesis=hypothesis, primary_metric=primary, mde=mde),
+                 depths=depths)
     names = [sf.name for sf in m.surfaces]
     if len(set(names)) != len(names):
         raise ValueError("surface names must be unique")
@@ -472,6 +476,7 @@ def backtest_run(ctx, name: str, progress=None, live=None) -> BacktestRun:
         s = check_seal(ctx, bt.queries)
         if not s["ok"]:
             raise ValueError(f"sealed test set check failed: {s['detail']}")
+    depths = M.check_depths(bt.depths)  # how deep each measure looks in this run, written into its record
     jm, jmap = judgments_map(ctx, bt.judgments) if bt.judgments else (None, {})
     offline_ev = J.EVIDENCE[jm.judgment_source or "heuristic"] if jm else Evidence.SIMULATED
     if jm and str((jm.tags or {}).get("synthetic", "")).lower() == "true":
@@ -502,8 +507,8 @@ def backtest_run(ctx, name: str, progress=None, live=None) -> BacktestRun:
     for n, a in enumerate(bt.arms):
         if live:
             live.stage(f"Rank {len(qs):,} queries with {a}", n + 1, n_arms + (2 if pop else 1))
-        pm, eng, prods, ranks, ms = _rankings(ctx, a, qs)
-        pq = M.per_query(ranks, jmap, _custom_metrics(ctx)) if jm else {}
+        pm, eng, prods, ranks, ms = _rankings(ctx, a, qs, k=max(50, *depths.values()))
+        pq = M.per_query(ranks, jmap, _custom_metrics(ctx), depths) if jm else {}
         offline = M.summarize(pq) if jm else {}
         if jm:
             offline["coverage"] = offline.get("judged@10", 0.0)
@@ -609,10 +614,10 @@ def backtest_run(ctx, name: str, progress=None, live=None) -> BacktestRun:
         if c["primary"]:
             c["cost"] = COST.roi(by_arm[c["a"]].cost, by_arm[c["b"]].cost, c["delta"], c["verdict"], qpd)
     segs = SEG.segments(qs, perq, bt.arms, bt.preregistration.mde) if jm else []
-    surfaces = [SEG.score_surface(ctx, sf, bt.arms, bt.preregistration.mde, lambda a, q: _rankings(ctx, a, q)[3:5])
+    surfaces = [SEG.score_surface(ctx, sf, bt.arms, bt.preregistration.mde, lambda a, q: _rankings(ctx, a, q, k=max(50, *depths.values()))[3:5], depths)
                 for sf in bt.surfaces]
     run = BacktestRun(**_base(ctx), name=name, version=0, backtest=ref(bt), mode=bt.mode, compute=os.environ.get("CST_COMPUTE") or bt.compute or "local",
-                      arms=arms, comparisons=comps, segments=segs, surfaces=surfaces,
+                      arms=arms, comparisons=comps, segments=segs, surfaces=surfaces, depths=depths,
                       independent=independent, complete=complete, files=files, wall_s=round(_time.time() - t_start, 2),
                       manifest=_run_manifest(ctx, bt, pop),
                       description=f"{len(qs)} queries, {len(people)} shoppers per arm")
@@ -655,6 +660,9 @@ def backtest_report(run: BacktestRun, bt: Backtest) -> str:
          f"Queries: {bt.queries}   Judgments: {bt.judgments or 'none'}   Population: {bt.population or 'none'}", ""]
     if run.mode == "imported":
         L += [f"Imported readout: {run.source}", run.description, ""]
+    if M.non_default(run.depths):
+        L += ["NOT THE USUAL DEPTHS: " + " ".join(M.non_default(run.depths)),
+              "The columns below keep their usual names. Compare this run only with runs at the same depths.", ""]
     if (bt.tags or {}).get("label_independence") == "shared":
         L += ["WARNING: the trained arm learned from the labeler that grades this test set. A higher score means it",
               "agrees with its own labeler, not that it beats the other arm.", ""]

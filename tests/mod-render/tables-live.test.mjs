@@ -50,18 +50,16 @@ await until((t) => t.includes('2 tables, last read'), 'the card says how many an
 
 // Tables: the database's tables are in the one list with the datasets, each saying where it lives.
 await h.click('see-demo-store');
-await until(() => h.mod.tab === 'tables' && (h.mod.catalog.rows ?? []).filter((r) => r.kind === 'table').length === 2, 'its two tables, in the list');
+await until(() => h.mod.tab === 'tables' && (h.mod.catalog.rows ?? []).filter((r) => r.kind === 'table').length === 2, 'its two tables are listed');
+// The database is a group of its own, open because "See its tables" asked for it: its name, its kind, a count.
+assert.ok(h.mod.catalog.isOpen('db:demo-store'), 'its group is open');
 let listed = h.text();
-assert.ok(listed.includes('products') && listed.includes('search_log') && /demo-store, [a-z-]+\.main/.test(listed) && !listed.includes('"'), `where they live, in words: ${listed.slice(0, 500)}`);
+assert.ok(listed.includes('demo-store') && listed.includes('2 tables') && listed.includes('products') && listed.includes('search_log') && !listed.includes('"'), `the group: ${listed.slice(0, 500)}`);
 assert.ok(listed.includes('Read where it lives'), 'Captain keeps no versions of a database table');
-h.mod.catalog.kind = null;
-h.mod.catalog.find.set_value('');
-h.mod.catalog.load(h.cx);
-await until(() => h.mod.catalog.asked === '' && h.mod.catalog.rows.filter((r) => r.kind === 'dataset').length > 1 && h.mod.catalog.rows.filter((r) => r.kind === 'table').length === 2, 'datasets and database tables together');
-await h.layoutLists({});
+assert.ok(h.mod.catalog.groups.some((g) => g.id.startsWith('folder:')), 'the tables Captain keeps are groups beside it');
 
 // A row opens the table's page: Rows first, then About (its columns and how it is queried).
-await h.click(`cat-row-${h.mod.catalog.rows.findIndex((r) => r.kind === 'table' && r.name === 'products')}`);
+await h.click(`cat-row-table-demo-store/${String(h.mod.catalog.rows.find((r) => r.name === 'products').schema).replace(/"/g, '')}/products`);
 await until(() => !!h.mod.tables.page?.columns, 'the table page');
 assert.deepEqual(h.byIdPrefix('ttab-').map((e) => e.call('id')[0]), ['ttab-rows', 'ttab-about'], 'two views');
 assert.ok(h.text().includes('Read where it lives: Captain keeps no versions of it.'), 'what it is, in one line');

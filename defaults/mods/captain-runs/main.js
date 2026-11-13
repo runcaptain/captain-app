@@ -195,6 +195,7 @@ export default class CaptainRuns extends View {
       if ((o?.section !== "runs" && !old) || o.at === this.opened) return;
       this.opened = o.at;
       this.grader = null;
+      this.opened1 = true;
       if (old) run("layout.select", { stack: "sections", child: "runs" });
       if (o.live) { this.tab = "runs"; this.kind = "live"; this.live.load(cx, o.live); }
       else if (o.backtest || o.replay) {
@@ -251,6 +252,13 @@ export default class CaptainRuns extends View {
     else if (kind === "jobs") { this.kind = "jobs"; this.jobs.load(cx); }
     else { this.kind = kind; if (!this.data[kind]) this.load(cx, kind); else if (!this.sel[kind] && this.data[kind][0]) this.pick(cx, kind, this.data[kind][0].name); }
     cx.notify();
+  }
+
+  /** What the open thing is called, for the crumb in a narrow pane. */
+  selectedTitle() {
+    if (this.kind === "jobs") { const j = (this.jobs.list ?? []).find((x) => x.id === this.jobs.sel); return j ? jobWords(j) : null; }
+    if (this.kind === "live") return (this.live.list ?? []).find((x) => x.id === this.live.sel)?.title ?? null;
+    return this.selected();
   }
 
   /** The name of what the right side shows. */
@@ -420,7 +428,7 @@ export default class CaptainRuns extends View {
       else {
         this.job.id = r.data?.job;
         // A run that streams: watch it in Live.
-        if (r.data?.live) { this.kind = "live"; this.grader = null; this.live.load(cx, r.data.live); }
+        if (r.data?.live) { this.kind = "live"; this.opened1 = true; this.grader = null; this.live.load(cx, r.data.live); }
       }
       cx.notify();
     });
@@ -620,6 +628,7 @@ export default class CaptainRuns extends View {
     const active = (r) => r.kind === this.kind && r.id === this.selected();
     const open = (cx, r) => {
       this.grader = null;
+      this.opened1 = true; // in a narrow pane, the row's page takes the place of the list
       if (r.kind === "live") { this.kind = "live"; this.live.select(cx, r.id); }
       else if (r.kind === "jobs") { this.kind = "jobs"; this.jobs.pick(cx, r.id); }
       else this.pick(cx, r.kind, r.id);
@@ -629,11 +638,12 @@ export default class CaptainRuns extends View {
       .child(h_flex().id("runs-filters").flex_none().flex_wrap().gap(6).p(10).border_b(1).border_color(c.rule)
         .child(chip(null, "All"))
         .child(chip("live", "Running now", counts.live))
-        .children(KINDS.map(([k, , label]) => chip(k, label, counts[k]))))
+        // A kind the workspace has none of gets no chip: the list doesn't advertise what nobody uses.
+        .children(KINDS.filter(([k]) => counts[k] > 0 || this.filter === k).map(([k, , label]) => chip(k, label, counts[k]))))
       .child(h_flex().flex_none().h(28).px(10).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().text_color(c.grey900).items_center()
         .child(div().flex_1().min_w(0).px(4).child("Name"))
-        .child(div().w(140).flex_none().px(4).child("Kind"))
-        .child(div().w(120).flex_none().px(4).child("Status")))
+        .child(div().w(128).flex_none().px(4).child("Kind"))
+        .child(div().w(96).flex_none().px(4).child("Status")))
       .child(v_flex().id("runs-rows").flex_1().min_h(0).overflow_y_scrollbar()
         .when(!!this.error, (e) => e.child(div().p(10).child(trouble(c, "runs-load", this.errorR, this.error, (cx) => this.loadAll(cx)))))
         .when(!loaded && !this.error, (e) => e.child(div().child(Skeleton(c, 8))))
@@ -659,8 +669,8 @@ export default class CaptainRuns extends View {
               .child(v_flex().flex_1().min_w(0)
                 .child(div().truncate().text_size(12.5).text_color(on ? c.blue : c.navy).child(r.title))
                 .when(!!r.sub, (e) => e.child(div().when(!!r.subId, (d) => d.id(r.subId)).truncate().text_size(11).text_color(c.grey500).child(r.sub)))))
-            .child(div().w(140).flex_none().px(4).truncate().text_size(12).text_color(c.grey900).child(r.word))
-            .child(div().w(120).flex_none().px(4).truncate().text_size(12).text_color(tone).child(r.status));
+            .child(div().w(128).flex_none().px(4).truncate().text_size(12).text_color(c.grey900).child(r.word))
+            .child(div().w(96).flex_none().px(4).truncate().text_size(12).text_color(tone).tooltip(r.status).child(r.status));
         })));
   }
 
@@ -905,13 +915,25 @@ export default class CaptainRuns extends View {
   render() {
     const c = palette(isDark(theme()));
     const w = this.width;
-    const lw = Math.max(380, Math.min(520, Math.floor(w * 0.4)));
+    // The list takes half: a name needs room beside its kind and its status.
+    const lw = Math.max(400, Math.min(620, Math.floor(w * 0.5)));
     // Never blank: the header always shows, and the body says what is happening.
     const body = this.starting ? v_flex().flex_1().items_center().justify_center().child(Loading(c, "", true))
       : this.tab === "compare" ? this.reg.render(c, w)
       // Rating a pair takes the whole width: the list steps aside until "Back to the queue".
       : this.grader ? this.graderView(c)
-      : h_flex().flex_1().min_h(0).child(this.runList(c, lw)).child(this.detailPane(c, w - lw));
+      // Beside an open terminal column there is no room for both: the list, then what a row opens to, with a crumb
+      // back, the way Data does it.
+      : w < 820
+        ? (this.opened1 && this.kind
+          ? v_flex().flex_1().min_h(0)
+            .child(h_flex().id("runs-crumb").flex_none().h(34).px(20).gap(6).items_center().border_b(1).border_color(c.rule).text_size(12.5)
+              .child(div().id("crumb-runs").text_color(c.blue).cursor_pointer().hover((s) => s.underline()).on_click((_e, cx) => { this.opened1 = false; cx.notify(); }).child("Runs"))
+              .child(this.icon("chevron-right", 11, c.grey500))
+              .child(div().min_w(0).truncate().text_color(c.navy).child(String(this.selectedTitle() ?? ""))))
+            .child(h_flex().flex_1().min_h(0).child(this.detailPane(c, w)))
+          : h_flex().flex_1().min_h(0).child(this.runList(c, w)))
+        : h_flex().flex_1().min_h(0).child(this.runList(c, lw)).child(this.detailPane(c, w - lw));
     return v_flex().id("root").size_full().bg(c.surface).font_family(FONT).text_color(c.navy)
       .on_size_change((size, cx) => { this.width = size.width; cx.notify(); })
       .child(this.header(c))

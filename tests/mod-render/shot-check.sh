@@ -19,7 +19,7 @@ block_of() { case "$1" in captain-deployments) echo deployments ;; captain-proje
 EXTRA=()
 for m in "${MODS[@]}"; do
   case "$m" in
-    captain-data) EXTRA+=("captain-data:sample" "captain-data:samplefiles" "captain-data:samplerow" "captain-data:pictures" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:sources" "captain-data:about" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
+    captain-data) EXTRA+=("captain-data:sample" "captain-data:samplefiles" "captain-data:samplerow" "captain-data:pictures" "captain-data:tablerows" "captain-data:wide40" "captain-data:wide13" "captain-data:sources" "captain-data:groups" "captain-data:about" "captain-data:lineage" "captain-data:insights" "captain-data:quality" "captain-data:import" "captain-data:import-table") ;;
     # needs SHOT_PROJECT=1: a project with pins and experiments. captain-project:list (the project cards, nothing picked):
     # SHOT_ONLY, as two cards leave the column the blank check measures nearly empty.
     # captain-project:ship needs SHOT_STAGED=1 too: the Ship steps first on the page, with something staged.
@@ -286,6 +286,7 @@ props_of() {
     captain-runs:compare) echo '{"tab": "compare"}' ;;
     captain-notebooks:notebook) echo '{"notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:sources) echo '{"tab": "sources"}' ;;
+    captain-data:groups) echo '{"openGroups": ["db:demo-store", "folder:"]}' ;;  # two groups open, five tables at a time
     captain-data:samplerow) echo '{"pageTab":"sample","dataset":"shot-multifile","openRow":2}' ;;
     captain-data:pictures) echo '{"pageTab":"sample","dataset":"shot-pictures","openRow":1}' ;;
     captain-project:choose) echo '{"chooseModels": true}' ;;
@@ -443,6 +444,7 @@ cst_app app open compare >/dev/null && opened compare 'runs|*'
 if cst_app app open experiments >/dev/null 2>&1; then echo "cst app open experiments: opened something, expected it to say the screen is gone"; fail=1; else echo "cst app open experiments: says the screen is gone"; fi
 # A form, filled in for the person: the New evaluation form, on a name an agent gave it. Nothing is submitted.
 cst_app app open form:backtest --value "name=opened-by-an-agent" >/dev/null && opened form:backtest '*|backtest|-'
+sleep 4  # the form reads the models, the tables and the measures before it draws its steps
 app shot "$OUT/cst-app-open-form.png" >/dev/null || true
 app do overlay.close '{}' >/dev/null 2>&1 || true
 # Pinned things: `cst context add` puts them in this window's sidebar strip, and `cst context show` expands them.

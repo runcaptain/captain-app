@@ -92,8 +92,9 @@ def check_guardrails(g_list, arm: str, base: str, metrics: dict[str, dict]) -> l
     return out
 
 
-def score_surface(ctx, surface, arms: list[str], mde: float, rankings) -> dict:
-    """rankings(arm, queries) -> (ranks, ms), the same engine call the main run uses."""
+def score_surface(ctx, surface, arms: list[str], mde: float, rankings, depths: dict | None = None) -> dict:
+    """rankings(arm, queries) -> (ranks, ms), the same engine call the main run uses. `depths`: how deep each
+    measure looks in this run (eval/metrics.py), the usual depths when not given."""
     from .ops import judgments_map, rows_of
 
     _, qs, _ = rows_of(ctx, surface.queries)
@@ -101,7 +102,7 @@ def score_surface(ctx, surface, arms: list[str], mde: float, rankings) -> dict:
     perq, metrics, arm_rows = {}, {}, []
     for a in arms:
         ranks, _ = rankings(a, qs)
-        perq[a] = M.per_query(ranks, jmap, X.current(ctx).custom("metric"))
+        perq[a] = M.per_query(ranks, jmap, X.current(ctx).custom("metric"), depths)
         metrics[a] = M.summarize(perq[a])
         arm_rows.append({"arm": a, "metrics": metrics[a], "judged@10": metrics[a].get("judged@10")})
     base = arms[0]

@@ -72,6 +72,17 @@ const order = h.byIdPrefix('').map((e) => String(e.call('id')?.[0] ?? '')).filte
 assert.equal(order[0], 'live-live-1', `the run that is going is first: ${order.slice(0, 3)}`);
 assert.ok(text.includes('Running, 42%'), 'and says how far it is');
 
+// A kind the workspace has none of gets no filter chip.
+{
+  const had = h.mod.data.replays;
+  h.mod.data.replays = [];
+  await h.layoutLists({});
+  h.mod.data.replays = [];
+  assert.equal(h.byIdPrefix('runs-kind-replays').length, 0, 'no Off-policy chip with no off-policy evaluations');
+  assert.equal(h.byIdPrefix('runs-kind-backtests').length, 1);
+  h.mod.data.replays = had;
+}
+
 // The filters keep one kind.
 await h.click('runs-kind-jobs');
 assert.equal(h.byIdPrefix('backtests-').length, 0, 'only jobs');
@@ -163,6 +174,21 @@ const lines = paths.filter((p) => p.width === 2);
 assert.equal(lines.length, rep.outcomes.length, 'a line per outcome');
 assert.ok(lines.some((p) => p.ops.some(([m]) => m === 'dash_array')), 'a dashed directional line');
 assert.equal(h.byIdPrefix('pt-').length, rep.curve.length, 'every operating point');
+
+// Beside an open terminal column the pane is narrow: the list alone, then a row's page in its place with a crumb back.
+h.mod.width = 600;
+h.mod.opened1 = false;
+await h.layoutLists({});
+assert.ok(h.byIdPrefix('runs-list').length === 1 && h.byIdPrefix('replay-detail').length === 0, 'narrow: the list alone');
+await h.click('backtests-demo-tuned-vs-bm25');
+await h.layoutLists({});
+assert.ok(h.byIdPrefix('runs-list').length === 0 && h.byIdPrefix('backtest-detail').length === 1, 'a row opens its page in place of the list');
+assert.ok(h.text().includes('demo-tuned-vs-bm25'), 'the crumb names it');
+await h.click('crumb-runs');
+assert.equal(h.byIdPrefix('runs-list').length, 1, 'the crumb goes back to the list');
+h.mod.width = 1000;
+await h.layoutLists({});
+assert.ok(h.byIdPrefix('runs-list').length === 1 && h.byIdPrefix('backtest-detail').length === 1, 'wide: the list and the page side by side');
 
 const sorted = [...h.timings].sort((a, b) => a - b);
 console.log(`renders: ${h.timings.length}, median ${sorted[Math.floor(sorted.length / 2)].toFixed(2)} ms, slowest ${sorted.at(-1).toFixed(1)} ms (V8)`);

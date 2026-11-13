@@ -1147,7 +1147,7 @@ The owner walked the whole app on 2026-11-12 and asked for far fewer screens. Th
 | View | Section id, mod | What it holds |
 |---|---|---|
 | Projects | `project`, `captain-project` | Home. The app opens on **All projects**, and so do the sidebar's Projects and the logo. A project's page opens from there or from the Explorer |
-| Data | `data`, `captain-data` | Two submenus. **Tables**: every table in one list, a dataset or a database's table alike, with where it lives, its rows, whether Captain keeps versions of it and when it was last read (`GET /api/data/tables`). **Sources**: the databases and model registries they come from |
+| Data | `data`, `captain-data` | Two submenus. **Tables**: every table, a dataset or a database's table alike, grouped by where it lives, five at a time (`GET /api/data/tables`). **Sources**: the databases and model registries they come from |
 | Notebooks | `notebooks`, `captain-notebooks` | SQL, Python, notes and charts, saved as versions. `cst app open notebook:<name>` opens one |
 | Runs | `runs`, `captain-runs` | Two submenus. **Runs**: everything that runs in one list with a Kind column and filters (offline evaluations, jobs, rating, workflows, off-policy evaluations), what is running now first. **Compare**: regression testing, every evaluation run with the change against the model it is compared with (`GET /api/regression`) |
 | Deployments | `deployments` | Every model that is running somewhere, across projects |
@@ -1159,11 +1159,22 @@ comparison shows in Runs. `cst app open compare` and `comparison:<evaluation>` o
 experiments` and `launch-review` say the screen is gone and name the command. Don't send a person to
 Experiments, Compare or Launch review: say what to do in Runs, or run the command for them.
 
-### Data: one list of tables
+### Data: tables, grouped by where they live
 
-A dataset is a table Captain keeps versions of. A database's table is one Captain reads where it lives. They are
-one list, and the **Versions** column says which is which ("Captain keeps 3 versions", "Read where it lives").
-There is no Datasets screen and no Labels screen. `cst labels` still defines and previews labels.
+A dataset is a table Captain keeps versions of. A database's table is one Captain reads where it lives. Tables
+shows both, **grouped by place**: one collapsible group per connected database (its mark, its name and kind, a
+count) and one per folder of the tables Captain keeps. The owner on the first build: "A giant wall of tables is
+not good. It needs to be a dropdown... searchable with pagination per type of database."
+
+- Groups start closed. The ones a person opens are remembered for the workspace.
+- An open group shows its tables **five at a time**, with Previous, Next and "1 to 5 of 39", and its own search
+  box. A database with more than 15 tables is grouped again by schema; a smaller one says the schema under
+  "Where it lives".
+- The search box at the top asks the services, so a column's name finds its table, and opens every group that
+  has a match.
+- The **Versions** column says which is which ("Captain keeps 3 versions", "Read where it lives"). There is no
+  Datasets screen and no Labels screen. `cst labels` still defines and previews labels.
+- A table's description shows on hover as plain words, about two lines. Markdown links become their words.
 
 - A row opens the table's page in place, with a crumb back to the list. A page has two views, **Rows** and
   **About**, and one button, **Where this came from**, which opens the lineage graph. About is one page: the
@@ -1172,8 +1183,8 @@ There is no Datasets screen and no Labels screen. `cst labels` still defines and
 - `cst app open dataset:<name> --tab sample|about|insights|quality|health|lineage` still opens the right place:
   an earlier tab's name opens About with that section open.
 - Searching the list asks the services, so a column's name finds its table.
-- Folders are not drawn as a tree any more. A dataset's folder is part of "Where it lives", and
-  `cst data mkdir | move | rename-folder | rmdir` still arrange them.
+- A folder is a group. A dataset's page moves it to another folder (About, "Where it lives"), and a file dropped
+  on its page lands in its folder. `cst data mkdir | rename-folder | rmdir` make, rename and remove folders.
 - With a project picked in the Explorer the list shows that project's datasets only: a database's tables belong
   to no project.
 
@@ -1232,10 +1243,18 @@ runs, and the name it is saved under.
 - **The setup is saved under its name as a test.** The same name again is the same test on another model, and
   its runs line up in Runs, Compare. "Run it on another model" on an evaluation opens the form on that test:
   pick the model and run. `cst app open form:backtest --value test=<name>` does the same for a person.
-- Three things the owner asked for are not something a run can do, so the form says them instead of drawing a
-  control that does nothing: how many results deep (each measure looks 10 deep, recall 50), which slices (a
-  run always reports by group and by traffic), and which measures to compute (all of them).
-  `GET /api/evaluations/options` lists these under `not_yet`, with the reason.
+- **How many results deep each measure looks is a field** under Limits: nDCG, Precision, Recall and MRR, each
+  starting at its usual depth (10, 10, 50, 50), up to 200. The plan keeps what differs (`depths`,
+  `cst`'s `POST /api/backtests {depths: {"ndcg@10": 20}}`), the run records every depth it looked, and the
+  measure's key keeps its usual name. So read a run's `depths` before its numbers: `ndcg@10` in a run with
+  `depths["ndcg@10"] == 20` is nDCG at 20, and the screens say "nDCG@20".
+- **A run measured at other depths says so in its verdict sentence** ("... on nDCG@20. nDCG looks 20 results
+  deep, not the usual 10. Human graded."), in its warnings and in its report. Two runs at different depths are
+  never compared as the same measure: `GET /api/compare-runs` lists it as `different-depth`. Say the depth
+  whenever you quote such a number.
+- Two things the owner asked for are not something a run can do yet, so the form says them instead of drawing
+  a control that does nothing: which slices (a run always reports by group and by traffic), and which measures
+  to compute (all of them). `GET /api/evaluations/options` lists these under `not_yet`, with the reason.
 - From a terminal the same thing is `cst backtest plan` then `cst backtest run`.
 
 ## Captain project page (Projects)
