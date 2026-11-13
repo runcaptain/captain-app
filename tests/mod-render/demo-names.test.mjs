@@ -14,7 +14,7 @@ const ids = new Set(names.ids), labels = new Set(names.labels);
 
 // 1. The picture check's sample rows, generated and read row by row.
 const bad = [];
-for (const view of ['empty', 'leftover', 'stopped', 'stopped-open', 'one', 'several', 'failed', 'found', 'deploying', 'busy', 'model', 'model-details']) {
+for (const view of ['empty', 'leftover', 'stopped', 'stopped-open', 'one', 'several', 'failed', 'found', 'deploying', 'busy', 'model', 'model-details', 'model-calls']) {
   const out = execFileSync('python3', [path.join(here, 'deployments-demo.py'), view], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   for (const r of JSON.parse(out).demo.deployed.rows) {
     if (!ids.has(r.project)) bad.push(`${view}: project ${r.project}`);

@@ -10,6 +10,7 @@
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { api, query } from "./kit/cst.js";
+import { sayError } from "./kit/checks.js";
 import { ResultGrid } from "./kit/grid.js";
 import { MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
@@ -67,7 +68,8 @@ export class DatasetPage {
     this.folders = null;
     this.moveNote = null;
     this.newFolder = InputState.new({ placeholder: "A new folder's name" });
-    this.newFolder.on("submit", (_e, cx) => this.moveTo(cx, this.newFolder.value().trim().replace(/^\/+|\/+$/g, ""), true));
+    this.newFolder.on("submit", (_e, cx) => { const k = this.folderCheck(); if (!k.off) this.moveTo(cx, k.folder, true); });
+    this.newFolder.on("change", (_e, cx) => cx.notify());
     this.health = new EvalHealth(); // About's health section (kit/evals.js)
     this.insights = new DatasetInsights(host); // the Insights tab (insights.js)
   }
@@ -119,6 +121,16 @@ export class DatasetPage {
     cx.notify();
   }
 
+  /** The folder typed for a move, checked as it is typed: {folder, text, off}. Any words are a folder's name; a
+   *  path's levels are kept. `off` is why the button is off. */
+  folderCheck() {
+    const folder = String(this.newFolder.value() ?? "").split("/").map((p) => p.trim()).filter(Boolean).join("/");
+    if (!folder) return { folder, text: null, off: "Type a folder's name." };
+    if (folder === this.folder()) return { folder, text: "It is already in that folder.", off: "It is already there." };
+    const there = (this.folders ?? []).includes(folder);
+    return { folder, text: there ? `It will move to ${folder}, which is already there.` : `Captain will make the folder ${folder} and move it there.`, off: null };
+  }
+
   /** Move the dataset on the page to a folder ("" is the top level). Moving copies nothing and changes no version. */
   moveTo(cx, folder, make = false) {
     const name = this.host.detail?.name;
@@ -127,7 +139,7 @@ export class DatasetPage {
       if (make) await api("/api/library/folders", { body: { path: folder } });
       const r = await api("/api/library/move", { body: { names: [name], folder } });
       if (r.ok) { this.moving = false; this.newFolder.set_value(""); this.moveNote = { text: `Moved to ${folder || "the top level"}.`, tone: "good" }; this.host.catalog.load(cx); }
-      else this.moveNote = { text: String(r.data?.detail ?? r.data?.error ?? r.error ?? "Couldn't move it."), tone: "fail" };
+      else this.moveNote = { text: sayError(r.data?.detail ?? r.data?.error ?? r.error).text || "Couldn't move it.", tone: "fail" };
       cx.notify();
     });
   }
@@ -279,7 +291,7 @@ export class DatasetPage {
         this.whereNote = null;
         this.locate = { state: "found", how: `in ${uri}`, column: m.column };
         this.rows?.setMedia(cx, (this.media.columns ?? []).filter((x) => !x.relative || x.template));
-      } else this.whereNote = { text: String(r.data?.detail ?? r.error ?? "Nothing there."), tone: "fail" };
+      } else this.whereNote = { text: sayError(r.data?.detail ?? r.error).text || "Nothing there.", tone: "fail" };
       cx.notify();
     });
     cx.notify();
@@ -299,7 +311,7 @@ export class DatasetPage {
         this.whereNote = null;
         this.locate = { state: "found", how: "the address you gave", column: m.column };
         this.rows?.setMedia(cx, (this.media.columns ?? []).filter((x) => !x.relative || x.template));
-      } else this.whereNote = { text: String(r.data?.detail ?? r.error ?? "Couldn't save it."), tone: "fail" };
+      } else this.whereNote = { text: sayError(r.data?.detail ?? r.error).text || "Couldn't save it.", tone: "fail" };
       cx.notify();
     });
     cx.notify();
@@ -434,7 +446,10 @@ export class DatasetPage {
             .on_click((_e, cx) => this.moveTo(cx, p)).child(p || "Top level")))
           .child(div().id("ds-move-new").w(200).h(26).px(8).flex().items_center().border_1().border_color(c.grey300)
             .child(Input.new(this.newFolder).w_full().text_size(12).text_color(c.navy)))
-          .child(Button(c, "ds-move-new-go", "Move to a new folder", (_e, cx) => this.moveTo(cx, this.newFolder.value().trim().replace(/^\/+|\/+$/g, ""), true), { small: true }))))
+          .child(div().id("ds-move-new-go-wrap").when(!!this.folderCheck().off, (x) => x.tooltip(this.folderCheck().off))
+            .child(Button(c, "ds-move-new-go", "Move to a new folder", (_e, cx) => { const k = this.folderCheck(); if (!k.off) this.moveTo(cx, k.folder, true); }, { small: true, disabled: !!this.folderCheck().off })))
+          // What typing so far will do, under the field, as it is typed.
+          .when(!!this.folderCheck().text, (x) => x.child(div().id("ds-move-says").w_full().text_size(11.5).text_color(c.grey500).child(this.folderCheck().text)))))
         .when(!!this.moveNote, (e) => e.child(div().id("ds-move-note").text_size(12).text_color(this.moveNote.tone === "fail" ? c.fail : c.good).child(this.moveNote.text))))
       .child(v_flex().gap(6)
         .child(div().text_size(13).font_medium().child("What made it"))

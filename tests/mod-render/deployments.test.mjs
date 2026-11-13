@@ -83,7 +83,7 @@ const filled = (h) => h.byIdPrefix('').filter((e) => e.calls?.some?.((x) => x[0]
 // ---- nothing deployed ----
 let h = await open({ deployed: { rows: [], asked: [], text: 'Nothing is deployed. Deploy a model from a project\'s page to see it here.', read_at: '' } });
 let t = h.text();
-assert.ok(t.includes('Deployments') && t.includes('Models') && t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 1 && t.includes('Deploy a model'), `empty: ${t}`);
+assert.ok(t.includes('Deployments') && t.includes('Models') && !t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 1 && t.includes('Deploy a model'), `empty: ${t}`);
 assert.equal(byId(h, 'dep-filters').length, 0, 'no filters over an empty list');
 // Nothing at all: one muted line says what the screen is for, so the page is not bare.
 assert.ok(byId(h, 'dep-what-for').length === 1 && t.includes("A model you deploy from a project's page shows here"), `what it is for: ${t}`);
@@ -100,7 +100,7 @@ h = await open({ deployed: { rows: [], asked: [], text: 'Nothing is deployed.', 
     { kind: 'bucket', name: 'captain-serving-us-west-1', what_for: "Holds the model's files and its request log." }] }] } });
 t = h.text();
 // The screen is a list of models first. What is in the account is one closed line at the bottom, until opened.
-assert.ok(t.includes('No models are running.') && t.includes('Deploy a model'), `no models, said under Models: ${t}`);
+assert.ok(!t.includes('No models are running.') && t.includes('Deploy a model'), `no models: the title says so once, and Models offers to deploy: ${t}`);
 assert.equal(byId(h, 'dep-what-for').length, 0, 'with an account line on the page, the page says enough');
 assert.ok(t.includes('Set up in your AWS account: 5 things Captain created so it can deploy there.') && byId(h, 'dep-setup-show-aws').length === 1, `one line for the account: ${t}`);
 assert.ok(t.indexOf('Models') < t.indexOf('Set up in your AWS account'), 'the models come first');
@@ -125,7 +125,7 @@ h = await open({ deployed: { rows: [OLD], asked, text: 'No models running.', sto
     { kind: 's3-object', kind_label: 'Build package', name: 's3://captain-serving-000000000000-us-west-1/build/serving.zip', short: 'serving.zip', what_for: "The files the model's image is built from. Kept so the image can be built again without sending them." },
     { kind: 'log-group', kind_label: 'Build log', name: '/aws/codebuild/captain-serving-build', short: 'captain-serving-build', what_for: 'What the image build printed while it ran. Kept so a build that failed can be read.' }] }] } });
 t = h.text();
-assert.ok(t.includes('No models running.') && t.includes('Models') && t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 1, `nothing running: says so, and offers to deploy: ${t}`);
+assert.ok(t.includes('No models running.') && t.includes('Models') && !t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 1, `nothing running: says so, and offers to deploy: ${t}`);
 assert.equal(shown(h), '', 'a stopped model is not in the list of what is deployed');
 assert.ok(t.includes('Stopped earlier: 1 model.') && byId(h, 'dep-earlier-show').length === 1, `it has its own closed line: ${t}`);
 assert.ok(t.indexOf('Stopped earlier') < t.indexOf('Set up in your AWS account') && t.indexOf('Models') < t.indexOf('Stopped earlier'), 'models, then stopped earlier, then the account');
@@ -439,6 +439,35 @@ assert.ok(h.text().includes('Stopped. It no longer answers or bills.') && byId(h
 assert.ok(shown(h) === 'trail' && h.text().includes('Stopped earlier: 1 model.') && h.text().includes('1 model running.'), `and the list is the truth, without a click: ${shown(h)}`);
 assert.ok(sent.some((x) => x[1] === '/api/deployed?fresh=true'), 'read fresh after the action');
 world.stopJob = null; world.jobs = null;
+
+// ---- requests come from the request log, and the cloud's chart is named for what it is ----
+// Proven on a real endpoint: 29 requests for results, and 178 calls counted by the cloud, most of them Captain's own checks.
+const CALLS = '178 calls reached the endpoint in the last hour. That counts Captain\'s own checks (asking the model whether it is well, and to write its log) as well as requests for results.';
+h = await open({ deployed: { rows: [SHOP], asked, text: '1 model running.', read_at: '' }, numbers: { shop: numbers(29, {
+  text: '29 requests in the last hour, no errors. Median 2.6 ms, 95th percentile 6.9 ms.',
+  source_text: 'Requests, failures and response time are from Captain\'s request log, which holds only requests for results.' }) } });
+world.numbers.shop.summary = { ...world.numbers.shop.summary, requests: 29, calls: 178, counted_from: 'log', calls_text: CALLS };
+await h.click('dep-open-shop:staging');
+await h.idle(150);
+t = h.text();
+assert.ok(t.includes('Calls a minute at the endpoint') && t.includes(CALLS) && !t.includes('Requests a minute'), `the cloud's chart is of calls, and says they include Captain's checks: ${t.slice(0, 900)}`);
+assert.ok(t.includes('request log, which holds only requests for results'), 'where the count comes from');
+// With no request log the cloud's count is the count, and the chart keeps its name.
+h = await open({ deployed: { rows: [SHOP], asked, text: '1 model running.', read_at: '' }, numbers: { shop: numbers(8640) } });
+world.numbers.shop.summary = { ...world.numbers.shop.summary, calls: 8640, counted_from: 'cloud', calls_text: 'x' };
+await h.click('dep-open-shop:staging');
+await h.idle(150);
+assert.ok(h.text().includes('Requests a minute') && !h.text().includes('Calls a minute at the endpoint'), 'one count, one name');
+
+// ---- only the refresh control asks the model to write its log ----
+h = await open({ deployed: { rows: [SHOP], asked, text: '1 model running.', read_at: '' }, numbers: { shop: numbers(8640) } });
+await h.click('dep-open-shop:staging');
+await h.idle(150);
+const logReads = () => sent.filter((x) => String(x[1]).includes('/staging/requests'));
+assert.ok(logReads().length > 0 && !logReads().some((x) => String(x[1]).includes('refresh=true')), 'opening the page does not call the model');
+await h.click('model-updated-refresh');
+await h.idle(150);
+assert.ok(logReads().some((x) => String(x[1]).includes('refresh=true')), 'the refresh control does');
 
 // ---- a deploy under way is a row, and counts its own seconds ----
 const started = new Date(Date.now() - 48000).toISOString();
