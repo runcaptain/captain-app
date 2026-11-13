@@ -1,0 +1,19 @@
+{
+ "columns": [
+  {
+   "id": "class",
+   "label": "Group",
+   "groups": 4
+  },
+  {
+   "id": "device",
+   "label": "device",
+   "groups": 3
+  }
+ ],
+ "traffic": true,
+ "usual": [
+  "class",
+  "traffic"
+ ]
+}

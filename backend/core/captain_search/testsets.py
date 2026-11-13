@@ -73,6 +73,12 @@ def _pairs(rows: list[dict], mapping: dict, default_grade: int) -> tuple[list[di
     qcol, pcol, gcol, scol = mapping.get("query"), mapping.get("product"), mapping.get("grade"), mapping.get("slice")
     if not qcol or not pcol:
         raise ValueError("say which column holds the question and which holds the product you want back")
+    also = [c for c in (mapping.get("also") or []) if c not in (qcol, pcol, gcol, scol)]
+    for c in also:
+        if c in ("query_id", "query", "class", "weight"):
+            raise ValueError(f"a column named {c} can't be kept as a group: that name is taken on a question")
+        if rows and c not in rows[0]:
+            raise ValueError(f"the table has no column named {c}")
     questions: dict[str, dict] = {}
     answers: dict[tuple, dict] = {}
     skipped = {"no question": 0, "no product": 0, "a grade that isn't 0 to 3": 0}
@@ -90,7 +96,9 @@ def _pairs(rows: list[dict], mapping: dict, default_grade: int) -> tuple[list[di
             skipped["a grade that isn't 0 to 3"] += 1
             continue
         qid = Q.qid("own", q.lower())
-        questions.setdefault(qid, {"query_id": qid, "query": q, "class": str(r.get(scol) or "own") if scol else "own"})
+        # Columns kept on each question so results can be sliced by them (mapping["also"]): the first row's value stands.
+        extra = {c: (None if r.get(c) is None else str(r.get(c))) for c in also}
+        questions.setdefault(qid, {"query_id": qid, "query": q, "class": str(r.get(scol) or "own") if scol else "own", **extra})
         key = (qid, str(p).strip())
         # The same pair twice: the higher grade stands.
         if key not in answers or g > answers[key]["grade"]:
@@ -106,7 +114,10 @@ def preview(ctx: Context, source: dict, mapping: dict | None = None, default_gra
     t, label = _table(ctx, source)
     cols = list(t.column_names)
     rows = t.to_pylist()
-    mapping = {k: v for k, v in (mapping or guess(cols)).items() if v in cols}
+    given = mapping or guess(cols)
+    mapping = {k: v for k, v in given.items() if k != "also" and v in cols}
+    if given.get("also"):
+        mapping["also"] = [c for c in given["also"] if c in cols]
     out = {"source": label, "columns": cols, "rows": [[r.get(c) for c in cols] for r in rows[: max(1, limit)]],
            "total": len(rows), "mapping": mapping, "default_grade": default_grade, "ready": False,
            "questions": 0, "answers": 0, "skipped": {}, "sample": []}

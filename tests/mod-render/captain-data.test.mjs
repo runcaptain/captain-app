@@ -60,27 +60,32 @@ const { groupsOf, plainTip, PAGE, BY_SCHEMA_OVER } = await import(path.join(work
 assert.equal(PAGE, 5);
 assert.equal(h.byIdPrefix('cat-row-').length, 0, 'no table shows until a group is opened');
 const groups = groupsOf(merged.rows);
-assert.deepEqual(groups.map((g) => g.id), ['db:demo-store', 'db:warehouse', 'folder:demo-historic-replay', 'folder:logs', 'folder:'], 'databases first, then the folders of what Captain keeps');
+assert.deepEqual(groups.map((g) => g.id), ['db:demo-store', 'db:warehouse', 'kept'], 'each database, then ONE group for what Captain keeps: three rows, not a wall of folders');
+const kept = groups.at(-1);
 for (const g of groups) assert.equal(h.byIdPrefix(`cat-group-${g.id}`).filter((e) => e.call('id')[0] === `cat-group-${g.id}`).length, 1, `a heading for ${g.id}`);
 assert.ok(text.includes('warehouse') && text.includes('Databricks') && text.includes('39 tables'), `a database's name, its kind and its count: ${text.slice(0, 400)}`);
-assert.ok(text.includes('logs') && text.includes('2 tables') && text.includes('Kept in Captain'), 'folders are the groups for the tables Captain keeps');
-assert.ok(text.includes(`${merged.rows.length} tables in ${groups.length} places`), 'the count');
+assert.ok(text.includes('Kept in Captain') && text.includes('Tables Captain keeps versions of'), 'said once, on its row');
+assert.ok(!text.includes('A folder of tables') && !text.includes('places'), 'not repeated on every row, and no count of places');
+assert.ok(text.includes(`${merged.rows.length} tables`), 'the count');
+assert.equal(h.byIdPrefix('cat-group-folder:').length, 0, 'folders are inside it, not beside it');
 // A database's own mark is on its heading.
 assert.ok(h.has(h.byIdPrefix('cat-group-db:warehouse')[0], 'svg') || h.has(h.byIdPrefix('cat-group-db:warehouse')[0], 'image'), 'the mark');
 
 // Open a folder: its tables, with the five columns. A dataset is a table Captain keeps versions of: the Versions
 // column says so. There is no separate Datasets screen.
-await h.click('cat-group-folder:');
+await h.click('cat-group-kept');
 text = h.text();
+// Its folders are a second level, nested by path. A folder with one table shows that table directly.
+assert.ok(h.byIdPrefix('cat-group-folder:logs').length === 1, 'a folder with several tables is a group inside it');
+assert.ok(kept.parts.every((p) => p.rows.length > 1), 'no folder row for a single table');
 for (const col of ['Name', 'Where it lives', 'Rows', 'Versions', 'Last read']) assert.ok(text.includes(col), `column ${col}`);
-assert.equal(h.byIdPrefix('cat-row-').length, 3, 'three tables in no folder: all shown, no pager needed');
-assert.equal(h.byIdPrefix('cat-next-').length, 0, 'no pager for five or fewer');
+assert.equal(h.byIdPrefix('cat-row-').length, Math.min(5, kept.own.length), 'the tables directly in it, after its folders');
 assert.ok(text.includes('Captain keeps 1 version') && text.includes('Captain keeps 2 versions'), 'the Versions column');
 assert.ok(text.includes('Captain, a saved query on demo-store'), 'where it lives, in words');
 assert.equal(versionWords({ kind: 'dataset', versions: 3 }), 'Captain keeps 3 versions');
 assert.equal(versionWords({ kind: 'table', versions: null }), 'Read where it lives');
 // The open groups are remembered for the workspace.
-assert.deepEqual(Object.values(globalThis.__shared['captain.data.groups'])[0], ['folder:'], 'remembered');
+assert.deepEqual(Object.values(globalThis.__shared['captain.data.groups'])[0], ['kept'], 'remembered');
 
 // A big database is grouped again by schema, and each schema shows five tables at a time with a pager.
 assert.ok(39 > BY_SCHEMA_OVER);
@@ -127,7 +132,7 @@ assert.equal(readWords('2026-11-05T08:00:00+00:00', now), '7 days ago');
 assert.equal(readWords('2026-08-01', now), 'Aug 1, 2026');
 assert.equal(readWords(null, now), 'Not read yet');
 assert.ok(!/@v\d/.test(h.text()), 'no raw name@v ref anywhere');
-assert.ok(h.text().includes('Import a dataset'), 'the one filled button brings data in');
+assert.ok(h.text().includes('Add a table') && !h.text().includes('New class'), 'the one filled button brings data in');
 
 // Beside an open terminal column the list is narrow. The Versions column still shows, in shorter words.
 h.mod.width = 700;
@@ -146,7 +151,7 @@ assert.ok(h.mod.catalog.groups.every((g) => h.mod.catalog.isOpen(g.id)), 'every 
 h.mod.catalog.find.set_value('');
 h.mod.catalog.load(h.cx);
 await h.idle(30);
-assert.ok(h.mod.catalog.isOpen('folder:') && !h.mod.catalog.isOpen('folder:logs'), 'cleared: back to the groups the person opened');
+assert.ok(h.mod.catalog.isOpen('kept') && !h.mod.catalog.isOpen('folder:logs'), 'cleared: back to the groups the person opened');
 
 // A row opens that table's page in place: a crumb back to the list, one line saying what it is, and two views.
 await h.click('cat-row-dataset-demo-catalog');
@@ -203,7 +208,7 @@ assert.ok(h.asked().slice(beforeQuality).some((p) => p.startsWith('/api/profile'
 
 // Back to the one list.
 await h.click('crumb-tables');
-assert.ok(h.byIdPrefix('cat-group-folder:').length >= 1 && h.byIdPrefix('crumb-tables').length === 0, 'the groups again');
+assert.ok(h.byIdPrefix('cat-group-kept').length >= 1 && h.byIdPrefix('crumb-tables').length === 0, 'the groups again');
 
 // Sources: the databases Captain reads tables from, and the model registries.
 await h.click('submenu-sources');

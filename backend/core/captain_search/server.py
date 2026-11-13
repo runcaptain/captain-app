@@ -3079,7 +3079,7 @@ def run(name: str, v: int | None = None):
     from .eval import metrics as MX
 
     r["depths"] = MX.check_depths(m.depths)
-    r["not_usual"] = MX.non_default(m.depths)
+    r["not_usual"] = MX.not_usual(m)
     return r
 
 
@@ -3501,14 +3501,30 @@ def population_add(body: dict):
 def backtest_add(body: dict):
     """{name, arms, queries?, judgments?, population?, hypothesis, primary?, mde?, mode?, logs?, compute?, surfaces?,
     population_size?, depths?}. depths is how many results deep each measure looks: {"ndcg@10": 20, "r@50": 100}
-    (the usual depth for any left out). population_size is how many simulated shoppers a replay of logged searches makes (4000 unless
+    (the usual depth for any left out). measures is the list to compute (it must hold `primary`), every one the
+    data allows when left out. slices is what to slice the result by: columns of the questions, and "traffic",
+    the usual (class, then traffic) when left out. population_size is how many simulated shoppers a replay of logged searches makes (4000 unless
     given): a limit the form shows as a field rather than hiding."""
     return ops.backtest_plan(ctx(), body["name"], body["arms"], body.get("queries") or None, body.get("judgments") or None,
                              body.get("population") or None, body["hypothesis"], body.get("primary", "ndcg@10"),
                              float(body.get("mde", 0.003)), mode=body.get("mode", "simulated"), logs=body.get("logs") or None,
                              compute=body.get("compute") or None, surfaces=body.get("surfaces") or None,
                              population_size=int(body.get("population_size") or 4000),
-                             depths=body.get("depths") or None).model_dump(mode="json")
+                             depths=body.get("depths") or None, measures=body.get("measures") or None,
+                             slices=body.get("slices") or None).model_dump(mode="json")
+
+
+@app.get("/api/evaluations/slices", dependencies=A)
+def evaluation_slices(queries: str):
+    """What that set of questions can be sliced by: {columns: [{id, label, groups}], traffic, usual}."""
+    from . import segments as SEGS
+
+    c = ctx()
+    try:
+        m, rows, _ = ops.rows_of(c, queries)
+    except (KeyError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return SEGS.choices([f.get("name") for f in (m.schema_fields or [])] or (list(rows[0]) if rows else []), rows)
 
 
 @app.get("/api/evaluations/options", dependencies=A)
