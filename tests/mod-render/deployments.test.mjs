@@ -440,6 +440,42 @@ assert.ok(shown(h) === 'trail' && h.text().includes('Stopped earlier: 1 model.')
 assert.ok(sent.some((x) => x[1] === '/api/deployed?fresh=true'), 'read fresh after the action');
 world.stopJob = null; world.jobs = null;
 
+// ---- a deploy under way is a row, and counts its own seconds ----
+const started = new Date(Date.now() - 48000).toISOString();
+const going = { label: 'AWS', project: 'gifts', env: 'staging', started_at: new Date(Date.now() - 52000).toISOString(),
+  step: { id: 'image', title: "Building the model's image", started_at: started, typical_s: 92, typical: 'about a minute and a half' },
+  steps: [{ id: 'check', title: 'Checking your account', status: 'done', seconds: 1 }, { id: 'access', title: 'Creating permissions', status: 'done', seconds: 2 },
+    { id: 'image', title: "Building the model's image", status: 'running', typical: 'about a minute and a half', started_at: started },
+    { id: 'start', title: 'Starting the model', status: 'pending', typical: 'about 2 minutes' }, { id: 'ready', title: 'Checking it answers', status: 'pending', typical: 'under a minute' }],
+  last_line: 'Still building the image: 40 s. Building.' };
+const DEPLOYING = row({ id: 'gifts:staging', project: 'gifts', project_name: 'Gift finder', model_version: 'gifts/starter-ranker@v3', model_label: 'starter-ranker, version 3', cloud: 'aws',
+  cloud_label: 'AWS', region: null, machine: null, where: 'AWS', name: null, state: 'deploying', state_label: 'Deploying', state_text: 'stale text from the services', address: null, deploying: going });
+h = await open({ deployed: { rows: [DEPLOYING], asked, text: 'No models running, 1 deploying.', read_at: '' } });
+t = h.text();
+assert.equal(shown(h), 'gifts', 'a deploy under way is in the list from the moment it is accepted');
+assert.ok(t.includes('No models running, 1 deploying.') && !t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 0, `the list is not empty while a model is being made: ${t}`);
+assert.ok(/Deploying to AWS: Building the model's image, (4[89]|5\d) s so far \(usually about a minute and a half\)\./.test(t) && !t.includes('stale text'), `what is being done, how long so far, how long it usually takes, on the page's clock: ${t}`);
+// Each step with its state: what is done and how long it took, what is running now, what comes next and how long it usually takes.
+for (const part of ['Done', 'Checking your account', '1 s', 'Now', "Building the model's image", 'Next', 'Starting the model', 'usually about 2 minutes', 'Checking it answers'])
+  assert.ok(t.includes(part), `the steps say ${part}`);
+assert.ok(t.includes('Still building the image: 40 s. Building.') && t.includes('Started by dana'), 'the last thing the job said, and who started it');
+// Nothing is offered that would act on a model still being made.
+for (const id of ['dep-open-gifts:staging', 'dep-stop-gifts:staging', 'dep-remove-gifts:staging', 'dep-start-gifts:staging', 'dep-forget-gifts:staging']) assert.equal(byId(h, id).length, 0, `no ${id} while it deploys`);
+// The seconds tick on the page's own clock, with no read from the services.
+const readsBefore = sent.length;
+const secondsOf = () => Number(/, (\d+) s so far/.exec(h.text())?.[1]);
+const first = secondsOf();
+await new Promise((r) => setTimeout(r, 1200));
+await tick(h);
+assert.ok(secondsOf() > first, `the time went on: ${first} then ${secondsOf()}`);
+// When it finishes the row becomes the running model, on the next read, without a click.
+world.deployed = { rows: [{ ...SHOP, id: 'gifts:staging', project: 'gifts', project_name: 'Gift finder' }], asked, text: '1 model running.', read_at: '' };
+await tick(h);
+assert.ok(h.text().includes('Running on 1 copy.') && h.text().includes('1 model running.') && byId(h, 'dep-step-gifts:staging-0').length === 0 && sent.length > readsBefore, `it became the running model: ${h.text().slice(0, 300)}`);
+// A new version going onto a model that is running: the row stays, with its buttons, and says what is happening.
+h = await open({ deployed: { rows: [{ ...SHOP, deploying: { ...going, label: 'AWS', step: { ...going.step, title: 'Starting the model', typical: 'about 2 minutes' } } }], asked, text: '1 model running.', read_at: '' }, numbers: { shop: numbers(8640) } });
+assert.ok(/A new version is on its way\. Deploying to AWS: Starting the model, \d+ s so far \(usually about 2 minutes\)\./.test(h.text()) && byId(h, 'dep-stop-shop:staging').length === 1, `a redeploy says so on the running row: ${h.text().slice(0, 400)}`);
+
 // ---- the screen rules ----
 for (const f of ['main.js', 'model.js', 'words.js']) {
   const src = fs.readFileSync(path.join(dir, f), 'utf8');

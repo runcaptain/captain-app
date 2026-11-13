@@ -10,7 +10,7 @@ import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Button, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
-import { ago, money, ms, count, Spark, Updated } from "./words.js";
+import { ago, money, ms, count, Spark, Updated, deployingWords, spanWords } from "./words.js";
 import { ModelPage } from "./model.js";
 
 const UP = ["running", "asleep", "starting", "unknown"];
@@ -56,6 +56,10 @@ export default class CaptainDeployments extends View {
     // Live: the list is read every few seconds, so a deploy or a stop made on another screen or in a terminal
     // shows by itself. A read is skipped while an action here is running: its own result comes next.
     cx.timer.every(5000, (cx) => { if (!Object.keys(this.busy).length) this.load(cx); });
+    // While a model is being deployed its row counts the seconds on this page's own clock, and the list is read
+    // more often, so the step changes and the finished model show as they happen.
+    cx.timer.every(1000, (cx) => { if (this.deployingNow()) cx.notify(); });
+    cx.timer.every(2000, (cx) => { if (this.deployingNow() && !Object.keys(this.busy).length) this.load(cx); });
     cx.timer.every(20000, (cx) => cx.notify());  // so "Updated just now" turns into "a minute ago" without a read
     cx.timer.every(60000, (cx) => this.page?.refresh(cx));  // an open model's page: where it runs and its numbers
     // A link on another screen can't reach this screen's props: it sets the shared "open" value and selects this
@@ -76,6 +80,10 @@ export default class CaptainDeployments extends View {
     const row = this.d?.rows.find((x) => x.id === o.open);
     if (row) this.openRow(row, cx);
     else { this.wanted = o.open; this.load(cx, true); }  // not read yet, or made a moment ago: ask, then open it
+  }
+
+  deployingNow() {
+    return Boolean(this.d?.rows?.some((r) => r.state === "deploying" || r.deploying));
   }
 
   /** Read what is deployed, and the numbers beside it. The list is read every few seconds: Captain's records and
@@ -245,7 +253,28 @@ export default class CaptainDeployments extends View {
       .child(Button(c, "dep-ask-no", "Cancel", (_e, cx) => { this.ask = null; cx.notify(); }, { small: true })));
   }
 
+  /** A model being deployed: what is being done now, how long it has taken and how long it usually takes, counted
+   *  on this page's clock, then each step with its state. No button: nothing can be done to a model still being made. */
+  deployingRow(c, r) {
+    const g = r.deploying;
+    const word = { done: "Done", running: "Now", pending: "Next", skipped: "Not needed", failed: "Failed" };
+    return v_flex().id(`dep-row-${r.id}`).gap(6).py(12).border_b(1).border_color(c.rule)
+      .child(h_flex().gap(10).items_center()
+        .child(r.cloud === "local" ? svg(icon("monitor")).size(16).text_color(c.navy) : Brand(c, r.cloud, 16))
+        .child(div().id(`dep-name-${r.id}`).text_size(16).font_semibold().text_color(c.navy).child(r.project_name ?? r.project))
+        .child(div().id(`dep-model-${r.id}`).min_w(0).truncate().text_size(14).text_color(c.grey900).child(r.model_label ?? r.model_version ?? "")))
+      .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(c.navy).child(deployingWords(g)))
+      .children((g.steps ?? []).map((st, i) => h_flex().id(`dep-step-${r.id}-${i}`).gap(10).items_center()
+        .child(div().w(84).flex_none().text_size(12.5).text_color(st.status === "running" ? c.navy : c.grey500).when(st.status === "running", (e) => e.font_semibold()).child(word[st.status] ?? ""))
+        .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(st.status === "running" ? c.navy : c.grey500).child(st.title ?? ""))
+        .child(div().w(190).flex_none().text_size(12.5).text_color(c.grey500)
+          .child(st.status === "done" && st.seconds != null ? spanWords(st.seconds) : st.status === "running" || st.status === "pending" ? (st.typical ? `usually ${st.typical}` : "") : ""))))
+      .when(Boolean(g.last_line), (e) => e.child(div().id(`dep-line-${r.id}`).text_size(12.5).line_height("18px").text_color(c.grey500).child(String(g.last_line))))
+      .child(div().text_size(12.5).text_color(c.grey500).child([r.by_name ? `Started by ${r.by_name}` : null, ago(r.since)].filter(Boolean).join(", ") + "."));
+  }
+
   row(c, r) {
+    if (r.state === "deploying" && r.deploying) return this.deployingRow(c, r);
     const n = this.nums[r.id];
     const s = n?.summary ?? {};
     const busy = this.busy[r.id];
@@ -292,6 +321,9 @@ export default class CaptainDeployments extends View {
         .when(hour.some((v) => v > 0) && !found, (e) => e.child(Spark(c, `dep-spark-${r.id}`, hour))))
       .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(wrong && r.in_cloud !== false ? c.fail : c.navy)
         .child(r.remembered_text ? `${r.state_text} ${r.remembered_text}` : r.state_text))
+      // A new version going onto a model that is running: it keeps answering, and the row says what is happening.
+      .when(Boolean(r.deploying), (e) => e.child(div().id(`dep-new-version-${r.id}`).text_size(13).line_height("19px").text_color(c.navy)
+        .child(`A new version is on its way. ${deployingWords(r.deploying)}`)))
       // Where it lives: the address a site calls, to copy, and one line about the system it runs on.
       .when(Boolean(r.address) && r.in_cloud !== false, (e) => e.child(h_flex().gap(8).items_center()
         // The code font is for the one thing here a person copies, and nothing else.

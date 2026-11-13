@@ -1,6 +1,6 @@
 """Sample rows for the Deployments screen's pictures: props for `captain-deployments:<view>`, as JSON on stdout.
 Nothing is deployed and no cloud is asked: the screen draws what it is handed, and its buttons reach no service.
-Views: empty, leftover, stopped, stopped-open, one, several, failed, found, busy, model, model-details. Demo names only."""
+Views: empty, leftover, stopped, stopped-open, one, several, failed, found, deploying, busy, model, model-details. Demo names only."""
 import datetime as dt
 import json
 import math
@@ -90,6 +90,15 @@ LEFT = {"cloud": "aws", "cloud_label": "AWS", "login": "aws", "login_shown": Non
     {"kind": "codebuild-project", "kind_label": "Image build", "name": "captain-serving-build", "short": "captain-serving-build", "what_for": "Builds the model's image inside your account. It runs only when an image is built."},
     {"kind": "log-group", "kind_label": "Build log", "name": "/aws/codebuild/captain-serving-build", "short": "captain-serving-build", "what_for": "What the image build printed while it ran. Kept so a build that failed can be read."}]}
 
+GOING = {"label": "AWS", "project": "gifts", "env": "staging", "started_at": ago(seconds=52),
+         "step": {"id": "image", "title": "Building the model's image", "started_at": ago(seconds=48), "typical_s": 92, "typical": "about a minute and a half"},
+         "steps": [{"id": "check", "title": "Checking your account", "status": "done", "seconds": 1}, {"id": "access", "title": "Creating permissions", "status": "done", "seconds": 2},
+                   {"id": "image", "title": "Building the model's image", "status": "running", "typical": "about a minute and a half", "started_at": ago(seconds=48)},
+                   {"id": "start", "title": "Starting the model", "status": "pending", "typical": "about 2 minutes"},
+                   {"id": "ready", "title": "Checking it answers", "status": "pending", "typical": "under a minute"}],
+         "last_line": "Still building the image: 40 s. Building."}
+GIFTS_DEPLOYING = {**row("gifts", "Gift finder", "gifts/starter-ranker@v3", "aws", "AWS", None, None, "deploying", "Deploying to AWS: Building the model's image, 48 s so far (usually about a minute and a half).",
+                         since=ago(seconds=52)), "address": None, "account": None, "machine_words": None, "copies_words": None, "deploying": GOING, "where": "AWS"}
 # view -> (rows, the title line, what Captain created, whether "Stopped earlier" is opened)
 sets = {
     "empty": ([], "No models running.", None, False),
@@ -105,6 +114,8 @@ sets = {
     "model": ([SHOP], "1 model running.", None, False),
     # The model's page on its second submenu: earlier versions, requests, log, copies and machine.
     "model-details": ([SHOP], "1 model running.", None, False),
+    # A deploy under way: a row from the moment it is accepted, with its steps and a clock that ticks.
+    "deploying": ([GIFTS_DEPLOYING, SHOP], "1 model running, 1 deploying.", None, False),
     # An action in progress: the row says what is being done, with the step it is on, and offers no button.
     "busy": ([SHOP, GARDEN, TRAIL], "3 models running.", None, False),
 }

@@ -620,6 +620,7 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
         end("done")
         s = by_id[sid]
         s["status"] = "running"
+        s["started_at"] = _now()  # with `typical_s`, enough for a page to draw live time on its own clock
         cur.update(id=sid, t=time.time())
         _write(ctx, pid, env, doc)
         say("step", id=sid, title=s["title"], index=order.index(sid) + 1, of=len(order))
