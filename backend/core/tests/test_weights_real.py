@@ -1024,3 +1024,93 @@ def test_the_list_says_where_a_model_came_from_without_its_address_and_labels_ca
     assert svc.get(p + "/labels", tensor="cn")["rows_shown"] == [0, ITEMS] and len(svc.get(p + "/labels", tensor="cn", rows="3")["labels"]) == 1
     assert svc.get(p + "/labels", tensor="act.weight", rows="0:2")["labels"] is None
     assert "outside this tensor" in svc.get(p + "/labels", code=400, tensor="cn", rows="5:99")["error"]
+
+
+# ---- What can be brought in from the workspace's own model registries -------------------------------------------------------
+
+def make_registry(root: Path) -> Path:
+    """A made-up model registry in the usual layout: <architecture>/<brand>/<version>/, each with a MANIFEST.yaml. Two
+    versions hold a session model file. One holds only a ranker, so it cannot be opened."""
+    for arch, brand, label, day, says, with_model in [("arch-a", "shop", "v1", "2026-11-01", "the first one kept", True),
+                                                      ("arch-a", "shop", "v2", "2026-11-12", "wider, two layers", True),
+                                                      ("arch-b", "garden", "v1", "2026-11-05", "a ranker alone", False)]:
+        d = root / arch / brand / label
+        if with_model:
+            make_folder(d)
+        else:
+            (d / "weights").mkdir(parents=True)
+            (d / "weights" / "rank_full.txt").write_text(TREES)
+        (d / "MANIFEST.yaml").write_text(f"architecture: {arch}\nversion: {label}\ndescription: {says}\ncreated: {day}\n")
+    (root / "INDEX.md").write_text("# a made-up registry\n")
+    return root
+
+
+def test_versions_in_every_attached_registry_are_listed_by_registry_and_never_by_address(svc):
+    from captain_search import attach as AT
+
+    assert svc.get("/api/weights/registry") == {"registries": [], "count": 0, "can_open": 0, "read_only": True,
+                                                "says": "No model registry is attached to this workspace."}
+    # Short folders: Captain names a registry's copy after its address, cut at 100 letters, and pytest's own
+    # folders are longer than that, so two registries under them would share one name.
+    import shutil
+    import tempfile
+
+    base = Path(tempfile.mkdtemp(prefix="cst-reg-", dir="/tmp"))
+    try:
+        _two_registries(svc, AT, base)
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def _two_registries(svc, AT, base):
+    one, two = make_registry(base / "one"), make_registry(base / "two")
+    AT.attach(svc.ctx, str(one))
+    AT.attach(svc.ctx, str(two), label="Kept by the team")
+    r = svc.get("/api/weights/registry")
+    assert [g["name"] for g in r["registries"]] == ["Model registry 1", "Kept by the team"]
+    assert str(base) not in " ".join([g["name"] for g in r["registries"]] + [r["says"]] + [g["says"] for g in r["registries"]])
+    assert (r["count"], r["can_open"]) == (6, 4) and r["says"] == "6 versions in 2 model registries. 4 can be opened here. Nothing was written there."
+    g = r["registries"][0]
+    assert [v["id"] for v in g["versions"]] == ["shop@v2", "garden@v1", "shop@v1"], "newest first, by the day its manifest gives"
+    v2, garden = g["versions"][0], g["versions"][1]
+    assert all(k in v2 for k in ("id", "name", "brand", "architecture", "version", "path", "address", "description", "made", "files", "can_open", "why_not", "here"))
+    assert (v2["name"], v2["description"], v2["made"], v2["can_open"], v2["why_not"], v2["here"]) == ("shop, v2", "wider, two layers", "2026-11-12", True, None, None)
+    assert (garden["can_open"], garden["why_not"]) == (False, "This version holds no session model file.")
+    assert g["says"] == "3 versions, 2 that can be opened here."
+    # One registry by its id, and an id that is not attached is refused in a sentence.
+    only = svc.get("/api/weights/registry", **{"from": r["registries"][1]["id"]})
+    assert [x["name"] for x in only["registries"]] == ["Kept by the team"]
+    assert R.attached(svc.ctx, r["registries"][0]["id"])["registries"][0]["name"] == "Model registry"
+    with pytest.raises(R.WeightsError, match="No model registry with that id"):
+        R.attached(svc.ctx, "not-an-id")
+    # A folder still works, for a terminal.
+    assert svc.get("/api/weights/registry", **{"from": str(one)})["count"] == 2
+
+
+def test_a_version_already_brought_in_says_as_what_and_its_address_is_what_import_takes(svc):
+    from captain_search import attach as AT
+
+    reg = make_registry(svc.tmp / "reg")
+    AT.attach(svc.ctx, str(reg))
+    v2 = svc.get("/api/weights/registry")["registries"][0]["versions"][0]
+    assert v2["here"] is None
+    out = svc.post("/api/weights/import", {"folder": v2["address"], "name": "shop-model"})
+    assert out["model"] == "shop-model"
+    again = svc.get("/api/weights/registry")["registries"][0]["versions"]
+    assert [(v["id"], v["here"]) for v in again] == [("shop@v2", "shop-model"), ("garden@v1", None), ("shop@v1", None)]
+
+
+def test_the_terminal_lists_the_attached_registries_with_no_argument(tmp_path):
+    from captain_search import attach as AT
+    from captain_search.cli.main import ctx as cli_ctx
+
+    R._KINDS.clear()
+    cst("init", "demo", "--storage", str(tmp_path / "bucket"))
+    AT.attach(cli_ctx(), str(make_registry(tmp_path / "reg")))
+    listed = cst("weights", "registry")
+    assert (listed["count"], listed["can_open"]) == (3, 2)
+    text = words("weights", "registry")
+    assert "3 versions in 1 model registry. 2 can be opened here." in text and "shop@v2  can be brought in" in text
+    assert "garden@v1  This version holds no session model file." in text
+    # A folder still lists what is under it.
+    assert cst("weights", "registry", str(tmp_path / "reg"))["count"] == 2

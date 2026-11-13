@@ -1286,13 +1286,92 @@ def _one_line(raw: bytes | None) -> str | None:
         got = yaml.safe_load(raw.decode())
     except Exception:  # noqa: BLE001  a manifest that cannot be parsed has no description
         return None
+    return _line_of(got)
+
+
+def _line_of(got) -> str | None:
+    """One line about a version, from its manifest as a mapping."""
     if not isinstance(got, dict):
         return None
-    for k in ("description", "summary", "says", "title", "notes"):
+    for k in ("description", "summary", "says", "title", "notes", "what_changed"):
         if isinstance(got.get(k), str) and got[k].strip():
             return " ".join(got[k].split())[:200]
     scalars = [f"{k}: {v}" for k, v in got.items() if isinstance(v, (str, int, float)) and not isinstance(v, bool)][:4]
     return ", ".join(scalars)[:200] or None
+
+
+NO_SESSION_FILE = "This version holds no session model file."
+
+
+def _where(address) -> str:
+    """An address or folder as it is compared: no trailing slash, and without a trailing `weights` folder."""
+    a = str(address or "").rstrip("/")
+    return a[: -len("/weights")] if a.endswith("/weights") else a
+
+
+def _brought_in(ctx) -> dict[str, str]:
+    """Where each model of this workspace was brought in from: {address: the model's name here}."""
+    out: dict[str, str] = {}
+    for m in WS.models(ctx):
+        try:
+            src = (WS.manifest(ctx, m["id"]).get("source") or {}).get("from")
+        except Exception:  # noqa: BLE001  a model that cannot be read was not brought in from anywhere we can name
+            continue
+        if src:
+            out.setdefault(_where(src), m["id"])
+    return out
+
+
+def _made(man: dict) -> str | None:
+    """The day a version was made, when its manifest says: used to put the newest first."""
+    for k in ("created_at", "created", "trained_at", "date", "updated"):
+        v = man.get(k) if isinstance(man, dict) else None
+        if v:
+            return str(v)[:10]
+    return None
+
+
+def attached(ctx, only: str | None = None) -> dict:
+    """What can be brought in from the model registries attached to this workspace, grouped by registry. It reads
+    the copy of each registry's manifests and file listing that Captain already keeps (models.py), so nothing is
+    listed in storage a second time. Each version says whether it can be opened here (it holds a session model
+    file) and whether it is already brought in, and as what. A registry is named in words, never by its address."""
+    from .. import attach as AT
+    from .. import models as MD
+
+    regs = AT.registries(ctx)
+    if only not in (None, ""):
+        regs = [r for r in regs if r.get("id") == only]
+        if not regs:
+            raise WeightsError("No model registry with that id is attached to this workspace.")
+    here = _brought_in(ctx)
+    out, total, openable = [], 0, 0
+    for n, r in enumerate(regs):
+        snap = MD.latest_for(ctx, r["uri"])
+        # A label the person gave is the registry's name. The default label is its address, which is not shown.
+        given = r.get("label") if r.get("label") and r["label"] != str(r["uri"]).split("://", 1)[-1] else None
+        name = given or ("Model registry" if len(regs) == 1 else f"Model registry {n + 1}")
+        rows = []
+        for m in (snap.models if snap else []):
+            files = {f.get("path") for f in m.get("files") or []}
+            can = any(e in files for e in ENDS)
+            man = m.get("manifest") or {}
+            address = _where(m.get("path"))
+            rows.append({"id": m.get("id"), "name": f"{m.get('brand')}, {m.get('version')}", "brand": m.get("brand"), "architecture": m.get("architecture"),
+                         "version": m.get("version"), "path": f"{m.get('architecture')}/{m.get('brand')}/{m.get('version')}", "address": address,
+                         "description": _line_of(man), "made": _made(man), "files": len(files), "can_open": can,
+                         "why_not": None if can else NO_SESSION_FILE, "here": here.get(address)})
+        # Newest first: by the day its manifest gives, then by its version label.
+        rows.sort(key=lambda v: (v["made"] or "", MD._vkey(str(v["version"]))), reverse=True)
+        total += len(rows)
+        openable += sum(1 for v in rows if v["can_open"])
+        out.append({"id": r.get("id"), "name": name, "read": snap is not None, "versions": rows, "count": len(rows),
+                    "says": (f"{S._plural(len(rows), 'version')}, {sum(1 for v in rows if v['can_open'])} that can be opened here." if snap
+                             else "Captain has not read this registry yet.")})
+    return {"registries": out, "count": total, "can_open": openable, "read_only": True,
+            "says": ("No model registry is attached to this workspace." if not out
+                     else f"{S._plural(total, 'version')} in {len(out)} model {'registry' if len(out) == 1 else 'registries'}. "
+                          f"{openable} can be opened here. Nothing was written there.")}
 
 
 def registry(where: str) -> dict:
