@@ -14,7 +14,7 @@ MODS=("$@")
 if [[ ${#MODS[@]} -eq 0 ]]; then
   for m in captain-data captain-notebooks captain-runs; do [[ -d defaults/mods/$m ]] && MODS+=("$m"); done
 fi
-block_of() { case "$1" in captain-deployments) echo deployments ;; captain-project) echo project ;; captain-team) echo team ;; captain-nav) echo project ;; captain-data) echo data ;; captain-runs) echo runs ;; captain-notebooks) echo notebooks ;; *) echo "" ;; esac; }
+block_of() { case "$1" in captain-deployments) echo deployments ;; captain-project) echo project ;; captain-team) echo team ;; captain-nav) echo project ;; captain-data) echo data ;; captain-runs) echo runs ;; captain-notebooks) echo notebooks ;; captain-weights) echo weights ;; *) echo "" ;; esac; }
 # Extra views after the plain ones (the two that open the import wizard last, so it covers nothing after them): a query side by side (props the mods read at init).
 EXTRA=()
 for m in "${MODS[@]}"; do
@@ -88,11 +88,14 @@ CSTCMD=${CST_BIN:-cst}
 # pictures then show an older backend behind the current screens: a live view once read "Updated just now" where
 # this tree says "Live", and nothing said why. This tree's backend/core goes first on the Python path, and the
 # check stops if what would run is still not from here. SHOT_ANY_BACKEND=1 skips the check, on purpose.
-if [[ -d "$PWD/backend/core/captain_search" ]]; then
-  export PYTHONPATH="$PWD/backend/core${PYTHONPATH:+:$PYTHONPATH}"
+# SHOT_BACKEND_DIR: another tree's backend/core to run instead (a branch whose routes these screens need and this
+# tree does not have yet). The check below then holds the backend to that folder.
+BACKEND_DIR=${SHOT_BACKEND_DIR:-$PWD/backend/core}
+if [[ -d "$BACKEND_DIR/captain_search" ]]; then
+  export PYTHONPATH="$BACKEND_DIR${PYTHONPATH:+:$PYTHONPATH}"
   CST_PY_CHECK=$(head -1 "$(command -v "$CSTCMD")" | sed 's/^#!//')
   RUNS_FROM=$("$CST_PY_CHECK" -c "import captain_search, os; print(os.path.realpath(os.path.dirname(captain_search.__file__)))" 2>/dev/null || echo "unknown")
-  WANT_FROM=$(python3 -c "import os; print(os.path.realpath('$PWD/backend/core/captain_search'))")
+  WANT_FROM=$(python3 -c "import os; print(os.path.realpath('$BACKEND_DIR/captain_search'))")
   if [[ "$RUNS_FROM" != "$WANT_FROM" && -z "${SHOT_ANY_BACKEND:-}" ]]; then
     echo "STOP: the backend these pictures would run is not this tree's."
     echo "  it runs from: $RUNS_FROM"
@@ -226,6 +229,10 @@ d["captain.forms.preview"] = json.loads(form) if form[:1] in "[{" else form.spli
 json.dump(d, open(p, "w"))
 PY
 fi
+# SHOT_APPEARANCE=dark (or light): the window in that appearance, whatever the system's is.
+if [[ "${SHOT_APPEARANCE:-}" == dark || "${SHOT_APPEARANCE:-}" == light ]]; then
+  printf '{"appearance":"%s"}\n' "$SHOT_APPEARANCE" > "$HOME_DIR/settings.json"
+fi
 # SHOT_WINDOW=1100x750: the window at that size (logical pixels). SHOT_WINDOW=max: maximized after it starts.
 if [[ "${SHOT_WINDOW:-}" =~ ^([0-9]+)x([0-9]+)$ ]]; then
   printf '{"state":"windowed","bounds":[80.0,60.0,%s.0,%s.0]}\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" > "$HOME_DIR/window.json"
@@ -307,6 +314,17 @@ props_of() {
     captain-deployments:live-stop) echo '{"press": "stop"}' ;;
     captain-deployments:live-remove) echo '{"press": "remove"}' ;;
     captain-deployments:*) python3 tests/mod-render/deployments-demo.py "${1#captain-deployments:}" ;;
+    # The Weights page, set up as if a person had clicked (its `show` prop, honoured only in a test window).
+    # tiny-*: the tiny network the page keeps itself, so no weights routes are needed. services-* and digits-*:
+    # the networks Captain's services make, so the backend these pictures run must have the weights routes.
+    captain-weights:list) echo '{}' ;;
+    captain-weights:tiny-neuron) echo '{"show": {"model": "starter:tiny", "input": 3, "neuron": [1, 1]}}' ;;
+    captain-weights:tiny-walk) echo '{"show": {"model": "starter:tiny", "input": 3, "walk": 2}}' ;;
+    captain-weights:tiny-plain) echo '{"show": {"model": "starter:tiny", "input": 1}}' ;;
+    captain-weights:services-tiny-neuron) echo '{"show": {"model": "tiny", "input": 1, "neuron": [1, 1], "ask": true}}' ;;
+    captain-weights:digits-plain) echo '{"show": {"model": "digits", "input": 2}}' ;;
+    captain-weights:digits-neuron) echo '{"show": {"model": "digits", "input": 2, "neuron": [1, 4]}}' ;;
+    captain-weights:digits-walk) echo '{"show": {"model": "digits", "input": 2, "walk": 3}}' ;;
     captain-runs:compare) echo '{"tab": "compare"}' ;;
     captain-notebooks:notebook) echo '{"notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:sources) echo '{"tab": "sources"}' ;;
