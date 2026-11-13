@@ -30,8 +30,8 @@ def trees(model: str, ranker: str | None = None, trees: int = 3):
 
 
 @router.get("/sessions/{sid}/labels")
-def labels(sid: str, tensor: str):
-    return R.labels(_ctx(), sid, tensor)
+def labels(sid: str, tensor: str, rows: str | None = None):
+    return R.labels(_ctx(), sid, tensor, rows=rows)
 
 
 @router.get("/models/{model}/rankers")

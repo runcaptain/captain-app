@@ -221,7 +221,11 @@ def summary(ctx, name: str, project_of=None) -> dict:
     out = {"id": name, "name": name, "says": m.get("says") or "", "sizes": m.get("sizes"), "parameters": m.get("parameters"),
            "versions": have, "latest": have[-1], "synthetic": bool((m.get("data") or {}).get("synthetic")),
            "data_note": (m.get("data") or {}).get("note") or "", "starter": bool(m.get("starter")),
-           "kind": m.get("kind") or "dense", "kind_says": m.get("kind_says") or "fully connected network"}
+           "kind": m.get("kind") or "dense", "kind_says": m.get("kind_says") or "fully connected network", "source_says": None}
+    if out["kind"] != "dense":
+        from . import real as R
+
+        out["source_says"] = R.source_says(m)
     if project_of:
         out["project"] = project_of(name)
     return out

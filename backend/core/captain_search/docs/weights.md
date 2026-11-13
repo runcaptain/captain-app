@@ -573,7 +573,9 @@ Every tensor belongs to exactly one part, so the parts' `parameters` add up to t
   not confirmed.
 
 `sizes`, `layers`, `examples` and `test` are empty: they belong to fully connected networks. `GET /api/weights/models`
-gives each model's `kind` and `kind_says`.
+gives each model's `kind`, `kind_says` and `source_says`: one sentence on where it came from, such as "Brought in from
+cloud storage on 2026-11-13, 12 files kept unchanged.", with no folder or address in it. It is `null` for a fully
+connected network. The model's own answer has `source_says` too.
 
 ### Reading it
 
@@ -588,7 +590,7 @@ do not apply. Nothing here runs the model.
 | `cst weights nearest <tensor> <row> [--top 10]` | `GET /api/weights/sessions/{s}/nearest?tensor=&row=&top=` | the rows that point the same way as one row |
 | `cst weights directions <tensor> [--top 5]` | `GET /api/weights/sessions/{s}/directions?tensor=&top=` | a table's largest directions |
 | `cst weights attention [--layer 1] [--head 2] [--heads 2] [--matrix query_key]` | `GET /api/weights/sessions/{s}/attention?layer=&head=&heads=&matrix=` | what each head looks for and what it copies |
-| `cst weights labels <tensor>` | `GET /api/weights/sessions/{s}/labels?tensor=` | what each row of a table stands for, when a saved list says |
+| `cst weights labels <tensor>` | `GET /api/weights/sessions/{s}/labels?tensor=&rows=` | what each row of a table stands for, when a saved list says |
 
 One read or heatmap sends at most 200,000 numbers. `read` and `heatmap` need a session that may see raw weights and
 are counted in `weights_read`. `nearest` and `directions` also work on any table of a fully connected network.
@@ -597,10 +599,12 @@ are counted in `weights_read`. `nearest` and `directions` also work on any table
 `cat.s.weight`), or `edges` for a price table, whose cut points make ranges ("1.00 to 2.00"). A list with one name per
 row names them. A list one short of the rows names them too, and the row left over is called "none or unknown": at the
 end whose row is all near zero, or at row 0 as a guess when neither end stands out. `sure` is false for a guess, and
-`labels_says` says so. Any other length names nothing. It shows no number, so it is not an event.
+`labels_says` says so. Any other length names nothing. It shows no number, so it is not an event. With `rows=a:b`
+(`cst weights labels cn --rows 0:50`) only those rows' names come back, and `rows_shown` says which. `rows` is always
+the table's full count.
 
 ```json
-{"tensor": "price.weight", "rows": 6, "labels": ["none or unknown", "below 1.00", "1.00 to 2.00", "2.00 to 3.00", "3.00 to 4.00", "4.00 and up"],
+{"tensor": "price.weight", "rows": 6, "rows_shown": [0, 6], "labels": ["none or unknown", "below 1.00", "1.00 to 2.00", "2.00 to 3.00", "3.00 to 4.00", "4.00 and up"],
  "labels_from": "edges", "extra_row": 0, "sure": false,
  "labels_says": "edges holds 4 edges, which make 5 ranges for 6 rows, one row more. The extra row is taken to be row 0, called \"none or unknown\". Neither end stands out, so its place is a guess: every name may be one row off."}
 ```
