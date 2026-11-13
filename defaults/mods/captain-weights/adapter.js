@@ -191,6 +191,24 @@ export async function sendUndo(sessionId, editId, by = "you") {
   return api(`/api/weights/sessions/${enc(sessionId)}/undo`, { method: "POST", body: { edit: editId, by }, timeout: 30 });
 }
 
+/** Start an agent on a session with a goal. Captain's services start it, hold it to its limits and give the
+ *  verdict. Body: {goal, max_edits, target_input, target_output}. Resolves to {job, session, agent, goal}. A
+ *  network kept in this mod has no services behind it, so there is nothing to start. */
+export async function sendProgram(sessionId, body) {
+  if (isLocalSession(sessionId)) return { ok: false, error: "This network lives only in the page, so no agent can be started on it." };
+  return api(`/api/weights/sessions/${enc(sessionId)}/program`, { method: "POST", body, timeout: 60 });
+}
+
+/** Stop the agent working in a session. Captain's verdict on what it did so far follows. */
+export async function sendProgramStop(sessionId) {
+  return api(`/api/weights/sessions/${enc(sessionId)}/program/stop`, { method: "POST", body: {}, timeout: 30 });
+}
+
+/** A job the services run, as it stands: {status, message, result}. */
+export async function readJob(id) {
+  return api(`/api/jobs/${enc(id)}`, { scoped: false, timeout: 20 });
+}
+
 /** Hear when the model's numbers or the session's record change, whoever changed them. Returns the stop. */
 export function watchWeights(cx, model, sessionId, onChange) {
   return watchLive(cx, [`weights:${model}`, sessionId ? `weights-session:${sessionId}` : null], onChange);

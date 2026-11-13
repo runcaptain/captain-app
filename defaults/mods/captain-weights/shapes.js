@@ -11,6 +11,9 @@
 //   GET  /api/weights/sessions/{session}            -> Session
 //   POST /api/weights/sessions/{session}/edits      <- EditRequest   -> WeightEvent
 //   POST /api/weights/sessions/{session}/undo       <- {edit: id, by} -> WeightEvent
+//   POST /api/weights/sessions/{session}/program    <- {goal, max_edits, target_input, target_output} -> {job, session, agent, goal}
+//   POST /api/weights/sessions/{session}/program/stop -> {session, stopping}
+//   GET  /api/jobs/{job}                            -> {status, message, result}: the result is the run's report
 //
 // A trained model too big to draw neuron by neuron (the services' kind "session-ranker": a small transformer with
 // tree rankers) is a "model of parts". It is read here, never edited or run. adapter.js turns the services'
