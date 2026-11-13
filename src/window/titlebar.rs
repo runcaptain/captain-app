@@ -201,6 +201,7 @@ impl AppWindow {
                 self.drain_documents(window, cx);
                 self.close_mods_now(std::time::Instant::now() + Duration::from_millis(250), window, cx);
                 crate::place::save(window, cx);
+                tracing::info!(target: "captain::window", "closed the main window (window.close)");
                 window.remove_window();
             }
             "window.minimize" => window.minimize_window(),

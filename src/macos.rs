@@ -3,7 +3,11 @@ use gpui::*;
 actions!(herdr, [Quit, Hide, HideOthers, ShowAll, Settings, About]);
 
 pub fn init(cx: &mut App) {
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Quit, cx| {
+        // CAPTAIN: the log says what asked for every quit.
+        crate::logs::quit_asked("the person, with the Quit menu item or its shortcut");
+        cx.quit()
+    });
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());

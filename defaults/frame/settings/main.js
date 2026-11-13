@@ -784,6 +784,21 @@ export default class Settings extends View {
       );
   }
 
+  // CAPTAIN: the app keeps a log of what happens to it (~/Library/Logs/Captain on a Mac), with secrets taken out
+  // as each line is written. Two ways to get it out, both the app's commands: nothing of the log is drawn here.
+  logs(t) {
+    return v_flex()
+      .w_full()
+      .child(div().h(18))
+      .child(this.heading(t, "Logs"))
+      .child(this.row(t, "The last time Captain ran",
+        "If Captain closed by itself, this copies the record of it. Otherwise it copies the latest lines of its log. Keys and tokens are taken out.",
+        this.button(t, "st-logs-copy", "Copy what happened last time", () => run("logs.copy_last"))))
+      .child(this.row(t, "Something to send us",
+        "One zip on your Desktop with Captain's logs and crash records. Keys and tokens are taken out, and your home folder is written as ~.",
+        this.button(t, "st-logs-save", "Save logs for a bug report", () => run("logs.save_bundle"))));
+  }
+
   privacy(t) {
     const s = telemetry();
     const on = s ? s.setting : this.person.telemetry !== false;
@@ -816,12 +831,13 @@ export default class Settings extends View {
           }),
         ),
       );
-    if (!this.showData) return body;
-    if (!s?.enabled) return body.child(div().pt(14).text_size(13).text_color(t.dim).child("Nothing is collected or sent while it's off."));
+    if (!this.showData) return body.child(this.logs(t));
+    if (!s?.enabled) return body.child(div().pt(14).text_size(13).text_color(t.dim).child("Nothing is collected or sent while it's off.")).child(this.logs(t));
     return body
       .children(s.queued.map((r, i) => this.report(t, `st-tq-${i}`, `Waiting to send: ${r.day}`, "Sent as is, soon.", r)))
       .when(Boolean(s.draft), (el) => el.child(this.report(t, "st-td", "Today so far", "A draft: it changes until the day ends (UTC), then goes out once.", s.draft)))
-      .when(Boolean(s.last_sent), (el) => el.child(this.report(t, "st-tl", `Last sent: ${s.last_sent.report.day}`, `Sent ${at(s.last_sent.at)}.`, s.last_sent.report)));
+      .when(Boolean(s.last_sent), (el) => el.child(this.report(t, "st-tl", `Last sent: ${s.last_sent.report.day}`, `Sent ${at(s.last_sent.at)}.`, s.last_sent.report)))
+      .child(this.logs(t));
   }
 
   // ----------------------------------------------------------------------

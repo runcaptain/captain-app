@@ -1,0 +1,17 @@
+[package]
+name = "captain-logs"
+version = "0.0.0"
+description = "CAPTAIN: the app's log file, crash records and run marker (no window code, so its tests build in seconds)"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# All already in the tree through the app: nothing new in Cargo.lock but this crate.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry"] }
+regex = "1"
+serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
