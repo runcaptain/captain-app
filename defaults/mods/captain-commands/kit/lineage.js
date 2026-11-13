@@ -38,6 +38,7 @@ const LANE = "\u0001"; // marks the id of a lane: the slot a connector takes thr
 const LANE_H = 10, LANE_GAP = 6; // a lane's height, and the space around it
 const MAX_FIT = 1.25; // Fit enlarges a small graph up to here: a box's title is then the size of body text
 const MARGIN = 24; // the space Fit leaves around the graph
+const WIDE_MIN_H = 420; // the least height of the canvas when the graph is wider than it
 const RADIUS = 8; // a box's corners
 const ALL = 99; // every step, each way: the whole chain
 
@@ -227,6 +228,22 @@ export class LineageGraph {
    *  one grows to fill the canvas, up to MAX_FIT, never left tiny in the middle. */
   fitZoom(L, w, h) {
     return Math.max(0.3, Math.min(MAX_FIT, (w - MARGIN * 2) / Math.max(1, L.width - PAD * 2), (h - MARGIN * 2) / Math.max(1, L.height - PAD * 2)));
+  }
+
+  /** How the graph first shows. One that fits at 100% or more is fitted. One too wide for that opens at 100%, so a
+   *  box's title is the size of body text, centred on the box the page is about; the rest is a drag away, the
+   *  overview map says there is more, and Fit shows the whole chain. Names too small to read are worse than a
+   *  chain that needs a drag. */
+  open(L, w, h) {
+    if (this.fitZoom(L, w, h) >= 1) return this.fit(L, w, h);
+    this.zoom = 1;
+    const f = L.pos.has(this.focus) ? this.at(L, this.focus) : null;
+    const gh = L.height - PAD * 2;
+    // Centred on the focus across; never past the graph's own left or right edge.
+    const cx = f ? f.x + NODE_W / 2 : PAD + (w - MARGIN * 2) / 2;
+    const x = Math.min(MARGIN - PAD, Math.max(w - MARGIN - (L.width - PAD), w / 2 - cx));
+    const y = gh <= h - MARGIN * 2 ? (h - gh) / 2 - PAD : Math.min(MARGIN - PAD, Math.max(h - MARGIN - (L.height - PAD), h / 2 - (f ? f.y + NODE_H / 2 : L.height / 2)));
+    this.pan = { x, y };
   }
 
   fit(L, w, h) {
@@ -438,8 +455,11 @@ export class LineageGraph {
     // The canvas is as tall as the graph needs at the size it will be drawn (a short chain gets a short canvas),
     // within what the host has room for.
     const room = opts.height > 0 ? Math.max(260, opts.height) : 620;
-    const zw = opts.width > 0 ? Math.min(MAX_FIT, (opts.width - MARGIN * 2) / Math.max(1, L.width - PAD * 2)) : 1;
-    const H = Math.round(Math.max(220, Math.min(room, (L.height - PAD * 2) * Math.max(0.3, zw) + MARGIN * 2 + 24)));
+    // A graph wider than the canvas opens at 100% and is panned, so it gets a canvas at least WIDE_MIN_H tall: room
+    // to drag in, and for the overview map.
+    const wide = opts.width > 0 && L.width - PAD * 2 > opts.width - MARGIN * 2;
+    const zw = wide ? 1 : opts.width > 0 ? Math.min(MAX_FIT, (opts.width - MARGIN * 2) / Math.max(1, L.width - PAD * 2)) : 1;
+    const H = Math.round(Math.max(wide ? Math.min(room, WIDE_MIN_H) : 220, Math.min(room, (L.height - PAD * 2) * zw + MARGIN * 2 + 24)));
     if (opts.width > 0) {
       this.view = { w: opts.width, h: H };
       // Fitted when it first has boxes, and again whenever the canvas changes size or the graph grows (a screen
@@ -449,7 +469,7 @@ export class LineageGraph {
       if (L.pos.size && (!this.fitted || (!this.touched && sized !== this.fitFor))) {
         this.fitted = true;
         this.fitFor = sized;
-        this.fit(L, opts.width, H);
+        this.open(L, opts.width, H);
       }
     }
     const z = this.zoom;
