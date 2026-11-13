@@ -56,8 +56,9 @@ export function plainTip(text, max = 150) {
 
 const schemaWords = (s) => String(s ?? "").replace(/"/g, "");
 
-/** The groups for a list of rows: [{id, label, sub, engine?, rows, parts?}], databases first (by name), then the
- *  folders of the tables Captain keeps. `parts` is a database's schemas when it has more than BY_SCHEMA_OVER tables. */
+/** The groups for a list of rows: [{id, label, sub, engine?, rows, own?, parts?}], each connected database (by
+ *  name), then one group for the tables Captain keeps. `rows` is every table in a group, `parts` the groups inside
+ *  it (a big database's schemas, Captain's folders) and `own` the tables shown directly in it. */
 export function groupsOf(rows) {
   const dbs = new Map(), folders = new Map();
   for (const r of rows ?? []) {
@@ -74,10 +75,31 @@ export function groupsOf(rows) {
     }
     out.push(g);
   }
-  for (const [folder, list] of [...folders].sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b))))
-    out.push({ id: `folder:${folder}`, label: folder || "Kept in Captain", sub: folder ? "A folder of tables Captain keeps versions of" : "Tables Captain keeps versions of, in no folder", rows: list });
+  // Captain's own tables are ONE group. It opens to its folders, nested by their path; a folder holding a single
+  // table shows that table directly, and tables in no folder come last.
+  const kept = [...folders.values()].flat();
+  if (kept.length) {
+    const node = (path) => ({ path, own: folders.get(path) ?? [], kids: [...new Set([...folders.keys()].filter((f) => f && (path ? f.startsWith(`${path}/`) : true))
+      .map((f) => (path ? `${path}/` : "") + f.slice(path ? path.length + 1 : 0).split("/")[0]))].sort((a, b) => a.localeCompare(b)).map(node) });
+    const build = (n, top) => {
+      const parts = [], own = [];
+      for (const k of n.kids) {
+        const g = build(k, false);
+        if (g.rows.length === 1) own.push(g.rows[0]); else parts.push(g);
+      }
+      own.push(...n.own);
+      const rows = [...parts.flatMap((x) => x.rows), ...own];
+      return top
+        ? { id: "kept", label: "Kept in Captain", sub: "Tables Captain keeps versions of", path: "", rows, own, ...(parts.length ? { parts } : {}) }
+        : { id: `folder:${n.path}`, label: n.path.split("/").pop(), folder: true, path: n.path, rows, own, ...(parts.length ? { parts } : {}) };
+    };
+    out.push(build(node(""), true));
+  }
   return out;
 }
+
+/** A group and every group inside it. */
+export const withParts = (g) => [g, ...(g.parts ?? []).flatMap(withParts)];
 
 export class Catalog {
   constructor(host) {
@@ -111,7 +133,7 @@ export class Catalog {
         this.error = null;
         this.groups = groupsOf(this.rows);
         // Each group's search box, and each schema's: made here, outside drawing.
-        for (const g of this.groups.flatMap((x) => [x, ...(x.parts ?? [])])) {
+        for (const g of this.groups.flatMap(withParts)) {
           if (!this.finds.has(g.id)) {
             const st = InputState.new({ placeholder: `Search ${g.label}` });
             st.on("change", (_e, cx) => { this.page.set(g.id, 0); cx.notify(); });
@@ -119,7 +141,7 @@ export class Catalog {
           }
         }
         // A search across everything opens the groups that have a match.
-        this.matched = q ? new Set(this.groups.flatMap((x) => [x.id, ...(x.parts ?? []).map((p) => p.id)])) : null;
+        this.matched = q ? new Set(this.groups.flatMap(withParts).map((x) => x.id)) : null;
         if (q) this.page = new Map();
       } else if (!r.starting) this.error = r;
       this.starting = !r.ok && !!r.starting;
@@ -141,7 +163,16 @@ export class Catalog {
   }
 
   /** Open the group a table is in (a source's "See its tables", a table just imported). */
-  reveal(id) { this.open.add(id); this.remember(); }
+  reveal(id) {
+    this.open.add(id);
+    // A folder is inside "Kept in Captain", and inside the folders above it.
+    if (id.startsWith("folder:")) {
+      this.open.add("kept");
+      const segs = id.slice(7).split("/");
+      for (let i = 1; i < segs.length; i++) this.open.add(`folder:${segs.slice(0, i).join("/")}`);
+    }
+    this.remember();
+  }
 
   openRow(cx, r) {
     if (r.kind === "dataset") this.host.openDataset(cx, r.name);
@@ -151,7 +182,8 @@ export class Catalog {
   /** An open group's tables: its search box, five rows, and the pager. */
   tables(c, g, narrow, depth) {
     const q = (this.finds.get(g.id)?.value() ?? "").trim().toLowerCase();
-    const all = q ? g.rows.filter((r) => `${r.name} ${r.where} ${r.description ?? ""}`.toLowerCase().includes(q)) : g.rows;
+    const mine = g.own ?? g.rows;
+    const all = q ? mine.filter((r) => `${r.name} ${r.where} ${r.description ?? ""}`.toLowerCase().includes(q)) : mine;
     const start = Math.min(this.page.get(g.id) ?? 0, Math.max(0, Math.floor((all.length - 1) / PAGE) * PAGE));
     const rows = all.slice(start, start + PAGE);
     const col = (t, width, right) => div().w(width).flex_none().px(8).truncate().when(!!right, (e) => e.text_right()).child(t);
@@ -160,9 +192,10 @@ export class Catalog {
     const where = (r) => (r.kind === "table" ? schemaWords(r.schema) : r.where);
     const pager = (id, label, to, off) => div().id(`${id}-${g.id}`).h(24).px(8).flex().flex_none().items_center().text_size(12).border_1().border_color(c.grey300)
       .text_color(off ? c.grey500 : c.navy).when(!off, (e) => e.cursor_pointer().hover((s) => s.border_color(c.blue).text_color(c.blue)).on_click((_e, cx) => { this.page.set(g.id, to); cx.notify(); })).child(label);
-    return v_flex().id(`cat-tables-${g.id}`).flex_none().pl(depth ? 40 : 20).pr(12).pb(10).gap(6)
+    const pad = 20 + depth * 20;
+    return v_flex().id(`cat-tables-${g.id}`).flex_none().pl(pad).pr(12).pb(10).gap(6)
       .child(h_flex().gap(8).items_center()
-        .when(g.rows.length > PAGE && this.finds.has(g.id), (e) => e.child(h_flex().id(`cat-gfind-${g.id}`).w(240).h(26).px(8).gap(6).items_center().border_1().border_color(q ? c.blue : c.grey300)
+        .when(mine.length > PAGE && this.finds.has(g.id), (e) => e.child(h_flex().id(`cat-gfind-${g.id}`).w(240).h(26).px(8).gap(6).items_center().border_1().border_color(q ? c.blue : c.grey300)
           .child(svg(icon("search")).size(11).flex_none().text_color(c.grey500))
           .child(div().flex_1().min_w(0).child(Input.new(this.finds.get(g.id)).w_full().text_size(12).text_color(c.navy)))))
         .child(div().flex_1())
@@ -184,7 +217,7 @@ export class Catalog {
           .on_click((_e, cx) => this.openRow(cx, r))
           .child(h_flex().flex_1().min_w(120).px(8).gap(8).items_center()
             .child(svg(icon(r.type === "view" ? "layers" : "table")).size(13).flex_none().text_color(c.grey500))
-            .child(div().min_w(0).truncate().text_color(c.navy).child(r.kind === "dataset" && r.folder && r.name.startsWith(`${r.folder}/`) ? r.name.slice(r.folder.length + 1) : r.name))
+            .child(div().min_w(0).truncate().text_color(c.navy).child(r.kind === "dataset" && g.path && r.name.startsWith(`${g.path}/`) ? r.name.slice(g.path.length + 1) : r.name))
             .when(!!r.matched_column, (x) => x.child(div().flex_none().text_size(11).text_color(c.grey500).child(`column ${r.matched_column}`))))
           .child(div().flex_1().min_w(100).px(8).truncate().text_color(c.grey900).child(where(r)))
           .child(col(r.rows != null ? int(r.rows) : "", narrow ? 72 : 96, true))
@@ -195,14 +228,24 @@ export class Catalog {
   /** One group's heading: a chevron, the source's mark, its name, what it is, and how many tables. */
   heading(c, g, depth) {
     const open = this.isOpen(g.id);
-    return h_flex().id(`cat-group-${g.id}`).h(depth ? 34 : 44).flex_none().pl(depth ? 40 : 20).pr(20).gap(10).items_center().cursor_pointer().hover((s) => s.bg(c.surface2))
+    return h_flex().id(`cat-group-${g.id}`).h(depth ? 34 : 44).flex_none().pl(20 + depth * 20).pr(20).gap(10).items_center().cursor_pointer().hover((s) => s.bg(c.surface2))
       .on_click((_e, cx) => this.toggle(cx, g.id))
       .child(svg(icon(open ? "chevron-down" : "chevron-right")).size(12).flex_none().text_color(c.grey500))
-      .when(!depth, (e) => e.child(g.engine ? Brand(c, g.engine, 16) : svg(icon(g.id === "folder:" ? "database" : "folder")).size(15).flex_none().text_color(c.grey500)))
+      .when(!depth, (e) => e.child(g.engine ? Brand(c, g.engine, 16) : svg(icon("database")).size(15).flex_none().text_color(c.grey500)))
+      .when(!!depth && !!g.folder, (e) => e.child(svg(icon("folder")).size(13).flex_none().text_color(c.grey500)))
       .child(div().flex_none().max_w(360).truncate().text_size(depth ? 12.5 : 13.5).font_medium().text_color(c.navy).child(g.label))
       .when(!depth && !!g.sub, (e) => e.child(div().min_w(0).truncate().text_size(12).text_color(c.grey500).child(g.sub)))
       .child(div().flex_1())
       .child(div().id(`cat-count-${g.id}`).flex_none().text_size(12).text_color(c.grey500).child(`${int(g.rows.length)} ${g.rows.length === 1 ? "table" : "tables"}`));
+  }
+
+  /** A group: its heading, and when open the groups inside it (a big database's schemas, Captain's folders) and
+   *  then the tables that sit directly in it. */
+  group(c, g, narrow, depth) {
+    return v_flex().flex_none().child(this.heading(c, g, depth))
+      .when(this.isOpen(g.id), (e) => e
+        .children((g.parts ?? []).map((p) => this.group(c, p, narrow, depth + 1)))
+        .when(!g.parts || (g.own ?? []).length > 0, (x) => x.child(this.tables(c, g, narrow, depth))));
   }
 
   render(c, w) {
@@ -219,7 +262,7 @@ export class Catalog {
           .child(div().flex_1().min_w(0).child(Input.new(this.find).w_full().text_size(12).text_color(c.navy))))
         .when(!!q, (e) => e.child(div().id("cat-find-clear").flex_none().cursor_pointer().text_size(12).text_color(c.blue).on_click((_e, cx) => { this.find.set_value(""); this.load(cx); }).child("Clear")))
         .child(div().flex_1())
-        .child(div().id("cat-count").flex_none().text_size(12).text_color(c.grey500).child(this.rows === null ? "" : `${int(total)} ${total === 1 ? "table" : "tables"} in ${int(groups.length)} ${groups.length === 1 ? "place" : "places"}`)))
+        .child(div().id("cat-count").flex_none().text_size(12).text_color(c.grey500).child(this.rows === null ? "" : `${int(total)} ${total === 1 ? "table" : "tables"}`)))
       .when(!!this.host.lib.job, (e) => e.child(this.host.lib.progress(c)))
       .when(!!this.host.lib.summary, (e) => e.child(this.host.lib.summaryPanel(c)))
       // A database connected but never read lists nothing: say so, with the button that reads it.
@@ -231,11 +274,6 @@ export class Catalog {
         .when(!!this.error, (e) => e.child(div().p(20).child(this.host.troubleView(c, "tables-list", this.error, "Couldn't load your tables.", (cx) => this.load(cx)))))
         .when(this.rows !== null && !groups.length && !this.error, (e) => e.child(div().id("cat-none").p(20).text_size(12.5).text_color(c.grey500)
           .child(q ? `No table matches "${q}". Search looks at names, where a table lives and column names.` : "No tables yet.")))
-        .children(groups.map((g) => v_flex().id(`cat-group-wrap-${g.id}`).flex_none().border_b(1).border_color(c.rule)
-          .child(this.heading(c, g, 0))
-          .when(this.isOpen(g.id), (e) => (g.parts
-            // A big database: its schemas, each a group of its own.
-            ? e.children(g.parts.map((p) => v_flex().flex_none().child(this.heading(c, p, 1)).when(this.isOpen(p.id), (x) => x.child(this.tables(c, p, narrow, 1)))))
-            : e.child(this.tables(c, g, narrow, 0)))))));
+        .children(groups.map((g) => v_flex().id(`cat-group-wrap-${g.id}`).flex_none().border_b(1).border_color(c.rule).child(this.group(c, g, narrow, 0)))));
   }
 }

@@ -43,6 +43,7 @@ async function submitForm(overlay, values) {
   await f.start();
   await until(f, () => f.byIdPrefix('form-go').length > 0, `the ${overlay.props.task} form`);
   Object.assign(f.mod.values, values);
+  await f.idle(20);
   await f.click('form-go');
   await until(f, () => f.mod.result && !f.mod.busy, `${overlay.props.task} submitted`);
   return f.mod.result;

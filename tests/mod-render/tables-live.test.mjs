@@ -56,7 +56,7 @@ assert.ok(h.mod.catalog.isOpen('db:demo-store'), 'its group is open');
 let listed = h.text();
 assert.ok(listed.includes('demo-store') && listed.includes('2 tables') && listed.includes('products') && listed.includes('search_log') && !listed.includes('"'), `the group: ${listed.slice(0, 500)}`);
 assert.ok(listed.includes('Read where it lives'), 'Captain keeps no versions of a database table');
-assert.ok(h.mod.catalog.groups.some((g) => g.id.startsWith('folder:')), 'the tables Captain keeps are groups beside it');
+assert.ok(h.mod.catalog.groups.some((g) => g.id === 'kept'), 'the tables Captain keeps are one group beside it');
 
 // A row opens the table's page: Rows first, then About (its columns and how it is queried).
 await h.click(`cat-row-table-demo-store/${String(h.mod.catalog.rows.find((r) => r.name === 'products').schema).replace(/"/g, '')}/products`);

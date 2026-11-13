@@ -133,6 +133,13 @@ export default class CaptainData extends View {
     cx.timer.every(500, (cx) => {
       const o = shared("captain.open");
       if (this.wantTab && this.detail?.name === this.wantTab.dataset) { const t = this.wantTab.tab; this.wantTab = null; this.page.open(cx, t); }
+      // The sidebar's entry: Data's home, the tables' groups as the person left them.
+      if (o?.section === "data" && o.home && o.at !== this.opened) {
+        this.opened = o.at;
+        this.wanted = null; this.wantTab = null;
+        this.shown = null;
+        this.showTab(cx, "tables");
+      }
       // {section: "data", view: tables | sources (or an earlier tab's name)}: that submenu of Data.
       if (o?.section === "data" && o.view && !o.dataset && o.at !== this.opened) {
         this.opened = o.at;
@@ -336,8 +343,7 @@ export default class CaptainData extends View {
       .child(div().flex_1())
       // One filled button: bringing data in. On a table's page the page has its own actions.
       .when(this.tab === "tables" && !this.shown, (e) => e
-        .child(Button(c, "new-class", "New class", () => openForm("dataset-class"), { small: true }))
-        .child(Button(c, "import-dataset", "Import a dataset", () => openImport(), { kind: "primary", small: true })))
+        .child(Button(c, "import-dataset", "Add a table", () => openImport(), { kind: "primary", small: true })))
       .when(this.tab === "sources", (e) => e
         .child(Button(c, "tables-connect", "Connect a database", () => openForm("database"), { kind: "primary", small: true })))
       .child(div().id("data-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()

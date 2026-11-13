@@ -10,6 +10,8 @@ import { Button, Badge, ServiceError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { TASKS } from "./tasks.js";
+import { idFrom, isId, sayError, FALLBACK } from "./checks.js";
+import { api } from "./kit/cst.js";
 import { recordsChanged } from "./kit/cst.js";
 import { watchView, publishView, safeFields } from "./kit/view.js";
 import { costState, loadPlaces, refreshEstimate, needsConfirm, costSlice, RunsOn, LOCAL } from "./kit/cost.js";
@@ -45,6 +47,11 @@ export default class CaptainForms extends View {
     this.options = {};
     this.ctx = { args: props()?.args ?? {} };
     this.errors = {};
+    // Checked as the person types (checks.js): what each field's own check says, what the services say about it,
+    // which fields have been touched, and the id Captain makes from each name.
+    this.touched = {}; this.sig = {}; this.changedAt = {}; this.tried = false;
+    this.asked = {}; this.checking = {}; this.said = {}; this.names = {}; this.idOpen = {}; this.idStates = {};
+    this.serverErrors = {}; this.formError = null;
     // Where the work runs and what it costs there (kit cost.js), for a task with a "runs-on" field.
     this.cost = costState(this.values.compute || LOCAL);
     if (this.values.compute) this.cost.picked = true; // a place handed in with the form stays, whatever the default
@@ -65,6 +72,9 @@ export default class CaptainForms extends View {
       // The estimate follows what is filled in: asked again only when the place or the size changed.
       cx.timer.every(500, (cx) => this.priceNow(cx));
     }
+    // Every field is looked at again a few times a second: what changed is marked touched, and a check that needs
+    // the services runs by itself once the typing pauses. Nothing waits for the button.
+    cx.timer.every(250, (cx) => this.watch(cx));
     // A default can depend on what the caller preset (New candidate opens on your own command when a ranker is named).
     for (const f of this.task.fields) if (f.default !== undefined) this.values[f.key] ??= typeof f.default === "function" ? f.default(this.values) : f.default;
     // Text inputs keep state, which gpui-kit only lets a view create outside render.
@@ -80,6 +90,133 @@ export default class CaptainForms extends View {
       }
       await this.loadOptions(cx);
     });
+  }
+
+  // ---- checked as the person types ---------------------------------------------------------------------------
+
+  /** What is in a field now. A text box is read from the box itself. */
+  valueOf(f) {
+    if (f.kind === "rows") return (this.values[f.key] ?? []).map((r) => ({ ...r, label: this.rowStates?.[r.uid]?.value?.() ?? r.label }));
+    return this.values[f.key];
+  }
+
+  /** The problem a field has by itself, with nothing asked of the services: a sentence, or null. Pure. */
+  problemOf(f) {
+    if (f.kind === "note" || f.kind === "runs-on") return null;
+    const v = this.valueOf(f);
+    if (f.kind === "rows") return f.check ? f.check(v, this.values, this.ctx) ?? null : null;
+    const empty = v === undefined || v === null || String(v).trim() === "";
+    if (empty) return f.required ? f.missing ?? (f.name ? "Give it a name." : `${f.label} is needed.`) : null;
+    if (f.name && this.idOpen[f.key]) {
+      const id = this.idStates[f.key]?.value?.() ?? "";
+      if (!isId(id)) return "Captain's own name for it uses lower-case letters, digits and hyphens, like gpu-cloud.";
+    }
+    return f.check ? f.check(v, this.values, this.ctx) ?? null : null;
+  }
+
+  /** The id Captain will keep for a name field: the person's own if they opened it, else the next free one the
+   *  services offered, else the one made here from the words. */
+  idOf(f) {
+    if (this.idOpen[f.key] && isId(this.idStates[f.key]?.value?.() ?? "")) return this.idStates[f.key].value();
+    const n = this.names[f.key];
+    const made = idFrom(this.values[f.key], FALLBACK[f.name] ?? "item");
+    return n && n.id === made ? n.next ?? n.id : made;
+  }
+
+  /** What is shown under a field: what came back for it after the button, else its own problem once it has been
+   *  touched, else what the services said about it. */
+  shownProblem(f) {
+    if (this.serverErrors[f.key]) return this.serverErrors[f.key];
+    const own = this.problemOf(f);
+    if (own && (this.touched[f.key] || this.tried)) return own;
+    const said = this.said[f.key];
+    return said?.problem ? said.text : null;
+  }
+
+  /** Why the main button is off: the first thing in the way, as one sentence. Null when nothing is. */
+  blocked() {
+    for (const f of this.shown()) {
+      const own = this.problemOf(f);
+      if (own) return own;
+      if (this.said[f.key]?.problem) return this.said[f.key].text;
+    }
+    const b = this.task.blocked?.(this.values, this.ctx);
+    return b ? (typeof b === "string" ? b : "Something above still needs choosing.") : null;
+  }
+
+  /** A few times a second: mark what changed as touched, and ask the services what only they know (is this name
+   *  free, is this sign-in there), once the typing has paused. */
+  watch(cx) {
+    if (!this.task || this.busy || this.done) return;
+    let redraw = false;
+    const now = Date.now();
+    for (const f of this.shown()) {
+      if (f.kind === "note" || f.kind === "runs-on") continue;
+      const sig = JSON.stringify([this.valueOf(f) ?? null, this.idOpen[f.key] ? this.idStates[f.key]?.value?.() : null]);
+      if (this.sig[f.key] === undefined) this.sig[f.key] = sig;
+      else if (this.sig[f.key] !== sig) {
+        this.sig[f.key] = sig; this.touched[f.key] = true; this.changedAt[f.key] = now;
+        if (this.serverErrors[f.key]) delete this.serverErrors[f.key];
+        this.formError = null;
+        redraw = true;
+      }
+      const ask = f.name ? "name" : f.checkAsync ? "check" : f.status ? "status" : null;
+      if (!ask) continue;
+      const v = this.values[f.key];
+      const on = ask === "status" ? JSON.stringify(f.statusOn ? f.statusOn(this.values) : v ?? null) : String(v ?? "");
+      const due = this.asked[f.key]?.on !== on || (f.recheck && now - (this.asked[f.key]?.at ?? 0) > f.recheck && !this.checking[f.key]);
+      if (!due || now - (this.changedAt[f.key] ?? 0) < 400) continue;
+      if (ask !== "status" && String(v ?? "").trim() === "") { this.asked[f.key] = { on, at: now }; if (this.said[f.key] || this.names[f.key]) { delete this.said[f.key]; delete this.names[f.key]; redraw = true; } continue; }
+      const first = this.asked[f.key]?.on !== on;
+      this.asked[f.key] = { on, at: now };
+      if (first) { this.checking[f.key] = true; redraw = true; }
+      cx.spawn(async (cx) => {
+        let said = null, name = null;
+        try {
+          if (ask === "name") {
+            const r = await api(`/api/names/propose?label=${encodeURIComponent(String(v))}&kind=${encodeURIComponent(f.name)}`, { scoped: false });
+            // Taken with no other id offered is a problem to fix. Taken with the next free one offered is not.
+            if (r.ok && r.data?.id) { name = r.data; said = { text: r.data.text, problem: Boolean(r.data.taken) && r.data.next === r.data.id }; }
+          } else if (ask === "check") {
+            const t = await f.checkAsync(v, this.values, this.ctx);
+            said = t ? { text: t, problem: true } : null;
+          } else {
+            const t = await f.status(this.ctx, this.values);
+            said = t?.text ? { text: t.text, problem: Boolean(t.problem) } : null;
+          }
+        } catch { said = null; }
+        if (this.asked[f.key]?.on !== on) return; // the field moved on while this was asked
+        this.checking[f.key] = false;
+        if (said) this.said[f.key] = said; else delete this.said[f.key];
+        if (ask === "name") { if (name) this.names[f.key] = name; else delete this.names[f.key]; }
+        cx.notify();
+      });
+    }
+    if (redraw) cx.notify();
+  }
+
+  /** Under a name field: the id Captain will keep, and a way to change it for those who want to. */
+  nameLine(c, f) {
+    const v = String(this.values[f.key] ?? "").trim();
+    if (!v) return null;
+    const open = Boolean(this.idOpen[f.key]);
+    const said = this.said[f.key];
+    // A name that is taken with nothing else offered is said once, as the field's problem, not here as well.
+    const text = this.checking[f.key] && !this.names[f.key] ? "Checking..." : open ? "Captain will call it:" : said?.problem ? `Captain would call it ${this.idOf(f)}.` : said?.text ?? `Captain will call it ${this.idOf(f)}.`;
+    return h_flex().id(`f-${f.key}-id`).gap(8).items_center().flex_wrap()
+      .child(div().id(`f-${f.key}-id-text`).text_size(12).line_height("17px").text_color(c.grey500).child(text))
+      .when(open, (e) => e.child(div().id(`f-${f.key}-id-box`).w(200).h(26).px(8).flex().items_center().bg(c.surface).border_1().border_color(c.grey300).cursor_text()
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .child(Input.new(this.idStates[f.key]).w_full().text_size(12.5).text_color(c.navy))))
+      .child(div().id(`f-${f.key}-id-change`).text_size(12).text_color(c.blue).cursor_pointer()
+        .on_click((_e, cx) => {
+          if (open) { this.idOpen[f.key] = false; } else {
+            const st = this.idStates[f.key] ?? InputState.new({ placeholder: "" });
+            st.set_value(this.idOf(f));
+            this.idStates[f.key] = st; this.idOpen[f.key] = true;
+          }
+          cx.notify();
+        }).child(open ? "Use Captain's" : "Change"));
   }
 
   /** The "runs-on" field shown now, if the task has one. */
@@ -264,7 +401,11 @@ export default class CaptainForms extends View {
   }
 
   field(c, f) {
-    const err = this.errors[f.key];
+    const err = this.errors[f.key] ?? this.shownProblem(f);
+    const said = this.said[f.key];
+    // What the services said about this field that is not a problem (a sign-in that was found), or that they are
+    // being asked now.
+    const note = f.name ? null : this.checking[f.key] ? "Checking..." : said && !said.problem ? said.text : null;
     // Help can depend on what's picked (a database kind's note: "Signs in with your AWS login").
     const help = typeof f.help === "function" ? f.help(this.ctx, this.values) : f.help;
     const label = h_flex().gap(6).items_baseline()
@@ -321,20 +462,24 @@ export default class CaptainForms extends View {
           : long ? Textarea.new(this.states[f.key]).w_full().text_size(13).text_color(c.navy) : Input.new(this.states[f.key]).w_full().text_size(13).text_color(c.navy));
     }
     return v_flex().gap(5).child(label).child(control)
-      .when(Boolean(err), (e) => e.child(div().text_size(12).text_color(c.fail).child(err)))
-      .when(!err && Boolean(help), (e) => e.child(div().text_size(12).line_height("17px").text_color(c.grey500).child(help)));
+      .when(Boolean(f.name) && Boolean(this.nameLine(c, f)), (e) => e.child(this.nameLine(c, f)))
+      .when(Boolean(err), (e) => e.child(div().id(`f-${f.key}-problem`).text_size(12).line_height("17px").text_color(c.fail).child(err)))
+      .when(!err && Boolean(note), (e) => e.child(div().id(`f-${f.key}-note`).text_size(12).line_height("17px").text_color(c.grey500).child(note)))
+      .when(!err && !note && Boolean(help), (e) => e.child(div().text_size(12).line_height("17px").text_color(c.grey500).child(help)));
   }
 
   submit(cx) {
     if (this.busy) return;
-    this.errors = {};
+    this.errors = {}; this.serverErrors = {}; this.formError = null;
     for (const f of this.shown()) {
       // An editable list is read from its text boxes as they stand now, not from the last change heard.
       if (f.kind === "rows") for (const row of this.values[f.key] ?? []) if (this.rowStates?.[row.uid]) row.label = this.rowStates[row.uid].value();
-      const v = this.values[f.key];
-      if (f.required && (v === undefined || v === null || String(v).trim() === "")) this.errors[f.key] = `${f.label} is needed.`;
+      // The id Captain keeps for a name travels with the form: <key>_id beside the words typed.
+      if (f.name) this.values[`${f.key}_id`] = this.idOf(f);
     }
-    if (Object.keys(this.errors).length) { cx.notify(); return; }
+    // Nothing is checked here for the first time: the button is off while a field has a problem. This is for a
+    // key press that reaches it anyway.
+    if (this.blocked()) { this.tried = true; cx.notify(); return; }
     // Above the amount set in Settings, the first click only repeats the number. The second starts it.
     if (this.runsOn() && needsConfirm(this.cost)) { this.cost.confirming = true; cx.notify(); return; }
     this.busy = true; this.result = null;
@@ -344,6 +489,12 @@ export default class CaptainForms extends View {
       try { r = await this.task.submit(this.values, this.ctx, props()?.args ?? {}, cx); } catch (e) { r = { ok: false, error: String(e) }; }
       this.busy = false;
       this.result = r;
+      if (!r.ok && !/couldn't start its services/.test(String(r.error ?? ""))) {
+        // What came back is said in plain words, under the field it is about when that can be told.
+        const e = sayError(r.error, this.shown());
+        const at = r.field ?? e.field;
+        if (at && this.shown().some((f) => f.key === at)) this.serverErrors[at] = e.text; else this.formError = e.text;
+      }
       if (r.ok) {
         recordsChanged(this.task.id); // Handoff, Investigations... reload now
         if (r.next) { this.done = r; cx.notify(); return; } // stay open to offer the next step
@@ -410,6 +561,7 @@ export default class CaptainForms extends View {
     if (!this.task || this.isMenu) return this.menu(c);
     const t = this.task;
     const failed = this.result && !this.result.ok ? this.result.error : null;
+    const why = this.blocked();
     return v_flex().size_full().bg(c.surface).rounded(RADIUS).font_family(FONT).text_color(c.navy)
       .child(h_flex().h(56).flex_none().px(20).gap(12).items_center().border_b(1).border_color(c.rule)
         .child(div().size(30).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon(t.icon)).size(16)))
@@ -420,11 +572,14 @@ export default class CaptainForms extends View {
       .child(v_flex().id("form-body").flex_1().min_h(0).overflow_y_scroll().p(20).gap(16)
         .child(div().text_size(13).line_height("19px").text_color(c.grey900).child(t.about))
         .children(this.shown().map((f) => this.field(c, f)))
-        .when(Boolean(failed), (e) => e.child(/couldn't start its services/.test(failed) ? ServiceError(c, failed) : div().p(10).bg(c.failLight).border_1().border_color(c.fail).text_size(12.5).line_height("18px").text_color(c.fail).child(failed)))
+        .when(Boolean(failed) && /couldn't start its services/.test(failed), (e) => e.child(true ? ServiceError(c, failed) : div().p(10).bg(c.failLight).border_1().border_color(c.fail).text_size(12.5).line_height("18px").text_color(c.fail).child(failed)))
         .when(Boolean(this.done), (e) => e.child(div().p(10).bg(c.goodLight).border_1().border_color(c.good).text_size(12.5).line_height("18px").text_color(c.good).child(this.done.message ?? "Done.")))
         .when(Boolean(this.result?.next ?? this.done?.next), (e) => e.child(this.nextStep(c, this.result?.next ?? this.done?.next))))
-      .child(h_flex().h(60).flex_none().px(20).gap(8).items_center().justify_end().border_t(1).border_color(c.rule)
+      .child(h_flex().min_h(60).py(8).flex_none().px(20).gap(8).items_center().justify_end().border_t(1).border_color(c.rule)
+        // One line: what came back that belongs to no field, else why the button is off.
+        .child(div().id("form-why").flex_1().min_w(0).text_size(12).line_height("17px").text_color(this.formError ? c.fail : c.grey500)
+          .child(this.done ? "" : this.formError ?? (this.busy ? "" : why ?? "")))
         .child(Button(c, "form-cancel", "Cancel", () => this.close()))
-        .child(this.done ? Button(c, "form-done", "Close", () => this.close()) : Button(c, "form-go", this.busy ? (t.busy?.(this.values) ?? "Working...") : this.cost.confirming ? "Start anyway" : (t.go?.(this.values, this.ctx) ?? t.label), (_e, cx) => this.submit(cx), { kind: "primary", disabled: Boolean(this.busy) || Boolean(t.blocked?.(this.values, this.ctx)) })));
+        .child(this.done ? Button(c, "form-done", "Close", () => this.close()) : Button(c, "form-go", this.busy ? (t.busy?.(this.values) ?? "Working...") : this.cost.confirming ? "Start anyway" : (t.go?.(this.values, this.ctx) ?? t.label), (_e, cx) => this.submit(cx), { kind: "primary", disabled: Boolean(this.busy) || Boolean(why) })));
   }
 }

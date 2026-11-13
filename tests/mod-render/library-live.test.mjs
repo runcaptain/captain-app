@@ -55,8 +55,15 @@ let t = h.text();
 assert.ok(t.includes("isn't a table"), `skipped reason: ${t.slice(0, 400)}`);
 assert.ok(t.includes('shop') && t.includes('queries'), 'imported rows listed');
 // The folder it landed in is a group of the list; opened, it shows the new table and that Captain keeps versions of it.
-await until(() => (h.mod.catalog.groups ?? []).some((g) => g.id === 'folder:drop/catalogs'), 'its folder is a group');
-await h.click('cat-group-folder:drop/catalogs');
+// Captain's tables are one group; its folders are inside it, nested by path. Open every level down to the table.
+const openAll = async () => {
+  const all = (gs) => gs.flatMap((g) => [g, ...all(g.parts ?? [])]);
+  await until(() => (h.mod.catalog.groups ?? []).some((g) => g.id === 'kept'), 'the tables Captain keeps are one group');
+  for (const g of all(h.mod.catalog.groups)) h.mod.catalog.open.add(g.id);
+  await h.idle(20);
+};
+await openAll();
+assert.ok(h.mod.catalog.groups.every((g) => !g.id.startsWith('folder:')), 'no folder at the top level');
 await until((t) => t.includes('shop') && t.includes('Captain keeps 1 version'), 'the group shows the new table and that Captain keeps versions of it');
 
 // 3. The same file, changed, dropped on the dataset's own page: it lands in its folder, so it is a new version.
@@ -79,8 +86,8 @@ await h.click('ds-move-new-go');
 await until((t) => t.includes('Moved to Catalogs.'), 'moved');
 await until((t) => t.includes('Captain keeps it, in the folder Catalogs.'), 'the page says its new folder');
 await h.click('crumb-tables');
-await until(() => (h.mod.catalog.groups ?? []).some((g) => g.id === 'folder:Catalogs'), 'the folder it moved to is a group now');
-await h.click('cat-group-folder:Catalogs');
+await until(() => (h.mod.catalog.rows ?? []).some((r) => r.folder === 'Catalogs'), 'the list has it in its new folder');
+await openAll();
 await until((t) => t.includes('Captain keeps 2 versions'), 'and it says there are two versions');
 
 // 5. And back to the top level, by picking it.

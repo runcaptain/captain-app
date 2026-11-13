@@ -3079,7 +3079,7 @@ def run(name: str, v: int | None = None):
     from .eval import metrics as MX
 
     r["depths"] = MX.check_depths(m.depths)
-    r["not_usual"] = MX.non_default(m.depths)
+    r["not_usual"] = MX.not_usual(m)
     return r
 
 
@@ -3326,12 +3326,79 @@ def cloud_profiles():
             for p in cloud.profiles()]
 
 
-@app.post("/api/cloud/profiles", dependencies=A)
-def cloud_add(body: dict):
+@app.get("/api/names/propose", dependencies=A)
+def names_propose(label: str = "", kind: str = "cloud"):
+    """What a form shows under a name field as the person types: {label, id, taken, next, text}. `id` is what
+    Captain makes from the words typed (naming.make_id), `next` the next free one when that is taken. Kinds:
+    cloud, project, compute, connection. Any other kind gets an id and is never "taken"."""
+    from . import naming as NM
+
+    c = ctx()
+    taken: list = []
+    try:
+        if kind == "cloud":
+            from . import cloud
+
+            taken = [p["name"] for p in cloud.profiles()]
+        elif kind == "project":
+            from . import projects as PR
+
+            taken = [p["id"] for p in PR.listing(c)]
+        elif kind == "compute":
+            from . import compute as C
+
+            taken = [t["name"] for t in C.listing(c)]
+        elif kind == "connection":
+            taken = list(c.registry.names("connection"))
+    except Exception:  # noqa: BLE001  what is taken can't be read just now: the id is still right, and saving checks again
+        taken = []
+    out = NM.propose(label, kind, taken)
+    if kind == "project":
+        # A project's id is made by the rule projects already use, so what the form shows is what is created.
+        from . import projects as PR
+
+        try:
+            wanted = PR.slug(out["label"])
+        except ValueError:
+            wanted = "project"
+        nxt = NM.free(wanted, taken)
+        # No second id is offered for a project: two projects with one name would be told apart only by a number.
+        out.update(id=wanted, next=wanted, taken=nxt != wanted,
+                   text=(f"You already have a project called {wanted}. Give this one another name." if nxt != wanted
+                         else f"Captain will call it {wanted}."))
+    return out
+
+
+@app.get("/api/cloud/signin", dependencies=A)
+def cloud_signin(provider: str, auth: str):
+    """Is the sign-in this choice relies on found on this computer? {found: true | false | null, text}. The Connect a
+    cloud account form asks by itself, as the person chooses."""
     from . import cloud
 
-    p = cloud.add_profile(body["name"], body["provider"], body["auth"], body.get("region"), body.get("fields") or {},
+    return cloud.signin_found(provider, auth)
+
+
+@app.post("/api/cloud/profiles", dependencies=A)
+def cloud_add(body: dict):
+    """{name, provider, auth, region?, fields?, secrets?, label?}. `name` can be any words: Captain keeps them as the
+    label and makes the id from them (naming.make_id), so a name is never refused for its spelling."""
+    from . import cloud
+    from . import naming as NM
+
+    said = " ".join(str(body.get("label") or body.get("name") or "").split())
+    name = str(body.get("name") or "")
+    if not NM.is_id(name):
+        name = NM.make_id(name or said, "login")
+    if any(p["name"] == name for p in cloud.profiles()):
+        raise HTTPException(409, f"You already have a cloud account called {name}. Give this one another name.")
+    p = cloud.add_profile(name, body["provider"], body["auth"], body.get("region"), body.get("fields") or {},
                           body.get("secrets") or {})
+    if said and said != name:
+        try:
+            cloud.set_label(name, said)
+            p = {**p, "label": said}
+        except Exception:  # noqa: BLE001  the login is saved: a label that can't be kept is not a failure
+            pass
     return {k: v for k, v in p.items() if k != "secret_fields"}
 
 
@@ -3501,14 +3568,30 @@ def population_add(body: dict):
 def backtest_add(body: dict):
     """{name, arms, queries?, judgments?, population?, hypothesis, primary?, mde?, mode?, logs?, compute?, surfaces?,
     population_size?, depths?}. depths is how many results deep each measure looks: {"ndcg@10": 20, "r@50": 100}
-    (the usual depth for any left out). population_size is how many simulated shoppers a replay of logged searches makes (4000 unless
+    (the usual depth for any left out). measures is the list to compute (it must hold `primary`), every one the
+    data allows when left out. slices is what to slice the result by: columns of the questions, and "traffic",
+    the usual (class, then traffic) when left out. population_size is how many simulated shoppers a replay of logged searches makes (4000 unless
     given): a limit the form shows as a field rather than hiding."""
     return ops.backtest_plan(ctx(), body["name"], body["arms"], body.get("queries") or None, body.get("judgments") or None,
                              body.get("population") or None, body["hypothesis"], body.get("primary", "ndcg@10"),
                              float(body.get("mde", 0.003)), mode=body.get("mode", "simulated"), logs=body.get("logs") or None,
                              compute=body.get("compute") or None, surfaces=body.get("surfaces") or None,
                              population_size=int(body.get("population_size") or 4000),
-                             depths=body.get("depths") or None).model_dump(mode="json")
+                             depths=body.get("depths") or None, measures=body.get("measures") or None,
+                             slices=body.get("slices") or None).model_dump(mode="json")
+
+
+@app.get("/api/evaluations/slices", dependencies=A)
+def evaluation_slices(queries: str):
+    """What that set of questions can be sliced by: {columns: [{id, label, groups}], traffic, usual}."""
+    from . import segments as SEGS
+
+    c = ctx()
+    try:
+        m, rows, _ = ops.rows_of(c, queries)
+    except (KeyError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return SEGS.choices([f.get("name") for f in (m.schema_fields or [])] or (list(rows[0]) if rows else []), rows)
 
 
 @app.get("/api/evaluations/options", dependencies=A)

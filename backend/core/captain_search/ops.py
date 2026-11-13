@@ -379,7 +379,8 @@ def population_create(ctx, name: str, simulator: str, size: int, seed: int, clic
 def backtest_plan(ctx, name: str, arms: list[str], queries: str | None, judgments: str | None, population: str | None,
                   hypothesis: str, primary: str = "ndcg@10", mde: float = 0.003, dry_run=False, mode: str = "simulated",
                   logs: str | None = None, compute: str | None = None, population_size: int = 4000,
-                  surfaces: list[dict] | None = None, depths: dict | None = None) -> Backtest:
+                  surfaces: list[dict] | None = None, depths: dict | None = None, measures: list[str] | None = None,
+                  slices: list[str] | None = None) -> Backtest:
     # How deep each measure looks: checked now, so a bad depth is refused before anything is made.
     depths = M.check_depths(depths) if depths else {}
     depths = {k: v for k, v in depths.items() if v != M.DEFAULT_DEPTHS[k]}  # only what differs is kept: empty reads "the usual depths"
@@ -423,6 +424,16 @@ def backtest_plan(ctx, name: str, arms: list[str], queries: str | None, judgment
     ppin = ref(ctx.registry.resolve("population", population)[0]) if population else None
     if primary not in M.NAMES and primary not in ("ctr", "conversion", "rpv", "ndcg@10_tw"):
         raise ValueError(f"unknown primary metric {primary}")
+    # Which measures to compute, and what to slice by: checked now, against what this evaluation has.
+    measures = M.check_measures(measures, primary)
+    for m in measures:
+        if m in M.SHOPPER and not ppin:
+            raise ValueError(f"{m} comes from simulated shoppers, and this evaluation has none. Test on logged searches, or leave it out.")
+        if m in M.OFFLINE + M.WEIGHTED and not jpin:
+            raise ValueError(f"{m} needs judgments, and this evaluation has none")
+    from . import segments as SEGS
+
+    slices = SEGS.check_slices(slices, [f.get("name") for f in (qm.schema_fields or []) if isinstance(f, dict)])
     if (primary in M.NAMES or primary == "ndcg@10_tw") and not jpin:
         raise ValueError(f"{primary} needs --judgments: nDCG and friends only come from graded judgments")
     if primary in ("ctr", "conversion", "rpv") and not ppin:
@@ -430,7 +441,7 @@ def backtest_plan(ctx, name: str, arms: list[str], queries: str | None, judgment
     m = Backtest(**_base(ctx), name=check_name(name), version=0, mode=mode, logs=lpin, compute=compute,
                  arms=pinned, queries=qpin, judgments=jpin, surfaces=[_pin_surface(ctx, sf) for sf in (surfaces or [])],
                  population=ppin, preregistration=Preregistration(hypothesis=hypothesis, primary_metric=primary, mde=mde),
-                 depths=depths)
+                 depths=depths, measures=measures, slices=slices)
     names = [sf.name for sf in m.surfaces]
     if len(set(names)) != len(names):
         raise ValueError("surface names must be unique")
@@ -581,15 +592,21 @@ def backtest_run(ctx, name: str, progress=None, live=None) -> BacktestRun:
         live.stage("Compare the arms", n_arms + (2 if pop else 1), n_arms + (2 if pop else 1))
     base = bt.arms[0]
     comps = []
+    # The measures this evaluation asked for; every one the data allows when it named none.
+    want = set(bt.measures) or set(M.ALL_MEASURES)
     for a in bt.arms[1:]:
         if jm:
             for metric in ("ndcg@10", "p@10", "r@50", "mrr"):
+                if metric not in want:
+                    continue
                 key = M.NAMES[metric]
                 comps.append(compare({q: r[key] for q, r in perq[base].items()}, {q: r[key] for q, r in perq[a].items()},
                                      metric, bt.preregistration.mde if metric == bt.preregistration.primary_metric else 0.0,
                                      arm_a=base, arm_b=a) | {"evidence": offline_ev.value})
         if pop:
             for metric in ("ctr", "conversion", "rpv"):
+                if metric not in want:
+                    continue
                 comps.append(compare(per_shopper(pershop[base], metric), per_shopper(pershop[a], metric), metric,
                                      bt.preregistration.mde if metric == bt.preregistration.primary_metric else 0.0,
                                      arm_a=base, arm_b=a) | {"evidence": Evidence.SIMULATED.value})
@@ -598,7 +615,7 @@ def backtest_run(ctx, name: str, progress=None, live=None) -> BacktestRun:
     independent = not (pop and pop.click_model_judgments and bt.judgments and pop.click_model_judgments == bt.judgments)
     complete = all((r.judged_at_10 or 0) >= 0.9 for r in arms) if jm else True
     files = [e for r in arms for e in r.logs]
-    if jm and weights:
+    if jm and weights and "ndcg@10_tw" in want:
         for a in bt.arms[1:]:
             c = compare({q: r["ndcg10"] * len(perq[base]) * weights.get(q, 0) / (sum(weights.get(x, 0) for x in perq[base]) or 1)
                          for q, r in perq[base].items()},
@@ -613,11 +630,20 @@ def backtest_run(ctx, name: str, progress=None, live=None) -> BacktestRun:
     for c in comps:
         if c["primary"]:
             c["cost"] = COST.roi(by_arm[c["a"]].cost, by_arm[c["b"]].cost, c["delta"], c["verdict"], qpd)
-    segs = SEG.segments(qs, perq, bt.arms, bt.preregistration.mde) if jm else []
+    # Slices are scored on nDCG, so an evaluation that left nDCG out has none.
+    segs = SEG.segments(qs, perq, bt.arms, bt.preregistration.mde, bt.slices or None) if jm and "ndcg@10" in want else []
+    if bt.measures:
+        # An arm's scores keep only what was asked for. The share of judged results always stays: it is what says
+        # whether the scores can be trusted, not a measure.
+        keep = want | {"judged@10", "coverage"}
+        for r in arms:
+            r.offline = {k: v for k, v in r.offline.items() if k in keep or k not in M.ALL_MEASURES}
+            r.simulated = {k: v for k, v in r.simulated.items() if k in keep or k not in M.SHOPPER}
     surfaces = [SEG.score_surface(ctx, sf, bt.arms, bt.preregistration.mde, lambda a, q: _rankings(ctx, a, q, k=max(50, *depths.values()))[3:5], depths)
                 for sf in bt.surfaces]
     run = BacktestRun(**_base(ctx), name=name, version=0, backtest=ref(bt), mode=bt.mode, compute=os.environ.get("CST_COMPUTE") or bt.compute or "local",
                       arms=arms, comparisons=comps, segments=segs, surfaces=surfaces, depths=depths,
+                      measures=list(bt.measures), slices=list(bt.slices),
                       independent=independent, complete=complete, files=files, wall_s=round(_time.time() - t_start, 2),
                       manifest=_run_manifest(ctx, bt, pop),
                       description=f"{len(qs)} queries, {len(people)} shoppers per arm")
@@ -654,12 +680,16 @@ def backtest_launch(ctx, name: str, compute: str | None = None, progress=None, d
 
 
 def backtest_report(run: BacktestRun, bt: Backtest) -> str:
+    from . import segments as SEGW
+
     L = [f"# Offline evaluation {run.name} run v{run.version} ({run.mode}, on {run.compute})", "",
          f"Hypothesis (pre-registered {bt.preregistration.written_at:%Y-%m-%d}): {bt.preregistration.hypothesis}",
          f"Primary metric: {bt.preregistration.primary_metric}, smallest effect that counts: {bt.preregistration.mde}",
          f"Queries: {bt.queries}   Judgments: {bt.judgments or 'none'}   Population: {bt.population or 'none'}", ""]
     if run.mode == "imported":
         L += [f"Imported readout: {run.source}", run.description, ""]
+    for words in M.measures_words(run.measures) + SEGW.slices_words(run.slices):
+        L += [words, ""]
     if M.non_default(run.depths):
         L += ["NOT THE USUAL DEPTHS: " + " ".join(M.non_default(run.depths)),
               "The columns below keep their usual names. Compare this run only with runs at the same depths.", ""]
@@ -674,10 +704,12 @@ def backtest_report(run: BacktestRun, bt: Backtest) -> str:
     if any(r.offline for r in run.arms):
         L += [f"## Offline, from judgments [{run.arms[0].evidence.value}]", "",
               f"{'arm':32} {'nDCG@10':>8} {'P@10':>6} {'R@50':>6} {'MRR':>6} {'judged@10':>9}"]
+        # A measure the evaluation did not ask for has no number: a dash, never a zero.
+        num = lambda o, k, spec: format(o[k], spec) if o.get(k) is not None else format("-", ">" + spec.split(".")[0])
         for r in run.arms:
             o = r.offline
             tw = f"  traffic-weighted nDCG@10 {o['ndcg@10_tw']:.4f}" if "ndcg@10_tw" in o else ""
-            L.append(f"{r.arm:32} {o['ndcg@10']:8.4f} {o['p@10']:6.3f} {o['r@50']:6.3f} {o['mrr']:6.3f} {o['judged@10']:9.0%}{tw}")
+            L.append(f"{r.arm:32} {num(o, 'ndcg@10', '8.4f')} {num(o, 'p@10', '6.3f')} {num(o, 'r@50', '6.3f')} {num(o, 'mrr', '6.3f')} {num(o, 'judged@10', '9.0%')}{tw}")
         L.append("")
         if run.mode == "historic":
             L += ["Grades come from logged clicks (clicks over expected clicks at each rank). judged@10 is the share of",
@@ -686,7 +718,8 @@ def backtest_report(run: BacktestRun, bt: Backtest) -> str:
         L += ["## Simulated shoppers [SIMULATED]", "", f"{'arm':32} {'shoppers':>8} {'CTR':>6} {'conv':>6} {'RPV':>8} {'p99 ms':>7}"]
         for r in run.arms:
             s = r.simulated
-            L.append(f"{r.arm:32} {int(s['shoppers']):8d} {s['ctr']:6.3f} {s['conversion']:6.3f} {s['rpv']:8.2f} {s['p99_ms']:7.2f}")
+            dash = lambda k, spec: format(s[k], spec) if s.get(k) is not None else format("-", ">" + spec.split(".")[0])
+            L.append(f"{r.arm:32} {int(s['shoppers']):8d} {dash('ctr', '6.3f')} {dash('conversion', '6.3f')} {dash('rpv', '8.2f')} {dash('p99_ms', '7.2f')}")
         L.append("")
     L += ["## Comparisons (b minus a, paired, 95% bootstrap CI)", ""]
     for c in run.comparisons:

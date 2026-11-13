@@ -61,6 +61,39 @@ def label(name: str, depths: dict | None) -> str:
     return name
 
 
+# Every measure a run can compute, in the order they are shown: from judgments, from the weights of logged
+# searches, and from simulated shoppers. An evaluation may name the ones it wants (`measures`); none named means
+# every one the data allows, as before measures could be chosen.
+OFFLINE = ("ndcg@10", "p@10", "r@50", "mrr", "zero")
+WEIGHTED = ("ndcg@10_tw",)
+SHOPPER = ("ctr", "conversion", "rpv")
+ALL_MEASURES = OFFLINE + WEIGHTED + SHOPPER
+MEASURE_WORDS = {"ndcg@10": "nDCG", "p@10": "Precision", "r@50": "Recall", "mrr": "MRR", "zero": "Searches with no results",
+                 "ndcg@10_tw": "traffic-weighted nDCG", "ctr": "Click-through rate", "conversion": "Conversion", "rpv": "Revenue per visit"}
+
+
+def check_measures(measures, primary: str) -> list[str]:
+    """The measures an evaluation asked for, in the usual order, or [] for "every one the data allows". Refuses a
+    name that is not a measure, and a choice that leaves out the measure that decides the verdict."""
+    if not measures:
+        return []
+    asked = [str(m) for m in measures]
+    unknown = [m for m in asked if m not in ALL_MEASURES]
+    if unknown:
+        raise ValueError(f"{', '.join(unknown)} is not a measure. Pick from {', '.join(ALL_MEASURES)}.")
+    if primary not in asked:
+        raise ValueError(f"{primary} decides the verdict, so it must be one of the measures computed")
+    return [m for m in ALL_MEASURES if m in asked]
+
+
+def measures_words(measures) -> list[str]:
+    """What is not the usual about the measures, as a sentence: ["Only nDCG and MRR were computed."]."""
+    if not measures or set(measures) >= set(ALL_MEASURES):
+        return []
+    names = [MEASURE_WORDS[m] for m in ALL_MEASURES if m in measures]
+    return [f"Only {names[0]} was computed." if len(names) == 1 else f"Only {', '.join(names[:-1])} and {names[-1]} were computed."]
+
+
 def metrics(ranked, rel, depths: dict | None = None):
     d = depths or DEFAULT_DEPTHS
     kn, kp, kr, km = d["ndcg@10"], d["p@10"], d["r@50"], d["mrr"]
@@ -123,3 +156,11 @@ def summarize(rows: dict[str, dict]) -> dict[str, float]:
         if xs:
             out[name] = round(sum(xs) / len(xs), 4)
     return out
+
+
+def not_usual(run) -> list[str]:
+    """Everything about how a run was measured that is not the usual, as sentences: its depths, the measures it
+    was limited to, and what it was sliced by. Empty for a run measured the usual way."""
+    from ..segments import slices_words
+
+    return non_default(run.depths) + measures_words(run.measures) + slices_words(run.slices)

@@ -1159,14 +1159,29 @@ comparison shows in Runs. `cst app open compare` and `comparison:<evaluation>` o
 experiments` and `launch-review` say the screen is gone and name the command. Don't send a person to
 Experiments, Compare or Launch review: say what to do in Runs, or run the command for them.
 
+### The sidebar always opens a view's home
+
+The owner: "If I keep on going back to the deployments menu, I want to default to the home deployments menu, not
+the deployment I was already looking at." A sidebar entry always opens its view's home: every project, the
+tables' groups as they were left, the list of runs, of deployments, of notebooks. A second click on the entry
+already shown goes home too. A detail page opens only from a row or a link.
+
+One mechanism (`openEntry` in captain-nav): the entry sets shared `captain.open` to
+`{section, home: true, at}` and selects the view. Every view handles `home` by dropping its open page. A link
+sets the same value without `home` and names what to open. A new view must honour `home`, and
+`tests/mod-render/sidebar-home.test.mjs` has a block per view.
+
 ### Data: tables, grouped by where they live
 
 A dataset is a table Captain keeps versions of. A database's table is one Captain reads where it lives. Tables
 shows both, **grouped by place**: one collapsible group per connected database (its mark, its name and kind, a
-count) and one per folder of the tables Captain keeps. The owner on the first build: "A giant wall of tables is
+count), then ONE group, "Kept in Captain", for the tables Captain keeps. That group opens to its folders, nested
+by their path. A folder holding a single table shows the table, not a folder row, and tables in no folder come
+last. So a workspace with two databases shows three rows closed, however many folders it has. The owner on the first build: "A giant wall of tables is
 not good. It needs to be a dropdown... searchable with pagination per type of database."
 
 - Groups start closed. The ones a person opens are remembered for the workspace.
+- The header has one filled button, "Add a table". Dataset classes left the screen with Labels.
 - An open group shows its tables **five at a time**, with Previous, Next and "1 to 5 of 39", and its own search
   box. A database with more than 15 tables is grouped again by schema; a smaller one says the schema under
   "Where it lives".
@@ -1252,9 +1267,16 @@ runs, and the name it is saved under.
   deep, not the usual 10. Human graded."), in its warnings and in its report. Two runs at different depths are
   never compared as the same measure: `GET /api/compare-runs` lists it as `different-depth`. Say the depth
   whenever you quote such a number.
-- Two things the owner asked for are not something a run can do yet, so the form says them instead of drawing
-  a control that does nothing: which slices (a run always reports by group and by traffic), and which measures
-  to compute (all of them). `GET /api/evaluations/options` lists these under `not_yet`, with the reason.
+- **Which measures to compute is a box on each measure.** Clearing one leaves it out of the run
+  (`measures` on `POST /api/backtests`). The measure that decides the verdict is always computed, and the
+  services refuse a choice without it. A measure left out has no number anywhere: a dash, never a zero.
+- **What to report the result by is a row of chips**: any column of the questions that is a group, and traffic
+  when the questions carry weights (`slices`; `GET /api/evaluations/slices?queries=` lists the choices). For a
+  person's own table, a column picked here is kept on each question (`mapping.also`). Nothing picked means the
+  usual: by group, then by traffic.
+- A run limited to some measures, or grouped another way, says so in its verdict sentence, like depth
+  ("Only nDCG and MRR were computed.", "Sliced by device."). Each row of `GET /api/regression` and
+  `GET /api/runs/{name}` carries these sentences in `not_usual`. `not_yet` in the options is empty now.
 - From a terminal the same thing is `cst backtest plan` then `cst backtest run`.
 
 ## Captain project page (Projects)
@@ -1293,6 +1315,14 @@ Explorer, opens its page. With no project it offers New project, which can pin a
   logged clicks where under half of a candidate's top 10 has grades reads "Too few judged results to call". Import
   a model version brings one from MLflow or a registry. Rows open to: the comparison, Rerun with changes, Judge against the baseline,
   Make it the baseline (with its evidence) and Publish to the registry.
+- **Every form checks as the person types** (the shell, `captain-forms/main.js` and `checks.js`, so no form can
+  skip it). A field's problem is one plain sentence under that field, and clears the moment it is fixed. The main
+  button is off while any field has a problem, and the line beside it says why. A check that needs the services
+  (is this name free, is this sign-in there) runs by itself after a pause and shows "Checking..." then the
+  answer. A name takes any words: Captain keeps them as the label and makes its own id from them, shown under the
+  field ("Captain will call it gpu-cloud") and editable only when opened (`GET /api/names/propose`,
+  `naming.make_id`). Nothing raw from the services reaches a form: no "bad ...", no exception, no status code.
+  A field says what it needs with `required`, `missing`, `check`, `checkAsync`, `status` and `name: "<kind>"`.
 - **New project**: name first, then "What are you building?" (search ranking from events, search ranking with
   judgments, recommendations, your own pipeline, or "Something else" with the person's own description), then
   the inputs as a list to add to, rename and remove before creating (filled from the kind, never locked), then

@@ -63,6 +63,7 @@ h.mod.rowStates[added.uid].set_value('Product embeddings');
 await h.click(`f-inputs-row-${h.mod.values.inputs.length - 1}-kind-generic`);
 assert.equal(added.kind, 'generic');
 h.mod.values.name = 'Store search';
+await h.idle(20);
 await h.click('form-go');
 await wait(() => Boolean(globalThis.__shared['captain.scope']), `the project is made: ${h.text().slice(-500)}`);
 assert.deepEqual(globalThis.__shared['captain.scope'], { kind: 'project', id: 'store-search', label: 'Store search' }, 'the new project is picked');
@@ -82,18 +83,22 @@ for (let i = 0; i < 20 && h2.mod.values.trainer === undefined; i++) await h2.idl
 t = h2.text();
 assert.ok(t.includes('What is it?') && t.includes('No inputs yet. Add what your training reads'), `it asks what it is, and starts with no inputs: ${t.slice(-700)}`);
 assert.equal(h2.mod.values.trainer, 'command', 'and on their own training command');
+const off = (x) => !x.byIdPrefix('form-go').find((e) => e.call('id')?.[0] === 'form-go').call('on_click');
+const whyOff = (x) => { const e = x.byIdPrefix('form-why')[0]; return (e?.kids ?? []).join(''); };
 h2.mod.values.name = 'Fraud scores';
-await h2.click('form-go');
-assert.ok(h2.text().includes('What is it? is needed.'), 'it must be said what it is');
+await h2.idle(20);
+// Checked as it is filled in, not after the button: the button is off and says what is missing.
+assert.ok(off(h2) && whyOff(h2) === 'Say what it is, in a few words.', `it must be said what it is: ${whyOff(h2)}`);
 h2.mod.values.what = 'A fraud score for each payment';
 h2.mod.values.command = 'python train_fraud.py';
 await h2.click('f-inputs-add');
 h2.mod.rowStates[h2.mod.values.inputs[0].uid].set_value('Payments');
 await h2.click('f-inputs-add');                                                // left without a name
-await h2.click('form-go');
-await h2.idle(200);
-assert.ok(h2.text().includes('Every input needs a name. Name it, or remove it.'), `an unnamed input is said, and nothing is made: ${h2.text().slice(-400)}`);
+await h2.layoutLists({});
+assert.ok(off(h2) && h2.text().includes('Every input needs a name. Name it, or remove it.'), `an unnamed input is said under the list, and the button is off: ${h2.text().slice(-400)}`);
 await h2.click('f-inputs-row-1-remove');
+await h2.idle(20);
+assert.ok(!off(h2), 'fixed, and the button is on');
 await h2.click('form-go');
 for (let i = 0; i < 40 && !globalThis.__shared['captain.scope']; i++) await h2.idle(100);
 assert.equal(globalThis.__shared['captain.scope']?.id, 'fraud-scores');

@@ -93,16 +93,7 @@
    "only": "logs"
   }
  ],
- "not_yet": [
-  {
-   "what": "Which slices",
-   "why": "A run always reports by group and by traffic. The runner has no setting to pick among them."
-  },
-  {
-   "what": "Which measures to compute",
-   "why": "A run computes every measure it has the data for. You pick the one that decides the verdict."
-  }
- ],
+ "not_yet": [],
  "default_measure": "ndcg@10",
  "grades": {
   "0": "Irrelevant",
@@ -135,5 +126,16 @@
    "default": 50,
    "max": 200
   }
+ ],
+ "choose_measures": true,
+ "choose_slices": true,
+ "not_groups": [
+  "query_id",
+  "query",
+  "weight"
+ ],
+ "usual_slices": [
+  "class",
+  "traffic"
  ]
 }
