@@ -42,12 +42,15 @@ const S = {
   now: () => Date.now(),
 };
 
+let PUMPED = new WeakSet(); // the views that have a pump timer
+
 /** For tests: the request function and the clock. */
 export function liveTransport(ask, now) { if (ask) S.ask = ask; if (now) S.now = now; }
 
 /** Forget everything (a test starting over). */
 export function liveReset() {
   S.watchers.clear();
+  PUMPED = new WeakSet();
   Object.assign(S, { seq: null, state: "connecting", since: 0, asking: false, gen: 0, askedFor: null, nextAsk: 0, failures: 0, lastFallback: 0, pumping: false });
 }
 
@@ -160,7 +163,10 @@ function retopic(cx) {
 export function watchLive(cx, topics, onChange) {
   const w = { topics: [...new Set((Array.isArray(topics) ? topics : [topics]).filter(Boolean).map(String))], fn: onChange, cx };
   S.watchers.add(w);
-  if (!S.pumping) {
+  // One pump for each view that watches: a view's timer goes away with the view, so a view opened later must
+  // not rely on the timer of one that is gone. Two pumps never ask twice: only one request is open at a time.
+  if (!PUMPED.has(cx)) {
+    PUMPED.add(cx);
     S.pumping = true;
     cx.timer.every(PUMP_MS, (cx) => livePump(cx));
   }
