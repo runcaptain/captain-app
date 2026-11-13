@@ -106,5 +106,29 @@ const ask = async (h, o) => { globalThis.__shared['captain.open'] = { ...o, at: 
   const main = fs.readFileSync(path.join(root, 'defaults/mods/captain-notebooks/main.js'), 'utf8');
   assert.ok(main.includes('if (o.home) { nb.home(cx); return; }'), 'the screen sends the sidebar\'s request there');
 }
+// ---- Deployments: a model's page closes, the list shows -------------------------------------------------------------
+{
+  const { default: Dep } = await import('../../defaults/mods/captain-deployments/main.js');
+  const { openEntry, ITEMS } = await import('../../defaults/mods/captain-nav/main.js');
+  let drawn = 0;
+  const view = Object.assign(Object.create(Dep.prototype), { page: { id: 'shop:live' }, wanted: 'shop:live', asked: null, d: { rows: [] } });
+  openEntry(ITEMS.find((x) => x.id === 'deployments'));
+  view.takeOpen({ notify: () => drawn++ });
+  assert.deepEqual([view.page, view.wanted, drawn], [null, null, 1], 'the sidebar\'s own request closes the page');
+  // The same request is handled once; a second click carries a new time and is handled again.
+  view.page = { id: 'shop:live' };
+  view.takeOpen({ notify: () => drawn++ });
+  assert.ok(view.page, 'handled once');
+  await new Promise((r) => setTimeout(r, 3));
+  openEntry(ITEMS.find((x) => x.id === 'deployments'));
+  view.takeOpen({ notify: () => drawn++ });
+  assert.equal(view.page, null, 'a second click goes home again');
+}
+
+// ---- Projects: every project, never the project last open -----------------------------------------------------------
+{
+  const src = fs.readFileSync(path.join(root, 'defaults/mods/captain-project/main.js'), 'utf8');
+  assert.ok(src.includes('o?.section !== "project" || !o.all || o.at === this.openedAll'), 'the project page lands on All projects for the sidebar\'s request, once per click');
+}
 console.log('sidebar home: ok');
 process.exit(0);
