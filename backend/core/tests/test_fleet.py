@@ -441,7 +441,7 @@ def test_a_running_model_says_where_it_lives_from_the_clouds_own_describe(ws, aw
     assert f["files"]["value"].startswith("s3://") and f["files"]["value"].endswith(rec["bundle"])
     assert f["logs"]["value"] == f"/aws/sagemaker/Endpoints/{name}" and f["logs"]["copy"]
     assert f["stops"]["value"].endswith("minutes with no requests") and f["by"]["value"].endswith("just now")
-    assert f["version"]["value"] == f"{FL.model_words(ws.candidate, 'shop')} ({ws.candidate})"
+    assert f["version"]["value"] == f"Version 1 of this deployment: {FL.model_words(ws.candidate, 'shop')} ({ws.candidate})"
     # An account with an alias is said by its alias.
     aws.aliases = ["demo-team"]
     from captain_search.compute_providers import aws as AWSP
@@ -633,3 +633,106 @@ def test_container_apps_describes_where_a_model_lives(ws, logins, azure):  # noq
     assert "virtual CPU" in f["machine"]["value"] and f["machine"]["source"] == "cloud" and f["image"]["source"] == "cloud"
     assert f["logs"]["value"].startswith("az containerapp logs show --name ") and f["logs"]["copy"]
     assert "up now. Fewest " in f["copies"]["value"] and f["copies"]["source"] == "cloud"
+
+
+# ---- a deploy under way is a row, and says something true while it waits ----------------------------
+
+
+def test_a_deploy_under_way_is_a_row_from_the_moment_it_is_accepted(ws, logins, modal, monkeypatch):  # noqa: F811
+    """A person deployed to AWS and, while the image was being built, the list said "No models running." and the
+    screen showed nothing. There is nothing in the cloud to find at that point: the deploy itself is the row."""
+    import threading
+    import time
+
+    logins.append(LOGINS["modal"])
+    hold, real, seen = threading.Event(), DP.stage, {}
+
+    def slow(*a, **k):
+        seen["during"] = FL.deployed(ws, fresh=True)   # asked while "Starting the model" is running
+        seen["again"] = FL.deployed(ws)                # and again at once: the same step, so the kept answer
+        hold.wait(5)
+        return real(*a, **k)
+
+    monkeypatch.setattr(DP, "stage", slow)
+    t = threading.Thread(target=lambda: DP.run(ws, "shop", "modal", confirm=True))
+    t.start()
+    for _ in range(100):
+        if "again" in seen:
+            break
+        time.sleep(0.05)
+    d = seen["during"]
+    assert len(d["rows"]) == 1 and d["text"] == "No models running, 1 deploying."
+    r = d["rows"][0]
+    assert (r["state"], r["state_label"], r["project"], r["cloud"], r["in_cloud"], r["can"]) == ("deploying", "Deploying", "shop", "modal", True, [])
+    assert r["state_text"].startswith("Deploying to Modal: Starting the model, ") and " s so far (usually about a minute and a half)." in r["state_text"]
+    g = r["deploying"]
+    assert g["step"]["id"] == "start" and g["step"]["typical_s"] == 96 and g["step"]["started_at"]  # enough for a page to tick on its own clock
+    assert [(x["id"], x["status"]) for x in g["steps"]][:4] == [("check", "done"), ("access", "done"), ("image", "skipped"), ("start", "running")]
+    assert r["model_label"] and r["by_name"] and r["address"] is None
+    hold.set()
+    t.join(20)
+    # When it finishes the row is the running model, with no reload asked for: the records changed, so the kept answer is dropped.
+    after = FL.deployed(ws)
+    assert [x["state"] for x in after["rows"]] == ["running"] and "deploying" not in after["rows"][0] and after["text"] == "1 model running."
+
+
+def test_a_running_time_is_said_plainly():
+    import datetime as dt
+
+    assert [FL.span_words(s) for s in (0, 48, 89, 90, 130, 180)] == ["0 s", "48 s", "89 s", "1 min 30 s", "2 min 10 s", "3 min"]
+    now = dt.datetime.now(dt.timezone.utc)
+    g = {"label": "AWS", "step": {"title": "Building the model's image", "started_at": (now - dt.timedelta(seconds=48)).isoformat(timespec="seconds"),
+                                  "typical": "about a minute and a half"}}
+    assert FL.deploying_words(g, now) == "Deploying to AWS: Building the model's image, 48 s so far (usually about a minute and a half)."
+    g["step"]["typical"] = None
+    assert FL.deploying_words(g, now) == "Deploying to AWS: Building the model's image, 48 s so far."
+
+
+def test_a_deploy_whose_process_is_gone_is_not_listed_as_deploying(ws, logins, modal, monkeypatch):  # noqa: F811
+    import datetime as dt
+
+    old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)).isoformat(timespec="seconds")
+    DP._write(ws, "shop", "staging", {"project": "shop", "env": "staging", "host": "aws", "label": "AWS", "status": "running", "started_at": old,
+                                      "steps": [{"id": "image", "title": "Building the model's image", "status": "running", "lines": []}]})
+    monkeypatch.setattr(DP, "STALE_S", 0)  # said nothing for longer than a run can be silent
+    assert FL.deployed(ws, fresh=True)["rows"] == []
+
+
+def test_the_endpoint_start_says_something_true_while_it_waits(ws, aws, monkeypatch):  # noqa: F811
+    """The job printed nothing for about two minutes while SageMaker started the endpoint."""
+    from captain_search.compute_providers.aws import SageMakerProvider
+    from captain_search.staging import serving_setup as SS
+
+    monkeypatch.setattr(SageMakerProvider, "WAIT_LINE_S", 0)
+    said = []
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True, progress=said.append)
+    waiting = [str(x) for x in said if str(x).startswith("Still starting the endpoint: ")]
+    assert waiting and waiting[0].endswith(" s. SageMaker is starting the machine and loading the model.")
+    # The image build says what CodeBuild is doing, in words, for every phase it reports.
+    assert SS.WAIT_LINE_S <= 10 and SageMakerProvider.WAIT_LINE_S == 0
+    for phase in ("QUEUED", "PROVISIONING", "DOWNLOAD_SOURCE", "PRE_BUILD", "BUILD", "POST_BUILD"):
+        assert SS.BUILD_PHASES[phase] and SS.BUILD_PHASES[phase][0].isupper() and phase not in SS.BUILD_PHASES[phase]
+    assert (SS.BUILD_PHASES["BUILD"], SS.BUILD_PHASES["POST_BUILD"]) == ("Building", "Pushing the image")
+    SG.unstage(ws, "shop")
+
+
+def test_a_model_coming_up_says_where_and_what_the_cloud_is_doing(ws, aws):  # noqa: F811
+    """A real list read "Starting: Creating" while SageMaker made the endpoint. "Creating" is AWS's word, not a sentence."""
+    assert FL._starting_words("aws", "Creating") == "Starting on AWS: the endpoint is being created."
+    assert FL._starting_words("aws", "Updating") == "Starting on AWS: the endpoint is moving to the new version."
+    assert FL._starting_words("gcp", "Cloud Run is rolling it out") == "Starting on Google Cloud: cloud Run is rolling it out." or FL._starting_words("gcp", "Cloud Run is rolling it out").startswith("Starting on Google Cloud: ")
+    assert FL._starting_words("local", None) == "Starting on this computer." and FL._starting_words("modal", "") == "Starting on Modal."
+    rec = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    aws.endpoints[rec["endpoint"]["name"]]["polls"] = 0  # SageMaker says Creating on the next ask
+    r = FL.deployed(ws, fresh=True)["rows"][0]
+    assert r["state"] == "starting" and r["state_text"] == "Starting on AWS: the endpoint is being created."
+
+
+def test_a_row_says_which_version_of_the_deployment_it_is(ws, aws):  # noqa: F811
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    assert FL.deployed(ws, fresh=True)["rows"][0]["version_n"] == 1
+    SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
+    r = FL.deployed(ws, fresh=True)["rows"][0]
+    assert r["version_n"] == 2  # the second version put on this deployment, from its own history
+    v = {x["id"]: x for x in FL.where_it_runs(ws, "shop")["facts"]}["version"]["value"]
+    assert v == f"Version 2 of this deployment: {FL.model_words(ws.candidate, 'shop')} ({ws.candidate})"

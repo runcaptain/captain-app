@@ -46,6 +46,11 @@ TRUST = lambda svc: {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", 
 # general1.small on Linux, list price. Measured 2026-11-11 in us-west-1: the build itself took 78 seconds, and the
 # whole setup 94. The estimate stays at a cautious 3 minutes: a cold registry or a slow mirror takes longer.
 BUILD_MINUTES, BUILD_USD_PER_MIN = 3, 0.005
+WAIT_LINE_S = 10  # while waiting on a cloud, a line at least this often, so every view has something true to show
+# What CodeBuild is doing, in words.
+BUILD_PHASES = {"SUBMITTED": "Waiting to start", "QUEUED": "Waiting for a build machine", "PROVISIONING": "Getting a build machine",
+                "DOWNLOAD_SOURCE": "Fetching the build files", "INSTALL": "Preparing", "PRE_BUILD": "Signing in to the image repository",
+                "BUILD": "Building", "POST_BUILD": "Pushing the image", "UPLOAD_ARTIFACTS": "Finishing", "FINALIZING": "Finishing"}
 DOCKERFILE = """FROM python:3.12-slim
 WORKDIR /app
 COPY captain_search /app/captain_search
@@ -325,7 +330,7 @@ def _denied(e: Exception) -> str | None:
 
 
 def setup(ctx: Context, profile: str, region: str, *, name_prefix: str = "captain", instance_type: str = "ml.m5.large",
-          source: str = "auto", bucket: str | None = None, confirm: bool = False, progress=None, poll_s: float = 10.0) -> dict:
+          source: str = "auto", bucket: str | None = None, confirm: bool = False, progress=None, poll_s: float = 5.0) -> dict:
     """Create it all with the connected login. Safe to run again: what exists is kept. On a missing permission it
     stops with the step, the action and the policy, and what it already made stays listed for teardown."""
     from .. import __version__, cloud
@@ -454,10 +459,17 @@ def setup(ctx: Context, profile: str, region: str, *, name_prefix: str = "captai
         note("log-group", f"/aws/codebuild/{n['build']}")  # the build writes its log there: removed with the rest
         say("Building the serving image in your account" + TM.aside("aws", "image"))
         bid = step("start the image build", "codebuild:StartBuild", lambda: cb.start_build(projectName=n["build"]))["build"]["id"]
+        # The build runs for about a minute and a half and says nothing by itself. A line every 10 seconds, with how
+        # long it has been and what the build is doing now, in words, whenever that changes.
+        began, said_at, said_phase = time.time(), time.time(), None
         while True:
             b0 = step("watch the image build", "codebuild:BatchGetBuilds", lambda: cb.batch_get_builds(ids=[bid]))["builds"][0]
             if b0["buildStatus"] == "SUCCEEDED":
                 break
+            phase = BUILD_PHASES.get(str(b0.get("currentPhase") or ""))
+            if (phase and phase != said_phase) or time.time() - said_at >= WAIT_LINE_S:
+                say(f"Still building the image: {round(time.time() - began)} s." + (f" {phase}." if phase else ""))
+                said_at, said_phase = time.time(), phase or said_phase
             if b0["buildStatus"] != "IN_PROGRESS":
                 phase = next((ph for ph in b0.get("phases") or [] if ph.get("phaseStatus") not in (None, "SUCCEEDED")), {})
                 why = "; ".join(c.get("message", "") for c in phase.get("contexts") or []) or b0["buildStatus"]

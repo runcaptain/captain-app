@@ -31,6 +31,22 @@ export function Updated(c, id, { readAt, problem, onRefresh, icon: mark }) {
       .hover((x) => x.text_color(c.navy)).accessibility_label("Refresh").tooltip("Refresh").on_click(onRefresh).child(mark));
 }
 
+/** A running time as a row says it: "48 s", "2 min 10 s". The same words the services use. */
+export function spanWords(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
+  return s < 90 ? `${s} s` : s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${Math.floor(s / 60)} min`;
+}
+
+/** A deploy under way, in one sentence, on this page's own clock so it ticks every second without a read:
+ *  "Deploying to AWS: Building the model's image, 48 s so far (usually about a minute and a half)." */
+export function deployingWords(g, now = Date.now()) {
+  const step = g?.step ?? {};
+  const began = step.started_at ? new Date(step.started_at).getTime() : NaN;
+  return `Deploying to ${g?.label ?? "the cloud"}: ${step.title ?? "working"}`
+    + (isFinite(began) ? `, ${spanWords((now - began) / 1000)} so far` : "")
+    + (step.typical ? ` (usually ${step.typical}).` : ".");
+}
+
 export function money(x) {
   const v = Number(x);
   if (!isFinite(v)) return "";

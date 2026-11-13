@@ -517,9 +517,15 @@ variant. It held no processor or memory numbers at all: they were never publishe
 - Copies are the number AWS says are up now, and the fewest and most it may run, in words. There is no chart of
   copies over time, because no history of them is kept that can be relied on.
 
-The median over a range is the median minute, weighted by its requests. The 95th percentile is the slowest
-minute's 95th, among minutes that carried real traffic, because a percentile of percentiles is not a percentile
-and CloudWatch reports by the minute. CPU is a share of one core: 100% is one core in full use.
+**What counts as a request.** AWS counts every call to the endpoint, and Captain makes calls of its own: it asks
+the model whether it is well, and asks it to write its log. On a real endpoint on 2026-11-12, 24 test searches read
+as "160 requests in the last hour", because those calls were most of the count. The request log holds only
+requests for results, each with its own time. So when the log has any, requests, failures and response time come
+from it, and AWS's figure is shown beside them as what it is: calls that reached the endpoint, Captain's checks
+included. With no request log (a model that is not Captain's own runtime), AWS's count stands and says so.
+
+The 95th percentile is asked of AWS over the whole range, as one figure. The slowest minute's 95th is not the
+range's, and was shown as if it were. CPU is a share of one core: 100% is one core in full use.
 
 **What reading costs.** CloudWatch charges about a cent for a thousand metrics read, and each look reads ten.
 A cloud's numbers are counted by the minute and arrive a minute or two late, so asking more often buys nothing.

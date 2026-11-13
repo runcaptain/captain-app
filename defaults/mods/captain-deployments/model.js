@@ -129,8 +129,12 @@ export class ModelPage {
         .child(s.requests ? `${count(s.requests)} request${s.requests === 1 ? "" : "s"} in ${n.range_text ?? "this range"}, ${s.errors ? `${count(s.errors)} failed` : "none failed"}.`
           + (s.p50_ms != null ? ` A request typically takes ${ms(s.p50_ms)}.` : "") : `No requests in ${n.range_text ?? "this range"}.`))
       .child(h_flex().id("model-charts").gap(20).flex_wrap().items_start()
-        .child(chart("model-chart-requests", "Requests a minute", s.requests ? `${s.per_minute} on average, ${s.per_minute_peak} at the busiest` : "None in this range",
-          b.map((x) => (x.requests ?? 0) / minutes)))
+        // When the count comes from the request log, the cloud's own chart is of every call to the endpoint, which
+        // includes Captain's checks. It is named for what it is.
+        .child(s.counted_from === "log" && s.calls !== s.requests
+          ? chart("model-chart-requests", "Calls a minute at the endpoint", s.calls_text ?? "", b.map((x) => (x.requests ?? 0) / minutes))
+          : chart("model-chart-requests", "Requests a minute", s.requests ? `${s.per_minute} on average, ${s.per_minute_peak} at the busiest` : "None in this range",
+            b.map((x) => (x.requests ?? 0) / minutes)))
         // Failures are drawn against the same scale whether or not there were any, so "none" is a flat line and not a missing chart.
         .child(chart("model-chart-errors", "Requests that failed", s.errors ? `${count(s.errors)} of ${count(s.requests)}` : "None",
           b.map((x) => x.errors ?? 0), { color: c.fail }))

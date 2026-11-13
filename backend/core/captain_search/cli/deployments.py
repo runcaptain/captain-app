@@ -144,6 +144,11 @@ def deployments_list(running: bool = typer.Option(False, "--running", help="only
     # What is in a cloud now, then what was stopped earlier, under its own heading: Captain only remembers those.
     now, earlier = [r for r in rows if r["in_cloud"]], [r for r in rows if not r["in_cloud"]]
     lines = [line(r) for r in now]
+    # A deploy under way: its steps under its row, each with how long it took or is taking.
+    for r in now:
+        for st in (r.get("deploying") or {}).get("steps") or []:
+            took = f"{st['seconds']:g} s" if st.get("seconds") is not None and st.get("status") in ("done", "failed") else ""
+            lines.append(f"    {str(st.get('status') or ''):8} {st.get('title')}" + (f"  {took}" if took else "") + (f"  (usually {st['typical']})" if st.get("typical") and st.get("status") != "done" else ""))
     if earlier:
         lines += ([""] if lines else []) + ["Stopped earlier. Nothing of these is in a cloud or billing. Start one again with: cst deployments start <project>"]
         lines += [line(r) for r in earlier]
@@ -194,10 +199,13 @@ def deployments_show(name: str, span: str = typer.Option("1h", "--range", help="
     lines = [f"{row['project_name']}: {row['state_text']}",
              f"Model     {row.get('model_label') or row['model_version'] or 'not known'}",
              f"Where     {row['where']}" + (f" ({row['name']})" if row.get("name") else ""),
-             f"Since     {row['since'] or 'not known'}" + (f", by {row['by']}" if row.get("by") else ""),
+             "Deployed  " + (", ".join(x for x in (f"by {row['by_name']}" if row.get("by_name") else None, FL.ago_words(row.get("since"))) if x) or "not known")
+             + (f". Version {row['version_n']} of this deployment." if row.get("version_n") else "."),
              f"Traffic   {n['text']}"]
     if s.get("requests"):
-        lines.append(f"          {s['per_minute']:g} requests a minute on average, {s['per_minute_peak']:g} at the busiest.")
+        lines.append(f"          {s['per_minute']:g} requests a minute on average.")
+    if s.get("calls_text") and s.get("calls") != s.get("requests"):
+        lines.append(f"          {s['calls_text']}")
     if s.get("cpu") is not None:
         lines.append(f"Machine   CPU {s['cpu']:g}% on average, {s['cpu_peak']:g}% at the most. Memory {s['memory']:g}%.")
     if s.get("copies_text"):

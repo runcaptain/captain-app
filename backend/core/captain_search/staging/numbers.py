@@ -142,7 +142,35 @@ def _numbers(ctx: Context, pid: str, env: str, span: str, rec: dict, base: dict)
             out["not_read"].append(f"Captain couldn't read AWS's own metrics just now ({str(e)[:160]}). These numbers are from the request log.")
     if got is not None:
         out.update(_from_cloud(got, start, end, period))
-        out["source"], out["source_text"] = "cloud", "From AWS's own metrics (CloudWatch). They arrive a minute or two late."
+        out["source"], out["source_text"] = "cloud", "From AWS's own metrics (CloudWatch). They arrive a few minutes late."
+        s = out["summary"]
+        # What AWS counts is every call to the endpoint, and Captain makes calls of its own: it asks the model
+        # whether it is well, and to write its log. On a real endpoint those were most of the count. The request
+        # log holds only requests for results, each with its own time, so when it has any it is the count.
+        calls = s.get("requests") or 0
+        log = _from_log(ctx, pid, env, span)
+        ls = (log or {}).get("summary") or {}
+        if ls.get("requests"):
+            n, e = int(ls["requests"]), int(ls.get("errors") or 0)
+            s.update(requests=n, errors=e, error_rate=(e / n) if n else None, per_minute=round(n * 60.0 / seconds, 2), p50_ms=ls.get("p50"), p95_ms=ls.get("p95"),
+                     counted_from="log")
+            out["source_text"] = ("Requests, failures and response time are from Captain's request log, which holds only requests for results. "
+                                  "The charts and the machine's numbers are from AWS's own metrics (CloudWatch), which arrive a few minutes late.")
+        else:
+            s["counted_from"] = "cloud"
+            # No request log to count from: AWS's count stands, and its percentiles are asked for over the whole
+            # range, because the worst minute's 95th percentile is not the range's.
+            try:
+                whole = prov.range_latency(name, start, end) if callable(getattr(prov, "range_latency", None)) else {}
+                if whole.get("p50_us") is not None:
+                    s["p50_ms"] = round(whole["p50_us"] / 1000.0, 3)
+                if whole.get("p95_us") is not None:
+                    s["p95_ms"] = round(whole["p95_us"] / 1000.0, 3)
+            except Exception:  # noqa: BLE001  the per-minute figures stand
+                pass
+        s["calls"] = int(calls)
+        s["calls_text"] = (f"{int(calls):,} call{'s' if calls != 1 else ''} reached the endpoint in {words}. That counts Captain's own checks "
+                           "(asking the model whether it is well, and to write its log) as well as requests for results." if calls else None)
         if out["summary"].get("cpu") is None and out["summary"].get("memory") is None:
             out["not_read"].append("AWS has not published processor and memory numbers for this endpoint.")
         out["summary"].update(_copies(ctx, pid, env, rec, prov))
@@ -225,8 +253,7 @@ def _from_cloud(got: dict, start: dt.datetime, end: dt.datetime, period: int) ->
                         "memory": round(sum(mems) / len(mems), 1) if mems else None,
                         "memory_peak": max((g("memory_max", ts) or 0 for ts in times), default=None) if mems else None,
                         "copies_now": None, "copies_peak": None, "overhead_ms": _overhead(got),
-                        "cpu_text": "CPU is a share of one core: 100% is one core in full use.",
-                        "p95_text": "The 95th percentile is the slowest minute's, among minutes that carried real traffic."}}
+                        "cpu_text": "CPU is a share of one core: 100% is one core in full use."}}
 
 
 def cost(ctx: Context, pid: str, env: str = ENV, rec: dict | None = None) -> dict:

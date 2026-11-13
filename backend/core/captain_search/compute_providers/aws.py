@@ -336,7 +336,8 @@ class SageMakerProvider(_AWS):
     # ---- staging endpoints (staging/): created, tagged, waited for and removed by Captain -------------
 
     WAIT_S = 1500  # a new endpoint took about 2 minutes when measured; SageMaker's own limit for a container to start is far longer
-    POLL_S = 10
+    POLL_S = 5
+    WAIT_LINE_S = 10  # while waiting on SageMaker, a line at least this often
 
     def _names(self, st: dict) -> dict:
         import re
@@ -524,11 +525,20 @@ class SageMakerProvider(_AWS):
                 if step["call"] in kinds:
                     made.append({"type": kinds[step["call"]][0], "name": kinds[step["call"]][1], "region": self.region})
             deadline = time.time() + self.WAIT_S
+            # SageMaker takes about two minutes and says nothing by itself. A line every 10 seconds, with how long
+            # it has been and SageMaker's own word for where it is, in a sentence.
+            began, said_at = time.time(), time.time()
+            words = {"Creating": "SageMaker is starting the machine and loading the model", "Updating": "SageMaker is moving it to the new version",
+                     "SystemUpdating": "SageMaker is updating the machine", "RollingBack": "SageMaker is going back to the version before",
+                     "InService": "SageMaker is switching over to it"}
             while True:
                 d = sm.describe_endpoint(EndpointName=n["endpoint"])
                 s = d["EndpointStatus"]
                 if s == "InService" and d.get("EndpointConfigName") == n["config"]:
                     break
+                if time.time() - said_at >= self.WAIT_LINE_S:
+                    say(f"Still starting the endpoint: {round(time.time() - began)} s. {words.get(s, 'SageMaker says ' + str(s))}.")
+                    said_at = time.time()
                 if s in ("Failed", "OutOfService") or (s == "InService" and updating and time.time() > deadline):
                     raise ProviderError(f"SageMaker could not start the endpoint: {d.get('FailureReason') or s}")
                 if time.time() > deadline:
@@ -738,6 +748,23 @@ class SageMakerProvider(_AWS):
                 if not token or len(got) > 200:
                     break
             out[key] = got
+        return out
+
+    def range_latency(self, endpoint: str, start, end) -> dict:
+        """The response time inside the model over a whole range, as CloudWatch works it out from every call:
+        {p50_us, p95_us}, either None when there were no calls. A percentile over the range is asked for as one,
+        because the percentile of each minute's percentiles is not one."""
+        cw = self._client("cloudwatch")
+        dims = [{"Name": "EndpointName", "Value": endpoint}, {"Name": "VariantName", "Value": self.VARIANT}]
+        whole = max(60, int((end - start).total_seconds() // 60) * 60)
+        queries = [{"Id": i, "ReturnData": True, "MetricStat": {"Metric": {"Namespace": "AWS/SageMaker", "MetricName": "ModelLatency", "Dimensions": dims},
+                                                                "Period": whole, "Stat": stat}} for i, stat in (("p50_us", "p50"), ("p95_us", "p95"))]
+        r = cw.get_metric_data(MetricDataQueries=queries, StartTime=start, EndTime=end, ScanBy="TimestampAscending")
+        out = {"p50_us": None, "p95_us": None}
+        for res in r.get("MetricDataResults", []):
+            vals = res.get("Values") or []
+            if vals:
+                out[res["Id"]] = float(vals[-1] if res["Id"] == "p50_us" else max(vals))
         return out
 
     def found(self, prefix: str = "captain") -> list[dict]:

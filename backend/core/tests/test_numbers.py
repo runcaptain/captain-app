@@ -97,7 +97,8 @@ def test_errors_and_a_slow_minute_show(ws, aws):  # noqa: F811
 
     aws.metric = busy
     s = NB.numbers(ws, "shop", span="1h")["summary"]
-    assert s["errors"] == 36 and round(s["error_rate"], 4) == 0.005 and s["p50_ms"] == 3.0 and s["p95_ms"] == 250.0
+    # The failures are counted. The 95th percentile is the range's own, asked of AWS as one: not the slowest minute's 250 ms.
+    assert s["errors"] == 36 and round(s["error_rate"], 4) == 0.005 and s["p50_ms"] == 3.0 and s["p95_ms"] != 250.0
 
 
 def test_hours_and_cost_come_from_captains_own_record_at_the_list_price(ws, aws):  # noqa: F811
@@ -134,9 +135,9 @@ def test_the_numbers_are_kept_for_a_minute_because_each_read_costs(ws, aws):  # 
     first = _reads(aws)
     NB.numbers(ws, "shop")
     NB.numbers(ws, "shop")
-    assert _reads(aws) == first == 1  # one read for the range, and none for the cost
+    assert _reads(aws) == first == 2  # the range by the minute and the range as a whole, and none for the cost
     NB.numbers(ws, "shop", span="15m")
-    assert _reads(aws) == 2 and 30 <= NB.KEEP_S <= 120  # another range is another read
+    assert _reads(aws) == 4 and 30 <= NB.KEEP_S <= 120  # another range is another read
 
 
 def test_when_cloudwatch_cannot_be_read_the_request_log_answers_and_says_so(ws, aws):  # noqa: F811
@@ -170,3 +171,38 @@ def test_nothing_deployed_and_this_computer(ws):  # noqa: F811
     n = NB.numbers(ws, "shop")
     assert n["source"] == "log" and n["summary"]["requests"] == 1 and n["not_read"] == []
     SG.unstage(ws, "shop")
+
+
+def test_requests_are_counted_from_the_request_log_not_from_every_call_aws_sees(ws, aws):  # noqa: F811
+    """On a real endpoint, 24 test searches read as "160 requests in the last hour". AWS counts every call, and
+    Captain calls the endpoint itself: to ask whether it is well, and to write its log. Those were most of the 160."""
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    for q in ("jacket", "tent", "boots"):
+        SG.query(ws, "shop", q)
+    SG.call(ws, SG.state(ws, "shop"), "flush", {})
+    n = NB.numbers(ws, "shop", span="1h")
+    s = n["summary"]
+    assert n["source"] == "cloud" and s["counted_from"] == "log"
+    assert s["requests"] == 3 and s["errors"] == 0 and s["calls"] == 7200  # three requests for results, of 7,200 calls AWS counted
+    assert s["calls_text"] == ("7,200 calls reached the endpoint in the last hour. That counts Captain's own checks (asking the model whether it is "
+                               "well, and to write its log) as well as requests for results.")
+    assert n["text"].startswith("3 requests in the last hour, no errors.") and "request log, which holds only requests for results" in n["source_text"]
+    assert s["p50_ms"] is not None and s["p50_ms"] != 3.0  # the time of those three requests, not of every call
+
+
+def test_with_no_request_log_aws_gives_the_ranges_own_percentiles(ws, aws):  # noqa: F811
+    """The worst minute's 95th percentile is not the range's. AWS is asked for the percentile over the whole range."""
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    quiet = aws.metric
+
+    def spiky(name, stat, t, period):
+        if name == "ModelLatency" and period > 60:   # asked over the whole range
+            return {"p50": 3100.0, "p95": 12000.0}[stat]
+        if (name, stat) == ("ModelLatency", "p95"):  # by the minute: one slow minute in ten
+            return 250000.0 if t.minute % 10 == 0 else 9000.0
+        return quiet(name, stat, t, period)
+
+    aws.metric = spiky
+    s = NB.numbers(ws, "shop", span="1h")["summary"]
+    assert s["counted_from"] == "cloud" and (s["p50_ms"], s["p95_ms"]) == (3.1, 12.0)  # not 250 ms, the slowest minute's
+    assert s["requests"] == s["calls"] == 7200 and "Captain's own checks" in s["calls_text"]
