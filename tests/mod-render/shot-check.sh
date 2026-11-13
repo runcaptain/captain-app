@@ -282,6 +282,12 @@ props_of() {
     captain-runs:side) python3 tests/mod-render/first-query.py "$CSTH" ;;
     # The Deployments screen with sample rows (empty, leftover, stopped, stopped-open, one, several, failed, found, deploying, busy, model, model-details, model-calls): nothing
     # is deployed and no cloud is asked. Demo names only in that file.
+    # The live views show what is really deployed in the scratch workspace (SHOT_PROJECT=1 SHOT_STAGED=1 stages a
+    # model on this computer), with no sample: the screen listens to the change feed. `live` is changed from a
+    # second process. `live-stop` and `live-remove` do the screen's own action, as a real job.
+    captain-deployments:live) echo '{}' ;;
+    captain-deployments:live-stop) echo '{"press": "stop"}' ;;
+    captain-deployments:live-remove) echo '{"press": "remove"}' ;;
     captain-deployments:*) python3 tests/mod-render/deployments-demo.py "${1#captain-deployments:}" ;;
     captain-runs:compare) echo '{"tab": "compare"}' ;;
     captain-notebooks:notebook) echo '{"notebook": "shot-notebook", "runAll": true}' ;;
@@ -350,6 +356,10 @@ for view in "${VIEWS[@]}"; do
   rm -f "$HOME_DIR/mods/$m/gpui-kit.d.ts" "$HOME_DIR/mods/$m/jsconfig.json"
   # Captain's own layout can't be edited (edits land in a copy), so each view gets its own personal layout,
   # a copy of the shipped one with this block set; switching to a new layout builds its mods fresh.
+  # An action the screen does itself needs a running model to do it to: put it back first, from a terminal.
+  if [[ "$view" == captain-deployments:live-stop || "$view" == captain-deployments:live-remove ]] && [[ -n "${STAGED_PID:-}" ]]; then
+    env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects stage "$STAGED_PID" --candidate demo-tuned --target local >/dev/null 2>&1 || true
+  fi
   n_view=$((${n_view:-0} + 1))
   python3 - defaults/layouts/captain.json "$HOME_DIR/layouts/shot$n_view.json" "$block" "$m" "$props" <<'EOF'
 import json, sys
@@ -375,6 +385,12 @@ EOF
   [[ "$view" == captain-data:import-run ]] && sleep 14
   [[ "$view" == captain-data:models-attach ]] && sleep 25  # it lists every bucket of the login first
   [[ "$view" == captain-data:pictures ]] && sleep 20  # the rows, then their thumbnails
+  # The screen's own action as a real job: a picture every 0.7 seconds from the start, so the row is seen while
+  # the job runs and when it ends. Nothing is asked of the window but the picture.
+  if [[ "$view" == captain-deployments:live-stop || "$view" == captain-deployments:live-remove ]]; then
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do sleep 0.7; app shot "$OUT/${view/:/-}-$i.png" >/dev/null || true; done
+    echo "$view: 12 pictures, 0.7 s apart, from the moment the screen opened"
+  fi
   for i in $(seq 1 12); do
     sleep 1.5
     # A window in the background may not draw a new frame after its data arrives, and shot saves the last frame
@@ -387,6 +403,17 @@ EOF
     if [[ "$sum" == "${PREV_SUM:-}" ]]; then echo "$view: same frame as the previous view, waiting for a redraw"; continue; fi
     if python3 tests/mod-render/shot-busy.py "$OUT/${view/:/-}.png"; then ok=1; break; fi
   done
+  # A change made by a second process (cst in a terminal) while the screen is open: it must show within two
+  # seconds, with nothing pressed and nothing asked of the window but the picture.
+  if [[ "$view" == captain-deployments:live && -n "${STAGED_PID:-}" ]]; then
+    env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects unstage "$STAGED_PID" >/dev/null 2>&1 || true
+    echo "$view: stopped from a terminal at $(date +%T)"
+    sleep 1; app shot "$OUT/captain-deployments-live-1s-after-stop.png" >/dev/null || true
+    sleep 1; app shot "$OUT/captain-deployments-live-2s-after-stop.png" >/dev/null || true
+    env -u CLAUDECODE CST_HOME=$WORK/cst "$CSTCMD" projects stage "$STAGED_PID" --candidate demo-tuned --target local >/dev/null 2>&1 || true
+    echo "$view: deployed again from a terminal at $(date +%T)"
+    sleep 2; app shot "$OUT/captain-deployments-live-2s-after-deploy.png" >/dev/null || true
+  fi
   PREV_SUM=$(shasum "$OUT/${view/:/-}.png" | cut -d' ' -f1)
   errs=$(app status | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('errors', [])))")
   if [[ $ok == 1 && $errs == 0 ]]; then echo "$view: drawn ($OUT/${view/:/-}.png)"; else echo "$view: BLANK or errors ($errs) ($OUT/${view/:/-}.png)"; app status; fail=1; fi

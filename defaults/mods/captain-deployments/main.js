@@ -28,6 +28,9 @@ export default class CaptainDeployments extends View {
     this.ask = null;          // an open question: {kind, id, text, yes}
     this.busy = {};           // row id -> what is being done to it, in words
     this.following = {};      // row id -> the job doing it: {job, words, kind, read, heard, polling}
+    // For the picture check only, which can't click: do one action as if its button were pressed, once the list
+    // is read. "stop" or "remove", on the first model that is in a cloud or on this computer.
+    this.press = props()?.press ?? null;
     this.note = null;         // what the last action said
     this.projects = null;     // for "Link to a project"
     this.page = null;         // the model page, when a row is open
@@ -37,6 +40,9 @@ export default class CaptainDeployments extends View {
     // The picture check hands the screen its rows (props.demo), so every state can be drawn with nothing deployed
     // and no cloud asked. A screen drawn this way does nothing: its buttons reach no service.
     this.demo = props()?.demo ?? null;
+    // The line to the change feed. A quiet stand-in until it is opened below, so a page opened while the screen
+    // is still being set up (a sample does that, and so can a link from another screen) has something to call.
+    this.live = { up: () => Boolean(this.demo), kick() {} };
     if (this.demo) {
       this.d = this.demo.deployed;
       this.created = this.demo.created ?? null;
@@ -58,7 +64,7 @@ export default class CaptainDeployments extends View {
     // Live: the screen listens to the app's change feed and reads again the moment something it shows changes:
     // the list, an open model's page, a job it started. Whoever made the change, here, on another screen, in a
     // terminal or in the cloud's own console. It asks nothing on a clock while the channel is up.
-    this.live = this.demo ? { up: () => true, kick() {} }  // a sample has nothing to listen to
+    this.live = this.demo ? this.live  // a sample has nothing to listen to
       : watchLive(cx, () => this.topics(), (cx, changed, reset) => this.heard(cx, changed, reset));
     // The page's own clock, once a second: a deploying row's seconds and "Not updating". It reads nothing.
     cx.timer.every(1000, (cx) => { if (this.deployingNow() || Object.keys(this.following).length || !this.live.up()) cx.notify(); this.giveUp(cx); });
@@ -114,6 +120,15 @@ export default class CaptainDeployments extends View {
       const r = await api(`/api/deployed${fresh ? "?fresh=true" : ""}`, { timeout: 60 });
       if (mine < this.floor) return;  // asked before the last action finished: older than what the person did
       if (r.ok) { this.d = r.data; this.problem = null; this.readAt = Date.now(); this.settle(cx, r.data.rows, mine); } else if (!this.d) this.problem = r;
+      if (r.ok && this.press) {
+        const row = r.data.rows.find((x) => x.in_cloud && x.project && x.state !== "deploying");
+        const what = this.press;
+        if (row) {
+          this.press = null;
+          if (what === "stop") this.stop(row, cx);
+          if (what === "remove") { this.remove(row, cx); this.ask?.go(cx); }
+        }
+      }
       if (r.ok && this.wanted) {  // asked for by another screen ("Open in Deployments" on a project's page)
         const row = r.data.rows.find((x) => x.id === this.wanted);
         this.wanted = null;
