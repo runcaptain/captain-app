@@ -34,6 +34,7 @@ import { partsState, partsFacts, partsPin, openPart, loadPart, loadRanker, showV
 import { PartsCanvas, TreeCanvas, partsLayout } from "./partsdraw.js";
 import { AgentStrip, stripHeight } from "./program.js";
 import { SaveLine, saveShows, SAVE_H } from "./save.js";
+import { stagePartTyped, putBackPart, leavePart } from "./parthand.js";
 import { WalkButtons, walkWords, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
 const TIGHT = 640; // under this width nothing fits side by side: an open neuron takes the drawing's place, and the cost is one line
@@ -116,6 +117,9 @@ export default class CaptainWeights extends View {
     this.handInput.on("change", (_e, ecx) => this.stageTyped(ecx ?? cx));
     this.handInput.on("submit", (_e, ecx) => this.stageTyped(ecx ?? cx));
     this.handle = cx.focus_handle?.() ?? null; // so Escape reaches the page
+    this.partInput = InputState.new({ placeholder: "a number" }); // the value typed for a trained model's picked number (parthand.js)
+    this.partInput.on("change", (_e, ecx) => stagePartTyped(this, ecx ?? cx));
+    this.partInput.on("submit", (_e, ecx) => stagePartTyped(this, ecx ?? cx)); // Enter only stages, as for a neuron
     this.goalInput = InputState.new({ placeholder: "What should the agent fix?" }); // the goal for an agent (program.js)
     this.agentRun = null;   // an agent started from here: {state, goal, job, says} (program.js)
     this.agentNote = null;  // why the agent could not be started or stopped
@@ -243,12 +247,28 @@ export default class CaptainWeights extends View {
     // For the picture check (see `show` in init): open a part, a head, a row, or the rankers.
     if (this.show) {
       const w = this.show; this.show = null;
-      if (w.part) { openPart(this, w.part, w.head ?? null, cx); if (Number.isInteger(w.row)) this.pm.row = w.row; }
+      if (w.part) { openPart(this, w.part, w.head ?? null, cx); if (Number.isInteger(w.row)) this.pm.row = w.row; if (Number.isFinite(w.stagedCell)) this.pm.showStage = w.stagedCell; }
       if (w.rankers) { this.pm.view = "rankers"; this.pm.rankerAt = w.ranker ?? 0; this.pm.treeAt = w.tree ?? 0; }
     }
     if (this.pm.sel) loadPart(this, cx);
     if (this.pm.view === "rankers") loadRanker(this, cx);
+    this.readPartsSession(cx);
     cx.notify();
+  }
+
+  /** The record of the session the page looks at a trained model through: what was changed in it, and whether
+   *  that is saved as a version. Read when the model is, after the page's own edit, and when the feed says so. */
+  readPartsSession(cx) {
+    const pm = this.pm, model = this.model;
+    cx.spawn(async (cx) => {
+      const s = await readSession(model);
+      if (this.pm !== pm || !s?.ok || !s.data?.id) return;
+      const moved = pm.session !== s.data.id;
+      this.session = s.data; pm.session = s.data.id;
+      // Listen to the session's own topic too, once it is known.
+      if (moved) { this.stop?.(); this.stop = watchWeights(cx, model, s.data.id, (cx) => this.read(cx)); }
+      cx.notify();
+    });
   }
 
   /** Events that arrived since the last read make what they touched pulse. The first read pulses nothing: it is
@@ -382,6 +402,8 @@ export default class CaptainWeights extends View {
     const name = stagedName(this);
     this.dropped = name ? `Your unsaved change to ${name} was dropped. Nothing was saved.` : null;
     this.staged = null; this.drag = null; this.typo = null;
+    // A trained model's staged change is dropped the same way, and the list of networks says so.
+    if (this.pm?.staged) { leavePart(this); this.dropped = this.pm.dropped; }
   }
 
   /** Stage what is typed in the box. It changes nothing in the network: "Set this value" does. */
@@ -466,7 +488,9 @@ export default class CaptainWeights extends View {
 
   /** Escape puts a staged change back. */
   key(e, cx) {
-    if ((e?.key ?? e?.keystroke) !== "escape" || !this.staged) return;
+    if ((e?.key ?? e?.keystroke) !== "escape") return;
+    if (this.pm?.staged) { putBackPart(this, cx); return cx.stop_propagation?.(); }
+    if (!this.staged) return;
     this.putBack(cx);
     cx.stop_propagation?.();
   }
@@ -615,14 +639,16 @@ export default class CaptainWeights extends View {
   partsBody(c, W, H) {
     const pm = this.pm, narrow = W < WIDE;
     const rankers = pm.model.rankers ?? [], onRankers = pm.view === "rankers" && rankers.length > 0;
-    const ch = Math.max(180, H - 84 - 44 - 14);
+    const ch = Math.max(180, H - 84 - 44 - 14 - (saveShows(this) ? SAVE_H : 0));
     const sp = splitOf(W, ch, Boolean(pm.sel)), cw = sp.cw;
+    // One quiet line: what can be done with this model here, or that a change is staged, or that one was dropped.
+    const says = pm.staged ? "Not saved: the picture shows your change as a preview." : pm.dropped ?? pm.model.read_only ?? READ_ONLY;
     const strip = h_flex().id("wt-parts-bar").h(44).flex_none().px(20).gap(10).items_center()
       .when(rankers.length > 0, (e) => e.child(Submenus(c, [{ id: "model", label: "Model" }, { id: "rankers", label: "Rankers" }], onRankers ? "rankers" : "model", (id, cx) => showView(this, id, cx))))
-      .child(div().id("wt-read-only").flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(pm.model.read_only ?? READ_ONLY));
+      .child(div().id("wt-read-only").flex_1().min_w(0).truncate().text_size(11.5).text_color(pm.staged ? c.blue : c.grey500).child(says));
     const panel = (inner, close, w, h = null) => div().id("wt-side").w(w).flex_none().when(h == null, (e) => e.h_full()).when(h != null, (e) => e.h(h).border_t(1).border_color(c.rule)).overflow_y_scroll().child(v_flex().p(14).gap(12)
       .when(Boolean(close) && narrow, (e) => e.child(h_flex().child(div().flex_1()).child(div().id("wt-side-close").text_size(11.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
-        .on_click((_e, cx) => { pm.sel = null; cx.notify(); }).child("Close this part"))))
+        .on_click((_e, cx) => { leavePart(this); pm.sel = null; cx.notify(); }).child("Close this part"))))
       .child(inner));
     const rule = div().w(1).h_full().flex_none().bg(c.rule);
     if (onRankers) {
@@ -633,7 +659,7 @@ export default class CaptainWeights extends View {
       const drawn = (w, h) => v_flex().w(w).child(TreeBar(c, this)).child(tree ? TreeCanvas(c, tree, { id: "wr", pz: this.treePz, width: w, height: h - BAR, open: pm.treeOpen,
         onOpen: (id, cx) => { pm.treeOpen = new Set(pm.treeOpen).add(id); cx.notify(); } })
         : div().id("wr-none").w(w).text_size(12.5).line_height("18px").text_color(c.grey500).child(waiting ? "Reading the ranker." : "No tree of this ranker was sent to draw."));
-      return v_flex().flex_1().min_h(0).child(strip)
+      return v_flex().flex_1().min_h(0).when(saveShows(this), (e) => e.child(SaveLine(c, this))).child(strip)
         .when(!narrow, (e) => e.child(h_flex().flex_1().min_h(0).child(div().pl(20).child(drawn(cw, ch))).child(rule).child(panel(RankerPanel(c, this, sp.rail - 30), false, sp.rail))))
         // Narrower: one column that scrolls, the inputs first and the tree under them, so neither hides the other.
         .when(narrow, (e) => e.child(div().id("wt-rankers-column").flex_1().min_h(0).overflow_y_scroll().child(v_flex().px(20).pb(14).gap(10)
@@ -645,7 +671,7 @@ export default class CaptainWeights extends View {
       : sp.mode === "replace" ? h_flex().flex_1().min_h(0).child(pm.sel ? panel(PartPanel(c, this, W - 30), true, W) : canvas(ch))
         // Between: the open part sits under a shorter diagram, so both show.
         : v_flex().flex_1().min_h(0).child(canvas(sp.drawH)).when(Boolean(pm.sel), (e) => e.child(panel(PartPanel(c, this, W - 30), true, W, sp.panelH)));
-    return v_flex().flex_1().min_h(0).child(strip).child(body);
+    return v_flex().flex_1().min_h(0).when(saveShows(this), (e) => e.child(SaveLine(c, this))).child(strip).child(body);
   }
 
   render() {

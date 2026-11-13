@@ -246,7 +246,7 @@ export function reduceGrid(values, max = HEAT_MAX) {
 
 /** A matrix as shaded cells: blue for positive, red for negative, stronger for larger, nothing for near zero.
  *  `grid` is from reduceGrid. Drawn into a box at most `width` wide and `maxH` tall. `mark` is a row to outline. */
-export function Heat(c, id, grid, { width, maxH = 220, mark = null } = {}) {
+export function Heat(c, id, grid, { width, maxH = 220, mark = null, cell = null, onCell = null } = {}) {
   const { values, rows, cols } = grid;
   if (!rows || !cols) return div().id(id);
   const size = Math.max(2, Math.min(18, Math.floor(Math.min(width / cols, maxH / rows))));
@@ -258,11 +258,18 @@ export function Heat(c, id, grid, { width, maxH = 220, mark = null } = {}) {
   const shade = (i) => { const v = values[Math.floor(i / cols)][i % cols], m = Math.abs(v) / top; return m < 0.08 ? null : tint(v > 0 ? c.blue : c.fail, STRENGTH[Math.min(2, Math.floor(m * 3))]); };
   cells(rows, cols, shade, 0, 0, size, (colour, poly) => (groups.get(colour) ?? groups.set(colour, []).get(colour)).push(poly));
   let box = div().id(id).relative().w(w).h(h).flex_none().border_1().border_color(c.grey300).bg(c.surface);
+  // A press on the picture picks the cell under it, where the app says where in the picture the press was.
+  if (onCell) box = box.cursor_pointer().on_mouse_down("left", (ev, cx) => {
+    const at = ev.local_position ?? (ev.bounds && ev.position ? { x: ev.position.x - ev.bounds.x, y: ev.position.y - ev.bounds.y } : null);
+    if (!at) return;
+    onCell(Math.max(0, Math.min(rows - 1, Math.floor(at.y / size))), Math.max(0, Math.min(cols - 1, Math.floor(at.x / size))), cx);
+  });
   if (paint) for (const [colour, polys] of groups) {
     let p = PathBuilder.fill();
     for (const poly of polys) p = p.add_polygon(poly, true);
     box = box.child(div().absolute().inset_0().child(paint(p.build(), colour)));
   }
   if (mark != null && mark >= 0 && mark < rows) box = box.child(div().id(`${id}-mark`).absolute().left(0).top(mark * size).w(w).h(size).border_1().border_color(c.navy));
+  if (cell && cell[0] >= 0 && cell[0] < rows && cell[1] >= 0 && cell[1] < cols) box = box.child(div().id(`${id}-cell`).absolute().left(cell[1] * size).top(cell[0] * size).size(size).border_2().border_color(c.navy));
   return box;
 }
