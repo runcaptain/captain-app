@@ -244,6 +244,18 @@ assert.ok(h.text().includes('Sealed test set check failed: the holdout changed.'
 assert.equal(posted('/api/backtests/refused/run').length, 0);
 routes(/^\/api\/backtests$/, 'plan', 'POST');
 
+// Opened at a later step: the steps before it are folded to their heading, and "Show" opens them again.
+{
+  const later = await mount({ step: 4 });
+  assert.equal(later.byIdPrefix('ev-model-').length + later.byIdPrefix('ev-on-').length + later.byIdPrefix('ev-compute-').length, 0, 'steps 1 to 3 are folded');
+  assert.deepEqual(later.byIdPrefix('ev-show-').map((e) => e.call('id')[0]), ['ev-show-models', 'ev-show-on', 'ev-show-measure'].filter((id) => later.byIdPrefix(id).length));
+  assert.equal(later.byIdPrefix('ev-show-').length, 3);
+  assert.ok(later.byIdPrefix('ev-depth-in-').length === 4 && later.text().includes('Limits'), 'step 4 is open');
+  await later.click(later.byIdPrefix('ev-show-')[2].call('id')[0]);
+  assert.ok(later.byIdPrefix('ev-compute-').length > 0 && later.byIdPrefix('ev-show-').length === 2, 'Show opens that step and the ones after it');
+  assert.equal((await mount()).byIdPrefix('ev-show-').length, 0, 'opened the usual way, nothing is folded');
+}
+
 // Regression testing: from a saved test, everything is filled in. Pick the new model and run.
 h = await mount({ test: 'demo-tuned-vs-bm25' });
 const saved = fx('backtest');

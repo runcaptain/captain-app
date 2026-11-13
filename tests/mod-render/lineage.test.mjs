@@ -5,6 +5,7 @@
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/lineage.test.mjs
 import assert from 'node:assert/strict';
 import { levels, LineageGraph, untangle, crossings, KINDS } from '../../defaults/captain/kit/lineage.js';
+import { SHAPES_PER_DRAW } from './harness.mjs';
 import { palette } from '../../defaults/captain/kit/tokens.js';
 
 const graph = {
@@ -195,12 +196,88 @@ console.log('lineage ranks: ok');
   // Nothing to untangle stays as it was, so the same graph always draws the same.
   assert.deepEqual(untangle([['x', 'y'], ['z']], []), [['x', 'y'], ['z']]);
 }
-// The canvas takes the height it is given, so a long chain has room.
+// The canvas is as tall as the graph needs at the size it is drawn, within the room it is given: a short chain
+// gets a short canvas, not a tall empty box, and a tall graph gets all the room there is.
 {
-  const tall = new LineageGraph({ id: 'tall' });
-  tall.set(graph, null);
   const find2 = (tree, id) => { const out = []; const w = (e) => { if (!e || typeof e !== 'object') return; out.push(e); for (const k of e.kids ?? []) w(k); }; w(tree); return out.find((e) => e.call?.('id')?.[0] === id); };
-  assert.equal(find2(tall.render(palette(false), { width: 900, height: 640 }), 'tall-canvas').call('h')[0], 640);
+  const short = new LineageGraph({ id: 'tall' });
+  short.set(graph, null);
+  const hShort = find2(short.render(palette(false), { width: 900, height: 640 }), 'tall-canvas').call('h')[0];
+  assert.ok(hShort >= 220 && hShort < 640, `a short chain: ${hShort}`);
+  const many = { nodes: [{ id: 'a', kind: 'dataset' }, ...Array.from({ length: 14 }, (_x, i) => ({ id: `e${i}`, kind: 'backtest-run' }))], edges: Array.from({ length: 14 }, (_x, i) => ({ from: 'a', to: `e${i}` })) };
+  const tall = new LineageGraph({ id: 'tall' });
+  tall.set(many, 'a');
+  assert.equal(find2(tall.render(palette(false), { width: 900, height: 640 }), 'tall-canvas').call('h')[0], 640, 'a tall graph takes the room it is given');
+}
+
+// Fit fills the canvas. A small graph grows until a box's title is the size of body text (never past 125%), is
+// never shrunk below 100%, and starts at the left, at mid height. A big one shrinks to fit and is centred.
+{
+  const small = new LineageGraph({ id: 'fit' });
+  small.set({ nodes: [{ id: 'a', kind: 'dataset' }, { id: 'b', kind: 'pipeline' }], edges: [{ from: 'a', to: 'b' }] }, 'a');
+  small.render(palette(false), { width: 1200, height: 600 });
+  const L = small.layout();
+  assert.equal(small.zoom, 1.25, 'a small graph is enlarged, to 125% at most');
+  assert.ok(12.5 * small.zoom >= 13, 'a title is at least the size of body text');
+  assert.equal(Math.round(small.at(L, 'a').x * small.zoom + small.pan.x), 24, 'it starts at the left margin, not floating in the centre');
+  const H = small.view.h, mid = (small.at(L, 'a').y + 26) * small.zoom + small.pan.y;
+  assert.ok(Math.abs(mid - H / 2) < 2, 'at mid height');
+  const wide = { nodes: Array.from({ length: 9 }, (_x, i) => ({ id: `n${i}`, kind: 'dataset' })), edges: Array.from({ length: 8 }, (_x, i) => ({ from: `n${i}`, to: `n${i + 1}` })) };
+  const big = new LineageGraph({ id: 'fit' });
+  big.set(wide, 'n0');
+  big.up = 9; big.down = 9; big.cache = null;
+  big.render(palette(false), { width: 900, height: 600 });
+  const LB = big.layout();
+  assert.ok(big.zoom < 1 && big.zoom >= 0.3, `a wide graph shrinks: ${big.zoom}`);
+  const left = big.at(LB, 'n0').x * big.zoom + big.pan.x, right = (big.at(LB, [...LB.pos.keys()].at(-1)).x + 188) * big.zoom + big.pan.x;
+  assert.ok(left >= 23 && right <= 900 - 23, `inside the canvas with a margin: ${left} to ${right}`);
+}
+
+// A connector that skips a column runs through a gap between the boxes there, never across one.
+{
+  const g = { nodes: ['a', 'b1', 'b2', 'b3', 'c'].map((id) => ({ id, kind: 'dataset' })),
+    edges: [['a', 'b1'], ['a', 'b2'], ['a', 'b3'], ['b1', 'c'], ['b2', 'c'], ['b3', 'c'], ['a', 'c']].map(([from, to]) => ({ from, to })) };
+  const lg = new LineageGraph({ id: 'lane' });
+  lg.set(g, 'a');
+  const L = lg.layout();
+  const lane = L.routes.get('a\u0000c');
+  assert.equal(lane.length, 1, 'one lane, in the column it skips');
+  const boxes = ['b1', 'b2', 'b3'].map((id) => L.pos.get(id));
+  assert.equal(lane[0].x, boxes[0].x, 'in the middle column');
+  for (const b of boxes) assert.ok(lane[0].y <= b.y - 3 || lane[0].y >= b.y + 52 + 3, `the lane at ${lane[0].y} clears the box at ${b.y}`);
+  assert.deepEqual(L.columns.map((col) => col.length), [1, 3, 1], 'lanes are not boxes');
+  assert.equal(L.pos.size, 5);
+  // Drawn: the skipping connector bends into the lane, runs straight across the column, and bends out.
+  const tree = lg.render(palette(false), { width: 900, height: 500 });
+  const strokes = []; (function w(e) { if (!e || typeof e !== 'object') return; if (e.kind === 'path' && e.args?.[0]?.kind === 'stroke') strokes.push(e.args[0]); for (const k of e.kids ?? []) w(k); })(tree);
+  const ops = strokes.flatMap((p) => p.ops.map(([m]) => m));
+  assert.equal(ops.filter((m) => m === 'line_to').length, 1, 'one straight run, through the lane');
+  assert.equal(ops.filter((m) => m === 'cubic_bezier_to').length, 8, 'six one-column curves, and two for the one that skips');
+}
+
+// The untangler tries more than three sweeps and keeps the best order it saw.
+{
+  const cols = [['a', 'b', 'c', 'd'], ['w', 'x', 'y', 'z'], ['p', 'q', 'r', 's']];
+  const edges = [['a', 'z'], ['b', 'y'], ['c', 'x'], ['d', 'w'], ['w', 's'], ['x', 'r'], ['y', 'q'], ['z', 'p'], ['a', 'w'], ['d', 'z']];
+  const out = untangle(cols, edges);
+  assert.ok(crossings(out, edges) <= crossings(cols, edges), 'never worse than it started');
+  assert.ok(crossings(out, edges) <= 4, `few crossings: ${crossings(out, edges)}`);
+}
+
+// A draw never builds thousands of shapes. That is how the dotted grid broke the graph in a real window: the app
+// stops a draw that takes too long, and the tests could not see it. Every painted path in one draw is counted.
+{
+  const shapes = (tree) => { let n = 0; (function w(e) { if (!e || typeof e !== 'object') return; if (e.kind === 'path') n += e.args?.[0]?.ops?.length ?? 0; for (const k of e.kids ?? []) w(k); })(tree); return n; };
+  const nodes = Array.from({ length: 60 }, (_x, i) => ({ id: `n${i}`, kind: i % 3 ? 'backtest-run' : 'dataset' }));
+  const edges = nodes.slice(1).flatMap((n, i) => [{ from: `n${Math.floor(i / 3)}`, to: n.id }]);
+  const lg = new LineageGraph({ id: 'heavy' });
+  lg.set({ nodes, edges }, 'n0');
+  lg.up = 9; lg.down = 9; lg.cache = null;
+  for (const [w, h, zoom] of [[1300, 800, null], [2400, 1400, null], [1300, 800, 0.45], [1300, 800, 2]]) {
+    if (zoom) { lg.zoom = zoom; lg.touched = true; }
+    const n = shapes(lg.render(palette(false), { width: w, height: h }));
+    assert.ok(n > 0 && n <= SHAPES_PER_DRAW, `${n} shapes in one draw at ${w}x${h}, zoom ${lg.zoom.toFixed(2)}: the ceiling is ${SHAPES_PER_DRAW}`);
+  }
 }
 console.log('lineage graph: ok');
 
@@ -249,7 +326,9 @@ console.log('lineage fit: ok');
   assert.ok(grid, 'a dotted grid');
   const gp = g3.grid(220, 110);
   assert.equal(gp.kind, 'fill');
-  assert.equal(gp.ops.length, Math.ceil(220 / (22 * g3.zoom)) * Math.ceil(110 / (22 * g3.zoom)), 'a dot every 22 units, scaled by the zoom');
+  // A dot every 22 units, scaled by the zoom: the count depends on where the pan puts the first one.
+  const nx = 220 / (22 * g3.zoom), ny = 110 / (22 * g3.zoom);
+  assert.ok(gp.ops.length >= Math.floor(nx) * Math.floor(ny) && gp.ops.length <= Math.ceil(nx) * Math.ceil(ny), `a dot every 22 units, scaled by the zoom: ${gp.ops.length}`);
   const first = gp.ops[0][1][0][0];
   g3.pan = { x: g3.pan.x + 5, y: g3.pan.y };
   assert.notDeepEqual(g3.grid(220, 110).ops[0][1][0][0], first, 'the grid moves with the pan');

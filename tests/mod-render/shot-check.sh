@@ -447,6 +447,9 @@ cst_app app open form:backtest --value "name=opened-by-an-agent" >/dev/null && o
 sleep 4  # the form reads the models, the tables and the measures before it draws its steps
 app shot "$OUT/cst-app-open-form.png" >/dev/null || true
 app do overlay.close '{}' >/dev/null 2>&1 || true
+# The same form opened at its fourth step, so its limits, depths and where it runs are in the picture.
+cst_app app open form:backtest --value "name=opened-by-an-agent" --value "step=4" >/dev/null && sleep 4 && app shot "$OUT/cst-app-open-form-lower.png" >/dev/null || true
+app do overlay.close '{}' >/dev/null 2>&1 || true
 # Pinned things: `cst context add` puts them in this window's sidebar strip, and `cst context show` expands them.
 if cst_app context add demo-catalog run:demo-tuned-vs-bm25 >/dev/null 2>&1 && cst_app --json context show | python3 -c "
 import json,sys
