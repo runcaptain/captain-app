@@ -22,6 +22,9 @@ pub fn name(signal: c_int) -> String {
         libc::SIGILL => "SIGILL".into(),
         libc::SIGFPE => "SIGFPE".into(),
         libc::SIGABRT => "SIGABRT".into(),
+        libc::SIGKILL => "SIGKILL".into(),
+        libc::SIGQUIT => "SIGQUIT".into(),
+        libc::SIGPIPE => "SIGPIPE".into(),
         other => format!("signal {other}"),
     }
 }

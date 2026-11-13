@@ -294,3 +294,13 @@ def test_the_bundle_is_one_zip_safe_to_attach(tmp_path, monkeypatch):
     # A second one in the same second does not overwrite the first.
     again = CliRunner().invoke(app, ["app", "logs", "--bundle", "--to", str(tmp_path / "Desktop")]).output.strip()
     assert again != out and os.path.isfile(again)
+
+
+def test_processor_and_memory_use_is_logged_once_a_minute(logs):
+    line, busy = applog.usage_line(41.0, 60.0, 412.4, 9)
+    assert line == "used 41.0 s of processor time in the last 60 s (68% of one processor), memory 412 MB, 9 threads" and busy
+    assert applog.usage_line(0.4, 60.0, None, 3) == ("used 0.4 s of processor time in the last 60 s (1% of one processor), memory unknown, 3 threads", False)
+    # The real loop, with a short minute: two lines, each with this process's own numbers.
+    applog.watch_usage(every=0.05, rounds=2).join(5)
+    lines = [ln for ln in _text(logs).splitlines() if " usage  used " in ln]
+    assert len(lines) == 2 and all(re.search(r"used \d+\.\d s of processor time in the last 0 s \(\d+% of one processor\), memory \d+ MB, \d+ threads$", ln) for ln in lines), lines

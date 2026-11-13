@@ -4156,6 +4156,7 @@ def serve(host: str = "127.0.0.1", port: int = 0, token: str | None = None, ui: 
     print(json.dumps(info), flush=True)
     AL.start()
     AL.watch_threads()
+    AL.watch_usage()
     AL.info("services", f"started: cst {VERSION}, pid {os.getpid()}, port {port}, home {home()}" + (", serving the screens" if d else ""))
     from .workflows import start_scheduler
 

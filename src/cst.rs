@@ -203,6 +203,8 @@ pub fn terminal_env(space: &str) -> serde_json::Map<String, Value> {
     // The window this terminal belongs to, so `cst app context` and `cst app shot` ask this window and not another
     // Captain on the same computer (a test window, a second home).
     env.insert(crate::brand::HOME_ENV.into(), Value::String(crate::mods::app_dir().display().to_string()));
+    // So `cst app logs` in this terminal reads the folder this window logs into.
+    env.insert(captain_logs::DIR_ENV.into(), Value::String(crate::logs::dir().display().to_string()));
     env
 }
 
@@ -310,17 +312,23 @@ pub fn ensure(ready: impl Fn() + Send + 'static) {
     };
     if let Some((port, token)) = running() {
         // Not ours: reuse it, never stop it.
+        tracing::info!(target: "captain::services", "using services that were already running, at 127.0.0.1:{port} (not started by this app, so never stopped by it)");
         d.state = State::Ready { port, token };
         drop(d);
         ready();
         return;
     }
     let Some(bin) = find() else {
+        tracing::warn!(target: "captain::services", "no cst found: the services cannot start");
         d.state = State::Missing;
         return;
     };
+    let starts = STARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    tracing::info!(target: "captain::services", "starting the services: {} serve (start number {starts} of this run{})", bin.display(), if starts > 1 { ", a restart" } else { "" });
     let mut cmd = Command::new(&bin);
     cmd.env("CST_HOME", &home);
+    // The services write services.log beside app.log.
+    cmd.env(captain_logs::DIR_ENV, crate::logs::dir());
     // The prompts the services write for agents name this cst by its path (codeagent.cst_path).
     cmd.env("CST_BIN", &bin);
     cmd.args(["serve", "--port", "0"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -331,10 +339,13 @@ pub fn ensure(ready: impl Fn() + Send + 'static) {
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
+            tracing::error!(target: "captain::services", "could not start {}: {e}", bin.display());
             d.state = State::Failed(format!("Could not start {}: {e}", bin.display()));
             return;
         }
     };
+    let pid = child.id();
+    tracing::info!(target: "captain::services", "the services' process is pid {pid}");
     let stdout = child.stdout.take();
     if let Some(err) = child.stderr.take() {
         std::thread::spawn(move || {
@@ -366,8 +377,87 @@ pub fn ensure(ready: impl Fn() + Send + 'static) {
             }
             None => State::Failed("cst serve has no stdout.".into()),
         };
+        // The address, never the token.
+        match &state {
+            State::Ready { port, .. } => tracing::info!(target: "captain::services", "the services are ready at 127.0.0.1:{port} (pid {pid})"),
+            State::Failed(why) => tracing::error!(target: "captain::services", "the services did not come up: {why}"),
+            _ => {}
+        }
         DAEMON.lock().unwrap().state = state;
         ready();
+        watch_exit(pid);
+    });
+}
+
+/// How many times this run started the services: more than one is a restart.
+static STARTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// "exit code 1", "signal 9 (SIGKILL)".
+fn ended(status: std::process::ExitStatus) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    match (status.code(), status.signal()) {
+        (Some(code), _) => format!("exit code {code}"),
+        (None, Some(signal)) => format!("killed by {} (signal {signal})", captain_logs::signals::name(signal)),
+        _ => "an unknown status".into(),
+    }
+}
+
+/// What to do when the services stop by themselves.
+#[derive(Debug, PartialEq)]
+pub enum AfterExit {
+    /// Start them again, quietly.
+    Restart,
+    /// They were restarted less than a minute ago and stopped again: say so, and leave it to Retry.
+    GiveUp,
+}
+
+/// One restart, then stop trying: services that die twice within a minute would only die again.
+pub fn after_exit(last_restart: Option<std::time::Instant>, now: std::time::Instant) -> AfterExit {
+    match last_restart {
+        Some(at) if now.duration_since(at) < Duration::from_secs(60) => AfterExit::GiveUp,
+        _ => AfterExit::Restart,
+    }
+}
+
+static LAST_RESTART: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// What a screen shows when the services stopped and a restart did not hold. Plain words: it is drawn as is.
+pub const STOPPED: &str = "Captain's services stopped. Press Retry to start them again.";
+
+/// Looks once a second whether the services the app started are still there. Nothing else waits on them: before
+/// this, services that died were only noticed as every screen failing while the app went on saying "ready".
+/// When they stop by themselves the app logs how, starts them again once, and if they stop again within a minute
+/// publishes the failed state (the screens' "stopped" message with Retry).
+fn watch_exit(pid: u32) {
+    let _ = std::thread::Builder::new().name("captain-services-watch".into()).spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        let mut d = DAEMON.lock().unwrap();
+        // Stopped by the app (`stop` logs that), or replaced by a newer start: not ours to watch any more.
+        let Some(child) = d.child.as_mut().filter(|c| c.id() == pid) else { return };
+        let Ok(Some(status)) = child.try_wait() else { continue };
+        d.child = None;
+        if let Some(mut g) = d.guard.take() {
+            let _ = g.kill();
+            let _ = g.wait();
+        }
+        let now = std::time::Instant::now();
+        let mut last = LAST_RESTART.lock().unwrap_or_else(|e| e.into_inner());
+        match after_exit(*last, now) {
+            AfterExit::Restart => {
+                *last = Some(now);
+                tracing::error!(target: "captain::services", "the services (pid {pid}) stopped by themselves: {}. Starting them again, once", ended(status));
+                d.state = State::Idle;
+            }
+            AfterExit::GiveUp => {
+                tracing::error!(target: "captain::services", "the services (pid {pid}) stopped by themselves again within a minute of a restart: {}. Not restarting; the screens say they stopped and offer Retry", ended(status));
+                d.state = State::Failed(STOPPED.into());
+            }
+        }
+        drop(last);
+        drop(d);
+        // The window's next draw starts them again (state Idle) or tells the screens (state Failed).
+        crate::mods::request(crate::mods::Request::Refresh);
+        return;
     });
 }
 
@@ -380,13 +470,17 @@ pub fn stop() {
     }
     if let Some(mut c) = d.child.take() {
         let pg = -(c.id() as i32);
+        tracing::info!(target: "captain::services", "stopping the services (pid {})", c.id());
         unsafe { libc::kill(pg, libc::SIGTERM) };
         let until = std::time::Instant::now() + Duration::from_secs(2);
         while std::time::Instant::now() < until && !matches!(c.try_wait(), Ok(Some(_))) {
             std::thread::sleep(Duration::from_millis(50));
         }
         unsafe { libc::kill(pg, libc::SIGKILL) };
-        let _ = c.wait();
+        match c.wait() {
+            Ok(status) => tracing::info!(target: "captain::services", "the services stopped: {}", ended(status)),
+            Err(e) => tracing::warn!(target: "captain::services", "the services' end could not be read: {e}"),
+        }
     }
     d.state = State::Idle;
 }
@@ -440,6 +534,7 @@ pub fn tick() {
     let retry = crate::mods::shared("captain.daemon.retry");
     let fresh = RETRY.with_borrow_mut(|last| if *last != retry { let changed = last.is_some(); *last = retry; changed } else { false });
     if fresh && matches!(state(), State::Failed(_) | State::Missing) {
+        tracing::info!(target: "captain::services", "a screen asked to try the services again");
         stop();
     }
     if state() == State::Idle {
@@ -478,6 +573,21 @@ mod tests {
         link_cli_at(&link, &ours).unwrap();
         assert_eq!(std::fs::read_link(&link).unwrap(), theirs);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn services_that_stop_are_restarted_once_then_reported() {
+        let start = std::time::Instant::now();
+        // The first time they stop: start them again.
+        assert_eq!(after_exit(None, start), AfterExit::Restart);
+        // They stop again 20 seconds after that restart: give up and say so.
+        assert_eq!(after_exit(Some(start), start + Duration::from_secs(20)), AfterExit::GiveUp);
+        // An hour later is a new problem: one more restart.
+        assert_eq!(after_exit(Some(start), start + Duration::from_secs(3600)), AfterExit::Restart);
+        // What the screens then read is the failed state, in plain words, with nothing raw in it.
+        let shown = shared_value(&State::Failed(STOPPED.into()));
+        assert_eq!(shown["state"], "failed");
+        assert_eq!(shown["error"], "Captain's services stopped. Press Retry to start them again.");
     }
 
     #[test]

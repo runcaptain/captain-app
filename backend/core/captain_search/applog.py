@@ -280,6 +280,55 @@ def watch_threads() -> None:
     threading.excepthook, sys.excepthook = in_thread, at_top
 
 
+# ---- what the process uses ---------------------------------------------------------------
+
+def cpu_seconds() -> float:
+    """Processor time this process has used so far, user and system."""
+    t = os.times()
+    return t.user + t.system
+
+
+def memory_mb() -> float | None:
+    """The memory this process holds now, in MB (its resident size, as `ps` reports it). None when unknown."""
+    import subprocess
+
+    try:
+        out = subprocess.run(["ps", "-o", "rss=", "-p", str(os.getpid())], capture_output=True, text=True, timeout=5).stdout
+        return int(out.strip()) / 1024
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def usage_line(cpu: float, seconds: float, memory: float | None, threads: int) -> tuple[str, bool]:
+    """The once-a-minute line, and whether it is worth a warning: more than half a processor over the whole
+    minute is a lot for services that mostly wait."""
+    share = 100 * cpu / seconds if seconds > 0 else 0.0
+    mem = f"{memory:.0f} MB" if memory is not None else "unknown"
+    return (f"used {cpu:.1f} s of processor time in the last {seconds:.0f} s ({share:.0f}% of one processor), memory {mem}, {threads} threads", share > 50)
+
+
+_usage_stop = threading.Event()
+
+
+def watch_usage(every: float = 60.0, rounds: int | None = None) -> threading.Thread:
+    """Once a minute, one line with the processor time used in that minute and the memory held, so services that
+    sit busy while nobody asks them anything show in the file. WARN when it was more than half a processor."""
+    _usage_stop.clear()
+
+    def loop():
+        last_cpu, last_at, n = cpu_seconds(), time.monotonic(), 0
+        while (rounds is None or n < rounds) and not _usage_stop.wait(every):
+            n += 1
+            cpu, at = cpu_seconds(), time.monotonic()
+            line, busy = usage_line(cpu - last_cpu, at - last_at, memory_mb(), threading.active_count())
+            (warn if busy else info)("usage", line)
+            last_cpu, last_at = cpu, at
+
+    t = threading.Thread(target=loop, daemon=True, name="cst-usage")
+    t.start()
+    return t
+
+
 # ---- reading --------------------------------------------------------------------------------
 
 _SINCE = re.compile(r"\s*(\d+(?:\.\d+)?)\s*(s|m|h|d|w)\s*\Z")
