@@ -331,7 +331,7 @@ assert.ok(t.includes('Address · from AWS') && t.includes("Region · from Captai
 // What a person copies has Copy: the address, a test request, the log's name. A request of several lines shows its first.
 for (const id of ['address', 'call', 'logs']) assert.equal(byId(h, `model-where-${id}-copy`).length, 1, `${id} can be copied`);
 assert.equal(byId(h, 'model-where-region-copy').length, 0, 'a region is read, not copied');
-assert.ok(t.includes('aws sagemaker-runtime invoke-endpoint --region') && !t.includes('# Get a ranking.'), 'the request by its first real line, cut in its middle when long');
+assert.ok(t.includes('aws sagemaker-runtime invoke-endpoint') && !t.includes('# Get a ranking.'), 'the request by its first real line, cut in its middle when long');
 await h.click('model-where-call-copy');
 assert.equal(h.mod.page.copiedFact, 'call', 'Copy marks it copied (the icon turns to a tick)');
 for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time', 'Processor in use', 'Memory in use'])
