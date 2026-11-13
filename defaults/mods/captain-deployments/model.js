@@ -48,6 +48,14 @@ export class ModelPage {
     return `/api/projects/${encodeURIComponent(this.row.project)}${path}`;
   }
 
+  /** Read again what can have changed since the page was opened: where it runs and its numbers. Called by the
+   *  list on its own timer, once a minute, so an open page stays true without a click. */
+  refresh(cx) {
+    if (this.demo || this.busy) return;
+    this.where = null;
+    this.load(cx);
+  }
+
   load(cx) {
     if (this.demo) {
       Object.assign(this, { where: this.demo.where ?? null, n: this.demo.numbers?.[this.range] ?? this.demo.numbers?.["1h"] ?? null, requests: this.demo.requests ?? { rows: [] },

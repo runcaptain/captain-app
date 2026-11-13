@@ -21,6 +21,9 @@ globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), p = u.pathname, m = opts.method ?? 'GET';
   sent.push([m, p + u.search, opts.body ? JSON.parse(opts.body) : null]);
   if (p === '/api/deployed') return reply(200, world.deployed);
+  // Work the services do as a job: `world.jobs[id]` is the list of answers it gives, one per ask, the last repeating.
+  if (p.startsWith('/api/jobs/')) { const steps = world.jobs?.[p.split('/')[3]] ?? [{ status: 'done' }]; return reply(200, steps.length > 1 ? steps.shift() : steps[0]); }
+  if (m === 'POST' && p.endsWith('/unstage') && world.stopJob) return reply(200, { job: world.stopJob });
   // The plan for a deploy: what the confirm is built from. `world.plan` overrides it, or fails it.
   if (m === 'POST' && p.endsWith('/deploy') && JSON.parse(opts.body ?? '{}').dry_run) return world.planFails ? reply(400, { detail: world.planFails })
     : reply(200, world.plan ?? { host: 'gcp', label: 'Google Cloud', first_time: false, needs_confirm: true, minutes: { text: 'About 2 to 6 minutes.' },
@@ -366,6 +369,39 @@ globalThis.__shared['captain.open'] = { section: 'deployments', at: 1004 };
 await tick(h);
 assert.ok(h.text().includes('Ask the clouds again') && byId(h, 'submenu-traffic').length === 0, '"All deployments" with no model shows the list');
 delete globalThis.__shared['captain.open'];
+
+// ---- live: the screen shows the truth without a click ----
+h = await open({ deployed: { rows: [SHOP], asked, text: '1 model running.', read_at: '' }, numbers: { shop: numbers(8640) } });
+assert.ok(h.text().includes('Updated just now') && byId(h, 'dep-updated').length === 1 && byId(h, 'dep-refresh').length === 1, `it says when it was read, and asking again is still there: ${h.text().slice(0, 200)}`);
+// A model deployed from another screen or a terminal shows by itself, on the next read.
+let reads = sent.filter((x) => x[1].startsWith('/api/deployed') && !x[1].includes('created')).length;
+world.deployed = { rows: [SHOP, TRAIL], asked, text: '2 models running.', read_at: '' };
+await tick(h);
+assert.ok(sent.filter((x) => x[1].startsWith('/api/deployed') && !x[1].includes('created')).length > reads, 'the list is read again on a timer');
+assert.ok(shown(h) === 'shop trail' && h.text().includes('2 models running.'), `the new model is there without a click: ${shown(h)}`);
+// The numbers are not read again that soon: a cloud charges for each read of those.
+const numberReads = () => sent.filter((x) => x[1].includes('/deployed/numbers')).length;
+const beforeNumbers = numberReads();
+await tick(h);
+assert.equal(numberReads(), beforeNumbers, 'the numbers stay on their one-minute ration');
+// An action that the services do as a job is followed to its end. While it runs the row says what is being done,
+// with the step it is on, and no button is offered that would do it again.
+world.stopJob = 'job-1';
+world.jobs = { 'job-1': [{ status: 'running', message: 'Removing the endpoint.' }, { status: 'running', message: 'Removing the model.' }, { status: 'done', result: { text: 'Stopped. It no longer answers or bills.' } }] };
+const stopping = h.click('dep-stop-shop:staging');
+await h.idle(150);
+assert.ok(h.text().includes('Stopping: Removing the endpoint') && byId(h, 'dep-busy-shop:staging').length === 1, `the row says what is happening, with the step: ${h.text().slice(0, 400)}`);
+for (const id of ['dep-stop-shop:staging', 'dep-open-shop:staging', 'dep-back-shop:staging']) assert.equal(byId(h, id).length, 0, `no ${id} while it runs`);
+world.deployed = { rows: [{ ...SHOP, state: 'stopped', state_text: 'Stopped by dana, just now.', in_cloud: false, remembered_text: 'Nothing of it is running in AWS and nothing is billing. Captain remembers it so you can start it again.' }, TRAIL],
+  asked, text: '1 model running.', stopped_earlier: 1, read_at: '' };
+await stopping;
+for (let i = 0; i < 40 && byId(h, 'dep-busy-shop:staging').length; i++) await h.idle(150);
+await h.idle(150);
+// When it ends: what it said, and the list as it now is, at once, from the action's own result.
+assert.ok(h.text().includes('Stopped. It no longer answers or bills.') && byId(h, 'dep-busy-shop:staging').length === 0, `it says what was done: ${h.text().slice(0, 300)}`);
+assert.ok(shown(h) === 'trail' && h.text().includes('Stopped earlier: 1 model.') && h.text().includes('1 model running.'), `and the list is the truth, without a click: ${shown(h)}`);
+assert.ok(sent.some((x) => x[1] === '/api/deployed?fresh=true'), 'read fresh after the action');
+world.stopJob = null; world.jobs = null;
 
 // ---- the screen rules ----
 for (const f of ['main.js', 'model.js', 'words.js']) {
