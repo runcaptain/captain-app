@@ -42,6 +42,12 @@ def save_config(cfg: dict) -> None:
     with open(tmp, "w") as fh:
         yaml.safe_dump(cfg, fh, sort_keys=False)
     os.replace(tmp, config_path())
+    try:  # the cloud logins and this computer's settings live here, not in a store: the change feed is told by hand
+        from . import changes
+
+        changes.bump("logins", "settings")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def whoami() -> str:
