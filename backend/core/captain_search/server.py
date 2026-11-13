@@ -1407,10 +1407,11 @@ def project_staging_health(pid: str, history: int = 0):
 
 @app.post("/api/projects/{pid}/staging/health/check", dependencies=A)
 def project_staging_health_check(pid: str):
-    """Run one check now and record it. {…the health…, changed, alert: the message that went out, or null}."""
+    """Run one check now and record it. {…the health…, changed, alert: the message that went out, or null}. A person
+    pressed "Check now", so a model in a cloud is itself asked, once. The scheduled check never calls it."""
     from .staging import health as HL
 
-    return _staging_call(HL.check, ctx(), pid)
+    return _staging_call(lambda c, p: HL.check(c, p, asked=True), ctx(), pid)
 
 
 @app.put("/api/projects/{pid}/staging/health/target", dependencies=A)

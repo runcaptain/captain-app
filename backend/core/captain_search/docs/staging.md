@@ -759,9 +759,11 @@ On either change a message goes out, once:
 it shows in your own metrics, can trip an alarm on invocations, and counts toward adding a copy. So whether a
 model is up comes from the cloud's own state, which costs nothing to ask. A page that is open makes no call to
 a model in a cloud, however long it stays open. The model itself is called only when you ask for something that
-needs it (a search, "Check now", a test request, a refresh of the requests or the log), and by the scheduled
-health check, at most once a minute and never while it is asleep. Those calls are not requests for results, so
-they are not in the request log or its counts. A model on this computer is asked every time: nothing counts it.
+needs it: a search, "Check now", a test request, a refresh of the requests or the log. Those calls are not
+requests for results, so they are not in the request log or its counts. The scheduled health check never calls
+a model in a cloud. It reads the cloud's own state for "is it up" and the request log for "does it answer well".
+With no requests in the window it says "Running, no requests to judge by.", which is neither healthy nor
+unhealthy and is not an alert. A model on this computer is asked every time: nothing counts it.
 
 **What a check never does.** It never wakes a host that sleeps when idle: with no copy up the health is "Asleep".
 It never alerts while a deploy is running on that project. It never calls a model healthy on numbers it doesn't

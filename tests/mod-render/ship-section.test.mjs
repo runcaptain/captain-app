@@ -337,7 +337,7 @@ await wait(h, () => Boolean(h.mod.ship.healthD), 'health is read');
 assert.equal(byId(h, 'dep-unhealthy').length, 0, 'nothing is said at the top while it is healthy');
 await h.click('dep-more-health');
 t = h.text();
-assert.ok(t.includes('Captain checks once a minute that it answers') && t.includes('Healthy. 0 of its last 62 requests failed') && t.includes('Last checked 19:30 UTC.'), `its health, under its sentence: ${t.slice(-900)}`);
+assert.ok(t.includes('Captain checks once a minute how many requests fail') && t.includes('Healthy. 0 of its last 62 requests failed') && t.includes('Last checked 19:30 UTC.'), `its health, under its sentence: ${t.slice(-900)}`);
 assert.ok(t.includes('No target is set yet.') && t.includes('Unhealthy when 95 in 100 requests take longer than') && t.includes('Unhealthy when more requests than this fail'), 'the targets, in words');
 await h.click('dep-health-p95-200');
 await wait(h, () => h.mod.ship.healthD?.target?.p95_ms === 200, 'the target is saved');

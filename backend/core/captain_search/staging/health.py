@@ -36,7 +36,6 @@ MIN_REQUESTS = 20            # fewer than this in the window: the rates are not 
 DEFAULT_ERROR_RATE = 0.05    # until the person sets a target
 BAD_IN_A_ROW = 2
 PROBE_TIMEOUT_S = 5.0
-CLOUD_PROBE_EVERY_S = 60.0  # how often the scheduled check asks a model in a cloud whether it answers: never faster
 
 
 def _now() -> dt.datetime:
@@ -131,7 +130,8 @@ def _asleep(ctx: Context, rec: dict) -> bool:
     return not _awake(ctx, rec)
 
 
-def measure(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES, now: dt.datetime | None = None) -> dict:
+def measure(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES, now: dt.datetime | None = None,
+            asked: bool = False) -> dict:
     """What can be said right now, with no judgement: is it answering, and the last minutes' requests, errors and
     response time. Never wakes a sleeping host."""
     now = now or _now()
@@ -145,16 +145,19 @@ def measure(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES
     out["deploying"] = _deploying(ctx, pid)
     if _asleep(ctx, rec):
         return {**out, "asleep": True}
-    if rec.get("how") != "image":
+    cloud = rec.get("kind") != "local"
+    out["cloud"] = cloud
+    if rec.get("how") != "image" and (not cloud or asked):
         try:
-            # On this computer the model is asked on every check. In a cloud a check runs once a minute and every
-            # call counts as traffic there, so the model itself is asked at most once a minute, by this check only, and in between the
-            # last answer stands. Whether it is up at all comes from the cloud's own state, before this.
-            st = (call(ctx, rec, "status", {}, timeout=PROBE_TIMEOUT_S) if rec.get("kind") == "local"
-                  else ask_status(ctx, rec, max_age_s=CLOUD_PROBE_EVERY_S, timeout=PROBE_TIMEOUT_S))
+            # On this computer the model is asked on every check: nothing counts it. A model in a cloud is never
+            # called by a check on a schedule: there every call counts as traffic, toward the customer's own
+            # alarms and toward adding a copy. The cloud's own state says whether it is up, and the request log
+            # says whether it answers well. Only "Check now", which a person presses, asks the model itself.
+            st = (call(ctx, rec, "status", {}, timeout=PROBE_TIMEOUT_S) if not cloud
+                  else ask_status(ctx, rec, max_age_s=0, timeout=PROBE_TIMEOUT_S))
             out["answering"] = bool(st.get("ok", True)) and not st.get("stopped")
             out["fallbacks"] = int(st.get("fallbacks") or 0)
-            if rec.get("kind") == "local":
+            if not cloud:
                 try:
                     call(ctx, rec, "flush", {}, timeout=PROBE_TIMEOUT_S)  # it is awake and answering: read a current log
                 except Exception:  # noqa: BLE001
@@ -196,15 +199,17 @@ def judge(m: dict, tgt: dict) -> list[str]:
     return why
 
 
-def check(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES, notify: bool = True, now: dt.datetime | None = None) -> dict:
+def check(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES, notify: bool = True, now: dt.datetime | None = None,
+          asked: bool = False) -> dict:
     """Run one check, record it, and send a message if the status changed. Returns the health, with `changed` and
-    `alert` (the message that went out, or None)."""
+    `alert` (the message that went out, or None). `asked` is a person pressing "Check now": only then is a model
+    in a cloud itself called. A check on a schedule reads the cloud's state and the request log."""
     now = now or _now()
     rec = state(ctx, pid, env)
     if not rec:
         return {"project": pid, "status": "none", "text": "Nothing is deployed.", "changed": False, "alert": None}
     before = rec.get("health") or {}
-    m = measure(ctx, pid, env, window, now)
+    m = measure(ctx, pid, env, window, now, asked)
     tgt = target(rec)
     reasons = judge(m, tgt)
     bad = (int(before.get("bad_in_a_row") or 0) + 1) if reasons else 0
@@ -217,6 +222,9 @@ def check(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES, 
         status, bad = (was if was in ("healthy", "unknown") else "unknown"), 0  # a switch-over is not an outage
     elif reasons:
         status = "unhealthy" if bad >= BAD_IN_A_ROW or was == "unhealthy" else (was if was in ("healthy", "unknown") else "unknown")
+    elif m.get("cloud") and m.get("answering") is None:
+        # Up, by the cloud's own state. Healthy only when there are requests to judge by, and they are fine.
+        status = "healthy" if m["requests"] >= MIN_REQUESTS else "unknown"
     else:
         status = "healthy" if m.get("answering") else "unknown"
     changed = status != was
@@ -224,7 +232,9 @@ def check(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES, 
          "answering": m.get("answering"), "last_request_at": m.get("last_request_at"), "window_minutes": window,
          "requests": m["requests"], "errors": m["errors"], "error_rate": m["error_rate"], "p50_ms": m["p50_ms"], "p95_ms": m["p95_ms"],
          "target": {"p95_ms": tgt["p95_ms"], "error_rate": tgt["error_rate"], "set": tgt["set"]}, "reasons": reasons,
-         "bad_in_a_row": bad, "fallbacks": m.get("fallbacks", 0), "judged": m["requests"] >= MIN_REQUESTS}
+         "bad_in_a_row": bad, "fallbacks": m.get("fallbacks", 0), "judged": m["requests"] >= MIN_REQUESTS,
+         # A model in a cloud that the schedule did not call: it is running by the cloud's own state.
+         "running_by_cloud": bool(m.get("cloud")) and m.get("answering") is None and status in ("healthy", "unknown") and not m.get("deploying")}
     h["text"] = words(rec, h)
     _save(ctx, pid, env, health=h)
     try:
@@ -257,6 +267,10 @@ def words(rec: dict, h: dict) -> str:
         return "Asleep. It wakes on the next request."
     if s == "unhealthy":
         return "Unhealthy. " + " ".join(h["reasons"])
+    if s == "unknown" and h.get("running_by_cloud") and not h["reasons"]:
+        n = h.get("requests") or 0
+        return ("Running, no requests to judge by." if not n else
+                f"Running. Only {n:,} request{'s' if n != 1 else ''} in the last {h['window_minutes']} minutes, too few to judge by.")
     if s == "unknown":
         return ("Not confirmed healthy yet. " + " ".join(h["reasons"])) if h["reasons"] else "Not checked yet."
     if not h.get("judged"):

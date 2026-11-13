@@ -437,7 +437,8 @@ def deployments_health(name: str,
     c = ctx()
     if (p95_ms is not None or error_rate is not None) and not S.dry_run:
         _do(HL.set_target, c, name, p95_ms, error_rate)
-    h = _do(HL.check, c, name) if run and not S.dry_run else _do(HL.get, c, name)
+    # `--check` is a person asking, so a model in a cloud is itself asked, once. `watch` never calls it.
+    h = _do(HL.check, c, name, asked=True) if run and not S.dry_run else _do(HL.get, c, name)
     lines = [h.get("text") or "Not checked yet."]
     t = h.get("target") or {}
     lines.append("Target: " + (", ".join(x for x in [f"95 in 100 requests under {t['p95_ms']:g} ms" if t.get("p95_ms") is not None else None,
