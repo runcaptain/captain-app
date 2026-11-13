@@ -334,7 +334,7 @@ props_of() {
     captain-weights:parts-table) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"part": "item", "row": 2}' ;;
     captain-weights:parts-rankers) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"rankers": true}' ;;
     # The picker for bringing in a trained model, listing a made-up place.
-    captain-weights:bring) echo '{"show": {"bringFrom": "/made-up/models", "answers": {"/api/weights/registry?from=%2Fmade-up%2Fmodels": {"ok": true, "data": {"count": 3, "versions": [{"path": "arch-a/shop/v2", "address": "/made-up/models/arch-a/shop/v2", "name": "v2", "description": "wider, two layers"}, {"path": "arch-a/shop/v1", "address": "/made-up/models/arch-a/shop/v1", "name": "v1", "description": "the first one kept"}, {"path": "arch-b/garden/v1", "address": "/made-up/models/arch-b/garden/v1", "name": "v1", "description": null}]}}}}}' ;;
+    captain-weights:bring) echo '{"show": {"bring": true, "answers": {"/api/weights/registry": {"ok": true, "data": {"count": 5, "can_open": 4, "registries": [{"id": "reg-1", "name": "Model registry 1", "read": true, "count": 4, "versions": [{"id": "shop@v3", "name": "shop, v3", "path": "arch-a/shop/v3", "address": "/made-up/registry/arch-a/shop/v3", "description": "wider, two layers", "can_open": true, "why_not": null, "here": null}, {"id": "shop@v2", "name": "shop, v2", "path": "arch-a/shop/v2", "address": "/made-up/registry/arch-a/shop/v2", "description": "the one before", "can_open": true, "why_not": null, "here": "shop-model"}, {"id": "garden@v1", "name": "garden, v1", "path": "arch-a/garden/v1", "address": "/made-up/registry/arch-a/garden/v1", "description": "a ranker alone", "can_open": false, "why_not": "This version holds no session model file.", "here": null}, {"id": "shop@v1", "name": "shop, v1", "path": "arch-a/shop/v1", "address": "/made-up/registry/arch-a/shop/v1", "description": "the first one kept", "can_open": true, "why_not": null, "here": null}]}, {"id": "reg-2", "name": "Kept by the team", "read": true, "count": 1, "versions": [{"id": "trail@v4", "name": "trail, v4", "path": "arch-a/trail/v4", "address": "/made-up/registry/arch-a/trail/v4", "description": "trail gear, fourth try", "can_open": true, "why_not": null, "here": null}]}]}}}}}' ;;
     captain-weights:parts-staged) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"part": "act", "edits": true, "edited": true, "stagedCell": 0.75}' ;;
     captain-weights:parts-tree) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"rankers": true, "deep": true, "tree": 3}' ;;
     captain-weights:tiny-walk) echo '{"show": {"model": "starter:tiny", "input": 3, "walk": 2}}' ;;
@@ -361,6 +361,7 @@ props_of() {
     captain-project:choose) echo '{"chooseModels": true}' ;;
     captain-project:home) echo '{"openExperiment": true}' ;;
     captain-project:list) echo '{"allProjects": true}' ;;
+    captain-project:more) echo "{\"project\": \"${PID:-}\", \"moreOpen\": true}" ;;  # a project's page with its More menu open
     captain-project:display) echo '{"allProjects": true, "displayOpen": true}' ;;  # the list with its Display popover open
     # The project's own page with its Ship section: the model's card when something is deployed (SHOT_STAGED=1),
     # the places to deploy when nothing is. The project is named, because the Explorer's pick is not kept.

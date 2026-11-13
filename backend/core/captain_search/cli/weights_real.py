@@ -164,8 +164,22 @@ def rankers(model: str = typer.Argument(..., help="a session model with rankers,
 
 
 @weights_app.command("registry")
-def registry(where: str = typer.Argument(..., help="a folder, or an s3:// address, that holds version folders")):
-    """The trained versions under a folder or an address that can be brought in. Read only: nothing is written there."""
+def registry(where: Optional[str] = typer.Argument(None, help="nothing (every model registry attached to this workspace), the id of one, or a folder or an s3:// address that holds version folders")):
+    """The trained versions that can be brought in. With no argument: from every model registry attached to this
+    workspace, with which are already here and which cannot be opened. Read only: nothing is written there."""
+    from .. import attach as AT
+
+    c = ctx()
+    if where in (None, "") or any(x.get("id") == where for x in AT.registries(c)):
+        r = _do(R.attached, c, where)
+        lines = []
+        for g in r["registries"]:
+            lines.append(f"{g['name']}: {g['says']}")
+            for v in g["versions"]:
+                state = f"already here as {v['here']}" if v["here"] else ("can be brought in" if v["can_open"] else v["why_not"])
+                lines.append(f"  {v['id']}  {state}" + (f"\n      {v['description']}" if v["description"] else "") + (f"\n      {v['address']}" if v["can_open"] and not v["here"] else ""))
+        emit(r, "\n".join([r["says"]] + lines))
+        return
     r = _do(R.registry, where)
     lines = [f"  {v['address']}" + (f"\n      {v['description']}" if v["description"] else "") for v in r["versions"]]
     emit(r, "\n".join([r["says"]] + lines + ([f"  and {r['count'] - r['listed']} more"] if r["count"] > r["listed"] else [])))
