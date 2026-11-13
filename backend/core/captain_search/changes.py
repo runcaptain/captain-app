@@ -37,6 +37,7 @@ import threading
 import time
 
 KEEP = 4096          # how many changes the feed remembers: a client further behind is told to read everything again
+RECENT_S = 5.0       # how far back a client's first answer names what changed: the time a screen may take to first ask
 HOLD_S = 25.0        # how long a long poll is held open with nothing to say
 LINGER_S = 10.0      # how long a topic still counts as listened to after the last request for it ended: a long poll
                      # comes straight back, and a client that vanished simply stops asking
@@ -142,7 +143,7 @@ class Feed:
             if not ts:
                 return self.seq
             self.seq += 1
-            self.log.append((self.seq, frozenset(ts)))
+            self.log.append((self.seq, frozenset(ts), time.monotonic()))
             self.cond.notify_all()
             seq, heard = self.seq, list(self._heard)
         for fn in heard:
@@ -170,7 +171,7 @@ class Feed:
         if self.log and since < self.log[0][0] - 1 and since < self.seq:
             return [], True                      # further behind than the feed remembers
         hit: dict[str, int] = {}
-        for seq, ts in reversed(self.log):   # newest first, so the first time a topic is met is its latest change
+        for seq, ts, _at in reversed(self.log):   # newest first, so the first time a topic is met is its latest change
             if seq <= since:
                 break
             for t in covered(ts, want):
@@ -182,7 +183,17 @@ class Feed:
         want = None if topics is None else set(topics)
         with self.cond:
             if not since:
-                return {"seq": self.seq, "changed": [], "reset": False, "at": _now()}
+                # A client's first request learns where the feed is. A screen read what it shows a moment before
+                # that, and a change in between would be told to nobody. So the first answer also names what
+                # changed in the last few seconds (`recent`), and the client reads those once more.
+                edge, hit = time.monotonic() - RECENT_S, {}
+                for seq, ts, at in reversed(self.log):
+                    if at < edge:
+                        break
+                    for t in covered(ts, want):
+                        hit.setdefault(t, seq)
+                return {"seq": self.seq, "changed": [], "reset": False, "at": _now(),
+                        "recent": [{"topic": t, "seq": hit[t]} for t in sorted(hit)]}
             changed, reset = self._since(int(since), want)
             return {"seq": self.seq, "changed": changed, "reset": reset, "at": _now()}
 
@@ -474,7 +485,7 @@ class Watcher:
             t0 = time.monotonic()
             try:
                 ts = self.scan()
-                if ts:
+                if ts and self._on():      # a watcher that was replaced meanwhile says nothing more
                     FEED.bump(*ts)
             except Exception:  # noqa: BLE001
                 pass
@@ -596,7 +607,7 @@ class Watcher:
                             pass
                     if not self._mine(d, now):
                         out |= self._topics_of(d)
-                if out:
+                if out and self._on():
                     FEED.bump(*out)
             return True
         finally:

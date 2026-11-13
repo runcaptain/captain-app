@@ -30,5 +30,29 @@ const brand = await mount({ part: 'brand' });
 assert.deepEqual(brand.filter(isExplorers), [], `the brand mark reads nothing of the Explorer's, the team's views or MLflow: ${brand.filter(isExplorers)}`);
 const side = await mount({});
 assert.ok(side.some(isExplorers), `the sidebar itself does: ${[...new Set(side)].join(' ')}`);
+
+// ---- the models are asked for once at a start, also when the live channel only connects a moment later -------------
+// The channel calls its watchers when it reconnects. The MLflow list read again then, which asked the tracking
+// server's models a second time at every start, one second after the first.
+{
+  let feedUp = false;
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const p = new URL(url).pathname;
+    if (p === '/api/changes' && !feedUp) { asked.push(p); return { status: 503, ok: false, text: async () => '{}' }; }
+    return real(url);
+  };
+  asked.length = 0;
+  globalThis.__props = {};
+  const h = harness(Nav);
+  await h.start();
+  h.mod.explorer.openMlflow(h.cx);                       // its heading was left open: read at the start
+  for (let i = 0; i < 6; i++) { await h.layoutLists({}); await h.idle(60); }   // the channel is down: reconnecting
+  feedUp = true;
+  for (let i = 0; i < 30; i++) { await h.layoutLists({}); await h.idle(120); } // and now it connects
+  const models = asked.filter((p) => p === '/api/mlflow/models').length;
+  assert.equal(models, 1, `the registered models were asked for ${models} times at one start`);
+  globalThis.fetch = real;
+}
 console.log('nav brand: ok');
 process.exit(0);

@@ -122,7 +122,8 @@ export class Explorer {
     const m = this.mlflow;
     if (!this.mlflowLoaded || !m.status) return false;
     if (!m.status.configured) return true;
-    return Array.isArray(m.experiments) && !m.experiments.length && Array.isArray(m.models) && !m.models.length;
+    // Not "nothing yet" while the models are still being read, or the catalog is limiting requests.
+    return Array.isArray(m.experiments) && !m.experiments.length && Array.isArray(m.models) && !m.models.length && !m.modelsSaid && !m.expSaid;
   }
 
   mlflowRow(c) {
@@ -135,7 +136,12 @@ export class Explorer {
         .child(div().size(12).flex_none().flex().items_center().justify_center().text_color(c.grey500).child(svg(icon(open ? "chevron-down" : "chevron-right")).size(11)))
         .child(Brand(c, "mlflow", 13))
         // One line when there is nothing in it: said once it has been read, never guessed.
-        .child(div().id("ex-mlflow-label").flex_1().min_w(0).truncate().child(this.mlflowEmpty() ? "MLflow: nothing yet" : "MLflow")))
+        .child(div().id("ex-mlflow-label").flex_1().min_w(0).truncate().child(this.mlflowEmpty() ? "MLflow: nothing yet" : "MLflow"))
+        // Read again, for a person who wants it now. The lists are kept five minutes otherwise, because the server's
+        // limit can be a whole organisation's. It still waits out a limit the server set, and the list says so.
+        .when(this.mlflowLoaded && Boolean(this.mlflow.status?.configured), (e) => e.child(div().id("ex-mlflow-again").size(18).flex_none().flex().items_center().justify_center()
+          .rounded(4).text_color(c.grey500).cursor_pointer().hover((s) => s.bg(c.surface2)).tooltip("Read again").accessibility_label("Read again")
+          .on_click((_e, cx) => { cx.stop_propagation?.(); this.mlflow.readAgain(cx); }).child(svg(icon("refresh-cw")).size(11)))))
       // Empty, it is one line and stays closed: there is nothing under it to show.
       .when(open && !this.mlflowEmpty(), (e) => e.child(div().pl(10).child(this.mlflow.render(c, 220))));
   }

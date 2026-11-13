@@ -344,30 +344,58 @@ def mlflow_configure(body: dict):
 
 
 @app.get("/api/mlflow/experiments", dependencies=A)
-def mlflow_experiments():
+def mlflow_experiments(fresh: bool = False, check: bool = False):
+    """{experiments, state, text, retry_in_s}, at once, always, by the same rules as the registered models below:
+    what was read last, read again behind the answer, one call at a time, and never an error for what the
+    tracking server does. `fresh=true` is a person asking to read again now.
+
+    `check=true` is the Connect MLflow form asking whether the connection it just saved works: one call, waited
+    for, answered as the list, and a refusal or an unreachable server is the error it always was. It takes its
+    turn behind any background read, and is not made at all while the server has said to slow down."""
     from . import mlflow_bridge as MF
 
-    return MF.experiments(ctx())
+    if check:
+        left = MF.limited_for(ctx())
+        if left > 0:
+            raise HTTPException(429, f"The model catalog is limiting requests. Try again in {MF._span(max(1, int(round(left))))}.")
+        try:
+            found = MF.experiments(ctx(), timeout=MF.CALL_S, paced=True)
+        except MF.RateLimited as e:
+            with MF._keep_lock:
+                MF._WAIT[MF._server(ctx())] = {"until": time.monotonic() + (e.wait or MF.LIMITED_S), "tries": 1}
+            raise HTTPException(429, "The model catalog is limiting requests. Try again in a minute.") from None
+        MF._keep(MF._keep_key(ctx(), False, "experiments"), found)
+        return found
+    return MF.experiments_kept(ctx(), fresh=fresh)
 
 
 @app.get("/api/mlflow/experiments/{exp_id}/runs", dependencies=A)
 def mlflow_runs(exp_id: str, limit: int = 100):
     from . import mlflow_bridge as MF
 
-    return MF.runs(ctx(), exp_id, limit)
+    try:
+        return MF.runs(ctx(), exp_id, limit, paced=True)
+    except MF.RateLimited as e:   # the server said to slow down: said in words, and nothing was asked of it
+        left = MF.limited_for(ctx()) or e.wait or MF.LIMITED_S
+        if not MF.limited_for(ctx()):
+            with MF._keep_lock:
+                MF._WAIT[MF._server(ctx())] = {"until": time.monotonic() + left, "tries": 1}
+        raise HTTPException(429, f"The model catalog is limiting requests. Try again in {MF._span(max(1, int(round(left))))}.") from None
 
 
 @app.get("/api/mlflow/models", dependencies=A)
-def mlflow_models(include_system: bool = False):
+def mlflow_models(include_system: bool = False, fresh: bool = False):
     """Registered models. On Databricks: Unity Catalog, then the legacy workspace registry when it's on. Databricks'
     built-in models (the system catalog) are left out unless include_system=true.
 
-    Answered at once from the last read when there is one, also right after a start, and read again behind that:
-    the change feed says `mlflow` when the list is new (mlflow_bridge.models_kept). The first read ever waits for
-    the server, three seconds a call at most."""
+    {models, state, text, retry_in_s}, at once, always: what was read last, or an empty list with a sentence when
+    nothing has been read yet ("reading"), or when the catalog said to slow down ("limited"). The reading happens
+    behind the answer, gently, and the change feed says `mlflow` when it lands (mlflow_bridge.models_kept). The
+    route does not fail for anything the tracking server does. What is kept is read again after five minutes, or
+    when a person asks (`fresh=true`), which still waits out a limit the server set."""
     from . import mlflow_bridge as MF
 
-    return MF.models_kept(ctx(), include_system=include_system)
+    return MF.models_kept(ctx(), include_system=include_system, fresh=fresh)
 
 
 @app.post("/api/mlflow/links", dependencies=A)

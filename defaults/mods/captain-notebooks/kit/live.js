@@ -138,6 +138,9 @@ export function livePump(cx) {
     const first = S.seq === null;
     const reset = !!r.data.reset || (S.seq !== null && r.data.seq < S.seq);
     const changed = (r.data.changed ?? []).map((x) => (typeof x === "string" ? x : x?.topic)).filter(Boolean);
+    // The first answer: where the feed is, and what changed in the few seconds before. A screen read what it shows
+    // just before this, so a change in that time would otherwise be told to nobody: those topics are read once more.
+    const recent = first ? (r.data.recent ?? []).map((x) => (typeof x === "string" ? x : x?.topic)).filter(Boolean) : [];
     S.seq = r.data.seq;
     S.failures = 0;
     setState("live");
@@ -146,6 +149,7 @@ export function livePump(cx) {
     // Back after being down, or told that something was missed: every watcher reads once.
     if (back || (reset && !first)) tell(back ? "reconnected" : "reset");
     else if (changed.length) tell("changed", changed);
+    else if (recent.length) tell("changed", recent);
     if (back) cx?.notify?.();
   };
   if (cx?.spawn) cx.spawn(go); else go(cx);
