@@ -943,6 +943,10 @@ def _sets_out(st: State) -> dict:
     for which in SET_NAMES:
         got = _resolve(st, which)
         out[which] = {"defined": False} if got is None or len(got[0]) == 0 else {"defined": True, "of": int(len(got[0])), "says": got[2]}
+        if which == "held_out" and out[which]["defined"]:
+            # A fact about the version the session was opened on, before any edit: not a score of the caller's work.
+            m = _measure(st.net(base=True), got[0], got[1])
+            out[which]["base"] = {"model": WS.ref_of(st.model, st.doc["version"]), "cost": m["cost"], "right": m["right"], "of": int(len(got[0]))}
     return out
 
 
