@@ -118,7 +118,7 @@ def test_the_whole_network_carries_practice_examples_and_never_the_held_out_ones
     assert w["test"] == [] and len(w["examples"]) == 24 and set(w["examples"][0]) == {"name", "x", "y"}
     assert w["inputNames"] == ["x1", "x2"] and w["squish"] == "sigmoid" and w["synthetic"] is True
     d = WS.whole(*WS.load(ctx, "digits"), ctx)
-    assert d["inputShape"] == [28, 28] and len(d["examples"][0]["y"]) == 10 and d["examples"][0]["name"].startswith("practice 0: ")
+    assert d["inputShape"] == [28, 28] and len(d["examples"][0]["y"]) == 10 and d["examples"][0]["name"].startswith("example 1: ")
 
 
 def test_a_folder_from_any_trainer_comes_in_as_a_version_and_can_be_put_in_a_project(ctx, tmp_path):

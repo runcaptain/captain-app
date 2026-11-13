@@ -99,7 +99,7 @@ def generate(spec: dict) -> tuple[np.ndarray, np.ndarray]:
 
 def _sets(generator: str, practice: int, pool: int, held: int) -> dict:
     return {
-        "practice": {"generator": generator, "n": practice, "seed": 101, "says": "examples anyone may look at"},
+        "practice": {"generator": generator, "n": practice, "seed": 101, "says": "examples anyone may look at. They are never part of a score"},
         "evaluation": {"generator": generator, "n": pool, "seed": 202, "says": "the pool the target and should-not-change sets are drawn from, never shown"},
         "held_out": {"generator": generator, "n": held, "seed": 303, "says": "the held-out set, never shown"},
     }

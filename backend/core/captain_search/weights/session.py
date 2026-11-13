@@ -9,7 +9,13 @@ The record is written here, by the operations themselves. Nothing a caller passe
   - what they used: how many raw numbers were shown, each forward pass and what it held, whether gradients were
     computed, how many evaluations the tool ran
   - every operation with its arguments, every edit with its patch, and the share of numbers that now differ
+  - whether a score was shown to the caller, and which operation showed the first one
   - `weights_alone`, worked out from the above each time it is asked for
+
+A session opened blind (`feedback` off) measures and stores every score and shows none until it is saved or
+closed. Only such a session can make edits and still read "from the weights alone".
+
+In every sentence a person reads, layers and neurons are counted from 1. In every field they are counted from 0.
 
     weights/<model>/sessions/<id>/session.json      the record, replaced on every operation
     weights/<model>/sessions/<id>/patches/<n>.json  one edit's patch, written once
@@ -37,6 +43,8 @@ GRAD_CAP = 4096        # a gradient table larger than this is left out, and its 
 EVENTS_SHOWN = 100     # how many events a session answer carries (the record keeps all of them)
 DEFAULTS = {"you": {"raw_weights": True, "sandbox": False, "forward_passes": 50},
             "agent": {"raw_weights": True, "sandbox": False, "forward_passes": 0}}
+SCORE_KEYS = ("cost", "cost_before", "cost_after", "predicted", "result", "score_sentence")
+BLIND = "This session is blind: the scores are measured and kept, and shown when it is saved or closed."
 PASS_INPUTS = 32
 
 
@@ -119,10 +127,10 @@ class State:
         try:
             k = int(k)
         except (TypeError, ValueError):
-            raise WeightsError(f"A layer is a number from 0. {k!r} is not one.") from None
+            raise WeightsError(f"A layer is a whole number. {k!r} is not one.") from None
         layers = self.manifest["layers"]
         if not 0 <= k < len(layers):
-            raise WeightsError(f"This network has {len(layers)} layers, numbered from 0. There is no layer {k}.")
+            raise WeightsError(f"This network has {len(layers)} layers. The layer asked for is not one of them.")
         return layers[k]
 
     def where(self, tensor: str) -> tuple[int, str]:
@@ -145,12 +153,43 @@ class State:
     def total(self) -> int:
         return int(sum(t.size for t in self.base.values()))
 
-    def event(self, kind: str, sentence: str, by: str | None = None, **fields) -> dict:
+    def event(self, kind: str, sentence: str, by: str | None = None, score_sentence: str = "", **fields) -> dict:
+        """Add an event to the record. `score_sentence` and the SCORE_KEYS fields are scores: `show` leaves them
+        out for a blind session until it is saved or closed."""
         ev = {"id": f"e{len(self.doc['events']) + 1}", "seq": len(self.doc["events"]) + 1, "at": WS.now(),
               "by": _by(by, self.who), "kind": kind, "touched": {"neurons": [], "weights": []}, **fields}
         ev["sentence"] = sentence
+        if score_sentence:
+            ev["score_sentence"] = score_sentence
         self.doc["events"].append(ev)
         return ev
+
+    @property
+    def scores_visible(self) -> bool:
+        return bool(self.doc["allowed"].get("feedback", True) or self.doc.get("revealed"))
+
+    def show(self, ev: dict) -> dict:
+        """An event as a caller sees it: with its scores, or without them while the session is blind."""
+        out = {k: v for k, v in ev.items() if k != "score_sentence"}
+        if self.scores_visible:
+            if ev.get("score_sentence"):
+                out["sentence"] = ev["sentence"] + " " + ev["score_sentence"]
+            return out
+        hidden = [k for k in SCORE_KEYS if k in out]
+        for k in hidden:
+            out.pop(k)
+        if hidden:
+            out["scores"] = "hidden"
+        return out
+
+    def saw_score(self, ev: dict, op: str) -> None:
+        """A score was shown to the caller. The first time is kept: it is what ends "from the weights alone"."""
+        if self.doc["used"].get("score_seen") is None:
+            self.doc["used"]["score_seen"] = {"event": ev["id"], "seq": ev["seq"], "op": op}
+
+    def open_for_changes(self) -> None:
+        if self.doc.get("closed"):
+            raise WeightsError("This session is closed. Open a new one to go on.")
 
 
 def _by(by, default: str) -> str:
@@ -184,12 +223,43 @@ def _tell(st: State) -> None:
     CH.bump("weights", f"weights:{st.model}", f"weights-session:{st.sid}")
 
 
-def _do(ctx, sid: str, fn, watch: bool = False):
-    """Run one operation on a session and write its record. `watch` is a screen looking: nothing is recorded or
-    counted, and nothing is refused for want of an allowance."""
+def _looks_key(sid: str) -> str:
+    return f"weights-looks/{sid}.json"    # outside weights/, so counting a look tells no screen to read again
+
+
+def _looks(ctx, sid: str) -> dict:
+    try:
+        return json.loads(ctx.store.get(_looks_key(sid)).decode())
+    except (NotFound, ValueError):
+        return {"count": 0, "numbers": 0, "last": None}
+
+
+def _note_look(st: "State") -> None:
+    """A screen looked at this session's weights. Counted beside the record, so no look is traceless."""
+    for _ in range(4):
+        try:
+            data, tag = st.ctx.store.get_with_tag(_looks_key(st.sid))
+            d = json.loads(data.decode())
+        except (NotFound, ValueError):
+            d, tag = {"count": 0, "numbers": 0, "last": None}, None
+        d = {"count": d["count"] + 1, "numbers": d["numbers"] + int(getattr(st, "looked", 0)), "last": WS.now()}
+        try:
+            st.ctx.store.put_if(_looks_key(st.sid), json.dumps(d).encode(), tag)
+            return
+        except Conflict:
+            continue
+
+
+def _do(ctx, sid: str, fn, watch=False):
+    """Run one operation on a session and write its record.
+
+    `watch=True` is a screen showing a session's weights to a person looking on: the look is not an event and is
+    not held to the session's allowances, and it is counted beside the record ("looked at by the screen").
+    `watch="record"` reads the record itself and counts nothing. Nothing that runs the network takes `watch`."""
     for _ in range(8):
         st = _load(ctx, sid)
-        st.watch = watch
+        st.watch = bool(watch)
+        st.looked = 0
         try:
             out = fn(st)
         except Refused as e:
@@ -202,6 +272,8 @@ def _do(ctx, sid: str, fn, watch: bool = False):
                     pass
             raise
         if watch:
+            if watch is True:
+                _note_look(st)
             return out
         try:
             _save(st)
@@ -218,11 +290,20 @@ def ledger(st: State) -> dict:
     """What was allowed and what was used. `weights_alone` and `label` are worked out here, never stored."""
     a, u = st.doc["allowed"], st.doc["used"]
     changed, total = st.changed(), st.total()
-    alone = (not a["sandbox"]) and u["forward_used"] == 0
+    feedback = bool(a.get("feedback", True))
+    seen = u.get("score_seen")
+    # A score shown to the caller is feedback from running the network. In a session with feedback, the first one
+    # shown ends "from the weights alone". A blind session shows none until it is saved or closed, and loses the
+    # label only if it goes on editing after that.
+    edited_after = bool(seen) and any(e["kind"] in ("edit", "undo", "redo") and e["seq"] > seen["seq"] for e in st.doc["events"])
+    scored = bool(seen) and (feedback or edited_after)
+    alone = (not a["sandbox"]) and u["forward_used"] == 0 and not scored
     if u["forward_used"]:
         label = f"with {u['forward_used']} of {a['forward_passes']} forward passes"
     elif a["sandbox"]:
         label = "from the weights, with code, network not run"
+    elif scored:
+        label = "from the weights, with scores shown along the way"
     else:
         label = "from the weights alone"
     if u["training_steps"]:
@@ -231,7 +312,10 @@ def ledger(st: State) -> dict:
             "sandbox_used": u["sandbox_used"], "forward_allowed": a["forward_passes"], "forward_used": u["forward_used"],
             "pass_inputs": a["pass_inputs"], "gradients_computed": u["gradients_computed"], "evaluations": u["evaluations"],
             "training_steps": u["training_steps"], "changed": changed, "total": total,
-            "share": round(changed / total, 6) if total else 0.0, "weights_alone": alone, "label": label}
+            "share": round(changed / total, 6) if total else 0.0, "feedback": feedback, "scores_shown": bool(seen),
+            "first_score": {"event": seen["event"], "op": seen["op"]} if seen else None,
+            "screen_looks": _looks(st.ctx, st.sid)["count"], "screen_numbers": _looks(st.ctx, st.sid)["numbers"],
+            "weights_alone": alone, "label": label}
 
 
 def _edits_out(st: State) -> list[dict]:
@@ -243,16 +327,18 @@ def _session_out(st: State, events: int = EVENTS_SHOWN) -> dict:
     d = st.doc
     return {"id": d["id"], "model": d["model"], "version": d["version"], "base": WS.ref_of(d["model"], d["version"]),
             "who": d["who"], "opened_at": d["opened_at"], "ledger": ledger(st), "sets": _sets_out(st),
-            "edits": _edits_out(st), "events": d["events"][-events:] if events else [], "event_count": len(d["events"]),
-            "saved": d.get("saved") or []}
+            "edits": _edits_out(st), "events": [st.show(e) for e in d["events"][-events:]] if events else [],
+            "event_count": len(d["events"]), "saved": d.get("saved") or [], "closed": bool(d.get("closed"))}
 
 
 # ---- opening ------------------------------------------------------------------------------------------------------------
 
 def open_session(ctx, model: str, *, by: str = "you", name: str | None = None, raw_weights: bool | None = None,
-                 sandbox: bool | None = None, forward_passes: int | None = None, pass_inputs: int | None = None) -> dict:
+                 sandbox: bool | None = None, forward_passes: int | None = None, pass_inputs: int | None = None,
+                 feedback: bool | None = None) -> dict:
     """Open a session on a model (`digits`, or `digits@v2` for one version). The allowances are fixed here, at the
-    start, and cannot be changed later."""
+    start, and cannot be changed later. `feedback=False` opens it blind: scores are measured and kept, and shown
+    only when the session is saved or closed."""
     from ..workspace import whoami
 
     mname, version = WS.split_ref(model)
@@ -270,16 +356,19 @@ def open_session(ctx, model: str, *, by: str = "you", name: str | None = None, r
         "id": sid, "model": mname, "version": m["version"], "opened_at": WS.now(),
         "who": {"kind": "agent" if kind == "agent" else "person", "name": name or (whoami() if kind == "you" else "agent")},
         "allowed": {"raw_weights": d["raw_weights"] if raw_weights is None else bool(raw_weights),
-                    "sandbox": d["sandbox"] if sandbox is None else bool(sandbox), "forward_passes": passes, "pass_inputs": per},
+                    "sandbox": d["sandbox"] if sandbox is None else bool(sandbox), "forward_passes": passes, "pass_inputs": per,
+                    "feedback": True if feedback is None else bool(feedback)},
         "used": {"weights_read": 0, "sandbox_used": False, "forward_used": 0, "passes": [], "gradients_computed": False,
-                 "evaluations": 0, "training_steps": 0},
+                 "evaluations": 0, "training_steps": 0, "score_seen": None},
+        "revealed": False, "closed": False,
         "sets": {"target": None, "should_not_change": None},
         "edits": [], "actions": [], "events": [], "saved": [],
     }
     st = State(ctx, doc, None)
     a = doc["allowed"]
     st.event("open", f"{_Who(st)} opened {WS.ref_of(mname, m['version'])}. Allowed: raw weights {'yes' if a['raw_weights'] else 'no'}, "
-                     f"a sandbox {'yes' if a['sandbox'] else 'no'}, {a['forward_passes']} forward passes.", allowed=dict(a))
+                     f"a sandbox {'yes' if a['sandbox'] else 'no'}, {a['forward_passes']} forward passes, scores "
+                     f"{'shown as it goes' if a['feedback'] else 'hidden until it is saved or closed'}.", allowed=dict(a))
     try:
         ctx.store.put_new(_skey(mname, sid), json.dumps(doc).encode())
     except AlreadyExists:
@@ -309,29 +398,46 @@ def session_for(ctx, model: str) -> dict:
     return session(ctx, have[0]["id"]) if have else open_session(ctx, model)
 
 
+def current_digest(ctx, sid: str) -> dict:
+    """A checksum of the session's numbers as they are now, and what it has to do with saved versions:
+    {digest, base, changed, saved: [refs], matches: the saved ref with these exact numbers, or None}.
+    For code that must not save the same numbers twice. It reads no number out, so it is not an event."""
+    def fn(st):
+        digest = WS.digest(st.cur)
+        match = None
+        for ref in reversed(st.doc.get("saved") or []):
+            name, version = WS.split_ref(ref)
+            if WS.manifest(ctx, name, version).get("sha256") == digest:
+                match = ref
+                break
+        return {"digest": digest, "base": WS.ref_of(st.model, st.doc["version"]), "changed": st.changed(),
+                "saved": list(st.doc.get("saved") or []), "matches": match}
+    return _do(ctx, sid, fn, watch="record")
+
+
 def session(ctx, sid: str) -> dict:
-    return _do(ctx, sid, _session_out, watch=True)
+    return _do(ctx, sid, _session_out, watch="record")
 
 
 def events(ctx, sid: str, since: int = 0) -> dict:
     """The session's events after number `since`, oldest first."""
     def fn(st):
-        return {"session": st.sid, "model": st.model, "events": [e for e in st.doc["events"] if e["seq"] > int(since)],
+        return {"session": st.sid, "model": st.model, "events": [st.show(e) for e in st.doc["events"] if e["seq"] > int(since)],
                 "last": len(st.doc["events"])}
-    return _do(ctx, sid, fn, watch=True)
+    return _do(ctx, sid, fn, watch="record")
 
 
 def report(ctx, sid: str) -> dict:
     """The whole record: the allowances, what was used, every operation, every edit kept or taken back, and the label."""
     def fn(st):
         out = _session_out(st, events=0)
-        out["events"] = st.doc["events"]
+        out["events"] = [st.show(e) for e in st.doc["events"]]
         out["passes"] = st.doc["used"]["passes"]
         out["diff"] = _diff(st, listed=0)
         out["kept"] = [e for e in out["edits"] if e["state"] == "applied"]
         out["taken_back"] = [e for e in out["edits"] if e["state"] != "applied"]
         return out
-    return _do(ctx, sid, fn, watch=True)
+    return _do(ctx, sid, fn, watch="record")
 
 
 # ---- words --------------------------------------------------------------------------------------------------------------
@@ -346,6 +452,14 @@ def _g(x) -> str:
 
 def _plural(n: int, word: str) -> str:
     return f"{n:,} {word}{'' if n == 1 else 's'}"
+
+
+def _number_words(st: State, tensor: str, ix) -> str:
+    """One number by where it sits, counted from 1 as a person counts."""
+    k, kind = st.where(tensor)
+    if kind == "bias":
+        return f"the bias of layer {k + 1}, neuron {ix[0] + 1}"
+    return f"the weight into layer {k + 1}, neuron {ix[0] + 1} from neuron {ix[1] + 1}"
 
 
 # ---- reading ------------------------------------------------------------------------------------------------------------
@@ -364,6 +478,14 @@ def layers(ctx, sid: str, by: str | None = None, watch: bool = False) -> dict:
         return {"sizes": m["sizes"], "cost": m.get("cost"), "parameters": st.total(), "layers": rows,
                 "inputs": m.get("inputs"), "outputs": m.get("outputs"), "data": m.get("data")}
     return _do(ctx, sid, fn, watch)
+
+
+def session_layers(ctx, sid: str) -> list[dict]:
+    """The session's layers and their tensor names, for turning "layer 2" into a tensor. Shapes only: no numbers,
+    so it is not an event."""
+    def fn(st):
+        return [{"layer": k, "weight": {"tensor": ly["weight"]}, "bias": {"tensor": ly["bias"]}} for k, ly in enumerate(st.manifest["layers"])]
+    return _do(ctx, sid, fn, watch="record")
 
 
 def _span(text, size: int, what: str) -> tuple[int, int]:
@@ -413,6 +535,7 @@ def read(ctx, sid: str, tensor: str, rows=None, cols=None, by: str | None = None
                 raise WeightsError("A bias is one list of numbers. It has rows and no columns.")
             c0, c1 = 0, 1
             vals = t[r0:r1]
+        st.looked = int(vals.size)
         if not st.watch:
             if not st.doc["allowed"]["raw_weights"]:
                 raise Refused("This session may not see raw weights. It was opened without them, and that cannot be changed.")
@@ -483,16 +606,17 @@ def heatmap(ctx, sid: str, layer=0, neuron=None, by: str | None = None, watch: b
             js = [int(x) for x in (neuron if isinstance(neuron, (list, tuple)) else str(neuron).split(","))]
             for j in js:
                 if not 0 <= j < w.shape[0]:
-                    raise WeightsError(f"Layer {k} has {w.shape[0]} neurons, numbered from 0. There is no neuron {j}.")
+                    raise WeightsError(f"Layer {k + 1} has {w.shape[0]} neurons. The neuron asked for is not one of them.")
         shape = _grid_shape(st, k, w.shape[1])
         grids = [{"neuron": j, "bias": float(b[j]), "min": float(w[j].min()), "max": float(w[j].max()),
                   "grid": w[j].astype(float).reshape(shape).tolist()} for j in js]
         count = len(js) * (w.shape[1] + 1)
+        st.looked = count
         if not st.watch:
             if not st.doc["allowed"]["raw_weights"]:
                 raise Refused("This session may not see raw weights, and a heatmap is made of them.")
             st.doc["used"]["weights_read"] += count
-            st.event("read", f"{_Who(st, by)} looked at the incoming weights of {_plural(len(js), 'neuron')} in column {k + 1} as a grid.",
+            st.event("read", f"{_Who(st, by)} looked at the incoming weights of {_plural(len(js), 'neuron')} in layer {k + 1} as a grid.",
                      by, op="heatmap", tensor=ly["weight"], layer=k + 1, args={"neuron": js if neuron not in (None, "") else None},
                      count=count, touched={"neurons": [[k + 1, j] for j in js[:LIST_CAP]], "weights": []})
         return {"layer": k, "column": k + 1, "tensor": ly["weight"], "grid_shape": shape,
@@ -509,16 +633,17 @@ def template(ctx, sid: str, output=0, by: str | None = None, watch: bool = False
         try:
             j = int(output)
         except (TypeError, ValueError):
-            raise WeightsError(f"An output is a number from 0. {output!r} is not one.") from None
+            raise WeightsError(f"An output is a whole number. {output!r} is not one.") from None
         if not 0 <= j < w.shape[0]:
-            raise WeightsError(f"This network has {w.shape[0]} outputs, numbered from 0. There is no output {j}.")
+            raise WeightsError(f"This network has {w.shape[0]} outputs. The output asked for is not one of them.")
         shape = _grid_shape(st, k, w.shape[1])
         names = (st.manifest.get("outputs") or {}).get("names") or []
+        st.looked = int(w.shape[1] + 1)
         if not st.watch:
             if not st.doc["allowed"]["raw_weights"]:
                 raise Refused("This session may not see raw weights, and an output's template is made of them.")
             st.doc["used"]["weights_read"] += int(w.shape[1] + 1)
-            st.event("read", f"{_Who(st, by)} looked at the weights coming into output {j}.", by, op="template", tensor=ly["weight"],
+            st.event("read", f"{_Who(st, by)} looked at the weights coming into output {j + 1}.", by, op="template", tensor=ly["weight"],
                      layer=k + 1, neuron=j, count=int(w.shape[1] + 1), touched=_touch(st, k, "weight", range(j, j + 1), range(w.shape[1])))
         return {"layer": k, "column": k + 1, "output": j, "name": names[j] if j < len(names) else str(j), "bias": float(b[j]),
                 "weights": w[j].astype(float).tolist(), "grid_shape": shape, "grid": w[j].astype(float).reshape(shape).tolist(),
@@ -542,8 +667,8 @@ def _inputs(st: State, inputs=None, targets=None, example=None):
         x, y = _examples(st)
         for i in idx:
             if not 0 <= i < len(x):
-                raise WeightsError(f"There are {len(x)} practice examples, numbered from 0. There is no example {i}.")
-        return x[idx], np.asarray(y)[idx], "practice " + ", ".join(str(i) for i in idx)
+                raise WeightsError(f"There are {len(x)} examples. The example asked for is not one of them.")
+        return x[idx], np.asarray(y)[idx], "example" + ("s " if len(idx) != 1 else " ") + ", ".join(str(i + 1) for i in idx)
     if inputs is None:
         raise WeightsError("Give the inputs to run, or a practice example by number.")
     try:
@@ -562,8 +687,7 @@ def _inputs(st: State, inputs=None, targets=None, example=None):
 
 def _spend(st: State, n_inputs: int, op: str) -> None:
     """Count one forward pass, or refuse it past the allowance."""
-    if st.watch:
-        return
+    st.open_for_changes()
     a, u = st.doc["allowed"], st.doc["used"]
     if n_inputs > a["pass_inputs"]:
         raise Refused(f"One forward pass holds at most {a['pass_inputs']} inputs in this session, and this one has {n_inputs}.")
@@ -598,7 +722,7 @@ def _cost_terms(net: N.Network, out: np.ndarray, want: np.ndarray) -> list[dict]
     return rows
 
 
-def forward(ctx, sid: str, inputs=None, targets=None, example=None, by: str | None = None, watch: bool = False) -> dict:
+def forward(ctx, sid: str, inputs=None, targets=None, example=None, by: str | None = None) -> dict:
     """Run the network on inputs. Costs one forward pass."""
     def fn(st):
         x, y, name = _inputs(st, inputs, targets, example)
@@ -609,15 +733,13 @@ def forward(ctx, sid: str, inputs=None, targets=None, example=None, by: str | No
         res = {"outputs": np.round(out, 6).tolist(), "predicted": [_answer(r) for r in out]}
         if y is not None:
             res["cost"] = N.cost(net, xb, y)
-        if not st.watch:
-            st.event("run", f"{_Who(st, by)} ran the network on {name}. That is forward pass {st.doc['used']['forward_used']} of "
-                            f"{st.doc['allowed']['forward_passes']}.", by, op="forward", input=name,
-                     inputs=len(xb), cost_after=res.get("cost"))
+        st.event("run", f"{_Who(st, by)} ran the network on {name}. That is forward pass {st.doc['used']['forward_used']} of "
+                        f"{st.doc['allowed']['forward_passes']}.", by, op="forward", input=name, inputs=len(xb), run_cost=res.get("cost"))
         return {**res, **_left(st)}
-    return _do(ctx, sid, fn, watch)
+    return _do(ctx, sid, fn)
 
 
-def activations(ctx, sid: str, inputs=None, targets=None, example=None, by: str | None = None, watch: bool = False) -> dict:
+def activations(ctx, sid: str, inputs=None, targets=None, example=None, by: str | None = None) -> dict:
     """Every neuron's weighted sum and activation for one input. Costs one forward pass."""
     def fn(st):
         x, y, name = _inputs(st, inputs, targets, example)
@@ -636,16 +758,13 @@ def activations(ctx, sid: str, inputs=None, targets=None, example=None, by: str 
             res["wanted"] = yb[0].tolist()
             res["cost"] = float(N.cost_each(net, acts[-1], yb)[0])
             res["cost_terms"] = _cost_terms(net, acts[-1][0], yb[0])
-        if not st.watch:
-            st.event("run", f"{_Who(st, by)} looked at every neuron's activation on {name}. That is forward pass {st.doc['used']['forward_used']} of "
-                            f"{st.doc['allowed']['forward_passes']}.", by, op="activations", input=name,
-                     inputs=1, cost_after=res.get("cost"))
+        st.event("run", f"{_Who(st, by)} looked at every neuron's activation on {name}. That is forward pass {st.doc['used']['forward_used']} of "
+                        f"{st.doc['allowed']['forward_passes']}.", by, op="activations", input=name, inputs=1, run_cost=res.get("cost"))
         return {**res, **_left(st)}
-    return _do(ctx, sid, fn, watch)
+    return _do(ctx, sid, fn)
 
 
-def gradients(ctx, sid: str, inputs=None, targets=None, example=None, layer=None, neuron=None, by: str | None = None,
-              watch: bool = False) -> dict:
+def gradients(ctx, sid: str, inputs=None, targets=None, example=None, layer=None, neuron=None, by: str | None = None) -> dict:
     """The cost and its gradient for every weight and bias, and what each neuron wants. Costs one forward pass and
     marks the session as having computed gradients."""
     def fn(st):
@@ -677,7 +796,7 @@ def gradients(ctx, sid: str, inputs=None, targets=None, example=None, layer=None
             ly = st.layer(layer)
             gw = g["layers"][int(layer)]["weight"]
             if not 0 <= int(neuron) < gw.shape[0]:
-                raise WeightsError(f"Layer {layer} has {gw.shape[0]} neurons, numbered from 0. There is no neuron {neuron}.")
+                raise WeightsError(f"Layer {int(layer) + 1} has {gw.shape[0]} neurons. The neuron asked for is not one of them.")
             res["row"] = {"layer": int(layer), "neuron": int(neuron), "tensor": ly["weight"], "gradient": gw[int(neuron)].tolist(),
                           "bias_gradient": float(g["layers"][int(layer)]["bias"][int(neuron)])}
         if layer not in (None, "") and int(layer) >= 1:
@@ -690,16 +809,15 @@ def gradients(ctx, sid: str, inputs=None, targets=None, example=None, layer=None
             if cells.size <= GRAD_CAP:
                 res["desires"] = {"layer": k, "of_column": k, "asked_by_column": k + 1, "cells": cells.tolist(),
                                   "sums": cells.sum(axis=1).tolist(), "exact": g["examples"] == 1}
-        if not st.watch:
-            st.doc["used"]["gradients_computed"] = True
-            st.event("gradients", f"{_Who(st, by)} computed the gradient of the cost on {name}. The cost is {_g(g['cost'])}.", by,
-                     op="gradients", input=name, inputs=len(xb), cost_after=g["cost"],
-                     touched={"neurons": [], "weights": [[t["layer"], *t["index"]] for t in top if len(t["index"]) == 2]})
+        st.doc["used"]["gradients_computed"] = True
+        st.event("gradients", f"{_Who(st, by)} computed the gradient of the cost on {name}. The cost is {_g(g['cost'])}.", by,
+                 op="gradients", input=name, inputs=len(xb), run_cost=g["cost"],
+                 touched={"neurons": [], "weights": [[t["layer"], *t["index"]] for t in top if len(t["index"]) == 2]})
         return {**res, **_left(st)}
-    return _do(ctx, sid, fn, watch)
+    return _do(ctx, sid, fn)
 
 
-def trace(ctx, sid: str, inputs=None, targets=None, example=None, path=None, by: str | None = None, watch: bool = False) -> dict:
+def trace(ctx, sid: str, inputs=None, targets=None, example=None, path=None, by: str | None = None) -> dict:
     """The chain rule along one path through the network for one input: three factors per layer. Costs one forward
     pass and marks the session as having computed gradients."""
     def fn(st):
@@ -718,18 +836,18 @@ def trace(ctx, sid: str, inputs=None, targets=None, example=None, path=None, by:
             raise WeightsError("A trace follows one example. Give one input.")
         t = N.trace(net, xb, y, p)
         _spend(st, 1, "trace")
-        if not st.watch:
-            st.doc["used"]["gradients_computed"] = True
-            st.event("gradients", f"{_Who(st, by)} traced the cost back along the path {', '.join(str(v) for v in t['path'])} on {name}.",
-                     by, op="trace", input=name, inputs=1, cost_after=t["cost"],
-                     touched={"neurons": [[c, j] for c, j in enumerate(t["path"])],
-                              "weights": [[s["layer"], *s["weight"]["index"]] for s in t["steps"]]})
+        st.doc["used"]["gradients_computed"] = True
+        st.event("gradients", f"{_Who(st, by)} traced the cost back along the path through neurons "
+                              f"{', '.join(str(v + 1) for v in t['path'])} (input first) on {name}.",
+                 by, op="trace", input=name, inputs=1, run_cost=t["cost"],
+                 touched={"neurons": [[c, j] for c, j in enumerate(t["path"])],
+                          "weights": [[s["layer"], *s["weight"]["index"]] for s in t["steps"]]})
         return {**t, **_left(st)}
-    return _do(ctx, sid, fn, watch)
+    return _do(ctx, sid, fn)
 
 
 def cost_slice(ctx, sid: str, tensor: str, index, inputs=None, targets=None, example=None, span: float | None = None,
-               points: int = 21, by: str | None = None, watch: bool = False) -> dict:
+               points: int = 21, by: str | None = None) -> dict:
     """The cost as one number is moved and every other stays put: a slice through one of the network's dimensions.
 
     The network is run once per point, so this costs `points` forward passes. Nothing is changed."""
@@ -754,15 +872,14 @@ def cost_slice(ctx, sid: str, tensor: str, index, inputs=None, targets=None, exa
         half = float(span) / 2 if span not in (None, "") else max(1.0, abs(now))
         if not half > 0:
             raise WeightsError("The span of a slice is a number above zero.")
-        if not st.watch:
-            a, u = st.doc["allowed"], st.doc["used"]
-            if len(xb) > a["pass_inputs"]:
-                raise Refused(f"One forward pass holds at most {a['pass_inputs']} inputs in this session, and this one has {len(xb)}.")
-            if u["forward_used"] + n_pts > a["forward_passes"]:
-                raise Refused(f"A slice of {n_pts} points runs the network {n_pts} times, and this session has "
-                              f"{max(0, a['forward_passes'] - u['forward_used'])} forward passes left.")
-            for _ in range(n_pts):
-                _spend(st, len(xb), "slice")
+        a, u = st.doc["allowed"], st.doc["used"]
+        if len(xb) > a["pass_inputs"]:
+            raise Refused(f"One forward pass holds at most {a['pass_inputs']} inputs in this session, and this one has {len(xb)}.")
+        if u["forward_used"] + n_pts > a["forward_passes"]:
+            raise Refused(f"A slice of {n_pts} points runs the network {n_pts} times, and of this session's forward passes there are "
+                          f"{max(0, a['forward_passes'] - u['forward_used'])} left.")
+        for _ in range(n_pts):
+            _spend(st, len(xb), "slice")
         slope = N.backprop(net, xb, y)["layers"][k][kind][ix]
         values = np.linspace(now - half, now + half, n_pts)
         target = net.layers[k].weight if kind == "weight" else net.layers[k].bias
@@ -774,21 +891,23 @@ def cost_slice(ctx, sid: str, tensor: str, index, inputs=None, targets=None, exa
             costs.append(N.cost(net, xb, y))
         target[ix] = now
         cost_now = N.cost(net, xb, y)
-        if not st.watch:
-            st.doc["used"]["gradients_computed"] = True
-            st.event("run", f"{_Who(st, by)} measured the cost along {tensor}{list(ix)} at {n_pts} points on {name}. "
-                            f"That used {n_pts} forward passes.", by, op="slice", tensor=tensor, input=name, inputs=len(xb),
-                     args={"index": list(ix), "points": n_pts, "span": 2 * half}, cost_after=cost_now,
-                     touched=_touch(st, k, kind, range(ix[0], ix[0] + 1), range(ix[1], ix[1] + 1) if kind == "weight" else None))
+        st.doc["used"]["gradients_computed"] = True
+        st.event("run", f"{_Who(st, by)} measured the cost at {n_pts} values of {_number_words(st, tensor, ix)} on {name}. "
+                        f"That used {n_pts} forward passes.", by, op="slice", tensor=tensor, input=name, inputs=len(xb),
+                 args={"index": list(ix), "points": n_pts, "span": 2 * half},
+                 result={"cost": cost_now, "slope": float(slope), "values": values.tolist(), "costs": costs},
+                 touched=_touch(st, k, kind, range(ix[0], ix[0] + 1), range(ix[1], ix[1] + 1) if kind == "weight" else None))
+        if not st.scores_visible:   # a blind session: measured and kept, shown when it is saved or closed
+            return {"tensor": tensor, "index": list(ix), "value": now, "measured": True, "scores": "hidden", "says": BLIND,
+                    "examples": len(xb), "dimensions": st.total(), **_left(st)}
         return {"tensor": tensor, "index": list(ix), "value": now, "cost": cost_now, "slope": float(slope), "values": values.tolist(),
                 "costs": costs, "examples": len(xb), "dimensions": st.total(), **_left(st)}
-    return _do(ctx, sid, fn, watch)
+    return _do(ctx, sid, fn)
 
 
 # ---- the three sets -------------------------------------------------------------------------------------------------------
 
 SET_NAMES = {"target": "target", "should_not_change": "should not change", "held_out": "held out"}
-_DEFAULT_SETS = {"target": {"examples": [0], "default": True}, "should_not_change": {"not_examples": [0], "default": True}}
 
 
 def _labels(y: np.ndarray) -> np.ndarray:
@@ -803,11 +922,12 @@ def _resolve(st: State, which: str):
     if which == "held_out":
         got = WS.sets(st.ctx, st.manifest, "held_out")
         return None if got is None else (got[0], got[1], "the model's held-out set")
-    spec = st.doc["sets"].get(which) or (_DEFAULT_SETS[which] if WS.sets(st.ctx, st.manifest, "practice") is not None else None)
+    spec = st.doc["sets"].get(which)
     if not spec:
         return None
     if "inputs" in spec:
-        return np.asarray(spec["inputs"], dtype=float), np.asarray(spec["targets"]), "examples given when the set was named"
+        n = len(spec["inputs"])
+        return np.asarray(spec["inputs"], dtype=float), np.asarray(spec["targets"]), f"{_plural(n, 'input')} given when the set was named"
     if "classes" in spec:
         got = WS.sets(st.ctx, st.manifest, "evaluation")
         if got is None:
@@ -815,17 +935,7 @@ def _resolve(st: State, which: str):
         x, y = got
         keep = np.isin(_labels(y), np.asarray(spec["classes"], dtype=int))
         return x[keep], np.asarray(y)[keep], "classes " + ", ".join(str(c) for c in spec["classes"]) + " from the evaluation pool"
-    x, y = _examples(st)
-    if "examples" in spec:
-        idx = [int(i) for i in spec["examples"]]
-        says = "practice example" + ("s " if len(idx) != 1 else " ") + ", ".join(str(i) for i in idx)
-    else:
-        drop = {int(i) for i in spec["not_examples"]}
-        idx = [i for i in range(len(x)) if i not in drop]
-        says = "every practice example but " + ", ".join(str(i) for i in sorted(drop))
-    if spec.get("default"):
-        says += ", by default. Name the real one with `cst weights sets`"
-    return x[idx], np.asarray(y)[idx], says
+    return None
 
 
 def _sets_out(st: State) -> dict:
@@ -840,7 +950,7 @@ def _check_spec(st: State, spec, which: str):
     if spec is None:
         return None
     if not isinstance(spec, dict):
-        raise WeightsError(f"The {SET_NAMES[which]} set is given as classes, practice examples, or inputs with targets.")
+        raise WeightsError(f"The {SET_NAMES[which]} set is given as classes, or as inputs with targets.")
     n_out = st.manifest["sizes"][-1]
     if "classes" in spec:
         cs = [int(c) for c in spec["classes"]]
@@ -848,20 +958,25 @@ def _check_spec(st: State, spec, which: str):
         if not cs or any(not 0 <= c < top for c in cs):
             raise WeightsError(f"Classes are numbers from 0 to {top - 1}.")
         return {"classes": cs}
-    if "examples" in spec or "not_examples" in spec:
-        key = "examples" if "examples" in spec else "not_examples"
-        idx = [int(i) for i in spec[key]]
-        n = len(_examples(st)[0])
-        if any(not 0 <= i < n for i in idx):
-            raise WeightsError(f"There are {n} practice examples, numbered from 0.")
-        return {key: idx}
+    if "example" in spec:
+        # "Fix this one": one of the model's examples, copied in as its inputs and wanted output. Only a target can
+        # be named this way: the examples are for looking at and are no measure of what must not change.
+        if which != "target":
+            raise WeightsError("Only the target can be one of the model's examples. The examples are never a measure of what must not change.")
+        x, y = _examples(st)
+        i = int(spec["example"])
+        if not 0 <= i < len(x):
+            raise WeightsError(f"There are {len(x)} examples. The example asked for is not one of them.")
+        yi = np.asarray(y[i])
+        spec = {"inputs": [x[i].tolist()], "targets": [int(yi)] if yi.ndim == 0 else [yi.tolist()]}
     if "inputs" in spec and "targets" in spec:
         x = np.asarray(spec["inputs"], dtype=float)
         net = st.net()
         xb = N._batch(net, x)
         N._targets(net, np.asarray(spec["targets"]), len(xb))
         return {"inputs": xb.tolist(), "targets": np.asarray(spec["targets"]).tolist()}
-    raise WeightsError(f"The {SET_NAMES[which]} set is given as classes, practice examples, or inputs with targets.")
+    raise WeightsError(f"The {SET_NAMES[which]} set is given as classes, or as inputs with targets. The examples shown with a "
+                       "network are for looking at and are never scored.")
 
 
 def set_sets(ctx, sid: str, target=None, should_not_change=None, by: str | None = None) -> dict:
@@ -876,6 +991,7 @@ def set_sets(ctx, sid: str, target=None, should_not_change=None, by: str | None 
         for which in ("target", "should_not_change"):
             if (target if which == "target" else should_not_change) is not None and not out[which]["defined"]:
                 raise WeightsError(f"The {SET_NAMES[which]} set would be empty. Nothing in the pool matches it.")
+        st.open_for_changes()
         st.event("sets", f"{_Who(st, by)} named the sets: target is {out['target'].get('says', 'not defined')}, should not change is "
                          f"{out['should_not_change'].get('says', 'not defined')}.", by, op="sets",
                  args={"target": st.doc["sets"]["target"], "should_not_change": st.doc["sets"]["should_not_change"]})
@@ -900,21 +1016,15 @@ def _both(a: dict, b: dict, name: str, of: int, says: str | None = None) -> dict
     return out
 
 
-def _three(st: State, before: N.Network, after: N.Network, override: dict | None = None) -> dict:
+def _three(st: State, before: N.Network, after: N.Network) -> dict:
     """The three sets measured on two networks, as {target, keep, test}. A set that is not defined is left out."""
     out = {}
-    keep = dict(st.doc["sets"])
-    try:
-        if override:
-            st.doc["sets"] = {**keep, **override}
-        for key, which in (("target", "target"), ("keep", "should_not_change"), ("test", "held_out")):
-            got = _resolve(st, which)
-            if got is None or len(got[0]) == 0:
-                continue
-            x, y, _ = got
-            out[key] = _both(_measure(before, x, y), _measure(after, x, y), SET_NAMES[which], int(len(x)))
-    finally:
-        st.doc["sets"] = keep
+    for key, which in (("target", "target"), ("keep", "should_not_change"), ("test", "held_out")):
+        got = _resolve(st, which)
+        if got is None or len(got[0]) == 0:
+            continue
+        x, y, _ = got
+        out[key] = _both(_measure(before, x, y), _measure(after, x, y), SET_NAMES[which], int(len(x)))
     return out
 
 
@@ -961,11 +1071,17 @@ def evaluate(ctx, sid: str, by: str | None = None) -> dict:
         res = {"sets": sets, "drift": _drift(st, drift_x) if drift_x is not None else [], "drift_on": drift_on,
                "before_is": WS.ref_of(st.model, st.doc["version"]), "evaluations": st.doc["used"]["evaluations"],
                "changed": st.changed(), "total": st.total()}
-        st.event("evaluate", f"{_Who(st, by)} measured the network against its base: " + (", and ".join(words) or "no set is defined") + ".",
-                 by, op="evaluate", cost_before=tg.get("before") if tg["defined"] else ho.get("before"),
-                 cost_after=tg.get("after") if tg["defined"] else ho.get("after"),
-                 cost={k: {x: v for x, v in sets[w].items() if x not in ("defined", "says")}
-                       for k, w in (("target", "target"), ("keep", "should_not_change"), ("test", "held_out")) if sets[w]["defined"]})
+        ev = st.event("evaluate", f"{_Who(st, by)} measured the network against its base.", by,
+                      score_sentence=("The " + ", and ".join(words) + ".").replace("The cost", "Cost") if words else "No set is defined.",
+                      op="evaluate", cost_before=tg.get("before") if tg["defined"] else ho.get("before"),
+                      cost_after=tg.get("after") if tg["defined"] else ho.get("after"),
+                      cost={k: {x: v for x, v in sets[w].items() if x not in ("defined", "says")}
+                            for k, w in (("target", "target"), ("keep", "should_not_change"), ("test", "held_out")) if sets[w]["defined"]},
+                      result={"sets": sets, "drift": res["drift"], "drift_on": drift_on})
+        if not st.scores_visible:
+            return {"measured": True, "scores": "hidden", "says": BLIND, "before_is": res["before_is"],
+                    "evaluations": res["evaluations"], "changed": res["changed"], "total": res["total"]}
+        st.saw_score(ev, "evaluate")
         return res
     return _do(ctx, sid, fn)
 
@@ -981,7 +1097,7 @@ def _rows(spec, size: int, what: str) -> list[int]:
     js = [int(v) for v in (spec if isinstance(spec, (list, tuple)) else str(spec).split(","))]
     for j in js:
         if not 0 <= j < size:
-            raise WeightsError(f"There are {size} {what}, numbered from 0. There is no {j}.")
+            raise WeightsError(f"There are {size} {what}. One that was asked for is not among them.")
     return js
 
 
@@ -1019,20 +1135,20 @@ def _plan(st: State, req: dict) -> list[tuple[str, np.ndarray, np.ndarray]]:
     # The neuron form: a column and a neuron in it.
     if req.get("tensor") in (None, ""):
         if req.get("layer") in (None, "") or req.get("neuron") in (None, ""):
-            raise WeightsError("An edit names a tensor, or a neuron by its column (`layer`, 1 is the first after the input) and its number.")
+            raise WeightsError("An edit names a tensor, or a neuron by its `layer` (1 is the first after the input) and its `neuron`.")
         col = int(req["layer"])
         if not 1 <= col <= len(st.manifest["layers"]):
-            raise WeightsError(f"Neurons that can be edited are in columns 1 to {len(st.manifest['layers'])}. Column {col} is not one.")
+            raise WeightsError(f"A neuron that can be edited is in layer 1 to {len(st.manifest['layers'])}, and `layer` was {col}.")
         ly = st.manifest["layers"][col - 1]
         w, b = st.cur[ly["weight"]], st.cur[ly["bias"]]
         j = int(req["neuron"])
         if not 0 <= j < w.shape[0]:
-            raise WeightsError(f"Column {col} has {w.shape[0]} neurons, numbered from 0. There is no neuron {j}.")
+            raise WeightsError(f"Layer {col} has {w.shape[0]} neurons. The neuron asked for is not one of them.")
         n_in = w.shape[1]
         row = j * n_in + np.arange(n_in)
         frm = req.get("from")
         if frm not in (None, "") and not 0 <= int(frm) < n_in:
-            raise WeightsError(f"Neuron {j} of column {col} has {n_in} incoming weights, numbered from 0. There is no weight {frm}.")
+            raise WeightsError(f"A neuron in layer {col} has {n_in} incoming weights. The one asked for is not one of them.")
         if op in ("set", "add"):
             v = num("value")
             if frm in (None, ""):
@@ -1140,15 +1256,15 @@ def _overlap(a: dict, b: dict) -> bool:
 def _where_words(st: State, touched: dict, tensors: list[str]) -> str:
     ns = touched["neurons"]
     if len(ns) == 1:
-        return f"{' and '.join(tensors)} (neuron {ns[0][1]} of column {ns[0][0]})"
+        return f"{' and '.join(tensors)} (layer {ns[0][0]}, neuron {ns[0][1] + 1})"
     return " and ".join(tensors)
 
 
 def _cost_words(cost: dict) -> str:
     if "target" in cost:
-        return f" Cost on the target went from {_g(cost['target']['before'])} to {_g(cost['target']['after'])}."
+        return f"Cost on the target went from {_g(cost['target']['before'])} to {_g(cost['target']['after'])}."
     if "test" in cost:
-        return f" Cost on the held-out set went from {_g(cost['test']['before'])} to {_g(cost['test']['after'])}."
+        return f"Cost on the held-out set went from {_g(cost['test']['before'])} to {_g(cost['test']['after'])}."
     return ""
 
 
@@ -1159,19 +1275,13 @@ def _first_cost(cost: dict, key: str):
     return None
 
 
-def _predicted(st: State, before: N.Network, parts: list[dict], override: dict | None, cost: dict) -> dict | None:
+def _predicted(st: State, before: N.Network, parts: list[dict], cost: dict) -> dict | None:
     """What the gradient said this edit would do to the cost on the target, beside what it did. Only for a session
     that has already computed gradients: this never computes them behind the record's back. A large gap means the
     edit was not small."""
     if not st.doc["used"]["gradients_computed"] or "target" not in cost:
         return None
-    keep = dict(st.doc["sets"])
-    try:
-        if override:
-            st.doc["sets"] = {**keep, **override}
-        got = _resolve(st, "target")
-    finally:
-        st.doc["sets"] = keep
+    got = _resolve(st, "target")
     if got is None or len(got[0]) == 0:
         return None
     g = N.backprop(before, got[0], got[1])
@@ -1196,12 +1306,21 @@ def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
     by = by if by is not None else req.get("by")
 
     def fn(st):
+        st.open_for_changes()
         who = _by(by, st.who)
         why = str(req.get("why") or req.get("hypothesis") or "").strip()
         if who == "agent" and not why:
             raise WeightsError("An agent's edit needs `why`: one sentence saying what it expects the edit to do, given before the edit.")
         op = str(req.get("op") or "").replace("-", "_")
+        named = None
+        if isinstance(req.get("target"), dict):
+            # "Fix this one": the inputs and the wanted output, given whole. It becomes the session's target set.
+            named = _check_spec(st, req["target"], "target")
+            if "inputs" not in named:
+                raise WeightsError("A target given with an edit is its inputs and its wanted output: {\"inputs\": [...], \"targets\": [...]}.")
         plan = _plan(st, req)
+        if named is not None:
+            st.doc["sets"]["target"] = named
         parts = []
         for tensor, flat, new in plan:
             cur = st.cur[tensor].reshape(-1)
@@ -1221,13 +1340,8 @@ def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
         patch = {"n": n, "parts": parts}
         st.new_patches[key] = patch
         st._put(patch, "new")
-        target = req.get("target")
-        override = None
-        if isinstance(target, int) and not isinstance(target, bool):
-            override = {"target": _check_spec(st, {"examples": [target]}, "target"),
-                        "should_not_change": _check_spec(st, {"not_examples": [target]}, "should_not_change")}
-        cost = _three(st, before, st.net(), override)
-        predicted = _predicted(st, before, parts, override, cost)
+        cost = _three(st, before, st.net())
+        predicted = _predicted(st, before, parts, cost)
         changed = int(sum(len(p["indices"]) for p in parts))
         changes, touched = _changes(st, patch, "old", "new")
         tensors = [p["tensor"] for p in parts]
@@ -1235,12 +1349,13 @@ def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
             st.doc["used"]["training_steps"] += 1
         verb = {"set": "set", "scale": "scaled", "zero": "set to zero", "add": "added to", "add_direction": "added a direction to",
                 "step": "took one training step, which moved"}[op]
-        ev = st.event("edit", f"{_Who(st, by)} {verb} {_plural(changed, 'number')} in {_where_words(st, touched, tensors)}."
-                              + _cost_words(cost), by, op=op.replace("_", "-"), tensor=tensors[0], tensors=tensors,
+        ev = st.event("edit", f"{_Who(st, by)} {verb} {_plural(changed, 'number')} in {_where_words(st, touched, tensors)}.",
+                      by, score_sentence=_cost_words(cost), op=op.replace("_", "-"), tensor=tensors[0], tensors=tensors,
                       layer=touched["neurons"][0][0] if touched["neurons"] else None,
                       neuron=touched["neurons"][0][1] if len(touched["neurons"]) == 1 else None,
                       factor=float(req["factor"]) if op == "scale" else None, why=why,
-                      args={k: v for k, v in req.items() if k not in ("why", "hypothesis", "by", "direction", "values", "inputs", "targets")},
+                      args={k: v for k, v in req.items() if k not in ("why", "hypothesis", "by", "direction", "values", "inputs", "targets", "target")},
+                      **({"target_named": {"of": len(named["inputs"])}} if named is not None else {}),
                       changes=changes, changed=changed, share=round(changed / st.total(), 6), touched=touched, cost=cost,
                       cost_before=_first_cost(cost, "before"), cost_after=_first_cost(cost, "after"), undone=False,
                       **({"predicted": predicted} if predicted else {}))
@@ -1248,7 +1363,9 @@ def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
                                 "state": "applied", "changed": changed, "patch": key})
         st.doc["actions"].append(["apply", n])
         ev["ledger"] = {"changed": st.changed(), "total": st.total()}
-        return ev
+        if cost and st.scores_visible:
+            st.saw_score(ev, "edit")
+        return st.show(ev)
     return _do(ctx, sid, fn)
 
 
@@ -1274,14 +1391,14 @@ def _pick(st: State, edit_id, want: str) -> dict:
 
 def _flip(ctx, sid: str, edit_id, by, kind: str) -> dict:
     def fn(st):
+        st.open_for_changes()
         e = _pick(st, edit_id, "applied" if kind == "undo" else "undone")
         patch = st.patch(e["n"])
         if kind == "undo":
             later = [o for o in st.doc["edits"] if o["state"] == "applied" and o is not e
                      and _last_apply(st, o["n"]) > _last_apply(st, e["n"]) and _overlap(st.patch(o["n"]), patch)]
             if later:
-                raise WeightsError(f"Edit {e['event']} cannot be taken back yet: {later[0]['event']} changed the same numbers after it. "
-                                   "Take that one back first.")
+                raise WeightsError(f"Take back edit {later[0]['event']} first: it changed the same numbers after edit {e['event']}.")
         else:
             for part in patch["parts"]:
                 now = st.cur[part["tensor"]].reshape(-1)[np.asarray(part["indices"], dtype=np.int64)]
@@ -1299,14 +1416,16 @@ def _flip(ctx, sid: str, edit_id, by, kind: str) -> dict:
         changes, touched = _changes(st, patch, frm, to)
         words = "took back" if kind == "undo" else "put back"
         ev = st.event(kind, f"{_Who(st, by)} {words} edit {e['event']}: {_plural(e['changed'], 'number')} in "
-                            f"{_where_words(st, touched, e['tensors'])}." + _cost_words(cost), by, op=e["op"],
+                            f"{_where_words(st, touched, e['tensors'])}.", by, score_sentence=_cost_words(cost), op=e["op"],
                       **{"undoes" if kind == "undo" else "redoes": e["event"]}, tensor=e["tensors"][0], tensors=e["tensors"],
                       layer=touched["neurons"][0][0] if touched["neurons"] else None,
                       neuron=touched["neurons"][0][1] if len(touched["neurons"]) == 1 else None,
                       changes=changes, changed=e["changed"], touched=touched, cost=cost,
                       cost_before=_first_cost(cost, "before"), cost_after=_first_cost(cost, "after"))
         ev["ledger"] = {"changed": st.changed(), "total": st.total()}
-        return ev
+        if cost and st.scores_visible:
+            st.saw_score(ev, kind)
+        return st.show(ev)
     return _do(ctx, sid, fn)
 
 
@@ -1399,19 +1518,37 @@ def save(ctx, sid: str, note: str = "", by: str | None = None) -> dict:
                                 "new": st.cur[name].reshape(-1)[moved].astype(float).tolist()})
         if not patches:
             raise WeightsError("There is nothing to save: the network is the same as its base.")
-        led = ledger(st)
+        was_blind = not st.scores_visible
+        led = ledger(st)     # the label as it stood when the work ended, before any score is shown
         record = {"session": st.sid, "who": st.doc["who"], "opened_at": st.doc["opened_at"], "ledger": led, "edits": _edits_out(st),
                   "passes": st.doc["used"]["passes"], "sets": _sets_out(st),
-                  "events": [{k: v for k, v in e.items() if k != "changes"} for e in st.doc["events"]]}
+                  "events": [{k: v for k, v in e.items() if k not in ("changes", "result")} for e in st.doc["events"]]}
         m = WS.save_patched(ctx, st.model, st.doc["version"], patches, st.cur, record, note=str(note or ""))
         ref = WS.ref_of(st.model, m["version"])
         st.doc["saved"].append(ref)
         applied = sum(1 for e in st.doc["edits"] if e["state"] == "applied")
-        st.event("save", f"{_Who(st, by)} saved the network as {ref}: {WS.ref_of(st.model, st.doc['version'])} plus "
-                         f"{_plural(led['changed'], 'changed number')}.", by, op="save", ref=ref, args={"note": note})
+        ev = st.event("save", f"{_Who(st, by)} saved the network as {ref}: {WS.ref_of(st.model, st.doc['version'])} plus "
+                              f"{_plural(led['changed'], 'changed number')}.", by, op="save", ref=ref, args={"note": note})
+        if was_blind:
+            st.doc["revealed"] = True    # the work is saved: its scores can be shown now
+            st.saw_score(ev, "save")
         return {"model": st.model, "version": m["version"], "ref": ref, "base": WS.ref_of(st.model, st.doc["version"]),
                 "patches": applied, "changed": led["changed"], "share": led["share"], "label": led["label"],
-                "weights_alone": led["weights_alone"], "note": str(note or "")}
+                "weights_alone": led["weights_alone"], "note": str(note or ""), "scores_shown_now": was_blind}
+    return _do(ctx, sid, fn)
+
+
+def close(ctx, sid: str, by: str | None = None) -> dict:
+    """End a session. Nothing more can be run or changed in it. A blind session's scores are shown from here on."""
+    def fn(st):
+        st.open_for_changes()
+        was_blind = not st.scores_visible
+        ev = st.event("close", f"{_Who(st, by)} closed the session.", by, op="close")
+        st.doc["closed"] = True
+        if was_blind:
+            st.doc["revealed"] = True
+            st.saw_score(ev, "close")
+        return _session_out(st)
     return _do(ctx, sid, fn)
 
 
@@ -1419,6 +1556,7 @@ def export(ctx, sid: str, folder: str, file: str = "tensors.safetensors", by: st
     """Write the network as it is now into a folder, for code to work on. Only a session that was allowed a sandbox
     may do this, and doing it is recorded."""
     def fn(st):
+        st.open_for_changes()
         if not st.doc["allowed"]["sandbox"]:
             raise Refused("This session was opened without a sandbox, so its tensors cannot be written out for code to work on.")
         m = {k: v for k, v in st.manifest.items() if k not in ("record", "patches", "base", "sha256")}
@@ -1434,14 +1572,17 @@ def export(ctx, sid: str, folder: str, file: str = "tensors.safetensors", by: st
 
 
 def whole(ctx, model: str, sid: str | None = None) -> dict:
-    """A network whole, for a screen. With a session: the numbers as that session has edited them."""
+    """A network for a screen. With no session: its description only (sizes, what inputs and outputs mean, its
+    examples) and no numbers. With a session: every number as that session has edited them, counted in the
+    session's record as a look by the screen."""
     if sid:
         def fn(st):
             out = WS.whole(st.manifest, st.cur, ctx)
             out["session"] = st.sid
             out["edits"] = len(st.doc["actions"])
+            st.looked = st.total()
             return out
         return _do(ctx, sid, fn, watch=True)
     name, version = WS.split_ref(model)
     m, tensors = WS.load(ctx, name, version)
-    return WS.whole(m, tensors, ctx)
+    return WS.whole(m, tensors, ctx, numbers=False)

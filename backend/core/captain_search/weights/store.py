@@ -56,6 +56,12 @@ def _key(name: str, version: int, fname: str = F.MANIFEST) -> str:
     return f"{ROOT}/{name}/v{version}/{fname}"
 
 
+def read_file(ctx, name: str, version: int, fname: str) -> bytes:
+    """One file of a version as it is stored: its manifest.json, or a tensor file its manifest names."""
+    check_name(name)
+    return ctx.store.get(_key(name, int(version), fname))
+
+
 def versions(ctx, name: str) -> list[int]:
     out = []
     for k in ctx.store.list(f"{ROOT}/{name}/"):
@@ -244,18 +250,21 @@ def assign(ctx, name: str, project: str) -> dict:
     return {"model": name, "project": project}
 
 
-def whole(m: dict, tensors: dict[str, np.ndarray], ctx=None) -> dict:
-    """A network whole, in the shape a screen draws from. Practice examples come along. Held-out ones never do."""
-    if int(m.get("parameters") or 0) > WHOLE_LIMIT:
+def whole(m: dict, tensors: dict[str, np.ndarray], ctx=None, numbers: bool = True) -> dict:
+    """A network in the shape a screen draws from. Its examples come along. Held-out ones never do.
+    `numbers=False` leaves every weight and bias out: the description only."""
+    if numbers and int(m.get("parameters") or 0) > WHOLE_LIMIT:
         raise WeightsError(f"This network has {m['parameters']:,} numbers. Only networks up to {WHOLE_LIMIT:,} are sent whole. "
                            "Read it a layer at a time.")
-    layers = [{"W": np.asarray(tensors[ly["weight"]], dtype=float).tolist(), "b": np.asarray(tensors[ly["bias"]], dtype=float).tolist(),
-               "activation": ly["activation"], "name": ly["name"]} for ly in m["layers"]]
+    layers = [{**({"W": np.asarray(tensors[ly["weight"]], dtype=float).tolist(), "b": np.asarray(tensors[ly["bias"]], dtype=float).tolist()}
+                  if numbers else {}),
+               "activation": ly["activation"], "name": ly["name"], "inputs": int(tensors[ly["weight"]].shape[1]),
+               "outputs": int(tensors[ly["weight"]].shape[0])} for ly in m["layers"]]
     ins, outs = m.get("inputs") or {}, m.get("outputs") or {}
     out = {"id": m["name"], "name": m["name"], "version": m.get("version"), "sizes": m["sizes"],
            "squish": m["layers"][0]["activation"], "cost": m.get("cost"), "layers": layers,
            "inputMeaning": ins.get("meaning"), "outputMeaning": outs.get("meaning"),
-           "examples": [], "test": [], "synthetic": bool((m.get("data") or {}).get("synthetic")),
+           "numbers": numbers, "examples": [], "test": [], "synthetic": bool((m.get("data") or {}).get("synthetic")),
            "data_note": (m.get("data") or {}).get("note") or "", "parameters": m.get("parameters"), "base": m.get("base")}
     if ins.get("shape"):
         out["inputShape"] = ins["shape"]
@@ -274,7 +283,7 @@ def whole(m: dict, tensors: dict[str, np.ndarray], ctx=None) -> dict:
             else:
                 want = np.atleast_1d(yi).astype(float).tolist()
                 label = None
-            out["examples"].append({"name": f"practice {i}" + (f": {label}" if label is not None else ""),
+            out["examples"].append({"name": f"example {i + 1}" + (f": {label}" if label is not None else ""),
                                     "x": np.round(x[i], 4).tolist(), "y": want})
     return out
 

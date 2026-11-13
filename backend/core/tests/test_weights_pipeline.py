@@ -117,7 +117,7 @@ def test_a_folder_written_by_hand_with_its_own_sets_is_imported_and_scored_on_th
     ev = S.edit(ctx, sid, {"op": "add", "tensor": "o.bias", "indices": [[1]], "values": [5.0]})
     assert ev["cost"]["test"]["of"] == 30 and ev["cost"]["target"]["of"] + ev["cost"]["keep"]["of"] == 30
     assert ev["cost"]["target"]["after"] < ev["cost"]["target"]["before"] and ev["cost"]["keep"]["after"] > ev["cost"]["keep"]["before"]
-    assert WS.whole(*WS.load(ctx, "by-hand"), ctx)["examples"][0]["name"].startswith("practice 0: ")
+    assert WS.whole(*WS.load(ctx, "by-hand"), ctx)["examples"][0]["name"].startswith("example 1: ")
     # The same folder again is the next version, and its set files are not stored twice.
     assert WP.collect(ctx, str(folder), str(folder), None)["version"] == 2
     assert len([k for k in ctx.store.list("weights/by-hand/sets/")]) == 3

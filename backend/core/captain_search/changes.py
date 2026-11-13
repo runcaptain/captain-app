@@ -83,6 +83,8 @@ def topics_for(key: str) -> set[str]:
         return {"jobs", f"job:{parts[1].split('.')[0]}"}
     if head == "notebooks":
         return {"notebooks"}
+    if head == "weights-looks":
+        return set()  # a screen's looks at a session, counted beside its record: no screen reads again for one
     if head == "weights":
         # weights/<model>/v<N>/... and weights/<model>/sessions/<id>/...: a model's numbers, and a session's record
         out = {"weights"} | ({f"weights:{parts[1]}"} if len(parts) > 2 else set())

@@ -293,7 +293,7 @@ def trace(net: Network, x, y, path: list[int] | None = None) -> dict:
         raise WeightsError(f"A path names one neuron per column: {n_layers + 1} numbers for this network, and {len(path)} were given.")
     for col, (p, size) in enumerate(zip(path, net.sizes)):
         if not 0 <= p < size:
-            raise WeightsError(f"Column {col} has {size} neurons, numbered from 0. There is no neuron {p}.")
+            raise WeightsError(f"Place {col + 1} of the path has {size} neurons to choose from. The one asked for is not one of them.")
     steps = []
     for i, ly in enumerate(net.layers):
         j, k = path[i + 1], path[i]
