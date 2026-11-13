@@ -120,9 +120,9 @@ export class Jobs {
   }
 
   /** Every 2 s while a job runs: its state and new log lines. Otherwise the list every 30 s. */
+  /** As the live channel does, by hand: the list, and the open job's log if it is still going. */
   tick(cx) {
-    const live = (this.list ?? []).some((j) => !DONE.has(j.state));
-    if (Date.now() - this.last > (live ? 4000 : 30000)) this.load(cx, live);
+    this.load(cx, false);
     const j = (this.list ?? []).find((x) => x.id === this.sel);
     if (j && !DONE.has(j.state)) { this.follow(cx, j.id); cx.notify(); }
   }

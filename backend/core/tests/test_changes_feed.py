@@ -229,6 +229,37 @@ def test_a_client_that_asks_again_lets_its_older_request_go(svc):
     assert _t(other_box["answer"]) == ["project:shop"]
 
 
+def test_a_live_run_tells_its_end_at_once_and_one_written_by_another_process_is_seen(svc, tmp_path):
+    from captain_search import live as LV
+
+    CH.on_listen(LV.watch_folder)
+    seq = svc.get("/api/changes")["seq"]
+    run = LV.start("custom", "A demo run", of="shop")
+    assert _t(svc.get("/api/changes", since=seq, topics="runs", wait=0)) == ["runs"], "a run that began is news for the list"
+    seq = CH.FEED.seq
+    for i in range(20):
+        run.log(f"line {i}")
+    a = svc.get("/api/changes", since=seq, topics=f"runs,run:{run.id}", wait=0)
+    assert _t(a) in ([f"run:{run.id}"], []), f"its lines tell the run, not the list: {a}"
+    seq = CH.FEED.seq
+    run.end("done")   # right after a line, inside the five-a-second limit: it must not be held back
+    assert _t(svc.get("/api/changes", since=seq, topics=f"runs,run:{run.id}", wait=0)) == [f"run:{run.id}", "runs"], "the end is told at once"
+    # a run started from a terminal writes the same folder from another process
+    seq = CH.FEED.seq
+    t, box = _waiter(svc, seq, "runs,run:")
+    time.sleep(1.2)   # the folder's first look
+    assert "answer" not in box
+    code = ("from captain_search import live as LV; r = LV.start('custom', 'From a terminal', of='shop'); "
+            "r.log('hello'); print(r.id)")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr[-400:]
+    done = time.perf_counter()
+    t.join(4)
+    rid = out.stdout.strip().splitlines()[-1]
+    assert "answer" in box and set(_t(box["answer"])) == {"runs", f"run:{rid}"}, box
+    assert box["at"] - done < 1.5, f"told {box['at'] - done:.2f} s after the other process wrote it"
+
+
 def test_a_missed_sequence_gets_reset(svc):
     seq = svc.get("/api/changes")["seq"]
     assert svc.get("/api/changes", since=seq - 10 ** 9, topics="projects")["reset"] is True, "from before this service started"

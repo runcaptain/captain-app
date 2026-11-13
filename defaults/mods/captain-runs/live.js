@@ -161,13 +161,22 @@ export class Live {
   }
 
   /** New events since the last ask. Called every second while the open run is going. */
-  tick(cx) {
-    // A running run's time counts up every second on the page's own clock, heard from or not.
+  /** The page's own clock, once a second: a running run's time counts up, heard from or not. It asks nothing of
+   *  a run that is going: its events arrive through the live channel (`read`). */
+  clock(cx) {
     if (this.run && !this.run.error && going(this.run.head?.status)) cx.notify();
-    if (!this.sel || this.busy) return;
-    if (this.run && !this.run.error && !going(this.run.head.status)) { this.askCost(cx); return; }
+    if (this.sel && !this.busy && this.run && !this.run.error && !going(this.run.head.status)) this.askCost(cx);
+  }
+
+  /** The open run changed: read its new events. Told again while reading: read once more after. */
+  read(cx) {
+    if (!this.sel) return;
+    if (this.busy) { this.again = true; return; }
     this.fetch(cx);
   }
+
+  /** As `read`, on the clock's name: what the tests and older callers use. */
+  tick(cx) { this.clock(cx); if (this.sel && !this.busy && !(this.run && !this.run.error && !going(this.run.head.status))) this.fetch(cx); }
 
   /** A finished run that went out as a job: what the job cost. The cost is written a moment after the job ends, so
    *  this asks a few times, a few seconds apart, and then stops. */
@@ -192,6 +201,7 @@ export class Live {
       const since = this.run?.next ?? 0;
       const r = await api(`/api/live/${encodeURIComponent(id)}?since=${since}`);
       this.busy = false;
+      if (this.again) { this.again = false; if (this.sel === id) Promise.resolve().then(() => this.fetch(cx)); }
       if (this.sel !== id) return;
       if (!r.ok) { if (!this.run) this.run = { error: r }; cx.notify(); return; }
       if (!this.run || this.run.error) this.run = { head: r.data.run, next: 0, stages: [], metrics: new Map(), shoppers: [], logs: [], result: null, last: 0 };

@@ -1,5 +1,6 @@
-// The owner: "I think everything needs to refresh live." A view's lists reload by themselves: every few seconds
-// while the view is shown, at once when it comes back into view, and at once when a form changes something. The
+// The owner: "I think everything needs to refresh live." A view's lists reload by themselves: the moment the live
+// channel says something they show changed, at once when the view comes back into view, and at once when a form
+// changes something. Nothing is read on a clock. The
 // reload is quiet: nothing drawn goes blank and the person's place does not move.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/live-refresh.test.mjs
 import assert from 'node:assert/strict';
@@ -11,44 +12,57 @@ import { tidy } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
-const { keepFresh, viewShown, recordsChanged, connectionsChanged, FRESH_SECONDS } = await import('../../defaults/captain/kit/cst.js');
+const { keepFresh, viewShown, recordsChanged, connectionsChanged, api: realApi } = await import('../../defaults/captain/kit/cst.js');
+const { liveTransport, liveReset } = await import('../../defaults/captain/kit/live.js');
 
 // ---- the one helper every view uses -------------------------------------------------------------------------------
 {
-  assert.ok(FRESH_SECONDS >= 2 && FRESH_SECONDS <= 10, 'a few seconds');
   const stack = (active) => ({ id: 'root', children: [{ id: 'sections', active, children: [{ id: 'data' }, { id: 'runs' }] }] });
   globalThis.__layout = stack('data');
   assert.deepEqual([viewShown('data'), viewShown('runs')], [true, false]);
   const timers = [], why = [];
-  const cx = { timer: { every: (_ms, f) => timers.push(f) } };
-  const realNow = Date.now;
-  let t = realNow();
-  Date.now = () => t;
+  const cx = { timer: { every: (_ms, f) => timers.push(f) }, spawn: (f) => f(cx), notify() {} };
+  // The live channel, held by the test: each request is answered when the test says something changed.
+  let now = 1_000_000, held = null;
+  const asked = [];
+  liveReset();
+  liveTransport((p) => { asked.push(p); return p.includes('since=') ? new Promise((r) => { held = r; }) : Promise.resolve({ ok: true, data: { seq: 10, changed: [], reset: false } }); }, () => now);
+  const tick = async (ms = 300) => { now += ms; for (const f of timers) f(cx); await new Promise((r) => setImmediate(r)); };
+  const say = async (...topics) => { const h = held; held = null; h({ ok: true, data: { seq: (now += 1), changed: topics.map((topic) => ({ topic, seq: now })), reset: false } }); await new Promise((r) => setImmediate(r)); await tick(); };
   try {
-    keepFresh(cx, 'data', (_cx, w) => why.push(w), 5);
-    const tick = (ms = 300) => { t += ms; for (const f of timers) f(cx); };
-    tick(); tick();
-    assert.deepEqual(why, [], 'nothing before the few seconds are up');
-    tick(5000);
-    assert.deepEqual(why, ['timer'], 'then by itself');
-    tick(); assert.equal(why.length, 1, 'and not again at once');
-    // A form changed something: at once, without waiting for the timer.
-    recordsChanged('backtest'); tick();
-    assert.deepEqual(why, ['timer', 'changed']);
-    connectionsChanged(); tick();
-    assert.deepEqual(why, ['timer', 'changed', 'changed'], 'a database or cloud connected counts too');
-    // Hidden behind another view: no asking. Back in view: at once.
+    keepFresh(cx, 'data', (_cx, w) => why.push(w), ['data', 'table:']);
+    await tick(); await tick(1200);
+    assert.ok(decodeURIComponent(asked.at(-1)).includes('topics=data,table:'), `it listens for what it shows: ${asked.at(-1)}`);
+    for (let i = 0; i < 40; i++) await tick(1000);
+    assert.deepEqual(why, [], 'nothing is read on a clock, however long nothing changes');
+    // Something changed, from anywhere: read at once.
+    await say('data');
+    assert.deepEqual(why, ['live'], 'the moment the feed says so');
+    await say('table:demo-catalog');
+    assert.deepEqual(why, ['live', 'live'], 'a table of any name counts');
+    await say('notebooks');
+    assert.equal(why.length, 2, 'what it does not show is not its news');
+    // A form changed something: at once.
+    recordsChanged('backtest'); await tick();
+    assert.deepEqual(why.at(-1), 'changed');
+    await new Promise((r) => setTimeout(r, 5));
+    connectionsChanged(); await tick();
+    assert.deepEqual(why.slice(-2), ['changed', 'changed'], 'a database or cloud connected counts too');
+    // Hidden behind another view: nothing is read, even when the feed says something changed. Back in view: at once.
     globalThis.__layout = stack('runs');
-    tick(6000); tick(6000);
-    assert.equal(why.length, 3, 'a view that is not shown does not ask');
+    await tick();
+    const n = why.length;
+    await say('data');
+    assert.equal(why.length, n, 'a view that is not shown does not read');
     globalThis.__layout = stack('data');
-    tick();
-    assert.deepEqual(why.at(-1), 'shown', 'back in view: fresh at once');
-    // A change made while hidden still reaches it, so it is never older than the person's last action.
+    await tick();
+    assert.deepEqual(why.at(-1), 'shown', 'back in view: fresh at once, which reads what it missed');
+    // A change made by a form while hidden still reaches it, so it is never older than the person's last action.
     globalThis.__layout = stack('runs');
-    recordsChanged('dataset'); tick();
+    await new Promise((r) => setTimeout(r, 5)); // a later moment than the last form's change
+    recordsChanged('dataset'); await tick();
     assert.equal(why.at(-1), 'changed');
-  } finally { Date.now = realNow; globalThis.__layout = undefined; }
+  } finally { globalThis.__layout = undefined; liveReset(); liveTransport((path, opts) => realApi(path, opts), () => Date.now()); }
 }
 
 const mount = async (mod, fixtures, routes) => {

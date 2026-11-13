@@ -28,7 +28,7 @@ export default class CaptainNotebooks extends View {
     // Until the list loads (the services are still starting), ask again.
     cx.timer.every(3000, (cx) => { if (this.nb.list === null) this.nb.load(cx); });
     // The list stays current by itself. The open notebook is not reloaded: its text is the person's.
-    keepFresh(cx, "notebooks", (cx) => this.nb.refreshList(cx));
+    keepFresh(cx, "notebooks", (cx) => this.nb.refreshList(cx), ["notebooks"]);
     // Shared values outlive the app: an open from before this screen started is done.
     const stale = shared("captain.open");
     if (stale?.at && Date.now() - stale.at > 10000) this.opened = stale.at;
