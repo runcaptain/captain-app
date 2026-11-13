@@ -51,7 +51,7 @@ def test_an_endpoint_removed_outside_captain_is_noticed_and_the_record_set_right
     now = SG.state(ws, "shop")
     assert now["status"] == "stopped" and now["stop_reason"] == "It was removed outside Captain."
     again = _rows(ws)[0]  # read twice: still said, nothing more to correct
-    assert again["state"] == "gone" and again["corrected"] == [] and again["can"] == ["open", "start", "remove"]
+    assert again["state"] == "gone" and again["corrected"] == [] and again["can"] == ["start", "forget"] and not again["in_cloud"]
 
 
 def test_things_in_the_cloud_that_no_project_knows_are_listed(ws, aws):  # noqa: F811
@@ -355,15 +355,37 @@ def test_what_was_created_names_each_thing_and_leaves_out_captains_own_note(ws, 
     assert FL._same_word("aws", "aws") and FL._same_word("AWS", "aws") and not FL._same_word("work-aws", "aws") and FL._same_word(None, "modal")
 
 
-def test_the_summary_counts_models_the_way_a_person_would():
+def test_the_title_counts_what_is_running_now():
     s = FL._summary
-    assert s(0, [], 0) == "No models are deployed yet."
-    assert s(1, [], 0) == "1 model running." and s(3, [], 0) == "3 models running."
-    assert s(0, ["stopped"], 0) == "1 model, stopped." and s(0, ["failed"], 0) == "1 model, not running."
-    assert s(0, ["stopped", "gone"], 0) == "2 models, none running."
-    assert s(2, ["stopped"], 0) == "2 models running, 1 stopped." and s(1, ["stopped", "failed"], 0) == "1 model running, 2 not running."
+    assert s(0, [], 0) == "No models running." and s(1, [], 0) == "1 model running." and s(3, [], 0) == "3 models running."
+    assert s(2, ["failed"], 0) == "2 models running, 1 failed." and s(0, ["failed"], 0) == "No models running, 1 failed."
+    assert s(1, ["unknown"], 0) == "1 model running, 1 not answering."
     assert s(1, [], 2) == "1 model running, 2 found in your cloud with no project."
-    assert s(0, [], 1) == "No models of yours are deployed, 1 found in your cloud with no project."
+
+
+def test_a_stopped_model_is_remembered_not_deployed_and_can_be_forgotten(ws, aws):  # noqa: F811
+    """A person stopped their model and asked why it was still listed. Nothing of it was in the cloud: the list was
+    showing Captain's memory of it as if it were a deployment."""
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    d = FL.deployed(ws, fresh=True)
+    assert d["rows"][0]["in_cloud"] and d["rows"][0]["remembered_text"] is None and d["stopped_earlier"] == 0 and d["stopped_text"] is None
+    with pytest.raises(ValueError, match="is still in AWS"):
+        FL.forget_stopped(ws, "shop", confirm=True)  # never forget something that is still there and billing
+    SG.unstage(ws, "shop")
+    d = FL.deployed(ws, fresh=True)
+    r = d["rows"][0]
+    assert d["text"] == "No models running." and d["stopped_earlier"] == 1 and d["stopped_text"] == "Stopped earlier: 1 model."
+    assert not r["in_cloud"] and r["can"] == ["start", "forget"] and r["state"] == "stopped"
+    assert r["remembered_text"] == "Nothing of it is running in AWS and nothing is billing. Captain remembers it so you can start it again."
+    with pytest.raises(ValueError, match="Confirm first. Captain will forget .* Nothing in the cloud changes"):
+        FL.forget_stopped(ws, "shop")
+    calls = len(aws.calls)
+    out = FL.forget_stopped(ws, "shop", confirm=True)
+    assert out["text"].endswith("Nothing in the cloud changed.") and SG.state(ws, "shop") is None
+    assert not [c for c, _ in aws.calls[calls:] if c.startswith(("delete", "create", "update"))]  # the cloud was only read
+    assert FL.deployed(ws, fresh=True)["rows"] == [] and FL.deployed(ws)["text"] == "No models running."
+    with pytest.raises(ValueError, match="has no deployment to forget"):
+        FL.forget_stopped(ws, "shop", confirm=True)
 
 
 def test_a_row_says_who_and_when_in_words_and_names_the_model_plainly(ws):  # noqa: F811

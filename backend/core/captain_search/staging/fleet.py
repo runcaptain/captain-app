@@ -211,10 +211,17 @@ def _row(pr: dict | None, env: str | None, rec: dict | None, cloud: str, login: 
             "by": (rec or {}).get("started_by") or (thing or {}).get("by"),
             "by_name": short_name((rec or {}).get("started_by") or (thing or {}).get("by")),
             "link": link, "record_status": (rec or {}).get("status"), "corrected": corrected,
+            # Whether anything of it exists in a cloud (or runs on this computer) now. A model that was stopped does
+            # not: Captain only remembers it, so it can be started again. It is listed apart, as "stopped earlier".
+            "in_cloud": thing is not None or link in ("unlinked", "unknown") or (cloud == "local" and state == "running"),
+            "remembered_text": (None if (thing is not None or link in ("unlinked", "unknown") or (cloud == "local" and state == "running")) else
+                                f"Nothing of it is running {'on this computer' if cloud == 'local' else 'in ' + CLOUDS.get(cloud, cloud)} and nothing is billing. "
+                                "Captain remembers it so you can start it again."),
             "resources": (thing or {}).get("resources") or [],
             "sleeps": bool((rec or {}).get("scale_to_zero")), "address": ((rec or {}).get("endpoint") or {}).get("url"),
             "can": ([] if link == "unknown" else ["link", "remove"] if link == "unlinked" else
-                    ["open", "stop", "rollback"] if state in ("running", "asleep", "starting") else ["open", "start", "remove"])}
+                    ["open", "stop", "rollback"] if state in ("running", "asleep", "starting") else
+                    ["open", "remove"] if thing is not None else ["start", "forget"])}
 
 
 def short_name(who) -> str | None:
@@ -364,10 +371,13 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
     up = sum(1 for r in mine if r["state"] in ("running", "asleep", "starting"))
     loose = len(rows) - len(mine)
     could_not = [a for a in asked if not a["ok"]]
-    text = _summary(up, [r["state"] for r in mine if r["state"] not in ("running", "asleep", "starting")], loose)
+    # What is in a cloud now is what is counted. A model stopped earlier is remembered, not deployed.
+    text = _summary(up, [r["state"] for r in mine if r["in_cloud"] and r["state"] not in ("running", "asleep", "starting")], loose)
+    earlier = sum(1 for r in mine if not r["in_cloud"])
     if could_not:
         text += " Could not ask " + ", ".join(sorted({a["cloud_label"] for a in could_not})) + " just now."
-    out = {"rows": rows, "asked": asked, "text": text, "read_at": _now(), "ttl_s": TTL_S}
+    out = {"rows": rows, "asked": asked, "text": text, "read_at": _now(), "ttl_s": TTL_S, "stopped_earlier": earlier,
+           "stopped_text": f"Stopped earlier: {earlier} model{'s' if earlier != 1 else ''}." if earlier else None}
     # Marked with the records as they stand after any correction, so the corrected answer is the one kept.
     after = tuple(sorted((pr["id"], env, str(rec.get("id")), str(rec.get("status")), str(rec.get("model_version"))) for pr, env, rec in _records(ctx)))
     with _lock:
@@ -400,22 +410,17 @@ def _same(tag, value) -> bool:
 
 
 def _summary(up: int, down: list[str], loose: int) -> str:
-    """The line beside the screen's title, counting models as a person would: "2 models running, 1 stopped",
-    "1 model, not running", "No models are deployed yet."."""
-    n = up + len(down)
-    if not n and not loose:
-        return "No models are deployed yet."
+    """The line beside the screen's title: what is running now. "2 models running.", "No models running.", with a
+    word for any that is in a cloud and not answering ("1 failed"). Models stopped earlier are not in a cloud and
+    are not counted here: they have their own line."""
     models = lambda k: f"{k} model{'s' if k != 1 else ''}"  # noqa: E731
-    # "stopped" when every one that is down was stopped. Otherwise some failed or could not be checked.
-    word = "stopped" if all(s in ("stopped", "gone") for s in down) else "not running"
-    if not n:
-        said = "No models of yours are deployed"
-    elif not down:
-        said = f"{models(up)} running"
-    elif not up:
-        said = f"{models(n)}, {word if word == 'stopped' else 'not running'}" if n == 1 else f"{models(n)}, none running"
-    else:
-        said = f"{models(up)} running, {len(down)} {word}"
+    said = f"{models(up)} running" if up else "No models running"
+    failed = sum(1 for s in down if s == "failed")
+    other = len(down) - failed
+    if failed:
+        said += f", {failed} failed"
+    if other:
+        said += f", {other} not answering"
     return said + (f", {loose} found in your cloud with no project" if loose else "") + "."
 
 
@@ -600,3 +605,36 @@ def created(ctx: Context) -> dict:
     return {"places": places,
             "text": "Captain has created nothing in your cloud accounts." if not places else
                     "What the first deploy to each cloud created. A deployed model uses them, and they cost nothing or close to nothing while idle."}
+
+
+# ---- a model that was stopped earlier ----------------------------------------------------------------
+
+
+def forget_stopped(ctx: Context, pid: str, env: str = ENV, confirm: bool = False) -> dict:
+    """Forget a model that was stopped: remove Captain's own record of the deployment. Nothing in any cloud is
+    touched, because nothing of it is there. Refused while anything of it still exists in a cloud: stop or remove
+    that first."""
+    from .. import project_state as PS
+    from . import _note
+
+    row = one(ctx, pid, env, fresh=True)
+    if row is None:
+        raise ValueError(f"{pid} has no deployment to forget.")
+    if row["in_cloud"]:
+        raise ValueError(f"{row['project_name']}'s model is still in {row['cloud_label']}: {row['state_text']} Stop it or remove it from the cloud first.")
+    if not confirm:
+        raise ValueError(f"Confirm first. Captain will forget {row['project_name']}'s stopped model. Nothing in the cloud changes, and it can't be started again from here.")
+
+    def ch(doc):
+        st = dict(doc.get("staging") or {})
+        st.pop(env, None)
+        doc["staging"] = st
+        return True
+
+    PS._update(ctx, pid, ch)
+    try:
+        _note(ctx, pid, f"forgot the stopped deployment of {row.get('model_version') or 'a model'}")
+    except Exception:  # noqa: BLE001
+        pass
+    forget(ctx)
+    return {"project": pid, "env": env, "text": f"Forgot {row['project_name']}'s stopped model. Nothing in the cloud changed."}

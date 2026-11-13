@@ -14,7 +14,6 @@ import { ago, money, ms, count, Spark } from "./words.js";
 import { ModelPage } from "./model.js";
 
 const UP = ["running", "asleep", "starting", "unknown"];
-const SHOW = [["running", "Running"], ["stopped", "Stopped"], ["all", "All"]];
 
 export default class CaptainDeployments extends View {
   init(_props, cx) {
@@ -22,7 +21,7 @@ export default class CaptainDeployments extends View {
     this.problem = null;
     this.created = null;      // GET /api/deployed/created
     this.nums = {};           // project -> the last 24 hours of numbers
-    this.show = "all";        // every deployment at first: a stopped one is still there to start again or remove
+    this.shownEarlier = false; // whether the models stopped earlier are opened up
     this.cloud = null;        // a cloud to show only, or null for all
     this.project = null;
     this.ask = null;          // an open question: {kind, id, text, yes}
@@ -40,7 +39,7 @@ export default class CaptainDeployments extends View {
       this.d = this.demo.deployed;
       this.created = this.demo.created ?? null;
       this.nums = this.demo.numbers ?? {};
-      this.show = this.demo.show ?? "all";
+      this.shownEarlier = Boolean(this.demo.earlier);
       if (this.demo.open) this.openRow(this.d.rows.find((r) => r.id === this.demo.open), cx, this.demo.part ?? null);
       return;
     }
@@ -127,6 +126,13 @@ export default class CaptainDeployments extends View {
     cx.notify();
   }
 
+  forgetIt(row, cx) {
+    this.ask = { id: row.id, yes: "Forget it",
+      text: `Forget ${row.project_name}'s stopped model? Captain removes its own record of it. Nothing in the cloud changes, because nothing of it is there.`,
+      go: (cx) => cx.spawn((cx) => this.act(cx, row, "Forgetting", () => api("/api/deployed/forget", { method: "POST", body: { project: row.project, env: row.env, confirm: true } }))) };
+    cx.notify();
+  }
+
   linkTo(row, cx) {
     this.ask = { id: row.id, pick: true, text: `Which project should ${row.name} belong to?` };
     cx.notify();
@@ -199,9 +205,13 @@ export default class CaptainDeployments extends View {
           : up ? [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true }),
             Button(c, `dep-stop-${r.id}`, "Stop", (_e, cx) => this.stop(r, cx), { small: true }),
             Button(c, `dep-back-${r.id}`, "Go back to an earlier version", (_e, cx) => this.openRow(r, cx, "details"), { small: true })]
-            : [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true }),
-              ...(r.model_version ? [Button(c, `dep-start-${r.id}`, "Start again", (_e, cx) => this.start(r, cx), { small: true })] : []),
-              Button(c, `dep-remove-${r.id}`, "Remove from the cloud", (_e, cx) => this.remove(r, cx), { small: true })];
+            // Something in a cloud that is not answering (it failed): it can be looked at, and removed from the cloud.
+            : r.in_cloud !== false ? [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true }),
+              Button(c, `dep-remove-${r.id}`, "Remove from the cloud", (_e, cx) => this.remove(r, cx), { small: true })]
+              // Stopped earlier: nothing of it is in a cloud, so there is nothing to remove from one. Captain can start
+              // it again, or forget it.
+              : [...(r.model_version ? [Button(c, `dep-start-${r.id}`, "Start again", (_e, cx) => this.start(r, cx), { small: true })] : []),
+                Button(c, `dep-forget-${r.id}`, "Forget it", (_e, cx) => this.forgetIt(r, cx), { small: true })];
     // Who deployed it and when, by the name before the @. When it stopped is in the state's own sentence.
     const when = ago(r.since);
     const who = r.by ? [`Deployed by ${r.by_name ?? r.by}`, when].filter(Boolean).join(", ") : when ? `Made ${when}` : null;
@@ -224,7 +234,8 @@ export default class CaptainDeployments extends View {
         .child(div().flex_1())
         // Drawn only when the last hour had requests: an empty chart is a faint line that says nothing.
         .when(hour.some((v) => v > 0) && !found, (e) => e.child(Spark(c, `dep-spark-${r.id}`, hour))))
-      .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
+      .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(wrong && r.in_cloud !== false ? c.fail : c.navy)
+        .child(r.remembered_text ? `${r.state_text} ${r.remembered_text}` : r.state_text))
       .child(div().text_size(12.5).line_height("18px").text_color(c.grey500)
         .child([r.where, numbers, cost, who].filter(Boolean).join(". ") + "."))
       .children((r.corrected ?? []).map((x, i) => div().id(`dep-fixed-${r.id}-${i}`).text_size(12.5).line_height("18px").text_color(c.grey500).child(x)))
@@ -266,8 +277,9 @@ export default class CaptainDeployments extends View {
         : Button(c, `dep-setup-remove-${place.cloud}`, "Remove everything", (_e, cx) => this.removeSetup(place, cx), { small: true }))));
   }
 
-  // One row above the list. The state as three chips. The cloud and the project as two small pickers at the right,
-  // each shown only when there is more than one to pick from. An open picker lists its choices on a line below.
+  // Above the list, at the right: the cloud and the project as two small pickers, each shown only when there is
+  // more than one to pick from. An open picker lists its choices on a line below. There is no filter by state: what
+  // is in a cloud is the list, and what was stopped earlier has its own line under it.
   filters(c, rows) {
     const clouds = [...new Map(rows.map((r) => [r.cloud, r.cloud_label])).entries()];
     const projects = [...new Map(rows.filter((r) => r.project && r.link !== "unlinked").map((r) => [r.project, r.project_name ?? r.project])).entries()];
@@ -281,9 +293,9 @@ export default class CaptainDeployments extends View {
       .child(div().child(this[key] ? (list.find(([id]) => id === this[key])?.[1] ?? every) : every))
       .child(svg(icon(this.menu === key ? "chevron-up" : "chevron-down")).size(12).text_color(c.grey500));
     const open = this.menu === "cloud" ? ["cloud", "Every cloud", clouds] : this.menu === "project" ? ["project", "Every project", projects] : null;
+    if (clouds.length < 2 && projects.length < 2) return div();
     return v_flex().id("dep-filters").gap(6)
       .child(h_flex().gap(6).items_center()
-        .children(SHOW.map(([id, label]) => chip(`dep-show-${id}`, label, this.show === id, set("show", id))))
         .child(div().flex_1())
         .when(clouds.length > 1, (e) => e.child(picker("cloud", "Every cloud", clouds)))
         .when(projects.length > 1, (e) => e.child(picker("project", "Every project", projects))))
@@ -298,18 +310,21 @@ export default class CaptainDeployments extends View {
     if (this.page) return frame(this.page.render(c, cx));
     const d = this.d;
     if (!d) return frame(div().p(24).child(Problem(c, this.problem ?? { starting: true }, (cx) => this.load(cx))));
-    const rows = d.rows.filter((r) => (this.show === "all" || (UP.includes(r.state) || r.link === "unlinked") === (this.show === "running"))
-      && (!this.cloud || r.cloud === this.cloud) && (!this.project || r.project === this.project));
+    const picked = (r) => (!this.cloud || r.cloud === this.cloud) && (!this.project || r.project === this.project);
+    // The list is what exists in a cloud now: running, starting, asleep or failed. A model that was stopped is not
+    // in a cloud: Captain only remembers it, and it is listed apart.
+    const here = d.rows.filter((r) => r.in_cloud !== false), earlier = d.rows.filter((r) => r.in_cloud === false);
+    const rows = here.filter(picked);
     const notAsked = d.asked.filter((a) => !a.ok);
     const places = this.created?.places ?? [];
     const head = h_flex().h(56).flex_none().px(24).gap(12).items_center().border_b(1).border_color(c.rule)
       .child(div().text_size(18).font_semibold().text_color(c.navy).child("Deployments"))
       // With nothing deployed the page itself says so: the line beside the title would only repeat it.
-      .child(div().id("dep-summary").flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(d.rows.length ? d.text : ""))
+      .child(div().id("dep-summary").flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(d.text))
       .child(Button(c, "dep-refresh", "Ask the clouds again", (_e, cx) => this.load(cx, true), { small: true }));
-    const none = !d.rows.length;
-    const noneUp = !none && !d.rows.some((r) => UP.includes(r.state) && r.link !== "unlinked");
+    const none = !here.length;
     const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small });
+    const n = earlier.length;
     const body = v_flex().gap(18)
       .when(Boolean(this.note), (e) => e.child(div().id("dep-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)))
       .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(13).line_height("19px").text_color(c.fail)
@@ -319,16 +334,22 @@ export default class CaptainDeployments extends View {
         .child(h_flex().gap(12).items_center()
           .child(div().text_size(15).font_semibold().text_color(c.navy).child("Models"))
           .child(div().id("dep-models-line").flex_1().text_size(13).text_color(c.grey500)
-            .child(none ? "No models are deployed yet. Deploy one from a project's page, and it shows here with where it runs, its traffic and what it costs."
-              : noneUp ? "None is running. Start one again below, or deploy one from a project's page." : ""))
+            .child(none ? "No models are running. Deploy one from a project's page, and it shows here with where it runs, its traffic and what it costs." : ""))
           // The next step, when nothing is answering. An open question takes the filled button in its place.
-          .when((none || noneUp) && !this.ask, (e) => e.child(deploy(true))))
+          .when(none && !this.ask, (e) => e.child(deploy(true))))
         .when(this.ask?.id === "deploy", (e) => e.child(this.question(c)))
-        .child(none ? div() : this.filters(c, d.rows))
+        .child(none ? div() : this.filters(c, here))
         .child(v_flex().id("dep-list")
           .children(rows.map((r) => this.row(c, r)))
-          .when(!none && !rows.length, (e) => e.child(div().id("dep-none-shown").py(16).text_size(13).text_color(c.grey500)
-            .child(this.show === "running" ? "No model is running. Stopped ones are under Stopped." : "No model matches. Change what is shown above.")))))
+          .when(!none && !rows.length, (e) => e.child(div().id("dep-none-shown").py(16).text_size(13).text_color(c.grey500).child("No model matches. Change the cloud or the project above.")))))
+      // Stopped earlier: one closed line. Nothing of these is in a cloud. Captain remembers them so they can be
+      // started again, or forgotten.
+      .when(n > 0, (e) => e.child(v_flex().id("dep-earlier")
+        .child(h_flex().gap(10).items_center().py(8)
+          .child(div().id("dep-earlier-line").flex_1().text_size(13).line_height("19px").text_color(c.grey900).child(`Stopped earlier: ${n} model${n === 1 ? "" : "s"}.`))
+          .child(Button(c, "dep-earlier-show", this.shownEarlier || earlier.some((r) => this.ask?.id === r.id) ? "Hide" : "Show",
+            (_e, cx) => { this.shownEarlier = !this.shownEarlier; cx.notify(); }, { small: true })))
+        .when(this.shownEarlier || earlier.some((r) => this.ask?.id === r.id), (x) => x.children(earlier.map((r) => this.row(c, r))))))
       // Last and small: what the first deploy to each cloud made, one line each until it is opened.
       .when(Boolean(places.length), (e) => e.child(v_flex().id("dep-created").pt(6)
         .children(places.map((p) => this.setup(c, p)))));
