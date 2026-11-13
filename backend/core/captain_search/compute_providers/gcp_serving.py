@@ -298,6 +298,35 @@ class CloudRunServing(HttpServing):
                          "Invoker role on it, and sends its Google identity token beside the endpoint key.")
         return a
 
+    def where(self, rec: dict) -> dict:
+        """Where one deployed model lives, from Cloud Run's own description of the service: its address, image,
+        size, the service account it runs as, and when it was made. One read, and the service is not called.
+        Raises when it is gone."""
+        rest = self._rest()
+        name = (rec.get("endpoint") or {}).get("name")
+        s = self._get(rest, name)
+        if s is None:
+            raise ProviderError("the Cloud Run service no longer exists")
+        tpl = s.get("template") or {}
+        box = (tpl.get("containers") or [{}])[0]
+        lim = (box.get("resources") or {}).get("limits") or {}
+        sc = tpl.get("scaling") or {}
+
+        def mb(text):  # "2048Mi", "2Gi"
+            t = str(text or "")
+            try:
+                return int(float(t[:-2]) * (1024 if t.endswith("Gi") else 1)) if t[-2:] in ("Mi", "Gi") else None
+            except ValueError:
+                return None
+        try:
+            cpu = float(lim.get("cpu")) if lim.get("cpu") else None
+        except (TypeError, ValueError):
+            cpu = None
+        return {"endpoint": name, "address": s.get("uri"), "copies_now": None, "copies_min": sc.get("minInstanceCount"), "copies_max": sc.get("maxInstanceCount"),
+                "cpu": cpu, "memory_mb": mb(lim.get("memory")), "image": box.get("image"), "image_built": None, "role": tpl.get("serviceAccount"),
+                "account": f"project {rest.project}", "since": s.get("createTime"), "changed": s.get("updateTime"), "machine": None, "state": "running",
+                "logs": f"gcloud run services logs read {name} --region {self.region} --project {rest.project}"}
+
     def found(self, prefix: str = "captain") -> list[dict]:
         """Every Cloud Run service in this project and region that Captain made, whatever Captain project made it: by
         Captain's label, or by the name prefix. Reads the list only. Cloud Run does not say how many copies are up,

@@ -585,3 +585,51 @@ def test_a_deploy_with_no_place_named_never_lands_on_this_computer(ws, logins, m
     assert rec["status"] == "stopped" and rec["kind"] != "local"  # nothing was started anywhere
     # Naming this computer is still allowed: that is a person asking for it.
     assert c.post("/api/projects/shop/deploy", headers=h, json={"host": "local", "dry_run": True}).status_code == 200
+
+
+# ---- where it runs, as Modal, Cloud Run and Container Apps describe it -------------------------------
+
+
+def test_modal_describes_where_a_model_lives_without_calling_it(ws, logins, modal):  # noqa: F811
+    logins.append(LOGINS["modal"])
+    DP.run(ws, "shop", "modal", confirm=True)
+    asked = len(modal.calls)
+    w = FL.where_it_runs(ws, "shop")
+    f = {x["id"]: x for x in w["facts"]}
+    assert w["from_cloud"] and w["text"] == "Read from Modal just now." and len(modal.calls) == asked  # it was asked about, not called
+    assert f["address"]["value"].endswith(".modal.run") and f["address"]["source"] == "cloud"
+    assert f["cloud"]["value"] == f"Modal, environment {LOGINS['modal']['fields']['environment']}" and f["cloud"]["source"] == "cloud"
+    assert f["machine"]["value"].startswith("1 CPU, 2 GB memory, about $0.06 an hour") and f["machine"]["source"] == "cloud"
+    assert f["copies"]["value"].startswith("1 up now. Fewest 0, most ") and f["copies"]["source"] == "cloud"
+    assert f["logs"]["value"].startswith("modal app logs ") and f["logs"]["copy"] and "image" not in f and "role" not in f  # Modal has neither to name
+    modal.copies = 0
+    FL.forget()
+    assert {x["id"]: x for x in FL.where_it_runs(ws, "shop")["facts"]}["copies"]["value"].startswith("0 up now.") and len(modal.calls) == asked  # asleep, and left asleep
+
+
+def _described(ws, logins, host):  # noqa: F811
+    logins.append(LOGINS[host])
+    DP.run(ws, "shop", host, confirm=True)
+    w = FL.where_it_runs(ws, "shop")
+    return w, {x["id"]: x for x in w["facts"]}
+
+
+def test_cloud_run_describes_where_a_model_lives(ws, logins, google):  # noqa: F811
+    w, f = _described(ws, logins, "gcp")
+    assert w["from_cloud"] and w["text"] == "Read from Google Cloud just now."
+    assert f["address"]["value"].startswith("https://") and f["address"]["source"] == "cloud"
+    assert f["cloud"]["value"].startswith("Google Cloud, project ") and f["cloud"]["source"] == "cloud"
+    assert "virtual CPU" in f["machine"]["value"] and "memory" in f["machine"]["value"] and f["machine"]["source"] == "cloud"
+    assert f["image"]["source"] == "cloud" and f["role"]["source"] == "cloud" and "@" in f["role"]["value"]  # the service account it runs as
+    assert f["logs"]["value"].startswith("gcloud run services logs read ") and f["logs"]["copy"]
+    assert f["copies"]["value"].startswith("Fewest ") and f["copies"]["source"] == "cloud"  # Cloud Run does not say how many are up now
+
+
+def test_container_apps_describes_where_a_model_lives(ws, logins, azure):  # noqa: F811
+    w, f = _described(ws, logins, "azure")
+    assert w["from_cloud"] and w["text"] == "Read from Azure just now."
+    assert f["address"]["value"].startswith("https://") and f["address"]["value"].endswith(".azurecontainerapps.io") and f["address"]["source"] == "cloud"
+    assert "resource group" in f["cloud"]["value"] and f["cloud"]["source"] == "cloud"
+    assert "virtual CPU" in f["machine"]["value"] and f["machine"]["source"] == "cloud" and f["image"]["source"] == "cloud"
+    assert f["logs"]["value"].startswith("az containerapp logs show --name ") and f["logs"]["copy"]
+    assert "up now. Fewest " in f["copies"]["value"] and f["copies"]["source"] == "cloud"

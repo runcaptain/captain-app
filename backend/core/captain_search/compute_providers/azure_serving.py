@@ -282,6 +282,38 @@ class ContainerAppsServing(HttpServing):
                 "note": "Setup makes no log workspace, to keep the group small. The app's own lines, from a terminal: "
                         f"az containerapp logs show -n {name} -g {self.config.get('resource_group')} --follow"}
 
+    def where(self, rec: dict) -> dict:
+        """Where one deployed model lives, from Azure's own description of the container app: its address, image,
+        size, the identity it runs as, the copies up, and when it was made. Reads only, and the app is not called.
+        Raises when it is gone."""
+        arm = self._arm()
+        name = (rec.get("endpoint") or {}).get("name")
+        app = arm.call("GET", self._app(arm, name), api=APP_API, ok_missing=True)
+        if app is None:
+            raise ProviderError("the container app no longer exists")
+        p = app.get("properties") or {}
+        tpl = p.get("template") or {}
+        box = (tpl.get("containers") or [{}])[0]
+        res = box.get("resources") or {}
+        sc = tpl.get("scale") or {}
+        fqdn = ((p.get("configuration") or {}).get("ingress") or {}).get("fqdn")
+        who = next(iter(((app.get("identity") or {}).get("userAssignedIdentities") or {}).keys()), None)
+        group = self.config.get("resource_group")
+        sub = str(getattr(arm, "subscription", "") or self.config.get("subscription_id") or "")
+
+        def mb(text):  # "2Gi", "1.5Gi"
+            t = str(text or "")
+            try:
+                return int(float(t[:-2]) * 1024) if t.endswith("Gi") else None
+            except ValueError:
+                return None
+        return {"endpoint": name, "address": f"https://{fqdn}" if fqdn else None, "copies_now": self._copies(arm, name, app),
+                "copies_min": sc.get("minReplicas"), "copies_max": sc.get("maxReplicas"), "cpu": res.get("cpu"), "memory_mb": mb(res.get("memory")),
+                "image": box.get("image"), "image_built": None, "role": who.rsplit("/", 1)[-1] if who else None,
+                "account": ", ".join(x for x in (f"subscription ending {sub[-4:]}" if len(sub) >= 4 else None, f"resource group {group}" if group else None) if x) or None,
+                "since": (app.get("systemData") or {}).get("createdAt"), "changed": (app.get("systemData") or {}).get("lastModifiedAt"), "machine": None, "state": "running",
+                "logs": f"az containerapp logs show --name {name} --resource-group {group}" if group else None}
+
     def found(self, prefix: str = "captain") -> list[dict]:
         """Every container app in Captain's resource group that Captain made, whatever project made it: by Captain's
         tag, or by the name prefix. Reads the list and the count of copies up. It never calls an app."""
