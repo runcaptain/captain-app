@@ -154,6 +154,13 @@ capture or permissions. It needs a running window that has drawn a frame;
 If Captain misbehaves, `captain-app feedback "<what happened>"` drafts a report.
 The person reviews and sends it; it does not silently send feedback.
 
+If Captain closed by itself, or something failed, read its logs before guessing:
+`cst app logs --last` prints what happened last time (the crash record, or the end
+of the log), `cst app logs --since 1h` the recent lines of the app and its
+services, and `cst app logs --bundle` writes one zip to the Desktop for a bug
+report. The files are in `~/Library/Logs/Captain` on a Mac. Secrets are taken out
+as each line is written.
+
 Never experiment with pointer/key automation on the person's real display.
 When developing the app on Linux, its `scripts/sandbox` provides an isolated
 home, hc and display: `up`, `do`, `status`, `shot`, then `down` when done.

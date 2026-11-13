@@ -685,6 +685,9 @@ The main ones:
   Other unreachable machines don't offer this.
 - Window: `window.minimize`, `window.maximize` (or back), `window.close`.
 - macOS: `app.quit`, `app.hide`, `app.hide_others`, `app.show_all`.
+- Logs: `logs.copy_last` (what happened last time, to the clipboard: the last run's crash record, else the
+  latest lines of the app's log), `logs.save_bundle` (one zip of the logs on the Desktop, for a bug report).
+  Settings, Privacy has a button for each. See "The app's logs" below.
 
 When the user runs a command without a required name (a key, a click), Captain
 asks them. **You never get a dialog**: pass every required argument, or the
@@ -702,6 +705,31 @@ captain-app commands    # every command and its arguments
 
 `captain-app do` prints what the command made (`{ "space", "tab",
 "terminal" }`, `{ "pane", "terminal" }`) or `{ "error": "..." }` and exits 1.
+
+### The app's logs
+
+Captain keeps a log of what happens to it, so that after it stops anyone can say why from a file. On a Mac the
+folder is `~/Library/Logs/Captain` (`CAPTAIN_LOG_DIR` picks another; a window on its own `CAPTAIN_APP_HOME` logs
+into `<home>/logs`):
+
+- `app.log`: one line per event, `<UTC time> <LEVEL> <source>  <message>`. The start (version, commit, system,
+  what launched it), windows opening and closing, each mod loaded, the services starting, their address, their
+  exit, every quit and what asked for it, signals, and every warning and error, script errors from mods included
+  (`ERROR mods  mod=<name> ...`, the same error once a minute at most). A new file every 5 MB, five old ones kept.
+- `services.log`: the same for Captain's services: failed (5xx) and slow requests with a request id, jobs,
+  uncaught exceptions. Requests that go well are counted, not listed.
+- `crash-<UTC time>.log`: a crash record, with the message, the thread, a backtrace, the build and the last 200
+  lines of `app.log`.
+- `last-run.json`: how the last run ended, as the next start found it: `clean`, `crashed` (with its record),
+  `signal`, or `vanished` (killed, forced to quit, power lost).
+
+Read them with `cst app logs [--follow] [--since 1h] [--which app|services|crash|all]`. `cst app logs --last`
+prints what happened last time. `cst app logs --bundle` writes one zip to the Desktop and prints its path.
+
+Secrets are taken out of every line as it is written: tokens, keys, passwords, Authorization headers, sign-in
+codes, email addresses; a home folder is written as `~`. Request bodies, query text and file contents are never
+logged. A mod's `console.warn` and `console.error` reach `app.log`; its `console.log` does not. Don't print a
+secret anyway.
 
 ## The person: `settings.json`
 

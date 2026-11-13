@@ -30,6 +30,10 @@ from . import changes as CH  # noqa: E402  the change feed every screen listens 
 TOKEN = os.environ.get("CST_SERVE_TOKEN") or secrets.token_urlsafe(24)
 app = FastAPI(title="Captain Search Tools", version=VERSION)
 
+from . import applog as AL  # noqa: E402  services.log: failed and slow requests, jobs, start and exit (no bodies, no secrets)
+
+AL.install(app)
+
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 # The desktop web view (tauri://localhost) and the Vite dev server call the daemon cross-origin.
@@ -96,12 +100,14 @@ def ctx():
         if _ctx is None:
             _ctx = open_context()
             CH.watch(_ctx.store)  # its writes bump the change feed, and writes from outside are looked for
+            AL.info("workspace", f"opened workspace {_ctx.workspace.name}")
         if not name or name == _ctx.workspace.name:
             return _ctx
         if name not in _ctxs:
             try:
                 _ctxs[name] = open_context(name)
                 CH.watch(_ctxs[name].store)
+                AL.info("workspace", f"opened workspace {name}")
             except RuntimeError as e:  # unknown workspace: a 400 with the known names, not a crash
                 raise ValueError(str(e)) from None
         return _ctxs[name]
@@ -120,6 +126,8 @@ async def _err(request: Request, exc: Exception):
     code = (404 if isinstance(exc, NotFound) else 409 if isinstance(exc, (Conflict, AlreadyExists))
             # Another service refused us, or couldn't be reached (MLflow, a warehouse): its sentence, not a bare 500.
             else 403 if isinstance(exc, PermissionError) else 502 if isinstance(exc, ConnectionError) else 400)
+    if code >= 500:
+        AL.note_failure(request, exc)
     if isinstance(exc, AlreadyExists):  # the raw key ("compute/x.yaml") is not a sentence; name what exists
         key = str(exc).strip("'\"")
         thing, _, rest = key.partition("/")
@@ -142,6 +150,8 @@ for _cls in (NotFound, ValueError, KeyError, WriteRefused, TooLarge, LLMUnavaila
 
 @app.exception_handler(HTTPException)
 async def _http(request: Request, exc: HTTPException):
+    if exc.status_code >= 500:
+        AL.note_failure(request, exc)
     return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
 
 
@@ -3039,13 +3049,18 @@ def _job(fn, label: str, topics: tuple = ()) -> str:
 
     def go():
         JOBS[jid]["status"] = "running"
+        began = time.monotonic()
+        # The label is what the job does ("backtest shop-v2"): names, never what it reads.
+        AL.info("jobs", f"job {jid} started: {label}")
         try:
             res = fn(lambda f: JOBS[jid].__setitem__("progress", round(float(f), 3)))
             JOBS[jid].update(status="done", progress=1.0, result=res, message="done")
             JOBS[jid]["log"].append(f"done: {res}")
+            AL.info("jobs", f"job {jid} done after {time.monotonic() - began:.1f} s: {label}")
         except Exception as e:  # noqa: BLE001
             JOBS[jid].update(status="failed", message=str(e))
             JOBS[jid]["log"].append(f"failed: {e}")
+            AL.error("jobs", f"job {jid} failed after {time.monotonic() - began:.1f} s: {label}", e)
 
     threading.Thread(target=go, daemon=True).start()
     return jid
@@ -4139,6 +4154,10 @@ def serve(host: str = "127.0.0.1", port: int = 0, token: str | None = None, ui: 
     with os.fdopen(fd, "w") as fh:
         json.dump(info, fh)
     print(json.dumps(info), flush=True)
+    AL.start()
+    AL.watch_threads()
+    AL.watch_usage()
+    AL.info("services", f"started: cst {VERSION}, pid {os.getpid()}, port {port}, home {home()}" + (", serving the screens" if d else ""))
     from .workflows import start_scheduler
 
     start_scheduler(ctx)
@@ -4148,7 +4167,9 @@ def serve(host: str = "127.0.0.1", port: int = 0, token: str | None = None, ui: 
     server = uvicorn.Server(config)
     import signal as _signal
 
-    def _stop(*_):  # graceful on SIGTERM and SIGINT, so the cleanup below always runs
+    def _stop(signum=None, *_):  # graceful on SIGTERM and SIGINT, so the cleanup below always runs
+        if signum is not None:
+            AL.info("services", f"asked to stop by {_signal.Signals(signum).name}")
         server.should_exit = True
 
     for sig in (_signal.SIGTERM, _signal.SIGINT):
@@ -4158,7 +4179,13 @@ def serve(host: str = "127.0.0.1", port: int = 0, token: str | None = None, ui: 
             pass  # not the main thread (tests): uvicorn's own handling applies
     try:
         server.run(sockets=[sock])
+    except BaseException as e:  # noqa: BLE001  logged, then raised as before
+        if not isinstance(e, (KeyboardInterrupt, SystemExit)):
+            AL.error("services", "the server stopped on an exception", e)
+        raise
     finally:
+        AL.COUNT.flush()
+        AL.info("services", f"exit: pid {os.getpid()}, {len(JOBS)} jobs seen this run")
         for k in list(KERNELS.values()):
             try:
                 k.shutdown()

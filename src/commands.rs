@@ -98,6 +98,8 @@ pub const COMMANDS: &[Command] = &[
     cmd("app.zoom_reset", &[], "Back to normal size."),
     cmd("app.update", &[], "Restart into the update Captain downloaded (your terminals keep running)."),
     cmd("app.quit", &[], "Quit (macOS)."),
+    cmd("logs.copy_last", &[], "Copy what happened last time: the last run's crash record, else the latest lines of the app's log. Secrets are taken out."),
+    cmd("logs.save_bundle", &[], "Save one zip of the logs for a bug report to the Desktop (app.log, services.log, crash records), secrets taken out."),
     cmd("app.hide", &[], "Hide the app (macOS)."),
     cmd("app.hide_others", &[], "Hide other apps (macOS)."),
     cmd("app.show_all", &[], "Show all apps (macOS)."),

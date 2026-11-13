@@ -557,9 +557,12 @@ impl AppWindow {
             // macOS: the red button hides the app instead, so alerts keep ringing;
             // the Dock icon or a new launch brings it back, Cmd+Q quits.
             if cfg!(target_os = "macos") {
+                tracing::info!(target: "captain::window", "window hidden by its close button, app still running (the Dock icon brings it back)");
+                crate::logs::hidden();
                 cx.hide();
                 return false;
             }
+            tracing::info!(target: "captain::window", "closed the main window (its close button)");
             let _ = closing.update(cx, |this, cx| {
                 this.drain_documents(window, cx);
                 this.close_mods_now(std::time::Instant::now() + Duration::from_millis(250), window, cx);
@@ -1654,6 +1657,7 @@ impl AppWindow {
                     copy._watch = runtime.watch(&root, window, cx).map_err(|e| tracing::warn!("{}: no hot reload: {e:#}", copy.inst.name)).ok();
                 }
                 copy.root = Some(root);
+                tracing::info!(target: "captain::mods", "loaded mod {} (version {})", copy.inst.name, crate::logs::mod_version(&folder.dir));
             }
             Err(e) => {
                 tracing::warn!("mod {} failed to load: {e:#}", copy.inst.name);
@@ -3407,13 +3411,43 @@ impl AppWindow {
                 });
                 self.write_person(|p| p.zoom = zoom, window, cx);
             }
-            "app.quit" => cx.quit(),
+            "app.quit" => {
+                // CAPTAIN: the log says what asked for every quit. A key, a click or a mod is the person's;
+                // `captain-app do app.quit` is another program's, through the control socket.
+                crate::logs::quit_asked(if person { "the person, with the app.quit command (a key, a click or a mod)" } else { "asked by another program, through the control socket (captain-app do app.quit)" });
+                cx.quit()
+            }
+            // CAPTAIN: Settings' Logs group and the "closed unexpectedly" line. The text is redacted when written.
+            "logs.copy_last" => {
+                cx.write_to_clipboard(ClipboardItem::new_string(crate::logs::what_happened()));
+                crate::logs::notice_done();
+                self.layout_notice("Copied", "What happened last time is on your clipboard, with keys and tokens taken out.", window, cx);
+                cx.notify();
+            }
+            "logs.save_bundle" => {
+                self._tasks.push(cx.spawn_in(window, async move |this, cx| {
+                    let saved = cx.background_executor().spawn(async { crate::logs::save_bundle() }).await;
+                    let _ = this.update_in(cx, |this, window, cx| match saved {
+                        Ok(path) => {
+                            let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                            let place = if path.contains("/Desktop/") { "on your Desktop" } else { "in your home folder" };
+                            this.layout_notice("Logs saved", &format!("{name} is {place}, with keys and tokens taken out."), window, cx);
+                        }
+                        Err(why) => {
+                            tracing::warn!("could not save the logs bundle: {why}");
+                            let folder = captain_logs::redact::redact(&crate::logs::dir().display().to_string(), std::env::var("HOME").ok().as_deref());
+                            this.layout_notice("Could not save the logs", &format!("They are still in {folder}."), window, cx);
+                        }
+                    });
+                }));
+            }
             "app.update" => {
                 if !crate::update::apply() {
                     return self.fail("no update is ready yet");
                 }
                 self.drain_documents(window, cx);
                 crate::update::relaunch();
+                crate::logs::quit_asked("an update is going in: the app restarts into it (app.update)");
                 cx.quit();
             }
             "window.close" | "window.minimize" | "window.maximize" => return self.window_command(name, window, cx),
@@ -3717,7 +3751,14 @@ impl AppWindow {
             Request::Run { name, args } => self.run(&name, args, window, cx),
             Request::OpenOverlay { id, spec } => self.open_overlay(id, spec, window, cx),
             Request::CloseOverlay { id } => self.close_overlay(&id, window, cx),
-            Request::Refresh => self.refresh_mods(cx),
+            Request::Refresh => {
+                // CAPTAIN: the services' state is looked at here too, not only when the window draws. A window
+                // behind other apps may not draw for a long time, and services that stopped must be started
+                // again, and their new address published, without waiting for that.
+                #[cfg(unix)]
+                crate::cst::tick();
+                self.refresh_mods(cx)
+            }
             // CAPTAIN: a shot draws a fresh frame first. macOS stops the frame clock of a window that's fully
             // covered, so the last frame drawn can predate whatever arrived since, and the shot saved that: a
             // test window behind other apps showed screens "stuck" on their skeleton that were already loaded.
@@ -3919,6 +3960,10 @@ impl AppWindow {
         if active != self.window_active {
             self.window_active = active;
             if active {
+                // CAPTAIN: the other half of "window hidden by its close button": it came back.
+                if crate::logs::shown_again() {
+                    tracing::info!(target: "captain::window", "window shown again after being hidden by its close button");
+                }
                 self.sync(window, cx);
             } else {
                 self.looked.clear();
@@ -4393,6 +4438,11 @@ impl AppWindow {
         if pill.is_some() {
             toast_y += UPDATE_PILL_HEIGHT + 8.0;
         }
+        // CAPTAIN: "Captain closed unexpectedly last time", once, above the update pill.
+        let closed = self.render_closed_notice(toast_y, cx);
+        if closed.is_some() {
+            toast_y += UPDATE_PILL_HEIGHT + 8.0;
+        }
         // Windows under dialogs, popups and toasts; each kind in the order opened
         // (a window pressed last is last: on top).
         let order = self.overlays.iter().filter(|o| o.kind == OverlayKind::Window).chain(self.overlays.iter().filter(|o| o.kind != OverlayKind::Window));
@@ -4472,12 +4522,60 @@ impl AppWindow {
                 .on_click(cx.listener(|this, _, w, cx| this.run("app.settings", json!({ "section": "updates" }), w, cx)))
                 .child(format!("herdr-core update failed: {error} · Open Updates")).into_any_element());
         }
+        out.extend(closed);
         out.extend(pill);
         out
     }
 }
 
 const UPDATE_PILL_HEIGHT: f32 = 34.0;
+
+impl AppWindow {
+    /// CAPTAIN: one quiet line when the last run crashed or vanished, in the corner where "Updated to ..." goes:
+    /// what happened, a way to copy the record, and a way to dismiss it. Never the log's text itself.
+    fn render_closed_notice(&self, bottom: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !crate::logs::notice_due() { return None; }
+        let pill = div()
+            .absolute()
+            .right(settings::z(16.0))
+            .bottom(settings::z(bottom))
+            .h(settings::z(UPDATE_PILL_HEIGHT))
+            .pl(settings::z(14.0))
+            .pr(settings::z(6.0))
+            .flex()
+            .items_center()
+            .gap(settings::z(10.0))
+            .bg(c("popover"))
+            .border_1()
+            .border_color(c("border"))
+            .rounded_full()
+            .shadow_lg()
+            .occlude()
+            .text_size(settings::z(13.0))
+            .child(div().text_color(c("foreground")).child(format!("{} closed unexpectedly last time.", crate::brand::NAME)))
+            .child(div().id("closed-copy").px(settings::z(6.0)).cursor_pointer().text_color(c("accent"))
+                .child("Copy what happened")
+                .on_click(cx.listener(|this, _, w, cx| this.run("logs.copy_last", json!({}), w, cx))))
+            .child(
+                div()
+                    .id("closed-dismiss")
+                    .size(settings::z(24.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .text_color(c("dim"))
+                    .hover(|s| s.bg(c("raised")).text_color(c("foreground")))
+                    .child("×")
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        crate::logs::notice_done();
+                        cx.notify();
+                    })),
+            );
+        Some(pill.into_any_element())
+    }
+}
 
 impl AppWindow {
     /// "Herdr 0.2.0 is ready · Restart": the frame's, so no layout or mod can hide it.

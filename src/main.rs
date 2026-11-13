@@ -11,6 +11,8 @@ mod keys;
 mod layout;
 mod layout_sync;
 mod links;
+// CAPTAIN: app.log, crash records, and how the last run ended.
+mod logs;
 mod model;
 mod mirror;
 mod mirror_sync;
@@ -126,16 +128,14 @@ fn main() {
 
     #[cfg(target_os = "macos")]
     core_bin::fill_path();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("HERDR_APP_LOG")
-                .unwrap_or_else(|_| "warn,herdr_app=info,gpui_shell=info".into()),
-        )
-        .init();
+    // CAPTAIN: tracing goes to stderr as before, and to app.log (logs.rs).
+    logs::open();
 
     if update::apply_on_startup() {
         return;
     }
+    // CAPTAIN: from here this run is marked as running until it quits cleanly.
+    logs::begin();
 
     telemetry::clock();
     // A first start sizes the app to the screen and the system's text size.
@@ -151,7 +151,7 @@ fn main() {
                 // One that can't serve this app gets the screen that fixes it.
                 Ok(core) => hc::check(&core.hello).map(|()| core).map_err(setup::Need::Fix),
                 Err(e) => {
-                    eprintln!("captain-app: {e:#}");
+                    tracing::error!("cannot connect to the terminals (herdr-core): {e:#}");
                     Err(setup::Need::Connect(format!("{e:#}")))
                 }
             }
@@ -169,7 +169,7 @@ fn main() {
     telemetry::start(settings::telemetry_setting(&person));
     bench::start();
     if let Err(e) = mods::write_workspace() {
-        eprintln!("captain-app: cannot write {}: {e}", mods::app_dir().display());
+        tracing::error!("cannot write {}: {e}", mods::app_dir().display());
     }
 
     gpui_platform::application()
@@ -184,6 +184,8 @@ fn main() {
             mods::init(cx);
             // Not restarted for it: the update goes in when the app quits.
             cx.on_app_quit(|cx| {
+                // CAPTAIN: what asked for this quit, first, so it is on file even if the cleanup below hangs.
+                logs::quitting();
                 let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
                 // Where the window was, for the next start (a quit never asks the window).
                 for w in cx.windows() {
@@ -201,6 +203,8 @@ fn main() {
                 cst::stop();
                 telemetry::quit();
                 update::apply();
+                // CAPTAIN: last: the run marker goes, so the next start reads this as a clean end.
+                logs::quit_done();
                 async {}
             })
             .detach();
@@ -219,7 +223,10 @@ fn main() {
             }
             match core {
                 Ok(core) => open_main(core, requests, cx),
-                Err(need) => setup::open(need, requests, cx),
+                Err(need) => {
+                    tracing::info!(target: "captain::window", "opened the setup window: the terminals (herdr-core) are not ready");
+                    setup::open(need, requests, cx)
+                }
             }
         });
 }
@@ -262,6 +269,7 @@ pub fn open_main(core: std::sync::Arc<hc::Core>, requests: async_channel::Receiv
             };
             cx.open_window(options, |window, cx| cx.new(|cx| window::AppWindow::new(core, requests, window, cx)))
                 .expect("cannot open the Captain window");
+            tracing::info!(target: "captain::window", "opened the main window{}", if test_window() { " (a test window)" } else { "" });
             if !test_window() {
                 cx.activate(true);
             }
