@@ -87,10 +87,13 @@ def test_errors_and_a_slow_minute_show(ws, aws):  # noqa: F811
     SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
     quiet = aws.metric
 
+    given: dict = {}  # the failures the stand-in reported, by minute
+
     def busy(name, stat, t, period):
         late = t.minute % 10 == 0  # one minute in ten: errors and a slow tail
         if (name, stat) == ("Invocation5XXErrors", "Sum"):
-            return 6.0 if late else 0.0
+            given[t] = 6.0 if late else 0.0
+            return given[t]
         if (name, stat) == ("ModelLatency", "p95"):
             return 250000.0 if late else 9000.0
         return quiet(name, stat, t, period)
@@ -98,7 +101,12 @@ def test_errors_and_a_slow_minute_show(ws, aws):  # noqa: F811
     aws.metric = busy
     s = NB.numbers(ws, "shop", span="1h")["summary"]
     # The failures are counted. The 95th percentile is the range's own, asked of AWS as one: not the slowest minute's 250 ms.
-    assert s["errors"] == 36 and round(s["error_rate"], 4) == 0.005 and s["p50_ms"] == 3.0 and s["p95_ms"] != 250.0
+    # How many of the hour's minutes end in 0 depends on the clock when the test runs: six most of the time, seven
+    # when the hour starts or ends on one. So the count is checked against what the stand-in reported, not a
+    # number that is only right for most starting times.
+    errors = int(sum(given.values()))
+    assert errors in (36, 42), f"six or seven bad minutes in an hour, six failures each: {errors}"
+    assert s["errors"] == errors and round(s["error_rate"], 4) == round(errors / s["requests"], 4) and s["p50_ms"] == 3.0 and s["p95_ms"] != 250.0
 
 
 def test_hours_and_cost_come_from_captains_own_record_at_the_list_price(ws, aws):  # noqa: F811
@@ -117,9 +125,15 @@ def test_hours_and_cost_come_from_captains_own_record_at_the_list_price(ws, aws)
     c = NB.cost(ws, "shop")
     assert _reads(aws) == before  # the cost asks AWS nothing
     assert c["source"] == "times" and c["hourly_usd"] == 0.0 and c["rate_usd"] == pytest.approx(hourly, abs=1e-4) and c["machine"] == "ml.t2.medium"
-    assert c["month_usd"] == pytest.approx(hourly, abs=2e-3) and c["month_usd"] > 0  # an hour at the list price, not nothing
+    # The hour it ran, as much of it as falls in this month. That is all of it, except in the first hour and twenty
+    # minutes of a month, when part of the run was last month's: the test must not fail then.
+    month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    ran_month = max(0.0, ((now - dt.timedelta(minutes=20)) - max(now - dt.timedelta(hours=1, minutes=20), month)).total_seconds() / 3600)
+    assert c["month_usd"] == pytest.approx(ran_month * hourly, abs=2e-3)
     assert c["today_usd"] == pytest.approx(ran * hourly, abs=2e-3) or c["today_usd"] <= c["month_usd"]
-    assert c["text"].startswith("Stopped, so it costs nothing now.") and "This month: about $0.07." in c["text"]
+    assert c["text"].startswith("Stopped, so it costs nothing now.")
+    if ran_month == pytest.approx(1.0):
+        assert c["month_usd"] > 0 and "This month: about $0.07." in c["text"]  # an hour at the list price, not nothing
     assert "from when Captain started and stopped it, at the list price for ml.t2.medium" in c["text"] and c["text"].endswith("Your AWS bill is the final word.")
     # While it runs: the rate, and the hours so far.
     SG._save(ws, "shop", "staging", status="running", started_at=(now - dt.timedelta(minutes=30)).isoformat(timespec="seconds"), stopped_at=None)
