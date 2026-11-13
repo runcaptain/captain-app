@@ -14,6 +14,20 @@ const AUDIENCES = [
 
 /** A metric key in words: "arms.full~tuned+m6.all.conv_vs_ref" reads "Conversion vs the reference, all shoppers",
  *  "ndcg@10_tw" reads "nDCG@10, traffic-weighted". Unknown keys come back tidied, never invented. */
+/** A log line as the app draws it: a cloud account's number (12 digits, often inside a bucket's name) shows only
+ *  its last four. The number is not a secret, but it has no place on a screen someone may share. */
+export function hideAccount(text) {
+  return String(text ?? "").replace(/(^|[^0-9])\d{8}(\d{4})(?![0-9])/g, "$1xxxxxxxx$2");
+}
+
+/** Seconds as a person reads a clock that is running: "48 s", "1 min 32 s", "12 min", "1.5 h". */
+export function clockWords(s) {
+  if (s == null || !Number.isFinite(s) || s < 0) return "";
+  if (s < 60) return `${Math.floor(s)} s`;
+  if (s < 600) return `${Math.floor(s / 60)} min ${Math.floor(s % 60)} s`;
+  return s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
+}
+
 export function metricWords(key) {
   const raw = String(key ?? "");
   const vsRef = /_vs_ref|vs_ref/.test(raw);

@@ -35,7 +35,12 @@ fs.cpSync(path.join(root, 'defaults/mods/captain-runs'), dir, { recursive: true 
 const { default: Mod } = await import(path.join(dir, 'main.js'));
 const h = harness(Mod);
 await h.start();
-await h.click('runs-kind-jobs'); // the one list, filtered to jobs
+// The one list, filtered to jobs. A kind the workspace has none of has no filter chip, and this workspace has no
+// job yet, so the filter is set the way a link does ("Open jobs"). The chip shows while its filter is on.
+assert.equal(h.byIdPrefix('runs-kind-jobs').length, 0, 'no Jobs chip before there is a job');
+h.mod.showKind(h.cx, 'jobs');
+await h.idle(50);
+assert.equal(h.byIdPrefix('runs-kind-jobs').length, 1, 'the chip of the filter in force shows');
 const until = async (ok, what) => {
   for (let i = 0; i < 80 && !ok(h.text()); i++) { await h.layoutLists({}); await h.idle(250); }
   assert.ok(ok(h.text()), `${what}: ${h.text().slice(0, 800)}`);
