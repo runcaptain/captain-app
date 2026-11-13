@@ -28,6 +28,9 @@ def test_a_session_records_who_opened_it_and_what_they_were_allowed(ctx):
     led = s["ledger"]
     assert (led["raw_weights"], led["sandbox"], led["forward_allowed"], led["forward_used"]) == (True, False, 4, 0)
     assert led["changed"] == 0 and led["total"] == 13 and led["weights_alone"] is True and led["label"] == "from the weights alone"
+    base = s["sets"]["held_out"]["base"]
+    assert base["model"] == "tiny@v1" and base["of"] == 300 and base["right"] >= 290 and 0 < base["cost"] < 0.1
+    assert s["ledger"]["scores_shown"] is False, "the base's own score is a fact about the model, not feedback"
     assert s["events"][0]["kind"] == "open" and s["events"][0]["by"] == "agent" and "4 forward passes" in s["events"][0]["sentence"]
     assert S.session(ctx, s["id"])["ledger"] == led and S.session_for(ctx, "tiny")["id"] == s["id"]
 
@@ -499,6 +502,8 @@ def test_fix_this_one_a_single_input_and_its_wanted_output_can_be_the_target(ctx
     assert ev["cost"]["target"]["of"] == 1 and ev["cost"]["target"]["name"] == "target" and ev["target_named"] == {"of": 1}
     assert set(ev["cost"]) == {"target", "test"}
     assert S.session(ctx, sid)["sets"]["target"] == {"defined": True, "of": 1, "says": "1 input given when the set was named"}
+    S.edit(ctx, sid, {"op": "zero", "layer": 3, "neuron": 0})
+    assert S.session(ctx, sid)["sets"]["held_out"]["base"]["right"] == S.open_session(ctx, "digits")["sets"]["held_out"]["base"]["right"], "edits do not move it"
     # Or by naming the example, which copies its inputs in.
     sets = S.set_sets(ctx, sid, target={"example": 7})
     assert sets["target"]["of"] == 1
