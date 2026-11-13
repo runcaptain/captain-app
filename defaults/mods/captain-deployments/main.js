@@ -6,15 +6,14 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, props, run, shared, setShared } from "herdr";
 import { api, watchWorkspace } from "./kit/cst.js";
-import { palette, isDark, FONT } from "./kit/tokens.js";
+import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Button, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
-import { ago, money, ms, count, Spark } from "./words.js";
+import { ago, money, ms, count, Spark, Updated } from "./words.js";
 import { ModelPage } from "./model.js";
 
 const UP = ["running", "asleep", "starting", "unknown"];
-const SHOW = [["running", "Running"], ["stopped", "Stopped"], ["all", "All"]];
 
 export default class CaptainDeployments extends View {
   init(_props, cx) {
@@ -22,7 +21,7 @@ export default class CaptainDeployments extends View {
     this.problem = null;
     this.created = null;      // GET /api/deployed/created
     this.nums = {};           // project -> the last 24 hours of numbers
-    this.show = "all";        // every deployment at first: a stopped one is still there to start again or remove
+    this.shownEarlier = false; // whether the models stopped earlier are opened up
     this.cloud = null;        // a cloud to show only, or null for all
     this.project = null;
     this.ask = null;          // an open question: {kind, id, text, yes}
@@ -40,15 +39,23 @@ export default class CaptainDeployments extends View {
       this.d = this.demo.deployed;
       this.created = this.demo.created ?? null;
       this.nums = this.demo.numbers ?? {};
-      this.show = this.demo.show ?? "all";
+      this.shownEarlier = Boolean(this.demo.earlier);
       if (this.demo.open) this.openRow(this.d.rows.find((r) => r.id === this.demo.open), cx, this.demo.part ?? null);
       return;
     }
     this.asked = 0;           // the `at` of the last request from another screen that was handled
+    this.reads = 0;           // how many times the list has been asked for
+    this.floor = 0;           // answers to asks numbered below this are older than the person's last action
+    this.readAt = 0;          // when the list on screen was read
+    this.numsAt = 0;          // when the numbers were last read
     this.takeOpen(cx);
     this.load(cx);
     watchWorkspace(cx, (cx) => { this.page = null; this.load(cx); });
-    cx.timer.every(15000, (cx) => this.load(cx));
+    // Live: the list is read every few seconds, so a deploy or a stop made on another screen or in a terminal
+    // shows by itself. A read is skipped while an action here is running: its own result comes next.
+    cx.timer.every(5000, (cx) => { if (!Object.keys(this.busy).length) this.load(cx); });
+    cx.timer.every(20000, (cx) => cx.notify());  // so "Updated just now" turns into "a minute ago" without a read
+    cx.timer.every(60000, (cx) => this.page?.refresh(cx));  // an open model's page: where it runs and its numbers
     // A link on another screen can't reach this screen's props: it sets the shared "open" value and selects this
     // place. Looked at a few times a second, as the other screens do, so the link lands without a wait.
     cx.timer.every(300, (cx) => this.takeOpen(cx));
@@ -60,27 +67,44 @@ export default class CaptainDeployments extends View {
     const o = shared("captain.open");
     if (!o || o.section !== "deployments" || !o.at || o.at === this.asked) return;
     this.asked = o.at;
-    if (!o.open) { this.page = null; this.wanted = null; return cx.notify(); }
+    // The sidebar's entry asks for the view's home, every click, the entry already shown included. Home is the
+    // list: any model's page is closed and forgotten, with whatever was open on it, and so is a model waiting to be
+    // opened, an open question and an open picker. A request for home wins over a page opened a moment before.
+    if (o.home || !o.open) { this.page = null; this.wanted = null; this.ask = null; this.menu = null; return cx.notify(); }
     const row = this.d?.rows.find((x) => x.id === o.open);
     if (row) this.openRow(row, cx);
     else { this.wanted = o.open; this.load(cx, true); }  // not read yet, or made a moment ago: ask, then open it
   }
 
+  /** Read what is deployed, and the numbers beside it. The list is read every few seconds: Captain's records and
+   *  the clouds' own listings cost nothing to ask. The numbers are read once a minute, because a cloud charges for
+   *  each read of those. An answer that set out before the person's last action is dropped: the screen never
+   *  shows a state older than the last thing they did. */
   load(cx, fresh = false) {
     if (this.demo) return;
+    const mine = ++this.reads;
     cx.spawn(async (cx) => {
       const r = await api(`/api/deployed${fresh ? "?fresh=true" : ""}`, { timeout: 60 });
-      if (r.ok) { this.d = r.data; this.problem = null; } else if (!this.d) this.problem = r;
+      if (mine < this.floor) return;  // asked before the last action finished: older than what the person did
+      if (r.ok) { this.d = r.data; this.problem = null; this.readAt = Date.now(); } else if (!this.d) this.problem = r;
       if (r.ok && this.wanted) {  // asked for by another screen ("Open in Deployments" on a project's page)
         const row = r.data.rows.find((x) => x.id === this.wanted);
         this.wanted = null;
         if (row) this.openRow(row, cx);
       }
+      // A model's page open on a row keeps to the row as it is now, or closes when the row is gone.
+      if (r.ok && this.page) {
+        const now = r.data.rows.find((x) => x.id === this.page.row.id);
+        if (now) this.page.row = now; else this.page = null;
+      }
       cx.notify();
       if (!r.ok) return;
       const made = await api("/api/deployed/created");
-      if (made.ok) this.created = made.data;
-      // Traffic and cost for each row that belongs to a project. The services keep each answer for a minute.
+      if (made.ok && mine >= this.floor) this.created = made.data;
+      cx.notify();
+      if (!fresh && Date.now() - this.numsAt < 60000) return;
+      this.numsAt = Date.now();
+      // Traffic and cost for each row that belongs to a project.
       for (const row of r.data.rows.filter((x) => x.link !== "unlinked" && x.project)) {
         const n = await api(`/api/projects/${encodeURIComponent(row.project)}/deployed/numbers?range=24h&env=${encodeURIComponent(row.env ?? "staging")}`, { timeout: 60 });
         if (n.ok) this.nums[row.id] = n.data;
@@ -91,15 +115,31 @@ export default class CaptainDeployments extends View {
 
   // ---- doing things to a deployment -----------------------------------------------------------------
 
+  /** Do something to a deployment and show it happening. While it runs the row says what is being done, with the
+   *  step it is on, and offers no button that would do it again. Work the services do as a job (stopping,
+   *  starting, removing) is followed to its end. When it ends, what it said is shown and the list is read at once. */
   async act(cx, row, words, call) {
     this.ask = null;
     if (this.demo) return cx.notify();
     this.busy[row.id] = words;
     this.note = null;
     cx.notify();
-    const r = await call();
+    let r = await call();
+    let said = r.ok ? (r.data?.text ?? null) : plainError(r.error, "That did not work.");
+    const job = r.ok ? r.data?.job : null;
+    for (let i = 0; job && i < 1800; i++) {  // half an hour at the most: a first deploy to a cloud takes minutes
+      const j = await api(`/api/jobs/${encodeURIComponent(job)}`, { timeout: 30 });
+      if (!j.ok) { said = plainError(j.error, "Captain lost track of that work. Look at the list for where it stands."); break; }
+      const step = j.data?.message || (j.data?.log ?? []).slice(-1)[0];
+      this.busy[row.id] = step ? `${words}: ${String(step).replace(/[.]+$/, "")}` : words;
+      cx.notify();
+      if (j.data?.status === "done") { said = j.data?.result?.text ?? said ?? `${words}: done.`; break; }
+      if (j.data?.status === "failed") { said = plainError(j.data?.error ?? j.data?.message, "That did not work."); break; }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
     delete this.busy[row.id];
-    this.note = r.ok ? (r.data?.text ?? null) : plainError(r.error, "That did not work.");
+    this.note = said;
+    this.floor = this.reads + 1;  // anything read before now is older than this action
     this.load(cx, true);
   }
 
@@ -107,13 +147,26 @@ export default class CaptainDeployments extends View {
     cx.spawn((cx) => this.act(cx, row, "Stopping", () => api(`/api/projects/${encodeURIComponent(row.project)}/unstage`, { method: "POST", body: { env: row.env }, timeout: 600 })));
   }
 
+  /** Start a stopped model again, in the place it was. The services are asked for the plan first, so the question
+   *  names the place, says when that place has to be set up again, how long it takes and what it costs. It never
+   *  starts anywhere else: with no plan for that place, nothing is asked and the reason is shown. */
   start(row, cx) {
-    const cost = this.nums[row.id]?.cost?.rate_usd;
-    this.ask = { id: row.id, yes: "Start it again",
-      text: `Start ${row.model_version} again on ${row.where}?` + (cost ? ` It costs about ${money(cost)} an hour while it is up.` : ""),
-      go: (cx) => cx.spawn((cx) => this.act(cx, row, "Starting", () => api(`/api/projects/${encodeURIComponent(row.project)}/deploy`,
-        { method: "POST", body: { host: row.cloud, login: row.login, candidate: row.model_version, env: row.env, confirm: true }, timeout: 60 }))) };
+    const where = { host: row.cloud, login: row.login, candidate: row.model_version, env: row.env };
+    this.busy[row.id] = "Checking where it will run";
     cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${encodeURIComponent(row.project)}/deploy`, { method: "POST", body: { ...where, dry_run: true }, timeout: 60 });
+      delete this.busy[row.id];
+      if (!r.ok) { this.note = plainError(r.error, `It can't be started again on ${row.cloud_label} just now.`); return cx.notify(); }
+      const p = r.data;
+      this.ask = { id: row.id, yes: p.first_time && row.cloud !== "local" ? `Set up ${p.label} and start it` : "Start it again",
+        text: `Start ${row.model_label ?? row.model_version} again on ${p.label ?? row.cloud_label}? `
+          + (p.first_time && row.cloud !== "local" ? `This will set up ${p.label} again. ` : "")
+          + [p.minutes?.text, p.cost?.text].filter(Boolean).join(" "),
+        go: (cx) => cx.spawn((cx) => this.act(cx, row, `Starting on ${p.label ?? row.cloud_label}`, () => api(`/api/projects/${encodeURIComponent(row.project)}/deploy`,
+          { method: "POST", body: { ...where, confirm: true }, timeout: 60 }))) };
+      cx.notify();
+    });
   }
 
   remove(row, cx) {
@@ -121,9 +174,16 @@ export default class CaptainDeployments extends View {
     this.ask = { id: row.id, yes: "Remove it from the cloud",
       text: found ? `Remove ${row.name} from your ${row.cloud_label} account? It cannot be undone.`
         : `Remove ${row.project_name}'s model from ${row.cloud_label}? It stops answering, and what Captain made for it there is deleted. It cannot be undone.`,
-      go: (cx) => cx.spawn((cx) => this.act(cx, row, "Removing", () => found
+      go: (cx) => cx.spawn((cx) => this.act(cx, row, `Removing from ${row.cloud_label}`, () => found
         ? api("/api/deployed/remove", { method: "POST", body: { id: row.id, confirm: true }, timeout: 600 })
         : api(`/api/projects/${encodeURIComponent(row.project)}/deploy?env=${encodeURIComponent(row.env ?? "staging")}`, { method: "DELETE", timeout: 600 }))) };
+    cx.notify();
+  }
+
+  forgetIt(row, cx) {
+    this.ask = { id: row.id, yes: "Forget it",
+      text: `Forget ${row.project_name}'s stopped model? Captain removes its own record of it. Nothing in the cloud changes, because nothing of it is there.`,
+      go: (cx) => cx.spawn((cx) => this.act(cx, row, "Forgetting", () => api("/api/deployed/forget", { method: "POST", body: { project: row.project, env: row.env, confirm: true } }))) };
     cx.notify();
   }
 
@@ -199,9 +259,13 @@ export default class CaptainDeployments extends View {
           : up ? [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true }),
             Button(c, `dep-stop-${r.id}`, "Stop", (_e, cx) => this.stop(r, cx), { small: true }),
             Button(c, `dep-back-${r.id}`, "Go back to an earlier version", (_e, cx) => this.openRow(r, cx, "details"), { small: true })]
-            : [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true }),
-              ...(r.model_version ? [Button(c, `dep-start-${r.id}`, "Start again", (_e, cx) => this.start(r, cx), { small: true })] : []),
-              Button(c, `dep-remove-${r.id}`, "Remove from the cloud", (_e, cx) => this.remove(r, cx), { small: true })];
+            // Something in a cloud that is not answering (it failed): it can be looked at, and removed from the cloud.
+            : r.in_cloud !== false ? [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true }),
+              Button(c, `dep-remove-${r.id}`, "Remove from the cloud", (_e, cx) => this.remove(r, cx), { small: true })]
+              // Stopped earlier: nothing of it is in a cloud, so there is nothing to remove from one. Captain can start
+              // it again, or forget it.
+              : [...(r.model_version ? [Button(c, `dep-start-${r.id}`, "Start again", (_e, cx) => this.start(r, cx), { small: true })] : []),
+                Button(c, `dep-forget-${r.id}`, "Forget it", (_e, cx) => this.forgetIt(r, cx), { small: true })];
     // Who deployed it and when, by the name before the @. When it stopped is in the state's own sentence.
     const when = ago(r.since);
     const who = r.by ? [`Deployed by ${r.by_name ?? r.by}`, when].filter(Boolean).join(", ") : when ? `Made ${when}` : null;
@@ -224,9 +288,18 @@ export default class CaptainDeployments extends View {
         .child(div().flex_1())
         // Drawn only when the last hour had requests: an empty chart is a faint line that says nothing.
         .when(hour.some((v) => v > 0) && !found, (e) => e.child(Spark(c, `dep-spark-${r.id}`, hour))))
-      .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
-      .child(div().text_size(12.5).line_height("18px").text_color(c.grey500)
-        .child([r.where, numbers, cost, who].filter(Boolean).join(". ") + "."))
+      .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(wrong && r.in_cloud !== false ? c.fail : c.navy)
+        .child(r.remembered_text ? `${r.state_text} ${r.remembered_text}` : r.state_text))
+      // Where it lives: the address a site calls, to copy, and one line about the system it runs on.
+      .when(Boolean(r.address) && r.in_cloud !== false, (e) => e.child(h_flex().gap(8).items_center()
+        // The code font is for the one thing here a person copies, and nothing else.
+        .child(div().id(`dep-address-${r.id}`).min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(c.navy).child(String(r.address)))
+        .child(Button(c, `dep-copy-${r.id}`, this.copied === r.id ? "Copied" : "Copy", (_e, cx) => { cx.write_to_clipboard?.(String(r.address)); this.copied = r.id; cx.notify(); }, { small: true }))))
+      .child(div().id(`dep-system-${r.id}`).text_size(12.5).line_height("18px").text_color(c.grey500)
+        .child([[r.cloud_label, r.account].filter(Boolean).join(", "), r.cloud === "local" ? null : r.region, r.machine_words ?? (r.cloud === "local" ? null : r.machine),
+          r.copies_words, who].filter(Boolean).join(". ") + "."))
+      .when(Boolean(numbers || cost), (e) => e.child(div().id(`dep-numbers-${r.id}`).text_size(12.5).line_height("18px").text_color(c.grey500)
+        .child([numbers, cost].filter(Boolean).join(". ") + ".")))
       .children((r.corrected ?? []).map((x, i) => div().id(`dep-fixed-${r.id}-${i}`).text_size(12.5).line_height("18px").text_color(c.grey500).child(x)))
       .when(this.ask?.id === r.id, (e) => e.child(this.question(c)))
       .when(this.ask?.id !== r.id, (e) => e.child(h_flex().gap(8).flex_wrap().children(buttons)));
@@ -266,8 +339,9 @@ export default class CaptainDeployments extends View {
         : Button(c, `dep-setup-remove-${place.cloud}`, "Remove everything", (_e, cx) => this.removeSetup(place, cx), { small: true }))));
   }
 
-  // One row above the list. The state as three chips. The cloud and the project as two small pickers at the right,
-  // each shown only when there is more than one to pick from. An open picker lists its choices on a line below.
+  // Above the list, at the right: the cloud and the project as two small pickers, each shown only when there is
+  // more than one to pick from. An open picker lists its choices on a line below. There is no filter by state: what
+  // is in a cloud is the list, and what was stopped earlier has its own line under it.
   filters(c, rows) {
     const clouds = [...new Map(rows.map((r) => [r.cloud, r.cloud_label])).entries()];
     const projects = [...new Map(rows.filter((r) => r.project && r.link !== "unlinked").map((r) => [r.project, r.project_name ?? r.project])).entries()];
@@ -281,9 +355,9 @@ export default class CaptainDeployments extends View {
       .child(div().child(this[key] ? (list.find(([id]) => id === this[key])?.[1] ?? every) : every))
       .child(svg(icon(this.menu === key ? "chevron-up" : "chevron-down")).size(12).text_color(c.grey500));
     const open = this.menu === "cloud" ? ["cloud", "Every cloud", clouds] : this.menu === "project" ? ["project", "Every project", projects] : null;
+    if (clouds.length < 2 && projects.length < 2) return div();
     return v_flex().id("dep-filters").gap(6)
       .child(h_flex().gap(6).items_center()
-        .children(SHOW.map(([id, label]) => chip(`dep-show-${id}`, label, this.show === id, set("show", id))))
         .child(div().flex_1())
         .when(clouds.length > 1, (e) => e.child(picker("cloud", "Every cloud", clouds)))
         .when(projects.length > 1, (e) => e.child(picker("project", "Every project", projects))))
@@ -298,37 +372,54 @@ export default class CaptainDeployments extends View {
     if (this.page) return frame(this.page.render(c, cx));
     const d = this.d;
     if (!d) return frame(div().p(24).child(Problem(c, this.problem ?? { starting: true }, (cx) => this.load(cx))));
-    const rows = d.rows.filter((r) => (this.show === "all" || (UP.includes(r.state) || r.link === "unlinked") === (this.show === "running"))
-      && (!this.cloud || r.cloud === this.cloud) && (!this.project || r.project === this.project));
+    const picked = (r) => (!this.cloud || r.cloud === this.cloud) && (!this.project || r.project === this.project);
+    // The list is what exists in a cloud now: running, starting, asleep or failed. A model that was stopped is not
+    // in a cloud: Captain only remembers it, and it is listed apart.
+    const here = d.rows.filter((r) => r.in_cloud !== false), earlier = d.rows.filter((r) => r.in_cloud === false);
+    const rows = here.filter(picked);
     const notAsked = d.asked.filter((a) => !a.ok);
     const places = this.created?.places ?? [];
     const head = h_flex().h(56).flex_none().px(24).gap(12).items_center().border_b(1).border_color(c.rule)
       .child(div().text_size(18).font_semibold().text_color(c.navy).child("Deployments"))
       // With nothing deployed the page itself says so: the line beside the title would only repeat it.
-      .child(div().id("dep-summary").flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(d.rows.length ? d.text : ""))
-      .child(Button(c, "dep-refresh", "Ask the clouds again", (_e, cx) => this.load(cx, true), { small: true }));
-    const none = !d.rows.length;
-    const noneUp = !none && !d.rows.some((r) => UP.includes(r.state) && r.link !== "unlinked");
+      .child(div().id("dep-summary").flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(d.text))
+      // It keeps itself up to date, and says when it last was, or that a cloud could not be reached. No button to
+      // press: a small refresh icon is there for someone who wants to ask now.
+      .child(Updated(c, "dep-updated", { readAt: this.readAt, icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.load(cx, true),
+        problem: notAsked.length ? `${[...new Set(notAsked.map((a) => a.cloud_label))].join(" and ")} could not be reached. Trying again.` : null }));
+    const none = !here.length;
     const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small });
+    const n = earlier.length;
     const body = v_flex().gap(18)
       .when(Boolean(this.note), (e) => e.child(div().id("dep-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)))
-      .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(13).line_height("19px").text_color(c.fail)
-        .child(`Captain could not ask ${a.cloud_label}${a.login ? ` (${a.login})` : ""} just now: ${plainError(a.error, "no reason given")}. What is shown for it is Captain's own record.`)))
+      // Why a cloud could not be reached, once, in words a person can act on. What is shown for it is Captain's record.
+      .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(12.5).line_height("18px").text_color(c.grey500)
+        .child(`${a.cloud_label}${a.login && a.login.toLowerCase() !== a.cloud ? ` (${a.login})` : ""}: ${plainError(a.error, "no reason given")}. What is shown for it is Captain's own record.`)))
       // The list of models is what this screen is: it is always here, under its own heading, even with nothing in it.
       .child(v_flex().id("dep-models").gap(10)
         .child(h_flex().gap(12).items_center()
           .child(div().text_size(15).font_semibold().text_color(c.navy).child("Models"))
           .child(div().id("dep-models-line").flex_1().text_size(13).text_color(c.grey500)
-            .child(none ? "No models are deployed yet. Deploy one from a project's page, and it shows here with where it runs, its traffic and what it costs."
-              : noneUp ? "None is running. Start one again below, or deploy one from a project's page." : ""))
+            .child(none ? "No models are running." : ""))
           // The next step, when nothing is answering. An open question takes the filled button in its place.
-          .when((none || noneUp) && !this.ask, (e) => e.child(deploy(true))))
+          .when(none && !this.ask, (e) => e.child(deploy(true))))
         .when(this.ask?.id === "deploy", (e) => e.child(this.question(c)))
-        .child(none ? div() : this.filters(c, d.rows))
+        // With nothing at all (no model, none stopped earlier, nothing set up in any account), one line says what
+        // this screen is for. With anything else on the page, the page says it.
+        .when(none && !n && !places.length, (e) => e.child(div().id("dep-what-for").text_size(13).line_height("19px").text_color(c.grey500)
+          .child("A model you deploy from a project's page shows here: where it runs, the address to call, its traffic and what it costs. You can stop it, start it again or remove it from here.")))
+        .child(none ? div() : this.filters(c, here))
         .child(v_flex().id("dep-list")
           .children(rows.map((r) => this.row(c, r)))
-          .when(!none && !rows.length, (e) => e.child(div().id("dep-none-shown").py(16).text_size(13).text_color(c.grey500)
-            .child(this.show === "running" ? "No model is running. Stopped ones are under Stopped." : "No model matches. Change what is shown above.")))))
+          .when(!none && !rows.length, (e) => e.child(div().id("dep-none-shown").py(16).text_size(13).text_color(c.grey500).child("No model matches. Change the cloud or the project above.")))))
+      // Stopped earlier: one closed line. Nothing of these is in a cloud. Captain remembers them so they can be
+      // started again, or forgotten.
+      .when(n > 0, (e) => e.child(v_flex().id("dep-earlier")
+        .child(h_flex().gap(10).items_center().py(8)
+          .child(div().id("dep-earlier-line").flex_1().text_size(13).line_height("19px").text_color(c.grey900).child(`Stopped earlier: ${n} model${n === 1 ? "" : "s"}.`))
+          .child(Button(c, "dep-earlier-show", this.shownEarlier || earlier.some((r) => this.ask?.id === r.id) ? "Hide" : "Show",
+            (_e, cx) => { this.shownEarlier = !this.shownEarlier; cx.notify(); }, { small: true })))
+        .when(this.shownEarlier || earlier.some((r) => this.ask?.id === r.id), (x) => x.children(earlier.map((r) => this.row(c, r))))))
       // Last and small: what the first deploy to each cloud made, one line each until it is opened.
       .when(Boolean(places.length), (e) => e.child(v_flex().id("dep-created").pt(6)
         .children(places.map((p) => this.setup(c, p)))));

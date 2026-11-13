@@ -23,7 +23,7 @@ const kindOf = (ctx, v) => (ctx.kinds ?? []).find((k) => k.kind === v.kind);
 const ok = (r, done) => {
   if (r.ok && !r.data?.error && !r.data?.exit_code) return { ok: true, message: done };
   if (r.failed) return { ok: false, error: r.error };
-  if (r.status >= 500) return { ok: false, error: `Captain's services hit a problem (error ${r.status}). Try again; if it keeps happening, tell us.` };
+  if (r.status >= 500) return { ok: false, error: "Captain's services hit a problem. Try again. If it keeps happening, tell us." };
   return { ok: false, error: plain(r.data?.error ?? r.error) };
 };
 // A failed readiness check's fixing action: the task that makes the missing evidence, pre-filled.
@@ -39,13 +39,38 @@ export function fixFor(gates, pipeline) {
 // Through the services' command runner, for the few tasks without their own route.
 const run = (path, args) => api("/api/commands/run", { body: { path, args }, timeout: 590 });
 
+// The id Captain keeps for a name field (the shell puts it in <key>_id), and the words typed, for the message.
+const idOf = (v, key = "name") => v[`${key}_id`] ?? String(v[key] ?? "").trim();
+const saidOf = (v, key = "name") => String(v[key] ?? "").trim() || idOf(v, key);
+
+/** A form's submit can be called without the form on screen (an agent, a test). So a check that guards something
+ *  that can't be undone, or that would start work, runs there too: the same check the field shows while typing. */
+const guard = (task, v, ctx) => {
+  for (const f of task.fields) {
+    if (f.when && !f.when(v, ctx ?? {})) continue;
+    const x = v[f.key];
+    if (x === undefined || x === null || String(x).trim() === "") continue;
+    const said = f.check?.(x, v, ctx ?? {});
+    if (said) return { ok: false, error: said, field: f.key };
+  }
+  return null;
+};
+const taskOf = (id) => TASKS.find((t) => t.id === id);
+
+// Checks a field makes as the person types (the shell shows the sentence under the field: checks.js).
+const whole = (x) => { const n = Number(String(x ?? "").replace(/[,_\s]/g, "")); return Number.isInteger(n) ? n : NaN; };
+const wholeBetween = (lo, hi, what) => (v) => (whole(v) >= lo && whole(v) <= hi ? null : `${what} is a whole number from ${lo.toLocaleString("en-US")} to ${hi.toLocaleString("en-US")}.`);
+const aNumber = (example) => (v) => (String(v).trim() !== "" && Number.isFinite(Number(v)) ? null : `That needs to be a number, like ${example}.`);
+const fileThere = async (v) => {
+  const path = String(v ?? "").trim().replace(/^~(?=\/|$)/, home());
+  if (!path) return null;
+  try { return (await exec("test", ["-f", path])).code === 0 ? null : `There's no file at ${String(v).trim()}.`; } catch { return null; }
+};
+
 // A file import, after checking the file is there (the services' own error is a database message).
 async function importFile(v) {
   const path = v.file.trim().replace(/^~(?=\/|$)/, home());
-  let there = false;
-  try { there = (await exec("test", ["-f", path])).code === 0; } catch {}
-  if (!there) return { ok: false, error: `There's no file at ${v.file.trim()}.` };
-  return ok(await run(["data", "snapshot"], { path, name: v.name, kind: v.kind }), `Imported ${v.name}.`);
+  return ok(await run(["data", "snapshot"], { path, name: idOf(v), kind: v.kind }), `Imported ${saidOf(v)}.`);
 }
 
 
@@ -186,14 +211,22 @@ export const TASKS = [
     about: "Name it, say what you're building, and list what it reads. Nothing here is fixed: inputs and the trainer can be changed on the project's page.",
     load: async () => ({ recipes: await recipes() }),
     fields: [
-      { key: "name", label: "Name", placeholder: "Outdoor store search", required: true },
-      { key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true,
+      // Any words: the project's id is made from them, and shown under the field.
+      { key: "name", label: "Name", name: "project", placeholder: "Outdoor store search", required: true },
+      { key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true, missing: "Choose what you're building.",
         options: (ctx) => [...recipeOptions(ctx), { value: "other", label: "Something else", icon: "plus", about: "Any other model. Say what it is, then list what it reads.", needs: "whatever your training reads." }] },
-      { key: "what", label: "What is it?", required: true, placeholder: "A fraud score for each payment, from past chargebacks", when: (v) => v.recipe === "other",
+      { key: "what", label: "What is it?", required: true, missing: "Say what it is, in a few words.", placeholder: "A fraud score for each payment, from past chargebacks", when: (v) => v.recipe === "other",
         help: "In your own words." },
       // The inputs, filled from the kind picked above and then the person's: add, rename and remove before creating.
       { key: "inputs", label: "Inputs", kind: "rows", when: (v) => Boolean(v.recipe), seedOn: (v) => v.recipe, placeholder: "Product embeddings",
         seed: (ctx, v) => ((ctx.recipes ?? []).find((r) => r.id === v.recipe)?.slots ?? []).map((x) => ({ id: x.id, label: x.label ?? x.id, kind: (x.accepts ?? ["any"])[0], required: Boolean(x.required) })),
+        // Checked as the list is edited, not after the button: an input with no name, or two with one name.
+        check: (rows) => {
+          const names = rows.map((x) => String(x.label ?? "").trim().toLowerCase());
+          if (names.some((n) => !n)) return "Every input needs a name. Name it, or remove it.";
+          const twice = names.find((n, i) => names.indexOf(n) !== i);
+          return twice ? `Two inputs are named ${twice}. Give each its own name.` : null;
+        },
         kinds: INPUT_KINDS, addLabel: "Add an input", empty: "No inputs yet. Add what your training reads, or add them later on the project's page.",
         help: "What training reads. Rename one, remove one, or add your own. You choose the data for each on the project's page." },
       { key: "trainer", label: "How is it trained?", kind: "choice", required: true, default: (v) => (String(v.recipe ?? "").startsWith("search-") ? "builtin" : "command"), resetOn: "recipe",
@@ -202,13 +235,13 @@ export const TASKS = [
         help: (_ctx, v) => (v.trainer === "builtin" ? "A search ranker Captain trains from products and search events. It needs both among the inputs."
           : v.trainer === "repo" ? "Captain runs the command in your repo. It reads the inputs and reports its results."
           : "Any command. It reads the inputs and reports its results.") },
-      { key: "repo", label: "Repo address", required: true, placeholder: "https://github.com/your-team/ranker.git", when: (v) => v.trainer === "repo" },
+      { key: "repo", label: "Repo address", required: true, missing: "Give the address of your training repo.",
+        check: (v) => (/^(https?:\/\/|git@|ssh:\/\/|\/|~\/|\.\.?\/)\S+$/.test(String(v).trim()) ? null : "That doesn't look like a repo address. It starts with https://, git@ or a folder path."), placeholder: "https://github.com/your-team/ranker.git", when: (v) => v.trainer === "repo" },
       { key: "command", label: "Training command", placeholder: "python train.py", optional: true, when: (v) => v.trainer === "command" || v.trainer === "repo" },
       { key: "description", label: "What it's for", optional: true, placeholder: "Product search for the outdoor storefront" },
     ],
     submit: async (v) => {
       const inputs = (v.inputs ?? []).map((x) => ({ ...(x.id ? { id: x.id } : {}), label: String(x.label ?? "").trim(), kind: x.kind, ...(x.required ? { required: true } : {}) }));
-      if (inputs.some((x) => !x.label)) return { ok: false, error: "Every input needs a name. Name it, or remove it." };
       // Only what the form was given is sent: with no list of inputs the kind's own are used, as before.
       const body = { name: v.name.trim(), kind: v.recipe, ...(v.inputs !== undefined ? { slots: inputs } : {}),
         ...(v.trainer ? { trainer: { how: v.trainer, ...(v.command && v.trainer !== "builtin" ? { command: v.command.trim() } : {}), ...(v.trainer === "repo" ? { repo: String(v.repo ?? "").trim() } : {}) } } : {}),
@@ -238,7 +271,7 @@ export const TASKS = [
     id: "add-input", label: "Add an input", icon: "plus", hidden: true,
     about: "Anything your training reads that the project doesn't ask for yet. It's optional, so the project can still train without it.",
     fields: [
-      { key: "label", label: "Name", placeholder: "Product embeddings", required: true },
+      { key: "label", label: "Name", name: "input", placeholder: "Product embeddings", required: true },
       { key: "kind", label: "What it is", kind: "choice", required: true, default: "any",
         options: [{ value: "catalog", label: "Products" }, { value: "events", label: "Events" }, { value: "queries", label: "Queries" }, { value: "judgments", label: "Labels" }, { value: "any", label: "Something else" }] },
       { key: "why", label: "What training does with it", optional: true, placeholder: "Item vectors for the second-stage ranker" },
@@ -260,15 +293,14 @@ export const TASKS = [
     id: "generate-events", label: "Generate synthetic events", icon: "flask-conical", hidden: true,
     about: "Simulated shoppers search your catalog, click and buy. No real shopper made these events, so every result judged on them is simulated.",
     fields: [
-      { key: "sessions", label: "Shopper sessions", required: true, default: "20000", help: "One visit with one or more searches. Expect about five rows a session." },
-      { key: "days", label: "Days to spread them over", required: true, default: "30", help: "The range ends today." },
+      { key: "sessions", label: "Shopper sessions", required: true, default: "20000", check: wholeBetween(1, 200000, "Shopper sessions"), help: "One visit with one or more searches. Expect about five rows a session." },
+      { key: "days", label: "Days to spread them over", required: true, default: "30", check: wholeBetween(1, 365, "Days"), help: "The range ends today." },
       { key: "compute", kind: "runs-on", fixed: true, cost: (v) => ({ kind: "synthetic-events", where: "local", size: { sessions: Number(String(v.sessions ?? "").replace(/[,_\s]/g, "")) || 0, days: Number(v.days) || 0 } }) },
     ],
     submit: async (v) => {
-      const whole = (x) => { const n = Number(String(x ?? "").replace(/[,_\s]/g, "")); return Number.isInteger(n) ? n : NaN; };
+      const no = guard(taskOf("generate-events"), v);
+      if (no) return no;
       const sessions = whole(v.sessions), days = whole(v.days);
-      if (!(sessions >= 1 && sessions <= 200000)) return { ok: false, error: "Shopper sessions is a whole number from 1 to 200,000." };
-      if (!(days >= 1 && days <= 365)) return { ok: false, error: "Days is a whole number from 1 to 365." };
       const r = await api(`/api/projects/${encodeURIComponent(v.project)}/inputs/${encodeURIComponent(v.slot ?? "events")}/generate`, { body: { sessions, days }, scoped: false });
       const started = ok(r, "");
       if (!started.ok) return started;
@@ -283,12 +315,14 @@ export const TASKS = [
     id: "delete-project", label: "Delete project", icon: "trash-2", hidden: true,
     about: "The project goes: its inputs, candidates and baseline. Its datasets, models and runs are kept, and so is everything else in the workspace.",
     fields: [
-      { key: "confirm", label: "Type the project's name to delete it", required: true, help: (_ctx, v) => `It's called ${v.name}.` },
+      { key: "confirm", label: "Type the project's name to delete it", required: true, missing: "Type the project's name.", help: (_ctx, v) => `It's called ${v.name}.`,
+        check: (x, v) => (String(x).trim() === String(v.name).trim() ? null : `That isn't the project's name. It's called ${v.name}.`) },
       { key: "force", label: "Delete it even with a launch review waiting", kind: "toggle", optional: true, when: (v) => Boolean(v.waiting),
         help: "A launch review from this project has no deployment recorded yet. Its bundle is kept either way." },
     ],
     submit: async (v) => {
-      if (v.confirm.trim() !== String(v.name).trim()) return { ok: false, error: `That isn't the project's name. It's called ${v.name}.` };
+      const no = guard(taskOf("delete-project"), v);   // never deleted on a name that doesn't match, form or no form
+      if (no) return no;
       const r = await api(`/api/projects/${encodeURIComponent(v.project)}?force=${v.force ? "true" : "false"}`, { method: "DELETE", scoped: false });
       if (r.status === 409) {
         const hs = r.data?.handoffs ?? [];
@@ -492,16 +526,17 @@ export const TASKS = [
     about: "Bring in a catalog, queries, judgments or logs, from a file on this computer or a SQL query.",
     fields: [
       { key: "from", label: "From", kind: "choice", default: "file", options: [{ value: "file", label: "A file" }, { value: "sql", label: "A SQL query" }] },
-      { key: "name", label: "Name", placeholder: "gift-catalog", required: true, help: "Letters, digits and dashes. Each import becomes a new version of it." },
+      { key: "name", label: "Name", name: "dataset", placeholder: "Gift catalog", required: true, help: "Each import becomes a new version of it." },
       { key: "kind", label: "What it holds", kind: "choice", default: "catalog",
         options: [{ value: "catalog", label: "Catalog" }, { value: "queries", label: "Queries" }, { value: "judgments", label: "Judgments" }, { value: "events", label: "Events or logs" }, { value: "generic", label: "Something else" }] },
-      { key: "file", label: "File", placeholder: "~/Downloads/catalog.parquet", required: true, when: (v) => v.from !== "sql", help: "CSV, TSV, Parquet or JSON lines." },
+      { key: "file", label: "File", placeholder: "~/Downloads/catalog.parquet", required: true, missing: "Choose a file.", when: (v) => v.from !== "sql", help: "CSV, TSV, Parquet or JSON lines.",
+        checkAsync: fileThere },
       { key: "conn", label: "Database", kind: "choice", required: true, when: (v) => v.from === "sql",
         options: () => list("/api/connections", (c) => ({ value: c.name, label: c.name, chip: c.engine })), empty: "No database connected yet. Connect one first." },
       { key: "sql", label: "Query", kind: "long", required: true, when: (v) => v.from === "sql", placeholder: "select * from products" },
     ],
     submit: async (v) => (v.from === "sql"
-      ? ok(await api("/api/sql", { body: { conn: v.conn, sql: v.sql, save: v.name, kind: v.kind } }), `Saved ${v.name}.`)
+      ? ok(await api("/api/sql", { body: { conn: v.conn, sql: v.sql, save: idOf(v), kind: v.kind } }), `Saved ${saidOf(v)}.`)
       : await importFile(v)),
   },
   {
@@ -511,7 +546,7 @@ export const TASKS = [
     // change here.
     load: async () => ({ kinds: (await api("/api/connections/kinds")).data ?? [] }),
     fields: [
-      { key: "kind", label: "Database", kind: "choice", grid: true, required: true,
+      { key: "kind", label: "Database", kind: "choice", grid: true, required: true, missing: "Pick a database.",
         options: (ctx) => (ctx.kinds ?? []).map((k) => ({ value: k.kind, label: k.label, brand: k.icon })),
         help: (ctx, v) => {
           const k = (ctx.kinds ?? []).find((x) => x.kind === v.kind);
@@ -519,7 +554,7 @@ export const TASKS = [
           if (k.installed === false) return `Captain can't reach ${k.label} on this computer yet: its driver isn't installed.`;
           return k.note ?? null;
         } },
-      { key: "name", label: "Name", placeholder: "warehouse", required: true, when: (v) => Boolean(v.kind), help: "How you'll pick this database later." },
+      { key: "name", label: "Name", name: "connection", placeholder: "Sales warehouse", required: true, when: (v) => Boolean(v.kind) },
       { key: "*kind-fields", kind: "dynamic", when: (v) => Boolean(v.kind),
         fields: (ctx, v) => ((ctx.kinds ?? []).find((k) => k.kind === v.kind)?.fields ?? [])
           .map((f) => ({ ...f, key: `${v.kind}.${f.name}`, optional: !f.required })) },
@@ -527,12 +562,9 @@ export const TASKS = [
     ],
     submit: async (v, ctx) => {
       const kind = (ctx.kinds ?? []).find((k) => k.kind === v.kind);
-      if (!kind) return { ok: false, error: "Pick a database." };
-      const name = String(v.name ?? "").trim();
-      // Submitting again after a failed test replaces what this form saved, and nothing else.
-      if (ctx.saved !== name && ((await api("/api/connections")).data ?? []).some((c) => c.name === name)) {
-        return { ok: false, error: `A database named ${name} is already connected. Pick another name.` };
-      }
+      // The id Captain made from the name (a taken one already got the next free id, under the field). Submitting
+      // again after a failed test replaces what this form saved, and nothing else.
+      const name = ctx.saved ?? v.name_id ?? String(v.name ?? "").trim();
       const fields = {};
       for (const f of kind.fields ?? []) {
         const val = v[`af:${v.kind}.${f.name}`];
@@ -562,9 +594,18 @@ export const TASKS = [
     load: async () => ({ providers: (await api("/api/cloud/providers")).data ?? [] }),
     fields: [
       { key: "provider", label: "Cloud", kind: "choice", required: true, options: (ctx) => (ctx.providers ?? []).map((p) => ({ value: p.provider, label: { aws: "AWS", gcp: "Google Cloud", azure: "Azure", modal: "Modal" }[p.provider] ?? p.provider, brand: p.provider })) },
+      // The sign-in this choice relies on is looked for by itself, and again every few seconds, so a person who
+      // signs in from a terminal sees it found when they come back. No button asks.
       { key: "auth", label: "Sign in with", kind: "choice", required: true, when: (v) => Boolean(v.provider),
-        options: (ctx, v) => ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).map((a) => ({ value: a.mode, label: a.label })) },
-      { key: "name", label: "Name", placeholder: "work", required: true, help: "How you'll pick this login later." },
+        options: (ctx, v) => ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).map((a) => ({ value: a.mode, label: a.label })),
+        statusOn: (v) => [v.provider, v.auth], recheck: 3000,
+        status: async (_ctx, v) => {
+          if (!v.provider || !v.auth) return null;
+          const r = await api(`/api/cloud/signin?provider=${encodeURIComponent(v.provider)}&auth=${encodeURIComponent(v.auth)}`, { scoped: false });
+          return r.ok && r.data?.found === false ? { text: r.data.text, problem: true } : null;
+        } },
+      // Any words: Captain keeps them as the label and makes its own id from them (checks.js, naming.py).
+      { key: "name", label: "Name", name: "cloud", placeholder: "GPU cloud", required: true },
       // Modal picks where it runs by itself, so it is asked for no region.
       { key: "region", label: "Region", placeholder: "us-west-1", optional: true, when: (v) => v.provider !== "modal" },
       // The sign-in mode's own fields come from the services (cloud.providers), secrets masked.
@@ -572,12 +613,12 @@ export const TASKS = [
     ],
     submit: async (v, ctx) => {
       const spec = ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).find((a) => a.mode === v.auth)?.fields ?? [];
-      if (((await api("/api/cloud/profiles")).data ?? []).some((p) => p.name === v.name)) return { ok: false, error: `You already have a cloud account named ${v.name}. Pick another name.` };
       const fields = {}, secrets = {};
+      const id = v.name_id, said = String(v.name ?? "").trim();
       for (const f of spec) if (v[`af:${f.name}`]) (f.secret ? secrets : fields)[f.name] = v[`af:${f.name}`];
-      const r = await api("/api/cloud/profiles", { body: { name: v.name, provider: v.provider, auth: v.auth, region: v.region || undefined, fields, secrets } });
-      if (r.ok) await api(`/api/cloud/profiles/${encodeURIComponent(v.name)}/test`, { method: "POST", body: {}, timeout: 60 });
-      return ok(r, `Connected ${v.name}.`);
+      const r = await api("/api/cloud/profiles", { body: { name: id, label: said, provider: v.provider, auth: v.auth, region: v.region || undefined, fields, secrets } });
+      if (r.ok) await api(`/api/cloud/profiles/${encodeURIComponent(r.data?.name ?? id)}/test`, { method: "POST", body: {}, timeout: 60 });
+      return ok(r, `Connected ${said}.`);
     },
   },
   {
@@ -617,16 +658,17 @@ export const TASKS = [
     // Every kind comes from the services (GET /api/compute/kinds), including a team's own from its captain/ folder.
     load: async () => ({ kinds: (await api("/api/compute/kinds")).data ?? [], profiles: (await api("/api/cloud/profiles")).data ?? [] }),
     fields: [
-      { key: "kind", label: "Where", kind: "choice", grid: true, columns: 2, required: true,
+      { key: "kind", label: "Where", kind: "choice", grid: true, columns: 2, required: true, missing: "Pick where it runs.",
         options: (ctx) => (ctx.kinds ?? []).map((k) => ({ value: k.kind, label: k.label ?? k.kind, brand: k.provider === "local" ? "local" : k.provider, chip: k.live_tested ? null : "not tested yet" })),
         help: (ctx, v) => {
           const k = (ctx.kinds ?? []).find((x) => x.kind === v.kind);
           if (!k) return null;
           return k.live_tested ? `Tested on a real account on ${k.live_tested}.` : "Not yet tested on a real account. It should work; tell us if it doesn't.";
         } },
-      { key: "name", label: "Name", placeholder: "aws-batch", required: true, when: (v) => Boolean(v.kind), help: "How you'll pick this place later." },
+      { key: "name", label: "Name", name: "compute", placeholder: "GPU batch", required: true, when: (v) => Boolean(v.kind) },
       // The login comes from the kind's own cloud; this computer and Modal need none.
-      { key: "profile", label: "Cloud login", kind: "choice", when: (v, ctx) => Boolean(v.kind) && CLOUDS.includes(kindOf(ctx, v)?.provider),
+      { key: "profile", label: "Cloud login", kind: "choice", required: true, missing: "This place needs a cloud login. Connect a cloud account first, from Cloud and compute.",
+        when: (v, ctx) => Boolean(v.kind) && CLOUDS.includes(kindOf(ctx, v)?.provider),
         empty: "None yet for this cloud. Connect a cloud account first, from Cloud and compute.",
         options: (ctx, v) => (ctx.profiles ?? []).filter((p) => p.provider === kindOf(ctx, v)?.provider).map((p) => ({ value: p.name, label: p.name, brand: p.provider })) },
       { key: "region", label: "Region", optional: true, placeholder: "us-west-1", when: (v, ctx) => Boolean(v.kind) && CLOUDS.includes(kindOf(ctx, v)?.provider) },
@@ -635,17 +677,15 @@ export const TASKS = [
     ],
     submit: async (v, ctx) => {
       const k = kindOf(ctx, v);
-      if (!k) return { ok: false, error: "Pick where it runs." };
-      if (CLOUDS.includes(k.provider) && !v.profile) return { ok: false, error: `${k.label} needs a cloud login. Connect one first, from Cloud and compute.` };
-      if (((await api("/api/compute")).data ?? []).some((t) => t.name === v.name)) return { ok: false, error: `There's already a place to run work named ${v.name}. Pick another name.` };
+      const name = v.name_id ?? String(v.name ?? "").trim(), said = String(v.name ?? "").trim() || name;
       const config = {};
       for (const f of k.fields ?? []) { const val = v[`af:${v.kind}.${f.name}`]; if (val !== undefined && val !== "") config[f.name] = val; }
-      const r = await api("/api/compute", { body: { name: v.name, kind: v.kind, profile: v.profile || undefined, region: v.region || undefined, config } });
+      const r = await api("/api/compute", { body: { name, kind: v.kind, profile: v.profile || undefined, region: v.region || undefined, config } });
       if (!r.ok) return ok(r, "");
       // Try it at once, and say what happened either way: it's saved, and Cloud and compute can test it again.
-      const t = await api(`/api/compute/${encodeURIComponent(v.name)}/test`, { body: {}, timeout: 60 });
-      if (t.ok && t.data?.ok) return { ok: true, message: `Added ${v.name}, and it answered.` };
-      return { ok: true, message: `Added ${v.name}, but its test didn't pass: ${plain(t.data?.detail ?? t.data?.error ?? t.error ?? "no answer")}. Test it again from Cloud and compute once that's fixed.` };
+      const t = await api(`/api/compute/${encodeURIComponent(name)}/test`, { body: {}, timeout: 60 });
+      if (t.ok && t.data?.ok) return { ok: true, message: `Added ${said}, and it answered.` };
+      return { ok: true, message: `Added ${said}, but its test didn't pass: ${plain(t.data?.detail ?? t.data?.error ?? t.error ?? "no answer")}. Test it again from Cloud and compute once that's fixed.` };
     },
   },
   {
@@ -659,7 +699,7 @@ export const TASKS = [
     id: "dataset-class", label: "New dataset class", icon: "tag",
     about: "A class groups datasets by what they are for, and says which evaluations can use them.",
     fields: [
-      { key: "name", label: "Name", placeholder: "product-reviews", required: true, help: "Letters, digits and dashes." },
+      { key: "name", label: "Name", name: "class", placeholder: "Product reviews", required: true },
       { key: "description", label: "What it's for", kind: "long", required: true, placeholder: "Reviews shoppers left, used to find quality signals" },
       { key: "role", label: "Evaluations can use it as", kind: "choice", default: "generic",
         options: async () => {
@@ -671,9 +711,9 @@ export const TASKS = [
       { key: "columns", label: "Columns every dataset in it must have", optional: true, placeholder: "id, title", help: "Separate with commas." },
     ],
     submit: async (v) => ok(await api("/api/dataset-classes", { body: {
-      name: v.name.trim(), description: v.description.trim(), color: v.color, role: v.role === "generic" ? null : v.role,
+      name: idOf(v), description: v.description.trim(), color: v.color, role: v.role === "generic" ? null : v.role,
       required_columns: String(v.columns ?? "").split(",").map((x) => x.trim()).filter(Boolean),
-    } }), `Added the ${v.name.trim()} class.`),
+    } }), `Added the ${saidOf(v)} class.`),
   },
   {
     // The New menu and the palette open the evaluation's own form (captain-evaluation). These fields stay for a
@@ -684,9 +724,10 @@ export const TASKS = [
     fields: [
       { key: "kind", label: "What to test", kind: "choice", default: "versions",
         options: [{ value: "versions", label: "Two versions" }, { value: "settings", label: "Other settings of one version" }] },
-      { key: "name", label: "Name", placeholder: "tuned-vs-current", required: true, help: "Letters, digits and dashes.", when: (v) => v.kind !== "settings" },
+      { key: "name", label: "Name", name: "test", placeholder: "Tuned against current", required: true, when: (v) => v.kind !== "settings" },
       { key: "a", label: "Compare", kind: "choice", required: true, options: pipelines, empty: "No model versions yet.", when: (v) => v.kind !== "settings" },
-      { key: "b", label: "With", kind: "choice", required: true, options: pipelines, empty: "No model versions yet.", when: (v) => v.kind !== "settings" },
+      { key: "b", label: "With", kind: "choice", required: true, options: pipelines, empty: "No model versions yet.", when: (v) => v.kind !== "settings",
+        check: (b, v) => (v.a && v.a === b ? "Pick two different versions to compare." : null) },
       { key: "pipeline", label: "Version", kind: "choice", required: true, options: pipelines, empty: "No model versions yet.", when: (v) => v.kind === "settings",
         help: "Captain tries other values of its numeric settings, a quick pass on a sample of queries first." },
       { key: "mode", label: "Shoppers", kind: "choice", default: "simulated", when: (v) => v.kind !== "settings",
@@ -705,14 +746,15 @@ export const TASKS = [
         openOverlay({ mod: "captain-sandbox", kind: "dialog", width: 0.9, height: 0.9, props: { pipeline: v.pipeline, queries: v.queries, judgments: v.judgments } });
         return { ok: true, message: `Trying settings of ${String(v.pipeline).split("@")[0]}` };
       }
-      if (v.a === v.b) return { ok: false, error: "Pick two different versions to compare." };
+      const no = guard(taskOf("backtest"), v);
+      if (no) return no;
       const plan = await api("/api/backtests", { body: {
-        name: v.name.trim(), arms: [v.a, v.b], queries: v.queries, judgments: v.judgments, hypothesis: v.hypothesis.trim(),
+        name: idOf(v), arms: [v.a, v.b], queries: v.queries, judgments: v.judgments, hypothesis: v.hypothesis.trim(),
         primary: "ndcg@10", mde: Number(v.mde) || 0.003, mode: v.mode, logs: v.mode === "historic" ? v.logs : undefined,
       } });
       const planned = ok(plan, "");
       if (!planned.ok) return planned;
-      const started = await api(`/api/backtests/${v.name.trim().split("/").map(encodeURIComponent).join("/")}/run`, { body: v.compute ? { compute: v.compute } : {} });
+      const started = await api(`/api/backtests/${idOf(v).split("/").map(encodeURIComponent).join("/")}/run`, { body: v.compute ? { compute: v.compute } : {} });
       // Watch it as it goes: Runs opens on its live view.
       if (started.ok && started.data?.live) {
         setShared("captain.open", { section: "runs", live: started.data.live, at: Date.now() });
@@ -727,7 +769,7 @@ export const TASKS = [
     // The team's rubrics (captain/rubrics/<domain>.md): graders see the same words beside each pair.
     load: async () => ({ rubrics: (await api("/api/rubrics")).data ?? [], rows: await rowsByRef() }),
     fields: [
-      { key: "name", label: "Name", placeholder: "spring-rating", required: true, help: "Letters, digits and dashes." },
+      { key: "name", label: "Name", name: "rating", placeholder: "Spring rating", required: true },
       { key: "queries", label: "Queries", kind: "choice", required: true, options: () => byRole("queries"), empty: "No query sets yet. Import one first." },
       { key: "a", label: "Results from", kind: "choice", required: true, options: pipelines, empty: "No model versions yet." },
       { key: "b", label: "And from", kind: "choice", optional: true, options: pipelines },
@@ -744,7 +786,7 @@ export const TASKS = [
         note: "People rate this queue, at no cloud cost. The estimate is what an LLM judge would bill in tokens for the same pairs." },
     ],
     submit: async (v) => ok(await api("/api/grading", { body: {
-      name: v.name.trim(), queries: v.queries, pipelines: [v.a, v.b].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(","),
+      name: idOf(v), queries: v.queries, pipelines: [v.a, v.b].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(","),
       depth: Number(v.depth) || 10, ...(Number(v.sample) > 0 ? { sample: Number(v.sample) } : {}), ...(v.rubric ? { rubric: v.rubric } : {}),
     } }), "Queue ready. Rate it in Runs, under Rating."),
   },
@@ -824,15 +866,16 @@ export const TASKS = [
     about: "A result from your own testing tool. It counts as real-traffic evidence.",
     fields: [
       { key: "metric", label: "Metric", required: true, placeholder: "conversion rate" },
-      { key: "value", label: "Change", required: true, placeholder: "0.012", help: "The measured lift as a number, e.g. 0.012 for +1.2%." },
-      { key: "ci_low", label: "Interval low", optional: true },
-      { key: "ci_high", label: "Interval high", optional: true },
+      { key: "value", label: "Change", required: true, placeholder: "0.012", help: "The measured lift as a number, e.g. 0.012 for +1.2%.", check: aNumber("0.012") },
+      { key: "ci_low", label: "Interval low", optional: true, check: aNumber("0.004") },
+      { key: "ci_high", label: "Interval high", optional: true, check: aNumber("0.02") },
       { key: "source", label: "Where it comes from", required: true, placeholder: "the Optimizely report for test 42" },
       { key: "experiment", label: "The test's name in your tool", optional: true },
     ],
     submit: async (v, ctx, args) => {
+      const no = guard(taskOf("add-outcome"), v);
+      if (no) return no;
       const num = (x) => (x === undefined || x === "" ? undefined : Number(x));
-      if (!Number.isFinite(num(v.value))) return { ok: false, error: "Change needs to be a number, like 0.012." };
       return ok(await api(`/api/handoffs/${encodeURIComponent(args.id)}/outcome`, { body: { metric: v.metric, value: num(v.value), ci_low: num(v.ci_low), ci_high: num(v.ci_high), source: v.source, experiment: v.experiment || undefined } }), "Result added.");
     },
   },

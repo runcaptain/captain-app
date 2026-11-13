@@ -139,10 +139,33 @@ def deployments_list(running: bool = typer.Option(False, "--running", help="only
     # again or remove, and a list that counts it and does not show it is no list.
     up = lambda r: r["state"] in UP or r["link"] == "unlinked"  # noqa: E731
     rows = [r for r in d["rows"] if every or not (running or stopped) or (running and up(r)) or (stopped and not up(r))]
-    lines = [f"{(r['project_name'] or r['name'] or '')[:22]:22} {r['state_label'][:24]:24} {r['where'][:40]:40} "
-             f"{(r.get('model_label') or r['model_version'] or 'not linked to a project')[:34]:34} {r['state_text']}" for r in rows]
+    line = lambda r: (f"{(r['project_name'] or r['name'] or '')[:22]:22} {r['state_label'][:24]:24} {r['where'][:40]:40} "  # noqa: E731
+                      f"{(r.get('model_label') or r['model_version'] or 'not linked to a project')[:34]:34} {r['state_text']}")
+    # What is in a cloud now, then what was stopped earlier, under its own heading: Captain only remembers those.
+    now, earlier = [r for r in rows if r["in_cloud"]], [r for r in rows if not r["in_cloud"]]
+    lines = [line(r) for r in now]
+    if earlier:
+        lines += ([""] if lines else []) + ["Stopped earlier. Nothing of these is in a cloud or billing. Start one again with: cst deployments start <project>"]
+        lines += [line(r) for r in earlier]
     lines += [f"Could not ask {a['cloud_label']} ({a['login'] or 'no login'}): {a['error']}" for a in d["asked"] if not a["ok"]]
-    emit({**d, "rows": rows}, "\n".join(lines + ([d["text"]] if d["rows"] else [])) if lines else d["text"])
+    emit({**d, "rows": rows}, "\n".join(([d["text"]] if d["rows"] else []) + lines) if lines else d["text"])
+
+
+@deployments_app.command("forget")
+def deployments_forget(name: str, env: str = typer.Option("staging", "--env"),
+                       yes: bool = typer.Option(False, "--yes", "-y", help="confirm: Captain's record of it is removed")):
+    """Forget a model that was stopped earlier: remove Captain's own record of the deployment. Nothing in any cloud
+    changes, because nothing of it is there."""
+    from ..staging import fleet as FL
+
+    if S.dry_run:
+        emit({"dry_run": True, "project": name}, f"Would forget {name}'s stopped model. Nothing in the cloud would change.")
+        return
+    try:
+        r = FL.forget_stopped(ctx(), name, env, confirm=yes)
+    except ValueError as e:
+        fail(str(e))
+    emit(r, r["text"])
 
 
 @deployments_app.command("sync")

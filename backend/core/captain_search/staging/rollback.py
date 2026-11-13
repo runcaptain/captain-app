@@ -30,6 +30,23 @@ def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 
 
+def _place(rec: dict) -> str:
+    """Where this deployment runs, for the deploy that puts a version back: the record's own place. A record
+    written before places were recorded has only its kind, and the place is read from that. It is never taken
+    to be this computer because nothing else was said."""
+    if rec.get("host"):
+        return rec["host"]
+    if rec.get("kind") == "local":
+        return "local"
+    from . import hosts as H
+
+    h = H.of_kind(rec.get("kind") or "")
+    if h is None:
+        raise ValueError("Captain can't tell where this model runs, so it won't put a version back by guessing. "
+                         "Deploy the earlier version from the project's page, and choose the place.")
+    return h.cloud
+
+
 def earlier(ctx: Context, pid: str, env: str = ENV) -> list[dict]:
     """The versions this deployment can go back to, newest first: every earlier deploy that is not the one running."""
     from .traffic import versions
@@ -67,7 +84,7 @@ def go(ctx: Context, pid: str, to: int | None = None, reason: str | None = None,
     is_base = row["model_version"] == doc.get("champion")
     # The same one-job deploy, to the same place. What is running stays up until the earlier version answers.
     try:
-        out = DP.run(ctx, pid, rec.get("host") or "local", rec.get("login"), candidate=None if is_base else row["model_version"],
+        out = DP.run(ctx, pid, _place(rec), rec.get("login"), candidate=None if is_base else row["model_version"],
                      baseline=is_base, env=env, confirm=True, on_event=on_event, force=True)
         failed = None if out.get("status") == "done" else str(out.get("error") or "")
     except Exception as e:  # noqa: BLE001  whatever stopped it, the question is what is running now

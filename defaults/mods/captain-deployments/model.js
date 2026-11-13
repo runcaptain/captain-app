@@ -9,7 +9,7 @@ import * as UI from "./kit/ui.js";
 import { Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
-import { ago, money, ms, count, BarChart } from "./words.js";
+import { ago, money, ms, count, BarChart, Updated } from "./words.js";
 
 const RANGES = [["15m", "15 minutes"], ["1h", "1 hour"], ["24h", "24 hours"], ["7d", "7 days"]];
 // Two submenus, never more: the numbers, and everything else about this model on one scrolling page.
@@ -37,6 +37,9 @@ export class ModelPage {
     this.log = null;
     this.versions = null;
     this.scale = null;
+    this.where = null;     // GET /deployed/where: the table of where it runs
+    this.readAt = 0;       // when what is on the page was read
+    this.copiedFact = null;
     this.copied = false;
     this.note = null;
     this.busy = null;
@@ -46,14 +49,29 @@ export class ModelPage {
     return `/api/projects/${encodeURIComponent(this.row.project)}${path}`;
   }
 
+  /** Read again what can have changed since the page was opened: where it runs and its numbers. Called by the
+   *  list on its own timer, once a minute, so an open page stays true without a click. */
+  refresh(cx) {
+    if (this.demo || this.busy) return;
+    this.where = null;
+    this.load(cx);
+  }
+
   load(cx) {
     if (this.demo) {
-      Object.assign(this, { n: this.demo.numbers?.[this.range] ?? this.demo.numbers?.["1h"] ?? null, requests: this.demo.requests ?? { rows: [] },
+      Object.assign(this, { readAt: Date.now(), where: this.demo.where ?? null, n: this.demo.numbers?.[this.range] ?? this.demo.numbers?.["1h"] ?? null, requests: this.demo.requests ?? { rows: [] },
         log: this.demo.log ?? { rows: [] }, versions: this.demo.versions ?? { rows: [] }, scale: this.demo.scale ?? null });
       return cx.notify();
     }
     if (!this.row.project) return;
     cx.spawn(async (cx) => {
+      // Where it runs first: it is read from the cloud's own describe call, and is what the page opens on.
+      if (!this.where) {
+        const w = await api(this.url(`/deployed/where?env=${encodeURIComponent(this.row.env ?? "staging")}`), { timeout: 60 });
+        this.where = w.ok ? w.data : { facts: [], text: plainError(w.error, "Where it runs could not be read.") };
+        this.readAt = Date.now();
+        cx.notify();
+      }
       const n = await api(this.url(`/deployed/numbers?range=${this.range}&env=${encodeURIComponent(this.row.env ?? "staging")}`), { timeout: 60 });
       if (n.ok) this.n = n.data; else this.note = plainError(n.error, "The numbers could not be read.");
       cx.notify();
@@ -171,26 +189,37 @@ export class ModelPage {
   render(c, _cx) {
     const r = this.row;
     const wrong = r.state === "failed" || r.state === "gone";
-    const address = r.address ?? r.name;
     const head = h_flex().h(56).flex_none().px(24).gap(12).items_center().border_b(1).border_color(c.rule)
       .child(Button(c, "model-close", "All deployments", (_e, cx) => { this.close(); cx.notify(); }, { small: true }))
       .child(r.cloud === "local" ? svg(icon("monitor")).size(16).text_color(c.navy) : Brand(c, r.cloud, 16))
       .child(div().id("model-title").text_size(18).font_semibold().text_color(c.navy).child(r.project_name ?? r.name ?? ""))
-      .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(r.model_label ?? r.model_version ?? ""));
+      .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(r.model_label ?? r.model_version ?? ""))
+      // The page keeps itself current, as the list does: when it was read, or that the cloud could not be reached.
+      .child(Updated(c, "model-updated", { readAt: this.readAt, icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.refresh(cx),
+        problem: this.where && this.where.from_cloud === false && /could not be asked/.test(this.where.text ?? "") ? `${r.cloud_label} could not be reached. Trying again.` : null }));
     const top = v_flex().gap(6)
       .child(div().id("model-state").text_size(14).line_height("20px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
-      .child(div().text_size(12.5).line_height("18px").text_color(c.grey500)
-        .child([r.where, r.by ? `Deployed by ${r.by}` : null, ago(r.since)].filter(Boolean).join(". ") + "."))
       .children((r.corrected ?? []).map((x) => div().text_size(12.5).line_height("18px").text_color(c.grey500).child(x)))
-      .when(Boolean(address), (e) => e.child(h_flex().gap(8).items_center().pt(4)
-        .child(div().text_size(12.5).text_color(c.grey500).child(r.address ? "Its address" : "Its name in the cloud"))
-        // The one thing on this page a person copies: the code font is for that and nothing else.
-        .child(div().id("model-address").min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(c.navy).child(String(address)))
-        .child(Button(c, "model-copy", this.copied ? "Copied" : "Copy", (_e, cx) => { cx.write_to_clipboard(String(address)); this.copied = true; cx.notify(); }, { small: true }))))
       .when(Boolean(this.busy), (e) => e.child(div().id("model-busy").text_size(13).text_color(c.navy).child(`${this.busy}...`)))
       .when(Boolean(this.note), (e) => e.child(div().id("model-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)));
     const parts = h_flex().id("model-parts").child(Submenus(c, PARTS, this.part, (id, cx) => { this.part = id; cx.notify(); }));
+    // Where it runs: first on the page, as a small table. Each value says whether it was read from the cloud or
+    // comes from Captain's record. What a person copies (the address, a test request, the log's name) has Copy.
+    const w = this.where;
+    const where = v_flex().id("model-where").gap(2)
+      .child(div().pb(4).text_size(14).font_semibold().text_color(c.navy).child("Where it runs"))
+      .children((w?.facts ?? []).map((f) => h_flex().id(`model-where-${f.id}`).gap(12).py(5).items_start().border_b(1).border_color(c.rule)
+        .child(div().w(150).flex_none().text_size(12.5).line_height("18px").text_color(c.grey500).child(f.label))
+        .child(f.copy
+          // The code font only for what is copied. A request of several lines shows its first, and Copy takes it all.
+          ? div().id(`model-where-${f.id}-value`).flex_1().min_w(0).truncate().text_size(12.5).line_height("18px").font_family(MONO).text_color(c.navy)
+            .child(String(f.value).split("\n").find((x) => x.trim() && !x.trim().startsWith("#")) ?? String(f.value))
+          : div().id(`model-where-${f.id}-value`).flex_1().min_w(0).text_size(13).line_height("18px").text_color(c.navy).child(String(f.value)))
+        .when(Boolean(f.copy), (e) => e.child(Button(c, `model-where-${f.id}-copy`, this.copiedFact === f.id ? "Copied" : "Copy",
+          (_e, cx) => { cx.write_to_clipboard?.(String(f.value)); this.copiedFact = f.id; cx.notify(); }, { small: true })))
+        .child(div().w(150).flex_none().text_size(12).line_height("18px").text_color(c.grey500).child(f.source_text ?? ""))))
+      .child(div().id("model-where-text").pt(6).text_size(12.5).line_height("18px").text_color(c.grey500).child(w ? (w.text ?? "") : "Reading where it runs..."));
     return v_flex().id("model-page").size_full().child(head)
-      .child(div().id("model-body").flex_1().min_h(0).overflow_y_scroll().px(24).py(18).child(v_flex().gap(18).child(top).child(parts).child(this.body(c))));
+      .child(div().id("model-body").flex_1().min_h(0).overflow_y_scroll().px(24).py(18).child(v_flex().gap(18).child(top).child(where).child(parts).child(this.body(c))));
   }
 }

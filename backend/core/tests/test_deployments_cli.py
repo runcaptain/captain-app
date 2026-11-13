@@ -36,7 +36,7 @@ def cst(*args):
 
 def test_list_show_and_sync_read_the_cloud(ws, aws):  # noqa: F811
     code, out = cst("deployments", "list")
-    assert code == 0 and "No models are deployed yet." in out
+    assert code == 0 and "No models running." in out
     rec = SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
     FL.forget()
     code, out = cst("deployments", "list")
@@ -59,7 +59,7 @@ def test_list_show_and_sync_read_the_cloud(ws, aws):  # noqa: F811
     code, out = cst("deployments", "sync")
     assert code == 0 and "shop:" in out and "removed outside Captain" in out
     FL.forget()
-    assert "No models are deployed yet." not in cst("deployments", "list", "--stopped")[1] and "Removed outside Captain" in cst("deployments", "list", "--stopped")[1]
+    assert "Stopped earlier." in cst("deployments", "list")[1] and "Removed outside Captain" in cst("deployments", "list", "--stopped")[1]
     assert cst("deployments", "show", "nothing-here")[0] != 0
 
 
@@ -71,12 +71,17 @@ def test_a_stopped_deployment_is_a_row_in_the_list_and_in_its_json(ws):  # noqa:
     SG.unstage(ws, "shop")
     FL.forget()
     code, out = cst("deployments", "list")
-    assert code == 0 and "Stopped" in out and FL.model_words(version, "shop") in out and "1 model, stopped." in out
+    assert code == 0 and FL.model_words(version, "shop") in out and out.startswith("No models running.")
+    # It is listed apart, under what it is: stopped earlier, not in a cloud, not billing.
+    assert "Stopped earlier. Nothing of these is in a cloud or billing." in out and out.index("Stopped earlier.") < out.index("Stopped by ")
+    assert cst("deployments", "forget", "shop")[0] != 0 and "Confirm first" in cst("deployments", "forget", "shop")[1]
     assert "This computer, This computer" not in out and "This computer" in out
     rows = json.loads(cst("--json", "deployments", "list")[1])["rows"]
     assert [(r["project"], r["state"]) for r in rows] == [("shop", "stopped")]
     assert json.loads(cst("--json", "deployments", "list", "--running")[1])["rows"] == []
     assert len(json.loads(cst("--json", "deployments", "list", "--stopped")[1])["rows"]) == 1
+    code, out = cst("deployments", "forget", "shop", "--yes")
+    assert code == 0 and "Nothing in the cloud changed." in out and cst("deployments", "list")[1].strip() == "No models running."
 
 
 def test_something_found_in_the_cloud_is_listed_linked_or_removed(ws, aws):  # noqa: F811
@@ -109,6 +114,6 @@ def test_start_again_and_remove(ws, logins, modal):  # noqa: F811
     assert code != 0 and "Confirm with --yes" in out and len(modal.stops) == stops
     code, out = cst("deployments", "remove", "shop", "--yes")
     # Modal keeps a stopped app's name in its list: what matters is that it was stopped, and that the cloud read agrees.
-    assert code == 0 and len(modal.stops) == stops + 1 and SG.state(ws, "shop")["status"] != "running"
+    assert code == 0 and len(modal.stops) == stops + 1 and SG.state(ws, "shop") is None and "Nothing is left." in out
     FL.forget()
-    assert [r["state"] for r in FL.deployed(ws, fresh=True)["rows"]] == ["stopped"]
+    assert FL.deployed(ws, fresh=True)["rows"] == []  # removed means gone from the list, not stopped in it

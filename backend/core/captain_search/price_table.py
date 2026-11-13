@@ -171,3 +171,13 @@ LLM = {
     "claude-sonnet-5-5": (2.00, 10.00),
     "claude-haiku-5-5": (0.10, 0.50),
 }
+
+
+# What each machine is, beside what it costs: virtual CPUs and memory in MB. A size's name ("ml.t2.medium") tells a
+# person nothing, so wherever a machine is named it is said with these. The hosts that are sized by CPU and memory
+# directly (Modal, Cloud Run, Container Apps) need no table: their size is their facts.
+SAGEMAKER_MACHINES = {
+    "ml.t2.medium": {"cpus": 2, "memory_mb": 4096}, "ml.c5.large": {"cpus": 2, "memory_mb": 4096}, "ml.m5.large": {"cpus": 2, "memory_mb": 8192},
+    "ml.c5.xlarge": {"cpus": 4, "memory_mb": 8192}, "ml.m5.xlarge": {"cpus": 4, "memory_mb": 16384},
+    "ml.c5.2xlarge": {"cpus": 8, "memory_mb": 16384}, "ml.m5.2xlarge": {"cpus": 8, "memory_mb": 32768},
+}

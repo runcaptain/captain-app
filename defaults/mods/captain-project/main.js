@@ -129,10 +129,13 @@ export default class ProjectHome extends View {
     // The sidebar's Projects and the logo ask for the list of every project (captain-nav).
     cx.timer.every(300, (cx) => {
       const o = shared("captain.open");
-      if (o?.section !== "project" || !o.all || o.at === this.openedAll) return;
+      // {section: "project", home: true, all: true, at} on every click of the sidebar's Projects, a second click
+      // included. A link that names a project carries neither `home` nor `all`, and is left to open it.
+      if (o?.section !== "project" || !(o.home || o.all) || o.at === this.openedAll) return;
       this.openedAll = o.at;
       if (Date.now() - o.at > 10000) return; // from an earlier session
-      this.deployOpen = false; this.shipPath.listOpen = false;
+      // Whatever is open goes: the project's page, the deployed model's screen, an open menu.
+      this.deployOpen = false; this.shipPath.listOpen = false; this.shipPath.more = null; this.menuOpen = false; this.open = null;
       this.allProjects(cx);
     });
     watchWorkspace(cx, (cx) => { this.last = null; this.load(cx); });
@@ -153,6 +156,9 @@ export default class ProjectHome extends View {
     });
     let rev = shared("captain.explorer.rev") ?? null;
     cx.timer.every(1000, (cx) => { const r = shared("captain.explorer.rev") ?? null; if (r !== rev) { rev = r; this.load(cx); } });
+    // The list of projects stays live: every few seconds it reads again, so a model deployed or stopped from
+    // another screen or a terminal shows on its card with no manual refresh.
+    cx.timer.every(5000, (cx) => { if (!this.pid() && this.projects && !this.inFlight) this.load(cx); });
     // Until the first answer (the services may still be starting), ask again every 3 s.
     cx.timer.every(3000, (cx) => {
       const pid = this.pid();
@@ -907,6 +913,14 @@ export default class ProjectHome extends View {
   /** Each project's champion, experiments and next step, for its card on Home. */
   loadSummaries(cx, seq) {
     this.summaries ??= {};
+    // Where each model runs, as the cloud reports it now (one read for every project, kept a few seconds by the
+    // services). A card says "Running on AWS" from this, not from a record that may be behind.
+    cx.spawn(async (cx) => {
+      const r = await api("/api/deployed", { scoped: false, timeout: 60 });
+      if (seq !== this.seq || !r.ok) return;
+      this.deployedBy = Object.fromEntries((r.data?.rows ?? []).filter((x) => x.project).map((x) => [x.project, x]));
+      cx.notify();
+    });
     for (const p of this.projects ?? []) {
       cx.spawn(async (cx) => {
         const [st, ex] = await Promise.all([api(`/api/projects/${enc(p.id)}/stages`, { scoped: false }), api(`/api/projects/${enc(p.id)}/experiments`, { scoped: false })]);
@@ -950,7 +964,11 @@ export default class ProjectHome extends View {
     const state = !told ? "No model yet." : `${inProject(parseRef(told.pipeline).name)}: ${verdictSentence(told, champ).replace(/^./, (x) => x.toLowerCase())}`;
     const rec = ready ? sum.stages.ship?.staging ?? null : null;
     const place = { local: "this computer", aws: "AWS", modal: "Modal", gcp: "Google Cloud", azure: "Azure" }[rec?.host ?? (rec?.kind === "local" ? "local" : "")] ?? null;
-    const deployed = rec?.status === "running" ? `Running on ${place ?? "your cloud"}` : "Not deployed";
+    // The cloud's own answer first, when there is one. Else the project's record.
+    const row = this.deployedBy?.[p.id] ?? null;
+    const up = row ? ["running", "asleep", "starting"].includes(row.state) : rec?.status === "running";
+    const where = row ? (row.cloud === "local" ? "this computer" : row.cloud_label ?? place) : place;
+    const deployed = up ? `Running on ${where ?? "your cloud"}` : "Not deployed";
     const what = p.description || (ready ? sum.stages.recipe?.label : null) || "";
     return v_flex().id(`ph-p-${i}`).w(300).min_h(176).flex_none().p(14).gap(8).bg(c.surface).border_1().border_color(c.rule).cursor_pointer()
       .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => this.pickProject(cx, p))

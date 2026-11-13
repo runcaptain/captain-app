@@ -299,6 +299,25 @@ class ModalServingProvider(HttpServing, ComputeProvider):
         return {"lines": [], "next": since,
                 "note": f"Modal keeps the app's own lines. From a terminal: modal app logs {name}" + (f" -e {env}" if env else "")}
 
+    def where(self, rec: dict) -> dict:
+        """Where one deployed model lives, as Modal itself says: that the app is there, how many copies are up, and
+        its address. Modal builds the image and holds the files itself, so there is no image, role or bucket to
+        name. Asks Modal about the app and never calls it, so a sleeping one stays asleep. Raises when it is gone."""
+        ep = rec.get("endpoint") or {}
+        name = ep.get("name")
+        if self._app_tags(name) is None:
+            raise ProviderError("the Modal app no longer exists")
+        try:
+            copies = int(getattr(self._fn(name).get_current_stats(), "num_total_runners", 0) or 0)
+        except Exception:  # noqa: BLE001
+            copies = None
+        env, size = self._env(), self._size()
+        return {"endpoint": name, "address": ep.get("url"), "copies_now": copies, "cpu": size.get("cpu"), "memory_mb": size.get("memory_mb"),
+                "account": f"environment {env}" if env else None, "state": "asleep" if copies == 0 else "running",
+                # What a person types to read the app's own lines: Modal keeps them, not Captain.
+                "logs": f"modal app logs {name}" + (f" -e {env}" if env else ""),
+                "image": None, "image_built": None, "role": None, "since": None, "machine": None}
+
     def found(self, prefix: str = "captain") -> list[dict]:
         """Every deployed app in this Modal environment that Captain made, whatever project made it: by Captain's
         tag, or by the name prefix. Asks Modal for the list and for how many copies are up. It never calls an app,

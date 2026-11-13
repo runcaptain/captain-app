@@ -1327,6 +1327,14 @@ Explorer, opens its page. With no project it offers New project, which can pin a
   logged clicks where under half of a candidate's top 10 has grades reads "Too few judged results to call". Import
   a model version brings one from MLflow or a registry. Rows open to: the comparison, Rerun with changes, Judge against the baseline,
   Make it the baseline (with its evidence) and Publish to the registry.
+- **Every form checks as the person types** (the shell, `captain-forms/main.js` and `checks.js`, so no form can
+  skip it). A field's problem is one plain sentence under that field, and clears the moment it is fixed. The main
+  button is off while any field has a problem, and the line beside it says why. A check that needs the services
+  (is this name free, is this sign-in there) runs by itself after a pause and shows "Checking..." then the
+  answer. A name takes any words: Captain keeps them as the label and makes its own id from them, shown under the
+  field ("Captain will call it gpu-cloud") and editable only when opened (`GET /api/names/propose`,
+  `naming.make_id`). Nothing raw from the services reaches a form: no "bad ...", no exception, no status code.
+  A field says what it needs with `required`, `missing`, `check`, `checkAsync`, `status` and `name: "<kind>"`.
 - **New project**: name first, then "What are you building?" (search ranking from events, search ranking with
   judgments, recommendations, your own pipeline, or "Something else" with the person's own description), then
   the inputs as a list to add to, rename and remove before creating (filled from the kind, never locked), then

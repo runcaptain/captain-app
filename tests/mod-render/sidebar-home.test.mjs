@@ -127,8 +127,45 @@ const ask = async (h, o) => { globalThis.__shared['captain.open'] = { ...o, at: 
 
 // ---- Projects: every project, never the project last open -----------------------------------------------------------
 {
-  const src = fs.readFileSync(path.join(root, 'defaults/mods/captain-project/main.js'), 'utf8');
-  assert.ok(src.includes('o?.section !== "project" || !o.all || o.at === this.openedAll'), 'the project page lands on All projects for the sidebar\'s request, once per click');
+  const { ITEMS, openEntry } = await import('../../defaults/mods/captain-nav/main.js');
+  const entry = ITEMS.find((x) => x.id === 'project');
+  globalThis.__shared['captain.scope'] = { kind: 'project', id: 'shop', label: 'Demo shop' };
+  const h = await mount('captain-project', 'captain-project-home', [
+    [/^\/api\/projects$/, 'projects'], [/^\/api\/projects\/[^/]+\/stages/, 'stages'], [/^\/api\/projects\/[^/]+\/experiments/, 'experiments'],
+    [/^\/api\/projects\/[^/]+\/staging$/, 'staging'], [/^\/api\/deployed/, 'deployed'], [/^\/api\/recipes/, 'empty'], [/^\/api\/projects\/[^/]+\/deploy\/hosts/, 'none'],
+    [/^\/api\//, 'none'],
+  ]);
+  const title = () => h.byIdPrefix('ph-name').find((e) => e.call('id')?.[0] === 'ph-name').kids.join('');
+  const onList = () => h.byIdPrefix('ph-projects').length === 1 && title() === 'Projects' && !globalThis.__shared['captain.scope'];
+  const settle = async () => { for (let i = 0; i < 6; i++) { await h.layoutLists({}); await h.idle(30); } };
+  await settle();
+  assert.equal(title(), 'Demo shop', `a project's page is open: ${h.text().slice(0, 200)}`);
+  // The sidebar's own click, as the sidebar sends it.
+  const click = async () => { tick += 1000; const real = Date.now; Date.now = () => tick; try { openEntry(entry, 'sections'); } finally { Date.now = real; } await settle(); };
+  await click();
+  assert.deepEqual([globalThis.__shared['captain.open'].section, globalThis.__shared['captain.open'].home, globalThis.__shared['captain.open'].all], ['project', true, true]);
+  assert.ok(onList(), `Projects lands on every project, not the one last open: ${h.text().slice(0, 300)}`);
+  assert.ok(h.text().includes('Demo shop') && h.text().includes('Trail gear'), 'both projects are listed');
+  // From deeper in: a project's deployed model screen, with a menu open.
+  h.mod.pickProject(h.cx, { id: 'trail', name: 'Trail gear' });
+  await settle();
+  h.mod.deployOpen = true; h.mod.menuOpen = true; h.mod.shipPath.more = 'settings';
+  await settle();
+  assert.equal(title(), 'Trail gear');
+  await click();
+  assert.ok(onList() && !h.mod.deployOpen && !h.mod.menuOpen && h.mod.shipPath.more === null, 'from a deployed model\'s screen too, and nothing is left open');
+  // A second click on Projects, already on the list: still the list, and it is read again.
+  const before = (globalThis.__asked ?? []).filter((p) => p === '/api/projects').length;
+  await click();
+  assert.ok(onList(), 'a second click stays on every project');
+  assert.ok((globalThis.__asked ?? []).filter((p) => p === '/api/projects').length > before, 'and reads the list again');
+  // A request is handled once: opening a project after it is not undone by the same request.
+  h.mod.pickProject(h.cx, { id: 'shop', name: 'Demo shop' });
+  await settle();
+  assert.equal(title(), 'Demo shop', 'a card opens its project, and the old request does not pull it back');
+  // A link that names a project carries no `home`: it opens that project and is left alone.
+  await ask(h, { section: 'project' });
+  assert.equal(title(), 'Demo shop', 'a link without home does not go to the list');
 }
 console.log('sidebar home: ok');
 process.exit(0);
