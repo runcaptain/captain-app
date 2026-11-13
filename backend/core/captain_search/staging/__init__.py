@@ -300,6 +300,9 @@ def _target(ctx: Context, name: str | None) -> dict:
     from .. import compute as C
     from .. import settings as ST
 
+    if name == "":
+        # A place was meant and its name is missing (its cloud setup is gone, say). That is never "this computer".
+        raise ValueError("That place is not set up for deploying any more. Choose where to deploy: this computer, or a cloud you have connected.")
     name = name or ST.default_compute(ctx, "serve") or "local"
     t = C.get(ctx, name)
     if t["kind"] != "local" and not C.can_stage(ctx, t):
@@ -477,6 +480,13 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
                                                    if p["local_fit"]["outcome"] == "over-limit" else ""))  # refused before anything starts, in the sentence the choice shows
     if p["needs_confirm"] and not confirm:
         raise NeedsConfirm("Confirm the cost first. " + p["cost"]["text"] + "".join(" " + w for w in p["warnings"]), p)
+    # A model that ran in a cloud is never started on this computer because no place was named: its cloud setup
+    # may be gone, and a person must choose. (2026-11-12: after a model was removed from AWS, a start with no
+    # place named ran it here, on 127.0.0.1, and the record said "local".)
+    _was = state(ctx, pid, env)
+    if p["kind"] == "local" and target is None and _was and _was.get("kind") not in (None, "local"):
+        raise ValueError(f"This model last ran on {_was.get('host') or _was.get('target') or 'a cloud'}, and no place was named for this deploy. "
+                         "Choose where to deploy it: this computer (--target local), or a cloud.")
     # Nothing about a test stops a deploy. Captain runs no A/B tests, and a record of one left in a project's
     # state by an older version is ignored.
     say = progress or (lambda _t: None)

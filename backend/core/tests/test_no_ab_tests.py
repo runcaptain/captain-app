@@ -137,3 +137,21 @@ def test_nothing_in_the_deployment_code_names_a_split_or_a_ramp():
         text = f.read_text()
         for word in ("An A/B test is running", "staging another version", "ramp(", "ab-start", "import ab"):
             assert word not in text, (f.name, word)
+
+
+def test_a_model_that_ran_in_a_cloud_is_never_started_on_this_computer_because_no_place_was_named(ws):  # noqa: F811
+    """After a model was removed from AWS, a start with no place named ran it on this computer and the record
+    said "local", with a 127.0.0.1 address. It asks now."""
+    SG._save(ws, "shop", "staging", {"env": "staging", "status": "stopped", "kind": "aws-sagemaker", "host": "aws", "target": "aws-serving",
+                                      "model_version": ws.candidate, "resources": []})
+    with pytest.raises(ValueError, match="last ran on aws, and no place was named"):
+        SG.stage(ws, "shop")                       # no place named
+    with pytest.raises(ValueError, match="not set up for deploying any more"):
+        SG.stage(ws, "shop", target="")            # a place was meant, and its name is missing
+    rec = SG.state(ws, "shop")
+    assert rec["kind"] == "aws-sagemaker" and rec["status"] == "stopped" and not rec.get("endpoint"), "nothing was started, and the record is as it was"
+    # choosing this computer, in so many words, still works
+    assert SG.stage(ws, "shop", target="local")["kind"] == "local"
+    SG.unstage(ws, "shop")
+    # and a project that never ran in a cloud still deploys here when no place is named, as before
+    assert SG.stage(ws, "shop")["kind"] == "local"

@@ -92,5 +92,16 @@ globalThis.__overlays = [];
 const g = h.mod.projects.findIndex((p) => p.id === 'gifts');
 await h.click(`ph-p-${g}-open`);
 assert.equal(globalThis.__shared['captain.scope']?.id, 'gifts', 'Open opens the project');
+// The list is live. A model deployed from a terminal shows on its card at the next read, with no manual refresh,
+// and so does stopping it. (The page reads again every five seconds: here the read is asked for directly.)
+globalThis.__shared['captain.scope'] = null;
+h.mod.allProjects(h.cx);
+await until((x) => x.includes('Outdoor') && x.includes('Not deployed') && !x.includes('Running on'), 'nothing is deployed yet');
+assert.equal(spawnSync(cst, ['deploy', 'outdoor', '--on', 'local'], { env }).status, 0, 'deployed from a terminal');
+h.mod.load(h.cx);
+await until((x) => x.includes('Running on this computer'), 'the card says where it runs, from the next read');
+assert.equal(spawnSync(cst, ['deployments', 'stop', 'outdoor'], { env }).status, 0, 'stopped from a terminal');
+h.mod.load(h.cx);
+await until((x) => !x.includes('Running on'), 'and that it is no longer deployed');
 console.log('project home list render test: ok');
 process.exit(0);

@@ -110,7 +110,13 @@ export class Ship {
       const r = await api(`/api/projects/${enc(pid)}/staging`, { scoped: false });
       if (this.pid() !== pid) return;
       if (r.ok) {
+        // What is deployed changed since the last read (a deploy, a stop or a roll back, from here, another screen
+        // or a terminal): the page's own Next banner and steps are read again, at once.
+        const now = `${r.data?.status}:${r.data?.staged?.model_version ?? ""}:${r.data?.staged?.id ?? ""}`;
+        const changed = this.seenStatus !== undefined && this.seenFor === pid && this.seenStatus !== now;
+        this.seenStatus = now; this.seenFor = pid;
         this.status = r.data; this.problem = null; this.settle(); this.around(cx);
+        if (changed && !this.busy) this.page.reload?.(cx);
         if (r.data?.status === "running" && !this.page.deployOpen) loadLive(this, cx); // the project page names the state too
         // The deployment page's own reads, once per project when the page is open: the chart, the live card, the open tab.
         if (this.page.deployOpen && this.tabsFor !== pid) { this.tabsFor = pid; this.loadTab(cx); }
