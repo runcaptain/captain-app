@@ -14,6 +14,23 @@ export function ago(t) {
   return days === 1 ? "1 day ago" : `${days} days ago`;
 }
 
+/** "Updated just now", "Updated 12 s ago", "Updated 3 min ago": when what is on screen was read. */
+export function updatedWords(readAt) {
+  if (!readAt) return "";
+  const s = Math.max(0, Math.round((Date.now() - readAt) / 1000));
+  return s < 5 ? "Updated just now" : s < 60 ? `Updated ${s} s ago` : `Updated ${Math.floor(s / 60)} min ago`;
+}
+
+/** The small control at the right of a title: when the screen was last read, or that a cloud could not be reached,
+ *  and a refresh icon. The screen keeps itself current, so this is quiet. The icon says what it is to a screen
+ *  reader and on hover. */
+export function Updated(c, id, { readAt, problem, onRefresh, icon: mark }) {
+  return h_flex().id(id).flex_none().gap(8).items_center()
+    .child(div().id(`${id}-text`).text_size(12).text_color(problem ? c.fail : c.grey500).child(problem ?? updatedWords(readAt)))
+    .child(div().id(`${id}-refresh`).size(24).flex().flex_none().items_center().justify_center().cursor_pointer().text_color(c.grey500)
+      .hover((x) => x.text_color(c.navy)).accessibility_label("Refresh").tooltip("Refresh").on_click(onRefresh).child(mark));
+}
+
 export function money(x) {
   const v = Number(x);
   if (!isFinite(v)) return "";
