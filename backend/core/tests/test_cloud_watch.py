@@ -8,20 +8,46 @@ import pytest
 from captain_search import staging as SG
 from captain_search.staging import announce as AN
 from captain_search.staging import fleet as FL
-from captain_search.staging import watch as WT
+from captain_search import changes as CH
+from captain_search.staging import cloud_watch as WT
 
 from test_staging import keychain, ws  # noqa: F401  (fixtures)
 from test_staging_cloud import aws  # noqa: F401  (fixture)
 
 
+SEQ: dict = {}
+
+
+class _Feed:
+    """The real change feed, with what a test needs to read from it: how many times each topic was told, and a
+    listener that comes and goes at once."""
+
+    @staticmethod
+    def seq(topic):
+        return SEQ.get(topic, 0)
+
+    @staticmethod
+    def listen(*topics):
+        CH.FEED.listen(set(topics))
+
+    @staticmethod
+    def unlisten(*topics):
+        CH.FEED.unlisten(set(topics) or set(CH.FEED._listening))
+
+
 @pytest.fixture(autouse=True)
-def quiet():
-    AN.reset()
+def quiet(monkeypatch):
+    CH.reset_for_tests()
+    SEQ.clear()
+    CH.FEED.hear(lambda _seq, topics: [SEQ.__setitem__(t, SEQ.get(t, 0) + 1) for t in topics])
+    monkeypatch.setattr(AN, "LINGER_S", 0.0)  # a listener that leaves is gone at once, so a test need not wait 30 s
+    for name in ("seq", "listen", "unlisten"):
+        monkeypatch.setattr(AN, name, getattr(_Feed, name), raising=False)
     WT.stop_all()
     FL.forget()
     yield
     WT.stop_all()
-    AN.reset()
+    CH.reset_for_tests()
     FL.forget()
 
 
@@ -56,11 +82,11 @@ def _until(what, seconds=2.0):
 
 def test_with_nobody_listening_nothing_is_asked(ws, aws, monkeypatch):  # noqa: F811
     SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
-    before = _asks(aws)
+    before, told = _asks(aws), AN.seq("deployed")  # the deploy's own writes were told, by the store
     stop = WT.start(ws)
     time.sleep(0.5)
     assert _asks(aws) == before and WT.status(ws) == []  # silent: no call to the cloud, no place being watched
-    assert AN.seq("deployed") == 0
+    assert AN.seq("deployed") == told
     stop.set()
     SG.unstage(ws, "shop")
 
@@ -157,11 +183,11 @@ def test_a_job_announces_every_step_line_and_its_end(ws, aws, monkeypatch):  # n
     from captain_search import server as SV
 
     said = []
-    real = AN.bump
-    monkeypatch.setattr(AN, "bump", lambda *t: (said.append(t), real(*t))[1])
-    hold = threading.Event()
+    CH.FEED.hear(lambda _seq, t: said.append(tuple(t)))
+    hold, named = threading.Event(), threading.Event()
 
     def work(progress):
+        named.wait(2)
         SV.JOBS[jid]["log"].append("Removing the endpoint.")
         SV.JOBS[jid]["message"] = "Removing the endpoint."
         progress(0.5)
@@ -170,16 +196,17 @@ def test_a_job_announces_every_step_line_and_its_end(ws, aws, monkeypatch):  # n
 
     jid = "pending"
     jid = SV._job(work, "stopping the deployed model of shop", SV._deployed_topics("shop"))
+    named.set()
     assert _until(lambda: SV.JOBS[jid].get("progress") == 0.5)
-    topics = (f"job:{jid}", "deployed", "deployment:shop")
-    assert said and all(t == topics for t in said)  # every announcement names the job, the list and the project
+    topics = {"jobs", f"job:{jid}", "deployed", "deployment:shop"}
+    assert said and all(set(t) == topics for t in said)  # every announcement names the job, the list and the project
     n = len(said)
     assert n >= 3  # running, the line, the message, the progress
     SV.JOBS[jid]["message"] = "Removing the endpoint."  # the same again says nothing
     assert len(said) == n
     hold.set()
     assert _until(lambda: SV.JOBS[jid]["status"] == "done")
-    assert len(said) > n and AN.seq(f"job:{jid}") == len(said) and AN.seq("deployed") == len(said)
+    assert len(said) > n and AN.seq(f"job:{jid}") == len(said) == AN.seq("deployed")
     # It still reads as a plain record for the route that returns it.
     import json
     assert json.loads(json.dumps(SV.JOBS[jid]))["result"] == {"text": "Stopped."}

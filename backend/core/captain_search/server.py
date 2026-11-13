@@ -8,6 +8,7 @@ import secrets
 import socket
 import sys
 import threading
+import time
 import traceback
 import uuid
 from typing import Any
@@ -25,6 +26,7 @@ from .model.entities import DatasetKind, Provenance
 from .storage.backend import NotFound
 from .workspace import home, open_context, whoami
 
+from . import changes as CH  # noqa: E402  the change feed every screen listens to
 TOKEN = os.environ.get("CST_SERVE_TOKEN") or secrets.token_urlsafe(24)
 app = FastAPI(title="Captain Search Tools", version=VERSION)
 
@@ -93,11 +95,13 @@ def ctx():
     with _ctx_lock:
         if _ctx is None:
             _ctx = open_context()
+            CH.watch(_ctx.store)  # its writes bump the change feed, and writes from outside are looked for
         if not name or name == _ctx.workspace.name:
             return _ctx
         if name not in _ctxs:
             try:
                 _ctxs[name] = open_context(name)
+                CH.watch(_ctxs[name].store)
             except RuntimeError as e:  # unknown workspace: a 400 with the known names, not a crash
                 raise ValueError(str(e)) from None
         return _ctxs[name]
@@ -2890,7 +2894,7 @@ def _start_cloud_watch(every_s: float = 5.0) -> threading.Thread:
     def loop():
         import time
 
-        from .staging import watch as WT
+        from .staging import cloud_watch as WT
 
         while True:
             try:
@@ -2936,40 +2940,40 @@ class _Told(list):
         self._tell()
 
 
-class _Job(dict):
-    """A job's record that announces itself: every change of status, step, progress or message, every log line and
-    its end bump `job:<id>` and the topics it was started with, so a screen that is looking hears at once and
-    never has to ask after a job. Reads are plain dict reads."""
+class _JobState(dict):
+    """A job's state. Every change to it is told to the change feed, so a screen showing the job follows its
+    progress with no timer of its own: its status, step, message, each log line and its end. `topics` are what the
+    job's work changes ("deployed", a project's topic), told with the job's own each time. Progress can move many
+    times a second: it is told at most five times."""
 
     def __init__(self, data: dict, topics: tuple = ()):
         super().__init__(data)
         self._topics = tuple(t for t in topics if t)
-        dict.__setitem__(self, "log", _Told(data.get("log") or [], self.tell))
+        dict.__setitem__(self, "log", _Told(data.get("log") or [], self._tell))
 
-    def tell(self):
-        from .staging import announce as AN
+    def _tell(self, key=None) -> None:
+        now = time.monotonic()
+        if key == "progress" and now - getattr(self, "_at", 0.0) < 0.2:
+            return
+        self._at = now
+        CH.bump("jobs", f"job:{self.get('id')}", *self._topics)
 
-        AN.bump(AN.job(self.get("id")), *self._topics)
-
-    def __setitem__(self, k, v):
-        changed = self.get(k) != v
-        dict.__setitem__(self, k, v)
+    def __setitem__(self, key, value):
+        changed = self.get(key) != value
+        super().__setitem__(key, value)
         if changed:
-            self.tell()
+            self._tell(key)
 
-    def update(self, *a, **kw):
-        new = dict(*a, **kw)
-        changed = any(self.get(k) != v for k, v in new.items())
-        dict.update(self, new)
-        if changed:
-            self.tell()
+    def update(self, *a, **k):
+        super().update(*a, **k)
+        self._tell()
 
 
 def _job(fn, label: str, topics: tuple = ()) -> str:
-    """Run `fn` in the background as a job. `topics` are what its work changes ("deployed", a project's topic): they
-    are bumped with the job's own topic on every change, and once more when it ends."""
+    """Run `fn` in the background as a job. `topics` are what its work changes: see `_JobState`."""
     jid = uuid.uuid4().hex[:12]
-    JOBS[jid] = _Job({"id": jid, "status": "queued", "progress": 0.0, "message": label, "result": None, "log": [label], "compute": "local"}, topics)
+    JOBS[jid] = _JobState({"id": jid, "status": "queued", "progress": 0.0, "message": label, "result": None, "log": [label], "compute": "local"}, topics)
+    CH.bump("jobs", f"job:{jid}", *topics)
 
     def go():
         JOBS[jid]["status"] = "running"
@@ -3277,6 +3281,86 @@ def kernel_start(body: dict):
     sid = uuid.uuid4().hex[:12]
     KERNELS[sid] = NB.Kernel(ctx())
     return {"session": sid}
+
+
+# ---- the change feed: what changed, the moment it changes (changes.py) -----------------------------------------
+
+_CHANGES_POOL = None
+
+
+def _topics(text: str | None) -> list[str] | None:
+    ts = [t.strip() for t in str(text or "").split(",") if t.strip()]
+    return ts or None
+
+
+@app.get("/api/changes", dependencies=A)
+async def changes_wait(since: int | None = None, topics: str | None = None, hold: float = CH.HOLD_S):
+    """Held open until one of `topics` (comma separated) changes after `since`, up to 25 seconds, then
+    {seq, changed: [topics], at}. Ask again with the `seq` it gave. With no `since`, or 0, it answers at once with
+    the current `seq`: read everything once, then wait from there. A `since` older than the feed remembers, or
+    from before the service restarted, answers at once with `reset: true`: read everything again. With no
+    `topics` it answers for any change. Topics: projects, project:<id>, data, table:<name>, runs, run:<id>, jobs,
+    job:<id>, deployed, deployment:<project>, notebooks, logins, compute, settings, team."""
+    global _CHANGES_POOL
+    ctx()  # the workspace this client is looking at is watched for writes made outside this process
+    if not since:
+        return CH.FEED.answer(since, _topics(topics))
+    if _CHANGES_POOL is None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        # Its own threads: a client that waits must never take one from the requests that do work.
+        _CHANGES_POOL = ThreadPoolExecutor(max_workers=64, thread_name_prefix="changes")
+    return await asyncio.get_running_loop().run_in_executor(_CHANGES_POOL, CH.FEED.wait, since, _topics(topics), max(0.0, min(float(hold), CH.HOLD_S)))
+
+
+@app.websocket("/api/changes/ws")
+async def changes_ws(ws: WebSocket):
+    """The same messages over one connection that stays open. Send {topics: [...], since?} to say what to listen
+    to, and again whenever that changes. Each change arrives as {seq, changed, at}; {reset: true} means read
+    everything again. {ping: true} every 20 seconds says the connection is alive."""
+    if not _ws_ok(ws):
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+    loop = asyncio.get_running_loop()
+    box: asyncio.Queue = asyncio.Queue()
+    want: set[str] = set()
+
+    def heard(seq, topics):  # from whichever thread bumped
+        loop.call_soon_threadsafe(box.put_nowait, (seq, topics))
+
+    async def read():
+        nonlocal want
+        while True:
+            msg = await ws.receive_json()
+            ts = set(msg.get("topics") or [])
+            CH.FEED.unlisten(want)
+            want = ts
+            CH.FEED.listen(want or {"*"})
+            ctx()
+            first = CH.FEED.answer(msg.get("since"), want or None)
+            await ws.send_json(first)
+
+    CH.FEED.hear(heard)
+    reader = asyncio.ensure_future(read())
+    try:
+        while True:
+            try:
+                seq, topics = await asyncio.wait_for(box.get(), timeout=20.0)
+            except asyncio.TimeoutError:
+                await ws.send_json({"ping": True, "seq": CH.FEED.seq})
+                continue
+            hit = sorted(topics if not want else topics & want)
+            if hit:
+                await ws.send_json({"seq": seq, "changed": hit, "at": CH._now()})
+            if reader.done():
+                break
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        reader.cancel()
+        CH.FEED.unhear(heard)
+        CH.FEED.unlisten(want or {"*"})
 
 
 def _ws_ok(ws: WebSocket) -> bool:

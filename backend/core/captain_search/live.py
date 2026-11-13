@@ -60,6 +60,24 @@ def _alive(pid: int | None) -> bool:
         return True
 
 
+_TOLD: dict = {}
+
+
+def _changed(rid: str) -> None:
+    """Tell the change feed a live run moved. A run can emit hundreds of events a second, so each run tells at
+    most five times a second: a screen reads the run again, and gets everything since."""
+    now = time.monotonic()
+    if now - _TOLD.get(rid, 0.0) < 0.2:
+        return
+    _TOLD[rid] = now
+    try:
+        from . import changes
+
+        changes.bump("runs", f"run:{rid}")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _write_header(rid: str, head: dict) -> None:
     hp, _ = _paths(rid)
     tmp = f"{hp}.{os.getpid()}.{threading.get_ident()}.tmp"
@@ -100,6 +118,7 @@ class Run:
             with open(ep, "a") as f:
                 f.write(json.dumps(ev, default=str) + "\n")
             self.head["events"] = self._n
+            _changed(self.id)
             if type_ == "stage":
                 self.head["stage"] = data.get("name")
                 # When this step began, in seconds since the run started: the screen counts the step's own time
@@ -292,6 +311,7 @@ class StoreRun(Run):
             self._n += 1
             self._buf.append(json.loads(json.dumps(ev, default=str)))
             self.head["events"] = self._n
+            _changed(self.id)
             if type_ == "stage":
                 self.head["stage"] = data.get("name")
                 if data.get("name") not in self.head.setdefault("stages", []):

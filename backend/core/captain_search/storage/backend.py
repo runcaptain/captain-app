@@ -32,8 +32,37 @@ class Conflict(StorageError):
     """The object changed since it was read."""
 
 
+def _told(fn):
+    """Wrap a store's write so the change feed is told after it succeeds (changes.py). The key is the first
+    argument of every write."""
+    import functools
+
+    @functools.wraps(fn)
+    def write(self, key, *a, **k):
+        out = fn(self, key, *a, **k)
+        try:
+            from .. import changes
+
+            changes.wrote(self, key)
+        except Exception:  # noqa: BLE001  a feed that can't be told never fails a write
+            pass
+        return out
+
+    write._told = True
+    return write
+
+
 class Store(ABC):
     uri: str
+    WRITES = ("put_new", "put_if", "put_new_chunks", "delete", "remove")
+
+    def __init_subclass__(cls, **kw):
+        # Every store's writes tell the change feed, here, so no caller and no new store can forget.
+        super().__init_subclass__(**kw)
+        for name in cls.WRITES:
+            fn = cls.__dict__.get(name)
+            if callable(fn) and not getattr(fn, "_told", False):
+                setattr(cls, name, _told(fn))
 
     @abstractmethod
     def put_new(self, key: str, data: bytes) -> None: ...

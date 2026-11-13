@@ -389,7 +389,7 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
             return hit[1]
     srcs = sources(ctx)
     asked, found = [], {}
-    from . import watch as WT
+    from . import cloud_watch as WT
 
     slowed = {(w["cloud"], w["login"], w["region"]): w["text"] for w in WT.status(ctx) if w.get("text")}
     for s in srcs:
