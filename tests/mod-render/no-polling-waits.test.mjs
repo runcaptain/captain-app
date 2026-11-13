@@ -54,7 +54,6 @@ const ALLOWED = [
   ['mods/captain-rankings/main.js', 'if (Date.now() >= this.due) this.validate(cx);', 'typing'],
   ['mods/captain-compute/main.js', 'else cx.timer.after(1000, (cx) => this.load(cx));', 'starting'],
   ['mods/captain-go/main.js', 'closeOverlay(p.overlay)', 'once'],
-  ['mods/captain-weights/main.js', 'if (mine !== this.beats || !this.pulse) return;', 'clock'],          // a pulse's animation: arms its next beat only while it pulses
   // ---- the frame
   ['frame/palette/main.js', 'this.input.focus()', 'once'],
   ['frame/whatsnew/main.js', 'this.handle.focus()', 'once'],
