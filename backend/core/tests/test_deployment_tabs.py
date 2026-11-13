@@ -171,7 +171,7 @@ def test_the_commands_are_named_like_the_pages(ws):  # noqa: F811
     from captain_search.cli.main import app
 
     run = lambda *a: CliRunner().invoke(app, list(a))  # noqa: E731
-    assert "Nothing is deployed." in run("deployments", "list").output
+    assert "No models are deployed yet." in run("deployments", "list").output
     out = run("deploy", "shop", "--target", "local", "--allow-large")
     assert out.exit_code == 0, out.output
     url = SG.state(ws, "shop")["endpoint"]["url"]
