@@ -38,7 +38,13 @@ globalThis.__starting = true;
 await h.start();
 // A quiet skeleton: the header, and no words about what is starting.
 assert.ok(!/engine|daemon|starting|loading/i.test(h.text()), `starting state shows words: ${h.text().slice(0, 160)}`);
+// While they start, the live channel can't reach them either. When they answer, it tells the screen to read:
+// no timer of the screen's asks again.
+await h.layoutLists({});
 globalThis.__starting = false;
+await h.idle(700);  // the channel tries the services again after a short wait
+await h.layoutLists({});
+await h.idle(30);
 await h.layoutLists({});
 const rows0 = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'rows0.json'), 'utf8'));
 const rows1 = JSON.parse(fs.readFileSync(path.join(globalThis.__fixtures, 'rows1.json'), 'utf8'));

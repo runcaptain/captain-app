@@ -13,6 +13,7 @@ import { h_flex, v_flex, Popup } from "gpui-base";
 import { theme, shared, setShared, run, openOverlay, props as layoutProps } from "herdr";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { api, watchScope, watchWorkspace, watchRecords } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { watchView } from "./kit/view.js";
 import { SendToAgent, pin } from "./kit/context.js";
 import { Badge, Button, Empty, Skeleton, Problem, plainError } from "./kit/ui.js";
@@ -156,19 +157,15 @@ export default class ProjectHome extends View {
     });
     let rev = shared("captain.explorer.rev") ?? null;
     cx.timer.every(1000, (cx) => { const r = shared("captain.explorer.rev") ?? null; if (r !== rev) { rev = r; this.load(cx); } });
-    // The list of projects stays live: every few seconds it reads again, so a model deployed or stopped from
-    // another screen or a terminal shows on its card with no manual refresh.
-    cx.timer.every(5000, (cx) => { if (!this.pid() && this.projects && !this.inFlight) this.load(cx); });
-    // Until the first answer (the services may still be starting), ask again every 3 s.
-    cx.timer.every(3000, (cx) => {
-      const pid = this.pid();
-      if (this.inFlight) return; // an answer is on its way: asking again would only throw it away
-      if ((!pid && this.projects === null && !this.listProblem) || (pid && !this.stages && (!this.problem || this.problem.starting))) this.load(cx);
+    // Live, by the one channel (kit/live.js): the list of projects and the open project's page are read again the
+    // moment a project, a run, a job or what is deployed changes, so a model deployed or stopped from another
+    // screen or a terminal, an experiment whose judging finished, and a project made elsewhere show by themselves.
+    // No timer re-reads them. While the services are still starting, the channel's fallback and its "connected"
+    // call are what ask again. An answer already on its way is not asked for twice.
+    watchLive(cx, ["projects", "runs", "jobs", "deployed"], (cx) => {
+      if (!this.inFlight) this.load(cx);
+      this.shipPath.tick(cx);
     });
-    // While something is staged: look again, so the status and the time left stay true.
-    cx.timer.every(5000, (cx) => this.shipPath.tick(cx));
-    // While an experiment is being judged, read again until its run lands.
-    cx.timer.every(4000, (cx) => { if ((this.exps?.experiments ?? []).some((e) => e.status === "backtesting")) this.load(cx); });
   }
 
   /** The project shown: the Explorer's pick, else the last one opened here. */

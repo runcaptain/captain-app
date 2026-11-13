@@ -19,6 +19,7 @@ import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, layout, props, notify, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
 import { api, retry, workspace, watchWorkspace, watchRecords, watchConnections } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { isDark, palette } from "./kit/tokens.js";
@@ -221,9 +222,13 @@ export default class CaptainNav extends View {
     this.teamViews.start(cx);
     this.refresh(cx);
     watchWorkspace(cx, (cx) => { this.cloud = null; setShared("captain.scope", null); this.refresh(cx); this.explorer.load(cx); });
-    // Every 3 s until Captain's services answer, then every 6 s: the chips and counts are never far behind.
-    this.tick = 0;
-    cx.timer.every(3000, (cx) => { this.tick++; if (this.state !== "ready" || this.tick % 2 === 0) this.refresh(cx); });
+    // Live, by the one channel (kit/live.js): the chips, the counts and the Explorer are read again the moment a
+    // login, a place to run work, a setting, a project, a table or a run changes. No timer re-reads them. Until
+    // Captain's services answer, the channel's two-second fallback and its "connected" call are what ask again.
+    watchLive(cx, ["logins", "compute", "settings", "projects", "data", "runs"], (cx, why, topics) => {
+      this.refresh(cx);
+      if (why !== "changed" || topics.some((t) => ["projects", "data", "runs"].includes(t))) this.explorer.load(cx);
+    });
     // And at once when a form changes something, or a cloud or database is connected or removed.
     watchRecords(cx, (cx) => { this.refresh(cx); this.explorer.load(cx); });
     watchConnections(cx, (cx) => this.refresh(cx));
@@ -328,7 +333,9 @@ export default class CaptainNav extends View {
           const r = await api(it.badge);
           this.counts[it.id] = r.ok && Array.isArray(r.data) ? r.data.length : 0;
         }
-        if (ws.ok && (this.tick ?? 0) % 10 === 0) {
+        // The palette's "Open <table>" and "Open <evaluation>" entries: read with every refresh, which now happens
+        // only when something changed, so a table made a moment ago can be opened by name at once.
+        if (ws.ok) {
           const [ds, bt] = await Promise.all([api("/api/datasets"), api("/api/backtests")]);
           const extra = { ...(shared("palette.extra") ?? {}) };
           const arr = (r) => (Array.isArray(r.data) ? r.data : []);

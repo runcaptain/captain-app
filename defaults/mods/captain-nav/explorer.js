@@ -56,7 +56,6 @@ export class Explorer {
       const rev = shared("captain.explorer.rev") ?? null;
       if (rev !== this.rev) { this.rev = rev; this.load(cx); }
     });
-    cx.timer.every(15000, (cx) => this.load(cx));
     // The experiments follow the Explorer's pick (X-CST-Scope): re-read them when it changes.
     let pick = JSON.stringify(shared("captain.scope") ?? null);
     cx.timer.every(400, (cx) => { const p = JSON.stringify(shared("captain.scope") ?? null); if (p !== pick) { pick = p; this.load(cx); } });

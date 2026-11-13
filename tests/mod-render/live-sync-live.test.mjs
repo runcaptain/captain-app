@@ -142,6 +142,19 @@ const check = (screen, what, took, limit) => {
   check('Notebooks', 'a rename made elsewhere shows', await within(h, 1000, (t) => t.includes('Named from elsewhere')), 1000);
 }
 
+// ---- Projects: the list of every project ------------------------------------------------------------------------
+{
+  globalThis.__shared['captain.scope'] = null;
+  const h = await mount('captain-project');
+  await settle(h);
+  assert.ok(h.text().includes('Outdoor') && !h.text().includes('Made Elsewhere'), `the list is up: ${h.text().slice(0, 200)}`);
+  await post('/api/projects', { name: 'Made Elsewhere', kind: 'search-events' });
+  check('Projects', 'a project made from elsewhere is on the list', await within(h, 1000, (t) => t.includes('Made Elsewhere')), 1000);
+}
+
+// The sidebar is not mounted here: the test harness cannot start it (it waits on the app's own layout). Its reads
+// go through the same channel (no-data-timers.test.mjs checks it watches), and it is checked in a real window.
+
 console.log(results.join('\n'));
 console.log('live sync: ok');
 process.exit(0);

@@ -120,11 +120,14 @@ export class Jobs {
   }
 
   /** Every 2 s while a job runs: its state and new log lines. Otherwise the list every 30 s. */
-  tick(cx) {
-    const live = (this.list ?? []).some((j) => !DONE.has(j.state));
-    if (Date.now() - this.last > (live ? 4000 : 30000)) this.load(cx, live);
+  /** Is any job still going? The page's clock redraws while one is. */
+  running() { return (this.list ?? []).some((j) => !DONE.has(j.state)); }
+
+  /** The live channel says a job moved on: read the list, and the open job's new log lines. */
+  changed(cx) {
+    this.load(cx, this.running());
     const j = (this.list ?? []).find((x) => x.id === this.sel);
-    if (j && !DONE.has(j.state)) { this.follow(cx, j.id); cx.notify(); }
+    if (j && !DONE.has(j.state)) this.follow(cx, j.id);
   }
 
   stop(cx, j) {

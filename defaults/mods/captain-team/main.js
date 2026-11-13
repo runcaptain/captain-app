@@ -3,6 +3,7 @@ import { View, div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme } from "herdr";
 import { api } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { palette, isDark, FONT } from "./kit/tokens.js";
 import { Button, plainError } from "./kit/ui.js";
 
@@ -21,8 +22,11 @@ export default class CaptainTeam extends View {
     this.body = InputState.new({ placeholder: 'Record JSON, for example {"title":"Search review"}' });
     this.body.set_value('{}'); this.visibility = 'private'; this.kind = 'investigation';
     this.refresh(cx);
+    // Live, by the one channel: until the team connection is read, and whenever a setting changes, read again.
+    watchLive(cx, ["settings"], (cx) => { if (!this.busy) this.refresh(cx); });
+    // A sign-in in progress is asked about at the pace the sign-in service sets. It is another service's clock, not
+    // a re-read of Captain's data.
     cx.timer.every(1000, (cx) => {
-      if (!this.connection && !this.busy) { this.refresh(cx); return; }
       if (!this.login || this.busy || Date.now() < this.nextPoll) return;
       if (Date.now() >= this.loginExpires) { this.login = null; this.error = 'Sign-in expired. Start again.'; cx.notify(); return; }
       this.perform(cx, async () => {

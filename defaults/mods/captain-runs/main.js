@@ -11,6 +11,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, run, shared, openOverlay, props as layoutProps } from "herdr";
 import { Curve } from "./kit/chart.js";
 import { api, retry, details, watchWorkspace, watchScope, keepFresh } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { watchView } from "./kit/view.js";
 import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
@@ -157,7 +158,6 @@ export default class CaptainRuns extends View {
     // The compute picker on the cloud chip changed where runs go: the "Runs on" row follows.
     let place = placeChanged();
     cx.timer.every(500, (cx) => { const now = placeChanged(); if (now !== place) { place = now; this.cost.backtests.picked = false; this.loadPlaces(cx); } });
-    cx.timer.every(1000, (cx) => this.pollJob(cx));
     // Compute jobs: their state and log lines. Live runs: what's running now, drawn as it goes (live.js).
     this.jobs = new Jobs(this);
     this.live = new Live(this);
@@ -166,9 +166,9 @@ export default class CaptainRuns extends View {
     this.reg = new Regression(this);
     cx.timer.every(150, (cx) => { if (this.tab === "runs" && this.kind === "backtests") this.cmp.tick(cx); });
     this.loadAll(cx);
-    cx.timer.every(1000, (cx) => { if (this.kind === "live") this.live.tick(cx); });
-    cx.timer.every(4000, (cx) => this.live.load(cx)); // what is running now leads the list wherever Runs is
-    cx.timer.every(2000, (cx) => this.jobs.tick(cx));
+    // The page's own clock, once a second: a running run's elapsed time and step time, and a running job's. It
+    // reads nothing.
+    cx.timer.every(1000, (cx) => { if ((this.kind === "live" && this.live.clock(cx)) || this.jobs.running()) cx.notify(); });
     // Layout props (a layout, or the real-window check): {tab: "jobs" | "grading" | "live" | "compare", live?: id,
     // backtest?, version?, section?, query?} opens on that.
     const p = layoutProps?.() ?? {};
@@ -179,10 +179,6 @@ export default class CaptainRuns extends View {
     if (p.section ?? p.cmpTab) this.cmp.show(cx, p.section ?? p.cmpTab);
     if (p.query) this.cmp.wantQuery = p.query;
     if (p.autoProfile) { this.cmp.autoProfile = true; this.cmp.sections.add("profile"); }
-    // Until the backend answers, ask again every 3 s.
-    // Until the list loads, ask again every 3 s: while the services start, and after any failure that wasn't the
-    // backend answering (they stopped or restarted).
-    cx.timer.every(3000, (cx) => { if (this.starting || (this.error && !this.errorR?.status)) this.loadAll(cx); });
     // Opened by name (the palette, the Explorer, a project page, `cst app open`): shared "captain.open"
     // {section: "runs", backtest | replay | live | tab, version?, at}. An evaluation opens with its comparison in
     // place; `tab` on an evaluation opens that section of it (queries, segments, surfaces, profile).
@@ -214,10 +210,22 @@ export default class CaptainRuns extends View {
     // The lists stay current by themselves, through the one live channel: read again the moment a run or a job
     // changes (a new evaluation, a workflow that finished, a run started from a terminal). No timer re-reads them.
     // What is open stays open.
-    keepFresh(cx, "runs", (cx) => {
-      if (this.starting) return;
-      for (const k of ["backtests", "workflows", "grading", "replays"]) this.load(cx, k);
-      if (this.tab === "compare") this.reg.load(cx);
+    //   runs: the four lists, what is running now, and Compare's table when it is shown.
+    //   jobs: the job this screen started, the jobs list, and the open job's log.
+    //   run:<id>: the open live run said something more.
+    // While the services are still starting, or the last read failed without an answer, the channel's two-second
+    // fallback and its "reconnected" call are what ask again: no timer here does.
+    keepFresh(cx, "runs", (cx, why, topics) => {
+      const all = why !== "changed";
+      if (all || topics.includes("runs")) {
+        for (const k of ["backtests", "workflows", "grading", "replays"]) this.load(cx, k);
+        this.live.load(cx);
+        if (this.tab === "compare") this.reg.load(cx);
+      }
+      if (all || topics.includes("jobs")) { this.pollJob(cx); this.jobs.changed(cx); }
+    });
+    watchLive(cx, ["run:"], (cx, why, topics) => {
+      if (this.kind === "live" && this.live.sel && (why !== "changed" || topics.includes(`run:${this.live.sel}`))) this.live.tick(cx);
     });
     // The Explorer's pick filters the lists: load them again.
     watchScope(cx, (cx) => { this.data = {}; this.loadAll(cx); if (this.tab === "compare") this.reg.load(cx); cx.notify(); });
@@ -440,6 +448,8 @@ export default class CaptainRuns extends View {
         // A run that streams: watch it in Live.
         if (r.data?.live) { this.kind = "live"; this.opened1 = true; this.grader = null; this.live.load(cx, r.data.live); }
       }
+      // Read at once: the action just returned. After this the live channel says when the job moves on.
+      this.pollJob(cx);
       cx.notify();
     });
     cx.notify();

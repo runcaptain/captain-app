@@ -3156,9 +3156,25 @@ def _changes_sources() -> None:
         rows = FL.deployed(ctx()).get("rows") or []
         return tuple((r.get("id"), r.get("state"), r.get("link"), r.get("reason"), r.get("copies"), str(r.get("deploying"))[:400]) for r in rows)
 
+    def live_runs():
+        # Each run still going, or just ended: how much it has said and where it stands.
+        from . import live as LV
+
+        return {r["id"]: (r.get("status"), r.get("events"), r.get("stage"), r.get("progress"), r.get("updated")) for r in LV.listing(limit=30)}
+
+    def compute_jobs():
+        # Jobs sent to a place to run work: their state as each place reports it. Asked of the places only while
+        # one is unfinished.
+        from . import jobs as J
+
+        rows = J.listing(ctx(), refresh_active=True, limit=50)
+        return tuple((j.get("id"), j.get("state"), j.get("message"), j.get("cost")) for j in rows)
+
     # A job that moves on changes the rows that show it: the jobs list, a model being deployed or stopped, a run.
     CH.source(["jobs", "deployed", "runs"], 0.5, jobs)
     CH.source(["deployed"], 2.0, deployed_now)
+    CH.source(["runs"], 0.5, live_runs, each="run")
+    CH.source(["jobs"], 4.0, compute_jobs)
 
 
 _changes_sources()

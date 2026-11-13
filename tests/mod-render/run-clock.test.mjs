@@ -94,10 +94,11 @@ for (const f of ['live.js', 'jobs.js']) assert.ok(fs.readFileSync(path.join(root
     assert.ok(a.includes("Still building the model's image. 48 s so far, usually about a minute and a half."), 'the quiet line');
     assert.ok(a.includes('account xxxxxxxx9012') && !a.includes('123456789012'), 'the log line hides the account');
     assert.ok(a.includes('Deploying starter-ranker, version 2 to AWS') && !a.includes(' | Run | '), 'no Run tag');
-    let ticks = 0;
-    live.busy = true;
-    live.tick({ notify: () => ticks++ });
-    assert.equal(ticks, 1, 'the one-second timer redraws a running run even when nothing is fetched');
+    // The page's clock says the run is still going, so the screen redraws each second. It reads nothing: what the
+    // run said is read when the live channel says the run moved on.
+    assert.equal(live.clock({}), true, 'a running run keeps the clock redrawing');
+    const main = fs.readFileSync(path.join(root, 'defaults/mods/captain-runs/main.js'), 'utf8');
+    assert.ok(main.includes('this.live.clock(cx)') && main.includes('watchLive(cx, ["run:"]') && !/timer\.every\(\d+, \(cx\) => [^\n]*(live\.tick|live\.load|jobs\.tick|pollJob|loadAll)/.test(main), 'no timer reads a run, a job or the lists');
   } finally { Date.now = realNow; }
 }
 console.log('run clock: ok');

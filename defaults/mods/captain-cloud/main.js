@@ -6,6 +6,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay } from "herdr";
 import { api, watchWorkspace } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
 import { Card, Button, Empty, Problem } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -36,7 +37,8 @@ export default class CaptainCloud extends View {
     this.testing = {};
     this.load(cx);
     watchWorkspace(cx, (cx) => this.load(cx));
-    cx.timer.every(15000, (cx) => this.load(cx));
+    // Live, by the one channel: read again the moment a login, a place to run work or a setting changes.
+    watchLive(cx, ["logins", "compute", "settings"], (cx) => this.load(cx));
   }
 
   load(cx) {

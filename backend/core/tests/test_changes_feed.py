@@ -120,3 +120,20 @@ def test_a_jobs_progress_reaches_the_feed(client):
     end = c.get(f"/api/changes?since={at}&topics=jobs,deployed&wait=5", headers=h).json()
     assert "jobs" in [x["topic"] for x in end["changed"]], "and so is its end"
     assert server.JOBS[jid]["status"] == "done"
+
+
+def test_each_run_that_moves_on_bumps_its_own_topic(monkeypatch):
+    monkeypatch.setattr(CH, "_sources", [])
+    monkeypatch.setattr(CH, "_asked", {"run:": 100.0})
+    runs = {"a": ("running", 3), "b": ("running", 9)}
+    CH.source(["runs"], 0.5, lambda: dict(runs), each="run")
+    CH.check_sources(now=100.0)
+    start = CH.seq()
+    runs["a"] = ("running", 4)  # run a said something more
+    CH.check_sources(now=100.6)
+    got = sorted(c["topic"] for c in CH.since(start, ["run:", "runs"])["changed"])
+    assert got == ["run:a", "runs"], "the run that moved, and the list it is on; not the run that did not"
+    at = CH.seq()
+    runs["c"] = ("queued", 0)  # a new run
+    CH.check_sources(now=101.2)
+    assert [c["topic"] for c in CH.since(at, ["run:", "runs"])["changed"]] == ["runs"], "a new run changes the list"

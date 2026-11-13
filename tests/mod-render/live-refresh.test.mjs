@@ -11,6 +11,7 @@ import { tidy } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
+globalThis.__shared = { 'captain.daemon': { state: 'ready', base: 'http://captain.test', token: 't' } };
 const { keepFresh, VIEW_TOPICS } = await import('../../defaults/captain/kit/cst.js');
 
 // ---- the one helper every view uses: it is the live channel now, with no timer of its own ----------------------

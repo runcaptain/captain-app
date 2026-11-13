@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { watchLive, livePump, liveState, liveTransport, liveReset, updatedWords, covers, FALLBACK_MS, WAIT_S } from '../../defaults/captain/kit/live.js';
 
+globalThis.__shared = { 'captain.daemon': { state: 'ready', base: 'http://captain.test', token: 't' } };
 let now = 1_000_000;
 const asked = [];
 let answer = null; // what the feed says next: a function of the path, or null to hold the request open
@@ -113,6 +114,55 @@ assert.ok(asked.length - n0 >= 4 && asked.length - n0 <= 6, `about once a second
 }
 console.log('live channel: ok');
 process.exit(0);
+
+// ---- the channel reaching the services late reads a screen whose own first read may have failed ---------------
+{
+  liveReset();
+  const t4 = [];
+  const cx4 = { timer: { every: (_ms, f) => t4.push(f) }, spawn: (f) => f(cx4), notify: () => {} };
+  const heard4 = [];
+  watchLive(cx4, ['data'], (_cx, why) => heard4.push(why));
+  answer = () => ok(700);
+  now += 5000; // the services took a while to come up before the channel first asked
+  now += 250; for (const f of t4) f(cx4); await new Promise((r) => setImmediate(r));
+  assert.deepEqual(heard4, ['connected'], 'read again on the first answer');
+  // A screen that connected at once is not read twice.
+  liveReset();
+  const heard5 = [];
+  watchLive(cx4, ['data'], (_cx, why) => heard5.push(why));
+  now += 250; for (const f of t4) f(cx4); await new Promise((r) => setImmediate(r));
+  assert.deepEqual(heard5, [], 'connected at once: its own first read stands');
+}
+
+// ---- a screen that showed before the services were up is read when the channel first reaches them -----------
+{
+  liveReset();
+  globalThis.__shared['captain.daemon'] = { state: 'starting' };
+  const t6 = [];
+  const cx6 = { timer: { every: (_ms, f) => t6.push(f) }, spawn: (f) => f(cx6), notify: () => {} };
+  const heard6 = [];
+  watchLive(cx6, ['projects'], (_cx, why) => heard6.push(why));
+  globalThis.__shared['captain.daemon'] = { state: 'ready', base: 'http://captain.test', token: 't' };
+  answer = () => ok(900);
+  now += 250; for (const f of t6) f(cx6); await new Promise((r) => setImmediate(r));
+  assert.deepEqual(heard6, ['connected'], 'its first read could not have worked, so it reads now, at once');
+}
+
+// ---- a pause in which nothing ran (the computer slept) drops nobody ----------------------------------------------
+{
+  liveReset();
+  const t3 = [];
+  const cx3 = { timer: { every: (_ms, f) => t3.push(f) }, spawn: (f) => f(cx3), notify: () => {} };
+  const heard3 = [];
+  watchLive(cx3, ['runs'], (_cx, why) => heard3.push(why));
+  answer = () => ok(500 + asked.length, ['runs']);
+  const tick3 = async (ms = 250) => { now += ms; for (const f of t3) f(cx3); await new Promise((r) => setImmediate(r)); };
+  await tick3(); await tick3();
+  now += 8 * 3600 * 1000; // eight hours asleep
+  await tick3(); await tick3();
+  assert.equal(liveState().watchers, 1, 'the view is still watched after a long pause');
+  assert.ok(heard3.length >= 2, 'and still hears changes');
+}
 
 // ---- a watcher that stops is no longer called, and its topics are no longer asked for ------------------------------
 stopList();

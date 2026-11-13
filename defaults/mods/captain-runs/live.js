@@ -161,9 +161,20 @@ export class Live {
   }
 
   /** New events since the last ask. Called every second while the open run is going. */
+  /** From the page's clock, once a second. Reads nothing new from a run: says whether the open run is still going,
+   *  so its time counts up on screen. A run that ended and went out as a job has its cost asked for a few times
+   *  here, a few seconds apart: the cost is written a moment after the job ends and nothing announces it. */
+  clock(cx) {
+    const run = this.run;
+    if (!run || run.error) return false;
+    if (going(run.head?.status)) return true;
+    this.askCost(cx);
+    return false;
+  }
+
+  /** Read what the open run has said since the last look. Called when the live channel says that run moved on
+   *  ("run:<id>"), and when a run is picked. */
   tick(cx) {
-    // A running run's time counts up every second on the page's own clock, heard from or not.
-    if (this.run && !this.run.error && going(this.run.head?.status)) cx.notify();
     if (!this.sel || this.busy) return;
     if (this.run && !this.run.error && !going(this.run.head.status)) { this.askCost(cx); return; }
     this.fetch(cx);

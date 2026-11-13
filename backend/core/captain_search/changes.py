@@ -81,9 +81,11 @@ _thread: threading.Thread | None = None
 ASKED_FOR_S = 40.0  # a topic counts as watched this long after the last request that named it
 
 
-def source(topics: list[str], every: float, digest) -> None:
-    """Register something that changes by itself: `digest()` returns a value that differs when it has changed."""
-    _sources.append({"topics": list(topics), "every": float(every), "digest": digest, "seen": None, "at": 0.0, "primed": False})
+def source(topics: list[str], every: float, digest, each: str | None = None) -> None:
+    """Register something that changes by itself: `digest()` returns a value that differs when it has changed.
+    With `each` (a topic prefix such as "run"), `digest()` returns {id: value}: the ids whose value differs bump
+    their own topic ("run:<id>"), which bumps its list, and a new or missing id bumps `topics`."""
+    _sources.append({"topics": list(topics), "every": float(every), "digest": digest, "seen": None, "at": 0.0, "primed": False, "each": each})
 
 
 def _wanted(src: dict, now: float) -> bool:
@@ -112,7 +114,14 @@ def check_sources(now: float | None = None) -> None:
         except Exception:  # noqa: BLE001  a source that can't be read says nothing; the next pass asks again
             continue
         if src["primed"] and seen != src["seen"]:
-            bump(*src["topics"])
+            if src.get("each") and isinstance(seen, dict) and isinstance(src["seen"], dict):
+                was = src["seen"]
+                moved = [k for k, v in seen.items() if k in was and was[k] != v]
+                bump(*[f"{src['each']}:{k}" for k in moved])
+                if set(seen) != set(was) or not moved:
+                    bump(*src["topics"])
+            else:
+                bump(*src["topics"])
         src["seen"], src["primed"] = seen, True
 
 

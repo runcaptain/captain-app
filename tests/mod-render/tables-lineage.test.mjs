@@ -11,6 +11,8 @@ import { tidy } from './backend.mjs';
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
 globalThis.__fixtures = path.join(here, 'fixtures/captain-data-tables');
+// A job this screen starts is followed when the live channel says a job moved on: here, on every tick.
+globalThis.__feedAlways = ['jobs'];
 globalThis.__routes = [
   [/^\/api\/lineage\/import\/wh$/, 'job-start', 'POST'],
   [/^\/api\/jobs\//, 'job-done'],

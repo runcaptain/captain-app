@@ -57,6 +57,7 @@ export class Library {
       if (!r.ok) { this.say(sentence(r.data?.detail ?? r.error) || "Couldn't start the import.", "fail"); cx.notify(); return; }
       this.importPath.set_value("");
       this.job = { id: r.data.job, label, folder: folder ?? "", progress: 0, status: "running", message: "" };
+      this.tick(cx); // at once: the action just returned. The live channel says when the job moves on.
       cx.notify();
     });
     cx.notify();

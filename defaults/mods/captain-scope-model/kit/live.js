@@ -16,6 +16,7 @@
 // the moment a topic changes: {seq, changed: [{topic, seq}], reset}. One request at a time per mod, shared by every
 // watcher in it. While it can't be reached the kit re-reads every FALLBACK_MS instead and liveState() says
 // "reconnecting", so a screen says "Reconnecting" in its Updated line and never looks fine while it is stale.
+import { shared } from "herdr";
 import { api } from "./cst.js";
 
 export const WAIT_S = 25; // how long the services may hold one request (the app's fetch gives up at 30 s)
@@ -23,6 +24,8 @@ export const FALLBACK_MS = 2000; // how often every watcher re-reads while the f
 export const PUMP_MS = 250; // how often the kit looks at whether to ask again
 const QUICK_MS = 400; // an answer this fast with nothing in it means the services did not hold the request
 const IDLE_GAP_MS = 1000; // so it is asked again a second later, not at once
+const SETTLED_MS = 1500; // a watcher this old when the channel first connects has had its own first read come and go
+const PAUSE_MS = 1000; // no pump at all for this long was a pause, not a view going away
 const GONE_MS = 3000; // a view whose timer has not ticked for this long has gone away
 const BACKOFF_MS = [500, 1000, 2000, 4000, 8000]; // between tries while the feed is down
 
@@ -35,6 +38,7 @@ const S = {
   nextAsk: 0, // not before this time
   failures: 0,
   lastFallback: 0,
+  lastPump: 0,
   owners: new WeakMap(), // a view's cx -> {beat}: the view that drives the channel and owns its watchers
   ask: (path, opts) => api(path, opts), // the request (a test puts its own here)
   now: () => Date.now(),
@@ -46,7 +50,7 @@ export function liveTransport(ask, now) { if (ask) S.ask = ask; if (now) S.now =
 /** Forget everything (a test starting over). */
 export function liveReset() {
   S.watchers.clear();
-  Object.assign(S, { seq: null, state: "connecting", since: 0, asking: false, nextAsk: 0, failures: 0, lastFallback: 0, owners: new WeakMap() });
+  Object.assign(S, { seq: null, state: "connecting", since: 0, asking: false, nextAsk: 0, failures: 0, lastFallback: 0, lastPump: 0, owners: new WeakMap() });
 }
 
 /** "live" while the feed answers; "reconnecting" while it can't be reached (the screens are then re-read every two
@@ -83,10 +87,10 @@ function dropGone() {
   for (const w of [...S.watchers]) if (now - w.owner.beat > GONE_MS) S.watchers.delete(w);
 }
 
-function tell(why, topics = null) {
+function tell(why, topics = null, only = null) {
   dropGone();
   for (const w of [...S.watchers]) {
-    if (!S.watchers.has(w)) continue;
+    if (!S.watchers.has(w) || (only && !only(w))) continue;
     const hit = topics === null ? null : topics.filter((t) => w.topics.some((mine) => covers(mine, t)));
     if (hit !== null && !hit.length) continue;
     try { w.fn(w.cx, why, hit ?? []); } catch { /* one screen's reader must not stop the others */ }
@@ -99,6 +103,11 @@ function topicsAsked() {
 
 /** One step, from the timer: ask the feed if it is time, and re-read on the fallback clock while it is down. */
 export function livePump(cx) {
+  // After a pause in which no view's timer ran (the computer slept, the app was held up), nobody can be told from
+  // gone: every view starts afresh, and only one that stays silent from here is dropped.
+  const t = S.now();
+  if (t - S.lastPump > PAUSE_MS) for (const w of S.watchers) w.owner.beat = t;
+  S.lastPump = t;
   dropGone();
   if (!S.watchers.size) return;
   const now = S.now();
@@ -138,6 +147,9 @@ export function livePump(cx) {
     S.nextAsk = !changed.length && took < QUICK_MS ? S.now() + IDLE_GAP_MS : 0;
     // Back after being down, or told that something was missed: every watcher reads once.
     if (back || (reset && !first)) tell(back ? "reconnected" : "reset");
+    // The first answer of all. A screen read once when it showed; if the channel only reached the services well
+    // after that (they were still coming up, and the screen's own read may have failed), it reads again now.
+    else if (first) { const t = S.now(); tell("connected", null, (w) => w.early || t - w.at > SETTLED_MS); }
     else if (changed.length) tell("changed", changed);
     if (back) cx?.notify?.();
   };
@@ -145,7 +157,7 @@ export function livePump(cx) {
 }
 
 /** Call `onChange(cx, why, topics)` when one of `topics` changes. `why` is "changed" (with the topics that did),
- *  "reset" or "reconnected" (something may have been missed: read everything), or "fallback" (the feed is down: this
+ *  "reset", "reconnected" or "connected" (something may have been missed: read everything), or "fallback" (the feed is down: this
  *  is the two-second re-read). Returns a function that stops watching. The first watcher in a mod starts the mod's
  *  one connection; when the view goes away its timer goes with it. */
 export function watchLive(cx, topics, onChange) {
@@ -158,7 +170,9 @@ export function watchLive(cx, topics, onChange) {
     const mine = owner;
     cx.timer.every(PUMP_MS, (cx) => { mine.beat = S.now(); livePump(cx); });
   }
-  const w = { topics: [...new Set((Array.isArray(topics) ? topics : [topics]).filter(Boolean).map(String))], fn: onChange, cx, owner };
+  const w = { topics: [...new Set((Array.isArray(topics) ? topics : [topics]).filter(Boolean).map(String))], fn: onChange, cx, owner, at: S.now(),
+    // Registered before the services were up: the screen's own first read cannot have worked.
+    early: shared("captain.daemon")?.state !== "ready" };
   S.watchers.add(w);
   // A new topic: the request in flight does not ask for it, so the next one goes out at once.
   S.nextAsk = 0;

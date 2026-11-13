@@ -12,6 +12,9 @@ export function shapesIn(tree) {
 }
 
 export function harness(Mod) {
+  // A test that says nothing about the app's shared values gets services that are up, as a screen normally finds
+  // them. A test about starting up sets `globalThis.__shared` itself (to {} for "not up yet") before mounting.
+  if (globalThis.__shared === undefined) globalThis.__shared = { 'captain.daemon': { state: 'ready', base: 'http://captain.test', token: 't' } };
   const pending = [];
   const timers = [];
   const timings = [];

@@ -6,7 +6,18 @@ export * from './real-cst.js';
 const dir = globalThis.__fixtures;
 const routes = globalThis.__routes ?? [];
 export const asked = (globalThis.__asked ??= []);
+let feedSeq = 100;
 export async function api(p, opts = {}) {
+  // The change feed (kit/live.js). Quiet unless a test says something changed: globalThis.__feedChanged = ['data']
+  // is told once, on the next ask. Not recorded in `asked`: a test counts the screen's reads, not the channel's.
+  if (p.startsWith('/api/changes')) {
+    if (globalThis.__down) return { ...globalThis.__down };
+    if (globalThis.__starting) return { ok: false, starting: true, error: null };
+    // globalThis.__feedAlways = ['jobs'] says those topics changed on every ask: a test following a job tick by tick.
+    const changed = [...(globalThis.__feedChanged ?? []).splice(0), ...(globalThis.__feedAlways ?? [])];
+    if (changed.length) feedSeq += 1;
+    return { ok: true, status: 200, data: { seq: feedSeq, changed: changed.map((topic) => ({ topic, seq: feedSeq })), reset: false }, error: null };
+  }
   asked.push(p);
   (globalThis.__bodies ??= []).push([p, opts]);
   // The backend is down: what kit/cst.js answers then (tests/mod-render/backend-down.test.mjs).

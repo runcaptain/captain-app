@@ -117,18 +117,21 @@ export default class CaptainData extends View {
     if (this.tab === "sources") this.models.load(cx);
     if (p.registryAttach) { this.tab = "sources"; this.models.load(cx); this.models.toggleAttach(cx); } // the attach form, open on the bucket list
     this.load(cx);
-    cx.timer.every(500, (cx) => { const busy = !!this.lib.job; this.lib.tick(cx); this.catalog.tick(cx); if (busy && !this.lib.job) this.catalog.load(cx); if (this.models.job) this.models.tick(cx); if (this.tables.jobs.size) this.tables.tick(cx); });
-    // Pages the grid asked for while drawing are fetched here, outside render.
-    // Until the backend answers, ask again every 3 s: the screen never stays on "starting" by itself.
-    cx.timer.every(3000, (cx) => {
-      if (this.starting || (this.list === null && this.loadedOnce) || (this.listError && !this.listR?.status)) this.load(cx);
-      // The one list, until it loads (while the services start, or after a failure that wasn't an answer).
-      if (this.catalog.rows === null || (this.catalog.error && !this.catalog.error.status)) this.catalog.load(cx);
-    });
+    // The search box: a moment after typing stops, the search is asked. It waits on the person, not on a clock
+    // that re-reads anything.
+    cx.timer.every(500, (cx) => this.catalog.tick(cx));
     // The lists stay current by themselves, through the one live channel: read again the moment Data's topics
     // change (a table added on another screen, by a form, from a terminal, or by a job that ended). No timer
     // re-reads them. An open page has only its facts refreshed.
-    keepFresh(cx, "data", (cx) => this.refreshLists(cx));
+    //   jobs: an import, a database being read, a registry being read: each is followed when the channel says a
+    //   job moved on, and at once when the action that started it returns.
+    // While the services are still starting, or a read failed without an answer, the channel's fallback and its
+    // "connected" call are what ask again.
+    keepFresh(cx, "data", (cx, why, topics) => {
+      const all = why !== "changed";
+      if (all || topics.includes("jobs")) this.followJobs(cx);
+      if (all || topics.some((t) => t !== "jobs")) this.refreshLists(cx);
+    });
     // "Open <dataset>" from the palette: captain-go sets shared "captain.open" {section: "data", dataset, tab?, at}.
     // tab (a dataset page tab: health, insights, quality...) opens once that dataset is on the page.
     // Shared values outlive the app: an open from before this screen started (the last session's import) is done.
@@ -203,8 +206,20 @@ export default class CaptainData extends View {
   }
 
   /** Reload what is listed, quietly: the groups stay as they are, and so does the page of each. */
+  /** The jobs this screen started: an import, reading a database's tables, reading a registry. */
+  followJobs(cx) {
+    const busy = !!this.lib.job;
+    this.lib.tick(cx);
+    if (busy && !this.lib.job) this.catalog.load(cx);
+    if (this.models.job) this.models.tick(cx);
+    if (this.tables.jobs.size) this.tables.tick(cx);
+  }
+
   refreshLists(cx) {
-    if (this.graph || this.catalog.rows === null) return;
+    // Never loaded, or the last read failed without an answer (the services were starting, or stopped): read all.
+    if (this.starting || this.list === null || (this.listError && !this.listR?.status)) this.load(cx);
+    if (this.catalog.rows === null || (this.catalog.error && !this.catalog.error.status)) { this.catalog.load(cx); return; }
+    if (this.graph) return;
     // A page is open: only its facts. The rows on the page, a filter being typed and the place in the grid are never
     // touched.
     if (this.shown) {
