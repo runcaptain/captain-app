@@ -318,19 +318,76 @@ class ModalServingProvider(HttpServing, ComputeProvider):
                 "logs": f"modal app logs {name}" + (f" -e {env}" if env else ""),
                 "image": None, "image_built": None, "role": None, "since": None, "machine": None}
 
-    def found(self, prefix: str = "captain") -> list[dict]:
-        """Every deployed app in this Modal environment that Captain made, whatever project made it: by Captain's
-        tag, or by the name prefix. Asks Modal for the list and for how many copies are up. It never calls an app,
-        so a sleeping one stays asleep."""
+    # ---- what apps this environment has ----
+    #
+    # Asked once a second or so while a screen is looking, so its cost matters. `modal app list` as a command
+    # starts a process and loads Modal's command line each time: about 0.19 seconds and 0.18 seconds of one
+    # processor, before the network. Modal's library, already loaded in this process, asks the same question
+    # with no process to start.
+    #
+    # NOT RUN ON A REAL WORKSPACE YET. The library has no public call for listing apps (1.6.3), so this uses the
+    # one its own command uses. It is tried first, checked strictly, and on anything unexpected the command is
+    # used instead, as before. `listed_by` says which answered last.
+    LIBRARY_LIST = True
+    listed_by: str | None = None
+
+    def _list_apps(self) -> list[dict]:
+        """Every app in this environment, as `modal app list --json` gives them: [{"Description", "State",
+        "Created at"}]."""
+        cls = type(self)
+        if self.LIBRARY_LIST:
+            try:
+                rows = self._list_by_library()
+                cls.listed_by = "library"
+                return rows
+            except Exception as e:  # noqa: BLE001  an unproven path never costs a listing: the command answers
+                cls.library_error = str(e)[:200]
+        rows = self._list_by_command()
+        cls.listed_by = "command"
+        return rows
+
+    def _list_by_command(self) -> list[dict]:
         import json
 
         argv = [sys.executable, "-m", "modal", "app", "list", "--json"] + (["-e", self._env()] if self._env() else [])
         r = self._run(argv, dict(os.environ))
         if r.returncode != 0:
             raise ProviderError(signed_out(Exception(r.stderr)) or f"Modal could not list apps: {r.stderr.strip()[-300:]}")
+        return json.loads(r.stdout or "[]")
+
+    def _list_by_library(self) -> list[dict]:
+        import datetime as dt
+        import inspect
+
+        from modal_proto import api_pb2  # type: ignore
+
+        modal = _modal()
+        client = modal.Client.from_env()
+        resp = client.stub.AppList(api_pb2.AppListRequest(environment_name=self._env() or ""))
+        if inspect.isawaitable(resp):
+            getattr(resp, "close", lambda: None)()
+            raise ProviderError("Modal's library answered with something to wait for")
+        rows = []
+        for a in resp.apps:
+            state = api_pb2.AppState.Name(a.state)  # a state this library does not know is an error, not a guess
+            name = a.description or getattr(a, "name", "")
+            if not name:
+                raise ProviderError("an app with no name in Modal's answer")
+            made = float(a.created_at or 0)
+            rows.append({"Description": name, "State": state.removeprefix("APP_STATE_").lower(), "App ID": a.app_id,
+                         "Created at": dt.datetime.fromtimestamp(made, dt.timezone.utc).isoformat(timespec="seconds") if made else None})
+        return rows
+
+    def found(self, prefix: str = "captain") -> list[dict]:
+        """Every deployed app in this Modal environment that Captain made, whatever project made it: by Captain's
+        tag, or by the name prefix. Asks Modal for the list and for how many copies are up. It never calls an app,
+        so a sleeping one stays asleep."""
+        import json
+
+        apps = self._list_apps()
         start = prefix.strip("-") + "-"
         out = []
-        for a in json.loads(r.stdout or "[]"):
+        for a in apps:
             name = a.get("Description") or a.get("description") or a.get("name")
             if not name or str(a.get("State") or a.get("state") or "").lower() not in ("deployed", "running"):
                 continue
@@ -355,12 +412,9 @@ class ModalServingProvider(HttpServing, ComputeProvider):
         """Every deployed app in this Modal environment that carries Captain's tags for this project's staging."""
         import json
 
-        argv = [sys.executable, "-m", "modal", "app", "list", "--json"] + (["-e", self._env()] if self._env() else [])
-        r = self._run(argv, dict(os.environ))
-        if r.returncode != 0:
-            raise ProviderError(signed_out(Exception(r.stderr)) or f"Modal could not list apps: {r.stderr.strip()[-300:]}")
+        apps = self._list_apps()
         out = []
-        for a in json.loads(r.stdout or "[]"):
+        for a in apps:
             name = a.get("Description") or a.get("description") or a.get("name")
             if not name or str(a.get("State") or a.get("state") or "").lower() not in ("deployed", "running"):
                 continue
