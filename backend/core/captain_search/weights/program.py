@@ -36,6 +36,10 @@ AGENTS = ("claude", "codex")
 ALLOWED = ("session", "report", "events", "layers", "read", "stats", "heatmap", "template", "forward", "activations", "gradients",
            "trace", "slice", "edit", "undo", "redo", "diff", "evaluate", "note")
 TIME_LIMIT_S = 600
+# Claude Code prints its answer once, at the end. Seen 2026-11-13 on a real run: it printed the answer 31 seconds in
+# and its command line then stayed open until the time limit, 6.5 minutes later. So once it has printed, and nothing
+# more is printed and no event lands for this long, the agent is done and Captain ends its command line.
+QUIET_S = 60
 _STOPS: dict[str, threading.Event] = {}     # session id -> ask the run in this process to stop
 
 
@@ -238,8 +242,9 @@ def run(ctx, plan: dict, *, keep: bool | None = None, save: bool = True, held_to
     stop_event = stop_event or threading.Event()
     _STOPS[sid] = stop_event
     work = tempfile.mkdtemp(prefix="cst-weights-run-")
-    out_path = os.path.join(work, "agent-output.txt")
-    proc, exit_code, stopped, timed_out, transcript = None, None, False, False, ""
+    out_path, err_path = os.path.join(work, "agent-output.txt"), os.path.join(work, "agent-errors.txt")
+    proc, exit_code, stopped, timed_out, lingered, transcript = None, None, False, False, False, ""
+    quiet_s = float(plan.get("quiet_s") or QUIET_S)
     try:
         _shim(work)
         writable = [d for d in (getattr(ctx.store, "root", None), os.environ.get("CST_HOME")) if d]
@@ -254,22 +259,28 @@ def run(ctx, plan: dict, *, keep: bool | None = None, save: bool = True, held_to
         say(f"Started {name} on session {sid}. {how}")
         seen = S.events(ctx, sid)["last"]
         t0 = time.time()
-        with open(out_path, "w") as out:
-            proc = subprocess.Popen(cmd, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-                                    start_new_session=True)
+        with open(out_path, "w") as out, open(err_path, "w") as err:
+            proc = subprocess.Popen(cmd, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True)
+            last, size = time.time(), 0
             while True:
                 code = proc.poll()
                 for ev in S.events(ctx, sid, seen)["events"]:
                     seen = ev["seq"]
+                    last = time.time()
                     say(f"{ev['id']:>4}  {ev['sentence']}")
                 if code is not None:
                     exit_code = code
                     break
+                now_size = os.path.getsize(out_path)
+                if now_size != size:
+                    size, last = now_size, time.time()
                 if stop_event.is_set():
                     stopped = True
                 elif time.time() - t0 > plan["time_limit_s"]:
                     timed_out = True
-                if stopped or timed_out:
+                elif name == "claude" and size > 0 and time.time() - last > quiet_s:
+                    lingered = True     # it has given its answer and gone quiet: see QUIET_S
+                if stopped or timed_out or lingered:
                     _end(proc)
                     exit_code = proc.returncode
                     break
@@ -281,16 +292,19 @@ def run(ctx, plan: dict, *, keep: bool | None = None, save: bool = True, held_to
             exit_code = proc.returncode
     finally:
         _STOPS.pop(sid, None)
-        try:
-            with open(out_path, errors="replace") as f:
-                transcript = f.read()
-        except OSError:
-            transcript = ""
+        for path in (out_path, err_path):
+            try:
+                with open(path, errors="replace") as f:
+                    transcript = (transcript + "\n" + f.read()).strip()
+            except OSError:
+                pass
         shutil.rmtree(work, ignore_errors=True)
     if stopped:
         say("Stopped. The agent's command line was ended. Every edit it had made is in the record.")
     if timed_out:
         say(f"The time limit of {plan['time_limit_s']} seconds is up. The agent's command line was ended.")
+    if lingered:
+        say(f"The agent gave its answer and did nothing more for {quiet_s:.0f} seconds, so Captain ended its command line.")
     for ev in S.events(ctx, sid, seen)["events"]:
         say(f"{ev['id']:>4}  {ev['sentence']}")
 
@@ -313,7 +327,7 @@ def run(ctx, plan: dict, *, keep: bool | None = None, save: bool = True, held_to
     label_before = sc["ledger"]["label"]
     alone = sc["ledger"]["weights_alone"]
     S.program_end(ctx, sid, {"kept": kept, "reason": reason, "scores": sc["scores"], "stopped": stopped, "timed_out": timed_out,
-                             "agent_exit": exit_code})
+                             "agent_exit": 0 if lingered else exit_code})
     saved = None
     if kept and save:
         saved = S.save(ctx, sid, note=f"{name}: {plan['goal']}"[:200], by="captain")["ref"]
@@ -329,8 +343,8 @@ def run(ctx, plan: dict, *, keep: bool | None = None, save: bool = True, held_to
         "edits": [{**e, "sentence": sc["sentences"].get(e["id"], "")} for e in sc["edits"]],
         "notes": sc["notes"], "refused": sc["refused"], "changed": sc["changed"], "total": sc["total"], "share": sc["share"],
         "scores": sc["scores"], "label": label_before, "weights_alone": alone, "kept": kept, "reason": reason,
-        "taken_back": taken_back, "saved": saved, "deployed": None, "stopped": stopped, "timed_out": timed_out, "agent_exit": exit_code,
-        "agent_said": transcript.strip()[-4000:],
+        "taken_back": taken_back, "saved": saved, "deployed": None, "stopped": stopped, "timed_out": timed_out, "agent_exit": 0 if lingered else exit_code,
+        "ended_after_answer": lingered, "agent_said": transcript.strip()[-4000:],
     }
     return report
 
@@ -376,6 +390,8 @@ def report_text(r: dict) -> str:
               "Saved as: " + (r["saved"] or "nothing"), "Deployed: " + (r["deployed"] or "no")]
     if r["stopped"] or r["timed_out"]:
         lines.append("The agent was stopped by a person." if r["stopped"] else "The agent ran out of time.")
+    elif r.get("ended_after_answer"):
+        lines.append("The agent gave its answer and its command line stayed open, so Captain ended it.")
     elif r["agent_exit"]:
         lines.append(f"The agent's command line ended with code {r['agent_exit']}.")
     if r["agent_said"]:

@@ -504,6 +504,9 @@ What happens:
    change was right and is now wrong, or when the held-out set lost more than 1 in 100 right answers. Otherwise
    it is kept and saved as a new version. What the agent says about its own work is printed and decides nothing.
 
+Claude Code prints its answer once, at the end. If it has printed and then nothing more happens for 60 seconds,
+Captain ends its command line and judges the result. The report then says so, and it is not called out of time.
+
 Ctrl-C stops the agent. Every edit it made is already in the record. In a terminal Captain asks whether to keep
 them. With no terminal it judges them by the same rule. The command then exits with code 130.
 
@@ -522,7 +525,7 @@ The report, also what `--json` prints:
  "label": "from the weights alone", "weights_alone": true,
  "kept": true, "reason": "Kept. The target improved (cost 9.2 to 0.01, 0 to 1 right of 1), and the rest held.",
  "taken_back": 0, "saved": "tiny@v2", "deployed": null,
- "stopped": false, "timed_out": false, "agent_exit": 0, "agent_said": "..."}
+ "stopped": false, "timed_out": false, "ended_after_answer": false, "agent_exit": 0, "agent_said": "..."}
 ```
 
 `scores` has `target`, `keep` and `test` like an edit's `cost`. `broke` is how many answers were right before and
