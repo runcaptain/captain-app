@@ -43,6 +43,7 @@ const ALLOWED = [
   ['captain/kit/mlflow.js', 'shared("captain.mlflow.changed")', 'window'],
   ['captain/kit/view.js', 'publishView(name, read())', 'window'],                     // what this page shows, for agents
   // ---- one-shots and first-answer retries in the mods
+  ['mods/captain-weights/main.js', 'cx.timer.after(PULSE_BEAT_MS', 'clock'],          // a pulse's next beat: armed only while something pulses
   ['mods/captain-data/main.js', 'if (p.importWith) cx.timer.after(1500', 'once'],
   ['mods/captain-data/tables.js', 'if (seq === this.loadSeq) this.load(cx);', 'starting'],
   ['mods/captain-runs/regression.js', 'if (seq === this.seq) this.load(cx);', 'starting'],
