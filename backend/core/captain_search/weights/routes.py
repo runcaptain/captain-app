@@ -211,7 +211,10 @@ def note(sid: str, body: dict):
 @router.post("/sessions/{sid}/program")
 def program(sid: str, body: dict):
     """Start an agent on this session with a goal. Returns a job: {job, session, agent}. The job's result is the
-    report. The run tells `jobs`, `job:<id>` and `weights-session:<id>` as it goes."""
+    report. The run tells `jobs`, `job:<id>` and `weights-session:<id>` as it goes.
+
+    A result Captain keeps stays in the session and is NOT saved as a new version, unless the body says
+    `"save": true`: from a page, nothing is saved until the person saves it."""
     from .. import server
     from . import program as WPG
 
@@ -234,7 +237,7 @@ def program(sid: str, body: dict):
             job["message"] = text
 
     def work(progress):
-        return WPG.run(c, plan, keep=keep if isinstance(keep, bool) else None, say=say)
+        return WPG.run(c, plan, keep=keep if isinstance(keep, bool) else None, save=b.get("save") is True, say=say)
 
     jid = server._job(work, f"{plan['agent']} is working on {S.session(c, sid)['base']}: {plan['goal']}", topics=(f"weights-session:{sid}",))
     box["jid"] = jid

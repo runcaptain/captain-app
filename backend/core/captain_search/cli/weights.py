@@ -584,7 +584,7 @@ def program(model: str = typer.Argument(..., help="a model, or one version of it
             target_input: Optional[str] = typer.Option(None, "--target-input", help="fix this one: an input as numbers with commas"),
             target_output: Optional[str] = typer.Option(None, "--target-output", help="the wanted output for --target-input: numbers, or one class number"),
             leave_alone: Optional[str] = typer.Option(None, "--leave-alone", help="classes that must not change: 0,1,2. Left out: every class in the model's evaluation pool"),
-            keep: Optional[bool] = typer.Option(None, "--keep/--undo-if-worse", help="keep the result whatever the scores say, or take it back if it did harm (the default)"),
+            keep: Optional[bool] = typer.Option(None, "--keep/--undo-if-worse", help="keep the result whatever the scores say and even if the run is stopped, or take it back if it did harm or was stopped (the default)"),
             project: Optional[str] = typer.Option(None, "--project", help="with --deploy-on: the project that deploys a kept result"),
             deploy_on: Optional[str] = typer.Option(None, "--deploy-on", help="deploy a kept result: local"),
             time_limit: int = typer.Option(600, "--time-limit", help="seconds before the agent is stopped (default 600)")):
@@ -593,9 +593,8 @@ def program(model: str = typer.Argument(..., help="a model, or one version of it
     The agent can run only `cst weights` commands on its own session. Every edit is a patch in the record and shows
     on the Weights page as it happens. When the agent stops, Captain measures the result: one that moved "should
     not change", made the held-out set worse or did not help the target is taken back whole. One that is kept is
-    saved as a new version. Ctrl-C stops the agent and leaves the record whole."""
-    import sys
-
+    saved as a new version. Ctrl-C, or the time limit, stops the agent: its edits are then taken back and nothing is
+    saved, unless --keep was given. They stay in the record as taken back."""
     from ..weights import program as WPG
 
     if bool(project) != bool(deploy_on):
@@ -620,16 +619,8 @@ def program(model: str = typer.Argument(..., help="a model, or one version of it
     quiet = S.json
     say = (lambda text: None) if quiet else (lambda text: typer.echo(text))
 
-    def ask() -> str:
-        if quiet or not sys.stdin.isatty():
-            return "judge"
-        try:
-            return "keep" if typer.confirm("Keep the edits made so far? No takes them all back", default=False) else "undo"
-        except (typer.Abort, EOFError, KeyboardInterrupt):
-            return "undo"
-
     deploying = bool(project)
-    r = _do(WPG.run, c, plan, keep=keep, save=not deploying, say=say, decide_on_stop=ask)
+    r = _do(WPG.run, c, plan, keep=keep, save=not deploying, say=say)
     if deploying and r["kept"]:
         from .deployments import _deploy_on
 

@@ -483,7 +483,7 @@ cst weights program tiny --goal "It answers wrong when both inputs are on. Fix t
 | `--max-edits N` | edits the agent may make. Default 5. A further edit is refused |
 | `--target-example N`, or `--target-input` with `--target-output` | the one thing to fix |
 | `--leave-alone 0,1` | classes that must not change. Left out: every class in the model's evaluation pool |
-| `--keep` / `--undo-if-worse` | keep the result whatever the scores say, or take back a result that did harm (the default) |
+| `--keep` / `--undo-if-worse` | keep the result whatever the scores say and even if the run is stopped, or take back a result that did harm or was stopped (the default) |
 | `--project shop --deploy-on local` | deploy a kept result |
 | `--time-limit 600` | seconds before the agent is stopped |
 | `--dry-run` (before `weights`) | print the plan, the command and the agent's instructions. Start nothing |
@@ -507,8 +507,9 @@ What happens:
 Claude Code prints its answer once, at the end. If it has printed and then nothing more happens for 60 seconds,
 Captain ends its command line and judges the result. The report then says so, and it is not called out of time.
 
-Ctrl-C stops the agent. Every edit it made is already in the record. In a terminal Captain asks whether to keep
-them. With no terminal it judges them by the same rule. The command then exits with code 130.
+Ctrl-C stops the agent, and so does the time limit. A stopped run takes its edits back and saves nothing, unless
+`--keep` was given. The report says "Stopped. Nothing was kept." and the edits stay in the record as taken back.
+After Ctrl-C the command exits with code 130.
 
 The report, also what `--json` prints:
 
@@ -524,7 +525,7 @@ The report, also what `--json` prints:
                        "answers_changed": 1, "broke": 0}},
  "label": "from the weights alone", "weights_alone": true,
  "kept": true, "reason": "Kept. The target improved (cost 9.2 to 0.01, 0 to 1 right of 1), and the rest held.",
- "taken_back": 0, "saved": "tiny@v2", "deployed": null,
+ "taken_back": 0, "saved": "tiny@v2", "kept_in_session": false, "deployed": null,
  "stopped": false, "timed_out": false, "ended_after_answer": false, "agent_exit": 0, "agent_said": "..."}
 ```
 
@@ -535,7 +536,10 @@ From a page: `POST /api/weights/sessions/{s}/program` with `{"goal": "...", "age
 "target_input": [1, 1], "target_output": [0], "should_not_change": [0, 1], "keep": false, "time_limit_s": 600}`
 starts the same run on that session and answers `{"job", "session", "agent", "goal"}`. The job is on the feed
 under `jobs`, `job:<id>` and `weights-session:<id>`, its log gets each line, and its result is the report. The
-session's own allowances apply, and it is left open. `"dry_run": true` answers the plan and starts nothing.
+session's own allowances apply, and it is left open. A result Captain keeps stays in the session and is not
+saved as a new version: the report has `"saved": null` and `"kept_in_session": true`, and the person saves it with
+`POST /api/weights/sessions/{s}/save`. Send `"save": true` to save it at once, as the command line does.
+`"dry_run": true` answers the plan and starts nothing.
 `POST /api/weights/sessions/{s}/program/stop` stops the agent, and Captain's verdict follows.
 
 ## A pinned neuron

@@ -232,11 +232,13 @@ def stop(sid: str) -> bool:
     return bool(ev)
 
 
-def run(ctx, plan: dict, *, keep: bool | None = None, save: bool = True, held_tolerance: float = 0.01, say=None, stop_event=None,
-        decide_on_stop=None) -> dict:
+def run(ctx, plan: dict, *, keep: bool | None = None, save: bool = True, held_tolerance: float = 0.01, say=None, stop_event=None) -> dict:
     """Start the agent the plan names, follow it, then judge the result. `say(text)` gets one line per thing that
-    happens. `stop_event` (or `stop(session)`) ends the agent early. `decide_on_stop()` may answer "keep" or "undo"
-    when a person stopped it. Returns the report."""
+    happens. `stop_event` (or `stop(session)`) ends the agent early. Returns the report.
+
+    A run that was stopped (by a person, or by the time limit) takes its edits back and saves nothing, unless
+    `keep` is true: nothing changes for good unless the run finished or the person asked for it. With `save` false
+    a kept result stays in the session and is not saved as a new version: the person saves it."""
     say = say or (lambda text: None)
     sid, name = plan["session"], plan["agent"]
     stop_event = stop_event or threading.Event()
@@ -300,7 +302,7 @@ def run(ctx, plan: dict, *, keep: bool | None = None, save: bool = True, held_to
                 pass
         shutil.rmtree(work, ignore_errors=True)
     if stopped:
-        say("Stopped. The agent's command line was ended. Every edit it had made is in the record.")
+        say("Stopped. The agent's command line was ended.")
     if timed_out:
         say(f"The time limit of {plan['time_limit_s']} seconds is up. The agent's command line was ended.")
     if lingered:
@@ -311,16 +313,10 @@ def run(ctx, plan: dict, *, keep: bool | None = None, save: bool = True, held_to
     # The verdict is Captain's.
     sc = S.program_scores(ctx, sid)
     keep_anyway = bool(keep)
-    if stopped and keep is None and decide_on_stop is not None:
-        answer = decide_on_stop()
-        if answer == "keep":
-            keep_anyway = True
-        elif answer == "undo":
-            S.program_undo(ctx, sid)
-            sc = S.program_scores(ctx, sid)
-    kept, reason = _decide(sc, keep_anyway, held_tolerance)
-    if stopped and not sc["edits"]:
-        reason = "The run was stopped before the agent made an edit."
+    if (stopped or timed_out) and not keep_anyway:
+        kept, reason = False, ("Stopped. Nothing was kept." if stopped else "Stopped at the time limit. Nothing was kept.")
+    else:
+        kept, reason = _decide(sc, keep_anyway, held_tolerance)
     taken_back = 0
     if not kept:
         taken_back = S.program_undo(ctx, sid)
@@ -343,7 +339,7 @@ def run(ctx, plan: dict, *, keep: bool | None = None, save: bool = True, held_to
         "edits": [{**e, "sentence": sc["sentences"].get(e["id"], "")} for e in sc["edits"]],
         "notes": sc["notes"], "refused": sc["refused"], "changed": sc["changed"], "total": sc["total"], "share": sc["share"],
         "scores": sc["scores"], "label": label_before, "weights_alone": alone, "kept": kept, "reason": reason,
-        "taken_back": taken_back, "saved": saved, "deployed": None, "stopped": stopped, "timed_out": timed_out, "agent_exit": 0 if lingered else exit_code,
+        "taken_back": taken_back, "saved": saved, "kept_in_session": bool(kept and not saved), "deployed": None, "stopped": stopped, "timed_out": timed_out, "agent_exit": 0 if lingered else exit_code,
         "ended_after_answer": lingered, "agent_said": transcript.strip()[-4000:],
     }
     return report
@@ -387,7 +383,7 @@ def report_text(r: dict) -> str:
         lines.append(f"  {name}: " + (f"cost {c['before']:.4g} to {c['after']:.4g}, right {c['right_before']} to {c['right_after']} of {c['of']}, "
                                       f"{c['answers_changed']} answers changed, {c['broke']} that were right are now wrong" if c else "not named"))
     lines += [f"Label: {r['label']}", f"Verdict: {r['reason']}",
-              "Saved as: " + (r["saved"] or "nothing"), "Deployed: " + (r["deployed"] or "no")]
+              "Saved as: " + (r["saved"] or ("nothing yet. The edits are in the session, for a person to save" if r.get("kept_in_session") else "nothing")), "Deployed: " + (r["deployed"] or "no")]
     if r["stopped"] or r["timed_out"]:
         lines.append("The agent was stopped by a person." if r["stopped"] else "The agent ran out of time.")
     elif r.get("ended_after_answer"):
