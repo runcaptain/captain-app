@@ -22,7 +22,7 @@ import { Brand, engineTitle } from "./kit/brands.js";
 import { askAgent, askAboutScreen } from "./kit/agent.js";
 import { ProjectBadge } from "./kit/projecticon.js";
 import { int } from "./kit/num.js";
-import { Ship } from "./ship.js";
+import { Ship, waitWords } from "./ship.js";
 import { costText } from "./kit/cost.js";
 import { ProjectsList, Quiet, readListView, keepListView, ago, shortOwner } from "./projects-list.js";
 
@@ -357,7 +357,7 @@ export default class ProjectHome extends View {
 
   /** One write, then read the project again. */
   act(cx, path, body, done, after, doing) {
-    if (this.busy) return;
+    if (this.busy) return this.refuse(cx);
     this.busy = true; this.busyWhat = doing ?? "Working on it"; this.note = null;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -380,7 +380,7 @@ export default class ProjectHome extends View {
   /** Keyword search over the catalog as the baseline: no training. When the title column can't be told, a short
    *  form asks which one. */
   baselineStart(cx) {
-    if (this.busy) return;
+    if (this.busy) return this.refuse(cx);
     cx.spawn(async (cx) => {
       const plan = await api(`/api/projects/${enc(this.pid())}/baseline-start`, { scoped: false });
       if (plan.ok && plan.data?.ask_title) return form("baseline", { project: this.pid(), columns: plan.data.columns ?? [] });
@@ -487,7 +487,7 @@ export default class ProjectHome extends View {
   }
 
   removeInput(cx, inp) {
-    if (this.busy) return;
+    if (this.busy) return this.refuse(cx);
     this.busy = true; this.busyWhat = `Removing ${inp.label}`; this.inputMenu = null;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -514,7 +514,7 @@ export default class ProjectHome extends View {
   /** Ask an agent to propose the inputs and a training script: it gets a prompt in a new tab, looks around, and
    *  files a proposal. Nothing is applied until the person accepts it here. */
   startAssist(cx) {
-    if (this.busy) return;
+    if (this.busy) return this.refuse(cx);
     this.busy = true; this.busyWhat = "Asking the agent for a setup"; this.note = null;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -541,7 +541,7 @@ export default class ProjectHome extends View {
    *  snapshot or live, like any input. */
   accept(cx, only) {
     const a = this.assist, prop = a.proposal;
-    if (this.busy) return;
+    if (this.busy) return this.refuse(cx);
     this.busy = true; this.busyWhat = "Applying what you accepted";
     cx.notify();
     cx.spawn(async (cx) => {
@@ -813,7 +813,7 @@ export default class ProjectHome extends View {
   }
 
   change(cx, req, note) {
-    if (this.busy) return;
+    if (this.busy) return this.refuse(cx);
     this.busy = true; this.busyWhat = "Saving that";
     cx.notify();
     cx.spawn(async (cx) => {
@@ -1130,6 +1130,13 @@ export default class ProjectHome extends View {
     return { text: "Publish the baseline, or train another candidate to beat it.", label: null };
   }
 
+  /** A click that can't be taken because something else is under way is answered with one plain sentence, never
+   *  dropped in silence. (The buttons are off while something runs, but a screen can be a moment behind.) */
+  refuse(cx) {
+    this.note = { tone: "wait", text: waitWords(this.running()) };
+    cx.notify();
+  }
+
   /** What is running on this page right now, as a few words, or null. One place, so every button asks the same. */
   running() {
     if (this.busy) return this.busyWhat ?? "Working on it";
@@ -1268,8 +1275,8 @@ export default class ProjectHome extends View {
     else body = h_flex().id("ph-doc").gap(40).items_start().child(v_flex().flex_1().min_w(0).max_w(820).gap(24)
       .child(this.titleBlock(c))
       .when(!column, (e) => e.child(this.properties(c, false)))
-      .when(Boolean(this.note), (e) => e.child(div().id("ph-note").px(12).py(8).text_size(13).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)
-        .text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
+      .when(Boolean(this.note), (e) => e.child(div().id("ph-note").px(12).py(8).text_size(13).bg(this.note.tone === "fail" ? c.failLight : this.note.tone === "wait" ? c.surface2 : c.goodLight)
+        .text_color(this.note.tone === "fail" ? c.fail : this.note.tone === "wait" ? c.grey900 : c.good).child(this.note.text)))
       // The Next banner holds the page's one filled button. A question open in Ship takes its place.
       .when(!this.shipPath.dconfirm && !this.shipPath.jobShown(), (e) => e.child(this.nextLine(c)))
       .when(this.shipFirst, (e) => e.child(this.ship(c)))
