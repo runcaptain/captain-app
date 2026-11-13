@@ -1,6 +1,6 @@
 """Sample rows for the Deployments screen's pictures: props for `captain-deployments:<view>`, as JSON on stdout.
 Nothing is deployed and no cloud is asked: the screen draws what it is handed, and its buttons reach no service.
-Views: empty, leftover, stopped, stopped-open, one, several, failed, found, deploying, busy, model, model-details. Demo names only."""
+Views: empty, leftover, stopped, stopped-open, one, several, failed, found, deploying, busy, model, model-details, model-calls. Demo names only."""
 import datetime as dt
 import json
 import math
@@ -114,6 +114,8 @@ sets = {
     "model": ([SHOP], "1 model running.", None, False),
     # The model's page on its second submenu: earlier versions, requests, log, copies and machine.
     "model-details": ([SHOP], "1 model running.", None, False),
+    # The count from the request log beside the cloud's count of every call, Captain's own checks included.
+    "model-calls": ([SHOP], "1 model running.", None, False),
     # A deploy under way: a row from the moment it is accepted, with its steps and a clock that ticks.
     "deploying": ([GIFTS_DEPLOYING, SHOP], "1 model running, 1 deploying.", None, False),
     # An action in progress: the row says what is being done, with the step it is on, and offers no button.
@@ -125,7 +127,7 @@ demo = {"deployed": {"rows": rows, "asked": ASKED if rows else [], "text": text,
                     "gifts:staging": numbers("24h", 2.0, errors=0.4)}}
 if view == "busy":
     demo["busy"] = {"shop:staging": "Removing from AWS: Removing the endpoint", "garden:staging": "Stopping"}
-if view in ("model", "model-details"):
+if view in ("model", "model-details", "model-calls"):
     demo["open"] = "shop:staging"
     demo["part"] = "details" if view == "model-details" else None
     demo["model"] = {"numbers": {k: numbers(k, 6.0) for k in ("15m", "1h", "24h", "7d")},
@@ -150,4 +152,13 @@ if view in ("model", "model-details"):
                      "versions": {"rows": [{"n": 2, "model_version": "shop/starter-ranker@v2", "at": ago(hours=5), "by": "dana", "live": True},
                                            {"n": 1, "model_version": "shop/keyword-baseline@v1", "at": ago(days=6), "by": "dana", "live": False, "can_roll_back": True}]},
                      "scale": {"text": "Keeps 1 up at all times. It never sleeps, and bills for each copy by the hour. 1 up now."}}
+if view == "model-calls":
+    for k, n in demo["model"]["numbers"].items():
+        calls, mine = n["summary"]["requests"], max(1, n["summary"]["requests"] // 6)
+        n["summary"].update(requests=mine, calls=calls, counted_from="log", per_minute=round(n["summary"]["per_minute"] / 6, 2), p50_ms=2.6, p95_ms=6.9,
+                            calls_text=f"{calls:,} calls reached the endpoint in {n['range_text']}. That counts Captain's own checks (asking the model whether it is "
+                                       "well, and to write its log) as well as requests for results.")
+        n["text"] = f"{mine:,} requests in {n['range_text']}, no errors. Median 2.6 ms, 95th percentile 6.9 ms."
+        n["source_text"] = ("Requests, failures and response time are from Captain's request log, which holds only requests for results. "
+                            "The charts and the machine's numbers are from AWS's own metrics (CloudWatch), which arrive a few minutes late.")
 print(json.dumps({"demo": demo}))

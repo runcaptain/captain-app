@@ -433,8 +433,8 @@ export default class CaptainDeployments extends View {
       .child(v_flex().id("dep-models").gap(10)
         .child(h_flex().gap(12).items_center()
           .child(div().text_size(15).font_semibold().text_color(c.navy).child("Models"))
-          .child(div().id("dep-models-line").flex_1().text_size(13).text_color(c.grey500)
-            .child(none ? "No models are running." : ""))
+          // The title already says "No models running.": saying it again here read as an echo.
+          .child(div().id("dep-models-line").flex_1())
           // The next step, when nothing is answering. An open question takes the filled button in its place.
           .when(none && !this.ask, (e) => e.child(deploy(true))))
         .when(this.ask?.id === "deploy", (e) => e.child(this.question(c)))
