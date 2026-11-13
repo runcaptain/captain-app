@@ -20,7 +20,7 @@ import re
 from .storage.backend import NotFound
 from .workspace import Context, whoami
 
-KINDS = ("dataset", "model", "run", "experiment", "candidate", "table", "project", "staging", "file")
+KINDS = ("dataset", "model", "run", "experiment", "candidate", "table", "project", "staging", "file", "weights")
 # What people call them, on screen and in the CLI: each maps to one kind.
 ALIASES = {"data": "dataset", "pipeline": "model", "version": "model", "backtest": "run", "evaluation": "run",
            "comparison": "run", "investigation": "experiment", "connection": "table", "path": "file"}
@@ -138,6 +138,10 @@ def resolve(ctx: Context, raw: str) -> dict:
         if conn not in ctx.connections():
             raise NotFound(f"no connection {conn!r}. Write it as table:<connection>.<table>")
         return {"ref": f"table:{conn}.{table}" if table else f"table:{conn}", "kind": "table", "label": f"{conn} {table}".strip()}
+    if kind == "weights":
+        from .weights import pins as WPN
+
+        return WPN.resolve(ctx, rest)
     # A bare name: the first thing it names.
     for k in ("project", "dataset", "model", "run", "experiment"):
         try:
@@ -293,4 +297,8 @@ def _expand(ctx: Context, kind: str, rest: str) -> dict:
             except (UnicodeDecodeError, OSError):
                 out["note"] = "not text"
         return out
+    if kind == "weights":
+        from .weights import pins as WPN
+
+        return WPN.expand(ctx, rest)
     raise ValueError(f"unknown kind {kind!r}")

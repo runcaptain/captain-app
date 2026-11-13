@@ -150,6 +150,17 @@ A = [Depends(auth)]
 from .collaboration.routes import router as team_router
 app.include_router(team_router, dependencies=A)
 
+from .weights.routes import router as weights_router  # noqa: E402  a network's weights, opened as a session
+from .weights.session import Refused as _WeightsRefused  # noqa: E402
+
+app.include_router(weights_router, dependencies=A)
+
+
+@app.exception_handler(_WeightsRefused)
+async def _weights_refused(request: Request, exc: _WeightsRefused):
+    # Something the session's allowances do not cover: a run past its forward passes, raw weights it may not see.
+    return JSONResponse({"error": str(exc), "refused": True}, status_code=403)
+
 # ---- workspace --------------------------------------------------------------------------
 
 
@@ -3308,7 +3319,8 @@ async def changes_wait(since: int | None = None, topics: str | None = None, wait
     the current `seq`: read everything once, then wait from there. A `since` older than the feed remembers, or
     from before the service restarted, answers at once with `reset: true`: read everything again. With no
     `topics` it answers for any change. Topics: projects, project:<id>, data, table:<name>, runs, run:<id>, jobs,
-    job:<id>, deployed, deployment:<project>, notebooks, logins, compute, settings, team."""
+    job:<id>, deployed, deployment:<project>, notebooks, logins, compute, settings, team, weights, weights:<model>,
+    weights-session:<id>."""
     global _CHANGES_POOL
     store = ctx().store  # the workspace this client is looking at is watched for writes made outside this process
     part = lambda a: {**a, "partial": CH.partial(store, _topics(topics))}  # noqa: E731

@@ -8,6 +8,7 @@ topics changed. A client says which topics it shows and is told the moment one o
 what it already reads. The feed carries no data: only "this changed".
 
     projects, project:<id>          data, table:<name>          runs, run:<id>          jobs, job:<id>
+    weights, weights:<model>        weights-session:<id>
     deployed, deployment:<project>  notebooks                   logins      compute     settings     team
 
 A change to one thing bumps its own topic and its list's (project:shop and projects), so a list listens to the
@@ -82,6 +83,14 @@ def topics_for(key: str) -> set[str]:
         return {"jobs", f"job:{parts[1].split('.')[0]}"}
     if head == "notebooks":
         return {"notebooks"}
+    if head == "weights-looks":
+        return set()  # a screen's looks at a session, counted beside its record: no screen reads again for one
+    if head == "weights":
+        # weights/<model>/v<N>/... and weights/<model>/sessions/<id>/...: a model's numbers, and a session's record
+        out = {"weights"} | ({f"weights:{parts[1]}"} if len(parts) > 2 else set())
+        if len(parts) > 4 and parts[2] == "sessions":
+            out.add(f"weights-session:{parts[3]}")
+        return out
     if head == "compute":
         return {"compute"}
     if head == "serving":
