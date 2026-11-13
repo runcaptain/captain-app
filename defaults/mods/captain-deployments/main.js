@@ -10,7 +10,7 @@ import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Button, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
-import { ago, money, ms, count, Spark } from "./words.js";
+import { ago, money, ms, count, Spark, Updated } from "./words.js";
 import { ModelPage } from "./model.js";
 
 const UP = ["running", "asleep", "starting", "unknown"];
@@ -380,25 +380,31 @@ export default class CaptainDeployments extends View {
       .child(div().text_size(18).font_semibold().text_color(c.navy).child("Deployments"))
       // With nothing deployed the page itself says so: the line beside the title would only repeat it.
       .child(div().id("dep-summary").flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(d.text))
-      // It keeps itself up to date, and says when it last was. Asking again is there, small, for someone who wants to.
-      .child(div().id("dep-updated").text_size(12).text_color(c.grey500).child(this.readAt ? `Updated ${ago(new Date(this.readAt).toISOString())}` : ""))
-      .child(Button(c, "dep-refresh", "Ask the clouds again", (_e, cx) => this.load(cx, true), { small: true }));
+      // It keeps itself up to date, and says when it last was, or that a cloud could not be reached. No button to
+      // press: a small refresh icon is there for someone who wants to ask now.
+      .child(Updated(c, "dep-updated", { readAt: this.readAt, icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.load(cx, true),
+        problem: notAsked.length ? `${[...new Set(notAsked.map((a) => a.cloud_label))].join(" and ")} could not be reached. Trying again.` : null }));
     const none = !here.length;
     const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small });
     const n = earlier.length;
     const body = v_flex().gap(18)
       .when(Boolean(this.note), (e) => e.child(div().id("dep-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)))
-      .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(13).line_height("19px").text_color(c.fail)
-        .child(`Captain could not ask ${a.cloud_label}${a.login ? ` (${a.login})` : ""} just now: ${plainError(a.error, "no reason given")}. What is shown for it is Captain's own record.`)))
+      // Why a cloud could not be reached, once, in words a person can act on. What is shown for it is Captain's record.
+      .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(12.5).line_height("18px").text_color(c.grey500)
+        .child(`${a.cloud_label}${a.login && a.login.toLowerCase() !== a.cloud ? ` (${a.login})` : ""}: ${plainError(a.error, "no reason given")}. What is shown for it is Captain's own record.`)))
       // The list of models is what this screen is: it is always here, under its own heading, even with nothing in it.
       .child(v_flex().id("dep-models").gap(10)
         .child(h_flex().gap(12).items_center()
           .child(div().text_size(15).font_semibold().text_color(c.navy).child("Models"))
           .child(div().id("dep-models-line").flex_1().text_size(13).text_color(c.grey500)
-            .child(none ? "No models are running. Deploy one from a project's page, and it shows here with where it runs, its traffic and what it costs." : ""))
+            .child(none ? "No models are running." : ""))
           // The next step, when nothing is answering. An open question takes the filled button in its place.
           .when(none && !this.ask, (e) => e.child(deploy(true))))
         .when(this.ask?.id === "deploy", (e) => e.child(this.question(c)))
+        // With nothing at all (no model, none stopped earlier, nothing set up in any account), one line says what
+        // this screen is for. With anything else on the page, the page says it.
+        .when(none && !n && !places.length, (e) => e.child(div().id("dep-what-for").text_size(13).line_height("19px").text_color(c.grey500)
+          .child("A model you deploy from a project's page shows here: where it runs, the address to call, its traffic and what it costs. You can stop it, start it again or remove it from here.")))
         .child(none ? div() : this.filters(c, here))
         .child(v_flex().id("dep-list")
           .children(rows.map((r) => this.row(c, r)))

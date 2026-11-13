@@ -9,7 +9,7 @@ import * as UI from "./kit/ui.js";
 import { Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
-import { ago, money, ms, count, BarChart } from "./words.js";
+import { ago, money, ms, count, BarChart, Updated } from "./words.js";
 
 const RANGES = [["15m", "15 minutes"], ["1h", "1 hour"], ["24h", "24 hours"], ["7d", "7 days"]];
 // Two submenus, never more: the numbers, and everything else about this model on one scrolling page.
@@ -38,6 +38,7 @@ export class ModelPage {
     this.versions = null;
     this.scale = null;
     this.where = null;     // GET /deployed/where: the table of where it runs
+    this.readAt = 0;       // when what is on the page was read
     this.copiedFact = null;
     this.copied = false;
     this.note = null;
@@ -58,7 +59,7 @@ export class ModelPage {
 
   load(cx) {
     if (this.demo) {
-      Object.assign(this, { where: this.demo.where ?? null, n: this.demo.numbers?.[this.range] ?? this.demo.numbers?.["1h"] ?? null, requests: this.demo.requests ?? { rows: [] },
+      Object.assign(this, { readAt: Date.now(), where: this.demo.where ?? null, n: this.demo.numbers?.[this.range] ?? this.demo.numbers?.["1h"] ?? null, requests: this.demo.requests ?? { rows: [] },
         log: this.demo.log ?? { rows: [] }, versions: this.demo.versions ?? { rows: [] }, scale: this.demo.scale ?? null });
       return cx.notify();
     }
@@ -68,6 +69,7 @@ export class ModelPage {
       if (!this.where) {
         const w = await api(this.url(`/deployed/where?env=${encodeURIComponent(this.row.env ?? "staging")}`), { timeout: 60 });
         this.where = w.ok ? w.data : { facts: [], text: plainError(w.error, "Where it runs could not be read.") };
+        this.readAt = Date.now();
         cx.notify();
       }
       const n = await api(this.url(`/deployed/numbers?range=${this.range}&env=${encodeURIComponent(this.row.env ?? "staging")}`), { timeout: 60 });
@@ -191,7 +193,10 @@ export class ModelPage {
       .child(Button(c, "model-close", "All deployments", (_e, cx) => { this.close(); cx.notify(); }, { small: true }))
       .child(r.cloud === "local" ? svg(icon("monitor")).size(16).text_color(c.navy) : Brand(c, r.cloud, 16))
       .child(div().id("model-title").text_size(18).font_semibold().text_color(c.navy).child(r.project_name ?? r.name ?? ""))
-      .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(r.model_label ?? r.model_version ?? ""));
+      .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(r.model_label ?? r.model_version ?? ""))
+      // The page keeps itself current, as the list does: when it was read, or that the cloud could not be reached.
+      .child(Updated(c, "model-updated", { readAt: this.readAt, icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.refresh(cx),
+        problem: this.where && this.where.from_cloud === false && /could not be asked/.test(this.where.text ?? "") ? `${r.cloud_label} could not be reached. Trying again.` : null }));
     const top = v_flex().gap(6)
       .child(div().id("model-state").text_size(14).line_height("20px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
       .children((r.corrected ?? []).map((x) => div().text_size(12.5).line_height("18px").text_color(c.grey500).child(x)))
