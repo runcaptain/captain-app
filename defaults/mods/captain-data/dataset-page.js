@@ -10,6 +10,7 @@
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { api, query } from "./kit/cst.js";
+import { hear } from "./kit/live.js";
 import { sayError } from "./kit/checks.js";
 import { ResultGrid } from "./kit/grid.js";
 import { MONO } from "./kit/tokens.js";
@@ -252,11 +253,12 @@ export class DatasetPage {
   startLocate(cx, m, key) {
     const d = this.host.detail;
     this.locate = { state: "looking", progress: 0, column: m.column };
-    const sleep = (ms) => new Promise((res) => cx.timer.after(ms, () => res()));
     cx.spawn(async (cx) => {
       const r = await api(`/api/datasets/${enc(d.name)}/media/locate`, { body: { column: m.column, v: d.version, file: this.file ?? undefined }, timeout: 30 });
       if (!r.ok || !r.data?.job) { this.locate = { state: "missing", suggestions: [], column: m.column }; cx.notify(); return; }
-      for (let i = 0; i < 600 && this.rowsFor === key; i++) {
+      // The job says so itself on the live channel: it is read once each time it does, never on a clock.
+      const ear = hear(cx, [`job:${r.data.job}`]);
+      try { for (let i = 0; i < 6000 && this.rowsFor === key; i++) {
         const j = await api(`/api/jobs/${encodeURIComponent(r.data.job)}`);
         if (this.rowsFor !== key) return;
         if (j.ok && j.data?.status === "done") {
@@ -272,8 +274,8 @@ export class DatasetPage {
         }
         if (j.ok && j.data?.status === "failed") { this.locate = { state: "missing", suggestions: [], column: m.column }; cx.notify(); return; }
         if (j.ok) { this.locate.progress = j.data?.progress ?? 0; cx.notify(); }
-        await sleep(600);
-      }
+        await ear.next();
+      } } finally { ear.stop(); }
     });
   }
 

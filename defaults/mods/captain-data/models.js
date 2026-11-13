@@ -103,6 +103,7 @@ export class Models {
       const r = await api("/api/registries", { body, timeout: 30 });
       if (!r.ok) { this.note = { text: sentence(r.data?.detail ?? r.error) || "Couldn't start.", tone: "fail" }; cx.notify(); return; }
       this.job = { id: r.data.job, label, progress: 0 };
+      this.tick(cx); // read it once now: from here on the job says so itself on the live channel
       cx.notify();
     });
     cx.notify();
@@ -165,6 +166,7 @@ export class Models {
       const r = await api("/api/registries/create", { body: { bucket, region: this.region, profile: this.profile ?? undefined }, timeout: 30 });
       if (!r.ok) { this.note = { text: sentence(r.data?.detail ?? r.error) || "Couldn't start.", tone: "fail" }; cx.notify(); return; }
       this.job = { id: r.data.job, label: `Creating s3://${bucket} in ${this.region}`, done: `Made s3://${bucket} and attached it. It's empty until your training writes its first model.`, progress: 0 };
+      this.tick(cx);
       cx.notify();
     });
   }

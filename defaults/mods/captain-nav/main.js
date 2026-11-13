@@ -19,6 +19,7 @@ import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, layout, props, notify, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
 import { api, retry, workspace, watchWorkspace, watchRecords, watchConnections } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { isDark, palette } from "./kit/tokens.js";
@@ -221,9 +222,18 @@ export default class CaptainNav extends View {
     this.teamViews.start(cx);
     this.refresh(cx);
     watchWorkspace(cx, (cx) => { this.cloud = null; setShared("captain.scope", null); this.refresh(cx); this.explorer.load(cx); });
-    // Every 3 s until Captain's services answer, then every 6 s: the chips and counts are never far behind.
+    // Every 3 s until Captain's services answer. From then on nothing is read on a clock: the chips, the counts
+    // and the alerts read again the moment something they show changes (the live channel, kit/live.js), whoever
+    // changed it: a screen, a terminal, a cloud.
     this.tick = 0;
-    cx.timer.every(3000, (cx) => { this.tick++; if (this.state !== "ready" || this.tick % 2 === 0) this.refresh(cx); });
+    cx.timer.every(3000, (cx) => { if (this.state !== "ready") this.refresh(cx); });
+    if (props()?.part !== "brand") {
+      watchLive(cx, ["projects", "data", "runs", "notebooks", "deployed", "logins", "compute", "settings"], (cx, why, topics) => {
+        // What the palette can open by name: read again when a dataset or an evaluation changes.
+        if (why !== "changed" || topics.includes("data") || topics.includes("runs")) this.paletteStale = true;
+        this.refresh(cx);
+      });
+    }
     // And at once when a form changes something, or a cloud or database is connected or removed.
     watchRecords(cx, (cx) => { this.refresh(cx); this.explorer.load(cx); });
     watchConnections(cx, (cx) => this.refresh(cx));
@@ -296,7 +306,8 @@ export default class CaptainNav extends View {
   }
 
   refresh(cx) {
-    if (props()?.part === "brand" || this.loading) return;
+    if (props()?.part === "brand") return;
+    if (this.loading) { this.again = true; return; } // told while reading: read once more after
     this.loading = true;
     cx.spawn(async (cx) => {
       try {
@@ -328,7 +339,8 @@ export default class CaptainNav extends View {
           const r = await api(it.badge);
           this.counts[it.id] = r.ok && Array.isArray(r.data) ? r.data.length : 0;
         }
-        if (ws.ok && (this.tick ?? 0) % 10 === 0) {
+        if (ws.ok && this.paletteStale !== false) {
+          this.paletteStale = false;
           const [ds, bt] = await Promise.all([api("/api/datasets"), api("/api/backtests")]);
           const extra = { ...(shared("palette.extra") ?? {}) };
           const arr = (r) => (Array.isArray(r.data) ? r.data : []);
@@ -338,6 +350,7 @@ export default class CaptainNav extends View {
       } finally {
         this.loading = false;
         cx.notify();
+        if (this.again) { this.again = false; Promise.resolve().then(() => this.refresh(cx)); }
       }
     });
   }

@@ -113,19 +113,15 @@ const swap = (file, to) => { globalThis.__routes.find((r) => r[1] === file)[1] =
     await h.idle(20);
     assert.equal(h.asked().length, asked, 'no request while typing');
     h.mod.catalog.find.set_value(''); h.mod.catalog.typed = null;
-    // A page that is open: only its facts are asked for, gently (every third time), and never its rows.
+    // A page that is open: only its facts are asked for, and never its rows.
     h.mod.openDataset(h.cx, 'demo-catalog');
     await h.idle(40);
     const grid = h.mod.page.grid ?? h.mod.page.rows ?? null;
     const detail = h.mod.detail;
     let during = h.asked().length;
-    h.mod.gentle = 0;
-    h.mod.refreshLists(h.cx); h.mod.refreshLists(h.cx);
-    await h.idle(20);
-    assert.equal(h.asked().length, during, 'two of three times nothing is asked');
     h.mod.refreshLists(h.cx);
     await h.idle(40);
-    const got = h.asked().slice(during);
+    const got = h.asked().slice(during).filter((p) => !p.startsWith('/api/changes'));
     assert.ok(got.length > 0 && got.every((p) => /^\/api\/datasets(\?|$|\/demo-catalog\?v=)/.test(p)), `only the list and its record: ${got}`);
     assert.ok(!got.some((p) => p.includes('/rows')), 'never its rows');
     assert.equal(h.mod.detail, detail, 'the page keeps its record: nothing is redrawn from scratch');

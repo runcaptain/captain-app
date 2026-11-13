@@ -93,6 +93,7 @@ export class Tables {
       const r = await api(`/api/tables/${enc(conn)}/pull`, { body: {} });
       if (!r.ok) { this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't start reading.", tone: "fail" }; cx.notify(); return; }
       this.jobs.set(conn, { id: r.data.job, progress: 0 });
+      this.tick(cx); // read it once now: from here on the job says so itself on the live channel
       cx.notify();
     });
   }
@@ -139,6 +140,7 @@ export class Tables {
       const r = await api(`/api/lineage/import/${enc(conn)}`, { body: { days } });
       if (!r.ok) { this.note = { text: sentence(r.data?.error ?? r.error) || `Couldn't read lineage from ${system}.`, tone: "fail" }; cx.notify(); return; }
       this.jobs.set(conn, { id: r.data.job, progress: 0, lineage: true, system });
+      this.tick(cx);
       cx.notify();
     });
   }

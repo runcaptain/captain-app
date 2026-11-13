@@ -12,6 +12,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input } from "gpui-base";
 import { theme, shared, props as layoutProps } from "herdr";
 import { api, retry, details, watchWorkspace, watchScope, watchConnections, keepFresh } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { watchView } from "./kit/view.js";
 import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
@@ -117,7 +118,16 @@ export default class CaptainData extends View {
     if (this.tab === "sources") this.models.load(cx);
     if (p.registryAttach) { this.tab = "sources"; this.models.load(cx); this.models.toggleAttach(cx); } // the attach form, open on the bucket list
     this.load(cx);
-    cx.timer.every(500, (cx) => { const busy = !!this.lib.job; this.lib.tick(cx); this.catalog.tick(cx); if (busy && !this.lib.job) this.catalog.load(cx); if (this.models.job) this.models.tick(cx); if (this.tables.jobs.size) this.tables.tick(cx); });
+    // The search box: asked once the person has stopped typing for a moment. The window's own state, not data.
+    cx.timer.every(500, (cx) => this.catalog.tick(cx));
+    // Work this screen started (an upload, a scan of a database, a bucket attached): each job says so itself on the
+    // live channel, and is read once each time it does. Nothing asks after a job on a clock.
+    watchLive(cx, ["job:"], (cx, why, topics) => {
+      const mine = (id) => why !== "changed" || topics.includes(`job:${id}`);
+      if (this.lib.job && mine(this.lib.job.id)) this.lib.tick(cx);
+      if (this.models.job && mine(this.models.job.id)) this.models.tick(cx);
+      if ([...this.tables.jobs.values()].some((j) => mine(j.id))) this.tables.tick(cx);
+    });
     // Pages the grid asked for while drawing are fetched here, outside render.
     // Until the backend answers, ask again every 3 s: the screen never stays on "starting" by itself.
     cx.timer.every(3000, (cx) => {
@@ -125,9 +135,9 @@ export default class CaptainData extends View {
       // The one list, until it loads (while the services start, or after a failure that wasn't an answer).
       if (this.catalog.rows === null || (this.catalog.error && !this.catalog.error.status)) this.catalog.load(cx);
     });
-    // The lists stay current by themselves: every few seconds while Data is shown, at once when it comes back into
-    // view, and at once when a form changes something. A page that is open is left alone.
-    keepFresh(cx, "data", (cx) => this.refreshLists(cx));
+    // The lists stay current by themselves: the moment a table, a source or a dataset changes (the live channel),
+    // at once when Data comes back into view, and at once when a form changes something.
+    keepFresh(cx, "data", (cx) => this.refreshLists(cx), ["data", "table:"]);
     // "Open <dataset>" from the palette: captain-go sets shared "captain.open" {section: "data", dataset, tab?, at}.
     // tab (a dataset page tab: health, insights, quality...) opens once that dataset is on the page.
     // Shared values outlive the app: an open from before this screen started (the last session's import) is done.
@@ -204,11 +214,9 @@ export default class CaptainData extends View {
   /** Reload what is listed, quietly: the groups stay as they are, and so does the page of each. */
   refreshLists(cx) {
     if (this.graph || this.catalog.rows === null) return;
-    // A page is open: only its facts, and only every third time (about 15 seconds). The rows on the page, a filter
-    // being typed and the place in the grid are never touched.
+    // A page is open: only its facts. The rows on the page, a filter being typed and the place in the grid are
+    // never touched.
     if (this.shown) {
-      this.gentle = ((this.gentle ?? 0) + 1) % 3;
-      if (this.gentle !== 0) return;
       if (this.shown === "dataset") this.refreshDatasetFacts(cx);
       else this.tables.refreshFacts(cx);
       return;
