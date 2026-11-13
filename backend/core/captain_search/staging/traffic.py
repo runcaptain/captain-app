@@ -104,22 +104,26 @@ def addresses(rec: dict) -> list[dict]:
     out = []
     for name in sorted(arms, key=lambda n: n != serve):
         deployed = name == serve
+        op = "predict" if rec.get("serves") == "predict" else "rank"  # a network answers /predict, a ranker /rank
         if _http(rec):
-            adr = f"{ep.get('url')}/rank" if deployed else f"{ep.get('url')}/rank/{name}"
+            adr = f"{ep.get('url')}/{op}" if deployed else f"{ep.get('url')}/{op}/{name}"
             how = "POST, with the key as a bearer token"
         else:
             adr = f"{ep.get('name')}" + (f" in {ep.get('region')}" if ep.get("region") else "")
-            how = 'invoke the endpoint with "op": "rank"' + ("" if deployed else f' and "arm": "{name}"')
+            how = f'invoke the endpoint with "op": "{op}"' + ("" if deployed else f' and "arm": "{name}"')
         out.append({"model": name, "model_version": arms[name], "role": "The deployed model" if deployed else "The compared model",
                     "address": adr, "how": how})
     return out
 
 
-def snippets(rec: dict) -> dict:
+def snippets(rec: dict, ctx: Context | None = None) -> dict:
     """Copy-paste code for the call a site makes: get a ranking. It can also report how long the request took as
     the site saw it. Nothing about what the shopper did is sent: Captain does not collect that. The key is never
-    in the code: each reads it from the site's own environment."""
+    in the code: each reads it from the site's own environment. For a deployed model that is not a ranker the
+    call is /predict, with an example read from the model's manifest (given `ctx`, its first practice input)."""
     ep = rec.get("endpoint") or {}
+    if rec.get("serves") == "predict":
+        return _predict_snippets(rec, ctx)
     fallback = ("If the endpoint doesn't answer in time, or answers with an error, show your own search results. "
                 "A slow ranking must never hold up the page.")
     if _http(rec):
@@ -218,6 +222,64 @@ def rank(query, session_id):
     return {"aws cli": cli, "javascript": js, "python": py}
 
 
+def _predict_snippets(rec: dict, ctx: Context | None) -> dict:
+    """The same three snippets for a model with named inputs: one command, JavaScript and Python."""
+    import json as _json
+
+    from . import predict as PD
+
+    ep = rec.get("endpoint") or {}
+    sh = rec.get("shape")
+    xs = None
+    if ctx is not None:
+        try:
+            m = PD._manifest(ctx, rec["model_version"])
+            sh = PD.shape(m)
+            xs = [round(x, 2) for x in PD.example_values(ctx, m)[0]]
+        except Exception:  # noqa: BLE001  the record's own description still makes a request that fits
+            pass
+    if not sh:
+        return {}
+    body = PD.example_body(sh, xs)
+    real = _json.dumps({**body, "traffic": "real"}, separators=(",", ":"))
+    inner = real[1:-1]
+    note = f"# {sh['text']} The answer is {{request_id, outputs, model_version, ms}}."
+    if _http(rec):
+        url = ep.get("url")
+        return {"curl": f"{note}\ncurl -s --max-time {TIMEOUT_MS / 1000:g} {url}/predict \\\n  -H \"Authorization: Bearer $CAPTAIN_STAGING_KEY\" -H \"Content-Type: application/json\" \\\n  -d '{real}'",
+                "javascript": f"""// {sh['text']}
+async function predict(inputs) {{
+  const r = await fetch("{url}/predict", {{
+    method: "POST", signal: AbortSignal.timeout({TIMEOUT_MS}),
+    headers: {{ "Authorization": `Bearer ${{process.env.CAPTAIN_STAGING_KEY}}`, "Content-Type": "application/json" }},
+    body: JSON.stringify({{ inputs, traffic: "real" }}),   // "real": these are your own requests
+  }});
+  if (!r.ok) throw new Error((await r.json()).detail);   // an error body is {{"detail": "..."}}, a plain sentence
+  return (await r.json()).outputs;
+}}""",
+                "python": f"""# {sh['text']}
+import os, requests
+
+def predict(inputs):
+    r = requests.post("{url}/predict", json={{"inputs": inputs, "traffic": "real"}},  # "real": these are your own requests
+                      headers={{"Authorization": f"Bearer {{os.environ['CAPTAIN_STAGING_KEY']}}"}}, timeout={TIMEOUT_MS / 1000:g})
+    if not r.ok:
+        raise ValueError(r.json()["detail"])   # an error body is {{"detail": "..."}}, a plain sentence
+    return r.json()["outputs"]"""}
+    name, region = ep.get("name"), ep.get("region")
+    return {"aws cli": f"{note}\naws sagemaker-runtime invoke-endpoint --region {region} --endpoint-name {name} --content-type application/json \\\n"
+                       f"  --cli-binary-format raw-in-base64-out \\\n  --body '{{\"op\":\"predict\",\"key\":\"'\"$CAPTAIN_STAGING_KEY\"'\",{inner}}}' /dev/stdout",
+            "python": f"""# {sh['text']}
+import json, os, boto3
+
+_rt = boto3.client("sagemaker-runtime", region_name="{region}")
+
+def predict(inputs):
+    r = _rt.invoke_endpoint(EndpointName="{name}", ContentType="application/json",
+                            Body=json.dumps({{"op": "predict", "key": os.environ["CAPTAIN_STAGING_KEY"], "inputs": inputs, "traffic": "real"}}))
+    return json.loads(r["Body"].read())["outputs"]"""}
+
+
 def _ago(iso: str | None) -> float | None:
     try:
         return (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(str(iso).replace("Z", "+00:00"))).total_seconds()
@@ -246,10 +308,13 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
            "timeout_ms": TIMEOUT_MS,
            "fallback": (f"Give the endpoint {TIMEOUT_MS} ms. If it doesn't answer in time, or answers with an error, "
                         "show your own search results. An error body is {\"detail\": \"...\"} with a 4xx or 5xx status."),
-           "snippets": snippets(rec) if rec.get("how") != "image" else {},
+           "snippets": snippets(rec, ctx) if rec.get("how") != "image" else {},
            # One address a model, so a team's own testing tool can send each group of shoppers to its model.
            "addresses": addresses(rec) if rec.get("how") != "image" else [], "own_tests": OWN_TESTS, "real": 0, "unlabelled": 0, "test": 0, "simulated": 0,
            "last_real_at": None}
+    if rec.get("serves") == "predict":
+        out["fallback"] = (f"Give the endpoint {TIMEOUT_MS} ms. A request it refuses comes back with a 4xx status and "
+                           "{\"detail\": \"...\"}, a sentence that says what was expected.")
     h: dict = {}
     try:
         from . import _awake
@@ -285,13 +350,20 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
     # What the traffic so far is, said only once there is some: real beats simulated beats test.
     out["evidence_label"] = ("Real traffic" if out["real"] else "Unlabelled" if out["unlabelled"] else "Simulated" if out["simulated"]
                              else "Test traffic only" if out["test"] else None)
-    q = (sample_queries(ctx, pid, 1) or ["shoes"])[0].replace("'", "")
+    q = (sample_queries(ctx, pid, 1) or ["shoes"])[0].replace("'", "") if rec.get("serves") != "predict" else ""
     ep = rec.get("endpoint") or {}
     out["test_request"] = (
         f"curl -s {ep.get('url')}/rank -H \"Authorization: Bearer $CAPTAIN_STAGING_KEY\" -H \"Content-Type: application/json\" "
         f"-d '{{\"query\": \"{q}\", \"k\": 5, \"traffic\": \"test\"}}'" if _http(rec) else
         f"aws sagemaker-runtime invoke-endpoint --region {ep.get('region')} --endpoint-name {ep.get('name')} --content-type application/json "
         f"--cli-binary-format raw-in-base64-out --body '{{\"op\": \"rank\", \"key\": \"'\"$CAPTAIN_STAGING_KEY\"'\", \"query\": \"{q}\", \"k\": 5, \"traffic\": \"test\"}}' /dev/stdout")
+    if rec.get("serves") == "predict":  # a model with named inputs: the request is its own example, on /predict
+        from . import predict as PD
+
+        try:
+            out["test_request"] = PD.try_info(ctx, pid, env)["request"]
+        except Exception:  # noqa: BLE001
+            out["test_request"] = None
     ago = _ago(out["last_real_at"])
     out["connected"] = out["real"] > 0
     out["live"] = (f"Received {out['real']:,} request{'s' if out['real'] != 1 else ''}"
@@ -327,6 +399,10 @@ def key_for_copy(ctx: Context, pid: str, env: str = ENV) -> dict:
 def test_request(ctx: Context, pid: str, query: str | None = None, env: str = ENV) -> dict:
     """One request through the same door a site uses, marked as test traffic, to prove the path works."""
     rec = _running(ctx, pid, env)
+    if rec.get("serves") == "predict":  # a model with named inputs: its own example goes through the same door
+        from . import predict as PD
+
+        return PD.try_send(ctx, pid, None, env)
     # A query the project's shoppers really search, so the answer has results in it and proves something.
     q = query or (sample_queries(ctx, pid, 1) or ["test"])[0]
     r = call(ctx, rec, "rank", {"query": q, "k": 5, "traffic": "test", "session_id": "test-" + new_id().lower()[-6:]})
@@ -605,10 +681,12 @@ def requests(ctx: Context, pid: str, env: str = ENV, limit: int = 50, refresh: b
     reqs = sorted(got["requests"], key=lambda r: str(r.get("ts")), reverse=True)
     rows = [{"request_id": r["request_id"], "ts": r.get("ts"), "query": r.get("query"), "arm": r.get("arm"),
              "model_version": r.get("model_version"), "ms": r.get("ms"), "results": len(r.get("ids") or []),
-             "traffic": r.get("traffic") or "unlabelled", "status": "answered", "shadowed": bool(r.get("shadow"))} for r in reqs[:limit]]
+             "traffic": r.get("traffic") or "unlabelled", "status": "answered", "shadowed": bool(r.get("shadow")),
+             # A model that is not a ranker has no query: its line says what went in and what came out, in short.
+             **({"kind": "predict", "summary": (r.get("predict") or {}).get("text")} if r.get("kind") == "predict" else {})} for r in reqs[:limit]]
     return {"project": pid, "stage": rec["id"], "rows": rows, "total": len(reqs),
             "text": f"{len(reqs):,} request{'s' if len(reqs) != 1 else ''} since this version was deployed." if reqs
-                    else "No requests yet. Try a query, or send a test request."}
+                    else "No requests yet. Send a test request." if rec.get("serves") == "predict" else "No requests yet. Try a query, or send a test request."}
 
 
 def request(ctx: Context, pid: str, request_id: str, env: str = ENV) -> dict:
@@ -624,6 +702,15 @@ def request(ctx: Context, pid: str, request_id: str, env: str = ENV) -> dict:
     lines = sorted((x for x in got["lines"] if str(x.get("request_id")) == str(request_id)), key=lambda x: str(x.get("ts")))
     seen = next((t["ms"] for t in got["timings"] if str(t["request_id"]) == str(request_id)), None)
     names = (got.get("names") or {}).get(r.get("arm")) or []
+    if r.get("kind") == "predict":  # named inputs in, named outputs out: no products, no signals
+        pr = r.get("predict") or {}
+        return {"request_id": r["request_id"], "ts": r.get("ts"), "kind": "predict", "query": None, "arm": r.get("arm"),
+                "model_version": r.get("model_version"), "ms": r.get("ms"), "traffic": r.get("traffic") or "unlabelled",
+                "session_id": r.get("session_id"), "results": [], "inputs": pr.get("inputs"), "outputs": pr.get("outputs"), "summary": pr.get("text"),
+                "lines": [{"ts": x["ts"], "text": x["text"], "level": x.get("level", "info")} for x in lines], "site_ms": seen,
+                "time_text": f"{r.get('ms'):g} ms at the endpoint" + (f", {seen:g} ms as your site saw it." if seen is not None else
+                                                                  ". Your site didn't report how long it took."),
+                "shadow": None}
     from . import _joined
 
     joined = _joined(ctx, {"ids": r.get("ids") or [], "scores": r.get("scores") or []}, r.get("model_version"))

@@ -1193,10 +1193,16 @@ def project_deploy_status(pid: str):
 
 @app.post("/api/projects/{pid}/deploy", dependencies=A)
 def project_deploy(pid: str, body: dict | None = None):
-    """{host, login?, candidate?, baseline?, allow_large?, confirm?, dry_run?}: deploy the project's model there,
+    """{host, login?, candidate?, baseline?, session?, note?, allow_large?, confirm?, dry_run?}: deploy the project's model there,
     first-time work included, as one job with named steps. dry_run returns the plan. A cloud without confirm is
     refused with 409 {needs_confirm, plan}. With confirm: {job, run, plan}; `run` is a live run (GET /api/live/{run})
-    whose stages are the plan's steps. Safe to send again: what exists is kept, and a failed deploy is picked up."""
+    whose stages are the plan's steps. Safe to send again: what exists is kept, and a failed deploy is picked up.
+
+    `candidate` may be a weights model version, written weights:<model>@v<N>. With `session` (a Weights session,
+    ws-...) the session is saved as a new version and that version is deployed, in this one call: the answer adds
+    {saved: {ref, base, changed, saved, text}, session}. A cloud without confirm saves nothing. The deployment's
+    record says which version it started from and which edits it carries (`carries`), and roll back returns to the
+    version that ran before."""
     from . import live as LV
     from .staging import deploy as DP
 
@@ -1215,18 +1221,31 @@ def project_deploy(pid: str, body: dict | None = None):
         host = "local"
     args = dict(host=host, login=b.get("login") or None, candidate=b.get("candidate") or None,
                 baseline=bool(b.get("baseline")), allow_large=bool(b.get("allow_large")))
+    sid = str(b.get("session") or "")
+    if sid:
+        # A Weights session: it is saved as a new version and that version is deployed, as one call. Until the
+        # place is confirmed nothing is saved, so the plan is made for the version the session was opened on.
+        from .staging import predict as PD
+
+        smodel, sver = _staging_call(PD.session_base, c, sid)
+        args.update(candidate=PD.ref_of(smodel, sver), baseline=False)
     p = _staging_call(DP.plan, c, pid, **args)
     if isinstance(p, JSONResponse):
         return p
     if b.get("dry_run"):
-        return {**p, "dry_run": True}
+        return {**p, "dry_run": True, **({"session": sid, "saves": "a new version of " + smodel} if sid else {})}
     if p["host"] == "local" and (p.get("fit") or {}).get("outcome") in ("wont-fit", "over-limit"):
         raise HTTPException(400, p["fit"]["text"])
     if p["needs_confirm"] and not b.get("confirm"):
-        return JSONResponse({"detail": "Confirm first. " + p["cost"]["text"], "needs_confirm": True, "plan": p}, status_code=409)
+        return JSONResponse({"detail": "Confirm first. " + ("Nothing was saved. " if sid else "") + p["cost"]["text"], "needs_confirm": True, "plan": p}, status_code=409)
+    saved = None
+    if sid:
+        saved = _staging_call(PD.save_session, c, sid, str(b.get("note") or ""), b.get("by") or None)
+        args["candidate"] = PD.PREFIX + saved["ref"]
+        p = _staging_call(DP.plan, c, pid, **args)
     # The run a person watches: its title in plain words ("Deploying starter-ranker, version 2 to AWS"), its kind
     # "deploy", and its steps with what each usually takes, so the screen can count time while a step is quiet.
-    mname, _, mver = str(p["model_version"]).rpartition("@v")
+    mname, _, mver = str(p["model_version"]).removeprefix("weights:").rpartition("@v")  # a weights version reads "digits, version 2"
     model_words = f"{(mname or str(p['model_version'])).split('/')[-1]}" + (f", version {mver}" if mname and mver else "")
     lr = LV.start("deploy", f"Deploying {model_words} to {p['label']}", of=pid, source="deploy")
     lr.plan([{"title": s.get("title"), "seconds": s.get("typical_s"), "usually": s.get("typical")} for s in p.get("steps") or []])
@@ -1244,9 +1263,12 @@ def project_deploy(pid: str, body: dict | None = None):
                 JOBS[jid]["log"].append(d["text"])
 
         try:
+            if saved:
+                lr.log(saved["text"])
+                JOBS[jid]["log"].append(saved["text"])
             out = DP.run(c, pid, confirm=True, on_event=hear, **args)
             lr.end("done", ref=p["model_version"], summary=f"Ready at {out.get('address')}")
-            return out
+            return {**out, "saved": saved, "session": sid} if sid else out
         except BaseException as e:  # noqa: BLE001
             JOBS[jid]["policy"] = getattr(e, "policy", None)
             lr.end("failed", error=str(e)[:600])
@@ -1254,7 +1276,30 @@ def project_deploy(pid: str, body: dict | None = None):
 
     jid = _job(go, f"deploying {p['model_version']} to {p['label']}", _deployed_topics(pid))
     JOBS[jid].update(compute=p["host"], run=lr.id)
-    return {"job": jid, "run": lr.id, "plan": p}
+    return {"job": jid, "run": lr.id, "plan": p, **({"saved": saved, "session": sid} if sid else {})}
+
+
+@app.get("/api/projects/{pid}/deployed/try", dependencies=A)
+def deployed_try(pid: str, env: str = "staging"):
+    """What a screen needs to offer "Try it" for the model this project has deployed, whatever it is: {serves:
+    predict | rank, model_version, route, address, inputs: [{name, type, count, shape, names, meaning, accepts}],
+    outputs: [{name, type, meaning}], text, example (a request body that fits), example_from, request (one command
+    that sends it, with the key read from CAPTAIN_STAGING_KEY), form: {kind: grid | named | list | query, ...},
+    send}. Read from the workspace: the model is not called."""
+    from .staging import predict as PD
+
+    return _staging_call(PD.try_info, ctx(), pid, env)
+
+
+@app.post("/api/projects/{pid}/deployed/try", dependencies=A)
+def deployed_try_send(pid: str, body: dict | None = None):
+    """{inputs?} for a model with named inputs, {query?} for a ranker: send one request to the deployed model as
+    test traffic. With nothing given, its example is sent. Answers {ok, serves, request_id, ms, outputs?, summary?,
+    text}. A request that does not fit is refused with 400 and a sentence that says what was expected."""
+    from .staging import predict as PD
+
+    b = body or {}
+    return _told(_staging_call(PD.try_send, ctx(), pid, b, str(b.get("env") or "staging")), pid)
 
 
 @app.delete("/api/projects/{pid}/deploy", dependencies=A)

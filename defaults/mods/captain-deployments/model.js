@@ -179,7 +179,7 @@ export class ModelPage {
       .child(section("model-section-requests", "Requests it answered", this.list(c, "model-requests", this.requests?.rows, this.requests?.text || "It has answered no requests yet.",
         (q, i) => h_flex().id(`model-request-${i}`).gap(12).py(6).border_b(1).border_color(c.rule)
           .child(div().w(90).flex_none().text_size(12.5).text_color(c.grey500).child(ago(q.ts) ?? ""))
-          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.navy).child(String(q.query ?? "")))
+          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.navy).child(String(q.query ?? q.summary ?? "")))  // a model with named inputs has no query: its line says what went in and came out
           .child(div().w(70).flex_none().text_size(12.5).text_color(c.grey500).child(q.ms != null ? ms(q.ms) : "")))))
       .child(section("model-section-log", "Its log", this.list(c, "model-log", this.log?.rows, this.log?.note || "It has written nothing to its log yet.",
         (l, i) => h_flex().id(`model-log-${i}`).gap(12).py(3)

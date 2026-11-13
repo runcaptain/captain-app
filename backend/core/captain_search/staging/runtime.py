@@ -14,8 +14,13 @@ staging endpoint and a cloud one serve exactly the same files.
   POST /timing      {request_id, ms}: how long the request took as the site saw it, network included.
   POST /flush       write buffered log records now (and publish the logs dataset with {"publish": true})
   GET  /healthz     what is loaded, uptime, requests served, and when it stops by itself. No secrets.
-  GET  /ping, POST /invocations   SageMaker's contract. /invocations takes {"op": "rank" | "timing" | "flush" |
-                    "status", "key": ..., ...the op's own fields}, because SageMaker exposes one route.
+  POST /predict     for a deployed model that is not a ranker (predict.py): {inputs, request_id?, session_id?,
+                    traffic?} -> {request_id, outputs, arm, model_version, ms}. Named inputs in, named outputs
+                    out, both described by the model's manifest. A ranker refuses it in a sentence, and a network
+                    refuses /rank the same way.
+  POST /describe    what the deployed model takes and gives back, and an example request.
+  GET  /ping, POST /invocations   SageMaker's contract. /invocations takes {"op": "rank" | "predict" | "timing" |
+                    "flush" | "status", "key": ..., ...the op's own fields}, because SageMaker exposes one route.
 
 Every route but /ping and /healthz needs the endpoint key: `Authorization: Bearer <key>` locally, `"key"` in the
 body through SageMaker. The process only ever holds the key's SHA-256.
@@ -132,6 +137,10 @@ class Arm:
 
 def load_arm(store, bundle_key: str, name: str, spec: dict, catalogs: dict) -> Arm:
     """One arm of a bundle as a ranker: the engine a pipeline version names, over the bundle's own files."""
+    if spec.get("kind") == "weights":  # a network, not a ranker: it answers /predict (predict.py)
+        from . import predict as PD
+
+        return PD.load(store, bundle_key, name, spec)
     import io
 
     import pyarrow.parquet as pq
@@ -312,6 +321,8 @@ class Runtime:
         shadowing = arm is None and bool(ctl.get("shadow")) and {"baseline", "candidate"} <= set(self.arms)
         name = arm or ("baseline" if shadowing else assign(ctl, self.arms, str(session or user or rid)))
         a = self.arms[name]
+        if hasattr(a, "predict"):  # a network, not a ranker: refused before anything is counted as a failure
+            raise Refused(f"This deployment serves {a.pipeline}, a model with named inputs, not a search ranker. Send it POST /predict. {a.shape['text']}")
         t0 = time.perf_counter()
         self.running += 1
         bud = ctl.get("budget") or {}
@@ -382,6 +393,66 @@ class Runtime:
             out["signals"] = {p: dict(zip(a.names, feats[p])) for p in ids if p in feats}
             out["importance"] = a.importance
         return out
+
+    def predict(self, body: dict, arm: str | None = None) -> dict:
+        """One answer from a deployed model that is not a ranker: named inputs in, named outputs out. Logged with
+        the same envelope as a rank request (request id, time, milliseconds, traffic kind, copy), with what went
+        in and what came out in a short form under `predict`."""
+        from . import predict as PD
+
+        ctl = self.control()
+        self._admit(body if isinstance(body, dict) else {}, ctl)
+        if arm is not None and arm not in self.arms:
+            raise ValueError(f"this endpoint has no {arm} arm. Loaded: {', '.join(self.arms)}")
+        name = arm or assign(ctl, self.arms)
+        a = self.arms[name]
+        if not hasattr(a, "predict"):
+            raise Refused(f"This deployment serves {a.pipeline}, a search ranker. Send it POST /rank with a query. "
+                          "POST /predict is for a model that takes named inputs.")
+        xs = PD.read_inputs(a.shape, body)
+        rid = str(body.get("request_id") or new_id())
+        session, user = body.get("session_id"), body.get("user_id")
+        traffic = body.get("traffic") if body.get("traffic") in L.TRAFFIC else "unlabelled"  # never real by default
+        t0 = time.perf_counter()
+        self.running += 1
+        try:
+            scores = a.predict(xs)
+        except Exception as e:  # noqa: BLE001
+            self.errors += 1
+            self.say(f"A predict request failed in the {name}: {str(e)[:200]}", rid, "error")
+            raise
+        finally:
+            self.running -= 1
+        ms = round((time.perf_counter() - t0) * 1000, 3)
+        out = PD.outputs_of(a.shape, scores)
+        text = PD.sentence(a.shape, xs, out)
+        rec = {"request_id": rid, "ts": _now(), "kind": "predict", "query": None, "k": None, "user_id": user, "session_id": session,
+               "arm": name, "model_version": a.pipeline, "ids": [], "scores": [], "features": {}, "ms": ms, "traffic": traffic,
+               "forced": arm is not None, "copy": self.copy,
+               "predict": {"inputs": PD.brief_inputs(a.shape, xs), "outputs": PD.brief_outputs(out), "text": text}}
+        with self._lock:
+            self._req.append(rec)
+            self.requests += 1
+            self.by_traffic[traffic] += 1
+            if traffic == "real":
+                self.last_real_at = rec["ts"]
+            self.last_used = self.clock()
+        self.say(f"Answered with the {name} in {ms:g} ms. {text}", rid)
+        return {"request_id": rid, "outputs": out, "arm": name, "model_version": a.pipeline, "ms": ms}
+
+    def describe(self, arm: str | None = None) -> dict:
+        """What the deployed model takes and gives back, with an example request. For a ranker, the rank request."""
+        from . import predict as PD
+
+        a = self.arms[arm] if arm in self.arms else self.arms[assign(self.control(), self.arms)]
+        if hasattr(a, "predict"):
+            return {"serves": "predict", "model_version": a.pipeline, "route": "/predict", **a.shape, "example": PD.example_body(a.shape, None)}
+        return {"serves": "rank", "model_version": a.pipeline, "route": "/rank",
+                "inputs": [{"name": "query", "type": "text", "meaning": "what the shopper searched"},
+                           {"name": "k", "type": "number", "meaning": "how many results, 1 to 200"}],
+                "outputs": [{"name": "ids", "type": "names", "meaning": "product ids, best first"},
+                            {"name": "scores", "type": "numbers", "meaning": "one score for each id"}],
+                "text": "Takes a search query. Gives back product ids, best first.", "example": {"query": "waterproof jacket", "k": 10}}
 
     def timing(self, body: dict) -> dict:
         """How long a request took as the site saw it, network included: {request_id, ms}. The only thing a site
@@ -455,6 +526,7 @@ class Runtime:
                 "errors": self.errors, "refused": self.refused, "fallbacks": self.fallbacks, "copy": self.copy, "ready_s": self.load_s, "memory_mb": _memory_mb(),
                 "last_real_at": self.last_real_at, "shadow": ctl.get("shadow") or None, "idle_s": round(idle),
                 "idle_minutes": self.idle_minutes,
+                **({"serves": "predict"} if any(hasattr(a, "predict") for a in self.arms.values()) else {}),
                 "stops_in_s": None if self.bundle.get("scale_to_zero") else max(0, round(self.idle_minutes * 60 - idle)),
                 "stopped": self.stopped}
 
@@ -576,6 +648,21 @@ def make_app(rt: Runtime):
         check(authorization)
         return run(rt.rank, body, arm)
 
+    @api.post("/predict")
+    def predict(body: dict, authorization: str = Header(default="")):
+        check(authorization)
+        return run(rt.predict, body)
+
+    @api.post("/predict/{arm}")
+    def predict_arm(arm: str, body: dict, authorization: str = Header(default="")):
+        check(authorization)
+        return run(rt.predict, body, arm)
+
+    @api.post("/describe")
+    def describe(body: dict | None = None, authorization: str = Header(default="")):
+        check(authorization)
+        return rt.describe((body or {}).get("arm"))
+
     @api.post("/timing")
     def timing(body: dict, authorization: str = Header(default="")):
         check(authorization)
@@ -605,6 +692,10 @@ def make_app(rt: Runtime):
         op = body.pop("op", "rank")
         if op == "rank":
             return run(rt.rank, body, body.pop("arm", None))
+        if op == "predict":
+            return run(rt.predict, body, body.pop("arm", None))
+        if op == "describe":
+            return rt.describe(body.get("arm"))
         if op == "timing" or (op == "outcome" and body.get("event") == "timing"):
             return run(rt.timing, body)
         if op == "outcome":
@@ -615,7 +706,7 @@ def make_app(rt: Runtime):
             return rt.status()
         if op == "reload":
             return rt.control(force=True)
-        raise HTTPException(400, f"unknown op {op!r}: rank, timing, flush, status or reload")
+        raise HTTPException(400, f"unknown op {op!r}: rank, predict, describe, timing, flush, status or reload")
 
     return api
 
