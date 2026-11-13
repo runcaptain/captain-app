@@ -1169,7 +1169,19 @@ def project_deploy(pid: str, body: dict | None = None):
     from .staging import deploy as DP
 
     c, b = ctx(), body or {}
-    args = dict(host=str(b.get("host") or "local"), login=b.get("login") or None, candidate=b.get("candidate") or None,
+    host = str(b.get("host") or "")
+    if not host:
+        # No place named. That once meant this computer, whatever the project ran on before, so a model that lived
+        # in a cloud could be started on this computer without anyone asking for it. A place is only assumed for a
+        # project that has never run anywhere else.
+        from . import staging as SG
+
+        last = SG.state(c, pid, str(b.get("env") or "staging")) or {}
+        if last and last.get("kind") != "local":
+            raise HTTPException(400, f"Say where to deploy it. This model last ran on {last.get('host') or 'a cloud'}, and no place was named. "
+                                     "Captain never moves a model to this computer without being asked.")
+        host = "local"
+    args = dict(host=host, login=b.get("login") or None, candidate=b.get("candidate") or None,
                 baseline=bool(b.get("baseline")), allow_large=bool(b.get("allow_large")))
     p = _staging_call(DP.plan, c, pid, **args)
     if isinstance(p, JSONResponse):

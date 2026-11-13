@@ -505,3 +505,83 @@ def test_every_size_a_host_offers_can_say_what_it_is():
         for s in SZ.sizes(host, None):
             m = SZ.machine_facts(host, s["config"])
             assert m["words"] and "memory" in m["words"] and m["hourly_usd"] is not None, (host, s["name"])
+
+
+# ---- removing a deployment, and starting one again -------------------------------------------------
+
+
+def test_removing_a_deployment_ends_with_it_gone_from_every_list(ws, logins, modal):  # noqa: F811
+    """A person clicked "Remove from the cloud" and said "it still just leaves it there". The cloud had been emptied.
+    The row stayed, because Captain kept its record of a deployment that no longer existed anywhere."""
+    logins.append(LOGINS["modal"])
+    DP.run(ws, "shop", "modal", confirm=True)
+    SG.unstage(ws, "shop")  # stopped: remembered, with what the first deploy set up still there
+    assert [r["state"] for r in FL.deployed(ws, fresh=True)["rows"]] == ["stopped"] and FL.created(ws)["places"]
+    out = DP.remove(ws, "shop")
+    assert out["status"] == "removed" and out["left"] == [] and out["removed_setup"] and out["forgotten"]
+    assert out["text"].startswith("Removed from Modal: ") and "Captain set up" in out["text"] and out["text"].endswith("Nothing is left.")
+    # Nothing is left to act on: no row, no record, nothing in the account.
+    assert FL.deployed(ws, fresh=True)["rows"] == [] and SG.state(ws, "shop") is None and FL.created(ws)["places"] == []
+    assert DP.status(ws, "shop")["status"] == "removed"
+    # A running one: the model goes, then what was set up, then the record.
+    DP.run(ws, "shop", "modal", confirm=True)
+    out = DP.remove(ws, "shop")
+    assert "the deployed model and the " in out["text"] and FL.deployed(ws, fresh=True)["rows"] == [] and SG.state(ws, "shop") is None
+
+
+def test_a_removal_that_leaves_something_keeps_the_row_and_says_what_is_left(ws, logins, modal, monkeypatch):  # noqa: F811
+    from captain_search.staging import hosts as H
+
+    logins.append(LOGINS["modal"])
+    DP.run(ws, "shop", "modal", confirm=True)
+    SG.unstage(ws, "shop")
+    monkeypatch.setattr(type(H.get("modal")), "teardown", lambda self, ctx, progress=None: {
+        "status": "partial", "created": [{"type": "modal-volume", "name": "captain-serving", "error": "it still holds files"}]})
+    out = DP.remove(ws, "shop")
+    assert out["status"] == "partly removed" and not out["forgotten"]
+    assert out["text"] == ("Not everything could be removed from Modal. Still there: modal-volume captain-serving (it still holds files). "
+                           "Try again, or remove these in the cloud's own console.")
+    assert SG.state(ws, "shop") is not None and len(FL.deployed(ws, fresh=True)["rows"]) == 1  # the row stays, with something still to do
+
+
+def test_start_again_goes_back_to_the_same_cloud_and_never_to_this_computer(ws, logins, modal):  # noqa: F811
+    """After a removal on a real account, a model that had lived in AWS turned up on this computer: address
+    127.0.0.1, started and stopped fifteen seconds apart. Starting again must set the cloud up again, and say so."""
+    from captain_search.staging import hosts as H
+
+    logins.append(LOGINS["modal"])
+    DP.run(ws, "shop", "modal", confirm=True)
+    version = SG.state(ws, "shop")["model_version"]
+    SG.unstage(ws, "shop")
+    H.get("modal").teardown(ws)  # what the first deploy set up is gone, the stopped model is still remembered
+    row = FL.deployed(ws, fresh=True)["rows"][0]
+    assert row["cloud"] == "modal" and row["state"] == "stopped" and row["can"] == ["start", "forget"]
+    # What the confirm is built from: the place by name, that it will be set up again, how long, and the cost.
+    p = DP.plan(ws, "shop", row["cloud"], row["login"], candidate=version)
+    assert p["label"] == "Modal" and p["host"] == "modal" and p["first_time"] and p["needs_confirm"] and "minute" in p["minutes"]["text"] and p["cost"]["text"]
+    DP.run(ws, "shop", row["cloud"], row["login"], candidate=version, confirm=True)
+    rec = SG.state(ws, "shop")
+    assert rec["status"] == "running" and rec["kind"] != "local" and rec["host"] == "modal" and "127.0.0.1" not in str(rec.get("endpoint"))
+    assert FL.deployed(ws, fresh=True)["rows"][0]["cloud"] == "modal"
+
+
+def test_a_deploy_with_no_place_named_never_lands_on_this_computer(ws, logins, modal, monkeypatch, tmp_path):  # noqa: F811
+    from fastapi.testclient import TestClient
+
+    from captain_search import server
+
+    monkeypatch.setenv("CST_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(server, "ctx", lambda: ws)
+    logins.append(LOGINS["modal"])
+    DP.run(ws, "shop", "modal", confirm=True)
+    SG.unstage(ws, "shop")
+    c = TestClient(server.app)
+    h = {"Authorization": f"Bearer {server.TOKEN}"}
+    r = c.post("/api/projects/shop/deploy", headers=h, json={"candidate": SG.state(ws, "shop")["model_version"], "confirm": True})
+    assert r.status_code == 400, (r.status_code, r.text[:300])
+    said = r.json().get("detail") or r.json().get("error") or r.text
+    assert "Say where to deploy it. This model last ran on modal" in said and "never moves a model to this computer without being asked" in said
+    rec = SG.state(ws, "shop")
+    assert rec["status"] == "stopped" and rec["kind"] != "local"  # nothing was started anywhere
+    # Naming this computer is still allowed: that is a person asking for it.
+    assert c.post("/api/projects/shop/deploy", headers=h, json={"host": "local", "dry_run": True}).status_code == 200

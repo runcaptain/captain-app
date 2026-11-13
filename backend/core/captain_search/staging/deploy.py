@@ -692,10 +692,25 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
                 skip("access", "Already there from the first time.")
                 skip("image", "Already built.")
                 target = hobj.target
+            # A cloud deploy with no place to start it must stop here, in a sentence. An empty name was once taken
+            # further down to mean "the default", and the default is this computer: a model asked for in a cloud
+            # must never start on this computer.
+            if not target:
+                raise ValueError(f"{p['label']} is not set up for deploying any more, and Captain could not set it up. Nothing was started. "
+                                 "Deploy again to set it up, or choose another place.")
         begin("start")
         if host != "local":
             _use_machine(ctx, target, p["machine"], line)
         rec = stage(ctx, pid, candidate, baseline, env, target, confirm=True, progress=line, allow_large=allow_large)
+        if (host == "local") != (rec.get("kind") == "local"):
+            # It started somewhere other than where it was asked for. Stop it and say so: never leave it running
+            # in the wrong place.
+            try:
+                unstage(ctx, pid, env)
+            except Exception:  # noqa: BLE001
+                pass
+            raise ValueError(f"The model was asked for on {p['label']} and started somewhere else. Captain stopped it. Nothing is running. "
+                             "This is a fault in Captain, not in your account.")
         _save(ctx, pid, env, host=host, login=p["login"])  # so every screen can say where it runs without guessing
         begin("ready")
         ep = (rec or {}).get("endpoint") or {}
@@ -760,39 +775,72 @@ def _test_requests(ctx: Context, pid: str, env: str, n: int = TEST_REQUESTS) -> 
 
 
 def remove(ctx: Context, pid: str, env: str = ENV, progress=None) -> dict:
-    """Stop the model. When this project's deploy also did the first-time work on its cloud and no other project
-    has a model there, take that away too, so a deploy that failed halfway leaves nothing behind."""
+    """Remove a deployment: stop the model, take away what the first deploy created in its cloud when this
+    project's deploy made it and no other project has a model there, and then forget Captain's own record of the
+    deployment. It ends with nothing left to act on: the deployment is gone from every list.
+
+    When something could not be removed, the record stays, and the answer says exactly what is left and why. A
+    removal never leaves a row whose only action is the one that was just done."""
     from .. import projects as PR
+    from . import fleet as FL
 
     say = progress or (lambda _t: None)
     doc, _ = _read(ctx, pid, env)
     rec = state(ctx, pid, env)
+    host = (doc or {}).get("host") or (rec or {}).get("host") or ("local" if (rec or {}).get("kind") == "local" else None)
+    where = FL.CLOUDS.get(host or "", "the cloud") if host != "local" else "this computer"
     left: list = []
+    took: list[str] = []
     if rec and (rec.get("status") in ("running", "starting", "failed") or rec.get("resources")):
         say("Stopping the model")
+        had = [r for r in rec.get("resources") or [] if r.get("type") in ("endpoint", "modal-app", "cloud-run-service", "container-app")]
         out = unstage(ctx, pid, env)
         left += out.get("resources") or []
+        if had and not out.get("resources"):
+            took.append("the endpoint" if host == "aws" else "the deployed model")
     removed_setup = False
-    host = (doc or {}).get("host")
     if doc and doc.get("made_setup") and host and host != "local":
         hobj = H.get(host)
         st = _setup(ctx, hobj)
         used = [pr["name"] for pr in PR.listing(ctx) if pr["id"] != pid
                 and any(s.get("status") in ("running", "starting") and s.get("target") == st.get("target") for s in (PS.read(ctx, pr["id"])[0].get("staging") or {}).values())]
         if st.get("status") not in ("none", "removed") and not used:
+            n = len([x for x in st.get("created") or [] if "target" not in str(x.get("type") or "")])
             say(f"Removing what the first deploy created in {hobj.label}")
             got = hobj.teardown(ctx, progress=say)
             left += got.get("created") or []
             removed_setup = got.get("status") == "removed"
+            if removed_setup and n:
+                took.append(f"the {n} thing{'s' if n != 1 else ''} Captain set up")
         elif used:
             say(f"Left the first-time work in {hobj.label}: {used[0]} has a model there.")
+            took.append(f"not what Captain set up there, because {used[0]} has a model on it")
     if doc:
         doc.update(status="removed" if not left else "failed", ended_at=_now(), made_setup=False if removed_setup else doc.get("made_setup"),
                    error=("Captain could not remove: " + ", ".join(f"{r.get('type')} {r.get('name')}" for r in left)) if left else None)
         _write(ctx, pid, env, doc)
-    return {"project": pid, "status": "removed" if not left else "partly removed", "left": left, "removed_setup": removed_setup,
-            "text": ("Removed. Nothing of this deploy is left." if not left else
-                     "Removed, except: " + "; ".join(f"{r.get('type')} {r.get('name')} ({r.get('error', 'still there')})" for r in left))}
+    if not left and rec:
+        # Nothing of it is anywhere now, so Captain forgets it. The deployment leaves every list: a removal that
+        # left its row behind read as "it still just leaves it there".
+        def forget(d):
+            st_ = dict(d.get("staging") or {})
+            st_.pop(env, None)
+            d["staging"] = st_
+            return True
+
+        PS._update(ctx, pid, forget)
+        try:
+            from . import _note
+
+            _note(ctx, pid, f"removed the deployment of {rec.get('model_version') or 'a model'} from {where}")
+        except Exception:  # noqa: BLE001
+            pass
+    FL.forget(ctx)
+    text = (f"Removed from {where}: " + (" and ".join(took) if took else "Captain's record of it") + ". Nothing is left." if not left else
+            f"Not everything could be removed from {where}. Still there: "
+            + "; ".join(f"{r.get('type')} {r.get('name')} ({r.get('error', 'still there')})" for r in left) + ". Try again, or remove these in the cloud's own console.")
+    return {"project": pid, "status": "removed" if not left else "partly removed", "left": left, "removed_setup": removed_setup, "forgotten": bool(rec) and not left,
+            "text": text}
 
 
 # The steps every deploy ends with (the trained-numbers check, saving to the registry) register themselves here.

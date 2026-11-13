@@ -21,6 +21,10 @@ globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), p = u.pathname, m = opts.method ?? 'GET';
   sent.push([m, p + u.search, opts.body ? JSON.parse(opts.body) : null]);
   if (p === '/api/deployed') return reply(200, world.deployed);
+  // The plan for a deploy: what the confirm is built from. `world.plan` overrides it, or fails it.
+  if (m === 'POST' && p.endsWith('/deploy') && JSON.parse(opts.body ?? '{}').dry_run) return world.planFails ? reply(400, { detail: world.planFails })
+    : reply(200, world.plan ?? { host: 'gcp', label: 'Google Cloud', first_time: false, needs_confirm: true, minutes: { text: 'About 2 to 6 minutes.' },
+      cost: { text: 'About $0.10 an hour while a copy is awake, and nothing while it sleeps.' } });
   if (p === '/api/deployed/created') return reply(200, world.created ?? { places: [], text: '' });
   if (p === '/api/projects') return reply(200, { projects: [{ id: 'shop', name: 'Demo shop' }, { id: 'trail', name: 'Trail gear' }] });
   if (p.endsWith('/deployed/numbers')) return reply(200, world.numbers?.[p.split('/')[3]] ?? numbers(0, { source: 'none', text: 'No requests in the last 24 hours.', cost: null }));
@@ -139,11 +143,30 @@ await h.idle(60);
 assert.deepEqual(sent.find((x) => x[1] === '/api/deployed/forget')?.[2], { project: 'kids', env: 'staging', confirm: true }, 'then Captain forgets it');
 assert.ok(!sent.some((x) => x[0] === 'DELETE'), 'and nothing is removed from any cloud');
 // Start again says what it will do, and sends the same version to the same place.
+// Start again asks the services where it will run first, then asks the person: the place by name, how long, the cost.
 await h.click(`dep-start-${OLD.id}`);
-assert.ok(h.text().includes('Start kids/keyword-baseline@v1 again on Google Cloud, us-central1, 1 vCPU, 2 GB?'), 'start asks first');
+await h.idle(80);
+assert.deepEqual(sent.find((x) => x[0] === 'POST' && x[1] === '/api/projects/kids/deploy')?.[2], { host: 'gcp', login: 'g', candidate: 'kids/keyword-baseline@v1', env: 'staging', dry_run: true }, 'the plan is asked for, for the place it was in');
+assert.ok(h.text().includes('Start keyword-baseline, version 1 again on Google Cloud? About 2 to 6 minutes. About $0.10 an hour while a copy is awake, and nothing while it sleeps.'), `start names the place, the time and the cost: ${h.text()}`);
+assert.ok(!sent.some((x) => x[1].endsWith('/deploy') && x[2]?.confirm), 'nothing is started before the answer');
 await h.click('dep-ask-yes');
 await h.idle(60);
-assert.deepEqual(sent.find((x) => x[0] === 'POST' && x[1] === '/api/projects/kids/deploy')?.[2], { host: 'gcp', login: 'g', candidate: 'kids/keyword-baseline@v1', env: 'staging', confirm: true }, 'the same version, the same place');
+assert.deepEqual(sent.filter((x) => x[0] === 'POST' && x[1] === '/api/projects/kids/deploy').pop()?.[2], { host: 'gcp', login: 'g', candidate: 'kids/keyword-baseline@v1', env: 'staging', confirm: true }, 'the same version, the same place');
+// When that place no longer has what the first deploy set up, the question says it will be set up again.
+world.plan = { host: 'gcp', label: 'Google Cloud', first_time: true, needs_confirm: true, minutes: { text: 'About 5 to 12 minutes.' }, cost: { text: 'About $0.10 an hour while a copy is awake.' } };
+await h.click(`dep-start-${OLD.id}`);
+await h.idle(80);
+assert.ok(h.text().includes('Start keyword-baseline, version 1 again on Google Cloud? This will set up Google Cloud again. About 5 to 12 minutes. About $0.10 an hour while a copy is awake.'), `it says the cloud will be set up again: ${h.text()}`);
+assert.ok(h.text().includes('Set up Google Cloud and start it'), 'and the button says so');
+await h.click('dep-ask-no');
+// When it can't be planned for that place, nothing is asked and nothing is started anywhere else. The reason is shown.
+world.plan = null; world.planFails = 'That place is not connected in Captain any more. Connect its cloud login again, or deploy somewhere else.';
+const before = sent.length;
+await h.click(`dep-start-${OLD.id}`);
+await h.idle(80);
+assert.ok(h.text().includes('That place is not connected in Captain any more.') && byId(h, 'dep-ask').length === 0, `the reason, and no question: ${h.text()}`);
+assert.ok(!sent.slice(before).some((x) => x[2]?.confirm || x[2]?.host === 'local'), 'nothing is started, and never on this computer');
+world.planFails = null;
 // "Deploy a model" with several projects asks which, and goes to that project.
 await h.click('dep-go-projects');
 await h.idle(80);
