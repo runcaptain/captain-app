@@ -8,6 +8,7 @@ import secrets
 import socket
 import sys
 import threading
+import time
 import traceback
 import uuid
 from typing import Any
@@ -25,6 +26,7 @@ from .model.entities import DatasetKind, Provenance
 from .storage.backend import NotFound
 from .workspace import home, open_context, whoami
 
+from . import changes as CH  # noqa: E402  the change feed every screen listens to
 TOKEN = os.environ.get("CST_SERVE_TOKEN") or secrets.token_urlsafe(24)
 app = FastAPI(title="Captain Search Tools", version=VERSION)
 
@@ -93,11 +95,13 @@ def ctx():
     with _ctx_lock:
         if _ctx is None:
             _ctx = open_context()
+            CH.watch(_ctx.store)  # its writes bump the change feed, and writes from outside are looked for
         if not name or name == _ctx.workspace.name:
             return _ctx
         if name not in _ctxs:
             try:
                 _ctxs[name] = open_context(name)
+                CH.watch(_ctxs[name].store)
             except RuntimeError as e:  # unknown workspace: a 400 with the known names, not a crash
                 raise ValueError(str(e)) from None
         return _ctxs[name]
@@ -2886,9 +2890,32 @@ def _start_health_watch(every_s: float = 60.0) -> threading.Thread:
     return th
 
 
+class _JobState(dict):
+    """A job's state. Every change to it is told to the change feed, so a screen showing the job follows its
+    progress with no timer of its own. Progress can move many times a second: it is told at most five times."""
+
+    def _tell(self, key=None) -> None:
+        now = time.monotonic()
+        if key == "progress" and now - getattr(self, "_at", 0.0) < 0.2:
+            return
+        self._at = now
+        CH.bump("jobs", f"job:{self.get('id')}")
+
+    def __setitem__(self, key, value):
+        changed = self.get(key) != value
+        super().__setitem__(key, value)
+        if changed:
+            self._tell(key)
+
+    def update(self, *a, **k):
+        super().update(*a, **k)
+        self._tell()
+
+
 def _job(fn, label: str) -> str:
     jid = uuid.uuid4().hex[:12]
-    JOBS[jid] = {"id": jid, "status": "queued", "progress": 0.0, "message": label, "result": None, "log": [label], "compute": "local"}
+    JOBS[jid] = _JobState({"id": jid, "status": "queued", "progress": 0.0, "message": label, "result": None, "log": [label], "compute": "local"})
+    CH.bump("jobs", f"job:{jid}")
 
     def go():
         JOBS[jid]["status"] = "running"
@@ -3196,6 +3223,86 @@ def kernel_start(body: dict):
     sid = uuid.uuid4().hex[:12]
     KERNELS[sid] = NB.Kernel(ctx())
     return {"session": sid}
+
+
+# ---- the change feed: what changed, the moment it changes (changes.py) -----------------------------------------
+
+_CHANGES_POOL = None
+
+
+def _topics(text: str | None) -> list[str] | None:
+    ts = [t.strip() for t in str(text or "").split(",") if t.strip()]
+    return ts or None
+
+
+@app.get("/api/changes", dependencies=A)
+async def changes_wait(since: int | None = None, topics: str | None = None, hold: float = CH.HOLD_S):
+    """Held open until one of `topics` (comma separated) changes after `since`, up to 25 seconds, then
+    {seq, changed: [topics], at}. Ask again with the `seq` it gave. With no `since`, or 0, it answers at once with
+    the current `seq`: read everything once, then wait from there. A `since` older than the feed remembers, or
+    from before the service restarted, answers at once with `reset: true`: read everything again. With no
+    `topics` it answers for any change. Topics: projects, project:<id>, data, table:<name>, runs, run:<id>, jobs,
+    job:<id>, deployed, deployment:<project>, notebooks, logins, compute, settings, team."""
+    global _CHANGES_POOL
+    ctx()  # the workspace this client is looking at is watched for writes made outside this process
+    if not since:
+        return CH.FEED.answer(since, _topics(topics))
+    if _CHANGES_POOL is None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        # Its own threads: a client that waits must never take one from the requests that do work.
+        _CHANGES_POOL = ThreadPoolExecutor(max_workers=64, thread_name_prefix="changes")
+    return await asyncio.get_running_loop().run_in_executor(_CHANGES_POOL, CH.FEED.wait, since, _topics(topics), max(0.0, min(float(hold), CH.HOLD_S)))
+
+
+@app.websocket("/api/changes/ws")
+async def changes_ws(ws: WebSocket):
+    """The same messages over one connection that stays open. Send {topics: [...], since?} to say what to listen
+    to, and again whenever that changes. Each change arrives as {seq, changed, at}; {reset: true} means read
+    everything again. {ping: true} every 20 seconds says the connection is alive."""
+    if not _ws_ok(ws):
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+    loop = asyncio.get_running_loop()
+    box: asyncio.Queue = asyncio.Queue()
+    want: set[str] = set()
+
+    def heard(seq, topics):  # from whichever thread bumped
+        loop.call_soon_threadsafe(box.put_nowait, (seq, topics))
+
+    async def read():
+        nonlocal want
+        while True:
+            msg = await ws.receive_json()
+            ts = set(msg.get("topics") or [])
+            CH.FEED.unlisten(want)
+            want = ts
+            CH.FEED.listen(want or {"*"})
+            ctx()
+            first = CH.FEED.answer(msg.get("since"), want or None)
+            await ws.send_json(first)
+
+    CH.FEED.hear(heard)
+    reader = asyncio.ensure_future(read())
+    try:
+        while True:
+            try:
+                seq, topics = await asyncio.wait_for(box.get(), timeout=20.0)
+            except asyncio.TimeoutError:
+                await ws.send_json({"ping": True, "seq": CH.FEED.seq})
+                continue
+            hit = sorted(topics if not want else topics & want)
+            if hit:
+                await ws.send_json({"seq": seq, "changed": hit, "at": CH._now()})
+            if reader.done():
+                break
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        reader.cancel()
+        CH.FEED.unhear(heard)
+        CH.FEED.unlisten(want or {"*"})
 
 
 def _ws_ok(ws: WebSocket) -> bool:
