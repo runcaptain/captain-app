@@ -4,7 +4,7 @@
 // this screen and the cloud cannot disagree. Opening a row shows that model's page (model.js).
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, props, run, setShared } from "herdr";
+import { theme, props, run, shared, setShared } from "herdr";
 import { api, watchWorkspace } from "./kit/cst.js";
 import { palette, isDark, FONT } from "./kit/tokens.js";
 import { Button, Empty, Problem, plainError } from "./kit/ui.js";
@@ -43,9 +43,26 @@ export default class CaptainDeployments extends View {
       if (this.demo.open) this.openRow(this.d.rows.find((r) => r.id === this.demo.open), cx, this.demo.part ?? null);
       return;
     }
+    this.asked = 0;           // the `at` of the last request from another screen that was handled
+    this.takeOpen(cx);
     this.load(cx);
     watchWorkspace(cx, (cx) => { this.page = null; this.load(cx); });
     cx.timer.every(15000, (cx) => this.load(cx));
+    // A link on another screen can't reach this screen's props: it sets the shared "open" value and selects this
+    // place. Looked at a few times a second, as the other screens do, so the link lands without a wait.
+    cx.timer.every(300, (cx) => this.takeOpen(cx));
+  }
+
+  /** What another screen asked this one to show: one model's page ("Open in Deployments" on a project's page), or
+   *  the list ("All deployments"). Each request carries the time it was made, and is handled once. */
+  takeOpen(cx) {
+    const o = shared("captain.open");
+    if (!o || o.section !== "deployments" || !o.at || o.at === this.asked) return;
+    this.asked = o.at;
+    if (!o.open) { this.page = null; this.wanted = null; return cx.notify(); }
+    const row = this.d?.rows.find((x) => x.id === o.open);
+    if (row) this.openRow(row, cx);
+    else { this.wanted = o.open; this.load(cx, true); }  // not read yet, or made a moment ago: ask, then open it
   }
 
   load(cx, fresh = false) {
