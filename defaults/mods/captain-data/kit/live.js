@@ -174,6 +174,22 @@ export function watchLive(cx, topics, onChange) {
   return () => { S.watchers.delete(w); retopic(cx); };
 }
 
+/** For a loop that waits on something (a job): `const ear = hear(cx, ["job:" + id])` BEFORE the first read, then
+ *  read, and `await ear.next()` before reading again. `next()` resolves the moment a topic is told, and at once
+ *  if it was told while the loop was reading, so nothing said between two reads is lost. `ear.stop()` when done.
+ *  While the channel is down the kit tells every two seconds, so the loop still moves. */
+export function hear(cx, topics) {
+  let told = false, wake = null;
+  const stop = watchLive(cx, topics, () => { told = true; wake?.(); });
+  return {
+    next() {
+      if (told) { told = false; return Promise.resolve(); }
+      return new Promise((resolve) => { wake = () => { wake = null; told = false; resolve(); }; });
+    },
+    stop,
+  };
+}
+
 /** Change what a watcher follows (a page that opens another thing): returns the new stop function. */
 export function rewatch(stop, cx, topics, onChange) {
   stop?.();

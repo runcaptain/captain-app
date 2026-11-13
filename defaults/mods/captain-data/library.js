@@ -57,6 +57,7 @@ export class Library {
       if (!r.ok) { this.say(sentence(r.data?.detail ?? r.error) || "Couldn't start the import.", "fail"); cx.notify(); return; }
       this.importPath.set_value("");
       this.job = { id: r.data.job, label, folder: folder ?? "", progress: 0, status: "running", message: "" };
+      this.tick(cx); // read it once now: from here on the job says so itself on the live channel
       cx.notify();
     });
     cx.notify();
@@ -85,6 +86,7 @@ export class Library {
         this.summary = { ...r.data.result, folder: j.folder, label: j.label };
         this.job = null;
         this.refresh(cx);
+        this.host.catalog.load(cx); // what it made is in the one list at once
         // The dataset on screen got a new version: show it.
         const sel = this.host.sel;
         if (sel && (r.data.result?.updated ?? []).some((x) => refName(x.ref) === sel)) this.host.select(cx, sel);

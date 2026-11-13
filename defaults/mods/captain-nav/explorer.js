@@ -11,6 +11,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { shared, setShared, openOverlay, run, layout } from "herdr";
 import { icon } from "./kit/icons.js";
 import { api, workspace } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { loadExplorer, words, childKinds, nodeIcon, nodeName, nodeKey, currentScope } from "./kit/scopes.js";
 import { MlflowList } from "./kit/mlflow.js";
 import { Brand } from "./kit/brands.js";
@@ -56,7 +57,8 @@ export class Explorer {
       const rev = shared("captain.explorer.rev") ?? null;
       if (rev !== this.rev) { this.rev = rev; this.load(cx); }
     });
-    cx.timer.every(15000, (cx) => this.load(cx));
+    // The tree reads again the moment a project, a run or a dataset changes (the live channel), not on a clock.
+    watchLive(cx, ["projects", "runs", "data"], (cx) => this.load(cx));
     // The experiments follow the Explorer's pick (X-CST-Scope): re-read them when it changes.
     let pick = JSON.stringify(shared("captain.scope") ?? null);
     cx.timer.every(400, (cx) => { const p = JSON.stringify(shared("captain.scope") ?? null); if (p !== pick) { pick = p; this.load(cx); } });
