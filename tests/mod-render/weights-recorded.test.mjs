@@ -141,6 +141,9 @@ test('a refusal from the services is shown in their own sentence, and a missing 
   const h = await page('tiny');
   await h.click('wt-n-1-1');
   h.mod.handInput.set_value('3');
+  h.mod.handInput.handlers.change({}, h.cx); // typing stages the value
+  await h.idle(1);
+  assert.ok(!asked.some(([p]) => p.endsWith('/edits')), 'staging sends nothing');
   await h.click('wt-hand-set');
   assert.equal(textOf(h, 'wt-hand-note'), 'This edit changes nothing: every number it names already has that value.');
   const sent = asked.find(([p]) => p.endsWith('/edits'));

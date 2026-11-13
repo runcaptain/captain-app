@@ -61,7 +61,7 @@ export function chainRows(net, run, grad, at) {
 /** The chain rule block, for the inspector, when a weight is picked and gradients are worked out. */
 export function ChainBlock(c, v) {
   if (!v.selW || !v.grad || !v.run) return null;
-  const r = chainRows(v.net, v.run, v.grad, v.selW);
+  const r = chainRows(v.shown ?? v.net, v.run, v.grad, v.selW);
   return v_flex().id("wt-chain").gap(4).p(8).border_1().border_color(c.rule)
     .child(div().text_size(12.5).font_semibold().child("The chain rule for the picked weight"))
     .child(div().text_size(11.5).line_height("17px").text_color(c.grey500).child("How much the cost moves when this weight moves a little: three numbers, multiplied."))

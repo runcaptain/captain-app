@@ -4,7 +4,7 @@
 import { div, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { int } from "./kit/num.js";
-import { costOf } from "./net.js";
+import { costOf, forward } from "./net.js";
 
 const MAX_POINTS = 60; // the curve shows the last 60 steps
 
@@ -78,6 +78,11 @@ export function CostPanel(c, v, { width, height, compact = false }) {
   const { net, run } = v;
   const e = net.examples[v.inputAt];
   const here = run && e ? costOf(net, run.a.at(-1), e.y) : null;
+  // While a change by hand waits to be saved, `run` is the network with that change: the number is a preview and
+  // says so, with the cost as it is now beside it.
+  const staged = Boolean(v.staged) && here != null;
+  const hereText = here == null ? "not run" : staged ? `if saved: ${cost3(here)}` : cost3(here);
+  const now = staged ? cost3(costOf(net, forward(net, e.x).a.at(-1), e.y)) : null;
   const t = v.test;
   const unknown = !t || t.unknown;
   const steps = costSteps(v.session, unknown ? null : t);
@@ -92,7 +97,7 @@ export function CostPanel(c, v, { width, height, compact = false }) {
   if (compact) {
     return h_flex().id("wt-cost").w(width).h(height).flex_none().gap(14).items_center().text_size(12.5)
       .child(div().flex_none().font_semibold().child("Cost"))
-      .child(h_flex().gap(5).flex_none().child(div().text_color(c.grey500).child("This input")).child(div().id("wt-cost-input").font_semibold().child(here == null ? "not run" : cost3(here))))
+      .child(h_flex().gap(5).flex_none().child(div().text_color(c.grey500).child("This input")).child(div().id("wt-cost-input").font_semibold().when(staged, (x) => x.text_color(c.blue)).child(hereText)))
       .child(h_flex().gap(5).min_w(0).child(div().flex_none().text_color(c.grey500).child("Test set")).child(div().id("wt-cost-test").flex_none().font_semibold().child(!t ? "reading" : t.hidden ? "hidden" : t.unknown ? "not scored" : cost3(t.cost)))
         .child(div().id("wt-cost-test-under").min_w(0).truncate().text_color(c.grey500).child(!t || t.unknown ? "" : t.of ? `${count(t.right)} of ${count(t.of)} right` : "")));
   }
@@ -101,7 +106,7 @@ export function CostPanel(c, v, { width, height, compact = false }) {
       .child(div().text_size(12.5).font_semibold().child("Cost"))
       .child(div().id("wt-cost-says").flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(COST_WORDS[net.cost ?? "squared_error"] ?? COST_WORDS.squared_error)))
     .child(h_flex().gap(22).items_start()
-      .child(number("wt-cost-input", "This input", here == null ? "not run" : cost3(here), e ? v.inputName(e, v.inputAt) : ""))
+      .child(number("wt-cost-input", "This input", hereText, staged ? `not saved. Now ${now}` : e ? v.inputName(e, v.inputAt) : ""))
       .child(number("wt-cost-test", t?.of ? `Test set (${count(t.of)} inputs)` : "Test set", !t ? "reading" : t.hidden ? "hidden" : t.unknown ? "not scored" : cost3(t.cost),
         !t ? "" : t.hidden ? "until the session is saved or closed" : t.unknown ? "an edit scores it" : t.of ? `${count(t.right)} of ${count(t.of)} right` : ""))
       .child(Curve(c, v, steps, curveW, 62)))
