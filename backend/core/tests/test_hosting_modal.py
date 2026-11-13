@@ -218,7 +218,7 @@ def test_the_plan_names_what_setup_makes_what_it_costs_and_changes_nothing(ws, m
     assert [r["resource"] for r in p["each_deploy"]] == ["Modal app", "Modal secret"]
     assert p["storage"] == f"modal://captain-search-test-serving@{ENV}/t"
     assert "nothing while it sleeps" in p["cost"]["text"] and p["cost"]["setup_usd"] == 0
-    assert p["login_policy"] is None and "modal token new" in p["login_text"]
+    assert p["login_policy"] is None and "cst cloud login modal" in p["login_text"] and "token new" not in p["login_text"]
     assert not modal.volumes and H.get("modal").status(ws)["status"] == "none"
     with pytest.raises(ValueError, match="Confirm first"):
         H.get("modal").setup(ws, environment=ENV)
@@ -244,7 +244,7 @@ def test_setup_refuses_a_volume_of_that_name_it_did_not_make(ws, modal):  # noqa
 
 def test_a_computer_that_is_not_signed_in_gets_one_sentence(ws, modal):  # noqa: F811
     modal.signed_out = True
-    with pytest.raises(ValueError, match="isn't signed in to Modal. Run `modal token new`"):
+    with pytest.raises(ValueError, match="isn't signed in to Modal. Sign in from Connect a cloud account"):
         _setup(ws)
 
 

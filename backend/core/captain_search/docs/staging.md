@@ -354,8 +354,8 @@ reach nothing else. The log is published into the workspace from Captain's side.
 the compute target `modal-serving`. There is no image repository and no role: Modal builds the image itself from
 the installed Captain the first time a model is deployed. Each deployed model is one Modal app and one Modal secret,
 named `<prefix>-<project>`. The secret holds what the endpoint is told (which bundle, where its storage is,
-the SHA-256 of the endpoint key, never the key) and is deleted with the app. Modal signs in by itself
-(`modal token new`), so there is no cloud login to pick and no policy to copy.
+the SHA-256 of the endpoint key, never the key) and is deleted with the app. Modal keeps its own sign-in on this
+computer (Connect a cloud account signs in with the browser, as does `cst cloud login modal`), so there is no policy to copy.
 
 Why a volume and not the workspace's bucket: Modal has no identity a bucket can trust, so the endpoint would need
 keys. Keys short enough to be safe run out under an endpoint that stays up for weeks. A volume needs none.

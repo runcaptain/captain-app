@@ -25,7 +25,7 @@ globalThis.fetch = async (url, opts = {}) => {
     return reply(200, { label, id, taken, next: taken ? `${id}-2` : id, text: taken ? `You already have a cloud account called ${id}. Captain will call this one ${id}-2.` : `Captain will call it ${id}.` });
   }
   if (p === '/api/cloud/check') { const v = u.searchParams.get('value'); return reply(200, v === 'us-west-9' ? { ok: false, text: 'AWS has no region called us-west-9. Did you mean us-west-1, us-west-2?' } : { ok: true, text: null }); }
-  if (p === '/api/cloud/signin') return reply(200, world.signedIn ? { found: true, text: null } : { found: false, text: 'No Modal sign-in on this computer yet. Run `modal token new` in a terminal, then come back.' });
+  if (p === '/api/cloud/signin') return reply(200, world.signedIn ? { found: true, text: null, why: null, browser: true } : { found: false, text: 'No Modal sign-in on this computer yet.', why: 'Sign in to Modal first.', browser: true });
   if (p === '/api/cloud/profiles' && opts.method === 'POST') return world.refuse ? reply(400, { error: world.refuse }) : reply(200, { name: body.name });
   if ((opts.method ?? 'GET') !== 'GET') return reply(400, { error: RAW });   // every other write is refused with the raw sentence
   return reply(200, []);
@@ -108,21 +108,20 @@ await h.click('form-go');
 for (let i = 0; i < 30 && !sent.some((x) => x[0] === 'POST' && x[1] === '/api/cloud/profiles'); i++) await h.idle(30);
 assert.equal(sent.find((x) => x[0] === 'POST' && x[1] === '/api/cloud/profiles')[2].name, 'gpu-cloud-2');
 
-// The Modal sign-in is looked for by itself. Not found: one muted line under the choice, and the button is off.
+// The Modal sign-in is looked for by itself. Not found: one line under the choice with the button that signs in,
+// and the main button is off. No command to type, and the sentence is not repeated at the bottom
+// (cloud-signin.test.mjs follows the sign-in itself).
 world = { signedIn: false };
 h = await open('cloud');
 await h.click('f-provider-modal');
 for (let i = 0; i < 20 && h.mod.values.auth === undefined; i++) await h.idle(30);
 await type(h, 'name', 'gpu cloud');
 await pause(h);
-assert.equal(text(h, 'f-auth-problem'), 'No Modal sign-in on this computer yet. Run `modal token new` in a terminal, then come back.', `under "Sign in with": ${h.text()}`);
+assert.equal(text(h, 'f-auth-problem'), 'No Modal sign-in on this computer yet.', `under "Sign in with": ${h.text()}`);
+assert.equal(text(h, 'form-why'), 'Sign in to Modal first.');
+assert.ok(!h.text().includes('token new') && !h.text().includes('terminal'), `no command to type: ${h.text()}`);
+assert.equal(text(h, 'f-auth-signin-go'), 'Sign in with your browser');
 assert.ok(!canPress(h));
-// The person signs in from a terminal and comes back: it is found by itself, with nothing pressed.
-world = { signedIn: true };
-h.mod.asked.auth.at = 0;                                  // the few seconds between looks have passed
-await pause(h, 50);
-assert.equal(byId(h, 'f-auth-problem').length, 0, 'found on the next look');
-assert.ok(canPress(h));
 
 // A region that doesn't exist is said while it is typed, under the Region field, and the button is off until it is fixed.
 world = { signedIn: true };

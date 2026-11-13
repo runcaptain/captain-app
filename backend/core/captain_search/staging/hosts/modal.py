@@ -9,7 +9,8 @@ Why a volume and not the workspace's bucket: Modal has no identity a bucket can 
 keys. Keys short enough to be safe (hours) run out under an endpoint that stays up for weeks, and long-lived keys
 in a secret are what least privilege is meant to avoid. The volume needs no keys and goes away with the setup.
 
-Modal signs in by itself (`modal token new`), so there is no `cst cloud` login and no policy to copy: a person who
+Modal keeps its own sign-in on this computer (Connect a cloud account signs in with the browser, as does
+`cst cloud login modal`), so there is no secret to keep and no policy to copy: a person who
 can deploy in the Modal workspace can do all of this.
 """
 from __future__ import annotations
@@ -80,7 +81,7 @@ class ModalHost(Host):
                                  f"Prices as of {PT.SERVERLESS_PRICED_AS_OF}."},
                 "login_policy": None,
                 "login_text": "Modal has no policy to grant. Whoever runs this needs to be signed in to Modal on this computer "
-                              "(`modal token new`) as a member who can deploy in that environment.",
+                              "(from Connect a cloud account, or with `cst cloud login modal`) as a member who can deploy in that environment.",
                 "text": f"Set up serving on Modal in {where}: " + ", ".join(f"{r['resource']} {r['name']}" for r in rows) + "."}
 
     def _modal(self):

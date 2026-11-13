@@ -5,7 +5,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay, notify, shared, setShared, run as runCommand } from "herdr";
-import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
+import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
 import { Button, Badge, ServiceError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
@@ -15,7 +15,7 @@ import { api } from "./kit/cst.js";
 import { recordsChanged } from "./kit/cst.js";
 import { watchView, publishView, safeFields } from "./kit/view.js";
 import { costState, loadPlaces, refreshEstimate, needsConfirm, costSlice, RunsOn, LOCAL } from "./kit/cost.js";
-import { liveStart } from "./kit/live.js";
+import { liveStart, watchLive } from "./kit/live.js";
 
 const IMPORT = { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} };
 
@@ -53,13 +53,15 @@ export default class CaptainForms extends View {
     this.touched = {}; this.sig = {}; this.changedAt = {}; this.tried = false;
     this.asked = {}; this.checking = {}; this.said = {}; this.names = {}; this.idOpen = {}; this.idStates = {};
     this.serverErrors = {}; this.formError = null;
+    // A browser sign-in started from a field (Connect a cloud account): null, or {key, state, id, link, code, text}.
+    this.signin = null; this.signinGen = 0; this.signinEar = null;
     // Where the work runs and what it costs there (kit cost.js), for a task with a "runs-on" field.
     this.cost = costState(this.values.compute || LOCAL);
     if (this.values.compute) this.cost.picked = true; // a place handed in with the form stays, whatever the default
     if (this.task) this.start(cx);
   }
 
-  close() { if (this.task) publishView("dialog", null); closeOverlay(props().overlay); }
+  close() { this.stopSignin(); if (this.task) publishView("dialog", null); closeOverlay(props().overlay); }
 
   start(cx) {
     // The form open over the page and what is filled in, for agents (cst app context). A secret field reads
@@ -77,6 +79,8 @@ export default class CaptainForms extends View {
     // the services runs by itself once the typing pauses. Nothing waits for the button.
     cx.timer.every(250, (cx) => this.watch(cx));
     liveStart(cx); // a task that waits on a job hears it on the live channel (tasks.js)
+    // A field that looks for a sign-in looks again the moment a login changes on this computer.
+    if (this.task.fields.some((f) => f.signin)) watchLive(cx, ["logins"], (cx) => { for (const f of this.task.fields) if (f.signin && !this.signin) delete this.asked[f.key]; cx.notify(); });
     // A default can depend on what the caller preset (New candidate opens on your own command when a ranker is named).
     for (const f of this.task.fields) if (f.default !== undefined) this.values[f.key] ??= typeof f.default === "function" ? f.default(this.values) : f.default;
     // Text inputs keep state, which gpui-kit only lets a view create outside render.
@@ -140,7 +144,8 @@ export default class CaptainForms extends View {
     for (const f of this.shown()) {
       const own = this.problemOf(f);
       if (own) return own;
-      if (this.said[f.key]?.problem) return this.said[f.key].text;
+      // A field can give the bottom line its own few words, so the sentence under it is not said twice.
+      if (this.said[f.key]?.problem) return this.said[f.key].why ?? this.said[f.key].text;
     }
     const b = this.task.blocked?.(this.values, this.ctx);
     return b ? (typeof b === "string" ? b : "Something above still needs choosing.") : null;
@@ -166,7 +171,7 @@ export default class CaptainForms extends View {
       if (!ask) continue;
       const v = this.values[f.key];
       const on = ask === "status" ? JSON.stringify(f.statusOn ? f.statusOn(this.values) : v ?? null) : String(v ?? "");
-      const due = this.asked[f.key]?.on !== on || (f.recheck && now - (this.asked[f.key]?.at ?? 0) > f.recheck && !this.checking[f.key]);
+      const due = this.asked[f.key]?.on !== on; // asked again when what it depends on changes, never on a clock
       if (!due || now - (this.changedAt[f.key] ?? 0) < 400) continue;
       if (ask !== "status" && String(v ?? "").trim() === "") { this.asked[f.key] = { on, at: now }; if (this.said[f.key] || this.names[f.key]) { delete this.said[f.key]; delete this.names[f.key]; redraw = true; } continue; }
       const first = this.asked[f.key]?.on !== on;
@@ -184,7 +189,8 @@ export default class CaptainForms extends View {
             said = t ? { text: t, problem: true } : null;
           } else {
             const t = await f.status(this.ctx, this.values);
-            said = t?.text ? { text: t.text, problem: Boolean(t.problem) } : null;
+            // `browser`: Captain can sign in to this with the browser. `found`: a sign-in is already here.
+            said = t?.text || t?.browser ? { text: t.text ?? null, problem: Boolean(t.problem), why: t.why ?? null, browser: Boolean(t.browser), found: t.found ?? null } : null;
           }
         } catch { said = null; }
         if (this.asked[f.key]?.on !== on) return; // the field moved on while this was asked
@@ -242,6 +248,7 @@ export default class CaptainForms extends View {
     delete this.errors[f.key];
     // A field whose starting value follows this pick (how a project trains follows what it builds) starts again.
     if (changed) for (const g of this.task.fields) if (g.resetOn === f.key && typeof g.default === "function") this.values[g.key] = g.default(this.values);
+    if (changed && this.signin) { this.stopSignin(); this.signin = null; } // a sign-in for the other choice is not waited for
     cx.notify();
     cx.spawn(async (cx) => this.loadOptions(cx));
   }
@@ -342,6 +349,7 @@ export default class CaptainForms extends View {
       if (f.when && !f.when(this.values, this.ctx)) continue;
       if (f.kind === "dynamic") {
         for (const d of f.fields(this.ctx, this.values)) {
+          if (d.hidden) continue; // one Captain fills by itself (which sign-in a browser sign-in was kept as)
           const type = d.secret ? "secret" : d.type === "secret" ? "secret" : d.type === "choice" ? "choice" : "text";
           const choices = (d.choices ?? []).map((ch) => (typeof ch === "object" ? { value: ch.value, label: ch.label ?? String(ch.value) } : { value: ch, label: String(ch) }));
           out.push({ key: `af:${d.key ?? d.name}`, label: d.label ?? d.name, kind: type, required: Boolean(d.required), optional: Boolean(d.optional),
@@ -403,8 +411,13 @@ export default class CaptainForms extends View {
   }
 
   field(c, f) {
-    const err = this.errors[f.key] ?? this.shownProblem(f);
     const said = this.said[f.key];
+    // While a browser sign-in for this field is under way or has just failed, its own lines say where things
+    // stand, so the field's sentence is not shown as well.
+    const signing = f.signin && this.signin?.key === f.key ? this.signin : null;
+    const err = signing ? null : this.errors[f.key] ?? this.shownProblem(f);
+    // No sign-in yet is not a mistake the person made, and the button to fix it is right under it: not in red.
+    const calm = Boolean(f.signin) && Boolean(said?.browser) && err === said?.text;
     // What the services said about this field that is not a problem (a sign-in that was found), or that they are
     // being asked now.
     const note = f.name ? null : this.checking[f.key] ? "Checking..." : said && !said.problem ? said.text : null;
@@ -465,9 +478,90 @@ export default class CaptainForms extends View {
     }
     return v_flex().gap(5).child(label).child(control)
       .when(Boolean(f.name) && Boolean(this.nameLine(c, f)), (e) => e.child(this.nameLine(c, f)))
-      .when(Boolean(err), (e) => e.child(div().id(`f-${f.key}-problem`).text_size(12).line_height("17px").text_color(c.fail).child(err)))
-      .when(!err && Boolean(note), (e) => e.child(div().id(`f-${f.key}-note`).text_size(12).line_height("17px").text_color(c.grey500).child(note)))
-      .when(!err && !note && Boolean(help), (e) => e.child(div().text_size(12).line_height("17px").text_color(c.grey500).child(help)));
+      .when(Boolean(err), (e) => e.child(div().id(`f-${f.key}-problem`).text_size(12).line_height("17px").text_color(calm ? c.grey900 : c.fail).child(err)))
+      .when(Boolean(f.signin) && (Boolean(signing) || Boolean(said?.browser)), (e) => e.child(this.signinBlock(c, f, signing, said)))
+      .when(!err && !signing && Boolean(note), (e) => e.child(div().id(`f-${f.key}-note`).text_size(12).line_height("17px").text_color(c.grey500).child(note)))
+      .when(!err && !signing && !note && Boolean(help), (e) => e.child(div().text_size(12).line_height("17px").text_color(c.grey500).child(help)));
+  }
+
+  // ---- signing in with the browser (a field with `signin`: tasks.js) ------------------------------------------------
+
+  /** Under the choice: the one outlined button, or where the sign-in stands. Never a command to type. */
+  signinBlock(c, f, signing, said) {
+    const id = `f-${f.key}-signin`;
+    const line = (key, text, color) => div().id(`${id}-${key}`).text_size(12).line_height("17px").text_color(color).child(text);
+    const link = (key, text, on) => div().id(`${id}-${key}`).text_size(12).text_color(c.blue).cursor_pointer().on_click(on).child(text);
+    if (!signing) return h_flex().child(Button(c, `${id}-go`, said?.found ? "Sign in to another account" : "Sign in with your browser", (_e, cx) => this.signIn(cx, f), { small: true }));
+    if (signing.state === "starting") return line("starting", "Opening your browser.", c.grey500);
+    if (signing.state === "waiting") return v_flex().id(id).gap(6)
+      .child(line("waiting", "Waiting for you to finish signing in in your browser.", c.grey900))
+      .when(Boolean(signing.code), (e) => e.child(h_flex().gap(8).items_center()
+        .child(div().text_size(12).text_color(c.grey500).child("Your code"))
+        .child(div().id(`${id}-code`).px(8).h(26).flex().items_center().bg(c.surface2).border_1().border_color(c.rule).font_family(MONO).text_size(13).text_color(c.navy).child(signing.code))
+        .child(div().id(`${id}-copy`).size(26).flex().flex_none().items_center().justify_center().cursor_pointer().text_color(c.grey500).hover((s) => s.text_color(c.blue))
+          .accessibility_label("Copy the code").tooltip("Copy the code").on_click((_e, cx) => cx.write_to_clipboard(signing.code)).child(svg(icon("copy")).size(14)))))
+      .child(h_flex().gap(16).items_center()
+        .child(link("open", "Open the link again", (_e, cx) => cx.open_url(signing.link)))
+        .child(link("stop", "Stop waiting", (_e, cx) => { this.stopSignin(); this.signin = null; cx.notify(); })));
+    // It ended without a sign-in: one sentence, and the one thing to do about it.
+    return v_flex().id(id).gap(6)
+      .child(line("problem", signing.text, signing.state === "missing_tool" ? c.grey900 : c.fail))
+      .child(h_flex().child(signing.state === "missing_tool"
+        ? Button(c, `${id}-install`, "Copy the install line", (_e, cx) => cx.write_to_clipboard(signing.install), { small: true })
+        : Button(c, `${id}-again`, "Try again", (_e, cx) => this.signIn(cx, f), { small: true })));
+  }
+
+  /** Start the sign-in: the services start the cloud's own, and hand back the link, which is opened here. */
+  signIn(cx, f) {
+    if (this.signin?.state === "starting") return;
+    this.stopSignin();
+    const gen = ++this.signinGen;
+    this.signin = { key: f.key, state: "starting" };
+    cx.notify();
+    cx.spawn(async (cx) => {
+      let r;
+      try { r = await f.signin.start(this.values); } catch { r = { ok: false }; }
+      if (gen !== this.signinGen) return; // stopped, or started again, while this was asked
+      if (!r.ok || !r.data?.state) { this.signin = { key: f.key, state: "failed", text: "Captain couldn't start the sign-in. Try again." }; cx.notify(); return; }
+      this.signinHeard(cx, f, r.data, true);
+    });
+  }
+
+  /** What the services say about the sign-in now. Waiting: listen for its end on the live channel. Ended: go on. */
+  signinHeard(cx, f, job, first = false) {
+    if (job.state === "waiting") {
+      this.signin = { key: f.key, state: "waiting", id: job.id, link: job.link, code: job.code ?? null };
+      if (first) {
+        cx.open_url?.(job.link);
+        const gen = this.signinGen;
+        this.signinEar = watchLive(cx, [`signin:${job.id}`], (cx) => cx.spawn(async (cx) => {
+          const r = await f.signin.read(job.id);
+          if (gen !== this.signinGen) return;
+          if (r.ok && r.data) this.signinHeard(cx, f, r.data);
+          else if (r.status === 404) this.signinHeard(cx, f, { state: "failed", text: "The sign-in was interrupted. Try again." }); // the services restarted
+        }));
+      }
+    } else {
+      this.signinEar?.(); this.signinEar = null;
+      if (job.state === "done") {
+        // The sign-in is chosen by itself, and the field is asked again at once so it reads as found.
+        f.signin.done?.(this.values, this.ctx, job);
+        this.signin = null;
+        delete this.asked[f.key];
+      } else if (job.state === "stopped") this.signin = null;
+      else this.signin = { key: f.key, state: job.state === "missing_tool" ? "missing_tool" : "failed", text: job.text ?? "The sign-in did not finish. Try again.", install: job.install ?? null };
+    }
+    cx.notify();
+  }
+
+  /** Stop waiting: the services end the cloud's tool, and nothing is kept. */
+  stopSignin() {
+    this.signinGen++;
+    this.signinEar?.(); this.signinEar = null;
+    const s = this.signin;
+    if (s?.state !== "waiting" || !s.id) return;
+    const f = this.task?.fields.find((x) => x.key === s.key);
+    Promise.resolve(f?.signin?.stop?.(s.id)).catch(() => null);
   }
 
   submit(cx) {

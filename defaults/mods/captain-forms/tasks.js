@@ -596,15 +596,30 @@ export const TASKS = [
     load: async () => ({ providers: (await api("/api/cloud/providers")).data ?? [] }),
     fields: [
       { key: "provider", label: "Cloud", kind: "choice", required: true, options: (ctx) => (ctx.providers ?? []).map((p) => ({ value: p.provider, label: { aws: "AWS", gcp: "Google Cloud", azure: "Azure", modal: "Modal" }[p.provider] ?? p.provider, brand: p.provider })) },
-      // The sign-in this choice relies on is looked for by itself, and again every few seconds, so a person who
-      // signs in from a terminal sees it found when they come back. No button asks.
+      // The sign-in this choice relies on is looked for by itself. Where the cloud has a browser sign-in, the form
+      // offers it under the choice ("Sign in with your browser") and hears its end on the live channel: no command
+      // is ever shown, and nothing is asked on a clock.
       { key: "auth", label: "Sign in with", kind: "choice", required: true, when: (v) => Boolean(v.provider),
         options: (ctx, v) => ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).map((a) => ({ value: a.mode, label: a.label })),
-        statusOn: (v) => [v.provider, v.auth], recheck: 3000,
-        status: async (_ctx, v) => {
+        statusOn: (v) => [v.provider, v.auth, v["af:modal_profile"] ?? ""],
+        status: async (ctx, v) => {
           if (!v.provider || !v.auth) return null;
-          const r = await api(`/api/cloud/signin?provider=${encodeURIComponent(v.provider)}&auth=${encodeURIComponent(v.auth)}`, { scoped: false });
-          return r.ok && r.data?.found === false ? { text: r.data.text, problem: true } : null;
+          const r = await api(`/api/cloud/signin?provider=${encodeURIComponent(v.provider)}&auth=${encodeURIComponent(v.auth)}&profile=${encodeURIComponent(v["af:modal_profile"] ?? "")}`, { scoped: false });
+          if (!r.ok) return null;
+          if (r.data?.found === false) return { text: r.data.text, why: r.data.why, problem: true, browser: Boolean(r.data.browser), found: false };
+          // Found. After a sign-in made here, say who it is.
+          return { text: ctx.signed?.provider === v.provider ? ctx.signed.text : null, browser: Boolean(r.data?.browser), found: r.data?.found ?? null };
+        },
+        signin: {
+          start: (v) => api("/api/cloud/signin/start", { body: { provider: v.provider }, scoped: false, timeout: 40 }),
+          read: (id) => api(`/api/cloud/signin/jobs/${encodeURIComponent(id)}`, { scoped: false }),
+          stop: (id) => api(`/api/cloud/signin/jobs/${encodeURIComponent(id)}/stop`, { method: "POST", body: {}, scoped: false }),
+          // Modal keeps the new sign-in under its own name. When it is not the one this computer uses by default,
+          // the login remembers which, so this account is the one Captain uses for it.
+          done: (v, ctx, job) => {
+            ctx.signed = { provider: v.provider, text: job.text };
+            if (v.provider === "modal") v["af:modal_profile"] = job.result?.active ? undefined : job.result?.profile;
+          },
         } },
       // Any words: Captain keeps them as the label and makes its own id from them (checks.js, naming.py).
       { key: "name", label: "Name", name: "cloud", placeholder: "GPU cloud", required: true },

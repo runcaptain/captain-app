@@ -8,7 +8,7 @@ there is no registry and no role. The bundle and the request log live in a Modal
 Captain never deploys over, stops or deletes an app or a secret it did not make: an app of that name that does not
 carry Captain's tag, or a secret of that name Captain has no record of, stops the deploy with a sentence.
 
-Modal's login is its own (`modal token new`), not a `cst cloud` profile.
+Modal's sign-in is its own, kept on this computer (`cst cloud login modal` makes one with the browser).
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def signed_out(e: Exception) -> str | None:
     """A sentence when Modal refused because nobody is signed in on this computer."""
     s = f"{type(e).__name__} {e}".lower()
     if "autherror" in s or "token" in s and ("missing" in s or "invalid" in s or "not found" in s) or "unauthenticated" in s:
-        return "This computer isn't signed in to Modal. Run `modal token new` in a terminal, then try again."
+        return "This computer isn't signed in to Modal. Sign in from Connect a cloud account, or with `cst cloud login modal`, then try again."
     return None
 
 

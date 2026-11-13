@@ -723,6 +723,26 @@ def cloud_test(name: str):
         raise typer.Exit(2)
 
 
+@cloud_app.command("login")
+def cloud_login(provider: str = typer.Argument(..., help="modal"),
+                minutes: float = typer.Option(10.0, "--minutes", help="how long to wait for the sign-in to be finished in the browser")):
+    """Sign in to a cloud with its own browser sign-in: print the link to open (and the short code, where the cloud
+    uses one), then wait until it is finished. A sign-in that is already on this computer is never replaced."""
+    from .. import cloud_signin
+
+    job = _do(cloud_signin.start, provider, None, minutes * 60)
+    if job["state"] == "missing_tool":
+        fail(f"{job['text']} Install it with: {job['install']}", 2)
+    if job["state"] == "waiting":
+        # The link goes to stderr, so `--json` still prints one JSON answer at the end.
+        typer.echo(f"Open this link to sign in to {job['label']}:\n  {job['link']}" + (f"\nThen enter this code: {job['code']}" if job["code"] else "")
+                   + "\nWaiting for you to finish signing in in your browser.", err=True)
+        job = cloud_signin.wait(job["id"], minutes * 60 + 30) or job
+    if job["state"] != "done":
+        fail(job.get("text") or f"The {job['label']} sign-in did not finish.", 2)
+    emit(job, job["text"])
+
+
 @cloud_app.command("rm")
 def cloud_rm(name: str):
     from .. import cloud

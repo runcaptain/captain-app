@@ -164,7 +164,7 @@ a service-principal login (the run used `az login`), a user-assigned identity, t
 Tested on a real Modal workspace on 2026-11-10, client 1.6.3, CPU containers, with the workspace in S3.
 
 - Install: `pip install 'captain-search[modal]'` (Modal 1.6 or newer).
-- Login: a Modal token for the team's Modal workspace (`modal token new`). The provider uses Modal's own login,
+- Login: a Modal token for the team's Modal workspace (`cst cloud login modal`, or Connect a cloud account in the app). The provider uses Modal's own login,
   not a `cst cloud` profile.
 - Make once:
   1. A Modal secret with credentials for the workspace bucket only. For S3: `AWS_ACCESS_KEY_ID`,

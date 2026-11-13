@@ -3712,12 +3712,47 @@ def cloud_check(provider: str, field: str, value: str = ""):
 
 
 @app.get("/api/cloud/signin", dependencies=A)
-def cloud_signin(provider: str, auth: str):
-    """Is the sign-in this choice relies on found on this computer? {found: true | false | null, text}. The Connect a
-    cloud account form asks by itself, as the person chooses."""
+def cloud_signin(provider: str, auth: str, profile: str = ""):
+    """Is the sign-in this choice relies on found on this computer? {found: true | false | null, text, why,
+    browser}. The Connect a cloud account form asks by itself, as the person chooses. `browser` says Captain can
+    sign in to this cloud with the browser. `profile` is the one a browser sign-in in this form was kept under."""
     from . import cloud
 
-    return cloud.signin_found(provider, auth)
+    return cloud.signin_found(provider, auth, profile or None)
+
+
+@app.post("/api/cloud/signin/start", dependencies=A)
+def cloud_signin_start(body: dict):
+    """{provider}. Start that cloud's own browser sign-in and answer once its link is known: {id, state, link,
+    code, text, install}. `state` is waiting (open `link`; `code` is the short code where the cloud uses one),
+    missing_tool (`install` is the line that installs it) or failed (`text` is one sentence). When it ends the
+    change feed is told under `logins` and `signin:<id>`. It never replaces a sign-in that is already here."""
+    from . import cloud_signin
+
+    return cloud_signin.start(str(body.get("provider") or ""))
+
+
+@app.get("/api/cloud/signin/jobs/{job_id}", dependencies=A)
+def cloud_signin_job(job_id: str):
+    """One browser sign-in: {id, state, link, code, text, result}. `state` ends as done, failed, timed_out or
+    stopped. `text` is Captain's own sentence, never what the cloud's tool printed."""
+    from . import cloud_signin
+
+    job = cloud_signin.get(job_id)
+    if job is None:
+        raise HTTPException(404, "That sign-in is no longer running. Start it again.")
+    return job
+
+
+@app.post("/api/cloud/signin/jobs/{job_id}/stop", dependencies=A)
+def cloud_signin_stop(job_id: str):
+    """Stop waiting for a browser sign-in. Nothing is kept."""
+    from . import cloud_signin
+
+    job = cloud_signin.stop(job_id)
+    if job is None:
+        raise HTTPException(404, "That sign-in is no longer running.")
+    return job
 
 
 @app.post("/api/cloud/profiles", dependencies=A)

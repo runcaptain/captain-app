@@ -83,9 +83,9 @@ def test_the_name_edgar_typed_connects_and_no_raw_sentence_ever_comes_back(api):
 def test_the_modal_sign_in_is_looked_for_without_a_button_and_the_label_holds_no_command(api, monkeypatch):
     modal = next(p for p in cloud.PROVIDERS if p["provider"] == "modal")
     assert modal["auth"][0]["label"] == "This computer's Modal sign-in", "no command in a label"
-    monkeypatch.setattr(cloud, "_test_modal", lambda: {"ok": False})
+    monkeypatch.setattr(cloud, "_test_modal", lambda profile=None: {"ok": False})
     got = api("get", "/api/cloud/signin", params={"provider": "modal", "auth": "local"}).json()
-    assert got == {"found": False, "text": "No Modal sign-in on this computer yet. Run `modal token new` in a terminal, then come back."}
-    monkeypatch.setattr(cloud, "_test_modal", lambda: {"ok": True})
-    assert api("get", "/api/cloud/signin", params={"provider": "modal", "auth": "local"}).json() == {"found": True, "text": None}
-    assert api("get", "/api/cloud/signin", params={"provider": "aws", "auth": "profile"}).json() == {"found": None, "text": None}
+    assert got == {"found": False, "text": "No Modal sign-in on this computer yet.", "why": "Sign in to Modal first.", "browser": True}, "a task, never a command"
+    monkeypatch.setattr(cloud, "_test_modal", lambda profile=None: {"ok": True})
+    assert api("get", "/api/cloud/signin", params={"provider": "modal", "auth": "local"}).json() == {"found": True, "text": None, "why": None, "browser": True}
+    assert api("get", "/api/cloud/signin", params={"provider": "aws", "auth": "profile"}).json() == {"found": None, "text": None, "why": None, "browser": False}

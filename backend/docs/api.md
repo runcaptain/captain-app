@@ -679,6 +679,17 @@ last_test: {ok, identity, error, at}}, profiles: [...], compute: [{name, kind, p
 can_run_in_cloud, notes}`. `POST /api/cloud/profiles/{name}/test` (or `cst cloud test`) checks the login and saves
 `last_test`.
 
+**Signing in with the browser.** `POST /api/cloud/signin/start {provider}` (or `cst cloud login <provider>`) starts
+that cloud's own browser sign-in and answers once its link is known: `{id, state, link, code, text, install}`.
+`state` is `waiting` (open `link`; `code` is the short code where the cloud uses one), `missing_tool` (`install` is
+the line that installs the cloud's tool) or `failed`. `GET /api/cloud/signin/jobs/{id}` reads it and
+`POST /api/cloud/signin/jobs/{id}/stop` stops it. It ends as `done`, `failed`, `timed_out` (10 minutes) or
+`stopped`, and the change feed is told under `logins` and `signin:<id>`, so a screen never asks on a clock. `text`
+is Captain's own sentence, never what the tool printed. Today: `modal`. A sign-in never replaces one that is
+already on the computer: Modal's is kept as a new profile (`captain`, else `captain-2`, ...) in Modal's settings
+file and is not made the active one, unless the file held no profile. `GET /api/cloud/signin?provider=&auth=`
+says whether the sign-in a choice relies on is there: `{found, text, why, browser}`.
+
 ## Secrets
 
 `POST /api/secrets {name, value}` stores a value in the OS keychain in the daemon's own process, so a password typed

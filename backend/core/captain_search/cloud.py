@@ -41,11 +41,13 @@ PROVIDERS = [
             {"name": "connection_string", "label": "Connection string", "secret": True, "required": True}]},
         {"mode": "default", "label": "Default credential (az login, managed identity)", "fields": [
             {"name": "subscription_id", "label": "Subscription ID", "secret": False, "required": False}]}]},
-    # Modal signs in by itself on this computer (`modal token new`), so the login holds no secret: connecting it
-    # here is how a person says "offer Modal in this Captain", and which Modal environment to use.
+    # Modal keeps its own sign-in on this computer, so the login holds no secret: connecting it here is how a person
+    # says "offer Modal in this Captain", and which Modal environment to use. `modal_profile` is filled by Captain
+    # after a browser sign-in that was kept beside another one (cloud_signin.py): no person types it.
     {"provider": "modal", "label": "Modal", "auth": [
         {"mode": "local", "label": "This computer's Modal sign-in", "fields": [
-            {"name": "environment", "label": "Modal environment (blank for your default)", "secret": False, "required": False}]}]},
+            {"name": "environment", "label": "Modal environment (blank for your default)", "secret": False, "required": False},
+            {"name": "modal_profile", "label": "Modal profile", "secret": False, "required": False, "hidden": True}]}]},
 ]
 
 
@@ -223,7 +225,7 @@ def _test_profile(name: str) -> dict:
             creds.refresh(Request())
             return {"ok": True, "identity": getattr(creds, "service_account_email", None) or f"project {project}"}
         if p["provider"] == "modal":
-            return _test_modal()
+            return _test_modal((p.get("fields") or {}).get("modal_profile"))
         cred, conn, _ = azure_credential(p)
         if conn:
             from azure.storage.blob import BlobServiceClient  # type: ignore
@@ -238,27 +240,45 @@ def _test_profile(name: str) -> dict:
         return {"ok": False, "error": str(e)[:400]}
 
 
-def _test_modal() -> dict:
-    """Is this computer signed in to Modal? Read from Modal's own settings: nothing is sent anywhere."""
+def _test_modal(profile: str | None = None) -> dict:
+    """Is this computer signed in to Modal? Read from Modal's own settings: nothing is sent anywhere. With
+    `profile`, the sign-in Captain kept under that name (cloud_signin.py) is the one looked for."""
+    if profile:
+        from . import cloud_signin
+
+        if any(p["name"] == profile and p["signed_in"] for p in cloud_signin.modal_profiles()):
+            return {"ok": True, "identity": "the Modal sign-in Captain keeps for this account"}
+        return {"ok": False, "error": MODAL_SIGNED_OUT}
     from modal.config import config  # type: ignore
 
     if config.get("token_id") and config.get("token_secret"):
         return {"ok": True, "identity": "this computer's Modal sign-in"}
-    return {"ok": False, "error": "This computer isn't signed in to Modal. Run `modal token new` in a terminal."}
+    return {"ok": False, "error": MODAL_SIGNED_OUT}
 
 
-def signin_found(provider: str, auth: str) -> dict:
+# Said wherever Modal turns out to have no sign-in here. It names the task, in the app and for agents, never a
+# command to type into a terminal.
+MODAL_SIGNED_OUT = ("This computer isn't signed in to Modal. Sign in from Connect a cloud account, "
+                    "or with `cst cloud login modal`.")
+
+
+def signin_found(provider: str, auth: str, profile: str | None = None) -> dict:
     """For the Connect a cloud account form, which checks by itself: is the sign-in this choice relies on there?
-    {found, text}. Only a sign-in kept on this computer can be looked for without a secret: Modal's. For anything
-    else `found` is None, and nothing is said."""
+    {found, text, why, browser}. Only a sign-in kept on this computer can be looked for without a secret: Modal's.
+    For anything else `found` is None, and nothing is said. `browser` is whether Captain can sign in to this cloud
+    with the browser (cloud_signin.py), so the form offers that and never a command. `why` is the few words for
+    the form's bottom line, so the sentence under the choice is not said twice."""
+    from . import cloud_signin
+
+    browser = provider in cloud_signin.SPECS
     if provider == "modal" and auth == "local":
         try:
-            ok = bool(_test_modal().get("ok"))
+            ok = bool(_test_modal(profile or None).get("ok"))
         except Exception:  # noqa: BLE001  the Modal package is not installed here
             ok = False
-        return {"found": ok, "text": None if ok else
-                "No Modal sign-in on this computer yet. Run `modal token new` in a terminal, then come back."}
-    return {"found": None, "text": None}
+        return {"found": ok, "text": None if ok else "No Modal sign-in on this computer yet.",
+                "why": None if ok else "Sign in to Modal first.", "browser": browser}
+    return {"found": None, "text": None, "why": None, "browser": browser}
 
 
 def provider_of(uri: str) -> str:
