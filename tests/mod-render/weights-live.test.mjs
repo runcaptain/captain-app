@@ -1,7 +1,7 @@
 // What the agent is doing, live, on the Weights page: an event told on the change feed makes its line appear in
 // words and what it touched pulse, with no click and no timer that reads data; an edit opens to its old and new
 // values and can be taken back; the header is the session's ledger; and "From the weights alone" shows only when
-// the ledger says no sandbox was allowed and no forward pass was used.
+// the ledger says no sandbox was allowed, no forward pass was used, and no score was shown before the last edit.
 //   node --import ./tests/mod-render/stubs/register.mjs --test tests/mod-render/weights-live.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -125,26 +125,37 @@ function serve(ledger, events = []) {
     '/api/weights/sessions/ws-1/evaluate': { ok: true, data: { sets: { held_out: { name: 'held out', defined: true, of: 200, before: 0.19, after: 0.19, right_before: 179, right_after: 179, answers_changed: 0 } } } },
   };
 }
-const LEDGER = { raw_weights: true, weights_read: 13, sandbox: false, sandbox_used: false, forward_allowed: 20, forward_used: 0, gradients_computed: false, changed: 0, total: 13, share: 0, weights_alone: true, label: 'from the weights alone' };
+const LEDGER = { raw_weights: true, weights_read: 13, sandbox: false, sandbox_used: false, forward_allowed: 20, forward_used: 0, gradients_computed: false, changed: 0, total: 13, share: 0, feedback: true, scores_shown: false, weights_alone: true, label: 'from the weights alone' };
 
-test('"From the weights alone" shows only when the ledger says no sandbox and no forward pass', async () => {
+test('"From the weights alone" shows only when the ledger says no sandbox, no forward pass and no score shown along the way', async () => {
   serve(LEDGER);
   let h = await page('tiny');
   assert.equal(textOf(h, 'wt-alone'), 'From the weights alone');
   assert.equal(textOf(h, 'wt-ledger'), 'Raw weights: 13 read. Sandbox: not allowed. Forward passes: 0 of 20 used.');
   // The services' own network drew: cross-entropy, their names, and the test set scored by them.
   assert.ok(textOf(h, 'wt-title') === 'tiny' && h.text().includes('exactly one is high'));
-  assert.equal(textOf(h, 'wt-cost-test'), '0.190');
-  assert.ok(h.text().includes('Test set (200 inputs)') && h.text().includes('179 of 200 right'));
+  // The services keep the test set, and the page never asks them to score it: a score shown is feedback, and
+  // asking would end "from the weights alone" for the session. Until the record holds a score, it says so.
+  assert.equal(textOf(h, 'wt-cost-test'), 'not scored');
+  assert.equal(textOf(h, 'wt-cost-test-under'), 'an edit scores it');
   assert.ok(textOf(h, 'wt-cost-says').includes('cross-entropy'));
-  assert.ok(asked.some(([p]) => p === '/api/weights/models/tiny?session=ws-1'), 'the numbers are asked for as the session has edited them');
-  assert.equal(asked.filter(([p]) => p.endsWith('/evaluate')).length, 1, 'the test set is scored once');
-  // A record that already holds a score for these numbers is not scored again.
-  serve(LEDGER, [{ id: 'e1', seq: 1, by: 'you', kind: 'evaluate', touched: { neurons: [], weights: [] }, cost: { test: { name: 'held out', of: 200, before: 0.19, after: 0.17, right_before: 179, right_after: 181 } } }]);
+  assert.ok(asked.some(([p]) => p === '/api/weights/models/tiny?session=ws-1&watch=1'), 'the numbers are read through the session, as a screen\'s look');
+  assert.equal(asked.filter(([p]) => p.includes('/evaluate')).length, 0, 'the page never asks for a score');
+  assert.ok(asked.every(([, method]) => method === 'GET'), 'opening the page changes nothing');
+  // A score in the record (an evaluation someone ran, an edit) is used.
+  serve(LEDGER, [{ id: 'e1', seq: 1, by: 'agent', kind: 'evaluate', touched: { neurons: [], weights: [] }, cost: { test: { name: 'held out', of: 200, before: 0.19, after: 0.17, right_before: 179, right_after: 181 } } }]);
   h = await page('tiny');
   assert.equal(textOf(h, 'wt-cost-test'), '0.170');
-  assert.equal(asked.filter(([p]) => p.endsWith('/evaluate')).length, 0, 'the last score in the record is used');
-  assert.ok(!h.text().includes('You scored the network on the test set.'), 'the page\'s own scoring is not listed as something done to the network');
+  assert.ok(h.text().includes('Test set (200 inputs)') && h.text().includes('181 of 200 right'));
+  assert.equal(asked.filter(([p]) => p.includes('/evaluate')).length, 0);
+  // A blind session's record hides its scores until it is saved or closed: the page says that, not a number.
+  serve({ ...LEDGER, feedback: false }, [{ id: 'e1', seq: 1, by: 'agent', kind: 'edit', op: 'set', layer: 1, neuron: 0, changed: 1, changes: [{ k: 0, j: 0, i: null, old: -3, new: -2 }], touched: { neurons: [[1, 0]], weights: [] }, scores: 'hidden' }]);
+  h = await page('tiny');
+  assert.equal(textOf(h, 'wt-cost-test'), 'hidden');
+  assert.equal(textOf(h, 'wt-cost-test-under'), 'until the session is saved or closed');
+  assert.ok(h.text().includes('Agent set the bias of layer 1, neuron 1 from -3.00 to -2.00. Its scores are hidden until the session is saved or closed.'));
+  assert.equal(textOf(h, 'wt-alone'), 'From the weights alone', 'a blind session with no sandbox and nothing run');
+  assert.ok(textOf(h, 'wt-ledger').endsWith('Blind.'));
   serve(LEDGER);
   h = await page('tiny');
   const no = [
@@ -152,6 +163,8 @@ test('"From the weights alone" shows only when the ledger says no sandbox and no
     ['a sandbox was allowed', { ...LEDGER, sandbox: true }],
     ['a sandbox was used', { ...LEDGER, sandbox_used: true }],
     ['the services say no', { ...LEDGER, weights_alone: false }],
+    ['the services do not say', (({ weights_alone, ...rest }) => rest)(LEDGER)],
+    ['a score was shown to the agent along the way', { ...LEDGER, feedback: true, scores_shown: true }],
     ['the ledger does not say whether there was a sandbox', (({ sandbox, ...rest }) => rest)(LEDGER)],
     ['the ledger does not say how many passes were used', (({ forward_used, ...rest }) => rest)(LEDGER)],
     ['there is no ledger', undefined],
@@ -165,6 +178,9 @@ test('"From the weights alone" shows only when the ledger says no sandbox and no
   }
   // A label the services send is not trusted by itself: the facts decide.
   assert.equal(ledgerFacts({ ...LEDGER, forward_used: 3, label: 'from the weights alone' }).alone, false);
+  // A blind session that was saved shows its scores then, and keeps the name if nothing was edited after.
+  assert.equal(ledgerFacts({ ...LEDGER, feedback: false, scores_shown: true, weights_alone: true }).alone, true);
+  assert.equal(ledgerFacts({ ...LEDGER, feedback: false, scores_shown: true, weights_alone: false }).alone, false, 'it went on editing after its scores were shown');
   served = {};
 });
 

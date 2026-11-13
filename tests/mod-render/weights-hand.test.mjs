@@ -122,8 +122,8 @@ test('a change the services refuse is put back, and said in plain words', async 
   h.mod.handInput.set_value('-9');
   await h.click('wt-hand-set');
   const sent = asked.find(([p]) => p === '/api/weights/sessions/ws-1/edits');
-  // `target` is the input that was open, by number: the services measure the edit on it, and "should not change" on the others.
-  assert.deepEqual(sent[1].body, { op: 'set', layer: 1, neuron: 1, from: null, value: -9, target: 0, by: 'you' }, 'the edit in the services\' shape');
+  // `target` is the input that was open, sent whole: the services measure the edit on it.
+  assert.deepEqual(sent[1].body, { op: 'set', layer: 1, neuron: 1, from: null, value: -9, target: { inputs: [[0, 0]], targets: [[0]] }, by: 'you' }, 'the edit in the services\' shape');
   assert.equal(textOf(h, 'wt-hand-note'), "Captain couldn't make that change.");
   assert.ok(!/HTTP|500/.test(h.text()));
   // A drag that is refused goes back to where it was.
@@ -151,9 +151,10 @@ test('"Send to agent" pins what is selected, and the three starters are written 
   assert.deepEqual(selectionPin(h.mod), { ref: 'weights:tiny@layer=1,neuron=1', kind: 'weights', label: 'Tiny network: hidden neuron 2 (bias -12.00)' });
   assert.equal(textOf(h, 'wt-agent-about'), 'It will be told about hidden neuron 2 (bias -12.00).');
   s = starters(h.mod);
-  assert.ok(s[0].prompt.includes('hidden neuron 2 (column 1, neuron 1 counted from 0)') && s[0].prompt.includes('cst weights heatmap --layer 0 --neuron 1'));
+  assert.ok(s[0].prompt.includes('hidden neuron 2 (layer 1, neuron 2)') && s[0].prompt.includes('cst weights heatmap --layer 1 --neuron 2'));
   assert.ok(s[1].prompt.includes('on the input "Both on". It gets it wrong: it answers') && s[1].prompt.includes('0.00 is wanted'));
   assert.ok(s[1].prompt.includes('cst weights undo') && s[1].prompt.includes('ONE `cst weights edit`'));
+  assert.ok(s[1].prompt.includes('cst weights open tiny --agent --blind') && s[1].prompt.includes('cst weights sets --target-example 4'), 'a blind session, and the input on screen as the target, counted from 1');
   assert.ok(s[2].prompt.includes('Explain layer 1 (the weights into column 1, 3 neurons fed by 2)'));
   for (const x of s) assert.ok(x.prompt.includes('say "from the weights alone" only if the session\'s record does'), 'every starter carries the honesty rule');
   // With no agent installed the prompt goes to the clipboard, as on every other screen.

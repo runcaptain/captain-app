@@ -29,21 +29,21 @@ export async function listNetworks() {
   return { ok: true, data: { networks: theirs.length ? theirs : localModels(), fromServices: theirs.length > 0 } };
 }
 
-/** A network, whole. With a session, the numbers as that session has edited them. */
+/** A network, whole, as a session has edited it. The services send the numbers only through a session, and as
+ *  a screen's look (`watch`): it is counted as the screen's, never against what the agent was allowed. */
 export async function readNetwork(model, sessionId) {
   if (isStarter(model)) return ok(localNetwork(model));
-  return ask(`/api/weights/models/${enc(model)}${sessionId ? `?session=${enc(sessionId)}` : ""}`, { timeout: 30 });
+  return ask(`/api/weights/models/${enc(model)}${sessionId ? `?session=${enc(sessionId)}&watch=1` : ""}`, { timeout: 30 });
 }
 
-/** The cost across the test set, as the numbers are now: {cost, right, of}. The services never send the test
- *  set itself: they score it and send the numbers. */
-export async function readTestCost(model, sessionId) {
-  if (isStarter(model)) { const net = localNetwork(model); return net ? { ok: true, data: costOver(net, net.test) } : ok(null); }
-  // Recorded as the person's: someone looking at the page asked for the score, not the agent.
-  const r = await ask(`/api/weights/sessions/${enc(sessionId)}/evaluate`, { method: "POST", body: { by: "you" }, timeout: 60 });
-  const h = r?.ok ? r.data?.sets?.held_out : null;
-  if (!h || !Number.isFinite(h.after)) return { ok: false, error: r?.error };
-  return { ok: true, data: { cost: h.after, right: h.right_after ?? null, of: h.of ?? null } };
+/** The cost across the test set, as the numbers are now: {cost, right, of}, or null when it is not known. Only
+ *  a network kept in this mod carries its test set. The services keep theirs back and say the score in the record
+ *  of each edit. The page never asks them to score: a score shown is feedback from running the network, and
+ *  asking would end a session's "from the weights alone". */
+export async function readTestCost(model) {
+  if (!isStarter(model)) return { ok: true, data: null };
+  const net = localNetwork(model);
+  return net ? { ok: true, data: costOver(net, net.test) } : ok(null);
 }
 
 /** The session open on a model: what the agent was allowed, and everything done so far. */
@@ -59,7 +59,11 @@ export async function readSessionById(id) {
 
 /** Change numbers: one EditRequest (shapes.js). Resolves to the event that records it. */
 export async function sendEdit(sessionId, req) {
-  if (isLocalSession(sessionId)) return ok(localEdit(sessionId, req));
+  // `aim` is the input on screen, {index, x, y}: what the edit is meant to fix. The stand-in takes its number.
+  // The services take the input itself, and measure the edit on it.
+  const { aim, ...rest } = req;
+  if (isLocalSession(sessionId)) return ok(localEdit(sessionId, { ...rest, target: aim?.index }));
+  req = aim ? { ...rest, target: { inputs: [aim.x], targets: [aim.y] } } : rest;
   return ask(`/api/weights/sessions/${enc(sessionId)}/edits`, { method: "POST", body: req, timeout: 30 });
 }
 

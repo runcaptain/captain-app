@@ -29,7 +29,8 @@ export function eventWords(ev) {
   const weights = changes.filter((c) => c.i != null), biases = changes.filter((c) => c.i == null);
   const total = ev.changed ?? changes.length;
   const test = ev.cost?.test;
-  const cost = test && Number.isFinite(test.before) && Number.isFinite(test.after) ? ` Cost on the test set: ${cost3(test.before)} to ${cost3(test.after)}.` : "";
+  const cost = test && Number.isFinite(test.before) && Number.isFinite(test.after) ? ` Cost on the test set: ${cost3(test.before)} to ${cost3(test.after)}.`
+    : ev.scores === "hidden" && ["edit", "undo", "redo"].includes(ev.kind) ? " Its scores are hidden until the session is saved or closed." : "";
   const where = whereOf(ev);
   let said;
   if (ev.kind === "edit") {
@@ -46,6 +47,9 @@ export function eventWords(ev) {
   else if (ev.kind === "evaluate") said = `${who} scored the network on the test set.`;
   else if (ev.kind === "sets") said = `${who} named what an edit should fix and what it should leave alone.`;
   else if (ev.kind === "export") said = `${who} wrote the network's numbers to a file.`;
+  else if (ev.kind === "close") said = `${who} closed the session.`;
+  // A refusal is the services' own sentence: what was asked for and why not.
+  else if (ev.kind === "refused" && typeof ev.sentence === "string" && ev.sentence) said = ev.sentence;
   else if (ev.kind === "open") said = `${who} opened a session on this network.`;
   else if (ev.kind === "save") said = `${who} saved the edited network as a new version.`;
   // A kind this page has no words for: the services' own sentence, when it has none of their names in it.
@@ -57,12 +61,17 @@ export function eventWords(ev) {
  *  itself shows that no sandbox was allowed and no forward pass was used. A field that is missing counts against. */
 export function ledgerFacts(ledger) {
   const l = ledger ?? {};
-  const alone = l.sandbox === false && l.sandbox_used !== true && l.forward_used === 0 && l.weights_alone !== false;
+  // Every one of these must hold. The services work out `weights_alone` from the whole record (it also falls when
+  // a score was shown to the agent before its last edit, which only they can tell), so it must be true; and the
+  // plain facts the page can see for itself must agree with it.
+  const scored = l.scores_shown === true && l.feedback !== false;
+  const alone = l.weights_alone === true && l.sandbox === false && l.sandbox_used !== true && l.forward_used === 0 && !scored;
   const allowed = [
     l.raw_weights === true ? `Raw weights: allowed, ${count(l.weights_read ?? 0)} read` : l.raw_weights === false ? "Raw weights: not allowed" : null,
     l.sandbox === true ? "A sandbox (code run on the numbers): allowed" : l.sandbox === false ? "A sandbox (code run on the numbers): not allowed" : null,
     Number.isFinite(l.forward_allowed) ? `Forward passes (runs of the network): ${count(l.forward_used ?? 0)} of ${count(l.forward_allowed)} used` : null,
     l.gradients_computed === true ? "Gradients were worked out" : null,
+    l.feedback === false ? "Blind: its scores are hidden from the agent until the session is saved or closed" : l.scores_shown === true ? "Scores were shown along the way" : null,
   ].filter(Boolean);
   // The same, short, for a line that must fit beside a terminal. The long form is its tooltip.
   const short = [
@@ -70,6 +79,7 @@ export function ledgerFacts(ledger) {
     l.sandbox === true ? "Sandbox: allowed" : l.sandbox === false ? "Sandbox: not allowed" : null,
     Number.isFinite(l.forward_allowed) ? `Forward passes: ${count(l.forward_used ?? 0)} of ${count(l.forward_allowed)} used` : null,
     l.gradients_computed === true ? "Gradients worked out" : null,
+    l.feedback === false ? "Blind" : l.scores_shown === true ? "Scores shown" : null,
   ].filter(Boolean);
   const share = l.total > 0 && Number.isFinite(l.changed) ? (100 * l.changed) / l.total : null;
   const changed = share == null ? null : `${count(l.changed)} of ${count(l.total)} numbers changed (${share === 0 ? "0" : share < 0.1 ? share.toFixed(3) : share.toFixed(1)}%)`;

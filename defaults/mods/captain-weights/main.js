@@ -122,6 +122,8 @@ export default class CaptainWeights extends View {
     cx.spawn(async (cx) => {
       const s = await readSession(model);
       if (mine !== this.reads || model !== this.model) return;
+      // No session, no numbers: say why in the services' own sentence when it is one.
+      if (!s.ok && !this.net) { this.problem = plainError(s.error, "Captain couldn't read that network."); return cx.notify(); }
       if (s.ok) {
         // The services answer with the newest session on the model. When an agent opens one, the page moves to
         // it: its record replaces the old one, nothing in it pulses as new, and the page listens to its topic.
@@ -142,18 +144,17 @@ export default class CaptainWeights extends View {
       if (this.net) this.readAt = Date.now();
       cx.notify();
       if (!this.net) return;
-      // The test set's cost. A network that carries its test set is scored through the adapter each time. One that
-      // does not (the services keep the test set to themselves) takes the number from its last edit, and asks
-      // once when there is none.
-      // An evaluation measures the numbers as they are, so its number counts too: the page asks for one only
-      // when the record holds none since the last change.
-      const last = (this.session?.events ?? []).filter((e) => ["edit", "undo", "redo", "evaluate"].includes(e.kind)).at(-1)?.cost?.test;
-      if (!this.net.test?.length && last && Number.isFinite(last.after)) this.test = { cost: last.after, right: last.right_after ?? null, of: last.of ?? null };
-      else if (this.net.test?.length || !this.test) {
-        const t = await readTestCost(model, this.session?.id);
+      // The test set's cost. A network kept in this mod is scored through the adapter. For the services' networks
+      // the number comes from the record: the last edit, undo or evaluation that carries one. A blind session's
+      // record hides its scores until it is saved or closed, and the page says so.
+      const scored = (this.session?.events ?? []).filter((e) => ["edit", "undo", "redo", "evaluate"].includes(e.kind) && (e.cost?.test || e.scores === "hidden")).at(-1);
+      const last = scored?.cost?.test;
+      if (this.net.test?.length) {
+        const t = await readTestCost(model);
         if (mine !== this.reads || model !== this.model) return;
         if (t.ok) this.test = t.data;
-      }
+      } else if (last && Number.isFinite(last.after)) this.test = { cost: last.after, right: last.right_after ?? null, of: last.of ?? null };
+      else this.test = { unknown: true, hidden: scored?.scores === "hidden", of: this.session?.sets?.held_out?.of ?? null };
       cx.notify();
     });
   }
@@ -279,7 +280,8 @@ export default class CaptainWeights extends View {
     this.busy = "hand"; this.note = null;
     cx.notify();
     cx.spawn(async (cx) => {
-      const r = await sendEdit(this.session.id, { ...req, target: this.inputAt, by: "you" });
+      const e = this.net.examples[this.inputAt];
+      const r = await sendEdit(this.session.id, { ...req, aim: e ? { index: this.inputAt, x: e.x, y: e.y } : undefined, by: "you" });
       this.busy = null;
       if (!r.ok) { undoLocal?.(); this.rerun(); this.note = plainError(r.error, "Captain couldn't make that change."); }
       this.read(cx);

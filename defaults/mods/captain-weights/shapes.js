@@ -6,7 +6,7 @@
 // (captain_search/weights/routes.py and docs/weights.md there):
 //
 //   GET  /api/weights/models                        -> [NetworkSummary]
-//   GET  /api/weights/models/{model}                -> Network
+//   GET  /api/weights/models/{model}?session=&watch=1 -> Network   (without a session it holds no numbers)
 //   GET  /api/weights/models/{model}/session        -> Session   (the open session for this model, made if none)
 //   GET  /api/weights/sessions/{session}            -> Session
 //   POST /api/weights/sessions/{session}/edits      <- EditRequest   -> WeightEvent
@@ -57,6 +57,11 @@
  * @property {number} forward_allowed     how many times it may run the network
  * @property {number} forward_used
  * @property {boolean} gradients_computed
+ * @property {boolean} [feedback]         false for a blind session: its scores are hidden until it is saved or closed
+ * @property {boolean} [scores_shown]     a score was shown to the caller
+ * @property {boolean} [weights_alone]    worked out by the services from the whole record: no sandbox, no forward
+ *                                        pass, and no score shown before the last edit
+ * @property {number} [screen_looks]      how many times a screen read the numbers (never counted against the agent)
  * @property {number} changed             how many weights and biases differ from the base
  * @property {number} total               how many the network has
  */

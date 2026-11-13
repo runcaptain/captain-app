@@ -45,7 +45,12 @@ export function digitsRoutes(path) {
   const p = String(path).split('?')[0];
   const net = digitsNet();
   if (p === '/api/weights/models/digits') return { ok: true, data: { ...net, test: [] } };
-  if (p === '/api/weights/models/digits/session') return { ok: true, data: { id: 'ws-digits', model: DIGITS, ledger: { raw_weights: true, weights_read: 0, sandbox: true, sandbox_used: false, forward_allowed: 50, forward_used: 0, changed: 0, total: 13002 }, events: [] } };
-  if (p === '/api/weights/sessions/ws-digits/evaluate') { const t = costOver(net, net.test); return { ok: true, data: { sets: { held_out: { defined: true, of: t.of, before: t.cost, after: t.cost, right_before: t.right, right_after: t.right } } } }; }
+  if (p === '/api/weights/models/digits/session') {
+    // The services never send the test set, and the page never asks them to score it: the score is in the record,
+    // here as an evaluation someone ran.
+    const t = costOver(net, net.test);
+    return { ok: true, data: { id: 'ws-digits', model: DIGITS, ledger: { raw_weights: true, weights_read: 0, sandbox: true, sandbox_used: false, forward_allowed: 50, forward_used: 0, changed: 0, total: 13002 },
+      events: [{ id: 'e1', seq: 1, by: 'agent', kind: 'evaluate', touched: { neurons: [], weights: [] }, cost: { test: { of: t.of, before: t.cost, after: t.cost, right_before: t.right, right_after: t.right } } }] } };
+  }
   return null;
 }

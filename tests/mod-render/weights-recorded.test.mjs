@@ -1,6 +1,6 @@
 // The Weights page against answers recorded from Captain's services' own weights routes (fixtures/captain-weights/
 // recorded-tiny.json: what captain_search on origin/feat/weights answered through its test client, in an empty
-// workspace). It checks that the page reads those shapes as they are, and that the page's arithmetic agrees with
+// workspace, at the commit the fixture names). It checks that the page reads those shapes as they are, and that the page's arithmetic agrees with
 // the services' numpy: the cost the page works out for an input is the cost the services measured for it.
 //   node --import ./tests/mod-render/stubs/register.mjs --test tests/mod-render/weights-recorded.test.mjs
 import test from 'node:test';
@@ -23,12 +23,12 @@ const personal = data('session:start').id, agents = data('session:end').id;
 let stage = 'start', asked = [], feed;
 weightsTransport(async (path, opts) => {
   asked.push([path, opts?.method ?? 'GET', opts?.body]);
-  const [p] = path.split('?');
-  if (p === '/api/weights/models') return answer('GET /api/weights/models');
-  if (p === '/api/weights/models/nope/session' || p === '/api/weights/models/nope') return answer('missing');
-  if (p === '/api/weights/models/tiny/session') return answer(stage === 'start' ? 'session:start' : stage === 'edited' ? 'session:after-edit' : 'session:end');
-  if (p === '/api/weights/models/tiny') return answer(stage === 'start' ? 'whole:start' : stage === 'edited' ? 'whole:after-edit' : 'whole:end');
-  if (p.endsWith('/evaluate')) return answer('evaluate');
+  const [p, q = ''] = path.split('?');
+  if (p === '/api/weights/models') return answer('models');
+  if (p === '/api/weights/models/nope/session') return answer('missing');
+  if (p === '/api/weights/models/tiny/session') return answer(stage === 'start' ? 'session:start' : stage === 'edited' ? 'session:after-edit' : stage === 'end' ? 'session:end' : 'person:session-after-edit');
+  // Without a session the services send the network's shape and no numbers.
+  if (p === '/api/weights/models/tiny') return !q.includes('session=') ? answer('whole:no-session') : answer(stage === 'start' || stage === 'person' ? 'whole:start' : stage === 'edited' ? 'whole:after-edit' : 'whole:end');
   if (p.endsWith('/edits')) return answer('edit:nothing');
   return { ok: false, error: 'Not Found' };
 });
@@ -48,40 +48,57 @@ test('the list is the services\' own: their two starters, with their words', asy
   const text = h.text();
   assert.ok(text.includes('tiny') && text.includes('digits'));
   assert.ok(text.includes('Two inputs, three hidden neurons, one output. Small enough to see every number.'));
-  assert.ok(!text.includes('Tiny network'), 'the page\'s own starters step aside when the services answer');
+  assert.ok(!text.includes('Tiny network') && !text.includes("needs Captain's services"), 'the page\'s own tiny network steps aside when the services answer');
   assert.equal(h.byIdPrefix('wt-open-btn-').length, 2);
 });
 
-test('their tiny network opens: cross-entropy, 24 practice inputs, the test set scored by them', async () => {
+test('their tiny network opens through a session, as a screen\'s look, and nothing is asked that changes the record', async () => {
   const h = await page('tiny');
   const net = data('whole:start');
-  assert.equal(net.cost, 'cross_entropy');
+  assert.equal(data('whole:no-session').numbers, false, 'the fixture: no numbers without a session');
+  assert.deepEqual(asked.map(([p, m]) => `${m} ${p}`), ['GET /api/weights/models/tiny/session', `GET /api/weights/models/tiny?session=${personal}&watch=1`]);
   assert.equal(textOf(h, 'wt-facts'), '2 in, 1 out, 13 numbers (9 weights and 4 biases). Made-up data');
-  assert.ok(h.text().includes('Input 1 of 24') && h.text().includes('practice 0'));
+  assert.ok(h.text().includes('Input 1 of 24') && h.text().includes(net.examples[0].name));
   assert.equal(h.byIdPrefix('wt-n-').length, 6);
-  // The page's arithmetic against the services' numpy. Their default target is practice example 0, so the cost
-  // they measured for it is the cost the page works out for the first input. The inputs are sent rounded to four
-  // places, hence the tolerance.
-  const e = net.examples[0];
-  const mine = costOf(net, forward(net, e.x).a.at(-1), e.y);
-  near(mine, data('evaluate').sets.target.before, 0.02);
-  assert.equal(textOf(h, 'wt-cost-input'), mine.toFixed(3));
-  // The test set is theirs to score: 300 inputs the page never sees.
-  const held = data('evaluate').sets.held_out;
-  assert.equal(textOf(h, 'wt-cost-test'), held.after.toFixed(3));
-  assert.ok(h.text().includes('Test set (300 inputs)') && h.text().includes('300 of 300 right'));
-  assert.deepEqual(asked.find(([p]) => p.endsWith('/evaluate')).slice(1), ['POST', { by: 'you' }], 'asked as the person, not the agent');
-  // A person's own session: no sandbox, nothing run.
+  assert.equal(textOf(h, 'wt-cost-says').includes('cross-entropy'), true);
+  // Nobody has scored it yet, and the page does not ask.
+  assert.equal(textOf(h, 'wt-cost-test'), 'not scored');
+  assert.ok(h.text().includes('Test set (300 inputs)'), 'the size of the set the services keep back');
+  // A person's own fresh session: no sandbox, nothing run, no score shown.
   assert.equal(textOf(h, 'wt-alone'), 'From the weights alone');
   assert.ok(textOf(h, 'wt-ledger').includes('Forward passes: 0 of 50 used'));
   // Nudges work on their network too: gradients for cross-entropy, worked out in the page.
   await h.click('wt-n-2-0');
   await h.click('wt-mode-nudges');
-  const g = backward(net, e.x, e.y);
+  const e = net.examples[0], g = backward(net, e.x, e.y);
   assert.ok(Number.isFinite(g.dW[1][0][0]) && h.byIdPrefix('wt-inspect-nudge').length === 1);
 });
 
-test('an agent opens a newer session and edits: the page moves to it and says what it did', async () => {
+test('the page\'s arithmetic agrees with the services\' numpy', async () => {
+  // A person's edit aimed at the input on screen: the services measured the cost on that input before and after.
+  const ev = data('person:edit'), before = data('whole:start'), e = before.examples[0];
+  near(costOf(before, forward(before, e.x).a.at(-1), e.y), ev.cost.target.before, 0.02);
+  const after = JSON.parse(JSON.stringify(before));
+  for (const c of ev.changes) { if (c.i == null) after.layers[c.k].b[c.j] = c.new; else after.layers[c.k].W[c.j][c.i] = c.new; }
+  near(costOf(after, forward(after, e.x).a.at(-1), e.y), ev.cost.target.after, 0.02);
+  // And the page shows that edit's numbers: the target and the test set. No "should not change" set was named.
+  const h = await page('tiny');
+  stage = 'person';
+  feed.tell(`weights-session:${personal}`);
+  await h.layoutLists({});
+  const text = h.text();
+  assert.ok(text.includes(`You set the bias of layer 1, neuron 1 from +10.18 to +9.00. Cost on the test set: ${ev.cost.test.before.toFixed(3)} to ${ev.cost.test.after.toFixed(3)}.`), text);
+  assert.ok(text.includes('Target') && text.includes(`${ev.cost.target.before.toFixed(3)} to ${ev.cost.target.after.toFixed(3)}`));
+  assert.ok(!text.includes('Should not change'), 'a set that was not named is left out');
+  assert.equal(textOf(h, 'wt-cost-test'), ev.cost.test.after.toFixed(3));
+  assert.ok(text.includes('291 of 300 right'));
+  // A score was shown in a session with feedback: it is no longer "from the weights alone".
+  assert.equal(data('person:session-after-edit').ledger.weights_alone, false);
+  assert.equal(h.byIdPrefix('wt-alone').length, 0);
+  assert.ok(textOf(h, 'wt-ledger').endsWith('Scores shown.'));
+});
+
+test('an agent opens a newer, blind session and edits: the page moves to it, and its scores stay hidden', async () => {
   const h = await page('tiny');
   assert.equal(h.mod.session.id, personal);
   stage = 'edited';
@@ -90,23 +107,17 @@ test('an agent opens a newer session and edits: the page moves to it and says wh
   assert.equal(h.mod.session.id, data('session:after-edit').id, 'the newest session on the model');
   assert.equal(h.mod.pulsed ?? null, null, 'another session\'s history does not pulse as if it just happened');
   const ev = data('edit:scale');
+  assert.equal(ev.scores, 'hidden');
   const text = h.text();
-  assert.ok(text.includes(`Agent scaled 2 weights into layer 1, neuron 2, by 0.5. Cost on the test set: ${ev.cost.test.before.toFixed(3)} to ${ev.cost.test.after.toFixed(3)}.`), text);
+  assert.ok(text.includes('Agent scaled 2 weights into layer 1, neuron 2, by 0.5. Its scores are hidden until the session is saved or closed.'), text);
   assert.ok(text.includes('Agent read 6 weights of layer 1.'));
   assert.ok(text.includes('Agent opened a session on this network.'));
-  // Its three numbers, in the services' shape. The edit named input 0 as its target.
-  assert.ok(text.includes('Target: practice 0') && text.includes(`${ev.cost.target.before.toFixed(3)} to ${ev.cost.target.after.toFixed(3)}`));
-  assert.ok(text.includes('Should not change (23 inputs)') && text.includes('4 answers changed'));
-  assert.ok(text.includes('Test set (300 inputs)') && text.includes('269 of 300 right'));
-  assert.equal(textOf(h, 'wt-cost-test'), ev.cost.test.after.toFixed(3));
-  assert.equal(asked.filter(([p]) => p.endsWith('/evaluate')).length, 1, 'no second scoring: the edit carries the number');
-  // The numbers were read again as that session has them, and the page's cost for input 0 is the services'.
-  assert.ok(asked.some(([p]) => p === `/api/weights/models/tiny?session=${data('session:after-edit').id}`));
-  const net = data('whole:after-edit'), e = net.examples[0];
-  near(costOf(net, forward(net, e.x).a.at(-1), e.y), ev.cost.target.after, 0.02);
-  assert.equal(textOf(h, 'wt-cost-input'), costOf(net, forward(net, e.x).a.at(-1), e.y).toFixed(3));
+  assert.equal(textOf(h, 'wt-cost-test'), 'hidden');
+  assert.equal(h.byIdPrefix('wt-cost-edit').length, 0, 'no three numbers for an edit whose scores are hidden');
+  assert.ok(asked.some(([p]) => p === `/api/weights/models/tiny?session=${data('session:after-edit').id}&watch=1`), 'the numbers as that session has them');
   assert.equal(textOf(h, 'wt-ledger-changed'), '2 of 13 numbers changed (15.4%)');
-  assert.equal(textOf(h, 'wt-alone'), 'From the weights alone', 'no sandbox, and the agent has not run it yet');
+  assert.equal(textOf(h, 'wt-alone'), 'From the weights alone', 'blind, no sandbox, and the agent has not run it yet');
+  assert.ok(textOf(h, 'wt-ledger').includes('Blind'));
   // The edit opens to the reason and the old and new values.
   await h.click(`wt-ev-line-${ev.id}`);
   assert.ok(h.text().includes('Why: this unit shouts') && h.text().includes('The weight from x1') && h.text().includes('+9.83 to +4.92'));
@@ -118,13 +129,12 @@ test('an agent opens a newer session and edits: the page moves to it and says wh
   const end = h.text();
   assert.equal(h.byIdPrefix('wt-alone').length, 0, 'one forward pass was used: no longer from the weights alone');
   assert.ok(textOf(h, 'wt-ledger').includes('Forward passes: 1 of 20 used'));
-  assert.ok(end.includes('Agent ran the network on "practice 0".'));
+  assert.ok(/Agent ran the network on "[^"]+"\./.test(end), end);
   assert.ok(end.includes('You took back an edit to layer 1, neuron 2.'));
   assert.ok(end.includes('Agent scaled 2 weights into layer 1, neuron 2, by 0.5.') && end.includes('Taken back.'));
   assert.ok(end.includes('You set the bias of layer 1, neuron 2 from'));
-  const p = h.mod.pulsed;
-  assert.ok(p && p.neurons.has('1:1'), 'what the new events touched pulsed');
-  assert.equal(h.byIdPrefix('wt-cost-mark-').length, 3, 'a mark for the edit, the hand edit and the undo');
+  assert.ok(h.mod.pulsed && h.mod.pulsed.neurons.has('1:1'), 'what the new events touched pulsed');
+  assert.ok(asked.every(([, m]) => m === 'GET'), 'watching an agent\'s session changes nothing in it');
 });
 
 test('a refusal from the services is shown in their own sentence, and a missing model in plain words', async () => {
@@ -133,6 +143,9 @@ test('a refusal from the services is shown in their own sentence, and a missing 
   h.mod.handInput.set_value('3');
   await h.click('wt-hand-set');
   assert.equal(textOf(h, 'wt-hand-note'), 'This edit changes nothing: every number it names already has that value.');
+  const sent = asked.find(([p]) => p.endsWith('/edits'));
+  const e = data('whole:start').examples[0];
+  assert.deepEqual(sent[2].target, { inputs: [e.x], targets: [e.y] }, 'the input on screen goes with the edit, whole');
   const gone = await page('nope');
   assert.ok(gone.text().includes('There is no weights model named nope.'), gone.text());
   assert.equal(gone.byIdPrefix('wt-retry').length, 1);

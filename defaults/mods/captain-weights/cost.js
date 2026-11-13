@@ -79,7 +79,8 @@ export function CostPanel(c, v, { width, height, compact = false }) {
   const e = net.examples[v.inputAt];
   const here = run && e ? costOf(net, run.a.at(-1), e.y) : null;
   const t = v.test;
-  const steps = costSteps(v.session, t);
+  const unknown = !t || t.unknown;
+  const steps = costSteps(v.session, unknown ? null : t);
   const focus = editInFocus(v.session, v.openEdit);
   const rows = threeNumbers(focus, net);
   const number = (id, label, value, under) => v_flex().gap(1).flex_none()
@@ -92,8 +93,8 @@ export function CostPanel(c, v, { width, height, compact = false }) {
     return h_flex().id("wt-cost").w(width).h(height).flex_none().gap(14).items_center().text_size(12.5)
       .child(div().flex_none().font_semibold().child("Cost"))
       .child(h_flex().gap(5).flex_none().child(div().text_color(c.grey500).child("This input")).child(div().id("wt-cost-input").font_semibold().child(here == null ? "not run" : cost3(here))))
-      .child(h_flex().gap(5).min_w(0).child(div().flex_none().text_color(c.grey500).child("Test set")).child(div().id("wt-cost-test").flex_none().font_semibold().child(t ? cost3(t.cost) : "reading"))
-        .child(div().id("wt-cost-test-under").min_w(0).truncate().text_color(c.grey500).child(t?.of ? `${count(t.right)} of ${count(t.of)} right` : "")));
+      .child(h_flex().gap(5).min_w(0).child(div().flex_none().text_color(c.grey500).child("Test set")).child(div().id("wt-cost-test").flex_none().font_semibold().child(!t ? "reading" : t.hidden ? "hidden" : t.unknown ? "not scored" : cost3(t.cost)))
+        .child(div().id("wt-cost-test-under").min_w(0).truncate().text_color(c.grey500).child(!t || t.unknown ? "" : t.of ? `${count(t.right)} of ${count(t.of)} right` : "")));
   }
   return v_flex().id("wt-cost").w(width).h(height).flex_none().gap(8)
     .child(h_flex().gap(6).items_center()
@@ -101,7 +102,8 @@ export function CostPanel(c, v, { width, height, compact = false }) {
       .child(div().id("wt-cost-says").flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(COST_WORDS[net.cost ?? "squared_error"] ?? COST_WORDS.squared_error)))
     .child(h_flex().gap(22).items_start()
       .child(number("wt-cost-input", "This input", here == null ? "not run" : cost3(here), e?.name ?? ""))
-      .child(number("wt-cost-test", t?.of ? `Test set (${count(t.of)} inputs)` : "Test set", t ? cost3(t.cost) : "reading", t?.of ? `${count(t.right)} of ${count(t.of)} right` : ""))
+      .child(number("wt-cost-test", t?.of ? `Test set (${count(t.of)} inputs)` : "Test set", !t ? "reading" : t.hidden ? "hidden" : t.unknown ? "not scored" : cost3(t.cost),
+        !t ? "" : t.hidden ? "until the session is saved or closed" : t.unknown ? "an edit scores it" : t.of ? `${count(t.right)} of ${count(t.of)} right` : ""))
       .child(Curve(c, v, steps, curveW, 62)))
     .when(rows.length > 0, (el) => el.child(v_flex().id("wt-cost-edit").gap(2)
       .child(div().text_size(11.5).text_color(c.grey500).child(focus.id === v.openEdit ? "The edit that is open" : "The last edit"))

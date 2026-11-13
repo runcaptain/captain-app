@@ -1470,17 +1470,21 @@ What a person sees, so you can tell them where to look:
 - **"What the agent is doing"**: every read, run and edit of the session as a sentence, newest first. What you
   touch pulses in the drawing as you touch it. Each edit opens to its old and new values and can be taken back.
   The top of the page is the session's ledger. "From the weights alone" shows only when the ledger says no sandbox was
-  allowed and no forward pass was used: you cannot set it, and you should never claim it when it is not shown.
+  allowed, no forward pass was used, and no score was shown to you before your last edit (open the session with
+  `--blind` to keep scores hidden until you save or close). You cannot set it, and you should never claim it when
+  it is not shown.
 - **By hand**: a person can type or drag a weight or a bias, halve, double or zero a neuron, and take it back.
   Their edits are in the same record as yours, marked "You".
 
 The page listens to the change feed topics `weights:<model>` and `weights-session:<id>`, so what you do with
 `cst weights` shows there the moment you do it. The page works out activations and gradients itself from the
-numbers it was sent: a person looking never spends your forward passes.
+numbers it was sent, and it never asks the services for a score: a person looking never spends your forward
+passes and never ends your "from the weights alone".
 
 "Send to agent" at the top of that page pins the selection as `weights:<model>@layer=<column>,neuron=<index>` (the column
-counted from the input as 0, the index from 0) and may add `,from=<index>` for one weight. On the page, neurons
-are numbered from 1: "layer 1, neuron 2" on screen is `layer=1,neuron=1`.
+counted from the input as 0, the index from 0) and may add `,from=<index>` for one weight. On the page and on the
+`cst weights` command line, layers and neurons are numbered from 1: "layer 1, neuron 2" on screen is
+`--layer 1 --neuron 2` in a command and `layer=1,neuron=1` in a pin.
 
 When Captain's services are not answering, the page still opens one tiny network it keeps itself (2-3-1, 13
 numbers, with one bias set wrong on purpose). Edits to it live only while the page is open. The digit reader is
