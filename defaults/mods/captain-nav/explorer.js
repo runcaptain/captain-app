@@ -122,7 +122,8 @@ export class Explorer {
     const m = this.mlflow;
     if (!this.mlflowLoaded || !m.status) return false;
     if (!m.status.configured) return true;
-    return Array.isArray(m.experiments) && !m.experiments.length && Array.isArray(m.models) && !m.models.length;
+    // Not "nothing yet" while the models are still being read, or the catalog is limiting requests.
+    return Array.isArray(m.experiments) && !m.experiments.length && Array.isArray(m.models) && !m.models.length && !m.modelsSaid;
   }
 
   mlflowRow(c) {

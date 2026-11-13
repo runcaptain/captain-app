@@ -85,9 +85,23 @@ def test_a_refused_login_reaches_the_app_as_a_sentence(ctx, monkeypatch):
         raise httpx.ConnectError("no route", request=httpx.Request("POST", "https://x"))
 
     monkeypatch.setattr(httpx, "request", down)
-    r = c.get("/api/mlflow/models", headers=h)
+    r = c.get("/api/mlflow/experiments", headers=h)
     assert r.status_code == 502 and r.json()["error"] == ("Couldn't reach MLflow at mlflow.example.com. Check the address in "
                                                          "Connect MLflow, and that the server is running.")
+    # The models are read behind the answer, so that route says the same sentence as a state, not as a failure.
+    import time
+
+    from captain_search import mlflow_bridge as MF
+
+    MF.forget_models()
+    assert c.get("/api/mlflow/models", headers=h).status_code == 200
+    for _ in range(100):
+        r = c.get("/api/mlflow/models", headers=h)
+        if r.json()["state"] == "failed":
+            break
+        time.sleep(0.05)
+    assert r.status_code == 200 and r.json()["text"].startswith("Could not be read: Couldn't reach MLflow at mlflow.example.com. Check the address in Connect MLflow")
+    MF.forget_models()
 
 
 def test_databricks_reads_unity_catalog_and_a_disabled_registry_isnt_a_login_error(ctx, monkeypatch):
@@ -129,78 +143,177 @@ def test_databricks_reads_unity_catalog_and_a_disabled_registry_isnt_a_login_err
         MF.experiments(ctx)
 
 
-# ---- the models are answered at once, and read again behind ------------------------------------------------------
+# ---- the models: always answered at once, read gently behind, and a rate limit is respected -----------------------
+# A real hosted catalog has one rate limit for a whole organisation. Reading eight models' versions at once tripped
+# it: the route answered 500 twice at every start and the sidebar said "MLflow: nothing yet".
 
-def test_the_models_are_answered_at_once_from_the_last_read_and_read_again_behind(ctx, monkeypatch):
-    """Reading the models took 5 to 11 seconds at every start, with the sidebar waiting, and was asked twice."""
-    import time
+import threading  # noqa: E402
+import time  # noqa: E402
 
-    from captain_search import changes as CH
-    from captain_search import mlflow_bridge as MF
+from captain_search import changes as CH  # noqa: E402
+from captain_search import mlflow_bridge as MF  # noqa: E402
 
+
+class Catalog:
+    """A stand-in tracking server: a list of models, one call for each model's versions, and a rate limit it can
+    switch on. It counts the calls and how many were in flight at once."""
+
+    def __init__(self, n=6):
+        self.names = [f"m{i}" for i in range(n)]
+        self.calls, self.now, self.most, self.times = 0, 0, 0, []
+        self.limit_after = None      # answer 429 from this many calls on
+        self.retry_after = None
+        self.lock = threading.Lock()
+
+    def request(self, method, url, json=None, params=None, headers=None, timeout=None):
+        with self.lock:
+            self.calls += 1
+            self.now += 1
+            self.most = max(self.most, self.now)
+            self.times.append((time.monotonic(), timeout))
+            limited = self.limit_after is not None and self.calls > self.limit_after
+        try:
+            time.sleep(0.02)
+            if limited:
+                hd = {"Retry-After": str(self.retry_after)} if self.retry_after else {}
+                return httpx.Response(429, json={"message": "Your request was rejected since your organization has exceeded the rate limit. Please retry your request later."},
+                                      headers=hd, request=httpx.Request(method, url))
+            if "registered-models/search" in url:
+                return httpx.Response(200, json={"registered_models": [{"name": n} for n in self.names]}, request=httpx.Request(method, url))
+            return httpx.Response(200, json={"model_versions": [{"version": "1"}]}, request=httpx.Request(method, url))
+        finally:
+            with self.lock:
+                self.now -= 1
+
+
+@pytest.fixture
+def catalog(ctx, monkeypatch):
     MF.configure(ctx, uri="https://mlflow.example.test")
     MF.forget_models()
     CH.reset_for_tests()
-    asked = []
-    now = {"models": [{"name": "ranker", "versions": []}]}
-
-    def slow(c, limit=200, include_system=False, timeout=60):
-        asked.append(timeout)
-        time.sleep(0.4)   # the tracking server takes its time
-        return [dict(m) for m in now["models"]]
-
-    monkeypatch.setattr(MF, "models", slow)
-    first = MF.models_kept(ctx)                       # never read before: this one waits
-    assert first == now["models"] and asked == [3.0], "each call to the server is limited to three seconds"
-    t0 = time.perf_counter()
-    assert MF.models_kept(ctx) == first and time.perf_counter() - t0 < 0.05 and len(asked) == 1, "the second ask is answered from what is kept"
-    # a new run of the services: nothing in memory, the file from last time answers at once, and it is read again behind
+    c = Catalog()
+    monkeypatch.setattr(httpx, "request", c.request)
+    monkeypatch.setattr(MF, "PAUSE_S", 0.05)
+    yield c
     MF.forget_models()
-    now["models"] = [{"name": "ranker", "versions": []}, {"name": "reranker", "versions": []}]
+    CH.reset_for_tests()
+
+
+def _until(what, seconds=5.0):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if what():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_with_nothing_kept_the_answer_is_at_once_and_says_it_is_reading(ctx, catalog):
     seq = CH.FEED.seq
     t0 = time.perf_counter()
-    again = MF.models_kept(ctx)
-    assert again == first and time.perf_counter() - t0 < 0.05, "at a start the last read is given at once"
-    twice = MF.models_kept(ctx)                       # the sidebar asks twice: one read behind, not two
-    assert twice == first
-    got = CH.FEED.wait(seq, {"mlflow"}, timeout=3.0)
-    assert [c["topic"] for c in got["changed"]] == ["mlflow"], "the new list is told, so the screen reads again"
-    assert len(asked) == 2, f"one read behind for the two asks: {len(asked) - 1}"
-    assert MF.models_kept(ctx) == now["models"], "and then gets the new list at once"
-    # the server can't be reached: what was read last stands, and nothing is raised at the screen
-    MF._KEPT[next(iter(MF._KEPT))]["at"] = float("-inf")
-    monkeypatch.setattr(MF, "models", lambda *a, **k: (_ for _ in ()).throw(ConnectionError("no route")))
-    assert MF.models_kept(ctx) == now["models"]
+    a = MF.models_kept(ctx)
+    assert time.perf_counter() - t0 < 0.05, "the screen never waits for the tracking server"
+    assert (a["models"], a["state"]) == ([], "reading") and a["text"].startswith("Reading the registered models.")
+    b = MF.models_kept(ctx)                                  # asked twice at a start: one read, not two
+    assert b["state"] == "reading"
+    got = CH.FEED.wait(seq, {"mlflow"}, timeout=5.0)
+    assert [c["topic"] for c in got["changed"]] == ["mlflow"], "told when the read lands, so the screen reads again"
+    c = MF.models_kept(ctx)
+    assert c["state"] == "ready" and c["text"] is None and [m["name"] for m in c["models"]] == catalog.names
+    # gently: one call at a time, a pause between calls, ten seconds a call at most, and the list read once
+    assert catalog.calls == 1 + len(catalog.names), f"one read for the two asks: {catalog.calls} calls"
+    assert catalog.most == 1, f"{catalog.most} calls were in flight at once"
+    gaps = [b[0] - a[0] for a, b in zip(catalog.times, catalog.times[1:])]
+    assert min(gaps) >= 0.045, f"a pause between calls: the shortest gap was {min(gaps) * 1000:.0f} ms"
+    assert {t for _, t in catalog.times} == {10.0}
+
+
+def test_a_rate_limit_stops_the_read_and_is_said_in_words_never_as_an_error(ctx, catalog):
+    catalog.limit_after, catalog.retry_after = 3, 40        # the fourth call is refused: wait 40 seconds
+    a = MF.models_kept(ctx)
+    assert a["state"] == "reading"
+    assert _until(lambda: MF.models_kept(ctx)["state"] == "limited")
+    b = MF.models_kept(ctx)
+    assert b["models"] == [] and 38 <= b["retry_in_s"] <= 40
+    assert b["text"].startswith("Could not be read: the model catalog is limiting requests, trying again in ") and b["text"].endswith(" s.")
+    assert catalog.calls == 4, f"it stopped at the refusal: {catalog.calls} calls, not all {1 + len(catalog.names)}"
+    # asked again and again while told to wait: nothing more is sent
+    for _ in range(20):
+        MF.models_kept(ctx)
     time.sleep(0.3)
-    assert MF.models_kept(ctx) == now["models"]
-    CH.reset_for_tests()
+    assert catalog.calls == 4, "no call is made before the wait is over, however often the screen asks"
+    # the wait is over and the limit is lifted: the next ask reads, and the list arrives
+    key = next(iter(MF._STATE))
+    MF._STATE[key]["until"] = time.monotonic() - 1
+    catalog.limit_after = None
+    seq = CH.FEED.seq
+    assert MF.models_kept(ctx)["state"] == "reading"
+    assert CH.FEED.wait(seq, {"mlflow"}, timeout=5.0)["changed"]
+    done = MF.models_kept(ctx)
+    assert done["state"] == "ready" and len(done["models"]) == len(catalog.names)
 
 
-def test_each_models_versions_are_asked_for_side_by_side_with_the_limit_given(ctx, monkeypatch):
-    import threading
-    import time
+def test_a_limit_with_no_wait_given_backs_off_longer_each_time(ctx, catalog):
+    catalog.limit_after = 0                                  # refused from the first call, and no Retry-After
+    MF.models_kept(ctx)
+    assert _until(lambda: MF.models_kept(ctx)["state"] == "limited")
+    first = MF.models_kept(ctx)["retry_in_s"]
+    key = next(iter(MF._STATE))
+    MF._STATE[key]["until"] = time.monotonic() - 1
+    MF.models_kept(ctx)
+    assert _until(lambda: MF._STATE[key].get("tries") == 2 and MF._STATE[key]["state"] == "limited")
+    second = MF.models_kept(ctx)["retry_in_s"]
+    assert 28 <= first <= 30 and 58 <= second <= 60, f"half a minute, then a minute: {first} s, {second} s"
+    assert catalog.calls == 2, "one call for each try, never a loop"
 
-    from captain_search import mlflow_bridge as MF
 
-    MF.configure(ctx, uri="https://mlflow.example.test")
-    seen = {"timeouts": set(), "at_once": 0, "now": 0}
-    lock = threading.Lock()
-
-    def request(method, url, json=None, params=None, headers=None, timeout=None):
-        seen["timeouts"].add(timeout)
-        if "registered-models/search" in url:
-            return httpx.Response(200, json={"registered_models": [{"name": f"m{i}"} for i in range(8)]}, request=httpx.Request(method, url))
-        with lock:
-            seen["now"] += 1
-            seen["at_once"] = max(seen["at_once"], seen["now"])
-        time.sleep(0.2)
-        with lock:
-            seen["now"] -= 1
-        return httpx.Response(200, json={"model_versions": [{"version": "1"}]}, request=httpx.Request(method, url))
-
-    monkeypatch.setattr(httpx, "request", request)
+def test_what_was_read_last_is_given_at_a_start_and_stands_while_the_catalog_limits(ctx, catalog):
+    MF.models_kept(ctx)
+    assert _until(lambda: MF.models_kept(ctx)["state"] == "ready")
+    MF.forget_models()                                       # the services start again: nothing in memory
+    catalog.limit_after, catalog.retry_after = catalog.calls, 120
     t0 = time.perf_counter()
-    out = MF.models(ctx, timeout=3.0)
-    took = time.perf_counter() - t0
-    assert [m["name"] for m in out] == [f"m{i}" for i in range(8)] and all(m["versions"][0]["version"] == "1" for m in out), "in the server's order"
-    assert seen["timeouts"] == {3.0} and seen["at_once"] > 1 and took < 1.0, f"eight models' versions one after another would be 1.6 s: {took:.2f} s"
+    a = MF.models_kept(ctx)
+    assert time.perf_counter() - t0 < 0.05 and len(a["models"]) == len(catalog.names), "the last read, at once, from its file"
+    assert _until(lambda: MF.models_kept(ctx)["state"] == "limited")
+    b = MF.models_kept(ctx)
+    assert len(b["models"]) == len(catalog.names) and b["text"].startswith("Showing the last read: the model catalog is limiting requests, trying again in 2 min")
+
+
+def test_the_route_never_fails_for_what_the_tracking_server_does(ctx, catalog, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from captain_search import server
+
+    monkeypatch.setattr(server, "_ctx", ctx)
+    monkeypatch.setattr(server, "ctx", lambda *a, **k: ctx)
+    hd = {"Authorization": f"Bearer {server.TOKEN}"}
+    c = TestClient(server.app)
+    catalog.limit_after = 0
+    r = c.get("/api/mlflow/models", headers=hd)
+    assert r.status_code == 200 and r.json()["state"] == "reading" and r.json()["models"] == []
+    assert _until(lambda: c.get("/api/mlflow/models", headers=hd).json()["state"] == "limited")
+    r = c.get("/api/mlflow/models", headers=hd)
+    assert r.status_code == 200 and "limiting requests" in r.json()["text"]
+    # a server that can't be reached at all: the same, in words
+    MF.forget_models()
+    monkeypatch.setattr(httpx, "request", lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectError("no route", request=httpx.Request("GET", "https://x"))))
+    assert c.get("/api/mlflow/models", headers=hd).status_code == 200
+    assert _until(lambda: c.get("/api/mlflow/models", headers=hd).json()["state"] == "failed")
+    r = c.get("/api/mlflow/models", headers=hd)
+    assert r.status_code == 200 and r.json()["text"].startswith("Could not be read: Couldn't reach MLflow at mlflow.example.test")
+
+
+def test_the_calls_made_are_counted_and_said_in_the_log(ctx, catalog, tmp_path):
+    from captain_search import applog
+
+    applog.start(str(tmp_path / "logs"))
+    try:
+        before = MF.CALLS["n"]
+        MF.models_kept(ctx)
+        assert _until(lambda: MF.models_kept(ctx)["state"] == "ready")
+        assert MF.CALLS["n"] - before == 1 + len(catalog.names)
+        text = (tmp_path / "logs" / "services.log").read_text()
+        assert f"read {len(catalog.names)} registered models with {1 + len(catalog.names)} calls" in text and "calls to the server since the services started" in text
+    finally:
+        applog.stop()

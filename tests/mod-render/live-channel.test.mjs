@@ -172,5 +172,16 @@ assert.equal(asked.length, same, 'a second watcher of the same topic asks nothin
   assert.ok(heard3.length > before, 'and still hears changes');
 }
 
+
+// ---- the first answer names what changed just before: a screen read a moment earlier, so it reads those once more --
+liveReset();
+asked.length = 0; held.length = 0;
+const early = [];
+answer = () => ({ ok: true, data: { seq: 70, changed: [], reset: false, recent: [{ topic: 'mlflow', seq: 69 }, { topic: 'notebooks', seq: 68 }] } });
+watchLive(cx, ['mlflow'], (_cx, why, topics) => early.push([why, topics]));
+watchLive(cx, ['projects'], (_cx, why, topics) => early.push(['other', why, topics]));
+await tick();
+assert.deepEqual(early, [['changed', ['mlflow']]], 'only the watcher of what just changed reads again, and nobody else');
+answer = null;
 console.log('live channel: ok');
 process.exit(0);

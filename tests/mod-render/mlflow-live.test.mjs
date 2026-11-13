@@ -79,6 +79,9 @@ const until = async (hh, ok, what) => {
 await until(h, (t) => t.includes('/rankers') && t.includes('ranker'), 'experiments and models');
 await h.click('ml-exp-1');
 await until(h, (t) => t.includes('lgbm') && t.includes('ndcg_10 0.71') && t.includes('lr=0.05') && t.includes('finished'), 'a run with its metrics and params');
+// The models are read behind the answer: the list says so, then shows them the moment the read lands, by itself.
+for (let i = 0; i < 80 && h.byIdPrefix('ml-model-ranker').length === 0; i++) { await h.layoutLists({}); await h.idle(150); }
+assert.ok(h.byIdPrefix('ml-model-ranker').length > 0, `the registered models arrive without a click: ${h.text().slice(0, 500)}`);
 await h.click('ml-model-ranker');
 await until(h, (t) => t.includes('v3') && t.includes('from run abc123de') && t.includes('Served by model version...'), 'a model version');
 await h.click('ml-link-ranker@3');

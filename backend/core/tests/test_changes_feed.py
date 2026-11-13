@@ -467,3 +467,18 @@ def test_another_process_writing_a_folder_a_moment_after_this_one_did_is_still_t
         fh.write("x: 2\n")
     t.join(3)
     assert "answer" in box and _t(box["answer"]) == ["project:demo-shop"], "the other process's write, just after ours, was not told"
+
+
+def test_a_clients_first_answer_names_what_changed_just_before_it_asked(svc):
+    """A screen reads what it shows, then its channel first asks where the feed is. A change in between was told
+    to nobody: the models of a tracking server that landed in that moment never showed."""
+    CH.bump("mlflow")
+    CH.bump("project:shop", "projects")
+    a = svc.get("/api/changes", topics="mlflow,project:")
+    assert [c["topic"] for c in a["recent"]] == ["mlflow", "project:shop"] and a["changed"] == [], a
+    assert svc.get("/api/changes", topics="notebooks")["recent"] == [], "only the topics it asked for"
+    assert "recent" not in svc.get("/api/changes", since=a["seq"], topics="mlflow", wait=0), "a later ask is told through `changed`"
+    # and not what changed long ago
+    with CH.FEED.cond:
+        CH.FEED.log = type(CH.FEED.log)([(s_, t_, at - 60) for s_, t_, at in CH.FEED.log], maxlen=CH.FEED.log.maxlen)
+    assert svc.get("/api/changes", topics="mlflow")["recent"] == []

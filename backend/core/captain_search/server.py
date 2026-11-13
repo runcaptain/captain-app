@@ -362,9 +362,10 @@ def mlflow_models(include_system: bool = False):
     """Registered models. On Databricks: Unity Catalog, then the legacy workspace registry when it's on. Databricks'
     built-in models (the system catalog) are left out unless include_system=true.
 
-    Answered at once from the last read when there is one, also right after a start, and read again behind that:
-    the change feed says `mlflow` when the list is new (mlflow_bridge.models_kept). The first read ever waits for
-    the server, three seconds a call at most."""
+    {models, state, text, retry_in_s}, at once, always: what was read last, or an empty list with a sentence when
+    nothing has been read yet ("reading"), or when the catalog said to slow down ("limited"). The reading happens
+    behind the answer, gently, and the change feed says `mlflow` when it lands (mlflow_bridge.models_kept). The
+    route does not fail for anything the tracking server does."""
     from . import mlflow_bridge as MF
 
     return MF.models_kept(ctx(), include_system=include_system)
