@@ -186,6 +186,8 @@ def show(model: str):
     """A network's description: its sizes, what its inputs and outputs mean, and its examples. No weights: those are
     read through a session, where they are counted."""
     w = _do(WSN.whole, ctx(), model)
+    if w.get("parts") is not None:    # a trained session model: its parts, in words
+        return emit(w, weights_real.show_text(w))
     emit(w, f"{w['name']} v{w['version']}: {'-'.join(str(s) for s in w['sizes'])}, {w['parameters']:,} numbers, {w['cost']} cost.\n"
             + "\n".join(f"layer {k + 1}: {ly['inputs']} in, {ly['outputs']} out, {ly['activation']}" for k, ly in enumerate(w["layers"]))
             + f"\ninputs: {w['inputMeaning']}\noutputs: {w['outputMeaning']}\n{_n(len(w['examples']), 'example')} to look at."
@@ -249,6 +251,8 @@ def events(session: Optional[str] = SESSION, since: int = typer.Option(0, "--sin
 def layers(session: Optional[str] = SESSION):
     """The layers: sizes, activation, tensor names and how many numbers each holds."""
     r = _do(WSN.layers, ctx(), _sid(session))
+    if r.get("parts") is not None:
+        return emit(r, weights_real.parts_text(r))
     lines = [f"{'-'.join(str(s) for s in r['sizes'])}, {r['parameters']:,} numbers, {r['cost']} cost"]
     lines += [f"layer {ly['layer'] + 1}: {ly['inputs']} in, {ly['outputs']} out, {ly['activation']}, "
               f"{ly['weight']['tensor']} and {ly['bias']['tensor']}, {ly['parameters']:,} numbers" for ly in r["layers"]]
@@ -303,6 +307,10 @@ def stats(tensor: Optional[str] = typer.Argument(None, help="one tensor by name.
              f"max {_f(t['max'])}  zeros {t['zero_share'] * 100:.0f}%  distinct {t['distinct']}" for t in r["tensors"]]
     lines += [f"layer {n['layer'] + 1}, neuron {n['neuron'] + 1}: bias {_f(n['bias'])}, weight size {_f(n['weight_norm'])}, "
               f"from {_f(n['weight_min'])} to {_f(n['weight_max'])}" + (", every weight is zero" if n["dead"] else "") for n in r.get("neurons", [])]
+    if "bias_range" not in r:    # a model read by tensor: one line per row, when asked for
+        lines += [f"row {n['row']}: size {_f(n['norm'])}, from {_f(n['min'])} to {_f(n['max'])}" + (", every number is zero" if n["dead"] else "")
+                  for n in r.get("rows", [])]
+        return emit(r, "\n".join(lines))
     lines.append(f"bias range: first layer {_f(r['bias_range']['first'])}, last layer {_f(r['bias_range']['last'])}")
     emit(r, "\n".join(lines))
 
@@ -310,9 +318,15 @@ def stats(tensor: Optional[str] = typer.Argument(None, help="one tensor by name.
 @weights_app.command("heatmap")
 def heatmap(layer: int = typer.Option(1, "--layer", help="the layer, counted from 1"),
             neuron: Optional[str] = typer.Option(None, "--neuron", help="one neuron or several, counted from 1: 3 or 1,3"),
+            tensor: Optional[str] = typer.Option(None, "--tensor", help="a matrix by name, instead of a layer. Needed for a trained session model"),
+            rows: Optional[str] = typer.Option(None, "--rows", help="with --tensor: a row or a range, counted from 0: 3 or 0:48"),
+            cols: Optional[str] = typer.Option(None, "--cols", help="with --tensor: a column or a range, counted from 0"),
             session: Optional[str] = SESSION):
-    """A layer's weights per input as grids, one per neuron."""
-    r = _do(WSN.heatmap, ctx(), _sid(session), _one(layer, "--layer"), _ones(neuron, "--neuron"))
+    """A layer's weights per input as grids, one per neuron. With --tensor: any matrix, or a part of it, as one grid."""
+    r = _do(WSN.heatmap, ctx(), _sid(session), _one(layer, "--layer"), _ones(neuron, "--neuron"), tensor=tensor, rows=rows, cols=cols)
+    if "grid" in r:
+        return emit(r, f"{r['tensor']}, rows {r['rows'][0]}:{r['rows'][1]}, columns {r['cols'][0]}:{r['cols'][1]} (counted from 0): one grid of "
+                       f"{r['grid_shape'][0]} by {r['grid_shape'][1]}, from {_f(r['min'])} to {_f(r['max'])}. Use --json for the numbers.")
     emit(r, f"layer {r['layer'] + 1}: {len(r['grids'])} grids of {r['grid_shape'][0]} by {r['grid_shape'][1]}, largest weight {_f(r['scale'])}. "
             "Use --json for the numbers.")
 
@@ -576,13 +590,23 @@ def export(folder: str, npz: bool = typer.Option(False, "--npz", help="write ten
 
 
 @weights_app.command("import")
-def import_(folder: str, name: Optional[str] = typer.Option(None, "--name", help="the model's name here. Left out: the manifest's"),
+def import_(folder: str, name: Optional[str] = typer.Option(None, "--name", "--as", help="the model's name here. Left out: the manifest's"),
             project: Optional[str] = typer.Option(None, "--project", help="also put it in this project")):
     """Bring in a model folder (manifest.json and its tensor files) made by any training code, as a new version.
-    A cost.jsonl in the folder is kept with it as the training's cost per step."""
+    A cost.jsonl in the folder is kept with it as the training's cost per step.
+
+    A folder of trained weights (sess.npz, the rank_*.txt tree rankers, model.json), or an s3:// address of one,
+    comes in as a session model with rankers: `cst weights import <folder> --as <name>`. Its files are kept
+    unchanged. An address is read with this computer's default cloud login, and nothing is written to it."""
     if S.dry_run:
         return emit({"dry_run": True, "would": f"import {folder}"}, f"would import {folder}")
     c = ctx()
+    if weights_real.R.looks_real(folder):
+        out = _do(weights_real.R.import_from, c, folder, name)
+        if project:
+            _do(WST.assign, c, out["model"], project)
+        out["project"] = project
+        return emit(out, weights_real.import_text(out))
     from ..weights import pipeline as WP
 
     out = _do(WP.collect, c, os.path.abspath(folder), os.path.abspath(folder), name)
@@ -598,3 +622,6 @@ def assign(model: str, project: str):
     """Put a weights model in a project."""
     r = _do(WST.assign, ctx(), WST.split_ref(model)[0], project)
     emit(r, f"{r['model']} is now in the project {r['project']}.")
+
+
+from . import weights_real  # noqa: E402  reading a trained session model: its parts, nearest rows, directions, attention, trees

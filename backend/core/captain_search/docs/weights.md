@@ -7,7 +7,8 @@ Everything here is one set of operations with three faces: Python functions in `
 under `/api/weights/`, and `cst weights` commands. Every command takes `--json` (before the command:
 `cst --json weights layers`) and prints the same shape the route returns.
 
-Only fully connected networks are supported. The code is numpy alone.
+Fully connected networks can be read, run and changed. A trained session model with its tree rankers can be read, and
+not yet run or changed: see "A trained session model with rankers". The code is numpy alone.
 
 ## Words used in every shape
 
@@ -464,6 +465,169 @@ forward passes, as `ledger.evaluations`. In a blind session the answer holds no 
  "label": "with 3 of 20 forward passes", "weights_alone": false, "note": "", "scores_shown_now": false}
 ```
 
+## A trained session model with rankers
+
+A training run leaves a folder: a small transformer in `sess.npz` under PyTorch's names, LightGBM rankers as text
+(`rank_*.txt`, each with a `*.cols.json` naming its inputs), lookup tables (other `.npz` files) and a `model.json`.
+Bring it in by its folder, or by an `s3://` address of it:
+
+```
+cst weights import ./v3 --as shop-session
+cst weights import s3://bucket/path/v3 --as shop-session
+```
+
+`POST /api/weights/import` with `{"folder": "...", "name": "shop-session"}` does the same. The folder may be the
+version folder (with `weights/` and `MANIFEST.yaml` inside) or the `weights` folder itself. An address is read with
+this computer's default cloud login. Only the `weights/` files and `MANIFEST.yaml` are fetched, and nothing is ever
+written to the address.
+
+The model is stored as kind `session-ranker` ("session model with rankers"). Every file is kept exactly as it came
+under `weights/<model>/v<N>/files/`, and the manifest records where it came from, each file's SHA-256 and size, and
+one digest over all the tensors. A version is written once. Arrays that are text, or numbers that are not learned
+(`cfg`, `edges`, `cat_vocab`), are kept as `facts`, not tensors. The answer:
+
+```json
+{"model": "shop-session", "version": 1, "ref": "shop-session@v1", "kind": "session-ranker",
+ "kind_says": "session model with rankers", "parameters": 2281, "width": 8, "depth": 1, "heads": 2, "tensors": 35,
+ "facts": ["cat_vocab", "cfg", "edges"], "rankers": ["full", "patc", "pclick"], "tables": ["covisit", "pop7"],
+ "sha256": "88342a41...", "files": {"sess.npz": "5d0c..."}, "from": "/models/v3", "says": "A session model, width 8, 1 layer, 2 heads, with 3 tree rankers."}
+```
+
+**This kind can be read here, not changed or run yet.** `edit`, `undo`, `redo`, `forward`, `activations`,
+`gradients`, `trace`, `slice`, `template`, `sets`, `evaluate`, `save`, `export` and a deploy all answer status 400
+with `{"error": "This model can be read here, not changed or run yet."}`.
+
+### Its parts
+
+`GET /api/weights/models/{model}`, `cst weights show <model>` and, in a session, `cst weights layers` (`GET
+/api/weights/sessions/{s}/layers`) answer with what the model is, worked out from the shapes of its tensors and
+nothing else. No number is in it.
+
+```json
+{"id": "shop-session", "version": 1, "kind": "session-ranker", "kind_says": "session model with rankers", "numbers": false,
+ "width": 8, "depth": 1, "heads": 2, "heads_from": "model.json", "heads_says": "2 heads, as model.json says. The shapes alone cannot tell.",
+ "head_width": 4, "feed_forward": 32, "parameters": 2281,
+ "declared": {"session_model": "XS (1 layer, width 8, 2 heads)", "layers": 1, "layers_agree": true},
+ "parts": [
+   {"id": "act", "kind": "embedding", "name": "action table", "technical": "act", "tensors": ["act.weight"], "shape": [5, 8],
+    "parameters": 40, "feeds_from": [], "side": "session", "rows": 5, "width": 8, "embeds": "what kind of event it was",
+    "meaning_from": "name", "says": "embedding table: one row of 8 numbers for each of 5 values. What kind of event it was."},
+   {"id": "text", "kind": "projection", "name": "text projection", "tensors": ["text.weight", "text.bias"], "shape": [8, 12],
+    "parameters": 104, "feeds_from": [], "side": "session", "inputs": 12, "outputs": 8},
+   {"id": "L0.self_attn", "kind": "attention", "name": "attention, layer 1", "layer": 0, "width": 8, "heads": 2, "head_width": 4,
+    "says": "attention: which earlier events this one looks at, and what it copies from them.",
+    "tensors": ["L0.self_attn.in_proj_weight", "L0.self_attn.in_proj_bias", "L0.self_attn.out_proj.weight", "L0.self_attn.out_proj.bias"],
+    "shape": [24, 8], "parameters": 288, "feeds_from": ["ln"],
+    "matrices": [{"role": "query", "name": "query: what this event is looking for", "tensor": "L0.self_attn.in_proj_weight",
+                  "rows": [0, 8], "shape": [8, 8], "bias": {"tensor": "L0.self_attn.in_proj_bias", "rows": [0, 8]}}]},
+   {"id": "L0.ff", "kind": "feed_forward", "name": "feed-forward, layer 1", "layer": 0, "inputs": 8, "hidden": 32, "feeds_from": ["L0.norm1"]}
+ ],
+ "wiring_says": "The order of the parts is PyTorch's usual one for these names ...",
+ "facts": [{"name": "cat_vocab", "kind": "text", "shape": [6], "count": 6, "kept": true}],
+ "rankers": [{"name": "full", "objective": "lambdarank", "trees": 3, "inputs": 5, "names_from": "the cols file"}],
+ "tables": [{"name": "covisit", "arrays": [{"name": "pairs", "shape": [3, 2], "dtype": "int32"}]}],
+ "source": {"from": "/models/v3", "read_at": "2026-11-13T10:00:00Z", "files": {"sess.npz": {"sha256": "5d0c...", "bytes": 21034}}},
+ "can": {"read": true, "edit": false, "run": false, "deploy": false, "says": "This model can be read here, not changed or run yet."},
+ "sizes": [], "layers": [], "examples": [], "test": []}
+```
+
+Every part has `id`, `kind`, `name` (plain words), `says` (one sentence), `technical`, `tensors`, `shape` (of its
+first tensor), `parameters` and `feeds_from` (the ids of the parts before it). `kind` is one of `embedding`,
+`projection`, `norm`, `attention`, `feed_forward`, `head`, `scale`, `other`. `side` is `session` or `candidate`.
+Every tensor belongs to exactly one part, so the parts' `parameters` add up to the model's.
+
+- An attention part has `matrices`: `query`, `key`, `value` and `output`. PyTorch stacks the first three in
+  `in_proj_weight`, so each is given as a range of that tensor's rows.
+- `heads` comes from `model.json` or the `cfg` note, never from shapes. When neither says, it is `null` and
+  `heads_says` starts "Unknown".
+- What a table embeds is a guess from its name and says so: `meaning_from` is `"name"`.
+- The file holds numbers, not wiring. `feeds_from` follows PyTorch's usual order and `wiring_says` says that it is
+  not confirmed.
+
+`sizes`, `layers`, `examples` and `test` are empty: they belong to fully connected networks. `GET /api/weights/models`
+gives each model's `kind` and `kind_says`.
+
+### Reading it
+
+Through a session, counted in its record like any read. Tensors are named, not numbered: `--layer` and `--neuron`
+do not apply. Nothing here runs the model.
+
+| Command | Route | Returns |
+|---|---|---|
+| `cst weights read <tensor> [--rows 0:2] [--cols 0:4]` | `GET /api/weights/sessions/{s}/read?tensor=&rows=&cols=` | a slice of any tensor: a table, a list or one number |
+| `cst weights stats [<tensor>] [--neurons]` | `GET /api/weights/sessions/{s}/stats?tensor=&neurons=1` | per tensor numbers. With a tensor and `neurons=1`: `rows`, one line per row |
+| `cst weights heatmap --tensor <tensor> [--rows] [--cols]` | `GET /api/weights/sessions/{s}/heatmap?tensor=&rows=&cols=` | `{tensor, shape, rows, cols, grid_shape, scale, min, max, grid}` |
+| `cst weights nearest <tensor> <row> [--top 10]` | `GET /api/weights/sessions/{s}/nearest?tensor=&row=&top=` | the rows that point the same way as one row |
+| `cst weights directions <tensor> [--top 5]` | `GET /api/weights/sessions/{s}/directions?tensor=&top=` | a table's largest directions |
+| `cst weights attention [--layer 1] [--head 2] [--heads 2] [--matrix query_key]` | `GET /api/weights/sessions/{s}/attention?layer=&head=&heads=&matrix=` | what each head looks for and what it copies |
+
+One read or heatmap sends at most 200,000 numbers. `read` and `heatmap` need a session that may see raw weights and
+are counted in `weights_read`. `nearest` and `directions` also work on any table of a fully connected network.
+
+`nearest`, by cosine. `label` is filled only when a list saved beside the arrays has exactly one name per row:
+
+```json
+{"tensor": "act.weight", "rows": 5, "width": 8, "row": 0, "label": null, "norm": 2.0,
+ "nearest": [{"row": 1, "label": null, "cosine": 1.0, "norm": 4.0}], "farthest": [{"row": 2, "label": null, "cosine": -1.0, "norm": 2.0}],
+ "labels_says": "", "says": "Cosine is 1 for rows that point the same way, 0 for unrelated rows, and below 0 for opposite ones."}
+```
+
+`directions` is the table's singular values, largest first. `share` is each one's part of the table's total squared
+size, and `needed_for_90` is how many directions carry 90% of it:
+
+```json
+{"tensor": "pos.weight", "shape": [10, 8], "singular_values": [55.5, 0.0], "share": [1.0, 0.0], "needed_for_90": 1, "of": 8,
+ "directions": [{"direction": 0, "size": 55.5, "share": 1.0, "strongest_rows": [{"row": 9, "label": null, "amount": -28.3}]}]}
+```
+
+`attention` composes one block's matrices. For head `h` with its rows `Q`, `K`, `V` of the query, key and value
+matrices and its columns `O` of the output matrix: `query_key` is `Q^T K` (how much an event looking with vector `x`
+attends to an event offering `y` is `x (Q^T K) y`) and `output_value` is `O V` (what is written back when an event with
+vector `y` is looked at). `layer` and `head` count from 0 in the route and from 1 in the command.
+
+```json
+{"layer": 0, "part": "L0.self_attn", "width": 8, "heads": 2, "heads_from": "model.json", "head_width": 4, "run": false,
+ "of": [{"head": 0, "head_width": 4,
+         "query_key": {"shape": [8, 8], "size": 4.0, "top": [2.0, 2.0, 2.0, 2.0, 0.0], "rank_at_most": 4},
+         "output_value": {"shape": [8, 8], "size": 6.0, "top": [3.0, 3.0, 3.0, 3.0, 0.0], "rank_at_most": 4},
+         "reads": [{"table": "act", "name": "action table", "rows": 5, "row_size": 2.4, "query": 1.4, "key": 2.8, "value": 4.2,
+                    "strongest": [{"row": 1, "label": null, "value": 12.0}]}]}]}
+```
+
+`size` is the matrix's overall size (its Frobenius norm) and `top` its five largest singular values. `reads` says, for
+each of the session's embedding tables, the typical size of a row seen as a query, as a key, and after being copied.
+It leaves out the norms and biases between, and for a layer after the first it is the direct path only. With one
+`head` and `matrix=query_key` or `matrix=output_value`, that head also carries `matrix: {which, grid, scale}`. When
+the files do not say how many heads there are, give `heads`.
+
+### Its tree rankers
+
+**These are trees, not neurons.** A tree asks yes or no questions about the inputs and ends at a leaf, and the answer
+is the sum of the leaves reached. There are no weights or biases to nudge, so they have their own view. The file is
+LightGBM's text format, read with plain Python.
+
+`cst weights trees <model> [--ranker full] [--trees 3]` and `GET /api/weights/models/{model}/trees?ranker=&trees=`:
+
+```json
+{"model": "shop-session", "version": 1, "ranker": "full", "rankers": ["full", "patc", "pclick"], "names_from": "the cols file",
+ "kind": "trees", "objective": "lambdarank", "trees": 3, "inputs": 5, "leaves": 7, "splits": 4, "gain": 20.0,
+ "unused": [{"input": 4, "name": "never_filled", "constant": true}],
+ "unused_says": "1 of 5 inputs are never asked about by any tree, so changing them cannot change the answer: never_filled.",
+ "by_input": [{"input": 0, "name": "views", "splits": 1, "gain": 10.0, "share": 0.5, "trees": 1}],
+ "first_trees": [{"tree": 0, "leaves": 3, "depth": 2, "shrinkage": 1.0,
+                  "root": {"input": 0, "name": "views", "threshold": 0.5, "gain": 10.0, "categorical": false, "missing_goes": "left", "count": 60,
+                           "left": {"input": 2, "name": "price_bucket", "threshold": 3.5, "gain": 5.0, "left": {"leaf": 0, "value": 0.1, "count": 10},
+                                    "right": {"leaf": 1, "value": -0.2, "count": 20}},
+                           "right": {"leaf": 2, "value": 0.3, "count": 30}}}],
+ "rule": "At each question, a value at or below the threshold goes left. Anything else goes right.",
+ "cannot": "This model can be read here, not changed or run yet."}
+```
+
+`by_input` lists every input, largest gain first: how many questions are asked about it (`splits`), their total
+`gain` from training, its `share` of all gain, and how many trees use it. `unused` is every input with no question
+at all. `constant` is true when LightGBM itself marked the input as holding one value in training. `trees` asks for
+up to 20 of the first trees.
+
 ## A pinned neuron
 
 The page can pin a network, a neuron or one weight for an agent. The ref is `weights:<model>`,
@@ -487,7 +651,8 @@ history is kept in the manifest under `training.cost` as `[step, cost]` pairs.
 
 ## Limits
 
-- Dense networks only. No convolutions, no attention.
+- Only fully connected networks are run and changed. No convolutions.
+- A session model with rankers is read only. Its attention is read from its matrices and never run.
 - The whole-network route sends at most 200,000 numbers.
 - The digits starter is trained on synthetic pictures.
 - Two networks trained separately cannot be compared weight by weight. The same network can be written with its
