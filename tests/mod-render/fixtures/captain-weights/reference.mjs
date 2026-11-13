@@ -42,3 +42,16 @@ export function wideNet(seededNet) {
   return { id: 'demo-wide', name: 'Wide sample', ...net, outputNames: ['A', 'B', 'C'],
     examples: [ex('First', [1, 0, 0.5, 0.2], [1, 0, 0]), ex('Second', [0, 1, 0.1, 0.9], [0, 1, 0])], test: [ex('First', [1, 0, 0.5, 0.2], [1, 0, 0])] };
 }
+
+/** A stand-in for the app's change feed (kit/live.js): `tell(topic)` makes the next answer say that topic changed.
+ *  The clock moves by itself, so the kit never waits. */
+export function fakeFeed(liveTransport) {
+  let seq = 0, t = 1e9;
+  const queue = [];
+  liveTransport(async () => {
+    const changed = queue.splice(0);
+    if (changed.length) seq++;
+    return { ok: true, data: { seq, changed: changed.map((topic) => ({ topic, seq })) } };
+  }, () => (t += 3000));
+  return { tell: (topic) => queue.push(topic) };
+}

@@ -5,6 +5,7 @@
 // Every function resolves to {ok: true, data} or {ok: false, error}: the page never sees a thrown error.
 import { api } from "./kit/cst.js";
 import { watchLive } from "./kit/live.js";
+import { costOver } from "./net.js";
 import { localModels, localNetwork, localSession, localSessionById, localEdit, localUndo } from "./local.js";
 
 const enc = encodeURIComponent;
@@ -26,10 +27,20 @@ export async function listNetworks() {
   return { ok: true, data: theirs.length ? theirs : localModels() };
 }
 
-/** A network, whole. */
-export async function readNetwork(model) {
+/** A network, whole. With a session, the numbers as that session has edited them. */
+export async function readNetwork(model, sessionId) {
   if (isStarter(model)) return ok(localNetwork(model));
-  return ask(`/api/weights/models/${enc(model)}`, { timeout: 30 });
+  return ask(`/api/weights/models/${enc(model)}${sessionId ? `?session=${enc(sessionId)}` : ""}`, { timeout: 30 });
+}
+
+/** The cost across the test set, as the numbers are now: {cost, right, of}. The services never send the test
+ *  set itself: they score it and send the numbers. */
+export async function readTestCost(model, sessionId) {
+  if (isStarter(model)) { const net = localNetwork(model); return net ? { ok: true, data: costOver(net, net.test) } : ok(null); }
+  const r = await ask(`/api/weights/sessions/${enc(sessionId)}/evaluate`, { method: "POST", body: {}, timeout: 60 });
+  const h = r?.ok ? r.data?.sets?.held_out : null;
+  if (!h || !Number.isFinite(h.after)) return { ok: false, error: r?.error };
+  return { ok: true, data: { cost: h.after, right: h.right_after ?? null, of: h.of ?? null } };
 }
 
 /** The session open on a model: what the agent was allowed, and everything done so far. */

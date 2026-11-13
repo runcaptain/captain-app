@@ -12,13 +12,15 @@ import { theme, props, closeOverlay } from "herdr";
 import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
 import { Button, Skeleton, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
-import { listNetworks, readNetwork } from "./adapter.js";
+import { listNetworks, readNetwork, readSession, readTestCost, watchWeights } from "./adapter.js";
 import { forward, backward, countOf } from "./net.js";
 import { PanZoom } from "./canvas.js";
 import { NetworkCanvas, layoutOf } from "./draw.js";
 import { Inspector } from "./inspect.js";
+import { CostPanel } from "./cost.js";
 
 const SIDE_W = 340; // the panel beside the drawing
+const BAND_H = 178; // the cost and the timeline, under the drawing
 const count = (n) => Number(n).toLocaleString("en-US");
 
 /** "784 in, 10 out, 13,002 numbers": the network as a function, in one line. */
@@ -39,6 +41,11 @@ export default class CaptainWeights extends View {
     this.selW = null;       // the picked weight: {k: layer, j: to, i: from}
     this.mode = "values";   // what the lines show: "values" (the weights) or "nudges" (what the cost wants)
     this.grad = null;       // backpropagation for the chosen input, while nudges are showing
+    this.session = null;    // the session on this network: what the agent was allowed, and everything done
+    this.test = null;       // the cost across the test set: {cost, right, of}
+    this.openEdit = null;   // the edit opened in the timeline
+    this.reads = 0;         // how many times the network has been asked for: an older answer never replaces a newer
+    this.stop = null;       // stops listening to the change feed
     this.pz = new PanZoom("wt");
     this.width = 1200; this.height = 760;
     if (this.model) this.open(this.model, cx); else this.loadList(cx);
@@ -48,17 +55,53 @@ export default class CaptainWeights extends View {
     cx.spawn(async (cx) => { const r = await listNetworks(); this.list = r.ok ? r.data : []; cx.notify(); });
   }
 
-  /** Open a network: read it whole, run it on its first input. */
+  /** Open a network: read its session and its numbers, run it on its first input, and listen for changes. */
   open(model, cx) {
     this.model = model; this.net = null; this.problem = null; this.sel = null; this.selW = null; this.inputAt = 0;
+    this.session = null; this.test = null; this.openEdit = null; this.readFor = null;
     this.pz = new PanZoom("wt");
-    cx.spawn(async (cx) => {
-      const r = await readNetwork(model);
-      if (r.ok) this.take(r.data); else this.problem = plainError(r.error, "Captain couldn't read that network.");
-      cx.notify();
-    });
+    this.stop?.(); this.stop = null;
+    this.read(cx);
     cx.notify();
   }
+
+  /** Read everything again: the session's record, the numbers if they changed, and the test-set cost. Called when
+   *  the page opens, when the change feed says the model or the session changed, and after the page's own action.
+   *  Quiet: nothing on screen goes blank while it reads. */
+  read(cx) {
+    const model = this.model, mine = ++this.reads;
+    cx.spawn(async (cx) => {
+      const s = await readSession(model);
+      if (mine !== this.reads || model !== this.model) return;
+      if (s.ok) this.session = s.data;
+      // The numbers are read again only when an edit or an undo has been recorded since they were last read.
+      const changes = (this.session?.events ?? []).filter((e) => e.kind === "edit" || e.kind === "undo" || e.kind === "redo");
+      const mark = changes.at(-1)?.id ?? "";
+      if (!this.net || mark !== this.readFor) {
+        const r = await readNetwork(model, this.session?.id);
+        if (mine !== this.reads || model !== this.model) return;
+        if (r.ok) { this.take(r.data); this.readFor = mark; }
+        else if (!this.net) this.problem = plainError(r.error, "Captain couldn't read that network.");
+      }
+      if (this.net && !this.stop) this.stop = watchWeights(cx, model, this.session?.id, (cx) => this.read(cx));
+      cx.notify();
+      if (!this.net) return;
+      // The test set's cost. A network that carries its test set is scored through the adapter each time. One that
+      // does not (the services keep the test set to themselves) takes the number from its last edit, and asks
+      // once when there is none.
+      const last = changes.at(-1)?.cost?.test;
+      if (!this.net.test?.length && last && Number.isFinite(last.after)) this.test = { cost: last.after, right: last.right_after ?? null, of: last.of ?? null };
+      else if (this.net.test?.length || !this.test) {
+        const t = await readTestCost(model, this.session?.id);
+        if (mine !== this.reads || model !== this.model) return;
+        if (t.ok) this.test = t.data;
+      }
+      cx.notify();
+    });
+  }
+
+  /** Show an edit: its three numbers under the cost, and its line open in the timeline. */
+  openTimeline(id, cx) { this.openEdit = this.openEdit === id ? null : id; cx.notify(); }
 
   /** New numbers for the open network: keep the input and the selection, and run it again. */
   take(net) {
@@ -82,7 +125,7 @@ export default class CaptainWeights extends View {
   pickInput(n, cx) { this.inputAt = n; this.rerun(); cx.notify(); }
   pickNeuron(at, cx) { this.sel = this.sel && this.sel.k === at.k && this.sel.j === at.j ? null : at; this.selW = null; cx.notify(); }
   pickWeight(at, cx) { this.selW = at; this.sel = { k: at.k + 1, j: at.j }; cx.notify(); }
-  back(cx) { this.model = null; this.net = null; this.problem = null; if (!this.list) this.loadList(cx); cx.notify(); }
+  back(cx) { this.stop?.(); this.stop = null; this.model = null; this.net = null; this.session = null; this.problem = null; if (!this.list) this.loadList(cx); cx.notify(); }
 
   /** What the drawing needs to know. */
   drawing() {
@@ -149,7 +192,7 @@ export default class CaptainWeights extends View {
   render() {
     const c = palette(isDark(theme()));
     const net = this.net;
-    const cw = Math.max(320, this.width - SIDE_W - 41), ch = Math.max(220, this.height - 56 - 44 - 20);
+    const cw = Math.max(320, this.width - SIDE_W - 41), ch = Math.max(180, this.height - 56 - 44 - BAND_H - 12);
     return v_flex().id("weights").size_full().bg(c.surface).rounded(RADIUS).text_color(c.navy).font_family(FONT)
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1 || Math.abs(size.height - this.height) > 1) { this.width = size.width; this.height = size.height; cx.notify(); } })
       .child(this.header(c))
@@ -161,10 +204,12 @@ export default class CaptainWeights extends View {
       .when(Boolean(net), (e) => e
         .child(this.inputs(c))
         .child(h_flex().flex_1().min_h(0)
-          .child(div().pl(20).pb(20).child(NetworkCanvas(c, this.drawing(), { id: "wt", pz: this.pz, layout: this.layout, width: cw, height: ch,
+          .child(div().pl(20).child(NetworkCanvas(c, this.drawing(), { id: "wt", pz: this.pz, layout: this.layout, width: cw, height: ch,
             onNeuron: (at, cx) => this.pickNeuron(at, cx), onWeight: (at, cx) => this.pickWeight(at, cx) })))
           .child(div().w(20).flex_none())
           .child(div().w(1).h_full().flex_none().bg(c.rule))
-          .child(this.side(c))));
+          .child(this.side(c)))
+        .child(h_flex().id("wt-band").h(BAND_H).flex_none().border_t(1).border_color(c.rule)
+          .child(div().pl(20).pt(12).child(CostPanel(c, this, { width: Math.min(560, cw), height: BAND_H - 12 })))));
   }
 }
