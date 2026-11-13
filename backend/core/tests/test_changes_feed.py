@@ -98,7 +98,7 @@ def test_the_first_call_answers_at_once_and_a_quiet_wait_ends_with_nothing(svc):
     a = svc.get("/api/changes")
     assert time.perf_counter() - t0 < 0.5 and a["changed"] == [] and a["seq"] > 0 and a["reset"] is False and a["at"].endswith("Z")
     b = svc.get("/api/changes", since=a["seq"], topics="projects", wait=0.3)
-    assert b == {"seq": a["seq"], "changed": [], "reset": False, "at": b["at"]}, "nothing changed: the same sequence, and nothing to read"
+    assert b == {"seq": a["seq"], "changed": [], "reset": False, "at": b["at"], "partial": []}, "nothing changed: the same sequence, and nothing to read"
     assert svc.c.get("/api/changes").status_code == 401, "it needs the token, like every other address"
 
 
