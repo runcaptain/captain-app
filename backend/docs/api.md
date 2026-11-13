@@ -1168,8 +1168,10 @@ else one Captain found next to the dataset's file (`.../images/{pid}/{value}` an
 folder, through the workspace's login for buckets, 8 at a time and cached by address. The grid shows the first image
 of each cell and an opened row shows all of them.
 
-- `POST /api/notebooks/{name}/rename {to}`: rename a notebook. `to` is any words, and the id is made from them with
-  the naming rule. Answers `{name, from, version, changed}`. An unsaved draft moves with the name. The latest saved
-  version is saved again under the new name as its version 1, and the earlier versions stay in the registry under
-  the old name, which leaves `GET /api/notebooks` until someone saves or drafts under it again. A name in use is
-  refused with a sentence (400), a notebook that does not exist is 404.
+- `POST /api/notebooks/{name}/rename {to}`: change what a notebook is called. A notebook has an id (`name`, fixed
+  for life, what commands take) and a label (any words, what a person sees). This writes the label only, one small
+  record: the id, the file, every saved version, an unsaved draft and a running Python session are untouched.
+  Answers `{name, label, changed}`. A label another notebook has, or an empty one, is refused with a sentence (400).
+  `GET /api/notebooks` rows and `GET /api/notebooks/{name}` carry `label`. A notebook never named shows its id,
+  and one started without a name (`untitled-notebook`, `untitled-notebook-2`) reads "Untitled notebook",
+  "Untitled notebook 2" until it is named.

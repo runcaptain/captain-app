@@ -179,25 +179,29 @@ await h.idle();
 assert.ok((globalThis.__written ?? []).some((p) => p.endsWith('/Downloads/weekly-check.qmd')), 'exported file written');
 assert.ok(h.text().includes('Exported to ~/Downloads/weekly-check.qmd.'), 'export note');
 
-// Rename: a click on the title shows the field with the name in it. Any words do, the line under the field says
-// what it will be called, and the page and the list follow the new name.
+// Rename: a click on the title shows the field with the name in it. Any words do. Only what the notebook is called
+// changes: its id, its version, its cells and its Python session are the same before and after.
 {
-  const was = h.mod.nb.open.name;
+  const nb = h.mod.nb;
+  const id = nb.open.name, version = nb.open.version, kernel = nb.kernel, cells = nb.cells, dirty = nb.dirty;
   await h.click('nb-title');
-  assert.equal(h.mod.nb.renameTo.value(), was, 'the field starts with its name');
+  assert.equal(nb.renameTo.value(), id, 'the field starts with its name');
   assert.equal(h.byIdPrefix('nb-rename-go')[0].call('on_click'), undefined, 'the same name: Rename is off');
-  h.mod.nb.renameTo.set_value('Weekly review, Q4');
+  nb.renameTo.set_value('Weekly review, Q4');
   await h.layoutLists({});
-  assert.ok(h.text().includes('Captain will call it weekly-review-q4.'), 'said as it is typed');
+  const before = h.asked().length;
   await h.click('nb-rename-go');
   await h.idle(40);
-  assert.equal(h.mod.nb.open.name, 'weekly-review-q4', 'the page follows');
-  assert.ok(h.mod.nb.list.some((n) => n.name === 'weekly-review-q4') && !h.mod.nb.list.some((n) => n.name === was), 'and the list');
-  assert.ok(h.text().includes('Renamed to weekly-review-q4.') && h.byIdPrefix('nb-rename-field').length === 0);
-  assert.ok(h.asked().some((p) => p.endsWith(`/api/notebooks/${was}/rename`)), 'the services were asked under the old name');
-  // From its row in the list too, and Cancel puts the title back.
-  await h.click('nb-rename-row');
-  assert.equal(h.byIdPrefix('nb-rename-field').length, 1);
+  assert.deepEqual(h.asked().slice(before).filter((p) => !p.includes('/api/kernels')), [`/api/notebooks/${id}/rename`], 'one request, and no draft or save');
+  assert.deepEqual([nb.open.name, nb.open.version, nb.kernel, nb.cells, nb.dirty], [id, version, kernel, cells, dirty], 'the id, the version, the cells and the Python session are untouched');
+  assert.equal(nb.list.find((n) => n.name === id).label, 'Weekly review, Q4', 'the list has its new name');
+  let t = h.text();
+  assert.ok(t.includes('Weekly review, Q4') && t.includes('Renamed to Weekly review, Q4.') && h.byIdPrefix('nb-rename-field').length === 0, 'the title and the row show it');
+  assert.equal(h.byIdPrefix('nb-id').length, 1, 'its id sits small under the name, for commands');
+  // Every row has Rename, and Cancel puts the title back.
+  assert.equal(h.byIdPrefix('nb-rename-row-').length, nb.list.length, 'Rename on every row');
+  await h.click(`nb-rename-row-${id}`);
+  assert.equal(nb.renameTo.value(), 'Weekly review, Q4', 'the field starts with the name it has now');
   await h.click('nb-rename-cancel');
   assert.equal(h.byIdPrefix('nb-title').length, 1);
 }

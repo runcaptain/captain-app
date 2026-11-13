@@ -11,7 +11,7 @@ import { watchWorkspace, watchConnections, keepFresh } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
 import { palette, isDark, FONT } from "./kit/tokens.js";
 import { icon } from "./kit/icons.js";
-import { Notebooks } from "./notebooks.js";
+import { Notebooks, labelOf } from "./notebooks.js";
 
 export default class CaptainNotebooks extends View {
   init(_props, cx) {
@@ -50,7 +50,7 @@ export default class CaptainNotebooks extends View {
       cx.notify();
     });
     // What this screen shows, for agents (cst app context): the notebook open.
-    watchView(cx, "notebooks", () => ({ notebook: this.nb?.open?.name ?? null }));
+    watchView(cx, "notebooks", () => ({ notebook: this.nb?.open?.name ?? null, name: this.nb?.open?.name ? labelOf(this.nb.row(this.nb.open.name)) : null }));
     // A database connected or removed anywhere in the app: relist it for the SQL cells.
     watchConnections(cx, (cx) => { this.nb.loadConns(cx); cx.notify(); });
     // Another workspace: its notebooks, on a fresh Python.

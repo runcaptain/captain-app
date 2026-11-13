@@ -23,29 +23,31 @@ assert.deepEqual(newNameCheck('', []), { id: 'untitled-notebook', text: null, of
 assert.equal(newNameCheck('  ', [{ name: 'untitled-notebook' }]).id, 'untitled-notebook-2', 'then the next free one');
 assert.equal(newNameCheck('', [{ name: 'untitled-notebook' }, { name: 'untitled-notebook-2' }]).id, 'untitled-notebook-3');
 let k = newNameCheck('GPU cloud notes', []);
-assert.deepEqual([k.id, k.text, k.off], ['gpu-cloud-notes', 'Captain will call it gpu-cloud-notes.', null], 'any words are a name');
+assert.deepEqual([k.id, k.label, k.text, k.off], ['gpu-cloud-notes', 'GPU cloud notes', 'Its id will be gpu-cloud-notes.', null], 'any words are a name, and stay its name on screen');
 assert.equal(idFrom('GPU cloud notes', 'notebook'), k.id, 'by the one rule');
 assert.equal(newNameCheck('weekly', []).text, null, 'already an id: nothing to say');
 k = newNameCheck('Weekly', [{ name: 'weekly' }]);
-assert.deepEqual([k.text, k.off], ['You already have a notebook called weekly. This opens it.', null], 'a name in use is said as it is typed, and is not an error');
+assert.deepEqual([k.text, k.off], ['You already have a notebook with the id weekly. This opens it.', null], 'an id in use is said as it is typed, and is not an error');
 assert.equal(newNameCheck('!!!', []).id, 'notebook', 'never empty, never refused');
 
 // ---- renaming a notebook -----------------------------------------------------------------------------------------
+// A notebook has a name a person gives it (any words) and an id that is fixed for life. Renaming changes the name
+// only: its id, its file, every saved version and a running Python session stay as they are.
 {
-  const { renameCheck } = await import('../../defaults/mods/captain-notebooks/notebooks.js');
-  assert.equal(renameCheck('', 'weekly', []).off, 'Give it a name.');
-  assert.deepEqual(renameCheck('Weekly review, Q4', 'untitled-notebook', []), { id: 'weekly-review-q4', text: 'Captain will call it weekly-review-q4.', off: null }, 'any words');
-  assert.equal(renameCheck('weekly', 'weekly', []).off, 'That is its name already.');
-  const taken = renameCheck('Other', 'weekly', [{ name: 'other' }]);
-  assert.ok(taken.bad && taken.off && taken.text === 'You already have a notebook called other. Pick another name.', 'a name in use is said as it is typed');
-  // Renaming saves the unsaved work first, asks the services, and the page and the list follow the new name.
-  const asked = [];
-  globalThis.__routes = [[/\/draft$/, 'ok', 'PUT'], [/\/rename$/, 'renamed', 'POST']];
+  const { renameCheck, labelOf } = await import('../../defaults/mods/captain-notebooks/notebooks.js');
+  assert.equal(labelOf({ name: 'weekly' }), 'weekly', 'never named: its id shows');
+  assert.equal(labelOf({ name: 'weekly', label: 'Weekly review, Q4' }), 'Weekly review, Q4');
+  assert.deepEqual(['untitled-notebook', 'untitled-notebook-2', 'untitled-notebook-12'].map((name) => labelOf({ name })), ['Untitled notebook', 'Untitled notebook 2', 'Untitled notebook 12'], 'started without a name');
+  const list = [{ name: 'untitled-notebook' }, { name: 'other', label: 'Other things' }];
+  assert.equal(renameCheck('', 'untitled-notebook', list).off, 'Give it a name.');
+  assert.deepEqual(renameCheck('  Weekly review,  Q4 ', 'untitled-notebook', list), { label: 'Weekly review, Q4', text: null, off: null }, 'any words, kept as typed');
+  assert.equal(renameCheck('Untitled notebook', 'untitled-notebook', list).off, 'That is its name already.');
+  const taken = renameCheck('other THINGS', 'untitled-notebook', list);
+  assert.ok(taken.bad && taken.off && taken.text === 'You already have a notebook called other THINGS. Pick another name.', 'a name another notebook has is said as it is typed');
   const src = read('defaults/mods/captain-notebooks/notebooks.js');
   const body = src.slice(src.indexOf('  rename(cx) {'), src.indexOf('  flushDraft(cx) {'));
-  assert.ok(body.indexOf('/draft') < body.indexOf('/rename') && body.includes('this.open.name = name') && body.includes('this.list = (this.list ?? []).map') && body.includes('sayError('), 'draft first, then rename, then the page and list follow; a refusal is a sentence');
-  assert.ok(src.includes('"nb-title"') && src.includes('"nb-rename-row"') && src.includes('"nb-rename-says"'), 'from the title, from the row, with its line under the field');
-  void asked;
+  assert.ok(body.includes('/rename') && !body.includes('/draft') && !body.includes('this.open.name =') && !/this\.kernel\b/.test(body) && !body.includes('this.open.version'), 'one request; the id, the draft, the version and the Python session are not touched');
+  assert.ok(src.includes('"nb-title"') && src.includes('`nb-rename-row-${n.name}`') && src.includes('"nb-rename-says"') && src.includes('"nb-id"'), 'from the title and from every row; the id shows small under a given name');
 }
 
 // ---- a notebook to import ----------------------------------------------------------------------------------------
@@ -74,7 +76,7 @@ assert.deepEqual(importPathCheck('~/x.ipynb', true), { text: null, off: null });
   assert.equal(went, 1, 'New works with nothing typed');
   went = 0;
   tree = draw(newNameCheck('GPU cloud notes', []));
-  assert.deepEqual(text(tree.find((e) => idOf(e) === 'nb-new-says')), ['Captain will call it gpu-cloud-notes.']);
+  assert.deepEqual(text(tree.find((e) => idOf(e) === 'nb-new-says')), ['Its id will be gpu-cloud-notes.']);
   tree.find((e) => idOf(e) === 'nb-new-go').call('on_click')[0]({}, {});
   assert.equal(went, 1);
   // The submit path itself refuses an empty name and makes the id: an agent or a test can call it with no form shown.

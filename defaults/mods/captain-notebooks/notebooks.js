@@ -47,17 +47,27 @@ export function newNameCheck(typed, list) {
   }
   const id = idFrom(words, "notebook");
   const has = (list ?? []).some((n) => n.name === id);
-  return { id, text: has ? `You already have a notebook called ${id}. This opens it.` : id === words ? null : `Captain will call it ${id}.`, off: null, has };
+  // The words are its name on screen; the id made from them is fixed for life and is what a command takes.
+  return { id, label: words, text: has ? `You already have a notebook with the id ${id}. This opens it.` : id === words ? null : `Its id will be ${id}.`, off: null, has };
 }
 
-/** A new name typed for a notebook, checked as it is typed: {id, text, off}. Any words do. */
-export function renameCheck(typed, current, list) {
-  const words = String(typed ?? "").trim();
-  if (!words) return { id: null, text: null, off: "Give it a name." };
-  const id = idFrom(words, "notebook");
-  if (id === current) return { id, text: "That is its name already.", off: "That is its name already." };
-  if ((list ?? []).some((n) => n.name === id)) return { id, text: `You already have a notebook called ${id}. Pick another name.`, off: "That name is taken.", bad: true };
-  return { id, text: id === words ? null : `Captain will call it ${id}.`, off: null };
+/** What a person sees for a notebook: the name they gave it, else its id. One started without a name reads
+ *  "Untitled notebook" (then "Untitled notebook 2") until it is named. The services apply the same rule. */
+export function labelOf(n) {
+  if (n?.label) return n.label;
+  const m = /^untitled-notebook(?:-(\d+))?$/.exec(String(n?.name ?? ""));
+  return m ? `Untitled notebook${m[1] ? ` ${m[1]}` : ""}` : String(n?.name ?? "");
+}
+
+/** A new name typed for a notebook, checked as it is typed: {label, text, off}. Any words do. Renaming changes what
+ *  the notebook is called on screen and nothing else: its id, its versions and its Python session stay. */
+export function renameCheck(typed, id, list) {
+  const label = String(typed ?? "").trim().replace(/\s+/g, " ");
+  if (!label) return { label, text: null, off: "Give it a name." };
+  const mine = (list ?? []).find((n) => n.name === id);
+  if (label === labelOf(mine ?? { name: id })) return { label, text: null, off: "That is its name already." };
+  if ((list ?? []).some((n) => n.name !== id && labelOf(n).toLowerCase() === label.toLowerCase())) return { label, text: `You already have a notebook called ${label}. Pick another name.`, off: "That name is taken.", bad: true };
+  return { label, text: null, off: null };
 }
 
 /** A path typed for a notebook to import, checked as it is typed: {text, off}. */
@@ -218,7 +228,10 @@ export class Notebooks {
     const name = k.id;
     this.newName.set_value("");
     this.list ??= [];
-    if (!this.list.some((n) => n.name === name)) this.list = [{ name, latest: null, has_draft: true }, ...this.list];
+    const isNew = !this.list.some((n) => n.name === name);
+    if (isNew) this.list = [{ name, ...(k.label && k.label !== name ? { label: k.label } : {}), latest: null, has_draft: true }, ...this.list];
+    // The words typed are its name on screen: one small record, written once.
+    if (isNew && k.label && k.label !== name) cx.spawn?.(async (cx) => { await api(`/api/notebooks/${enc(name)}/rename`, { body: { to: k.label } }); cx.notify(); });
     this.openNotebook(cx, name);
     this.dirty = true;
   }
@@ -243,32 +256,32 @@ export class Notebooks {
     if ([...this.state.values()].some((s) => s.status === "running")) cx.notify();
   }
 
-  /** Show the field that renames the open notebook, filled with its name. */
-  startRename(cx) {
-    if (!this.open?.name || this.open.error || this.open.loading) return;
-    this.renaming = true;
-    this.renameTo.set_value(this.open.name);
+  /** The row of the list for a notebook's id. */
+  row(name) { return (this.list ?? []).find((n) => n.name === name) ?? { name }; }
+
+  /** Show the field that renames a notebook (the open one, or the one whose row was picked), filled with its name. */
+  startRename(cx, name = this.open?.name) {
+    if (!name) return;
+    if (this.open?.name !== name) this.openNotebook(cx, name);
+    this.renaming = name;
+    this.renameTo.set_value(labelOf(this.row(name)));
     cx.notify();
   }
 
-  /** Rename the open notebook to the words typed. Unsaved work is saved as a draft first, so it moves with the
-   *  name. The page, the list and what the screen tells agents all follow the new name. */
+  /** Rename a notebook to the words typed. Only what it is called changes: the services write one small record.
+   *  Its id, its file, every saved version, its unsaved work and a running Python session are not touched. */
   rename(cx) {
-    const old = this.open?.name;
-    const k = renameCheck(this.renameTo.value(), old, this.list);
-    if (!old || k.off || this.renameBusy) return;
+    const id = this.renaming;
+    const k = renameCheck(this.renameTo.value(), id, this.list);
+    if (!id || k.off || this.renameBusy) return;
     this.renameBusy = true;
-    const nb = this.dirty ? toNotebook(this.cells, this.open.base) : null;
     cx.spawn(async (cx) => {
-      if (nb) { await api(`/api/notebooks/${enc(old)}/draft`, { method: "PUT", body: { notebook: nb } }); this.dirty = false; }
-      const r = await api(`/api/notebooks/${enc(old)}/rename`, { body: { to: this.renameTo.value().trim() } });
+      const r = await api(`/api/notebooks/${enc(id)}/rename`, { body: { to: k.label } });
       this.renameBusy = false;
       if (!r.ok) { this.note = { text: sayError(r.data?.error ?? r.data?.detail ?? r.error).text || "Couldn't rename it.", tone: "fail" }; cx.notify(); return; }
-      const name = r.data.name;
       this.renaming = false;
-      if (this.open?.name === old) { this.open.name = name; if (r.data.version != null) this.open.version = r.data.version; }
-      this.list = (this.list ?? []).map((n) => (n.name === old ? { ...n, name, latest: r.data.version ?? n.latest } : n));
-      this.note = { text: `Renamed to ${name}.`, tone: "good" };
+      this.list = (this.list ?? []).map((n) => (n.name === id ? { ...n, label: r.data.label } : n));
+      this.note = { text: `Renamed to ${r.data.label}.`, tone: "good" };
       recordsChanged("notebook");
       cx.notify();
     });
@@ -575,15 +588,15 @@ export class Notebooks {
           const on = this.open?.name === n.name;
           return h_flex().id(`nb-${n.name}`).h(38).flex_none().px(10).gap(8).items_center().cursor_pointer()
             .border_l(2).border_color(on ? c.blue : "#00000000").bg(on ? c.blueLight : c.surface).hover((s) => (on ? s : s.bg(c.surface2)))
-            .tooltip(n.name)
+            .tooltip(labelOf(n) === n.name ? n.name : `${labelOf(n)} (id ${n.name})`)
             .on_click((_e, cx) => this.openNotebook(cx, n.name))
             .child(this.icon("file-text", 14, on ? c.blue : c.grey500))
-            .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(on ? c.blue : c.navy).child(n.name))
+            .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(on ? c.blue : c.navy).child(labelOf(n)))
             .when(n.latest != null, (e) => e.child(div().flex_none().px(4).border_1().border_color(c.grey300).text_size(10.5).font_family(MONO).text_color(c.grey900).child(`v${n.latest}`)))
             .when(!!n.has_draft, (e) => e.child(div().flex_none().text_size(10.5).text_color(c.grey500).child("draft")))
-            // The open notebook can be renamed from its row too.
-            .when(on && !this.renaming, (e) => e.child(div().id("nb-rename-row").flex_none().text_size(11).text_color(c.blue).hover((s) => s.underline())
-              .on_click((_e, cx) => this.startRename(cx)).child("Rename")));
+            // Every row can be renamed.
+            .child(div().id(`nb-rename-row-${n.name}`).flex_none().text_size(11).text_color(c.blue).hover((s) => s.underline())
+              .on_click((_e, cx) => this.startRename(cx, n.name)).child("Rename"));
         })));
   }
 
@@ -604,11 +617,13 @@ export class Notebooks {
     return v_flex().flex_1().min_w(0).h_full()
       .child(h_flex().flex_none().flex_wrap().gap(8).px(20).py(10).items_center().border_b(1).border_color(c.rule)
         .child(this.icon("file-text", 16, c.navy))
-        // The title is the way in to renaming: a click on it, or the Rename button, shows the field.
-        .when(!this.renaming, (e) => e
-          .child(div().id("nb-title").min_w(0).truncate().text_size(15).font_medium().font_family(MONO).cursor_pointer().hover((s) => s.text_color(c.blue))
-            .tooltip("Rename this notebook").on_click((_e, cx) => this.startRename(cx)).child(o.name)))
-        .when(this.renaming, (e) => {
+        // The title is the notebook's name on screen. A click on it, or Rename on its row, shows the field. Its id
+        // sits small under the name when the two differ: it is what a command takes, and it never changes.
+        .when(this.renaming !== o.name, (e) => e.child(v_flex().min_w(0)
+          .child(div().id("nb-title").min_w(0).truncate().text_size(15).font_medium().cursor_pointer().hover((s) => s.text_color(c.blue))
+            .tooltip("Rename this notebook").on_click((_e, cx) => this.startRename(cx, o.name)).child(labelOf(this.row(o.name))))
+          .when(labelOf(this.row(o.name)) !== o.name, (x) => x.child(div().id("nb-id").text_size(10.5).font_family(MONO).text_color(c.grey500).tooltip("Its id, for commands. It never changes.").child(o.name)))))
+        .when(this.renaming === o.name, (e) => {
           const k = renameCheck(this.renameTo.value(), o.name, this.list);
           return e.child(v_flex().id("nb-rename").gap(3)
             .child(h_flex().gap(6).items_center()
