@@ -88,11 +88,11 @@ export function lineQuad(item, pz) {
 }
 
 const SHADE = ["40", "80", "bf", "ff"]; // an activation's four shades
-const STRENGTH = ["38", "80", "e6"]; // a weight's three strengths
+export const STRENGTH = ["38", "80", "e6"]; // a weight's three strengths
 const level = (m, n) => Math.min(n - 1, Math.floor(m * n));
 
 /** Cells of a grid as rectangles, neighbours of one shade in a row merged. `shadeAt(i)` is a key or null. */
-function cells(rows, across, shadeAt, x0, y0, size, add) {
+export function cells(rows, across, shadeAt, x0, y0, size, add) {
   for (let y = 0; y < rows; y++) {
     let start = 0, cur = shadeAt(y * across);
     for (let x = 1; x <= across; x++) {

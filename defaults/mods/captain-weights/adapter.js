@@ -20,6 +20,10 @@ let api = servicesApi;
 /** For tests: the request function. */
 export function weightsTransport(fn) { api = fn ?? servicesApi; }
 
+/** For the picture check only, which has no services that hold a model of parts: answers by address, {path:
+ *  answer}. Any address not in it is asked of the services as usual. */
+export function weightsCanned(answers) { api = async (path, opts) => answers[path] ?? servicesApi(path, opts); }
+
 /** The networks that can be opened: {networks, fromServices}. Captain's services make their own "tiny" and
  *  "digits" the first time weights are opened in a workspace, so when they answer, the list is theirs. When they
  *  do not, the one tiny network kept in this mod stands in, so the page always has something to open. */
@@ -35,6 +39,39 @@ export async function listNetworks() {
 export async function readNetwork(model, sessionId) {
   if (isStarter(model)) return ok(localNetwork(model));
   return api(`/api/weights/models/${enc(model)}${sessionId ? `?session=${enc(sessionId)}&watch=1` : ""}`, { timeout: 30 });
+}
+
+// ---- A model of parts: a trained model too big to draw neuron by neuron ------------------------------------------
+// It is read, never edited or run here, so nothing below goes through a session and nothing is counted against
+// an agent.
+
+/** What a model is, without its numbers: for a model of parts, its list of parts and its rankers (shapes.js
+ *  PartsModel). A starter has none. */
+export async function readDescription(model) {
+  if (isStarter(model)) return { ok: true, data: null };
+  return api(`/api/weights/models/${enc(model)}`, { timeout: 20 });
+}
+
+/** Whether a description is a model of parts. */
+export const isParts = (d) => Boolean(d) && (d.kind === "parts" || Array.isArray(d.parts));
+
+const query = (o) => Object.entries(o).filter(([, v]) => v != null && v !== "").map(([k, v]) => `${k}=${enc(v)}`).join("&");
+
+/** One matrix of a part as a grid of numbers, reduced by the services when it is large (shapes.js Heatmap). For
+ *  an attention part, `tensor` "qk" or "ov" with `head` is one head's query-key or output-value matrix. */
+export async function readPartHeatmap(model, part, { tensor, head } = {}) {
+  return api(`/api/weights/models/${enc(model)}/parts/${enc(part)}/heatmap?${query({ tensor, head, max: 64 })}`, { timeout: 30 });
+}
+
+/** A matrix's largest rows: [{row, name, norm, mean, largest}] (shapes.js RowStats). */
+export async function readPartRows(model, part, { tensor, head } = {}) {
+  return api(`/api/weights/models/${enc(model)}/parts/${enc(part)}/rows?${query({ tensor, head, top: 8 })}`, { timeout: 30 });
+}
+
+/** The rows of an embedding table most like one row: {row, name, nearest: [{row, name, similarity}]} (shapes.js
+ *  NearRows). */
+export async function readPartNearest(model, part, row) {
+  return api(`/api/weights/models/${enc(model)}/parts/${enc(part)}/nearest?${query({ row, top: 8 })}`, { timeout: 30 });
 }
 
 /** The cost across the test set, as the numbers are now: {cost, right, of}, or null when it is not known. Only

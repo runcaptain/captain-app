@@ -17,10 +17,10 @@ import { theme, props, shared } from "herdr";
 import { palette, isDark, FONT } from "./kit/tokens.js";
 import { liveState, updatedWords } from "./kit/live.js";
 import { SendToAgent } from "./kit/context.js";
-import { Button, Skeleton, plainError } from "./kit/ui.js";
+import { Button, Skeleton, Submenus, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { int } from "./kit/num.js";
-import { listNetworks, readNetwork, readSession, readTestCost, watchWeights, sendUndo, sendEdit } from "./adapter.js";
+import { listNetworks, readNetwork, readSession, readTestCost, watchWeights, sendUndo, sendEdit, readDescription, isParts, weightsCanned } from "./adapter.js";
 import { forward, backward, countOf } from "./net.js";
 import { PanZoom } from "./canvas.js";
 import { NetworkCanvas, layoutOf } from "./draw.js";
@@ -30,6 +30,8 @@ import { Timeline, ledgerFacts } from "./timeline.js";
 import { HandBlock, handTarget, dragSpan, TRACK_W, selectionPin, starters, withStaged, stagedChanges, stagedRequest, stagedName } from "./hand.js";
 import { askAgent } from "./kit/agent.js";
 import { DeployLine, startDeploy } from "./deploy.js";
+import { partsState, partsFacts, partsPin, openPart, loadPart, PartPanel, RankerPanel, TreeBar, rankerOf, READ_ONLY } from "./parts.js";
+import { PartsCanvas, TreeCanvas, partsLayout } from "./partsdraw.js";
 import { WalkButtons, walkWords, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
 const TIGHT = 640; // under this width nothing fits side by side: an open neuron takes the drawing's place, and the cost is one line
@@ -62,7 +64,11 @@ export default class CaptainWeights extends View {
     // input, an open neuron, a picked weight, the mode, how far the walk has gone). Honoured only in the app's
     // test window (the app sets `app.testWindow` at each start): in a person's app a layout naming it does nothing.
     this.show = shared("app.testWindow") === true ? (props()?.show ?? null) : null;
+    if (this.show?.answers) weightsCanned(this.show.answers); // the picture check's own answers, by address
     this.model = this.show?.model ?? props()?.model ?? null; // the network open, or null for the list
+    this.kind = null;       // what the open model is, once known: "network" (drawn neuron by neuron) or "parts"
+    this.pm = null;         // an open model of parts: its description and what is open in it (parts.js)
+    this.treePz = null;     // the view of the ranker's tree that is drawn
     this.showLastEdit = this.show?.openEdit === "last";
     this.showDeploy = this.show?.deploy === true; // press "Deploy this version" once the network is read
     this.list = null;       // the networks that can be opened
@@ -132,6 +138,7 @@ export default class CaptainWeights extends View {
   /** Open a network: read its session and its numbers, run it on its first input, and listen for changes. */
   open(model, cx) {
     this.leave();
+    this.kind = null; this.pm = null; this.treePz = null;
     this.model = model; this.net = null; this.problem = null; this.sel = null; this.selW = null; this.inputAt = 0;
     this.session = null; this.test = null; this.openEdit = null; this.readFor = null; this.seen = null; this.pulse = null; this.note = null; this.undoNote = null; this.drag = null;
     this.walk = { step: 0, playing: false }; this.mode = "values";
@@ -148,6 +155,15 @@ export default class CaptainWeights extends View {
   read(cx) {
     const model = this.model, mine = ++this.reads;
     cx.spawn(async (cx) => {
+      // First, what kind of model this is. A model of parts is read as a description and never through a
+      // session: nothing is opened on it and nothing is counted. A network small enough to draw goes on below.
+      if (this.kind !== "network") {
+        const d = await readDescription(model);
+        if (mine !== this.reads || model !== this.model) return;
+        if (d.ok && isParts(d.data)) return this.takeParts(d.data, cx);
+        if (this.kind === "parts") return cx.notify(); // it could not be read again: what is on screen stays
+        if (d.ok) this.kind = "network";
+      }
       const s = await readSession(model);
       if (mine !== this.reads || model !== this.model) return;
       // No session, no numbers: say why in the services' own sentence when it is one.
@@ -196,6 +212,24 @@ export default class CaptainWeights extends View {
       }
       cx.notify();
     });
+  }
+
+  /** A model of parts, read: keep what is open in it, and listen for the model changing. */
+  takeParts(model, cx) {
+    this.kind = "parts"; this.servicesAnswered = true; this.problem = null;
+    if (this.pm) this.pm.model = model; else { this.pm = partsState(model); this.pz = new PanZoom("wp"); }
+    this.partsLayout = partsLayout(model);
+    if (this.pm.sel && !model.parts.some((p) => p.id === this.pm.sel)) this.pm.sel = null;
+    if (!this.stop) this.stop = watchWeights(cx, this.model, null, (cx) => this.read(cx));
+    this.readAt = Date.now();
+    // For the picture check (see `show` in init): open a part, a head, a row, or the rankers.
+    if (this.show) {
+      const w = this.show; this.show = null;
+      if (w.part) { openPart(this, w.part, w.head ?? null, cx); if (Number.isInteger(w.row)) this.pm.row = w.row; }
+      if (w.rankers) { this.pm.view = "rankers"; this.pm.rankerAt = w.ranker ?? 0; this.pm.treeAt = w.tree ?? 0; }
+    }
+    if (this.pm.sel) loadPart(this, cx);
+    cx.notify();
   }
 
   /** Events that arrived since the last read make what they touched pulse. The first read pulses nothing: it is
@@ -420,7 +454,7 @@ export default class CaptainWeights extends View {
 
   /** Start an agent on one of the three tasks, with what is selected written into the prompt. */
   ask(starter, cx) { cx.spawn(async (cx) => { await askAgent(cx, starter.prompt); }); }
-  back(cx) { this.leave(); this.stop?.(); this.stop = null; this.model = null; this.net = null; this.session = null; this.problem = null; this.sel = null; this.selW = null; this.loadList(cx); cx.notify(); }
+  back(cx) { this.leave(); this.stop?.(); this.stop = null; this.kind = null; this.pm = null; this.model = null; this.net = null; this.session = null; this.problem = null; this.sel = null; this.selW = null; this.loadList(cx); cx.notify(); }
 
   /** What the drawing needs to know. */
   drawing() {
@@ -430,14 +464,14 @@ export default class CaptainWeights extends View {
   /** The top of the page: where this is (with the way back), the network in one line, how much of it has
    *  changed, and what the session's record says was allowed and used. */
   header(c) {
-    const net = this.net;
+    const net = this.net, pm = this.pm;
     const facts = ledgerFacts(this.session?.ledger);
     // "From the weights alone" is a claim about work done. On a session where nothing has been edited there is
     // no work to make it about, so it waits for the first edit: before that the line only says what is allowed.
     const edited = (this.session?.edits?.length ?? 0) > 0 || (this.session?.events ?? []).some((e) => e.kind === "edit");
     facts.alone = facts.alone && edited;
     const starterModel = String(this.model ?? "").startsWith("starter:");
-    const live = !net || starterModel ? "" : liveState().state === "live" ? "Live" : updatedWords(this.readAt);
+    const live = !(net || pm) || starterModel ? "" : liveState().state === "live" ? "Live" : updatedWords(this.readAt);
     return v_flex().id("wt-head").flex_none().px(20).pt(12).pb(10).gap(3).border_b(1).border_color(c.rule)
       .child(h_flex().gap(8).items_center()
         .child(div().id("wt-back").flex_none().text_size(15).font_semibold().text_color(this.model ? c.blue : c.navy)
@@ -445,8 +479,9 @@ export default class CaptainWeights extends View {
           .child("Weights"))
         .when(Boolean(this.model), (e) => e
           .child(svg(icon("chevron-right")).size(13).flex_none().text_color(c.grey500))
-          .child(div().id("wt-title").min_w(0).truncate().text_size(15).font_semibold().child(net?.name ?? String(this.model).replace(/^starter:/, ""))))
+          .child(div().id("wt-title").min_w(0).truncate().text_size(15).font_semibold().child(net?.name ?? pm?.model.name ?? String(this.model).replace(/^starter:/, ""))))
         .child(div().flex_1())
+        .when(Boolean(pm), (e) => e.child(SendToAgent(c, "wt-send", partsPin(this))))
         .when(Boolean(net), (e) => e
           .child(SendToAgent(c, "wt-send", selectionPin(this)))
           .child(Button(c, "wt-ask", this.askOpen ? "Hide what to ask" : "Ask an agent", (_e, cx) => { this.askOpen = !this.askOpen; cx.notify(); }, { small: true }))
@@ -454,6 +489,10 @@ export default class CaptainWeights extends View {
           .when(!starterModel && Boolean(this.session), (x) => x.child(Button(c, "wt-deploy-go", "Deploy this version", (_e, cx) => startDeploy(this, cx),
             { small: true, disabled: this.deploy?.state === "asking" || this.deploy?.state === "running" }))))
         .when(Boolean(live), (e) => e.child(div().id("wt-live").flex_none().text_size(11.5).text_color(c.grey500).child(live))))
+      // A model of parts: what it is and how many numbers, then where it came from.
+      .when(Boolean(pm), (e) => e
+        .child(div().id("wt-facts").min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(partsFacts(pm.model)))
+        .when(Boolean(pm.model.source), (x) => x.child(div().id("wt-source").min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(pm.model.source))))
       .when(Boolean(net), (e) => e
         .child(h_flex().gap(10).items_center()
           .child(div().id("wt-facts").min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(factsOf(net)))
@@ -483,7 +522,10 @@ export default class CaptainWeights extends View {
         .when(n > 0, (e) => e.border_t(1).border_color(c.rule))
         .child(v_flex().flex_1().min_w(0).gap(2)
           .child(div().text_size(12.5).font_medium().child(m.name))
-          .when(Boolean(m.says), (e) => e.child(div().text_size(12.5).line_height("17px").text_color(c.grey500).child(m.says))))
+          // A trained model says its kind in words and how many numbers it has, then where it came from.
+          .when(isParts(m), (e) => e.child(div().id(`wt-open-kind-${m.id}`).text_size(12.5).line_height("17px").text_color(c.grey500).child(partsFacts(m)))
+            .when(Boolean(m.source), (x) => x.child(div().id(`wt-open-source-${m.id}`).text_size(11.5).line_height("16px").text_color(c.grey500).child(m.source))))
+          .when(!isParts(m) && Boolean(m.says), (e) => e.child(div().text_size(12.5).line_height("17px").text_color(c.grey500).child(m.says))))
         .child(Button(c, `wt-open-btn-${m.id}`, `Open ${m.name}`, (_e, cx) => this.open(m.id, cx), { small: true })))))
       // Without the services there is only the tiny network: say where the bigger one comes from.
       .when(Boolean(this.list) && !this.fromServices, (e) => e.child(div().id("wt-needs-services").max_w(560).text_size(11.5).line_height("16px").text_color(c.grey500)
@@ -540,6 +582,41 @@ export default class CaptainWeights extends View {
       .child(Inspector(c, this, [ChainBlock(c, this), HandBlock(c, this)])));
   }
 
+  /** A model of parts, under the header: the diagram of its parts with the open part beside it, or its rankers:
+   *  one tree drawn, with the inputs by share of gain beside it. Nothing here edits or runs the model. */
+  partsBody(c, W, H) {
+    const pm = this.pm, narrow = W < WIDE, tight = W < TIGHT;
+    const rankers = pm.model.rankers ?? [], onRankers = pm.view === "rankers" && rankers.length > 0;
+    const open = onRankers || Boolean(pm.sel);
+    const rail = tight ? (open ? W - 40 : 0) : narrow ? (open ? Math.min(296, Math.round(W * 0.4)) : 0) : 340;
+    const ch = Math.max(180, H - 84 - 44 - 14);
+    const cw = Math.max(200, W - 40 - (rail && !tight ? rail + 1 : 0));
+    const strip = h_flex().id("wt-parts-bar").h(44).flex_none().px(20).gap(10).items_center()
+      .when(rankers.length > 0, (e) => e.child(Submenus(c, [{ id: "model", label: "Model" }, { id: "rankers", label: "Rankers" }], onRankers ? "rankers" : "model", (id, cx) => { pm.view = id; cx.notify(); })))
+      .child(div().id("wt-read-only").flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(READ_ONLY));
+    const panel = (inner, close) => div().id("wt-side").w(tight ? W : rail).flex_none().h_full().overflow_y_scroll().child(v_flex().p(14).gap(12)
+      .when(Boolean(close) && narrow, (e) => e.child(h_flex().child(div().flex_1()).child(div().id("wt-side-close").text_size(11.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
+        .on_click((_e, cx) => { pm.sel = null; cx.notify(); }).child("Close this part"))))
+      .child(inner));
+    const rule = div().w(1).h_full().flex_none().bg(c.rule);
+    if (onRankers) {
+      const r = rankerOf(this), tree = r?.shown?.[pm.treeAt] ?? null;
+      this.treePz ??= new PanZoom("wr");
+      // On a page too tight for both side by side, the inputs sit over the tree.
+      const half = Math.round(ch * 0.46), BAR = 36;
+      const drawn = (w, h) => v_flex().w(w).child(TreeBar(c, this)).child(tree ? TreeCanvas(c, tree, { id: "wr", pz: this.treePz, width: w, height: h - BAR })
+        : div().id("wr-none").w(w).text_size(12.5).line_height("18px").text_color(c.grey500).child("No tree of this ranker was sent to draw."));
+      return v_flex().flex_1().min_h(0).child(strip)
+        .when(!tight, (e) => e.child(h_flex().flex_1().min_h(0).child(div().pl(20).child(drawn(cw, ch))).child(rule).child(panel(RankerPanel(c, this), false))))
+        .when(tight, (e) => e.child(div().h(half).flex_none().overflow_y_scroll().child(div().px(20).pb(10).child(RankerPanel(c, this)))).child(div().pl(20).child(drawn(W - 40, ch - half))));
+    }
+    return v_flex().flex_1().min_h(0).child(strip)
+      .child(h_flex().flex_1().min_h(0)
+        .when(!(tight && rail > 0), (x) => x.child(div().pl(20).child(PartsCanvas(c, pm.model, { id: "wp", pz: this.pz, layout: this.partsLayout, width: cw, height: ch, sel: pm.sel, head: pm.head,
+          onPart: (id, head, cx) => openPart(this, id, head, cx) }))))
+        .when(rail > 0, (x) => x.when(!tight, (y) => y.child(rule)).child(panel(PartPanel(c, this, (tight ? W : rail) - 30), true))));
+  }
+
   render() {
     const c = palette(isDark(theme()));
     const net = this.net, W = this.width, H = this.height;
@@ -547,7 +624,7 @@ export default class CaptainWeights extends View {
     // The neuron panel: always beside the drawing on a wide page; beside it only while a neuron is open on a
     // narrow one; and in the drawing's place on a page too tight for both.
     const rail = tight ? (this.sel ? W - 40 : 0) : narrow ? (this.sel ? Math.min(296, Math.round(W * 0.4)) : 0) : 340;
-    const headH = net ? 84 : 46;
+    const headH = net || this.pm ? 84 : 46;
     const cw = Math.max(200, W - 40 - (rail && !tight ? rail + 1 : 0));
     // While the error walks backward, a strip under the drawing says what the step shows. It is never laid over
     // the drawing, where it hid the network's last column.
@@ -561,7 +638,8 @@ export default class CaptainWeights extends View {
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1 || Math.abs(size.height - this.height) > 1) { this.width = size.width; this.height = size.height; cx.notify(); } })
       .child(this.header(c))
       .when(!this.model, (e) => e.child(this.chooser(c)))
-      .when(Boolean(this.model) && !net && !this.problem, (e) => e.child(div().p(20).child(Skeleton(c, 6))))
+      .when(Boolean(this.model) && !net && !this.pm && !this.problem, (e) => e.child(div().p(20).child(Skeleton(c, 6))))
+      .when(Boolean(this.pm), (e) => e.child(this.partsBody(c, W, H)))
       .when(Boolean(this.problem), (e) => e.child(v_flex().id("wt-problem").p(20).gap(10).items_start()
         .child(div().text_size(12.5).line_height("19px").text_color(c.fail).child(this.problem))
         .child(Button(c, "wt-retry", "Try again", (_e, cx) => this.open(this.model, cx), { small: true }))))

@@ -322,6 +322,11 @@ props_of() {
     captain-weights:tiny-neuron) echo '{"show": {"model": "starter:tiny", "input": 3, "neuron": [1, 1]}}' ;;
     captain-weights:tiny-staged) echo '{"show": {"model": "starter:tiny", "input": 3, "neuron": [1, 1], "stagedValue": -9}}' ;;
     captain-weights:tiny-staged-halve) echo '{"show": {"model": "starter:tiny", "input": 3, "neuron": [1, 0], "stagedNeuron": {"op": "scale", "factor": 0.5}}}' ;;
+    # parts-*: a made-up trained model (a small transformer with rankers), handed to the page with its answers.
+    captain-weights:parts-plain) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{}' ;;
+    captain-weights:parts-attention) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"part": "attn-1", "head": 1}' ;;
+    captain-weights:parts-table) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"part": "emb-item", "row": 2}' ;;
+    captain-weights:parts-rankers) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"rankers": true}' ;;
     captain-weights:tiny-walk) echo '{"show": {"model": "starter:tiny", "input": 3, "walk": 2}}' ;;
     captain-weights:tiny-plain) echo '{"show": {"model": "starter:tiny", "input": 1}}' ;;
     captain-weights:services-tiny-neuron) echo '{"show": {"model": "tiny", "input": 1, "neuron": [1, 1], "ask": true}}' ;;
