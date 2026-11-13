@@ -262,8 +262,9 @@ function placeCard(ship, c, p) {
 function connectCard(c, wide) {
   const open = () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "cloud" } });
   return v_flex().id("ship-connect-cloud").flex_1().min_w(260).when(!wide, (e) => e.max_w(420)).p(20).gap(10).bg(c.surface).border_1().border_color(c.rule)
-    .child(h_flex().gap(10).items_center().child(svg(icon("cloud")).size(18).flex_none().text_color(c.grey900))
-      .child(div().text_size(15).font_semibold().text_color(c.navy).child(wide ? "Connect a cloud to deploy where a site can reach it" : "Connect a cloud")))
+    .child(h_flex().gap(10).items_start().child(svg(icon("cloud")).size(18).flex_none().text_color(c.grey900))
+      // The long title wraps inside its card. On one line it ran out past the card's edge.
+      .child(div().flex_1().min_w(0).text_size(15).line_height("20px").font_semibold().text_color(c.navy).child(wide ? "Connect a cloud to deploy where a site can reach it" : "Connect a cloud")))
     .child(line(c, "ship-connect-cloud-text", wide ? "On this computer only you can reach the model. Connect AWS, Google Cloud, Azure or Modal, and it gets an address your site can call."
       : "Another place to deploy: AWS, Google Cloud, Azure or Modal."))
     .child(div().flex_1())
