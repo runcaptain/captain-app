@@ -38,14 +38,16 @@ from .net import WeightsError
 
 KIND = "session-ranker"
 KIND_SAYS = "session model with rankers"
-NOT_YET = "This model can be read here, not changed or run yet."
+NOT_YET = "This model can be read and changed here, not run yet."
+NOT_MEASURED = "Not measured: this model cannot be run here yet."
+TREES_CANNOT = "A tree ranker can be read here, not changed or run."
 FILES = "files"
 SESSION_FILE = "sess.npz"
 READ_CAP = 200_000       # the most numbers one read or one heatmap sends
 FACT_CAP = 5000          # a fact longer than this keeps its shape and not its values
 ROWS_CAP = 4096
-CANNOT = ("template", "forward", "activations", "gradients", "trace", "cost_slice", "set_sets", "evaluate", "edit", "undo", "redo",
-          "save", "export")
+CANNOT = ("template", "forward", "activations", "gradients", "trace", "cost_slice", "set_sets", "evaluate", "export")
+EDIT_OPS = ("set", "scale", "zero", "add")
 WIRING = ("The order of the parts is PyTorch's usual one for these names: the tables and the text projection are added "
           "together, then each layer is attention, a norm, feed-forward, a norm. The file holds numbers, not wiring, so "
           "this order is a reading of the names and is not confirmed.")
@@ -335,11 +337,24 @@ def _store(ctx, name: str, m: dict, blobs: dict[str, bytes]) -> dict:
     raise WeightsError(f"Could not find a free version number for {name}. Try again.")
 
 
+def _file(ctx, m: dict, rel: str) -> bytes:
+    """One of a version's kept files. A version saved from a session keeps none of its own: they are its root's."""
+    name, version = WS.split_ref(m["files_at"]) if m.get("files_at") else (m["name"], m["version"])
+    return ctx.store.get(WS._key(name, version, rel))
+
+
 def load(ctx, m: dict) -> tuple[dict, dict[str, np.ndarray]]:
     """A version's manifest and its tensors, each in the number type it was saved with."""
+    if m.get("base"):    # saved from a session: its base, then its edits, checked against the digest it was saved with
+        bname, bver = WS.split_ref(m["base"])
+        _, tensors = WS.load(ctx, bname, bver)
+        WS.apply_patches(tensors, m.get("patches") or [])
+        if m.get("sha256") and WS.digest(tensors) != m["sha256"]:
+            raise WeightsError(f"{WS.ref_of(m['name'], m['version'])} does not match the numbers recorded when it was saved.")
+        return m, tensors
     out: dict[str, np.ndarray] = {}
     for fname in sorted({t["file"] for t in m["tensors"].values()}):
-        got, _ = _arrays(ctx.store.get(WS._key(m["name"], m["version"], fname)), fname)
+        got, _ = _arrays(_file(ctx, m, fname), fname)
         for k, t in m["tensors"].items():
             if t["file"] == fname:
                 if k not in got:
@@ -521,7 +536,7 @@ def describe(m: dict) -> dict:
                          "layers_agree": None if declared_layers is None else declared_layers == len(ids)},
             "parts": parts, "wiring_says": WIRING, "facts": facts,
             "rankers": [{**r, "says": T.SAYS} for r in m.get("rankers") or []], "tables": m.get("tables") or [],
-            "can": {"read": True, "edit": False, "run": False, "deploy": False, "says": NOT_YET}}
+            "can": {"read": True, "edit": True, "run": False, "deploy": False, "says": NOT_YET, "edits_say": NOT_MEASURED}}
 
 
 def whole(ctx, model: str, sid: str | None = None) -> dict | None:
@@ -535,7 +550,7 @@ def whole(ctx, model: str, sid: str | None = None) -> dict | None:
     src = m.get("source") or {}
     out = {"id": m["name"], "name": m["name"], "version": m.get("version"), "says": m.get("says") or "", "numbers": False,
            "sizes": [], "layers": [], "examples": [], "test": [], "synthetic": False, "data_note": (m.get("data") or {}).get("note") or "",
-           "base": None, "cost": None, "sha256": m.get("sha256"),
+           "base": m.get("base"), "note": m.get("note") or "", "cost": None, "sha256": m.get("sha256"),
            "source": {"from": src.get("from"), "read_at": src.get("read_at"), "files": src.get("files") or {},
                       "manifest_yaml": bool(src.get("manifest_yaml"))}, **d}
     if sid:
@@ -652,7 +667,9 @@ def stats(ctx, sid: str, tensor: str | None = None, neurons: bool = False, by: s
                 raise WeightsError("Name one tensor to get a line per row.")
             t = _matrix(st, tensor).astype(float)
             norm = np.linalg.norm(t, axis=1)
-            out["rows"] = [{"row": j, "norm": float(norm[j]), "mean": float(t[j].mean()), "min": float(t[j].min()), "max": float(t[j].max()),
+            got = _labels(st.manifest, tensor, t)
+            out["labels_says"] = got["says"]
+            out["rows"] = [{"row": j, "label": got["names"][j] if got["names"] else None, "norm": float(norm[j]), "mean": float(t[j].mean()), "min": float(t[j].min()), "max": float(t[j].max()),
                             "zero_share": float((t[j] == 0).mean()), "dead": bool((t[j] == 0).all())} for j in range(min(t.shape[0], ROWS_CAP))]
             out["rows_of"] = int(t.shape[0])
         if not st.watch:
@@ -690,16 +707,71 @@ def heatmap(ctx, sid: str, layer=None, neuron=None, by: str | None = None, watch
     return S._do(ctx, sid, fn, watch)
 
 
-def _labels(m: dict, tensor: str, rows: int) -> tuple[list[str] | None, str]:
-    """Names for a table's rows, when a list saved beside the arrays has exactly one name per row."""
+EXTRA = "none or unknown"
+
+
+def _extra_row(t: np.ndarray) -> tuple[int, bool]:
+    """Where a table's one extra row sits, and whether that is clear: (row, sure). A row whose numbers are all near
+    zero beside the others is the odd one. When neither end stands out, row 0 is taken, as a guess."""
+    size = np.linalg.norm(np.asarray(t, dtype=float), axis=1)
+    mid = float(np.median(size[1:-1])) if len(size) > 2 else float(np.median(size))
+    first, last = bool(size[0] <= 0.1 * mid), bool(size[-1] <= 0.1 * mid)
+    if first != last:
+        return (0 if first else len(size) - 1), True
+    return 0, False
+
+
+def _ranges(edges: list[float]) -> list[str]:
+    """The ranges that a list of edges cuts the number line into: below the first, between each pair, above the last."""
+    e = [f"{float(v):.2f}" for v in edges]
+    return [f"below {e[0]}"] + [f"{a} to {b}" for a, b in zip(e, e[1:])] + [f"{e[-1]} and up"]
+
+
+def _labels(m: dict, tensor: str, t: np.ndarray) -> dict:
+    """Names for a table's rows, from a list saved beside the arrays: {names, says, source, extra_row, sure}.
+
+    A list with one name per row names them. A list one short of the rows names them too, with the row left over
+    called "none or unknown": at the end whose row is near zero, or at row 0 as a guess when neither is. A price
+    table is named from `edges`, the cut points between its ranges."""
+    rows = int(t.shape[0])
+    none = {"names": None, "says": "", "source": None, "extra_row": None, "sure": None}
     stem = tensor.rsplit(".", 1)[0]
-    key = (stem[2:] if stem.startswith("c_") else stem).split(".")[0] + "_vocab"
-    f = (m.get("facts") or {}).get(key)
-    if not f or f.get("kind") != "text" or not isinstance(f.get("value"), list):
-        return None, ""
-    if len(f["value"]) == rows:
-        return f["value"], f"Rows are named from {key}, saved beside the arrays."
-    return None, f"{key} lists {len(f['value']):,} names for {rows:,} rows, so which row has which name is not certain. Rows are numbered."
+    key = (stem[2:] if stem.startswith("c_") else stem).split(".")[0]
+    facts = m.get("facts") or {}
+    f, source, what = facts.get(key + "_vocab"), key + "_vocab", "names"
+    have = f["value"] if f and f.get("kind") == "text" and isinstance(f.get("value"), list) else None
+    if have is None and key == "price":
+        f, source, what = facts.get("edges"), "edges", "ranges"
+        if f and f.get("kind") == "numbers" and isinstance(f.get("value"), list) and len(f["value"]) >= 2:
+            have = _ranges(f["value"])
+            if rows not in (len(have), len(have) + 1):     # the edges may also be the two ends of the ranges
+                inner = have[1:-1]
+                have = inner if rows in (len(inner), len(inner) + 1) else have
+    if have is None:
+        return none
+    made = f"{len(f['value']):,} edges, which make {len(have):,} ranges" if what == "ranges" else f"{len(have):,} names"
+    if len(have) == rows:
+        return {"names": list(have), "says": f"Rows are named from {source}, saved beside the arrays: {made}, one for each row.",
+                "source": source, "extra_row": None, "sure": True}
+    if len(have) == rows - 1:
+        at, sure = _extra_row(t)
+        names = [EXTRA] + list(have) if at == 0 else list(have) + [EXTRA]
+        where = "row 0" if at == 0 else f"the last row, {rows - 1}"
+        why = ("That row's numbers are all near zero beside the others, so it is the odd one." if sure
+               else "Neither end stands out, so its place is a guess: every name may be one row off.")
+        return {"names": names, "says": f"{source} holds {made} for {rows:,} rows, one row more. The extra row is taken to be {where}, "
+                                        f"called \"{EXTRA}\". {why}", "source": source, "extra_row": at, "sure": sure}
+    return {**none, "says": f"{source} holds {made} for {rows:,} rows, so which row is which is not known. Rows are numbered.", "source": source}
+
+
+def labels(ctx, sid: str, tensor: str, by: str | None = None, watch: bool = False) -> dict:
+    """What each row of a table stands for, when a list saved beside the arrays says. Not an event: it shows no number."""
+    def fn(st):
+        t = _matrix(st, tensor)
+        got = _labels(st.manifest, tensor, t)
+        return {"tensor": tensor, "rows": int(t.shape[0]), "labels": got["names"], "labels_from": got["source"], "labels_says": got["says"],
+                "extra_row": got["extra_row"], "sure": got["sure"]}
+    return S._do(ctx, sid, fn, watch="record")
 
 
 def nearest(ctx, sid: str, tensor: str, row=0, top: int = 10, by: str | None = None, watch: bool = False) -> dict:
@@ -717,7 +789,8 @@ def nearest(ctx, sid: str, tensor: str, row=0, top: int = 10, by: str | None = N
         cos = (t @ t[j]) / (safe * (size[j] or 1.0))
         cos[size == 0] = 0.0
         order = [int(i) for i in np.argsort(-cos, kind="stable") if int(i) != j]
-        names, says = _labels(st.manifest, tensor, t.shape[0])
+        got = _labels(st.manifest, tensor, t)
+        names, says = got["names"], got["says"]
         one = lambda i: {"row": i, "label": names[i] if names else None, "cosine": float(cos[i]), "norm": float(size[i])}  # noqa: E731
         if not st.watch:
             st.event("read", f"{S._Who(st, by)} looked for the rows of {tensor} nearest to row {j}.", by, op="nearest", tensor=tensor,
@@ -740,7 +813,8 @@ def directions(ctx, sid: str, tensor: str, top: int = 5, by: str | None = None, 
         power = s ** 2
         total = float(power.sum()) or 1.0
         share = power / total
-        names, says = _labels(st.manifest, tensor, t.shape[0])
+        got = _labels(st.manifest, tensor, t)
+        names, says = got["names"], got["says"]
         out = []
         for i in range(min(n, len(s))):
             amount = u[:, i] * s[i]
@@ -815,7 +889,7 @@ def attention(ctx, sid: str, layer=0, head=None, heads=None, matrix: str | None 
             for p, e in tables:
                 through = e @ ov.T
                 per_row = np.linalg.norm(through, axis=1)
-                names, _ = _labels(st.manifest, p["tensors"][0], e.shape[0])
+                names = _labels(st.manifest, p["tensors"][0], e)["names"]
                 reads.append({"table": p["id"], "name": p["name"], "rows": int(e.shape[0]), "row_size": rms(e),
                               "query": rms(e @ q[sl].T), "key": rms(e @ key[sl].T), "value": rms(through),
                               "strongest": [{"row": int(r), "label": names[int(r)] if names else None, "value": float(per_row[r])}
@@ -842,10 +916,363 @@ def attention(ctx, sid: str, layer=0, head=None, heads=None, matrix: str | None 
     return S._do(ctx, sid, fn, watch)
 
 
-OPS = {"layers": layers, "session_layers": _no_layers, "read": read, "stats": stats, "heatmap": heatmap}
+# ---- changing it: exact patches, never measured ---------------------------------------------------------------------------------
+
+def _positions(req: dict, tensor: str, t: np.ndarray) -> np.ndarray:
+    """The numbers an edit names, as positions in the flattened tensor: `indices`, whole rows (`neurons`), or
+    `rows` and `cols` ranges. With none of them, the whole tensor."""
+    if req.get("layer") is not None or req.get("neuron") is not None:
+        raise WeightsError("This model has parts, not numbered layers. Name a tensor, with rows and columns or with positions.")
+    if req.get("indices") is not None:
+        try:
+            idx = [[int(v) for v in (ix if isinstance(ix, (list, tuple)) else [ix])] for ix in req["indices"]]
+        except (TypeError, ValueError):
+            raise WeightsError("Positions are whole numbers, counted from 0.") from None
+        if not idx or any(len(ix) != max(t.ndim, 1) or any(not 0 <= v < s for v, s in zip(ix, t.shape or (1,))) for ix in idx):
+            raise WeightsError(f"{tensor} has the shape {list(t.shape) or 'of a single number'}. A position names one number inside it, counted from 0.")
+        flat = np.ravel_multi_index(np.asarray(idx).T, t.shape) if t.ndim else np.zeros(len(idx), dtype=np.int64)
+    elif t.ndim == 2:
+        if req.get("neurons") is not None:
+            try:
+                rs = sorted({int(r) for r in req["neurons"]})
+            except (TypeError, ValueError):
+                raise WeightsError("Rows are whole numbers, counted from 0.") from None
+            if not rs or not all(0 <= r < t.shape[0] for r in rs):
+                raise WeightsError(f"{tensor} has {t.shape[0]:,} rows, counted from 0.")
+        else:
+            r0, r1 = S._span(req.get("rows"), t.shape[0], "Rows")
+            rs = list(range(r0, r1))
+        c0, c1 = S._span(req.get("cols"), t.shape[1], "Columns")
+        flat = (np.asarray(rs)[:, None] * t.shape[1] + np.arange(c0, c1)[None, :]).reshape(-1)
+    else:
+        if req.get("cols") not in (None, ""):
+            raise WeightsError(f"{tensor} is one list of numbers. It has rows and no columns.")
+        r0, r1 = S._span(req.get("rows"), max(t.size, 1), "Rows")
+        flat = np.arange(r0, r1)
+    flat = np.asarray(flat, dtype=np.int64)
+    if len(np.unique(flat)) != len(flat):
+        raise WeightsError("An edit names each number once.")
+    if len(flat) > READ_CAP:
+        raise WeightsError(f"That is {len(flat):,} numbers. One edit changes at most {READ_CAP:,}.")
+    return flat
+
+
+def _amounts(req: dict, n: int, what: str) -> np.ndarray:
+    vals = req.get("values") if req.get("values") is not None else req.get("value")
+    if vals is None:
+        raise WeightsError(f"Give {what}: `value` for all of them, or `values` with one number each.")
+    try:
+        v = np.asarray(vals, dtype=np.float64).reshape(-1)
+    except (TypeError, ValueError):
+        raise WeightsError("The numbers to write are numbers.") from None
+    if len(v) not in (1, n):
+        raise WeightsError(f"This edit names {n:,} numbers and gives {len(v):,} values. Give one for all, or one each.")
+    return np.broadcast_to(v, (n,))
+
+
+def _listed(t: np.ndarray, tensor: str, part: dict, frm: str, to: str) -> list[dict]:
+    out = []
+    for f, a, b in list(zip(part["indices"], part[frm], part[to]))[:S.LIST_CAP]:
+        at = [int(v) for v in np.unravel_index(int(f), t.shape)] if t.ndim else []
+        out.append({"tensor": tensor, "index": at, "old": a, "new": b})
+    return out
+
+
+def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
+    """Change numbers of one tensor: set, scale, zero or add. The edit is an exact patch, so it can be taken back to
+    the bit. It is not measured: this kind cannot be run here yet."""
+    if not isinstance(req, dict):
+        raise WeightsError("An edit is an object with `op` and what to change.")
+    by = by if by is not None else req.get("by")
+
+    def fn(st):
+        st.open_for_changes()
+        why = str(req.get("why") or req.get("hypothesis") or "").strip()
+        if S._by(by, st.who) == "agent" and not why:
+            raise WeightsError("An agent's edit needs `why`: one sentence saying what it expects the edit to do, given before the edit.")
+        op = str(req.get("op") or "").replace("-", "_")
+        if op not in EDIT_OPS:
+            raise WeightsError(f"The edits this model takes are: {', '.join(EDIT_OPS)}.")
+        tensor = req.get("tensor")
+        t = _tensor(st, tensor)
+        if t.dtype != np.float32:
+            raise WeightsError(f"{tensor} is stored as {t.dtype} numbers. Edits here are exact for float32 only, so it is left alone.")
+        flat = _positions(req, tensor, t)
+        cur = t.reshape(-1)[flat]
+        with np.errstate(over="ignore", invalid="ignore"):    # a number too large for float32 becomes infinite, and is refused below
+            if op == "zero":
+                new = np.zeros(len(flat), dtype=np.float32)
+            elif op == "scale":
+                try:
+                    new = (cur * np.float32(float(req["factor"]))).astype(np.float32)
+                except (KeyError, TypeError, ValueError):
+                    raise WeightsError("To scale, give `factor`: the number to multiply by.") from None
+            elif op == "set":
+                new = _amounts(req, len(flat), "the number to write").astype(np.float32)
+            else:
+                new = (cur + _amounts(req, len(flat), "the amount to add").astype(np.float32)).astype(np.float32)
+        if not np.isfinite(new).all():
+            raise WeightsError("This edit would write a number that is not finite.")
+        moved = cur != new
+        if not moved.any():
+            raise WeightsError("This edit changes nothing: every number it names already has that value.")
+        part = {"tensor": tensor, "indices": flat[moved].tolist(), "old": cur[moved].astype(float).tolist(), "new": new[moved].astype(float).tolist()}
+        n = len(st.doc["edits"]) + 1
+        key = f"patches/{n}-{S.secrets.token_hex(3)}.json"
+        patch = {"n": n, "parts": [part]}
+        st.new_patches[key] = patch
+        st._put(patch, "new")
+        changed = len(part["indices"])
+        verb = {"set": "set", "scale": "scaled", "zero": "set to zero", "add": "added to"}[op]
+        ev = st.event("edit", f"{S._Who(st, by)} {verb} {S._plural(changed, 'number')} in {tensor}. {NOT_MEASURED}", by, op=op, tensor=tensor,
+                      tensors=[tensor], factor=float(req["factor"]) if op == "scale" else None, why=why,
+                      args={k: v for k, v in req.items() if k not in ("why", "hypothesis", "by", "values", "indices")},
+                      changes=_listed(t, tensor, part, "old", "new"), changed=changed, share=round(changed / st.total(), 6),
+                      undone=False, measured=False, not_measured=NOT_MEASURED)
+        st.doc["edits"].append({"n": n, "event": ev["id"], "op": op, "tensors": [tensor], "why": why, "by": ev["by"], "state": "applied",
+                                "changed": changed, "patch": key})
+        st.doc["actions"].append(["apply", n])
+        ev["ledger"] = {"changed": st.changed(), "total": st.total()}
+        return st.show(ev)
+    return S._do(ctx, sid, fn)
+
+
+def _flip(ctx, sid: str, edit_id, by, kind: str) -> dict:
+    def fn(st):
+        st.open_for_changes()
+        e = S._pick(st, edit_id, "applied" if kind == "undo" else "undone")
+        patch = st.patch(e["n"])
+        if kind == "undo":
+            later = [o for o in st.doc["edits"] if o["state"] == "applied" and o is not e
+                     and S._last_apply(st, o["n"]) > S._last_apply(st, e["n"]) and S._overlap(st.patch(o["n"]), patch)]
+            if later:
+                raise WeightsError(f"Take back edit {later[0]['event']} first: it changed the same numbers after edit {e['event']}.")
+        else:
+            for part in patch["parts"]:
+                now = st.cur[part["tensor"]].reshape(-1)[np.asarray(part["indices"], dtype=np.int64)]
+                if not np.array_equal(now, np.asarray(part["old"], dtype=np.float32)):
+                    raise WeightsError(f"Edit {e['event']} cannot be put back: the numbers it started from have changed since.")
+        frm, to = ("new", "old") if kind == "undo" else ("old", "new")
+        st._put(patch, to)
+        e["state"] = "undone" if kind == "undo" else "applied"
+        st.doc["actions"].append([kind, e["n"]])
+        for ev in st.doc["events"]:
+            if ev["id"] == e["event"]:
+                ev["undone"] = kind == "undo"
+        part = patch["parts"][0]
+        words = "took back" if kind == "undo" else "put back"
+        ev = st.event(kind, f"{S._Who(st, by)} {words} edit {e['event']}: {S._plural(e['changed'], 'number')} in {part['tensor']}. {NOT_MEASURED}",
+                      by, op=e["op"], **{"undoes" if kind == "undo" else "redoes": e["event"]}, tensor=part["tensor"], tensors=e["tensors"],
+                      changes=_listed(st.cur[part["tensor"]], part["tensor"], part, frm, to), changed=e["changed"], measured=False,
+                      not_measured=NOT_MEASURED)
+        ev["ledger"] = {"changed": st.changed(), "total": st.total()}
+        return st.show(ev)
+    return S._do(ctx, sid, fn)
+
+
+def undo(ctx, sid: str, edit_id=None, by: str | None = None) -> dict:
+    return _flip(ctx, sid, edit_id, by, "undo")
+
+
+def redo(ctx, sid: str, edit_id=None, by: str | None = None) -> dict:
+    return _flip(ctx, sid, edit_id, by, "redo")
+
+
+def _diff(st, listed: int = S.LIST_CAP) -> dict:
+    by_tensor, changes = [], []
+    changed = total = 0
+    for name, b in st.base.items():
+        c = st.cur[name]
+        moved = np.flatnonzero((b != c).reshape(-1))
+        total += int(b.size)
+        changed += len(moved)
+        if not len(moved):
+            continue
+        by_tensor.append({"tensor": name, "changed": len(moved), "total": int(b.size), "share": round(len(moved) / b.size, 6),
+                          "largest_change": float(np.abs(c.astype(float) - b.astype(float)).max())})
+        for f in moved[:max(0, listed - len(changes))]:
+            changes.append({"tensor": name, "index": [int(v) for v in np.unravel_index(int(f), b.shape)] if b.ndim else [],
+                            "old": float(b.reshape(-1)[f]), "new": float(c.reshape(-1)[f])})
+    return {"base": WS.ref_of(st.model, st.doc["version"]), "changed": changed, "total": total,
+            "share": round(changed / total, 6) if total else 0.0, "by_tensor": by_tensor, "changes": changes}
+
+
+def diff(ctx, sid: str, by: str | None = None, watch: bool = False) -> dict:
+    def fn(st):
+        out = _diff(st)
+        if not st.watch:
+            st.event("read", f"{S._Who(st, by)} compared the model with its base: {out['changed']:,} of {out['total']:,} numbers differ.", by, op="diff")
+        return out
+    return S._do(ctx, sid, fn, watch)
+
+
+def report(ctx, sid: str) -> dict:
+    def fn(st):
+        out = S._session_out(st, events=0)
+        out["events"] = [st.show(e) for e in st.doc["events"]]
+        out["passes"] = st.doc["used"]["passes"]
+        out["diff"] = _diff(st, listed=0)
+        out["kept"] = [e for e in out["edits"] if e["state"] == "applied"]
+        out["taken_back"] = [e for e in out["edits"] if e["state"] != "applied"]
+        return out
+    return S._do(ctx, sid, fn, watch="record")
+
+
+def save(ctx, sid: str, note: str = "", by: str | None = None) -> dict:
+    """Save the model as it is now as a new version: its base plus the changed numbers, with the session's record.
+    The new version keeps no files of its own. Nothing is overwritten."""
+    def fn(st):
+        patches = []
+        for name in st.base:
+            moved = np.flatnonzero((st.base[name] != st.cur[name]).reshape(-1))
+            if len(moved):
+                patches.append({"tensor": name, "indices": moved.tolist(), "old": st.base[name].reshape(-1)[moved].astype(float).tolist(),
+                                "new": st.cur[name].reshape(-1)[moved].astype(float).tolist()})
+        if not patches:
+            raise WeightsError("There is nothing to save: the model is the same as its base.")
+        led = S.ledger(st)
+        record = {"session": st.sid, "who": st.doc["who"], "opened_at": st.doc["opened_at"], "ledger": led, "edits": S._edits_out(st),
+                  "passes": [], "measured": False, "not_measured": NOT_MEASURED,
+                  "events": [{k: v for k, v in e.items() if k != "changes"} for e in st.doc["events"]]}
+        base_ref = WS.ref_of(st.model, st.doc["version"])
+        base = WS.manifest(ctx, st.model, st.doc["version"])
+        keep = {k: v for k, v in base.items() if k not in ("version", "created_at", "created_by", "sha256", "patches", "record", "note", "base")}
+        m = WS.save_packed(ctx, st.model, {**keep, "base": base_ref, "files_at": base.get("files_at") or base_ref, "patches": patches,
+                                           "record": record, "note": str(note or ""), "sha256": WS.digest(st.cur)}, None)
+        ref = WS.ref_of(st.model, m["version"])
+        st.doc["saved"].append(ref)
+        st.event("save", f"{S._Who(st, by)} saved the model as {ref}: {base_ref} plus {S._plural(led['changed'], 'changed number')}. {NOT_MEASURED}",
+                 by, op="save", ref=ref, args={"note": note})
+        return {"model": st.model, "version": m["version"], "ref": ref, "base": base_ref,
+                "patches": sum(1 for e in st.doc["edits"] if e["state"] == "applied"), "changed": led["changed"], "share": led["share"],
+                "label": led["label"], "weights_alone": led["weights_alone"], "note": str(note or ""), "scores_shown_now": False,
+                "measured": False, "not_measured": NOT_MEASURED, "sha256": m["sha256"]}
+    return S._do(ctx, sid, fn)
+
+
+OPS = {"layers": layers, "session_layers": _no_layers, "read": read, "stats": stats, "heatmap": heatmap, "edit": edit, "undo": undo,
+       "redo": redo, "diff": diff, "report": report, "save": save}
 
 
 # ---- the tree rankers ------------------------------------------------------------------------------------------------------------
+
+def _ranker(ctx, m: dict, pick: dict, shown: int) -> dict:
+    parsed = T.parse(_file(ctx, m, pick["file"]).decode(errors="replace"))
+    named = T.names_from(_file(ctx, m, pick["cols"]), parsed["inputs"]) if pick.get("cols") else []
+    return T.summary(parsed, named or None, shown)
+
+
+def rankers(ctx, model: str) -> dict:
+    """A model's tree rankers side by side: which inputs each one asks about, and which none of them does."""
+    name, version = WS.split_ref(model)
+    m = WS.manifest(ctx, name, version)
+    have = (m.get("rankers") or []) if is_real(m) else []
+    if not have:
+        raise WeightsError(f"{name} has no tree rankers. They come with a session model brought in from its training folder.")
+    each = {r["name"]: _ranker(ctx, m, r, 0) for r in have}
+    order: list[str] = []
+    for s in each.values():
+        order += [i["name"] for i in sorted(s["by_input"], key=lambda i: i["input"]) if i["name"] not in order]
+    rows = []
+    for nm in order:
+        by = {}
+        for rn, s in each.items():
+            hit = next((i for i in s["by_input"] if i["name"] == nm), None)
+            by[rn] = None if hit is None else {"splits": hit["splits"], "gain": hit["gain"], "share": hit["share"]}
+        used = [rn for rn, v in by.items() if v and v["splits"]]
+        rows.append({"name": nm, "group": T.group_of(nm), "by": by, "used_by": used, "unused_by": [rn for rn in by if rn not in used]})
+    rows.sort(key=lambda r: -max((v["share"] for v in r["by"].values() if v), default=0.0))
+    none = [r["name"] for r in rows if not r["used_by"]]
+    every = [r["name"] for r in rows if len(r["used_by"]) == len(each)]
+    names = list(each)
+    said = ", ".join(none[:8]) + (f" and {len(none) - 8} more" if len(none) > 8 else "")
+    return {"model": name, "version": m["version"], "says": T.SAYS,
+            "rankers": [{"name": rn, "objective": s["objective"], "trees": s["trees"], "inputs": s["inputs"],
+                         "used": s["inputs"] - len(s["unused"]), "unused": [u["name"] for u in s["unused"]]} for rn, s in each.items()],
+            "inputs": rows, "used_by_all": every, "used_by_some": [r["name"] for r in rows if 0 < len(r["used_by"]) < len(each)],
+            "unused_by_all": none,
+            "unused_by_all_says": (f"{len(none)} of {len(rows)} inputs are asked about by none of the {S._plural(len(each), 'ranker')} "
+                                   f"({', '.join(names)}), so they change no answer: {said}." if none
+                                   else f"Every input is asked about by at least one of the {S._plural(len(each), 'ranker')}."),
+            "same_inputs": all(s["inputs"] == len(rows) for s in each.values())}
+
+
+# ---- what can be brought in from a folder of versions ----------------------------------------------------------------------------
+
+VERSIONS_MOST = 500
+DESCRIBED_MOST = 200
+END = "weights/" + SESSION_FILE
+
+
+def _one_line(raw: bytes | None) -> str | None:
+    """A version's own one-line description, from its MANIFEST.yaml."""
+    if raw is None:
+        return None
+    try:
+        import yaml
+
+        got = yaml.safe_load(raw.decode())
+    except Exception:  # noqa: BLE001  a manifest that cannot be parsed has no description
+        return None
+    if not isinstance(got, dict):
+        return None
+    for k in ("description", "summary", "says", "title", "notes"):
+        if isinstance(got.get(k), str) and got[k].strip():
+            return " ".join(got[k].split())[:200]
+    scalars = [f"{k}: {v}" for k, v in got.items() if isinstance(v, (str, int, float)) and not isinstance(v, bool)][:4]
+    return ", ".join(scalars)[:200] or None
+
+
+def registry(where: str) -> dict:
+    """The version folders under a folder or an s3:// address that can be brought in: each one that holds
+    weights/sess.npz, with the one-line description from its MANIFEST.yaml. Read only. Nothing is written there."""
+    if not isinstance(where, str) or not where.strip():
+        raise WeightsError("Name the folder or the s3:// address that holds the versions.")
+    where = where.strip()
+    if is_address(where):
+        from ..storage.backend import S3Store
+
+        u = urlparse(where)
+        if not u.netloc:
+            raise WeightsError("An S3 address is written s3://bucket/folder.")
+        store = _cloud(lambda: S3Store(u.netloc, u.path.strip("/")))
+        keys = _cloud(lambda: store.list(""))
+        root = where.rstrip("/")
+        paths = sorted({k[:-len(END)].rstrip("/") for k in keys if k == END or k.endswith("/" + END)})
+        have = set(keys)
+        count = lambda p: sum(1 for k in keys if k.startswith((p + "/" if p else "") + "weights/"))  # noqa: E731
+        read = lambda p: _cloud(lambda: store.get((p + "/" if p else "") + "MANIFEST.yaml")) if (p + "/" if p else "") + "MANIFEST.yaml" in have else None  # noqa: E731
+    else:
+        root = os.path.abspath(where)
+        if not os.path.isdir(root):
+            raise WeightsError(f"{where} is not a folder.")
+        paths = []
+        for d, subs, _files in os.walk(root):
+            subs[:] = sorted(s for s in subs if not s.startswith("."))
+            rel = os.path.relpath(d, root)
+            if rel.count(os.sep) >= 6:
+                subs[:] = []
+            if os.path.isfile(os.path.join(d, "weights", SESSION_FILE)):
+                paths.append("" if rel == "." else rel.replace(os.sep, "/"))
+                subs[:] = []
+        count = lambda p: len([f for f in os.listdir(os.path.join(root, p, "weights")) if _wanted(f)])  # noqa: E731
+
+        def read(p):
+            try:
+                with open(os.path.join(root, p, "MANIFEST.yaml"), "rb") as f:
+                    return f.read()
+            except OSError:
+                return None
+    rows = []
+    for i, p in enumerate(paths[:VERSIONS_MOST]):
+        raw = read(p) if i < DESCRIBED_MOST else None
+        rows.append({"path": p, "address": f"{root}/{p}" if p else root, "name": p.split("/")[-1] if p else root.split("/")[-1],
+                     "description": _one_line(raw), "has_manifest": raw is not None, "files": count(p)})
+    return {"from": root, "versions": rows, "count": len(paths), "listed": len(rows), "read_only": True,
+            "says": (f"{S._plural(len(paths), 'version')} can be brought in from here." if paths
+                     else "No version was found here. A version is a folder that holds weights/sess.npz.")
+                    + " Nothing was written there. Bring one in with `cst weights import <address> --as <name>`."}
+
 
 def trees(ctx, model: str, ranker: str | None = None, trees: int = T.TREES_SHOWN) -> dict:
     """One of a model's tree rankers, read from its file: per input its questions and their gain, the inputs no tree
@@ -860,9 +1287,7 @@ def trees(ctx, model: str, ranker: str | None = None, trees: int = T.TREES_SHOWN
     if pick is None:
         raise WeightsError(f"{name} has no ranker named {ranker!r}. Its rankers are: {', '.join(names)}.")
     v = m["version"]
-    parsed = T.parse(ctx.store.get(WS._key(name, v, pick["file"])).decode(errors="replace"))
-    named = T.names_from(ctx.store.get(WS._key(name, v, pick["cols"])), parsed["inputs"]) if pick.get("cols") else []
-    out = T.summary(parsed, named or None, trees)
+    out = _ranker(ctx, m, pick, trees)
     return {"model": name, "version": v, "ranker": pick["name"], "rankers": names, "names_from": pick.get("names_from"),
             "file": pick["file"].split("/")[-1], "sha256": ((m.get("source") or {}).get("files") or {}).get(pick["file"].split("/")[-1], {}).get("sha256"),
-            **out, "cannot": NOT_YET}
+            **out, "cannot": TREES_CANNOT}

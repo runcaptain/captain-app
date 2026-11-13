@@ -16,6 +16,7 @@ leaf number `-child - 1`.
 from __future__ import annotations
 
 import json
+import re
 
 from .net import WeightsError
 
@@ -134,6 +135,12 @@ def names_from(cols, n_inputs: int) -> list[str]:
     return []
 
 
+def group_of(name: str) -> str:
+    """The start of an input's name up to its first underscore (`s1_pos` gives `s1_`), for folding a long list."""
+    hit = re.match(r"[A-Za-z]+\d*_", name)
+    return hit.group(0) if hit else "other"
+
+
 def _depth(t: dict, node: int = 0) -> int:
     if t["leaves"] <= 1:
         return 0
@@ -192,9 +199,19 @@ def summary(model: dict, names: list[str] | None = None, trees: int = TREES_SHOW
             used_in[f] += 1
     total_gain, total_splits = sum(gain), sum(splits)
     infos = model["infos"]
-    rows = [{"input": i, "name": names[i], "splits": splits[i], "gain": gain[i],
+    groups: dict[str, dict] = {}
+    for i in range(n):
+        g = groups.setdefault(group_of(names[i]), {"prefix": group_of(names[i]), "count": 0, "used": 0, "unused": 0, "splits": 0, "gain": 0.0, "inputs": []})
+        g["count"] += 1
+        g["used" if splits[i] else "unused"] += 1
+        g["splits"] += splits[i]
+        g["gain"] += gain[i]
+        g["inputs"].append(i)
+    for g in groups.values():
+        g["share"] = (g["gain"] / total_gain) if total_gain else 0.0
+    rows = [{"input": i, "name": names[i], "group": group_of(names[i]), "splits": splits[i], "gain": gain[i],
              "share": (gain[i] / total_gain) if total_gain else 0.0, "trees": used_in[i]} for i in range(n)]
-    unused = [{"input": i, "name": names[i], "constant": bool(infos) and infos[i] == "none"} for i in range(n) if not splits[i]]
+    unused = [{"input": i, "name": names[i], "group": group_of(names[i]), "constant": bool(infos) and infos[i] == "none"} for i in range(n) if not splits[i]]
     if unused:
         said = ", ".join(u["name"] for u in unused[:8]) + (f" and {len(unused) - 8} more" if len(unused) > 8 else "")
         unused_says = (f"{len(unused)} of {n} inputs are never asked about by any tree, so changing them cannot change the answer: {said}.")
@@ -203,6 +220,8 @@ def summary(model: dict, names: list[str] | None = None, trees: int = TREES_SHOW
     return {"kind": "trees", "says": SAYS, "rule": RULE, "objective": model["objective"] or "not stated", "trees": len(model["trees"]),
             "inputs": n, "leaves": sum(t["leaves"] for t in model["trees"]), "splits": total_splits, "gain": total_gain,
             "unused": unused, "unused_says": unused_says,
+            "groups": sorted(groups.values(), key=lambda g: (-g["gain"], g["prefix"])),
+            "groups_says": "Inputs are grouped by the start of their names, up to the first underscore. The names are the short codes the training used.",
             "by_input": sorted(rows, key=lambda r: (-r["gain"], -r["splits"], r["input"])),
             "first_trees": [{"tree": t["tree"], "leaves": t["leaves"], "depth": _depth(t), "shrinkage": t["shrinkage"], "root": _draw(t, names)}
                             for t in model["trees"][:shown]],

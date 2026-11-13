@@ -119,7 +119,7 @@ end of parameters
 
 pandas_categorical:null
 """
-COLS = ["views", "carts", "price_bucket", "recency", "never_filled"]
+COLS = ["f_views", "f_carts", "m_price", "s1_recency", "s1_never"]
 
 
 def arrays(width: int = 8, layers: int = 1, seed: int = 0, over: dict | None = None) -> dict[str, np.ndarray]:
@@ -300,7 +300,7 @@ def test_the_parts_are_worked_out_from_the_shapes(svc, layers):
         "parameters", "parts", "wiring_says", "facts", "rankers", "tables", "source", "can", "numbers", "sizes", "layers", "examples")
     assert (d["width"], d["depth"], d["heads"], d["head_width"], d["feed_forward"]) == (8, layers, 2, 4, 32)
     assert d["heads_from"] == "model.json" and d["numbers"] is False and d["declared"]["layers_agree"] is True
-    assert d["can"] == {"read": True, "edit": False, "run": False, "deploy": False, "says": R.NOT_YET}
+    assert d["can"] == {"read": True, "edit": True, "run": False, "deploy": False, "says": R.NOT_YET, "edits_say": R.NOT_MEASURED}
     parts = {p["id"]: p for p in d["parts"]}
     for p in d["parts"]:
         has(p, "id", "kind", "name", "says", "technical", "tensors", "shape", "parameters", "feeds_from")
@@ -453,14 +453,14 @@ def test_the_tree_file_is_read_with_its_splits_gains_and_leaves():
     has(s, "kind", "says", "rule", "objective", "trees", "inputs", "leaves", "splits", "gain", "unused", "unused_says", "by_input", "first_trees")
     assert (s["trees"], s["inputs"], s["leaves"], s["splits"], s["gain"]) == (3, 5, 7, 4, 20.0)
     assert [(r["name"], r["splits"], r["gain"], r["share"], r["trees"]) for r in s["by_input"]] == [
-        ("views", 1, 10.0, 0.5, 1), ("price_bucket", 1, 5.0, 0.25, 1), ("carts", 1, 4.0, 0.2, 1), ("recency", 1, 1.0, 0.05, 1),
-        ("never_filled", 0, 0.0, 0.0, 0)]
-    assert s["unused"] == [{"input": 4, "name": "never_filled", "constant": True}] and "1 of 5 inputs are never asked about" in s["unused_says"]
+        ("f_views", 1, 10.0, 0.5, 1), ("m_price", 1, 5.0, 0.25, 1), ("f_carts", 1, 4.0, 0.2, 1), ("s1_recency", 1, 1.0, 0.05, 1),
+        ("s1_never", 0, 0.0, 0.0, 0)]
+    assert s["unused"] == [{"input": 4, "name": "s1_never", "group": "s1_", "constant": True}] and "1 of 5 inputs are never asked about" in s["unused_says"]
     assert "not neurons" in s["says"] and "no weights or biases" in s["says"]
-    # the first tree, as a screen draws it: is views at most 0.5? yes: is price_bucket at most 3.5? ...
+    # the first tree, as a screen draws it: is f_views at most 0.5? yes: is m_price at most 3.5? ...
     root = s["first_trees"][0]["root"]
-    assert (root["name"], root["threshold"], root["gain"], root["count"], root["missing_goes"]) == ("views", 0.5, 10.0, 60, "left")
-    assert (root["left"]["name"], root["left"]["left"], root["left"]["right"]) == ("price_bucket", {"leaf": 0, "value": 0.1, "count": 10},
+    assert (root["name"], root["threshold"], root["gain"], root["count"], root["missing_goes"]) == ("f_views", 0.5, 10.0, 60, "left")
+    assert (root["left"]["name"], root["left"]["left"], root["left"]["right"]) == ("m_price", {"leaf": 0, "value": 0.1, "count": 10},
                                                                                  {"leaf": 1, "value": -0.2, "count": 20})
     assert root["right"] == {"leaf": 2, "value": 0.3, "count": 30}
     assert (s["first_trees"][0]["depth"], s["first_trees"][0]["leaves"], len(s["first_trees"])) == (2, 3, 2)
@@ -483,7 +483,7 @@ def test_a_models_rankers_are_served_and_the_unused_input_is_named(svc):
     has(r, "model", "version", "ranker", "rankers", "names_from", "file", "sha256", "kind", "says", "unused", "unused_says", "by_input",
         "first_trees", "cannot")
     assert (r["ranker"], r["rankers"], r["objective"], r["names_from"]) == ("full", ["full", "patc", "pclick"], "lambdarank", "the cols file")
-    assert r["unused"][0]["name"] == "never_filled" and len(r["first_trees"]) == 3 and r["cannot"] == R.NOT_YET
+    assert r["unused"][0]["name"] == "s1_never" and len(r["first_trees"]) == 3 and r["cannot"] == R.TREES_CANNOT
     assert r["sha256"] == hashlib.sha256(TREES.encode()).hexdigest()
     click = svc.get("/api/weights/models/sample/trees", ranker="pclick", trees=1)
     assert click["objective"] == "binary" and len(click["first_trees"]) == 1
@@ -493,18 +493,18 @@ def test_a_models_rankers_are_served_and_the_unused_input_is_named(svc):
 
 # ---- what it cannot do yet ----------------------------------------------------------------------------------------------------
 
-def test_changing_and_running_are_refused_in_one_plain_sentence(svc):
+def test_running_is_refused_in_one_plain_sentence(svc):
     bring(svc)
-    assert R.NOT_YET == "This model can be read here, not changed or run yet."
+    assert R.NOT_YET == "This model can be read and changed here, not run yet."
     s = svc.post("/api/weights/sessions", {"model": "sample"})
     p = f"/api/weights/sessions/{s['id']}"
-    for path, body in (("/edits", {"op": "zero", "tensor": "act.weight", "neurons": [0]}), ("/forward", {"inputs": [[0.1]]}),
+    for path, body in (("/forward", {"inputs": [[0.1]]}),
                        ("/activations", {"example": 0}), ("/gradients", {"example": 0}), ("/trace", {"example": 0}),
-                       ("/slice", {"tensor": "act.weight", "index": [0, 0]}), ("/undo", {}), ("/redo", {}), ("/evaluate", {}),
-                       ("/sets", {"target": {"classes": [1]}}), ("/save", {}), ("/export", {"folder": str(svc.tmp / "out")})):
+                       ("/slice", {"tensor": "act.weight", "index": [0, 0]}), ("/evaluate", {}),
+                       ("/sets", {"target": {"classes": [1]}}), ("/export", {"folder": str(svc.tmp / "out")})):
         assert svc.post(p + path, body, code=400) == {"error": R.NOT_YET}, path
     assert svc.get(p + "/template", code=400)["error"] == R.NOT_YET
-    with pytest.raises(ValueError, match="not changed or run yet"):
+    with pytest.raises(ValueError, match="not run yet"):
         PD.resolve(svc.ctx, "weights:sample@v1")
     # nothing was changed, and the session still reads, reports and closes
     assert svc.get(p + "/diff")["changed"] == 0 and svc.get(p + "/report")["ledger"]["changed"] == 0
@@ -587,8 +587,8 @@ def test_the_commands_bring_it_in_describe_it_read_it_and_refuse_to_change_it(tm
     assert cst("weights", "attention", "--layer", "1", "--head", "2")["of"][0]["head"] == 1       # typed from 1, answered from 0
     assert cst("weights", "heatmap", "--tensor", "L0.self_attn.out_proj.weight")["grid_shape"] == [8, 8]
     assert cst("weights", "stats", "act.weight", "--neurons")["rows_of"] == 5
-    assert cst("weights", "trees", "sample", "--ranker", "patc")["unused"][0]["name"] == "never_filled"
-    r = RUN.invoke(cli, ["--json", "weights", "edit", "zero", "--tensor", "act.weight", "--neurons", "1"])
+    assert cst("weights", "trees", "sample", "--ranker", "patc")["unused"][0]["name"] == "s1_never"
+    r = RUN.invoke(cli, ["--json", "weights", "gradients", "--example", "1"])
     assert r.exit_code == 1 and R.NOT_YET in r.output
     assert R.NOT_YET in RUN.invoke(cli, ["weights", "forward", "--input", "0.1"]).output
     # what a person reads, without --json
@@ -598,8 +598,8 @@ def test_the_commands_bring_it_in_describe_it_read_it_and_refuse_to_change_it(tm
                  R.NOT_YET):
         assert want in text, want
     text = words("weights", "trees", "sample")
-    for want in ("NOT USED: 1 of 5 inputs are never asked about", "never_filled", "These are trees, not neurons", "is views at most 0.5?",
-                 "views: 1 question, 50.0% of the gain"):
+    for want in ("NOT USED: 1 of 5 inputs are never asked about", "s1_never", "These are trees, not neurons", "is f_views at most 0.5?",
+                 "f_views: 1 question, 50.0% of the gain"):
         assert want in text, want
     for args in (("weights", "layers"), ("weights", "nearest", "cat.s.weight", "2"), ("weights", "directions", "act.weight"),
                  ("weights", "attention"), ("weights", "stats", "act.weight", "--neurons"), ("weights", "heatmap", "--tensor", "act.weight"),
@@ -614,3 +614,261 @@ def test_what_a_person_reads_in_these_files_has_no_dashes_arrows_or_internal_wor
         text = (here / f).read_text()
         assert not re.search(r"[—–←-⇿⟵-⟿]", text), f"{f} has a dash or an arrow a person could see"
         assert not re.search(r"\bengines?\b|\bdaemon\b", text, re.I), f"{f} says a word people should not see"
+
+
+# ---- row names, input groups, rankers side by side, what can be brought in ----------------------------------------------------
+
+def _labels(svc, name, **over):
+    bring(svc, name=name, over=over)
+    sid = svc.post("/api/weights/sessions", {"model": name})["id"]
+    return sid, lambda tensor: svc.get(f"/api/weights/sessions/{sid}/labels", tensor=tensor)
+
+
+def test_rows_are_named_from_a_list_one_short_and_the_extra_row_is_found_or_said_to_be_a_guess(svc):
+    cat = arrays()["cat.s.weight"].copy()
+    # the made-up layout as it comes: 6 names for 7 rows, 4 edges (5 ranges) for 6 price rows, and no row stands out
+    sid, lab = _labels(svc, "guess")
+    c = lab("cat.s.weight")
+    has(c, "tensor", "rows", "labels", "labels_from", "labels_says", "extra_row", "sure")
+    assert c["labels"] == ["none or unknown"] + [f"category {i}" for i in range(6)] and (c["extra_row"], c["sure"]) == (0, False)
+    assert "guess" in c["labels_says"] and "6 names for 7 rows" in c["labels_says"]
+    pr = lab("price.weight")
+    assert pr["labels"] == ["none or unknown", "below 1.00", "1.00 to 2.00", "2.00 to 3.00", "3.00 to 4.00", "4.00 and up"]
+    assert pr["labels_from"] == "edges" and "4 edges, which make 5 ranges for 6 rows" in pr["labels_says"] and pr["sure"] is False
+    assert lab("c_price.weight")["labels"] == pr["labels"]
+    assert lab("act.weight")["labels"] is None and lab("act.weight")["labels_says"] == ""
+    # the names reach every reading that lists rows
+    p = f"/api/weights/sessions/{sid}"
+    assert svc.get(p + "/nearest", tensor="cat.s.weight", row=1)["label"] == "category 0"
+    assert svc.get(p + "/stats", tensor="price.weight", neurons=1)["rows"][2]["label"] == "1.00 to 2.00"
+    assert svc.get(p + "/directions", tensor="cat.s.weight")["directions"][0]["strongest_rows"][0]["label"]
+    # a last row of zeros is the extra one, and that is sure
+    last = cat.copy()
+    last[-1] = 0
+    c = _labels(svc, "last", **{"cat.s.weight": last})[1]("cat.s.weight")
+    assert c["labels"] == [f"category {i}" for i in range(6)] + ["none or unknown"] and (c["extra_row"], c["sure"]) == (6, True)
+    assert "near zero" in c["labels_says"]
+    first = cat.copy()
+    first[0] = 1e-6
+    c = _labels(svc, "first", **{"cat.s.weight": first})[1]("cat.s.weight")
+    assert c["labels"][0] == "none or unknown" and c["labels"][1] == "category 0" and (c["extra_row"], c["sure"]) == (0, True)
+    # one name per row needs no guess, and a list of another length names nothing
+    c = _labels(svc, "exact", cat_vocab=np.array([f"category {i}" for i in range(7)]), edges=np.linspace(1.0, 5.0, 5))[1]
+    assert c("cat.s.weight")["labels"][0] == "category 0" and c("cat.s.weight")["extra_row"] is None and c("cat.s.weight")["sure"] is True
+    assert c("price.weight")["labels"][0] == "below 1.00" and len(c("price.weight")["labels"]) == 6 and c("price.weight")["extra_row"] is None
+    c = _labels(svc, "short", cat_vocab=np.array(["a", "b", "c"]))[1]("cat.s.weight")
+    assert c["labels"] is None and "which row is which is not known" in c["labels_says"]
+    for text in (pr["labels_says"], c["labels_says"]):
+        plain(text)
+
+
+def test_tree_inputs_are_grouped_by_the_start_of_their_names():
+    s = T.summary(T.parse(TREES), COLS)
+    assert [(g["prefix"], g["count"], g["used"], g["unused"], g["splits"], g["gain"], g["share"], g["inputs"]) for g in s["groups"]] == [
+        ("f_", 2, 2, 0, 2, 14.0, 0.7, [0, 1]), ("m_", 1, 1, 0, 1, 5.0, 0.25, [2]), ("s1_", 2, 1, 1, 1, 1.0, 0.05, [3, 4])]
+    assert [r["group"] for r in s["by_input"]] == ["f_", "m_", "f_", "s1_", "s1_"] and "groups_says" in s
+    assert T.group_of("pf_ctr") == "pf_" and T.group_of("s1_pos") == "s1_" and T.group_of("plain") == "other"
+
+
+def test_the_rankers_side_by_side_and_the_inputs_none_of_them_uses(svc):
+    folder, _ = make_folder(svc.tmp / "three")
+    # the second ranker stops asking about the input its third tree used: it is now unused there, and used by the others
+    text = (folder / "weights" / "rank_patc.txt").read_text().replace("split_feature=3", "split_feature=1")
+    (folder / "weights" / "rank_patc.txt").write_text(text)
+    R.import_from(svc.ctx, str(folder), "sample")
+    r = svc.get("/api/weights/models/sample/rankers")
+    has(r, "model", "version", "says", "rankers", "inputs", "used_by_all", "used_by_some", "unused_by_all", "unused_by_all_says", "same_inputs")
+    assert [(k["name"], k["trees"], k["inputs"], k["used"], k["unused"]) for k in r["rankers"]] == [
+        ("full", 3, 5, 4, ["s1_never"]), ("patc", 3, 5, 3, ["s1_recency", "s1_never"]), ("pclick", 3, 5, 4, ["s1_never"])]
+    assert r["unused_by_all"] == ["s1_never"] and r["used_by_some"] == ["s1_recency"] and r["used_by_all"] == ["f_views", "f_carts", "m_price"]
+    assert "1 of 5 inputs are asked about by none of the 3 rankers" in r["unused_by_all_says"] and r["same_inputs"] is True
+    rec = next(i for i in r["inputs"] if i["name"] == "s1_recency")
+    assert rec["used_by"] == ["full", "pclick"] and rec["unused_by"] == ["patc"] and rec["by"]["patc"]["splits"] == 0 and rec["group"] == "s1_"
+    assert rec["by"]["full"] == {"splits": 1, "gain": 1.0, "share": 0.05}
+    assert "no tree rankers" in svc.get("/api/weights/models/tiny/rankers", code=400)["error"]
+    plain(r["unused_by_all_says"])
+
+
+def test_the_versions_under_a_folder_or_an_address_are_listed_and_nothing_is_written(svc, monkeypatch):
+    root = svc.tmp / "registry"
+    make_folder(root / "arch-a" / "shop" / "v1")
+    make_folder(root / "arch-a" / "shop" / "v2", layers=2)
+    make_folder(root / "arch-b" / "trail" / "v1")
+    (root / "arch-a" / "shop" / "v2" / "MANIFEST.yaml").write_text("description: wider,  two layers\nversion: v2\n")
+    (root / "arch-b" / "notes").mkdir()
+    (root / "INDEX.md").write_text("made up")
+    before = sorted(str(f) for f in root.rglob("*"))
+    r = svc.get("/api/weights/registry", **{"from": str(root)})
+    has(r, "from", "versions", "count", "listed", "read_only", "says")
+    assert [v["path"] for v in r["versions"]] == ["arch-a/shop/v1", "arch-a/shop/v2", "arch-b/trail/v1"] and r["count"] == 3 and r["read_only"] is True
+    v1, v2, _ = r["versions"]
+    has(v1, "path", "address", "name", "description", "has_manifest", "files")
+    assert v2["description"] == "wider, two layers" and v1["description"] == "architecture: made-up, version: v1, reproducibility: not-tested"
+    assert v1["address"] == str(root / "arch-a" / "shop" / "v1") and v1["name"] == "v1" and v1["files"] == 10
+    assert sorted(str(f) for f in root.rglob("*")) == before
+    # an address a row gives is what import takes
+    assert R.import_from(svc.ctx, v2["address"], "picked")["depth"] == 2
+    empty = svc.tmp / "nothing"
+    empty.mkdir()
+    assert svc.get("/api/weights/registry", **{"from": str(empty)})["says"].startswith("No version was found here")
+    assert "is not a folder" in svc.get("/api/weights/registry", code=400, **{"from": str(svc.tmp / "missing")})["error"]
+    boto3, moto = pytest.importorskip("boto3"), pytest.importorskip("moto")
+    for k, v in (("AWS_ACCESS_KEY_ID", "testing"), ("AWS_SECRET_ACCESS_KEY", "testing"), ("AWS_DEFAULT_REGION", "us-east-1")):
+        monkeypatch.setenv(k, v)
+    with moto.mock_aws():
+        s3 = boto3.client("s3")
+        s3.create_bucket(Bucket="made-up-models")
+        for f in root.rglob("*"):
+            if f.is_file():
+                s3.put_object(Bucket="made-up-models", Key=f.relative_to(root).as_posix(), Body=f.read_bytes())
+        keys = sorted(o["Key"] for o in s3.list_objects_v2(Bucket="made-up-models")["Contents"])
+        cloud = R.registry("s3://made-up-models/")
+        assert sorted(o["Key"] for o in s3.list_objects_v2(Bucket="made-up-models")["Contents"]) == keys
+        one = R.registry("s3://made-up-models/arch-b")
+    assert [(v["path"], v["description"], v["files"]) for v in cloud["versions"]] == [(v["path"], v["description"], v["files"]) for v in r["versions"]]
+    assert cloud["versions"][1]["address"] == "s3://made-up-models/arch-a/shop/v2" and one["versions"][0]["address"] == "s3://made-up-models/arch-b/trail/v1"
+
+
+def test_the_new_commands_say_it_in_words(tmp_path):
+    R._KINDS.clear()
+    cst("init", "demo", "--storage", str(tmp_path / "bucket"))
+    make_folder(tmp_path / "reg" / "arch" / "shop" / "v1")
+    listed = cst("weights", "registry", str(tmp_path / "reg"))
+    assert listed["count"] == 1
+    cst("weights", "import", listed["versions"][0]["address"], "--as", "sample")
+    cst("weights", "open", "sample")
+    assert cst("weights", "labels", "price.weight")["labels"][1] == "below 1.00"
+    assert cst("weights", "rankers", "sample")["unused_by_all"] == ["s1_never"]
+    assert "score sharpness (logit_scale): one number. " in words("weights", "show", "sample")
+    assert "row 1: below 1.00" in words("weights", "labels", "price.weight") and "numbered" in words("weights", "labels", "act.weight")
+    assert "NOT USED BY ANY: 1 of 5 inputs" in words("weights", "rankers", "sample")
+    assert "s1_: 2 inputs, 1 not used" in words("weights", "trees", "sample")
+    assert "1 version can be brought in from here" in words("weights", "registry", str(tmp_path / "reg"))
+
+
+# ---- changing it ------------------------------------------------------------------------------------------------------------------
+
+def test_an_edit_is_an_exact_patch_that_is_never_measured_and_can_be_taken_back_to_the_bit(svc):
+    out, a, _ = bring(svc)
+    s = svc.post("/api/weights/sessions", {"model": "sample"})
+    p = f"/api/weights/sessions/{s['id']}"
+    start = WS.digest(tensors_of(a))
+    digest = lambda: WSN.current_digest(svc.ctx, s["id"])["digest"]  # noqa: E731
+    act = a["act.weight"]
+    # set, scale, zero and add, on rows and columns, on whole rows, and on single positions
+    e1 = svc.post(p + "/edits", {"op": "set", "tensor": "act.weight", "rows": "0", "cols": "0:3", "value": 0.5, "why": "try it"})
+    has(e1, "id", "kind", "op", "tensor", "tensors", "why", "changes", "changed", "share", "undone", "measured", "not_measured", "sentence", "ledger")
+    assert (e1["kind"], e1["op"], e1["changed"], e1["measured"], e1["not_measured"]) == ("edit", "set", 3, False, R.NOT_MEASURED)
+    assert e1["changes"][0] == {"tensor": "act.weight", "index": [0, 0], "old": float(act[0, 0]), "new": 0.5}
+    assert e1["sentence"] == "You set 3 numbers in act.weight. Not measured: this model cannot be run here yet." and "cost" not in e1
+    e2 = svc.post(p + "/edits", {"op": "scale", "tensor": "act.weight", "neurons": [1], "factor": 2})
+    assert e2["changed"] == 8 and svc.get(p + "/read", tensor="act.weight", rows="1", watch=1)["values"][0] == (act[1] * np.float32(2)).astype(float).tolist()
+    e3 = svc.post(p + "/edits", {"op": "zero", "tensor": "L0.self_attn.in_proj_bias", "rows": "8:16"})
+    e4 = svc.post(p + "/edits", {"op": "add", "tensor": "q.weight", "indices": [[0, 0], [7, 7]], "values": [1.0, -1.0]})
+    e5 = svc.post(p + "/edits", {"op": "set", "tensor": "logit_scale", "value": 3})
+    assert (e3["changed"], e4["changed"], e5["changed"]) == (8, 2, 1) and e5["changes"][0]["index"] == []
+    led = svc.get(p)["ledger"]
+    assert (led["changed"], led["total"], led["forward_used"], led["scores_shown"]) == (22, out["parameters"], 0, False)
+    assert led["weights_alone"] is True and led["label"] == "from the weights alone"
+    d = svc.get(p + "/diff")
+    assert d["changed"] == 22 and {t["tensor"]: t["changed"] for t in d["by_tensor"]} == {
+        "act.weight": 11, "L0.self_attn.in_proj_bias": 8, "q.weight": 2, "logit_scale": 1}
+    # take one back from the middle, put it back, then take everything back: the exact numbers return
+    u = svc.post(p + "/undo", {"edit": e2["id"]})
+    assert (u["kind"], u["undoes"], u["changed"], u["measured"]) == ("undo", e2["id"], 8, False)
+    assert svc.get(p + "/read", tensor="act.weight", rows="1", watch=1)["values"][0] == act[1].astype(float).tolist()
+    assert svc.post(p + "/redo")["redoes"] == e2["id"] and svc.get(p)["ledger"]["changed"] == 22
+    edited = digest()
+    for _ in range(5):
+        svc.post(p + "/undo")
+    assert digest() == start and svc.get(p)["ledger"]["changed"] == 0 and svc.get(p + "/diff")["changed"] == 0
+    assert "no edit to take back" in svc.post(p + "/undo", code=400)["error"]
+    for _ in range(5):
+        svc.post(p + "/redo")
+    assert digest() == edited != start
+    # an edit that overlaps a later one cannot be taken back first
+    e6 = svc.post(p + "/edits", {"op": "add", "tensor": "act.weight", "rows": "0", "cols": "0", "value": 1})
+    assert f"Take back edit {e6['id']} first" in svc.post(p + "/undo", {"edit": e1["id"]}, code=400)["error"]
+    # what is refused, each in a sentence
+    for body, want in (({"op": "step", "tensor": "act.weight"}, "set, scale, zero, add"), ({"op": "zero", "tensor": "nope"}, "no tensor named"),
+                       ({"op": "set", "tensor": "act.weight", "rows": "0"}, "Give the number to write"),
+                       ({"op": "set", "tensor": "act.weight", "rows": "0", "value": float("1e39")}, "not finite"),
+                       ({"op": "zero", "tensor": "L0.self_attn.in_proj_bias", "rows": "8:16"}, "changes nothing"),
+                       ({"op": "zero", "layer": 1, "neuron": 0, "tensor": "act.weight"}, "parts, not numbered layers"),
+                       ({"op": "set", "tensor": "act.weight", "indices": [[9, 9]], "value": 1}, "A position names one number"),
+                       ({"op": "set", "tensor": "act.weight", "indices": [[0, 0], [0, 1]], "values": [1, 2, 3]}, "gives 3 values")):
+        err = svc.post(p + "/edits", body, code=400)["error"]
+        assert want in err, err
+        plain(err)
+    agent = svc.post("/api/weights/sessions", {"model": "sample", "by": "agent", "name": "helper"})["id"]
+    assert "needs `why`" in svc.post(f"/api/weights/sessions/{agent}/edits", {"op": "zero", "tensor": "act.weight", "rows": "0"}, code=400)["error"]
+    # the base is untouched until a deliberate save
+    _, base = WS.load(svc.ctx, "sample", 1)
+    assert WS.digest(base) == start and WS.versions(svc.ctx, "sample") == [1]
+    rep = svc.get(p + "/report")
+    assert len(rep["kept"]) == 6 and rep["diff"]["changed"] == 22 and all(R.NOT_MEASURED in e["sentence"] for e in rep["events"] if e["kind"] == "edit")
+
+
+def test_a_save_is_a_new_version_that_is_the_base_plus_the_edits_and_reads_like_any_other(svc):
+    out, a, _ = bring(svc)
+    s = svc.post("/api/weights/sessions", {"model": "sample"})
+    p = f"/api/weights/sessions/{s['id']}"
+    assert "nothing to save" in svc.post(p + "/save", code=400)["error"]
+    svc.post(p + "/edits", {"op": "zero", "tensor": "cat.s.weight", "neurons": [6]})
+    svc.post(p + "/edits", {"op": "scale", "tensor": "text.bias", "factor": 0.5})
+    seq = svc.get("/api/changes")["seq"]
+    saved = svc.post(p + "/save", {"note": "last category row cleared"})
+    has(saved, "model", "version", "ref", "base", "patches", "changed", "share", "label", "weights_alone", "note", "measured", "not_measured", "sha256")
+    assert (saved["ref"], saved["base"], saved["patches"], saved["changed"], saved["measured"]) == ("sample@v2", "sample@v1", 2, 16, False)
+    assert saved["label"] == "from the weights alone" and saved["weights_alone"] is True
+    assert {c["topic"] for c in svc.get("/api/changes", since=seq, topics="weights:sample", wait=0)["changed"]} == {"weights:sample"}
+    # the new version holds no files: its manifest, the patches and the record. Its numbers are the base plus the edits.
+    assert [k for k in svc.ctx.store.list("weights/sample/v2/")] == ["weights/sample/v2/manifest.json"]
+    m2 = WS.manifest(svc.ctx, "sample", 2)
+    assert (m2["base"], m2["files_at"], m2["kind"], m2["note"]) == ("sample@v1", "sample@v1", "session-ranker", "last category row cleared")
+    assert m2["record"]["measured"] is False and m2["record"]["ledger"]["changed"] == 16 and len(m2["patches"]) == 2
+    want = {k: np.array(v) for k, v in tensors_of(a).items()}
+    want["cat.s.weight"][6] = 0
+    want["text.bias"] = (want["text.bias"] * np.float32(0.5)).astype("float32")
+    _, got = WS.load(svc.ctx, "sample", 2)
+    assert WS.digest(got) == WS.digest(want) == saved["sha256"] == m2["sha256"]
+    _, base = WS.load(svc.ctx, "sample", 1)
+    assert WS.digest(base) == out["sha256"]
+    # it is described, read, named and compared like the version it came from
+    d = svc.get("/api/weights/models/sample")
+    assert (d["version"], d["base"], d["width"], len(d["parts"])) == (2, "sample@v1", 8, len(svc.get("/api/weights/models/sample@v1")["parts"]))
+    assert svc.get("/api/weights/models/sample@v2/trees")["unused"][0]["name"] == "s1_never"
+    assert svc.get("/api/weights/models/sample/rankers")["unused_by_all"] == ["s1_never"]
+    s2 = svc.post("/api/weights/sessions", {"model": "sample"})
+    assert s2["base"] == "sample@v2"
+    lab = svc.get(f"/api/weights/sessions/{s2['id']}/labels", tensor="cat.s.weight")
+    assert (lab["extra_row"], lab["sure"]) == (6, True)            # the cleared row is now the one that stands out
+    cmp = svc.get("/api/weights/compare", a="sample@v1", b="sample@v2")
+    assert cmp["changed"] == 16 and {t["tensor"] for t in cmp["by_tensor"]} == {"cat.s.weight", "text.bias"}
+    # a second line of edits on top of the saved one
+    p2 = f"/api/weights/sessions/{s2['id']}"
+    svc.post(p2 + "/edits", {"op": "set", "tensor": "logit_scale", "value": 1.5})
+    assert svc.post(p2 + "/save")["ref"] == "sample@v3" and WS.manifest(svc.ctx, "sample", 3)["files_at"] == "sample@v1"
+    _, got3 = WS.load(svc.ctx, "sample", 3)
+    assert float(got3["logit_scale"]) == 1.5 and (got3["cat.s.weight"][6] == 0).all()
+    # still nothing runs, and nothing deploys
+    assert svc.post(p2 + "/evaluate", code=400) == {"error": R.NOT_YET}
+    with pytest.raises(ValueError, match="not run yet"):
+        PD.resolve(svc.ctx, "weights:sample@v3")
+
+
+def test_cst_edits_takes_back_and_saves(tmp_path):
+    R._KINDS.clear()
+    cst("init", "demo", "--storage", str(tmp_path / "bucket"))
+    folder, a = make_folder(tmp_path / "folder")
+    cst("weights", "import", str(folder), "--as", "sample")
+    cst("weights", "open", "sample")
+    ev = cst("weights", "edit", "zero", "--tensor", "act.weight", "--rows", "0:2", "--cols", "0:4")
+    assert ev["changed"] == 8 and ev["measured"] is False
+    assert cst("weights", "edit", "scale", "--tensor", "pos.weight", "--neurons", "1", "--factor", "0.5")["changes"][0]["index"] == [0, 0]
+    assert cst("weights", "undo")["undoes"] == "e3" and cst("weights", "diff")["changed"] == 8
+    assert "Not measured: this model cannot be run here yet." in words("weights", "edit", "add", "--tensor", "intent.bias", "--values", "0.25")
+    assert "9 of" in words("weights", "diff") and "taken back: e3 scale" in words("weights", "report")
+    out = words("weights", "save", "--as", "two rows cleared")
+    assert "saved sample@v2: sample@v1 plus 9 changed numbers" in out
+    assert cst("weights", "show", "sample")["base"] == "sample@v1" and "sample v2" in words("weights", "show", "sample")
