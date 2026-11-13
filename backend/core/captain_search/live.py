@@ -105,6 +105,10 @@ class Run:
                 # When this step began, in seconds since the run started: the screen counts the step's own time
                 # from it on its own clock, so the time moves while the step prints nothing.
                 self.head["stage_at"] = ev["at"]
+                # Every step that really began. A planned step that is never announced was not needed (an image
+                # that is already built): the screen leaves it out of the bar instead of counting its usual time.
+                if data.get("name") not in self.head.setdefault("seen", []):
+                    self.head["seen"].append(data.get("name"))
                 self.head.setdefault("stages", [])
                 if data.get("name") not in self.head["stages"]:
                     self.head["stages"].append(data.get("name"))

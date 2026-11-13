@@ -50,6 +50,18 @@ assert.ok(clock(plain, 0, t0 + 10000).progress === 3 / 5 && clock(plain, 0, t0 +
 // A finished run shows the time it took, not a clock still running.
 assert.equal(clock({ ...head, status: 'done' }, 230, t0 + 9e6).elapsed, 230);
 
+// A planned step that was passed over never began (a host where the image is already built): it is not drawn and
+// its usual time is not counted, so the bar is not held back by 92 seconds that never happen.
+{
+  const { stepsOf } = await import('../../defaults/mods/captain-runs/live.js');
+  const skipped = { ...head, progress: null, stage: 'Starting the model', stage_at: 3, seen: ['Checking your account', 'Creating permissions', 'Starting the model'] };
+  assert.deepEqual(stepsOf(skipped).map((s) => s.title), ['Checking your account', 'Creating permissions', 'Starting the model', 'Checking it answers'], 'the image step is left out, the one ahead stays');
+  const p = clock(skipped, 0, t0 + 70000).progress;
+  assert.ok(Math.abs(p - (3 + 67) / 138) < 0.001, `the bar counts the steps that run: ${p}`);
+  assert.deepEqual(stepsOf({ ...skipped, status: 'done' }).map((s) => s.title), skipped.seen, 'when it is over, only what ran');
+  assert.equal(stepsOf(head).length, 5, 'a run with no record of what began shows its whole plan');
+}
+
 // 5. Its kind is the word "Deploy", and its title a sentence in the page's font with no "RUN" tag.
 assert.equal(liveKind({ kind: 'deploy' }), 'Deploy');
 assert.equal(liveKind({ kind: 'custom' }), 'Run');

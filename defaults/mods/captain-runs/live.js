@@ -29,6 +29,17 @@ const secs = (s) => (s == null || !Number.isFinite(s) ? "" : s < 90 ? `${Math.ro
 const fmt = (name, v) => (v == null ? "" : PCT.has(name) ? `${(v * 100).toFixed(1)}%` : /revenue|rpv|usd|\$/.test(name) ? `$${Number(v).toFixed(2)}` : Math.abs(v) >= 1000 ? int(v) : Number(v).toFixed(Math.abs(v) < 1 ? 4 : 2));
 const label = (name) => { const w = metricWords(name); return w && w !== name ? w : String(name).replace(/_/g, " "); };
 
+/** The steps a run goes through, as far as is known: its plan, without the planned steps it passed over. A step
+ *  before the one running that never began was not needed (on a host where the image is already built), so it is
+ *  not drawn and its usual time is not counted. Steps still ahead stay: they may yet run. */
+export function stepsOf(head) {
+  const h = head ?? {};
+  const plan = h.steps?.length ? h.steps : (h.stages ?? []).map((title) => ({ title }));
+  if (!Array.isArray(h.seen)) return plan;
+  const at = h.status === "done" ? plan.length : plan.findIndex((s) => s.title === h.stage);
+  return plan.filter((s, j) => h.seen.includes(s.title) || (at >= 0 && j > at) || (at < 0 && h.status !== "done"));
+}
+
 /** Where a run stands on the page's own clock: {elapsed, step, stepElapsed, usual, usually, progress}. A running run
  *  counts from when it started, whether or not anything new was heard from it, so its time never stands still.
  *  `last` is the time of the last thing heard (seconds since the start), used once the run is over.
@@ -39,7 +50,7 @@ export function clock(head, last = 0, now = Date.now()) {
   const started = Date.parse(h.started ?? "");
   const on = going(h.status);
   const elapsed = on && Number.isFinite(started) ? Math.max(last, (now - started) / 1000) : last;
-  const steps = h.steps?.length ? h.steps : (h.stages ?? []).map((title) => ({ title }));
+  const steps = stepsOf(h);
   const i = steps.findIndex((s) => s.title === h.stage);
   const step = i >= 0 ? steps[i] : null;
   const stepElapsed = on && step && typeof h.stage_at === "number" ? Math.max(0, elapsed - h.stage_at) : null;
@@ -257,7 +268,7 @@ export class Live {
   }
 
   progress(c, h, pct, k) {
-    const stages = h.steps?.length ? h.steps.map((s) => s.title) : h.stages ?? [];
+    const stages = stepsOf(h).map((s) => s.title);
     const cur = stages.indexOf(h.stage);
     const icon = this.host.icon.bind(this.host);
     return v_flex().gap(8)
