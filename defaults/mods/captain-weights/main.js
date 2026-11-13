@@ -87,6 +87,7 @@ export default class CaptainWeights extends View {
     this.treePz = null;     // the view of the ranker's tree that is drawn
     this.showLastEdit = this.show?.openEdit === "last";
     this.showDeploy = this.show?.deploy === true; // press "Deploy this version" once the network is read
+    this.showInto = this.show?.into ?? null;     // and deploy into this project (kept here: `show` is cleared once staged)
     this.list = null;       // the networks that can be opened
     this.net = null;        // the open network (shapes.js Network)
     this.problem = null;    // why it could not be read, in a sentence
@@ -217,7 +218,7 @@ export default class CaptainWeights extends View {
       }
       if (this.net && !this.stop) this.stop = watchWeights(cx, model, this.session?.id, (cx) => this.read(cx));
       if (this.net) this.readAt = Date.now();
-      if (this.showDeploy && this.net && this.session) { this.showDeploy = false; startDeploy(this, cx, this.show?.into ?? null); }
+      if (this.showDeploy && this.net && this.session) { this.showDeploy = false; startDeploy(this, cx, this.showInto); }
       cx.notify();
       if (!this.net) return;
       // The test set's cost. A network kept in this mod is scored through the adapter. For the services' networks
