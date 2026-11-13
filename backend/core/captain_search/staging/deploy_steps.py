@@ -22,17 +22,8 @@ from . import deploy as DP
 def _match(ctx: Context, pid: str, env: str, say) -> None:
     from . import consistency as SC
 
-    rec = state(ctx, pid, env or ENV) or {}
-    if rec.get("serves") == "predict":
-        # A network has no ranking features. What can be checked is that the deployed copy gives the same answers
-        # as the saved version, edits included, on the model's own practice inputs.
-        from . import predict as PD
-
-        r = PD.check_served(ctx, pid, env or ENV)
-        say(r["text"])
-        if r["status"] == "fail":
-            raise ValueError(r["text"])
-        return
+    # For a network, which has no ranking features, the same call checks that the deployed copy gives the same
+    # answers as the saved version, edits included, on the model's own practice inputs.
     r = SC.check(ctx, pid, env or ENV)
     say(r.get("text") or "The check ran.")
     if r.get("status") == "fail":

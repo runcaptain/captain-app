@@ -525,7 +525,9 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
 
     if PD.is_ref(p["model_version"]):
         # A network: the record says it answers /predict, and which version it started from and which edits it carries.
-        rec.update(serves="predict", carries=PD.carries(ctx, p["model_version"]))
+        rec.update(serves="predict", carries=PD.carries(ctx, p["model_version"]), shape=PD.shape(PD._manifest(ctx, p["model_version"])))
+        if PD.join_project(ctx, pid, p["model_version"]):
+            say(f"Put {PD.parse(p['model_version'])[0]} in this project, so it is listed with the project's models.")
     # While the new version starts, what is up keeps answering: the record says where, so Captain's own requests
     # go there until the switch is done (see `serving`).
     if old and old.get("status") == "running":
@@ -1035,6 +1037,9 @@ def query(ctx: Context, pid: str, q: str, k: int = 10, env: str = ENV) -> dict:
     rec = serving(ctx, pid, env)
     if not rec or rec.get("status") != "running":
         raise ValueError("Nothing is deployed. Deploy a model first.")
+    if rec.get("serves") == "predict":
+        raise ValueError("This model takes named inputs, not a search query, so there are no results to list. "
+                         f"Send it an example instead: cst deployments try {pid} --send.")
     if not str(q or "").strip():
         raise ValueError("Type a query to try.")
     arms = rec.get("arms") or {}
@@ -1092,6 +1097,14 @@ def query(ctx: Context, pid: str, q: str, k: int = 10, env: str = ENV) -> dict:
     return out
 
 
+def addresses_of(rec: dict) -> str | None:
+    """The address a site sends this deployment's requests to: its URL with the route, or the endpoint's name on SageMaker."""
+    ep = rec.get("endpoint") or {}
+    if ep.get("url"):
+        return f"{ep['url']}/{'predict' if rec.get('serves') == 'predict' else 'rank'}"
+    return ep.get("name")
+
+
 def servable_quiet(ctx: Context, pipeline: str) -> str | None:
     try:
         return servable(ctx, pipeline)["how"]
@@ -1119,7 +1132,8 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
          else "Not deployed." if not rec or rec.get("status") == "stopped" else f"The deploy {rec.get('status')}.",
          "action": None if on else {"action": "stage", "experiment": cand["id"]} if cand else {"action": "stage", "baseline": True} if champ else None},
         {"n": 2, "id": "try", "title": "Try it", "done": on and bool(rec.get("tried")),
-         "status": "Tried." if on and rec.get("tried") else "Type a search and see the results." if on else "Waits for a deployed model.",
+         "status": "Tried." if on and rec.get("tried") else "Send it an example and see what comes back." if on and rec.get("serves") == "predict"
+         else "Type a search and see the results." if on else "Waits for a deployed model.",
          "action": {"action": "try"} if on and not rec.get("tried") else None},
     ]
     connected = on and bool(rec.get("connected_at"))
@@ -1136,7 +1150,8 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
     if judged and not on:
         nxt = {"action": "stage", "experiment": judged[-1]["id"], "text": f"Deploy {judged[-1]['pipeline']} to try it live."}
     elif on and not rec.get("tried"):
-        nxt = {"action": "try", "text": "Try the deployed model: type a search on its screen."}
+        nxt = {"action": "try", "text": ("Try the deployed model: send it an example from its screen, or with cst deployments try."
+                                         if rec.get("serves") == "predict" else "Try the deployed model: type a search on its screen.")}
     elif on and not connected:
         nxt = ({"action": "connect", "text": "A site can't reach this computer. Deploy the model to a cloud to use it from your site."}
                if local else {"action": "connect", "text": "Use it from your site: copy the code from the deployed model's screen (More, Use it from your site) and send the first request."})

@@ -52,12 +52,19 @@ def deploy(name: str,
            remove: bool = typer.Option(False, "--remove", help="stop the model, and remove the first-time setup too when this deploy made it and nothing else uses it"),
            idle_minutes: Optional[float] = typer.Option(None, "--idle-minutes", help="stop by itself after this long with no requests; default 240"),
            allow_large: bool = typer.Option(False, "--allow-large", help="deploy on this computer even when the model is over the size limit for it"),
+           session: Optional[str] = typer.Option(None, "--session", help="a Weights session (ws-...): save it as a new version and deploy that version, in one call. Needs --on"),
+           note: str = typer.Option("", "--note", help="with --session: a note saying what the new version is"),
            yes: bool = typer.Option(False, "--yes", "-y", help="confirm the cost of a cloud deploy")):
-    """Stage the project's current candidate as a live endpoint. The last line printed is its address."""
+    """Stage the project's current candidate as a live endpoint. The last line printed is its address.
+
+    --candidate takes a model version, or a weights model version written weights:<model>@v<N> (a network that
+    answers POST /predict). --session saves a Weights session as a new version and deploys it."""
     from .. import staging as SG
 
+    if session and not on:
+        fail("Say where to deploy the session's network: --on local, aws, modal, gcp or azure.")
     if on or remove:
-        return _deploy_on(name, on, login, candidate, baseline, env, allow_large, yes, remove)
+        return _deploy_on(name, on, login, candidate, baseline, env, allow_large, yes, remove, session, note)
     stage(name, candidate, baseline, env, target, None, None, None, idle_minutes, allow_large, yes)
     if S.json or S.dry_run:
         return
@@ -65,7 +72,7 @@ def deploy(name: str,
     typer.echo(ep.get("url") or ep.get("name") or "")
 
 
-def _deploy_on(name, on, login, candidate, baseline, env, allow_large, yes, remove):
+def _deploy_on(name, on, login, candidate, baseline, env, allow_large, yes, remove, session=None, note=""):
     """`cst deploy <project> --on <host>`: one plan, one confirm, then the first-time work and the model, step by
     step. The last line printed is the model's address."""
     import json as _json
@@ -81,8 +88,14 @@ def _deploy_on(name, on, login, candidate, baseline, env, allow_large, yes, remo
                 return emit({**st, "dry_run": True}, "Would stop the model and remove: " + (", ".join(f"{x['resource']} {x['name']}" for x in st.get("exists_now") or []) or "nothing else"))
             r = DP.remove(c, name, env, progress=None if S.json else lambda t: typer.echo(t, err=True))
             return emit(r, r["text"])
+        if session:
+            # Planned for the version the session was opened on: nothing is saved until the place is confirmed.
+            from ..staging import predict as PD
+
+            smodel, sver = PD.session_base(c, session)
+            candidate, baseline = PD.ref_of(smodel, sver), False
         p = DP.plan(c, name, on, login, candidate, baseline, env, allow_large)
-        lines = [p["text"]]
+        lines = [p["text"].replace(candidate, f"this session's edits to {smodel} v{sver}") if session else p["text"]]
         for g in p["creates"]["groups"]:
             lines += [f"{g['title']}:"] + [f"  {r['resource']:28} {r['name']}" for r in g["items"]]
         if S.dry_run:
@@ -102,7 +115,10 @@ def _deploy_on(name, on, login, candidate, baseline, env, allow_large, yes, remo
             elif kind == "line":
                 typer.echo(f"      {d['text']}", err=True)
 
-        r = DP.run(c, name, on, login, candidate, baseline, env, confirm=True, allow_large=allow_large, on_event=hear)
+        if session:
+            r = PD.deploy_session(c, name, session, on, login, note=note, env=env, confirm=True, allow_large=allow_large, on_event=hear)
+        else:
+            r = DP.run(c, name, on, login, candidate, baseline, env, confirm=True, allow_large=allow_large, on_event=hear)
     except NeedsConfirm as e:
         fail(str(e))
     except _staging_errors() as e:
@@ -119,7 +135,66 @@ def _deploy_on(name, on, login, candidate, baseline, env, allow_large, yes, remo
                 raise typer.Exit(1)
             fail(msg)
         fail(str(e))
-    emit(r, f"Deployed {r['model_version']} to {r['label']}.\n{r.get('address') or ''}")
+    saved = (r.get("saved") or {}).get("text")
+    emit(r, (f"{saved}\n" if saved else "") + f"Deployed {r['model_version']} to {r['label']}.\n{r.get('address') or ''}")
+
+
+@deployments_app.command("try")
+def deployments_try(name: str,
+                    send: bool = typer.Option(False, "--send", help="send the example request now, as test traffic"),
+                    inputs: Optional[str] = typer.Option(None, "--inputs", help="for a model with named inputs: the inputs as JSON, such as '{\"x1\": 0.9, \"x2\": 0.1}' or '[0.9, 0.1]'. Sends it"),
+                    query: Optional[str] = typer.Option(None, "--query", help="for a ranker: the search to send. Sends it"),
+                    env: str = typer.Option("staging", "--env")):
+    """What the deployed model takes and gives back, with a ready example request. With --send, --inputs or --query
+    the request is sent as test traffic and the answer is printed."""
+    import json as _json
+
+    from ..staging import predict as PD
+
+    c = ctx()
+    if not (send or inputs is not None or query is not None):
+        r = _do(PD.try_info, c, name, env)
+        lines = [f"{r['model_version']} answers at {r['address']}", r["text"]]
+        lines += [f"  in   {i['name']}: {i.get('meaning') or i.get('type')}" + ("".join(f"\n         as {a}" for a in i.get("accepts") or [])) for i in r["inputs"]]
+        lines += [f"  out  {o['name']}: {o.get('meaning') or o.get('type')}" for o in r["outputs"]]
+        lines += ["An example request, from " + r["example_from"] + ":", r["request"]]
+        return emit(r, "\n".join(lines))
+    body: dict = {}
+    if inputs is not None:
+        try:
+            body["inputs"] = _json.loads(inputs)
+        except ValueError:
+            fail("--inputs must be JSON, such as '{\"x1\": 0.9, \"x2\": 0.1}' or '[0.9, 0.1]'.")
+    if query is not None:
+        body["query"] = query
+    if S.dry_run:
+        return emit({"dry_run": True, "would": "send one test request", "body": body}, "would send one test request to the deployed model")
+    r = _do(PD.try_send, c, name, body, env)
+    emit(r, r["text"])
+
+
+def _weights_deploy(project: str = typer.Argument(..., help="the project that deploys it"),
+                    on: str = typer.Option("local", "--on", help="where to run it: local, aws, modal, gcp or azure"),
+                    login: Optional[str] = typer.Option(None, "--login", help="which connected cloud login, when there is more than one"),
+                    note: str = typer.Option("", "--as", "--note", help="a note saying what this version is"),
+                    session: Optional[str] = typer.Option(None, "--session", "-s", help="the session to save and deploy. Left out: the one opened last"),
+                    env: str = typer.Option("staging", "--env"),
+                    yes: bool = typer.Option(False, "--yes", "-y", help="confirm the cost of a cloud deploy")):
+    """Save the session as a new version and deploy that version, in one call. The last line printed is the
+    model's address. The deployment's record says which version it started from and which edits it carries, and
+    `cst deployments rollback` returns to the version that ran before."""
+    from .weights import _sid
+
+    _deploy_on(project, on, login, None, False, env, False, yes, False, _sid(session), note)
+
+
+def _register_weights_deploy() -> None:
+    from .weights import weights_app
+
+    weights_app.command("deploy")(_weights_deploy)
+
+
+_register_weights_deploy()
 
 
 UP = ("running", "asleep", "starting", "unknown")

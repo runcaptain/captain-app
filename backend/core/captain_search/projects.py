@@ -425,6 +425,14 @@ def contents(ctx: Context, pid: str) -> dict:
     for kind, names in _all(ctx).items():
         out[kind] = [n for n in names if r.of(kind, n) == pid]
     out["models"] = [m for m in _models(ctx) if r.of("model", m["id"], brand=m.get("brand")) == pid]
+    # The weights models the project holds (member `model:weights:<name>`), each version a thing that can be
+    # deployed with its `deploy` name. They are not in a registry snapshot, so they are listed apart.
+    try:
+        from .staging import predict as PD
+
+        out["networks"] = PD.networks_of(ctx, pid)
+    except Exception:  # noqa: BLE001  a workspace where weights can't be read still has its project page
+        out["networks"] = []
     return {"project": p, **out}
 
 
@@ -479,11 +487,11 @@ def home(ctx: Context, pid: str) -> dict:
     doc, _ = _read(ctx)
     brands = sorted(b for b, q in doc["brands"].items() if q == pid)
     return {"project": {**c["project"], "brands": brands}, "datasets": sorted(datasets, key=lambda d: d["created_at"], reverse=True),
-            "pipelines": pipelines, "models": c["models"], "mlflow_models": mlflow, "notebooks": notebooks,
+            "pipelines": pipelines, "models": c["models"], "mlflow_models": mlflow, "networks": c["networks"], "notebooks": notebooks,
             "runs": runs[:20], "connections": c["connection"], "investigations": c["investigation"],
             "counts": {"datasets": len(datasets), "pipelines": len(pipelines), "notebooks": len(notebooks),
-                       "runs": len(runs), "models": len(c["models"]) + len(mlflow)},
-            "empty": not (datasets or pipelines or notebooks or runs or c["models"])}
+                       "runs": len(runs), "models": len(c["models"]) + len(mlflow) + len(c["networks"])},
+            "empty": not (datasets or pipelines or notebooks or runs or c["models"] or c["networks"])}
 
 
 def member_filter(ctx: Context, pid: str | None, kind: str):

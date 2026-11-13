@@ -284,7 +284,7 @@ def carries(ctx, ref: str) -> dict:
     root, steps = line_of(ctx, ref)
     rec = m.get("record") or {}
     led = rec.get("ledger") or {}
-    edits = [{k: e.get(k) for k in ("id", "op", "tensor", "why", "by", "changed") if e.get(k) is not None}
+    edits = [{k: e.get(k) for k in ("id", "op", "tensors", "why", "by", "changed") if e.get(k) is not None}
              for e in (rec.get("edits") or []) if e.get("state", "applied") == "applied"][:50]
     changed = sum(len(p.get("indices") or []) for s in steps for p in s["patches"])
     out = {"model": name, "version": int(m["version"]), "ref": ref_of(name, m["version"]),
@@ -420,3 +420,216 @@ def check_served(ctx, pid: str, env: str, n: int = 5) -> dict:
             "text": (f"The deployed model gives the same answers as {short(ref)} on {done} practice input{'s' if done != 1 else ''}."
                      if ok else f"The deployed model does not answer as {short(ref)} does: on {done} practice input{'s' if done != 1 else ''} "
                                 f"a score differs by up to {worst:.4g}. Deploy it again.")}
+
+
+# ---- a project's networks: what it holds that can be deployed --------------------------------------------
+
+
+def networks_of(ctx, pid: str) -> list[dict]:
+    """The weights models a project holds, each with its versions as things that can be deployed. A project holds a
+    weights model when the model was put in it (`model:weights:<name>`), which a deploy from the project does by
+    itself for a model that is in no project. The model deployed from this project now is listed too."""
+    from .. import project_state as PS
+    from ..weights import store as WS
+
+    try:
+        rec = ((PS.get(ctx, pid).get("staging") or {}).get("staging")) or {}
+    except Exception:  # noqa: BLE001
+        rec = {}
+    live = parse(rec["model_version"]) if rec.get("status") == "running" and is_ref(rec.get("model_version")) else (None, None)
+    from .. import projects as PR
+
+    members = PR.Resolver(ctx).doc["members"]
+    mine = [k[len("model:" + PREFIX):] for k, v in members.items() if k.startswith("model:" + PREFIX) and v == pid]
+    out = []
+    # Read by name, never by listing every model: a project page must not make the starter networks as a side effect.
+    for name in sorted(set(mine) | ({live[0]} if live[0] else set())):
+        have = WS.versions(ctx, name)
+        if not have:
+            continue
+        row = {**WS.summary(ctx, name), "project": members.get(f"model:{PREFIX}{name}")}
+        versions = []
+        for v in row["versions"]:
+            m = WS.manifest(ctx, row["name"], v)
+            led = ((m.get("record") or {}).get("ledger") or {})
+            versions.append({"version": v, "ref": WS.ref_of(row["name"], v), "deploy": ref_of(row["name"], v), "base": m.get("base"),
+                             "changed": led.get("changed") if m.get("base") else 0, "note": m.get("note") or "", "saved_at": m.get("created_at"),
+                             "saved_by": m.get("created_by"), "deployed": row["name"] == live[0] and v == live[1]})
+        sizes = "-".join(str(s) for s in row.get("sizes") or [])
+        out.append({"id": f"{PREFIX}{row['name']}", "kind": "weights", "name": row["name"], "says": row.get("says") or "", "version": row["latest"],
+                    "architecture": f"{sizes} network" if sizes else "network", "parameters": row.get("parameters"),
+                    "status_kind": "running" if row["name"] == live[0] else "can be deployed", "synthetic": row.get("synthetic"),
+                    "in_project": row.get("project") == pid, "deploy": ref_of(row["name"], row["latest"]), "versions": versions[::-1]})
+    return out
+
+
+def join_project(ctx, pid: str, ref: str) -> bool:
+    """Put a weights model in the project that deploys it, when it is in no project yet. Returns whether it did."""
+    from .. import projects as PR
+    from ..weights import store as WS
+
+    name, _ = parse(ref)
+    try:
+        if PR.Resolver(ctx).doc["members"].get(f"model:{PREFIX}{name}"):
+            return False
+        WS.assign(ctx, name, pid)
+        return True
+    except Exception:  # noqa: BLE001  a project that can't take it still gets its deploy
+        return False
+
+
+# ---- "Try it" for any deployed model -----------------------------------------------------------------------
+
+
+def _manifest(ctx, ref: str) -> dict:
+    from ..weights import store as WS
+
+    name, version = parse(resolve(ctx, ref))
+    m = WS.manifest(ctx, name, version)
+    return WS.load(ctx, name, version)[0] if m.get("base") and "sizes" not in m else m
+
+
+def copy_request(rec: dict, body: dict) -> str:
+    """One command a person pastes to send a test request to a deployed network. The key is read from the
+    environment, never written in the command."""
+    from .traffic import _http
+
+    ep = rec.get("endpoint") or {}
+    payload = {**body, "traffic": "test"}
+    if _http(rec):
+        return (f"curl -s {ep.get('url')}/predict -H \"Authorization: Bearer $CAPTAIN_STAGING_KEY\" -H \"Content-Type: application/json\" "
+                f"-d '{json.dumps(payload, separators=(',', ':'))}'")
+    inner = json.dumps(payload, separators=(",", ":"))[1:]
+    return (f"aws sagemaker-runtime invoke-endpoint --region {ep.get('region')} --endpoint-name {ep.get('name')} --content-type application/json "
+            f"--cli-binary-format raw-in-base64-out --body '{{\"op\":\"predict\",\"key\":\"'\"$CAPTAIN_STAGING_KEY\"'\",{inner}' /dev/stdout")
+
+
+def try_info(ctx, pid: str, env: str = "staging") -> dict:
+    """What a screen needs to offer "Try it" for the model a project has deployed, whatever it is: what the model
+    takes and gives back, a ready example request, and the command that sends it. Reads the workspace only: the
+    model is not called."""
+    from . import addresses_of, serving
+    from .traffic import sample_queries
+
+    rec = serving(ctx, pid, env)
+    if not rec or rec.get("status") != "running":
+        raise ValueError("Nothing is deployed. Deploy a model first.")
+    ep = rec.get("endpoint") or {}
+    base = {"project": pid, "env": env, "model_version": rec.get("model_version"), "address": addresses_of(rec),
+            "key_name": "CAPTAIN_STAGING_KEY", "send": f"/api/projects/{pid}/deployed/try"}
+    if rec.get("serves") == "predict":
+        m = _manifest(ctx, rec["model_version"])
+        sh = shape(m)
+        xs, source = example_values(ctx, m)
+        body = example_body(sh, [round(x, 2) for x in xs])
+        data = m.get("data") or {}
+        return {**base, "serves": "predict", "route": "/predict", "op": "predict", **sh, "example": body, "example_from": source,
+                # Said wherever a score is shown: a model trained on made-up data says nothing about real data.
+                "synthetic": bool(data.get("synthetic")), "data_note": data.get("note") or "",
+                "request": copy_request(rec, body),
+                "form": {"kind": "grid" if sh["inputs"][0]["shape"] else "named" if sh["inputs"][0]["names"] else "list",
+                         "input": sh["inputs"][0]["name"], "count": sh["inputs"][0]["count"], "shape": sh["inputs"][0]["shape"],
+                         "names": sh["inputs"][0]["names"], "low": 0, "high": 1}}
+    q = (sample_queries(ctx, pid, 1) or ["shoes"])[0]
+    from .traffic import _http
+
+    body = {"query": q, "k": 5}
+    payload = json.dumps({**body, "traffic": "test"}, separators=(",", ":"))
+    request = (f"curl -s {ep.get('url')}/rank -H \"Authorization: Bearer $CAPTAIN_STAGING_KEY\" -H \"Content-Type: application/json\" -d '{payload}'"
+               if _http(rec) else
+               f"aws sagemaker-runtime invoke-endpoint --region {ep.get('region')} --endpoint-name {ep.get('name')} --content-type application/json "
+               f"--cli-binary-format raw-in-base64-out --body '{{\"op\":\"rank\",\"key\":\"'\"$CAPTAIN_STAGING_KEY\"'\",{payload[1:]}' /dev/stdout")
+    return {**base, "serves": "rank", "route": "/rank", "op": "rank",
+            "inputs": [{"name": "query", "type": "text", "meaning": "what the shopper searched"},
+                       {"name": "k", "type": "number", "meaning": "how many results, 1 to 200"}],
+            "outputs": [{"name": "ids", "type": "names", "meaning": "product ids, best first"},
+                        {"name": "scores", "type": "numbers", "meaning": "one score for each id"}],
+            "text": "Takes a search query. Gives back product ids, best first.", "example": body, "example_from": "a query this project's shoppers search",
+            "request": request, "form": {"kind": "query"}}
+
+
+def try_send(ctx, pid: str, body: dict | None = None, env: str = "staging") -> dict:
+    """Send one request to the deployed model, as test traffic, and say what came back in a sentence. With no body
+    the example from `try_info` is sent. For a ranker this is the same test request the deployment page sends."""
+    from ..model.entities import new_id
+    from . import _save, call, serving
+
+    rec = serving(ctx, pid, env)
+    if not rec or rec.get("status") != "running":
+        raise ValueError("Nothing is deployed. Deploy a model first.")
+    if rec.get("serves") != "predict":
+        from .traffic import test_request
+
+        return {"serves": "rank", **test_request(ctx, pid, (body or {}).get("query") or None, env)}
+    m = _manifest(ctx, rec["model_version"])
+    sh = shape(m)
+    sent = {"inputs": (body or {})["inputs"]} if (body or {}).get("inputs") is not None else example_body(sh, example_values(ctx, m)[0])
+    xs = read_inputs(sh, sent)  # refused here in the same sentence the model would use, before a cloud is called
+    r = call(ctx, rec, "predict", {**sent, "traffic": "test", "session_id": "test-" + new_id().lower()[-6:]})
+    if not rec.get("tried"):
+        _save(ctx, pid, env, tried=True)
+    said = sentence(sh, xs, r["outputs"])
+    synthetic = bool((m.get("data") or {}).get("synthetic"))
+    if synthetic:
+        said += " This model was trained on synthetic data, so the score says nothing about real data."
+    return {"ok": True, "serves": "predict", "synthetic": synthetic, "request_id": r["request_id"], "model_version": r["model_version"], "ms": r["ms"], "arm": r["arm"],
+            "inputs": sent["inputs"], "outputs": r["outputs"], "summary": said,
+            "text": f"The model answered in {r['ms']:.0f} ms. {said} This was test traffic: it isn't counted as a real request."}
+
+
+# ---- from a Weights session to a deployed model, in one call --------------------------------------------------
+
+
+def session_base(ctx, sid: str) -> tuple[str, int]:
+    """(model, the version the session was opened on)."""
+    from ..storage.backend import NotFound
+    from ..weights import session as WSN
+
+    try:
+        s = WSN.session(ctx, sid)
+    except NotFound as e:
+        raise ValueError(str(e).strip("'\"")) from None
+    return s["model"], int(s["version"])
+
+
+def save_session(ctx, sid: str, note: str = "", by: str | None = None) -> dict:
+    """Save a session as a version to deploy: {ref, version, base, saved (False when an earlier save of this same
+    session already holds these exact numbers, and that version is used again), ...}. A session with no edits has
+    nothing to save: its own base is what there is to deploy, and the answer says so."""
+    from ..weights import session as WSN
+    from ..weights import store as WS
+
+    st = WSN._load(ctx, sid)
+    now = WS.digest(st.cur)
+    for ref in reversed(st.doc.get("saved") or []):
+        name, version = WS.split_ref(ref)
+        m = WS.manifest(ctx, name, version)
+        if m.get("sha256") == now:
+            return {"model": name, "version": int(version), "ref": ref, "base": m.get("base"), "saved": False,
+                    "text": f"{ref.replace('@', ' ')} already holds these numbers, so it was not saved again."}
+    if WS.digest(st.base) == now:
+        return {"model": st.model, "version": int(st.doc["version"]), "ref": WS.ref_of(st.model, st.doc["version"]), "base": None, "saved": False,
+                "text": f"This session has no edits, so there is no new version. {WS.ref_of(st.model, st.doc['version']).replace('@', ' ')} itself is deployed."}
+    out = WSN.save(ctx, sid, note=note, by=by)
+    return {**out, "saved": True, "text": f"Saved as {out['ref'].replace('@', ' ')}: {str(out['base']).replace('@', ' ')} plus "
+                                          f"{out['changed']:,} changed number{'s' if out['changed'] != 1 else ''}."}
+
+
+def deploy_session(ctx, pid: str, sid: str, host: str = "local", login: str | None = None, note: str = "", by: str | None = None,
+                   env: str = "staging", confirm: bool = False, allow_large: bool = False, on_event=None) -> dict:
+    """Save a Weights session as a new version and deploy that version to `host`, as one piece of work. A cloud
+    that has not been confirmed is refused before anything is saved, with the plan. The deployment's record says
+    which version it started from and which edits it carries (`carries`), and roll back returns to the version
+    that was running before."""
+    from . import NeedsConfirm
+    from . import deploy as DP
+
+    model, version = session_base(ctx, sid)
+    p = DP.plan(ctx, pid, host, login, candidate=ref_of(model, version), env=env, allow_large=allow_large)
+    if p["needs_confirm"] and not confirm:
+        raise NeedsConfirm("Confirm first. Nothing was saved. " + p["text"].replace(ref_of(model, version), f"this session's edits to {model} v{version}"), p)
+    saved = save_session(ctx, sid, note, by)
+    if on_event:
+        on_event("line", text=saved["text"], step=None)
+    out = DP.run(ctx, pid, host, login, candidate=f"{PREFIX}{saved['ref']}", env=env, confirm=True, allow_large=allow_large, on_event=on_event)
+    return {**out, "saved": saved, "session": sid}

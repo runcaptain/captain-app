@@ -33,6 +33,99 @@ A record of a test left in a project by an older version is ignored, and nothing
 `--endpoint` runs Captain's runtime on this computer in front of your service. `--image` deploys your container to
 the SageMaker target as it is: Captain can query it, but it logs nothing.
 
+## A model that is not a ranker: named inputs in, named outputs out
+
+A weights model (see `cst docs weights`) deploys through the same one call, to the same places, with the same
+record, health, request log, stop, start and roll back. It is named `weights:<model>@v<N>`. With no version it
+means the newest.
+
+```
+cst deploy shop --on local --candidate weights:digits@v2
+```
+
+`POST /api/projects/{pid}/deploy` takes the same name as `candidate`. A project lists the weights models it
+holds under `networks` in `GET /api/projects/{pid}/home`, each version with the name to deploy it by. Deploying a
+model that is in no project puts it in the project that deployed it.
+
+It is served alone. No ranking baseline runs beside it.
+
+### The request
+
+`POST <address>/predict`, with the key as a bearer token. On SageMaker, `"op": "predict"` in the body.
+
+```json
+{"inputs": {"input": [0.0, 0.1, 0.9]}, "traffic": "real", "session_id": "optional", "request_id": "optional"}
+```
+
+What `inputs` may hold comes from the model's manifest:
+
+| The manifest says | The request may send |
+|---|---|
+| always | `{"input": [every number, in order]}`, or the list alone |
+| `inputs.shape: [28, 28]` | `{"input": [[28 numbers], ... 28 rows]}` |
+| `inputs.names: ["x1", "x2"]` | `{"x1": 0.9, "x2": 0.1}` |
+
+The answer:
+
+```json
+{"request_id": "...", "arm": "candidate", "model_version": "weights:digits@v2", "ms": 0.08,
+ "outputs": {"scores": [0.01, 0.93], "named": {"0": 0.01, "1": 0.93}, "chosen": "1", "chosen_index": 1}}
+```
+
+`scores` has one number per output. `named` gives the same scores under the manifest's output names. `chosen` is
+the output with the largest score, when there is more than one. A network with one output between 0 and 1 answers
+`yes` (true above one half) and no `chosen`.
+
+A request that does not fit is refused with status 400 and a sentence under `detail`, for example "This model
+takes a grid of 28 by 28 numbers. The request sent 27 rows of 28." A network refuses `/rank` and a ranker refuses
+`/predict`, each saying where to send the request. `POST <address>/describe` returns what the model takes, what it
+gives back and an example request.
+
+One example per request. The response time budget and the fallback to a compared model apply to ranking only.
+
+### What the bundle holds
+
+The manifest and tensors of the version the line of edits started from, and every saved edit since, in order.
+The runtime applies them when it loads, with numpy alone. It refuses to start when the result is not the numbers
+recorded when the version was saved.
+
+### The record and the log
+
+The deployment's record gains `serves: "predict"` and `carries`: the version it started from, its base, how many
+numbers changed, each edit with its reason, the session and the note. A ranker's record has neither.
+
+A request's log line keeps the envelope of a ranking line (request id, time, milliseconds, traffic kind, copy)
+with `kind: "predict"` and, under `predict`, the inputs and outputs in a short form and one sentence: "In: a 28 by
+28 grid, 143 of 784 not zero. Out: chose 7, score 0.93." An input longer than 32 numbers is logged as its count,
+range, mean and first 8 numbers. `GET /api/projects/{pid}/staging/requests` returns the sentence as `summary`.
+
+After a deploy, "Checking it matches training" sends the model's own practice inputs through the deployment and
+compares each score with the saved version's. A difference fails that step, not the deploy.
+
+### Try it, for any deployed model
+
+| Command | Route | Returns |
+|---|---|---|
+| `cst deployments try <project>` | `GET /api/projects/{pid}/deployed/try` | what the model takes and gives back, an example body, the command that sends it, and `form` for a screen |
+| `cst deployments try <project> --send` | `POST /api/projects/{pid}/deployed/try` | the example sent as test traffic, and what came back |
+| `cst deployments try <project> --inputs '{"x1": 0.9, "x2": 0.1}'` | the same, with `{"inputs": ...}` | your own inputs sent as test traffic |
+
+`form.kind` is `grid`, `named`, `list` or, for a ranker, `query`. The example is the model's first practice input
+when it has one. "Copy a test request" on the Deployments screen copies the same command. The key is never in
+it: it reads `CAPTAIN_STAGING_KEY`.
+
+### From a Weights session to a deployed model
+
+```
+cst weights deploy shop --on local --as "the nine no longer reads as a four"
+```
+
+`POST /api/projects/{pid}/deploy` with `{"session": sid, "host": ..., "login"?, "note"?, "confirm"?}`, or
+`cst deploy <project> --on <host> --session <sid>`. The session is saved as a new version and that version is deployed, as one job with the same
+named steps. A cloud that has not been confirmed is refused before anything is saved. Sent twice, the same
+numbers are not saved twice: the version already saved is deployed. A session with no edits deploys the version
+it was opened on. `cst deployments rollback <project> --reason "..."` returns to the version that ran before.
+
 ## The serving bundle
 
 `stage` writes a bundle to the workspace's storage, `staging/<project>/bundles/<id>/`: `bundle.json` names each arm

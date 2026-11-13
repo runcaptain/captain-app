@@ -593,13 +593,13 @@ export class Ship {
         .children(d.rows.map((r, i) => h_flex().id(`dep-request-${i}`).gap(8).py(5).items_center().cursor_pointer().border_b(1).border_color(c.rule)
           .when(open?.id === r.request_id, (x) => x.bg(c.blueLight)).hover((x) => x.bg(c.surface2))
           .on_click((_e, cx) => this.openRequest(cx, r.request_id))
-          .child(cell(92, clock(r.ts), true)).child(div().flex_1().min_w(80).truncate().text_size(12.5).text_color(c.navy).child(r.query))
+          .child(cell(92, clock(r.ts), true)).child(div().flex_1().min_w(80).truncate().text_size(12.5).text_color(c.navy).child(r.query ?? r.summary ?? ""))
           .child(cell(80, r.arm === "baseline" ? "Baseline" : "Candidate")).child(cell(64, `${Number(r.ms).toFixed(1)} ms`)).child(cell(74, r.traffic))
           .child(div().w(70).flex_none().text_size(12.5).text_color(c.good).child("Answered")))));
     const x = open?.data;
     const panel = !open ? null : v_flex().id("dep-request-panel").w(360).flex_none().p(10).gap(6).bg(c.surface2).border_1().border_color(c.rule)
       .child(h_flex().gap(6).items_center()
-        .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().child(x?.query ?? "Opening..."))
+        .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().child(x?.query ?? x?.summary ?? "Opening..."))
         .child(Button(c, "dep-request-close", "Close", (_e, cx) => { this.reqOpen = null; cx.notify(); }, { small: true })))
       .when(Boolean(open.problem), (e) => e.child(div().text_size(12.5).text_color(c.fail).child(open.problem)))
       .when(Boolean(x), (e) => e

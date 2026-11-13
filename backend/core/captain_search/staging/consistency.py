@@ -133,6 +133,17 @@ def check(ctx: Context, pid: str, env: str = "staging", sample: int = SAMPLE, mi
         raise ValueError(f"Nothing is deployed for {pid}. Deploy a model and try it first.")
     if rec.get("how") == "image":
         out = {"status": "unavailable", "text": "Not checked: your own container doesn't log the features it serves."}
+    elif rec.get("serves") == "predict":
+        # A network has no ranking features. Its check is whether the deployed copy answers as the saved version
+        # does, on the model's own practice inputs (predict.check_served).
+        from . import predict as PD
+
+        if rec.get("status") != "running":
+            out = {"status": "unavailable", "text": "Not checked: the model is not running."}
+        elif dry_run:
+            return {"status": "unavailable", "dry_run": True, "text": "Would send the model's practice inputs through the deployment and compare the scores."}
+        else:
+            out = PD.check_served(ctx, pid, env)
     else:
         if rec.get("status") == "running":
             try:

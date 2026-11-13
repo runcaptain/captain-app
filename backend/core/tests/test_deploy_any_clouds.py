@@ -100,3 +100,41 @@ def test_a_ranker_deploys_beside_all_this_exactly_as_before(ws, logins, modal): 
     assert "serves" not in SG.call(ws, rec, "status", {})
     with pytest.raises(Exception, match="a search ranker. Send it POST /rank with a query"):
         SG.call(ws, rec, "predict", {"inputs": [0.1, 0.2]})
+
+
+def test_try_it_on_sagemaker_hands_out_the_aws_command_with_the_predict_op(ws, aws):  # noqa: F811
+    import json
+
+    from captain_search.staging import predict as PD
+
+    WS.ensure_starters(ws)
+    SG.stage(ws, "shop", candidate="weights:tiny", target="sm", confirm=True)
+    t = PD.try_info(ws, "shop")
+    rec = SG.state(ws, "shop")
+    assert t["serves"] == "predict" and t["address"] == rec["endpoint"]["name"] and t["form"]["kind"] == "named"
+    assert t["request"].startswith(f"aws sagemaker-runtime invoke-endpoint --region us-west-1 --endpoint-name {rec['endpoint']['name']} ")
+    body = t["request"].split("--body '")[1].split("' /dev/stdout")[0]
+    assert body.startswith('{"op":"predict","key":"\'"$CAPTAIN_STAGING_KEY"\'","inputs":{"x1":') and body.endswith('"traffic":"test"}')
+    assert SG._key(rec) not in t["request"]
+    sent = json.loads(body.replace("'\"$CAPTAIN_STAGING_KEY\"'", SG._key(rec)))  # what the shell would send
+    assert C.invoke_staged(ws, C.get(ws, "sm"), rec, sent)["outputs"]["scores"]
+    assert PD.try_send(ws, "shop")["serves"] == "predict"
+    snip = TF.snippets(rec, ws)
+    assert '"op":"predict"' in snip["aws cli"] and '"op": "predict"' in snip["python"]
+    SG.unstage(ws, "shop")
+
+
+def test_a_session_deployed_to_a_cloud_saves_nothing_until_it_is_confirmed(ws, logins, modal):  # noqa: F811
+    from captain_search.staging import predict as PD
+
+    WS.ensure_starters(ws)
+    logins.append(LOGINS["modal"])
+    s = WSN.open_session(ws, "tiny", by="agent", name="tester")
+    WSN.edit(ws, s["id"], {"op": "set", "layer": 2, "neuron": 0, "from": None, "value": -9.0, "why": "to see the answer move"}, by="agent")
+    with pytest.raises(SG.NeedsConfirm, match="Confirm first. Nothing was saved. Deploy this session's edits to tiny v1 in your Modal workspace"):
+        PD.deploy_session(ws, "shop", s["id"], "modal")
+    assert WS.versions(ws, "tiny") == [1] and SG.state(ws, "shop") is None and not modal.volumes
+    out = PD.deploy_session(ws, "shop", s["id"], "modal", confirm=True)
+    assert out["status"] == "done" and out["model_version"] == "weights:tiny@v2" and out["address"].startswith("https://")
+    rec = SG.state(ws, "shop")
+    assert rec["host"] == "modal" and rec["carries"]["session"] == s["id"] and SG.call(ws, rec, "predict", YES)["outputs"]["yes"] is False

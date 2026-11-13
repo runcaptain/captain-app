@@ -263,3 +263,183 @@ def test_a_version_that_is_not_there_is_refused_before_anything_starts(net):
     with pytest.raises(ValueError, match="There is no weights model named nothing-here"):
         DP.plan(net, "shop", "local", candidate="weights:nothing-here")
     assert SG.state(net, "shop") is None
+
+
+# ---- a project holds a weights model as something that can be deployed --------------------------------
+
+
+def test_a_project_lists_its_weights_models_with_each_version_ready_to_deploy(net):
+    assert PR.home(net, "shop")["networks"] == [] and PR.home(net, "shop")["empty"]
+    WS.assign(net, "tiny", "shop")
+    edited(net, "tiny")
+    h = PR.home(net, "shop")
+    assert h["counts"]["models"] == 1 and not h["empty"] and [n["name"] for n in h["networks"]] == ["tiny"]
+    row = h["networks"][0]
+    assert (row["id"], row["kind"], row["version"], row["architecture"], row["status_kind"], row["deploy"]) == ("weights:tiny", "weights", 2, "2-3-1 network", "can be deployed", "weights:tiny@v2")
+    assert [(v["version"], v["deploy"], v["base"], v["changed"], v["deployed"]) for v in row["versions"]] == [(2, "weights:tiny@v2", "tiny@v1", 1, False), (1, "weights:tiny@v1", None, 0, False)]
+    # What the list names is what the deploy takes.
+    assert DP.run(net, "shop", "local", candidate=row["versions"][0]["deploy"])["status"] == "done"
+    row = PR.home(net, "shop")["networks"][0]
+    assert row["status_kind"] == "running" and [v["deployed"] for v in row["versions"]] == [True, False]
+
+
+def test_deploying_a_model_that_is_in_no_project_puts_it_in_this_one(net):
+    said = []
+    DP.run(net, "shop", "local", candidate="weights:digits", on_event=lambda k, **d: said.append(d.get("text")))
+    assert "Put digits in this project, so it is listed with the project's models." in said
+    assert [n["name"] for n in PR.home(net, "shop")["networks"]] == ["digits"] and WS.models(net, project="shop")[0]["name"] == "digits"
+    # A model that already has a project stays where it is, and is still listed where it runs.
+    PR.create(net, "other")
+    WS.assign(net, "tiny", "other")
+    DP.run(net, "shop", "local", candidate="weights:tiny")
+    assert WS.models(net, project="other")[0]["name"] == "tiny"
+    assert [(n["name"], n["in_project"]) for n in PR.home(net, "shop")["networks"]] == [("digits", True), ("tiny", False)]
+
+
+def test_listing_a_project_does_not_make_the_starter_networks(tmp_path):
+    ctx = init_workspace("t", str(tmp_path / "store"))
+    PR.create(ctx, "shop")
+    assert PR.home(ctx, "shop")["networks"] == [] and not list(ctx.store.list("weights/"))
+
+
+# ---- Try it, for any model --------------------------------------------------------------------------
+
+
+def test_try_it_gives_a_request_that_fits_the_model_and_sends_it(net):
+    with pytest.raises(ValueError, match="Nothing is deployed. Deploy a model first."):
+        PD.try_info(net, "shop")
+    DP.run(net, "shop", "local", candidate="weights:digits")
+    t = PD.try_info(net, "shop")
+    assert (t["serves"], t["route"], t["model_version"], t["form"]["kind"], t["form"]["shape"]) == ("predict", "/predict", "weights:digits@v1", "grid", [28, 28])
+    assert t["address"].endswith("/predict") and t["example_from"] == "the model's first practice example" and t["send"] == "/api/projects/shop/deployed/try"
+    grid = t["example"]["inputs"]["input"]
+    assert len(grid) == 28 and all(len(r) == 28 for r in grid)
+    assert t["request"].startswith(f"curl -s {t['address']} -H \"Authorization: Bearer $CAPTAIN_STAGING_KEY\"") and '"traffic":"test"' in t["request"]
+    assert SG._key(SG.state(net, "shop")) not in t["request"]  # the key is read from the environment, never written
+    # The command it hands out is a request the model takes.
+    import json
+
+    body = json.loads(t["request"].split(" -d '")[1].rstrip("'"))
+    assert SG.call(net, SG.state(net, "shop"), "predict", body)["outputs"]["chosen"] in [str(i) for i in range(10)]
+    sent = PD.try_send(net, "shop")
+    assert sent["ok"] and sent["serves"] == "predict" and sent["summary"].startswith("In: a 28 by 28 grid") and "isn't counted as a real request" in sent["text"]
+    assert sent["synthetic"] and "trained on synthetic data" in sent["text"] and t["synthetic"] and "not handwriting" in t["data_note"]
+    assert SG.state(net, "shop")["tried"] is True
+    mine = PD.try_send(net, "shop", {"inputs": {"input": [0.0] * 784}})
+    assert len(mine["outputs"]["scores"]) == 10
+    with pytest.raises(ValueError, match="This model takes 784 numbers \\(a grid of 28 by 28\\). The request sent 3."):
+        PD.try_send(net, "shop", {"inputs": [1, 2, 3]})
+    # The places that hand a person a request to copy all hand out this one.
+    from captain_search.staging import fleet as FL
+
+    call = next(f for f in FL.where_it_runs(net, "shop")["facts"] if f["id"] == "call")
+    assert call["value"] == t["request"] and call["copy"]
+    conn = TF.connect(net, "shop")
+    assert conn["test_request"] == t["request"] and conn["addresses"][0]["address"] == t["address"]
+    assert "/predict" in conn["snippets"]["curl"] and "def predict(inputs)" in conn["snippets"]["python"] and "/rank" not in conn["snippets"]["javascript"]
+    assert TF.test_request(net, "shop")["serves"] == "predict"
+    with pytest.raises(ValueError, match="takes named inputs, not a search query"):
+        SG.query(net, "shop", "boots")
+
+
+def test_try_it_over_the_api_and_the_command(net, monkeypatch):
+    import json
+
+    from typer.testing import CliRunner
+
+    from captain_search import server
+    from captain_search.cli.main import app as cli
+
+    monkeypatch.setattr(server, "ctx", lambda: net)
+    c = TestClient(server.app, headers={"Authorization": f"Bearer {server.TOKEN}"})
+    assert c.get("/api/projects/shop/deployed/try").status_code == 400
+    DP.run(net, "shop", "local", candidate="weights:tiny")
+    t = c.get("/api/projects/shop/deployed/try").json()
+    assert t["form"] == {"kind": "named", "input": "input", "count": 2, "shape": None, "names": ["x1", "x2"], "low": 0, "high": 1}
+    assert set(t["example"]["inputs"]) == {"x1", "x2"} and t["text"] == "Takes 2 numbers (x1, x2). Gives back 1 score."
+    r = c.post("/api/projects/shop/deployed/try", json={"inputs": {"x1": 0.9, "x2": 0.1}})
+    assert r.status_code == 200 and r.json()["outputs"]["yes"] is True and r.json()["summary"].startswith("In: x1 0.9, x2 0.1. Out: exactly one is high: yes")
+    bad = c.post("/api/projects/shop/deployed/try", json={"inputs": {"x1": 0.9}})
+    assert bad.status_code == 400 and bad.json()["error"] == "The request is missing x2. This model needs all 2: x1, x2."
+    run = CliRunner()
+    shown = run.invoke(cli, ["deployments", "try", "shop"])
+    assert shown.exit_code == 0 and "Takes 2 numbers (x1, x2). Gives back 1 score." in shown.output and "/predict" in shown.output, shown.output
+    sent = run.invoke(cli, ["--json", "deployments", "try", "shop", "--inputs", "[0.9, 0.9]"])
+    assert sent.exit_code == 0 and json.loads(sent.output)["outputs"]["yes"] is False, sent.output
+
+
+# ---- from a Weights session to a deployed model, in one call -----------------------------------------------
+
+
+def _session_with_an_edit(ctx, model="tiny", value=-9.0):
+    s = WSN.open_session(ctx, model, by="agent", name="tester")
+    WSN.edit(ctx, s["id"], {"op": "set", "layer": 2, "neuron": 0, "from": None, "value": value, "why": "to see the answer move"}, by="agent")
+    return s["id"]
+
+
+def test_a_session_is_saved_and_deployed_in_one_call_and_rolls_back(net):
+    from captain_search.staging import rollback as RB
+
+    DP.run(net, "shop", "local", candidate="weights:tiny")
+    sid = _session_with_an_edit(net)
+    lines = []
+    out = PD.deploy_session(net, "shop", sid, "local", note="output bias pushed down", on_event=lambda k, **d: lines.append(d.get("text")))
+    assert out["status"] == "done" and out["session"] == sid and out["model_version"] == "weights:tiny@v2"
+    assert out["saved"]["saved"] and out["saved"]["ref"] == "tiny@v2" and lines[0] == "Saved as tiny v2: tiny v1 plus 1 changed number."
+    rec = SG.state(net, "shop")
+    c = rec["carries"]
+    assert (c["ref"], c["base"], c["started_from"], c["changed"], c["session"], c["note"]) == ("weights:tiny@v2", "tiny@v1", "tiny@v1", 1, sid, "output bias pushed down")
+    assert c["edits"] == [{"id": c["edits"][0]["id"], "op": "set", "tensors": ["layer2.bias"], "why": "to see the answer move", "by": "agent", "changed": 1}]
+    assert c["label"] == WS.manifest(net, "tiny", 2)["record"]["ledger"]["label"] and c["label"].startswith("from the weights") and rec["previous"] == "weights:tiny@v1"
+    body = {"inputs": {"x1": 0.9, "x2": 0.1}, "traffic": "test"}
+    assert SG.call(net, rec, "predict", body)["outputs"]["yes"] is False
+    # The same call again deploys the version it saved: the same numbers are not saved twice.
+    again = PD.deploy_session(net, "shop", sid, "local")
+    assert again["saved"] == {"model": "tiny", "version": 2, "ref": "tiny@v2", "base": "tiny@v1", "saved": False,
+                              "text": "tiny v2 already holds these numbers, so it was not saved again."} and WS.versions(net, "tiny") == [1, 2]
+    back = RB.go(net, "shop", reason="the edit made every answer no")
+    assert back["rolled_back_to"] == "weights:tiny@v1" and SG.call(net, SG.state(net, "shop"), "predict", body)["outputs"]["yes"] is True
+    assert SG.state(net, "shop")["carries"]["changed"] == 0
+
+
+def test_a_session_with_no_edits_deploys_its_own_version_and_a_missing_one_is_refused(net):
+    s = WSN.open_session(net, "tiny", by="you")
+    out = PD.deploy_session(net, "shop", s["id"], "local")
+    assert out["model_version"] == "weights:tiny@v1" and not out["saved"]["saved"] and "has no edits" in out["saved"]["text"] and WS.versions(net, "tiny") == [1]
+    with pytest.raises(ValueError, match="There is no weights session 'ws-nothing'"):
+        PD.deploy_session(net, "shop", "ws-nothing", "local")
+
+
+def test_the_routes_and_the_command_deploy_a_session(net, monkeypatch):
+    import time
+
+    from typer.testing import CliRunner
+
+    from captain_search import server
+    from captain_search.cli.main import app as cli
+
+    monkeypatch.setattr(server, "ctx", lambda: net)
+    c = TestClient(server.app, headers={"Authorization": f"Bearer {server.TOKEN}"})
+    sid = _session_with_an_edit(net)
+    assert c.post("/api/projects/shop/deploy", json={"session": "ws-nothing", "host": "local"}).status_code == 400
+    dry = c.post("/api/projects/shop/deploy", json={"session": sid, "host": "local", "dry_run": True}).json()
+    assert dry["dry_run"] and dry["session"] == sid and WS.versions(net, "tiny") == [1]  # a plan saves nothing
+    r = c.post("/api/projects/shop/deploy", json={"session": sid, "host": "local", "note": "from the page"}).json()
+    assert r["saved"]["ref"] == "tiny@v2" and r["plan"]["model_version"] == "weights:tiny@v2" and r["session"] == sid
+    for _ in range(300):
+        j = c.get(f"/api/jobs/{r['job']}").json()
+        if j.get("status") not in ("running", "queued", "pending"):
+            break
+        time.sleep(0.1)
+    assert j["status"] == "done", j
+    rec = SG.state(net, "shop")
+    assert rec["status"] == "running" and rec["model_version"] == "weights:tiny@v2" and rec["carries"]["note"] == "from the page"
+    # The same through the project's own deploy address, and from the terminal.
+    sid2 = _session_with_an_edit(net, value=4.0)
+    assert WSN.session(net, sid2)["version"] == 2
+    monkeypatch.setattr("captain_search.cli.weights._sid", lambda s: s or sid2)
+    done = CliRunner().invoke(cli, ["weights", "deploy", "shop", "--on", "local", "--as", "bias back up"])
+    assert done.exit_code == 0 and "Saved as tiny v3: tiny v2 plus 1 changed number." in done.output and "Deployed weights:tiny@v3 to This computer." in done.output, done.output
+    assert SG.state(net, "shop")["carries"]["line"] == ["tiny@v2", "tiny@v3"]
+    refused = CliRunner().invoke(cli, ["deploy", "shop", "--session", sid2])
+    assert refused.exit_code != 0 and "Say where to deploy the session's network" in refused.output
