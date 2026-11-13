@@ -1163,10 +1163,13 @@ Experiments, Compare or Launch review: say what to do in Runs, or run the comman
 
 A dataset is a table Captain keeps versions of. A database's table is one Captain reads where it lives. Tables
 shows both, **grouped by place**: one collapsible group per connected database (its mark, its name and kind, a
-count) and one per folder of the tables Captain keeps. The owner on the first build: "A giant wall of tables is
+count), then ONE group, "Kept in Captain", for the tables Captain keeps. That group opens to its folders, nested
+by their path. A folder holding a single table shows the table, not a folder row, and tables in no folder come
+last. So a workspace with two databases shows three rows closed, however many folders it has. The owner on the first build: "A giant wall of tables is
 not good. It needs to be a dropdown... searchable with pagination per type of database."
 
 - Groups start closed. The ones a person opens are remembered for the workspace.
+- The header has one filled button, "Add a table". Dataset classes left the screen with Labels.
 - An open group shows its tables **five at a time**, with Previous, Next and "1 to 5 of 39", and its own search
   box. A database with more than 15 tables is grouped again by schema; a smaller one says the schema under
   "Where it lives".

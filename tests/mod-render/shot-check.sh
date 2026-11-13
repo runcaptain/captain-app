@@ -286,7 +286,7 @@ props_of() {
     captain-runs:compare) echo '{"tab": "compare"}' ;;
     captain-notebooks:notebook) echo '{"notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:sources) echo '{"tab": "sources"}' ;;
-    captain-data:groups) echo '{"openGroups": ["db:demo-store", "folder:"]}' ;;  # two groups open, five tables at a time
+    captain-data:groups) echo '{"openGroups": ["db:demo-store", "kept"]}' ;;  # two groups open, five tables at a time
     captain-data:samplerow) echo '{"pageTab":"sample","dataset":"shot-multifile","openRow":2}' ;;
     captain-data:pictures) echo '{"pageTab":"sample","dataset":"shot-pictures","openRow":1}' ;;
     captain-project:choose) echo '{"chooseModels": true}' ;;

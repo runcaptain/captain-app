@@ -89,7 +89,7 @@ await search('historic judgments');
 await until((t) => t.includes('Captain, folder demo-historic-replay') && h.mod.catalog.rows.length === 1, 'a foldered dataset found, with its folder');
 await search('');
 await until(() => h.mod.catalog.rows.filter((r) => r.kind === 'dataset').length === h.mod.list.length, 'every dataset, folders aside');
-assert.ok(h.mod.catalog.groups.some((g) => g.id === 'folder:logs'), 'each folder is a group');
+assert.ok(h.mod.catalog.groups.some((g) => g.id === 'kept'), 'the tables Captain keeps are one group');
 
 stop();
 console.log('insights-live render test: ok');

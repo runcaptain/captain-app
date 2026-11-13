@@ -336,8 +336,7 @@ export default class CaptainData extends View {
       .child(div().flex_1())
       // One filled button: bringing data in. On a table's page the page has its own actions.
       .when(this.tab === "tables" && !this.shown, (e) => e
-        .child(Button(c, "new-class", "New class", () => openForm("dataset-class"), { small: true }))
-        .child(Button(c, "import-dataset", "Import a dataset", () => openImport(), { kind: "primary", small: true })))
+        .child(Button(c, "import-dataset", "Add a table", () => openImport(), { kind: "primary", small: true })))
       .when(this.tab === "sources", (e) => e
         .child(Button(c, "tables-connect", "Connect a database", () => openForm("database"), { kind: "primary", small: true })))
       .child(div().id("data-refresh").size(28).flex().flex_none().items_center().justify_center().cursor_pointer()
