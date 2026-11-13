@@ -18,10 +18,10 @@ Where bumps come from
   can forget (storage/backend.py). `topics_for` maps the key to its topics.
 - State that is not a store write: a job's progress, a live run's events, a cloud login saved. Those call `bump`.
 - Writes made outside this process (a `cst` command in a terminal, an agent, another machine): `Watcher`, while
-  anyone is listening. A workspace on this computer is seen within about a second. One in a bucket within about
-  two, and only for its few index objects (see `BucketWatch`).
-- What only a cloud knows (a model that stopped by itself): `staging/cloud_watch.py`, while anyone listens to
-  `deployed`.
+  anyone is listening. A workspace on this computer is seen within about a second. One in a bucket within two to
+  three, from the bucket's own listings (see `BucketWatch`), and the answer names what is only partly watched.
+- What only a cloud knows (a model that stopped by itself): flow-clouds' watcher, which calls `bump` here and
+  runs only while `listening("deployed")` or `listening("deployment:")`.
 
 The wire is `GET /api/changes` (a long poll) and `/api/changes/ws` in server.py.
 """
@@ -35,7 +35,8 @@ import time
 
 KEEP = 4096          # how many changes the feed remembers: a client further behind is told to read everything again
 HOLD_S = 25.0        # how long a long poll is held open with nothing to say
-LINGER_S = 30.0      # how long the watchers keep going after the last listener left (a long poll comes straight back)
+LINGER_S = 10.0      # how long a topic still counts as listened to after the last request for it ended: a long poll
+                     # comes straight back, and a client that vanished simply stops asking
 
 
 def _now() -> str:
@@ -98,6 +99,15 @@ def topics_for(key: str) -> set[str]:
 
 # ---- the feed ------------------------------------------------------------------------------------------------------
 
+def covered(changed, want) -> set[str]:
+    """The changed topics a client's list covers. A listed topic covers itself, and one that ends in a colon
+    covers every topic that starts with it: "run:" is every run. No list covers everything."""
+    if want is None:
+        return set(changed)
+    pre = tuple(w for w in want if w.endswith(":"))
+    return {t for t in changed if t in want or (pre and t.startswith(pre))}
+
+
 class Feed:
     """The sequence, what changed at each step, and who is listening."""
 
@@ -140,27 +150,35 @@ class Feed:
             if fn in self._heard:
                 self._heard.remove(fn)
 
-    def _since(self, since: int, want: set[str] | None) -> tuple[list[str], bool]:
-        """(the topics that changed after `since`, whether the client must read everything again). Lock held."""
+    def _since(self, since: int, want: set[str] | None) -> tuple[list[dict], bool]:
+        """(the topics that changed after `since`, each with the sequence of its latest change; whether the client
+        must read everything again). Lock held."""
         if since > self.seq or since < self.base:
             return [], True                      # from another run of the service
         if self.log and since < self.log[0][0] - 1 and since < self.seq:
             return [], True                      # further behind than the feed remembers
-        hit: set[str] = set()
-        for seq, ts in reversed(self.log):
+        hit: dict[str, int] = {}
+        for seq, ts in reversed(self.log):   # newest first, so the first time a topic is met is its latest change
             if seq <= since:
                 break
-            hit |= ts if want is None else (ts & want)
-        return sorted(hit), False
+            for t in covered(ts, want):
+                hit.setdefault(t, seq)
+        return [{"topic": t, "seq": hit[t]} for t in sorted(hit)], False
 
     def answer(self, since: int | None, topics=None) -> dict:
         """What a client is told right now, without waiting."""
         want = None if topics is None else set(topics)
         with self.cond:
             if not since:
-                return {"seq": self.seq, "changed": [], "at": _now()}
+                return {"seq": self.seq, "changed": [], "reset": False, "at": _now()}
             changed, reset = self._since(int(since), want)
-            return {"seq": self.seq, "changed": changed, "at": _now(), **({"reset": True} if reset else {})}
+            return {"seq": self.seq, "changed": changed, "reset": reset, "at": _now()}
+
+    def touch(self, topics=None) -> None:
+        """A client asked about these topics without waiting (it polls). It counts as listening for a while."""
+        ts = set(topics) if topics else {"*"}
+        self.listen(ts)
+        self.unlisten(ts)
 
     def wait(self, since: int | None, topics=None, timeout: float = HOLD_S) -> dict:
         """Hold until one of `topics` changes after `since`, or `timeout` passes. With no `since` it answers at
@@ -175,10 +193,10 @@ class Feed:
                 while True:
                     changed, reset = self._since(int(since), want)
                     if changed or reset:
-                        return {"seq": self.seq, "changed": changed, "at": _now(), **({"reset": True} if reset else {})}
+                        return {"seq": self.seq, "changed": changed, "reset": reset, "at": _now()}
                     left = end - time.monotonic()
                     if left <= 0:
-                        return {"seq": self.seq, "changed": [], "at": _now()}
+                        return {"seq": self.seq, "changed": [], "reset": False, "at": _now()}
                     self.cond.wait(left)
         finally:
             self.unlisten(want or {"*"})
@@ -200,10 +218,11 @@ class Feed:
                 self._left[t] = now
             self.last_listener = now
 
-    def listening(self, prefix: str | None = None, linger: float = LINGER_S) -> bool:
+    def listening(self, prefix: str | None = None, linger: float | None = None) -> bool:
         """Is anyone listening (to a topic that is `prefix` or starts with it, or to anything)? A long poll leaves
         and comes straight back, so a listener that left a moment ago still counts."""
         now = time.monotonic()
+        linger = LINGER_S if linger is None else linger
         with self.cond:
             self._left = {t: at for t, at in self._left.items() if now - at < linger}
             names = set(self._listening) | set(self._left)
@@ -216,7 +235,15 @@ FEED = Feed()
 
 
 def bump(*topics: str) -> int:
+    """Something changed under each topic. Safe from any thread, and cheap enough to call on every progress line.
+    Returns the new sequence number."""
     return FEED.bump(*topics)
+
+
+def listening(prefix: str | None = None) -> bool:
+    """Is a request open for a topic that is `prefix` or starts with it, or did one end under 10 seconds ago?
+    With no prefix: for any topic. What a watcher asks before it does work nobody would see."""
+    return FEED.listening(prefix)
 
 
 # ---- every write through this process ---------------------------------------------------------------------------------
@@ -332,56 +359,156 @@ class Watcher:
 
 
 class BucketWatch:
-    """A workspace kept in a bucket, written by another machine. Listing a bucket every second is neither cheap
-    nor fast, so this reads the tags of its few index objects every two seconds while someone listens: the list of
-    projects, each project's state, the settings, the library and the serving setup. A change to one of those is
-    told within about two seconds. A dataset or a run written by another machine that touches none of them is
-    seen when its project's state next changes, or when the screen is opened."""
+    """A workspace kept in a bucket, written by another machine. A bucket has no folder times to look at, but its
+    listing carries every object's tag, so one listing of a folder shows what was added, replaced or removed
+    under it without reading any object. While someone listens, every two seconds this lists:
+
+    - the workspace's top level (the project list, the settings, the library),
+    - every folder there except `objects/` (blobs named by their hash) and `staging/`,
+    - under `staging/`, each deployed model's own level (its deploy and control documents).
+
+    A change is told in about two to three seconds. The registry keeps no one index object for datasets, runs,
+    jobs or notebooks, which is why their folders are listed whole: a new version is a new key, and a record
+    replaced in place has a new tag.
+
+    What it does not watch, and says so (`partial`): what a deployed model writes about itself (its request log,
+    its copies, its health checks), which is many small objects. And a folder whose listing is slow (over a second)
+    or large (over 5,000 objects) is listed every 30 seconds instead, and its topics are named as partly watched.
+    A look never takes more than half the time: the wait is at least as long as the look took."""
 
     EVERY_S = 2.0
-    INDEX = ("projects.yaml", "settings.yaml", "library.yaml", "serving/setup.yaml", "classes/classes.yaml")
+    SLOW_EVERY_S = 30.0
+    SLOW_AFTER_S = 1.0
+    SLOW_KEYS = 5000
+    DIRS_EVERY_S = 30.0          # how often the list of deployed models' folders is read again
+    SKIP = ("objects/",)
+    OWN_S = 60.0                 # how long this process's own write is remembered, so it is not told twice
 
     def __init__(self, store, uri: str):
         self.store, self.uri = store, uri
-        self.tags: dict[str, str | None] = {}
+        self.tags: dict[tuple, dict[str, str]] = {}     # (prefix, shallow) -> {key: tag} at the last look
+        self.slow: dict[str, float] = {}                # folder -> when it may be listed next
+        self.envs: list[str] = []                       # "staging/<project>/<env>/"
+        self.envs_at = 0.0
+        self.own: dict[str, float] = {}
         self.primed = False
+        self.looks = 0                                  # listings made, for the tests
         self.thread: threading.Thread | None = None
         self.lock = threading.Lock()
 
     def saw(self, key: str) -> None:
         with self.lock:
-            self.tags.pop(str(key).lstrip("/"), None)   # read again on the next look, without reporting it
+            self.own[str(key).lstrip("/")] = time.monotonic()
 
-    def _keys(self) -> list[str]:
-        keys = list(self.INDEX)
+    def _list(self, prefix: str, shallow: bool) -> dict[str, str] | None:
+        self.looks += 1
         try:
-            import yaml
+            return dict(self.store.list_tags(prefix, shallow))
+        except Exception:  # noqa: BLE001  the bucket can't be reached just now: nothing is said, the next look tries
+            return None
 
-            doc = yaml.safe_load(self.store.get("projects.yaml")) or {}
-            rows = doc.get("projects") if isinstance(doc, dict) else doc
-            keys += [f"projects/{(p.get('id') if isinstance(p, dict) else p)}/state.yaml" for p in rows or []]
-        except Exception:  # noqa: BLE001
-            pass
-        return keys
+    def _diff(self, prefix: str, shallow: bool, now: dict[str, str]) -> set[str]:
+        """The keys added, replaced or removed under one listing since the last look at it."""
+        before = self.tags.get((prefix, shallow))
+        self.tags[(prefix, shallow)] = now
+        if before is None:
+            # A folder that was not there at the last look: all of it is new. On the first look nothing is.
+            return set(now) if self.primed else set()
+        return {k for k in set(now) | set(before) if now.get(k) != before.get(k)}
 
     def scan(self) -> set[str]:
+        t = time.monotonic()
+        moved: set[str] = set()
+        top = self._list("", True)
+        if top is None:
+            return set()
+        moved |= self._diff("", True, top)
+        for d in sorted(k for k in top if k.endswith("/") and k not in self.SKIP and k != "staging/"):
+            if self.slow.get(d, 0.0) > t:
+                continue
+            t0 = time.monotonic()
+            now = self._list(d, False)
+            if now is None:
+                continue
+            if time.monotonic() - t0 > self.SLOW_AFTER_S or len(now) > self.SLOW_KEYS:
+                self.slow[d] = time.monotonic() + self.SLOW_EVERY_S
+            else:
+                self.slow.pop(d, None)
+            moved |= self._diff(d, False, now)
+        for (d, shallow), had in list(self.tags.items()):
+            if d and not shallow and d not in top:   # a folder whose last object was removed is no longer listed at all
+                moved |= set(had)
+                del self.tags[(d, shallow)]
+        if "staging/" in top:
+            if not self.envs or t - self.envs_at > self.DIRS_EVERY_S or any(k.startswith("staging/") for k in moved):
+                envs = []
+                for pd in [k for k in (self._list("staging/", True) or {}) if k.endswith("/")]:
+                    envs += [k for k in (self._list(pd, True) or {}) if k.endswith("/")]
+                new = [e for e in envs if e not in self.envs]
+                self.envs, self.envs_at = envs, t
+                if self.primed and new:
+                    moved |= {e + "deploy.json" for e in new}   # a model deployed from another machine for the first time
+            for e in self.envs:
+                now = self._list(e, True)
+                if now is not None:
+                    moved |= self._diff(e, True, now)
+        with self.lock:
+            now_t = time.monotonic()
+            self.own = {k: at for k, at in self.own.items() if now_t - at < self.OWN_S}
+            mine = set(self.own)
+            first, self.primed = not self.primed, True
+        if first:
+            return set()
         out: set[str] = set()
-        with self.lock:
-            known, first = dict(self.tags), not self.primed
-        now: dict[str, str | None] = {}
-        for k in self._keys():
-            try:
-                now[k] = self.store.get_with_tag(k)[1]
-            except Exception:  # noqa: BLE001  not there, or the bucket can't be reached just now
-                now[k] = None
-            if not first and k in known and known[k] != now[k]:
-                out |= topics_for(k)
-        with self.lock:
-            self.tags, self.primed = now, True
+        for k in moved:
+            if k.endswith("/") or k in mine:
+                continue   # a folder is told by what is in it, and this process's own write was told when made
+            out |= topics_for(k)
         return out
 
-    run = Watcher.run
+    def partial(self) -> tuple[set[str], set[str]]:
+        """(topic names, topic prefixes) that are only partly watched here, so a screen keeps a slow read of its
+        own for them."""
+        names, prefixes = {"deployed"}, {"deployment:"}
+        t = time.monotonic()
+        for d, until in list(self.slow.items()):
+            if until > t - self.SLOW_EVERY_S:
+                for topic in topics_for(d + "x/x"):
+                    (prefixes.add(topic.split(":")[0] + ":") if ":" in topic else names.add(topic))
+        return names, prefixes
+
+    def run(self) -> None:
+        while FEED.listening():
+            t0 = time.monotonic()
+            try:
+                ts = self.scan()
+                if ts:
+                    FEED.bump(*ts)
+            except Exception:  # noqa: BLE001
+                pass
+            took = time.monotonic() - t0
+            end = time.monotonic() + max(self.EVERY_S - took, took, 0.05)
+            while time.monotonic() < end and FEED.listening():
+                time.sleep(min(0.2, max(0.0, end - time.monotonic())))
+        with self.lock:
+            self.thread, self.primed = None, False
+            self.tags, self.envs = {}, []
+
     ensure = Watcher.ensure
+
+
+def partial(store, topics=None) -> list[str]:
+    """Which of `topics` (or which topics at all) are only partly watched for this workspace: changes to them
+    made outside this service can be missed or told late, so a screen keeps a slow read of its own for them.
+    Nothing for a workspace on this computer."""
+    w = _WATCHERS.get(getattr(store, "uri", ""))
+    fn = getattr(w, "partial", None)
+    if not callable(fn):
+        return []
+    names, prefixes = fn()
+    if topics is None:
+        return sorted(names | {p + "*" for p in prefixes})
+    return sorted(t for t in set(topics) if t in names or any(t.startswith(p) for p in prefixes))
 
 
 def watch(store) -> None:
@@ -398,10 +525,12 @@ def watch(store) -> None:
         _WATCHERS[uri].ensure()
 
 
-_CLOUD_HOOKS: list = []   # called when someone starts listening: staging/cloud_watch.py registers itself here
+_CLOUD_HOOKS: list = []   # called each time a request starts listening, so a watcher starts at once
 
 
 def on_listen(fn) -> None:
+    """Call `fn()` each time a request starts listening (not only the first), from that request's thread. It
+    must be quick and safe to call often."""
     if fn not in _CLOUD_HOOKS:
         _CLOUD_HOOKS.append(fn)
 
