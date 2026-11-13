@@ -605,10 +605,12 @@ def requests(ctx: Context, pid: str, env: str = ENV, limit: int = 50, refresh: b
     reqs = sorted(got["requests"], key=lambda r: str(r.get("ts")), reverse=True)
     rows = [{"request_id": r["request_id"], "ts": r.get("ts"), "query": r.get("query"), "arm": r.get("arm"),
              "model_version": r.get("model_version"), "ms": r.get("ms"), "results": len(r.get("ids") or []),
-             "traffic": r.get("traffic") or "unlabelled", "status": "answered", "shadowed": bool(r.get("shadow"))} for r in reqs[:limit]]
+             "traffic": r.get("traffic") or "unlabelled", "status": "answered", "shadowed": bool(r.get("shadow")),
+             # A model that is not a ranker has no query: its line says what went in and what came out, in short.
+             **({"kind": "predict", "summary": (r.get("predict") or {}).get("text")} if r.get("kind") == "predict" else {})} for r in reqs[:limit]]
     return {"project": pid, "stage": rec["id"], "rows": rows, "total": len(reqs),
             "text": f"{len(reqs):,} request{'s' if len(reqs) != 1 else ''} since this version was deployed." if reqs
-                    else "No requests yet. Try a query, or send a test request."}
+                    else "No requests yet. Send a test request." if rec.get("serves") == "predict" else "No requests yet. Try a query, or send a test request."}
 
 
 def request(ctx: Context, pid: str, request_id: str, env: str = ENV) -> dict:
@@ -624,6 +626,15 @@ def request(ctx: Context, pid: str, request_id: str, env: str = ENV) -> dict:
     lines = sorted((x for x in got["lines"] if str(x.get("request_id")) == str(request_id)), key=lambda x: str(x.get("ts")))
     seen = next((t["ms"] for t in got["timings"] if str(t["request_id"]) == str(request_id)), None)
     names = (got.get("names") or {}).get(r.get("arm")) or []
+    if r.get("kind") == "predict":  # named inputs in, named outputs out: no products, no signals
+        pr = r.get("predict") or {}
+        return {"request_id": r["request_id"], "ts": r.get("ts"), "kind": "predict", "query": None, "arm": r.get("arm"),
+                "model_version": r.get("model_version"), "ms": r.get("ms"), "traffic": r.get("traffic") or "unlabelled",
+                "session_id": r.get("session_id"), "results": [], "inputs": pr.get("inputs"), "outputs": pr.get("outputs"), "summary": pr.get("text"),
+                "lines": [{"ts": x["ts"], "text": x["text"], "level": x.get("level", "info")} for x in lines], "site_ms": seen,
+                "time_text": f"{r.get('ms'):g} ms at the endpoint" + (f", {seen:g} ms as your site saw it." if seen is not None else
+                                                                  ". Your site didn't report how long it took."),
+                "shadow": None}
     from . import _joined
 
     joined = _joined(ctx, {"ids": r.get("ids") or [], "scores": r.get("scores") or []}, r.get("model_version"))

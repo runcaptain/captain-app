@@ -80,7 +80,15 @@ def _ago(iso: str | None) -> float | None:
 def servable(ctx: Context, pipeline: str) -> dict:
     """{ok, how, text}: can Captain's runtime serve this version, and how."""
     from ..ops import ref
+    from . import predict as PD
 
+    if PD.is_ref(pipeline):  # a weights model version: a network that answers /predict, on Captain's own runtime
+        try:
+            r = PD.resolve(ctx, pipeline)
+        except ValueError as e:
+            return {"ok": False, "pipeline": pipeline, "how": None, "text": str(e)}
+        return {"ok": True, "pipeline": r, "how": "weights",
+                "text": "Captain's own runtime serves it. It answers POST /predict with named inputs and named outputs."}
     pm, _ = ctx.registry.resolve("pipeline", pipeline)
     r = ref(pm)
     if pm.engine in CAPTAIN_ENGINES:
@@ -144,6 +152,10 @@ def _arm_spec(ctx: Context, pid: str, bundle_key: str, name: str, pipeline: str,
     s = servable(ctx, pipeline)
     if not s["ok"]:
         raise NotServable(s["text"])
+    if s["how"] == "weights":
+        from . import predict as PD
+
+        return PD.arm_spec(ctx, bundle_key, name, s["pipeline"], store)
     pm, _ = ctx.registry.resolve("pipeline", pipeline)
     spec = {k: v for k, v in (pm.spec or {}).items() if k != "train"}
     out = {"pipeline": ops.ref(pm), "engine": pm.engine, "spec": spec, "kind": s["how"], "catalog": None, "artifact": {}}
@@ -270,7 +282,11 @@ def set_control(ctx: Context, pid: str, env: str, **fields) -> dict:
 def _pick(ctx: Context, doc: dict, candidate: str | None, baseline: bool) -> tuple[dict[str, str], str, str | None]:
     """(arms, the arm served, the candidate's experiment id)."""
     from ..ops import ref
+    from . import predict as PD
 
+    if candidate and PD.is_ref(candidate) and not baseline:
+        # A weights model version. It is served alone: a ranking baseline beside a network would compare nothing.
+        return {"candidate": PD.resolve(ctx, candidate)}, "candidate", None
     champ = doc.get("champion")
     exps = doc.get("experiments") or []
     if baseline:
@@ -505,6 +521,11 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
            "idle_minutes": idle, "resources": [], "endpoint": None, "error": None, "check": None,
            "key_secret": key_name(pid, env), "previous": (old or {}).get("model_version") if old else None,
            "previous_bundle": (old or {}).get("bundle") if old else None}
+    from . import predict as PD
+
+    if PD.is_ref(p["model_version"]):
+        # A network: the record says it answers /predict, and which version it started from and which edits it carries.
+        rec.update(serves="predict", carries=PD.carries(ctx, p["model_version"]))
     # While the new version starts, what is up keeps answering: the record says where, so Captain's own requests
     # go there until the switch is done (see `serving`).
     if old and old.get("status") == "running":
@@ -838,7 +859,7 @@ def scale(ctx: Context, pid: str, env: str = ENV, min_copies: int | None = None,
 
 
 def call(ctx: Context, rec: dict, op: str, body: dict, arm: str | None = None, timeout: float = 30.0) -> dict:
-    """One call to the staged endpoint: rank, timing, flush, status or reload."""
+    """One call to the staged endpoint: rank, predict, describe, timing, flush, status or reload."""
     import httpx
 
     from .. import compute as C
@@ -850,8 +871,8 @@ def call(ctx: Context, rec: dict, op: str, body: dict, arm: str | None = None, t
         if op == "status":
             r = httpx.get(base + "/healthz", timeout=timeout)
         else:
-            path = {"rank": "/rank" + (f"/{arm}" if arm else ""), "timing": "/timing", "flush": "/flush",
-                    "reload": "/reload"}[op]
+            path = {"rank": "/rank" + (f"/{arm}" if arm else ""), "predict": "/predict" + (f"/{arm}" if arm else ""),
+                    "describe": "/describe", "timing": "/timing", "flush": "/flush", "reload": "/reload"}[op]
             r = httpx.post(base + path, json=body, headers={"Authorization": f"Bearer {_key(rec)}"}, timeout=timeout)
         if r.status_code >= 400:
             try:
@@ -862,6 +883,8 @@ def call(ctx: Context, rec: dict, op: str, body: dict, arm: str | None = None, t
         return r.json()
     t = C.get(ctx, rec["target"])
     if rec.get("how") == "image":
+        if op == "predict":
+            raise ValueError("Your own container answers rank requests only. A model with named inputs deploys from Weights, on Captain's own runtime.")
         if op != "rank":
             raise ValueError("Your own container answers rank requests only. Captain doesn't log or split inside it.")
         t0 = time.perf_counter()
