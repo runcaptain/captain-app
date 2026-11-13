@@ -13,8 +13,8 @@ globalThis.__shared = { 'captain.daemon': { state: 'ready', base: 'http://captai
 let world, sent;
 const reply = (status, data) => ({ status, ok: status < 300, text: async () => JSON.stringify(data) });
 const numbers = (requests, extra = {}) => ({ range: '24h', range_text: 'the last 24 hours', bucket_seconds: 300, source: 'cloud', source_text: "From AWS's own metrics (CloudWatch). They arrive a minute or two late.", not_read: [],
-  buckets: Array.from({ length: 288 }, (_, i) => ({ t: String(i), requests: requests / 288, errors: 0, p50_ms: 3, p95_ms: 9, cpu: 20, memory: 5, copies: 1 })),
-  summary: { requests, errors: 0, per_minute: requests / 1440, per_minute_peak: 12, p50_ms: 3.1, p95_ms: 9.4, cpu: 20, cpu_peak: 35, memory: 5, memory_peak: 6, copies_now: 1, copies_peak: 1 },
+  buckets: Array.from({ length: 288 }, (_, i) => ({ t: String(i), requests: requests / 288, errors: 0, p50_ms: 3, p95_ms: 9, cpu: 20, memory: 5, copies: null })),
+  summary: { requests, errors: 0, per_minute: requests / 1440, per_minute_peak: 12, p50_ms: 3.1, p95_ms: 9.4, cpu: 20, cpu_peak: 35, memory: 5, memory_peak: 6, copies_now: 1, copies_min: 1, copies_max: 3, copies_text: '1 copy up now. It may run 1 to 3.' },
   cost: { hourly_usd: 0.066, rate_usd: 0.066, today_usd: 0.92, month_usd: 14.3, text: 'About $0.07 an hour for each copy while it is up. Your AWS bill is the final word.' },
   text: `${requests.toLocaleString('en-US')} requests in the last 24 hours, no errors. Median 3.1 ms, 95th percentile 9.4 ms at the endpoint.`, ...extra });
 globalThis.fetch = async (url, opts = {}) => {
@@ -225,8 +225,10 @@ await h.click('dep-open-shop:staging');
 await h.idle(150);
 t = h.text();
 assert.ok(t.includes('All deployments') && t.includes('Demo shop') && t.includes('Running on 1 copy.') && t.includes('Its name in the cloud') && t.includes('captain-shop-staging'), `the page: ${t}`);
-for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time', 'Processor in use', 'Memory in use', 'Copies running'])
+for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time', 'Processor in use', 'Memory in use'])
   assert.ok(t.includes(label), `the model page has ${label}`);
+// Copies are said in words, from the cloud's count now and its settings. No chart: no history of them is kept.
+assert.ok(t.includes('1 copy up now. It may run 1 to 3.') && byId(h, 'model-chart-copies').length === 0 && !t.includes('Copies running'), `copies in words: ${t}`);
 // Two submenus and no more, drawn with the kit's control.
 assert.ok(byId(h, 'submenu-traffic').length === 1 && byId(h, 'submenu-details').length === 1 && h.byIdPrefix('submenu-').filter((e) => /^submenu-[a-z]+$/.test(e.call('id')?.[0] ?? '')).length === 2, 'two submenus');
 assert.ok(t.includes('Traffic and cost') && t.includes('Details'), 'named for what is in them');
@@ -259,6 +261,18 @@ assert.ok(h.text().includes('Ask the clouds again'), 'back to the list');
 await h.click('dep-back-shop:staging');
 await h.idle(120);
 assert.ok(h.text().includes('Put this version back') && h.text().indexOf('Earlier versions') < h.text().indexOf('Requests it answered'), 'straight to the versions');
+
+// What a real endpoint looked like on 2026-11-12: AWS had every request number and had published no processor or
+// memory numbers at all. Those two charts are left out and a sentence says why. Nothing is drawn empty.
+h = await open({ deployed: { rows: [SHOP], asked, text: '1 model running.', read_at: '' }, numbers: { shop: numbers(8640, {
+  buckets: Array.from({ length: 288 }, (_, i) => ({ t: String(i), requests: 30, errors: 0, p50_ms: 3, p95_ms: 9, cpu: null, memory: null, copies: null })),
+  not_read: ['AWS has not published processor and memory numbers for this endpoint.'] }) } });
+await h.click('dep-open-shop:staging');
+await h.idle(150);
+t = h.text();
+assert.ok(byId(h, 'model-chart-requests').length === 1 && byId(h, 'model-chart-time').length === 1, 'requests and response time are drawn');
+assert.ok(byId(h, 'model-chart-cpu').length === 0 && byId(h, 'model-chart-memory').length === 0 && !t.includes('Processor in use') && !t.includes('Memory in use'), 'no empty processor or memory chart');
+assert.ok(t.includes('AWS has not published processor and memory numbers for this endpoint.'), `and it says why: ${t}`);
 
 // Another screen can ask for one model's page ("Open in Deployments" on a project's page).
 globalThis.__props = { open: 'shop:staging' };

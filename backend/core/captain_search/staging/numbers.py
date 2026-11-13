@@ -5,8 +5,10 @@ and memory, the copies that were up, and what it has cost today and this month w
 
 Where each number comes from, by host:
 
-  aws     CloudWatch, for everything. One read-only call per look. Cost is the hours each copy was up (CloudWatch
-          hears from every copy once a minute) at the list price for its machine.
+  aws     CloudWatch for requests, errors and response time (always there for an endpoint that took requests), and
+          for processor and memory when AWS has published them, which it does not always: a real endpoint that ran
+          for an hour had none. One read-only call per look. Hours and cost come from Captain's own record of when
+          the model was up, at the list price for its machine. The copies up now come from AWS's own count.
   modal   Modal gives no history of an app's requests to read, so requests, errors and response time come from
           Captain's request log, and the copies up now from Modal. CPU, memory and cost so far: not read yet.
   gcp     Not read yet. The request log, when there is one.
@@ -31,7 +33,7 @@ from . import ENV, state
 RANGES = {"15m": (15 * 60, 60, "the last 15 minutes"), "1h": (3600, 60, "the last hour"),
           "24h": (86400, 300, "the last 24 hours"), "7d": (7 * 86400, 3600, "the last 7 days")}
 KEEP_S = 60.0
-KEEP_COST_S = 600.0
+KEEP_COST_S = 60.0
 NOT_READ = {
     "modal": "Modal keeps no history of an app's requests that Captain can read. Requests, errors and response time come from the "
              "request log. CPU, memory and the cost so far are not read yet.",
@@ -141,6 +143,9 @@ def _numbers(ctx: Context, pid: str, env: str, span: str, rec: dict, base: dict)
     if got is not None:
         out.update(_from_cloud(got, start, end, period))
         out["source"], out["source_text"] = "cloud", "From AWS's own metrics (CloudWatch). They arrive a minute or two late."
+        if out["summary"].get("cpu") is None and out["summary"].get("memory") is None:
+            out["not_read"].append("AWS has not published processor and memory numbers for this endpoint.")
+        out["summary"].update(_copies(ctx, pid, env, rec, prov))
     else:
         log = _from_log(ctx, pid, env, span)
         if cloud in NOT_READ:
@@ -186,14 +191,13 @@ def _from_cloud(got: dict, start: dt.datetime, end: dt.datetime, period: int) ->
     for ts in times:
         req = g("requests", ts)
         e4, e5 = g("errors_4xx", ts), g("errors_5xx", ts)
-        rep = g("reports", ts)
         buckets.append({"t": ts, "requests": int(req) if req is not None else 0,
                         "errors": int((e4 or 0) + (e5 or 0)),
                         "p50_ms": round(g("p50_us", ts) / 1000.0, 3) if g("p50_us", ts) is not None else None,
                         "p95_ms": round(g("p95_us", ts) / 1000.0, 3) if g("p95_us", ts) is not None else None,
                         "cpu": round(g("cpu", ts), 1) if g("cpu", ts) is not None else None,
                         "memory": round(g("memory", ts), 1) if g("memory", ts) is not None else None,
-                        "copies": round(rep / minutes) if rep else None})
+                        "copies": None})  # not counted from the cloud's numbers: see _copies
     total = sum(b["requests"] for b in buckets)
     errs = sum(b["errors"] for b in buckets)
     # A percentile of percentiles is not a percentile. The median over the range is the median bucket weighted by
@@ -211,7 +215,6 @@ def _from_cloud(got: dict, start: dt.datetime, end: dt.datetime, period: int) ->
     heavy = [b["p95_ms"] for b in buckets if b["p95_ms"] is not None and b["requests"] >= max(1, total / 20.0 / max(1, len(buckets)))]
     cpus = [b["cpu"] for b in buckets if b["cpu"] is not None]
     mems = [b["memory"] for b in buckets if b["memory"] is not None]
-    copies = [b["copies"] for b in buckets if b["copies"]]
     span_minutes = max(1.0, (end - start).total_seconds() / 60.0)
     return {"buckets": buckets,
             "summary": {"requests": total, "errors": errs, "error_rate": (errs / total) if total else None,
@@ -221,15 +224,19 @@ def _from_cloud(got: dict, start: dt.datetime, end: dt.datetime, period: int) ->
                         "cpu": round(sum(cpus) / len(cpus), 1) if cpus else None, "cpu_peak": max((g("cpu_max", ts) or 0 for ts in times), default=None) if cpus else None,
                         "memory": round(sum(mems) / len(mems), 1) if mems else None,
                         "memory_peak": max((g("memory_max", ts) or 0 for ts in times), default=None) if mems else None,
-                        "copies_now": copies[-1] if copies else None, "copies_peak": max(copies) if copies else None,
+                        "copies_now": None, "copies_peak": None, "overhead_ms": _overhead(got),
                         "cpu_text": "CPU is a share of one core: 100% is one core in full use.",
                         "p95_text": "The 95th percentile is the slowest minute's, among minutes that carried real traffic."}}
 
 
 def cost(ctx: Context, pid: str, env: str = ENV, rec: dict | None = None) -> dict:
-    """{hourly_usd, today_usd, month_usd, copy_hours_today, copy_hours_month, source, text}: the rate now, and what
-    it has cost today and this month (UTC). On AWS from the hours each copy was up, as CloudWatch saw them, at the
-    list price. Elsewhere from Captain's own record of when the deployment was up. Never the cloud's bill."""
+    """{hourly_usd, today_usd, month_usd, source, text}: the rate now, and what it has cost today and this month
+    (UTC). On every host from Captain's own record of when the deployment was up, at the list price: its ledger of
+    closed runs, or the start and stop times when the ledger holds nothing. Never the cloud's bill, and it says so.
+
+    It was once counted on AWS from the processor reports each copy sends (one a minute). A real endpoint that ran
+    for an hour sent none, so an hour of running counted as nothing. Captain knows when it started and stopped a
+    model. That is the count."""
     rec = rec or state(ctx, pid, env) or {}
     return _keep((ctx.workspace.name, pid, env, "cost", rec.get("id")), KEEP_COST_S, lambda: _cost(ctx, pid, env, rec))
 
@@ -245,25 +252,23 @@ def _run_hours(rec: dict, since: dt.datetime, now: dt.datetime) -> float:
     return max(0.0, (b - max(a, since)).total_seconds() / 3600.0)
 
 
-def _why_no_hours(prov, name: str) -> str:
-    """When AWS counts no hours for a model that ran, look at what it does hold under that name and say so, so the
-    reason can be read from the answer and not guessed: nothing at all, or numbers kept some other way."""
-    look = getattr(prov, "metric_names", None)
-    if not callable(look):
-        return ""
+def _overhead(got: dict) -> float | None:
+    """What AWS adds around the model on a typical request, in milliseconds (its own median, over the range)."""
+    v = sorted((got.get("overhead_us") or {}).values())
+    return round(v[len(v) // 2] / 1000.0, 3) if v else None
+
+
+def _copies(ctx: Context, pid: str, env: str, rec: dict, prov) -> dict:
+    """How many copies are up now, as the cloud counts them, and how many it may run, from its scaling settings.
+    The cloud keeps no history of this that can be relied on, so there is no chart of copies over time."""
     try:
-        got = look(name)
-    except Exception as e:  # noqa: BLE001
-        return f". Captain could not look at what AWS holds for it ({str(e)[:120]})"
-    copies, requests = got.get("copies") or [], got.get("requests") or []
-    if not copies and not requests:
-        return f". AWS holds no numbers at all under the name {name}"
-    if not copies:
-        return (f". AWS holds its request numbers ({', '.join(sorted({m['metric'] for m in requests})[:4])}) and none of the "
-                "numbers each copy reports, which the hours are counted from")
-    kept = sorted({m["metric"] for m in copies})
-    dims = sorted({f"{k}={v}" for m in copies for k, v in m["dimensions"].items() if k != "EndpointName"})
-    return f". AWS holds {', '.join(kept[:4])} for it under {', '.join(dims[:4]) or 'no other dimension'}, which is not how Captain asked for them"
+        sc = prov.scale(rec) if callable(getattr(prov, "scale", None)) else {}
+    except Exception:  # noqa: BLE001
+        sc = {}
+    now, lo, hi = sc.get("copies_now"), sc.get("min_copies"), sc.get("max_copies")
+    text = (f"{now} cop{'y' if now == 1 else 'ies'} up now." if now is not None else "") + \
+           (f" It may run {lo} to {hi}." if lo is not None and hi is not None and hi != lo else f" It always runs {lo}." if lo is not None and now is not None and lo == hi else "")
+    return {"copies_now": now, "copies_min": lo, "copies_max": hi, "copies_text": text.strip() or None}
 
 
 def _cost(ctx: Context, pid: str, env: str, rec: dict) -> dict:
@@ -278,26 +283,6 @@ def _cost(ctx: Context, pid: str, env: str, rec: dict) -> dict:
     machine = ((target or {}).get("config") or {}).get("instance_type")
     rate = _hourly(ctx, cloud, target, rec, machine)
     said_now = (f"About ${rate:.2f} an hour for each copy while it is up. " if up and rate else "Stopped, so it costs nothing now. " if not up else "")
-    why_not = None  # why the cloud's own count of hours was not used
-    if cloud == "aws" and prov is not None and name and callable(getattr(prov, "metrics", None)) and rate is not None:
-        try:
-            got = prov.metrics(name, month, now.replace(minute=0, second=0, microsecond=0) + dt.timedelta(hours=1), 3600, only=("reports",))
-            reports = got.get("reports") or {}
-            # One report a minute from each copy: 60 reports are one copy up for one hour.
-            hours_month = sum(reports.values()) / 60.0
-            hours_today = sum(v for t, v in reports.items() if t >= day.isoformat(timespec="seconds")) / 60.0
-            if hours_month > 0:
-                return {"hourly_usd": round(rate, 4) if up else 0.0, "rate_usd": round(rate, 4), "today_usd": round(hours_today * rate, 4),
-                        "month_usd": round(hours_month * rate, 4), "copy_hours_today": round(hours_today, 2), "copy_hours_month": round(hours_month, 2),
-                        "machine": machine, "source": "cloud", "note": None,
-                        "text": said_now + f"Today: about {_money(hours_today * rate)}. This month: about {_money(hours_month * rate)}. "
-                                           f"Worked out from the {hours_month:.1f} hours AWS saw a copy up this month, at the list price for {machine}. "
-                                           "Your AWS bill is the final word."}
-            # AWS answered and counted no hours. For a model that ran, that is AWS not having the numbers (they
-            # can take a while, and a deleted endpoint's can be thin), not the model costing nothing.
-            why_not = "AWS reported no hours for it this month" + _why_no_hours(prov, name)
-        except Exception as e:  # noqa: BLE001
-            why_not = f"Captain couldn't read AWS's own numbers ({str(e)[:140]})"
     try:
         c = OB.cost(ctx, pid, env)
     except Exception:  # noqa: BLE001
@@ -311,15 +296,16 @@ def _cost(ctx: Context, pid: str, env: str, rec: dict) -> dict:
             month_usd, today_usd, source = round(h_month * rate, 4), round(h_today * rate, 4), "times"
     shown = c.get("hourly_usd") if c.get("hourly_usd") is not None else (rec.get("cost") or {}).get("hourly_usd")
     how = ("Worked out from when Captain started and stopped it, at the list price" + (f" for {machine}" if machine else "") + "."
-           if source == "times" else "Worked out from Captain's own record of when it was up.")
+           if source == "times" else "Worked out from Captain's own record of when it was up" + (f", at the list price for {machine}." if machine else "."))
+    if cloud == "aws":
+        how += " Your AWS bill is the final word."
     if cloud not in ("local", "aws"):
         how += " Not from the cloud's own numbers."
     if rec.get("scale_to_zero") and cloud != "local":  # Captain knows how long it was deployed, not how long a copy was awake
         how += " It bills only while a copy is awake, so this is the most it can have cost."
     return {"hourly_usd": (shown if up else 0.0) if cloud != "local" else shown, "rate_usd": rate if rate is not None else shown,
             "today_usd": today_usd, "month_usd": month_usd, "copy_hours_today": None, "copy_hours_month": None, "machine": machine,
-            "source": source, "note": why_not,
+            "source": source, "note": None,
             "text": (c.get("text") if cloud == "local" or (not month_usd and not rate) else
                      said_now + (f"Today: about {_money(today_usd)}. " if today_usd else "") + (f"This month: about {_money(month_usd)}. " if month_usd else "") + how)
-                    or "Captain has no cost for this deployment yet.",
-            **({"not_from_cloud": f"{why_not[0].upper()}{why_not[1:]}, so this is an estimate from Captain's own record."} if why_not else {})}
+                    or "Captain has no cost for this deployment yet."}

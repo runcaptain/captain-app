@@ -51,7 +51,7 @@ def test_list_show_and_sync_read_the_cloud(ws, aws):  # noqa: F811
     assert "Cost      About $" in out and "Source    From AWS's own metrics" in out and "CPU 20% on average" in out
     code, out = cst("--json", "deployments", "show", "shop", "--range", "24h")
     d = json.loads(out)
-    assert d["deployment"]["cloud"] == "aws" and d["numbers"]["range"] == "24h" and d["numbers"]["cost"]["month_usd"] > 0
+    assert d["deployment"]["cloud"] == "aws" and d["numbers"]["range"] == "24h" and d["numbers"]["cost"]["hourly_usd"] > 0 and d["numbers"]["cost"]["month_usd"] >= 0  # deployed a moment ago: a rate, and next to nothing so far
     code, out = cst("deployments", "sync")
     assert code == 0 and "Captain's records match the cloud. Nothing to correct." in out
     # Deleted in the cloud's console: sync says so, and the list moves it to the stopped ones.

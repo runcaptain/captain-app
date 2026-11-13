@@ -176,8 +176,9 @@ def deployments_show(name: str, span: str = typer.Option("1h", "--range", help="
     if s.get("requests"):
         lines.append(f"          {s['per_minute']:g} requests a minute on average, {s['per_minute_peak']:g} at the busiest.")
     if s.get("cpu") is not None:
-        lines.append(f"Machine   CPU {s['cpu']:g}% on average, {s['cpu_peak']:g}% at the most. Memory {s['memory']:g}%."
-                     + (f" Copies: {s['copies_now']} now, {s['copies_peak']} at the most." if s.get("copies_now") else ""))
+        lines.append(f"Machine   CPU {s['cpu']:g}% on average, {s['cpu_peak']:g}% at the most. Memory {s['memory']:g}%.")
+    if s.get("copies_text"):
+        lines.append(f"Copies    {s['copies_text']}")
     lines.append(f"Cost      {cost.get('text') or 'not known'}")
     lines.append(f"Source    {n['source_text']}")
     lines += [f"Not read  {x}" for x in n["not_read"]] + [f"Corrected {x}" for x in row["corrected"]]
