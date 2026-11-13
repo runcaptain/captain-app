@@ -869,8 +869,12 @@ def cost_slice(ctx, sid: str, tensor: str, index, inputs=None, targets=None, exa
         st.doc["used"]["gradients_computed"] = True
         st.event("run", f"{_Who(st, by)} measured the cost at {n_pts} values of {_number_words(st, tensor, ix)} on {name}. "
                         f"That used {n_pts} forward passes.", by, op="slice", tensor=tensor, input=name, inputs=len(xb),
-                 args={"index": list(ix), "points": n_pts, "span": 2 * half}, run_cost=cost_now,
+                 args={"index": list(ix), "points": n_pts, "span": 2 * half},
+                 result={"cost": cost_now, "slope": float(slope), "values": values.tolist(), "costs": costs},
                  touched=_touch(st, k, kind, range(ix[0], ix[0] + 1), range(ix[1], ix[1] + 1) if kind == "weight" else None))
+        if not st.scores_visible:   # a blind session: measured and kept, shown when it is saved or closed
+            return {"tensor": tensor, "index": list(ix), "value": now, "measured": True, "scores": "hidden", "says": BLIND,
+                    "examples": len(xb), "dimensions": st.total(), **_left(st)}
         return {"tensor": tensor, "index": list(ix), "value": now, "cost": cost_now, "slope": float(slope), "values": values.tolist(),
                 "costs": costs, "examples": len(xb), "dimensions": st.total(), **_left(st)}
     return _do(ctx, sid, fn)

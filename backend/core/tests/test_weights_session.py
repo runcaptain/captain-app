@@ -426,6 +426,12 @@ def test_a_blind_session_keeps_every_score_and_shows_none_until_it_is_saved_or_c
     stored = S._load(ctx, sid).doc["events"]
     assert next(e for e in stored if e["id"] == ev["id"])["cost"]["target"]["right_after"] == 0
 
+    sliced = S.open_session(ctx, "tiny", by="agent", feedback=False, forward_passes=3)["id"]
+    r = S.cost_slice(ctx, sliced, "layer1.bias", 0, example=0, points=3)
+    assert r["scores"] == "hidden" and "costs" not in r and "slope" not in r and r["forward_used"] == 3
+    assert len(S._load(ctx, sliced).doc["events"][-1]["result"]["costs"]) == 3 and "result" not in S.events(ctx, sliced)["events"][-1]
+    assert S.session(ctx, sliced)["ledger"]["weights_alone"] is False, "a slice runs the network"
+
     saved = S.save(ctx, sid, note="blind fix")
     assert saved["weights_alone"] is True and saved["label"] == "from the weights alone" and saved["scores_shown_now"] is True
     assert WS.manifest(ctx, "digits", 2)["record"]["ledger"]["weights_alone"] is True

@@ -312,7 +312,8 @@ point, so it costs `points` forward passes, and it is refused whole when fewer a
  "values": [-5.2, -5.0], "costs": [0.09, 0.08], "examples": 3, "dimensions": 13, "forward_used": 24, "forward_left": 26}
 ```
 
-`dimensions` is how many numbers the network has. The picture is a slice through one of them.
+`dimensions` is how many numbers the network has. The picture is a slice through one of them. In a blind
+session a slice answers `{"measured": true, "scores": "hidden"}` with no costs, like `evaluate`.
 
 ### Change
 
