@@ -250,3 +250,14 @@ test('who made a project is shown by name: a sign-in address is cut at its "@"',
   assert.equal(textIn(one(h, 'ph-p-0-owner')[0]), 'sam');
   assert.ok(!h.text().includes('example.test'), 'the address is not on the page');
 });
+
+test('the menus on a project\'s page open below their buttons, not over them', async () => {
+  const h = await projectPage(1200);
+  // A popup's anchor names the popover's own corner: "top_right" puts it under the button.
+  const anchors = [];
+  (function w(e) { if (!e || typeof e !== 'object') return; if (e.kind === 'popup') anchors.push([e.args?.[0], e.call?.('anchor')?.[0]]); for (const k of e.kids ?? []) w(k); })(h.mod.render(h.cx));
+  assert.ok(anchors.some(([id]) => id === 'ph-more-pop'), JSON.stringify(anchors));
+  for (const [id, anchor] of anchors) assert.ok(String(anchor).startsWith('top_'), `${id} opens below its button: ${anchor}`);
+  await h.click('ph-more');
+  assert.equal(one(h, 'ph-more-list').length, 1);
+});
