@@ -23,6 +23,7 @@ import { api } from "./kit/cst.js";
 import { Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
+import { ModelCard } from "./kit/modelcard.js";
 import { SendToAgent } from "./kit/context.js";
 import { LogsTab, SettingsTab, CopiesTab, ProtectBox, Bars } from "./deploy-tabs.js";
 import { hear } from "./kit/live.js";
@@ -245,10 +246,12 @@ export function stateWords(ship) {
 function placeCard(ship, c, p) {
   const busy = Boolean(ship.djob) || Boolean(ship.dasking) || Boolean(ship.busy);
   const sub = p.sub;
-  return v_flex().id(`ship-place-${p.id}`).flex_1().min_w(240).max_w(380).p(12).gap(6).bg(c.surface).border_1().border_color(c.rule)
-    .child(h_flex().gap(8).items_center()
-      .child(p.provider ? Brand(c, p.provider, 16) : svg(icon("monitor")).size(15).flex_none().text_color(c.grey900))
-      .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(p.label))
+  // One place to deploy, as one card, in the language of the model's own card: its mark and name, one sentence,
+  // what it costs, and one Deploy button.
+  return v_flex().id(`ship-place-${p.id}`).flex_1().min_w(260).max_w(420).p(20).gap(10).bg(c.surface).border_1().border_color(c.rule)
+    .child(h_flex().gap(10).items_center()
+      .child(p.provider ? Brand(c, p.provider, 20) : svg(icon("monitor")).size(18).flex_none().text_color(c.grey900))
+      .child(div().text_size(15).font_semibold().text_color(c.navy).child(p.label))
       .when(Boolean(sub), (e) => e.child(div().min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(sub))))
     .child(line(c, `ship-place-${p.id}-reach`, p.reach ?? ""))
     .child(line(c, `ship-place-${p.id}-cost`, p.cost))
@@ -259,19 +262,20 @@ function placeCard(ship, c, p) {
     .when(p.why_not_action === "settings", (e) => e.child(div().id(`ship-place-${p.id}-limit`).text_size(12.5).text_color(c.blue).cursor_pointer()
       .on_click(() => run("app.settings")).child("Change the limit in Settings")))
     .child(div().flex_1())
-    .child(h_flex().child(Button(c, `ship-deploy-${p.id}`, ship.dasking === p.id ? "Checking..." : "Deploy", (_e, cx) => deployTo(ship, cx, p),
-      { small: true, disabled: !p.can_deploy || busy })));
+    .child(h_flex().pt(6).child(Button(c, `ship-deploy-${p.id}`, ship.dasking === p.id ? "Checking..." : "Deploy", (_e, cx) => deployTo(ship, cx, p),
+      { kind: "primary", disabled: !p.can_deploy || busy })));
 }
 
 function connectCard(c, wide) {
   const open = () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "cloud" } });
-  return v_flex().id("ship-connect-cloud").flex_1().min_w(240).when(!wide, (e) => e.max_w(380)).p(12).gap(6).bg(c.surface).border_1().border_color(c.rule)
-    .child(h_flex().gap(8).items_center().child(svg(icon("cloud")).size(15).flex_none().text_color(c.grey900))
-      .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(wide ? "Connect a cloud to deploy where a site can reach it" : "Connect a cloud")))
+  return v_flex().id("ship-connect-cloud").flex_1().min_w(260).when(!wide, (e) => e.max_w(420)).p(20).gap(10).bg(c.surface).border_1().border_color(c.rule)
+    .child(h_flex().gap(10).items_start().child(svg(icon("cloud")).size(18).flex_none().text_color(c.grey900))
+      // The long title wraps inside its card. On one line it ran out past the card's edge.
+      .child(div().flex_1().min_w(0).text_size(15).line_height("20px").font_semibold().text_color(c.navy).child(wide ? "Connect a cloud to deploy where a site can reach it" : "Connect a cloud")))
     .child(line(c, "ship-connect-cloud-text", wide ? "On this computer only you can reach the model. Connect AWS, Google Cloud, Azure or Modal, and it gets an address your site can call."
       : "Another place to deploy: AWS, Google Cloud, Azure or Modal."))
     .child(div().flex_1())
-    .child(h_flex().child(Button(c, "ship-connect-cloud-go", "Connect a cloud", open, { small: true })));
+    .child(h_flex().pt(6).child(Button(c, "ship-connect-cloud-go", "Connect a cloud", open)));
 }
 
 /** Before a cloud deploy: what the host's own plan says will be made, what it costs, how long it takes. One button.
@@ -342,6 +346,22 @@ export function ShipSection(ship, c) {
   const wrap = v_flex().id("ship").w_full().gap(10);
   if (ship.djob) return wrap.child(progressBox(ship, c));
   if (ship.dconfirm) return wrap.child(confirmBox(ship, c));
+  const openInDeployments = () => { setShared("captain.open", { section: "deployments", open: `${ship.pid()}:${s?.env ?? "staging"}`, at: Date.now() }); run("layout.select", { stack: "sections", child: "deployments" }); };
+  // Once deployed, the section is the model's card and nothing else: the same card the Deployments screen shows.
+  if (on && s && ship.depRow) {
+    const r = ship.depRow;
+    return wrap.child(v_flex().id("ship-deployed").w_full().gap(8)
+      .child(ModelCard(c, r, {
+        numbers: ship.depNums ?? null, busy: ship.busy ? String(ship.busy).replace(/ it$/, "") : null,
+        action: { id: "ship-stop", label: "Stop", kind: "secondary", go: (_e, cx) => ship.stop(cx) },
+        more: [{ id: "ship-open-in-deployments", label: "Details", go: openInDeployments }],
+        copied: ship.copiedAddress ? "address" : null,
+        onCopy: (what, _e, cx) => { if (what === "address") { ship.copy(cx, r.address, "The address is on your clipboard."); ship.copiedAddress = true; cx.notify(); } else openInDeployments(); },
+        notes: ship.healthD?.status === "unhealthy" ? [ship.healthD.text] : [],
+      }))
+      .when(Boolean(ship.dpast), (e) => e.child(pastLine(ship, c)))
+      .when(Boolean(ship.dnote), (e) => e.child(note(c, ship.dnote))));
+  }
   if (on && s) {
     const w = stateWords(ship);
     const address = s.url ?? s.endpoint?.url ?? s.endpoint?.name ?? "";
@@ -369,7 +389,7 @@ export function ShipSection(ship, c) {
     .child(line(c, "ship-question", `Where should ${what} run?`))
     .when(!d, (e) => e.child(line(c, "ship-loading", "Looking at where it can run...", "grey500")))
     .when(Boolean(d?.problem), (e) => e.child(line(c, "ship-places-problem", d.problem, "fail")))
-    .when(Boolean(d), (e) => e.child(h_flex().id("ship-places").flex_wrap().items_stretch().gap(10)
+    .when(Boolean(d), (e) => e.child(h_flex().id("ship-places").flex_wrap().items_stretch().gap(14)
       .children(places.map((p) => placeCard(ship, c, p)))
       .child(connectCard(c, clouds.length === 0))))
     .when(Boolean(s) && !on && !ship.page.deployOpen, (e) => e.child(line(c, "ship-last", `Last deployed: ${short(s.model_version)}. ${stateWords(ship).text}${s.spent?.text ? ` ${s.spent.text}.` : ""}`, "grey500")))

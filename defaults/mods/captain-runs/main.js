@@ -464,6 +464,10 @@ export default class CaptainRuns extends View {
     if (this.jobs.sel && has(`job:${this.jobs.sel}`)) this.jobs.follow(cx, this.jobs.sel);
     // Work this screen started (an evaluation, a workflow): its state and its last words.
     if (this.job?.id && has(`job:${this.job.id}`)) this.pollJob(cx);
+    // A profile the open comparison started: asked about when a job moves on. No timer asks.
+    if (has("jobs") || topics.some((t) => t.startsWith("job:"))) this.cmp.followJobs(cx);
+    // Back from being down, or on the fallback: a run record lost while the services restarted is asked for again.
+    if (all) this.cmp.retry(cx);
   }
 
   pollJob(cx) {

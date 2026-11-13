@@ -59,6 +59,7 @@ export class StorageSetup {
     for (const st of [this.name, this.bucket, this.prefix]) st.on("change", () => { this.check = null; this.error = null; });
     this.loadProfiles(cx);
     // A login connected meanwhile (Connect a cloud account opens over this) shows up without a reload.
+    // Through the one live channel: read again the moment a login changes. No timer re-reads the logins.
     watchLive(cx, ["logins"], (cx) => { if (this.step === "storage" && this.where === "cloud") this.loadProfiles(cx); });
   }
 

@@ -12,10 +12,10 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar } from "gpui-base";
 import { theme, props, closeOverlay, setShared, keys, openOverlay, spaces, run } from "herdr";
 import { api } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { Skeleton, ServiceError } from "./kit/ui.js";
 import { isDark, palette } from "./kit/tokens.js";
 import { StorageSetup } from "./kit/setup.js";
-import { watchLive } from "./kit/live.js";
 
 const PAGES = 5;
 const I = (name) => `mods/captain-nav/${name}.svg`;
@@ -57,10 +57,9 @@ export default class Welcome extends View {
     this.setup = new StorageSetup({ first: true, done: () => { this.page = 2; } });
     this.setup.start(cx);
     this.refresh(cx);
-    // Until the services first answer, ask again. From then on the steps follow what is really there: they are read
-    // again the moment a project, a dataset, a run or a login changes (the live channel), not on a clock.
-    cx.timer.every(4000, (cx) => { if (this.state !== "ready") this.refresh(cx); });
-    watchLive(cx, ["projects", "data", "runs", "notebooks", "logins", "compute", "settings", "deployed"], (cx) => { if (this.page === PAGES) this.refresh(cx); });
+    // The checklist on the last page ticks itself off the moment the thing is done anywhere (a table imported, a
+    // project made, a run finished), through the one live channel. No timer re-reads it.
+    watchLive(cx, ["settings", "data", "projects", "runs", "logins"], (cx) => { if (this.page === PAGES) this.refresh(cx); });
   }
 
   finish(outcome) {

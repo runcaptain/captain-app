@@ -316,6 +316,9 @@ props_of() {
     captain-project:choose) echo '{"chooseModels": true}' ;;
     captain-project:home) echo '{"openExperiment": true}' ;;
     captain-project:list) echo '{"allProjects": true}' ;;
+    # The project's own page with its Ship section: the model's card when something is deployed (SHOT_STAGED=1),
+    # the places to deploy when nothing is. The project is named, because the Explorer's pick is not kept.
+    captain-project:ship-section) echo "{\"project\": \"${PID:-}\"}" ;;
     captain-project:ship) echo '{"deployment": true}' ;;
     captain-project:hosts) echo '{"deployment": true}' ;;  # nothing staged: the cards in "Where should it run?"
     captain-project:pins) echo '{"pinCheck": true}' ;;
@@ -390,6 +393,10 @@ def find(n):
         if r: return r
 n = find(d)
 n["content"] = {"mod": mod, "props": json.loads(props)} if json.loads(props) else {"mod": mod}
+# SHOT_THEME=captain-light or captain-dark: the view in that theme, so every state is seen in both.
+import os
+if os.environ.get("SHOT_THEME"):
+    d["theme"] = os.environ["SHOT_THEME"]
 json.dump(d, open(p, "w"), indent=2)
 EOF
   sleep 2
