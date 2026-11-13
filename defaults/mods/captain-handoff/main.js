@@ -7,6 +7,7 @@ import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, openOverlay } from "herdr";
 import { api, watchWorkspace, watchScope, watchRecords } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { watchView } from "./kit/view.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Card, Badge, Button, Tabs, Empty, ErrorState, Loading, Problem, Table, RefChip, toneOf } from "./kit/ui.js";
@@ -69,7 +70,8 @@ export default class CaptainHandoff extends View {
     watchWorkspace(cx, (cx) => { this.open = null; this.detail = null; this.table.load(cx); cx.notify(); });
     // A form saved something (a handoff, a deployment, an outcome, a decision): the list and the open one reload now.
     watchRecords(cx, (cx) => { this.table.load(cx); if (this.open) this.load(this.open, cx); cx.notify(); });
-    cx.timer.every(15000, (cx) => (this.open ? this.load(this.open, cx) : this.table.load(cx)));
+    // Live, by the one channel: read again the moment a project or a run changes.
+    watchLive(cx, ["projects", "runs"], (cx) => (this.open ? this.load(this.open, cx) : this.table.load(cx)));
   }
 
   show(id, cx) {

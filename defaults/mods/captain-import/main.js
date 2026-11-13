@@ -17,6 +17,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, EditorState, Editor, Popup } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay, pickFolder, home, shared, setShared, notify, run } from "herdr";
 import { api, query, watchConnections } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { watchView, publishView } from "./kit/view.js";
 import { palette, isDark, FONT, MONO, RADIUS } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
@@ -134,7 +135,9 @@ export default class CaptainImport extends View {
     this.dest = this.dests[0];
     this.path.on("submit", (_e, cx) => this.importFiles(cx, [expand(this.path.value())]));
     this.loadSources(cx);
+    // A price and a name are checked as they are typed. The wizard's jobs are followed through the live channel.
     cx.timer.every(500, (cx) => this.tick(cx));
+    watchLive(cx, ["jobs"], (cx) => this.followJobs(cx));
     // A database connected from here ("Connect a new source") or anywhere else shows up at once.
     watchConnections(cx, (cx) => cx.spawn(async (cx) => {
       const seq = (this.connSeq = (this.connSeq ?? 0) + 1);
@@ -311,6 +314,11 @@ export default class CaptainImport extends View {
       cx.spawn(async (cx) => { if (await refreshEstimate(this.snapCost, want)) cx.notify(); });
     }
     if (this.step === 3 && this.source?.kind === "db") this.checkName(cx);
+  }
+
+  /** The jobs this wizard started (reading a database's tables, preparing a query, the import itself): asked about
+   *  when the live channel says a job moved on. No timer asks. */
+  followJobs(cx) {
     if (this.pullJob && !this.polling) {
       this.polling = true;
       cx.spawn(async (cx) => {
