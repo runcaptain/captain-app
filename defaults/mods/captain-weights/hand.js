@@ -70,8 +70,8 @@ export function HandBlock(c, v) {
   const knob = Math.max(0, Math.min(TRACK_W, TRACK_W / 2 + ((t.value - base) / span) * TRACK_W));
   const mine = (v.session.events ?? []).filter((e) => e.kind === "edit" && e.by === "you" && !e.undone).at(-1);
   return v_flex().id("wt-hand").gap(8).p(8).border_1().border_color(c.rule)
-    .child(div().text_size(12).font_semibold().child("Change it by hand"))
-    .child(div().id("wt-hand-target").text_size(12).line_height("17px").text_color(c.grey900).child(`${t.name.charAt(0).toUpperCase()}${t.name.slice(1)} is ${signed(t.value)}.`))
+    .child(div().text_size(12.5).font_semibold().child("Change it by hand"))
+    .child(div().id("wt-hand-target").text_size(12.5).line_height("17px").text_color(c.navy).child(`${t.name.charAt(0).toUpperCase()}${t.name.slice(1)} is ${signed(t.value)}.`))
     .child(h_flex().gap(8).items_center()
       .child(div().id("wt-hand-input").w(96).h(28).flex().flex_none().items_center().px(8).border_1().border_color(c.grey300).cursor_text()
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation?.()).child(Input.new(v.handInput).w_full().text_size(12.5).text_color(c.navy)))
@@ -86,13 +86,13 @@ export function HandBlock(c, v) {
         .child(div().absolute().left(0).top(8).w(TRACK_W).h(2).bg(c.grey300))
         .child(div().absolute().left(TRACK_W / 2).top(4).w(1).h(10).bg(c.grey500))
         .child(div().id("wt-hand-knob").absolute().left(knob - 6).top(3).size(12).rounded_full().bg(v.drag ? c.blue : c.surface).border_1().border_color(c.blue)))
-      .child(div().text_size(11).text_color(c.grey500).child(v.drag ? `Now ${signed(t.value)}. Let go to keep it.` : "Drag the dot: left is lower, right is higher.")))
+      .child(div().text_size(11.5).text_color(c.grey500).child(v.drag ? `Now ${signed(t.value)}. Let go to keep it.` : "Drag the dot: left is lower, right is higher.")))
     .when(Boolean(sel) && sel.k > 0, (e) => e.child(h_flex().flex_wrap().gap(6)
       .child(Button(c, "wt-hand-halve", "Halve its weights", (_e, cx) => v.editNeuron({ op: "scale", factor: 0.5 }, cx), { small: true, disabled: busy }))
       .child(Button(c, "wt-hand-double", "Double its weights", (_e, cx) => v.editNeuron({ op: "scale", factor: 2 }, cx), { small: true, disabled: busy }))
       .child(Button(c, "wt-hand-zero", "Set this neuron to zero", (_e, cx) => v.editNeuron({ op: "zero" }, cx), { small: true, disabled: busy }))))
     .when(Boolean(mine), (e) => e.child(h_flex().child(Button(c, "wt-hand-undo", "Take back my last edit", (_e, cx) => v.undo(mine.id, cx), { small: true, disabled: busy }))))
-    .when(Boolean(v.note), (e) => e.child(div().id("wt-hand-note").text_size(12).line_height("17px").text_color(c.fail).child(v.note)));
+    .when(Boolean(v.note), (e) => e.child(div().id("wt-hand-note").text_size(12.5).line_height("17px").text_color(c.fail).child(v.note)));
 }
 
 /** Hand what is selected to an agent: pin it, or start the agent on one of three tasks. */
@@ -100,7 +100,7 @@ export function AgentBlock(c, v) {
   const pin = selectionPin(v);
   return v_flex().id("wt-agent").gap(6).pt(4)
     .child(h_flex().items_center()
-      .child(div().flex_1().text_size(12).font_semibold().child("Ask an agent"))
+      .child(div().flex_1().text_size(12.5).font_semibold().child("Ask an agent"))
       .child(SendToAgent(c, "wt-send", pin)))
     .child(div().id("wt-agent-about").text_size(11.5).line_height("16px").text_color(c.grey500).child(`It will be told about ${pin.label.replace(/^[^:]*: /, "")}.`))
     .children(starters(v).map((s) => h_flex().child(Button(c, `wt-ask-${s.id}`, s.label, (_e, cx) => v.ask(s, cx), { small: true, disabled: Boolean(s.needs) }))));

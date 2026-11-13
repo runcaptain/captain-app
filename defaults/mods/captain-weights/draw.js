@@ -13,6 +13,7 @@
 // row merge into one rectangle, and `shapesFor` counts as it goes against MAX_SHAPES: pictures and strips first,
 // then lines from the strongest down, so what is left out is the faintest lines.
 import { div, PathBuilder } from "gpui-kit";
+import { int } from "./kit/num.js";
 
 export const MAX_SHAPES = 1800;
 export const DOTS_MAX = 64;
@@ -198,7 +199,7 @@ export function NetworkCanvas(c, s, o) {
     const name = col.k === 0 ? "Input" : col.k === L_out ? "Output" : net.sizes.length === 3 ? "Hidden" : `Hidden ${col.k}`;
     const [, capY] = pz.at(0, L.height - PAD - 14);
     over.push(div().absolute().left(cx0 - 40 * z).top(capY).w(col.w * z + 80 * z).text_center().text_size(11 * z).text_color(c.grey500)
-      .child(col.kind === "dots" ? name : `${name}, ${col.n.toLocaleString("en-US")} neurons`));
+      .child(col.kind === "dots" ? name : `${name}, ${int(col.n)} neurons`));
     if (col.kind === "image") {
       over.push(div().absolute().left(cx0).top(cy0).w(col.w * z).h(col.across ? col.rows * CELL * z : 0).border_1().border_color(c.grey300));
       const [, hy] = pz.at(0, col.top + col.heatTop);

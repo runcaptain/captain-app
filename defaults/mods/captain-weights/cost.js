@@ -3,13 +3,14 @@
 // meant to fix, the inputs that should not change, and the test set.
 import { div, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
+import { int } from "./kit/num.js";
 import { costOf } from "./net.js";
 
 const MAX_POINTS = 60; // the curve shows the last 60 steps
 
 /** A cost, to three places: "0.412". */
 export const cost3 = (v) => (Number.isFinite(v) ? v.toFixed(3) : "unknown");
-const count = (n) => Number(n).toLocaleString("en-US");
+const count = (n) => int(n);
 
 const COST_WORDS = {
   squared_error: "Cost is one number for how wrong the network is: the squared distance between its answer and the wanted answer. 0 is perfect.",
@@ -79,22 +80,22 @@ export function CostPanel(c, v, { width, height }) {
   const focus = editInFocus(v.session, v.openEdit);
   const rows = threeNumbers(focus);
   const number = (id, label, value, under) => v_flex().gap(1).flex_none()
-    .child(div().text_size(11).text_color(c.grey500).child(label))
-    .child(div().id(id).text_size(20).font_semibold().child(value))
-    .child(div().id(`${id}-under`).text_size(11).text_color(c.grey500).child(under));
+    .child(div().text_size(11.5).text_color(c.grey500).child(label))
+    .child(div().id(id).text_size(15).font_semibold().child(value))
+    .child(div().id(`${id}-under`).text_size(11.5).text_color(c.grey500).child(under));
   const curveW = Math.max(120, Math.min(260, width - 290));
   return v_flex().id("wt-cost").w(width).h(height).flex_none().gap(8)
     .child(h_flex().gap(6).items_center()
-      .child(div().text_size(13).font_semibold().child("Cost"))
+      .child(div().text_size(12.5).font_semibold().child("Cost"))
       .child(div().id("wt-cost-says").flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(COST_WORDS[net.cost ?? "squared_error"] ?? COST_WORDS.squared_error)))
     .child(h_flex().gap(22).items_start()
       .child(number("wt-cost-input", "This input", here == null ? "not run" : cost3(here), e?.name ?? ""))
       .child(number("wt-cost-test", t?.of ? `Test set (${count(t.of)} inputs)` : "Test set", t ? cost3(t.cost) : "reading", t?.of ? `${count(t.right)} of ${count(t.of)} right` : ""))
       .child(Curve(c, v, steps, curveW, 62)))
     .when(rows.length > 0, (el) => el.child(v_flex().id("wt-cost-edit").gap(2)
-      .child(div().text_size(11).text_color(c.grey500).child(focus.id === v.openEdit ? "The edit that is open" : "The last edit"))
-      .children(rows.map((r) => h_flex().id(`wt-cost-${r.id}`).gap(8).items_center().text_size(12)
-        .child(div().w(190).flex_none().truncate().text_color(c.grey900).child(r.name))
+      .child(div().text_size(11.5).text_color(c.grey500).child(focus.id === v.openEdit ? "The edit that is open" : "The last edit"))
+      .children(rows.map((r) => h_flex().id(`wt-cost-${r.id}`).gap(8).items_center().text_size(12.5)
+        .child(div().w(190).flex_none().truncate().text_color(c.navy).child(r.name))
         .child(div().w(120).flex_none().font_medium().child(`${cost3(r.before)} to ${cost3(r.after)}`))
-        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(c.grey500).child(r.says))))));
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(r.says))))));
 }

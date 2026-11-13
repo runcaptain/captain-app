@@ -5,11 +5,12 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { Button } from "./kit/ui.js";
+import { int } from "./kit/num.js";
 import { neuronName, signed } from "./inspect.js";
 import { cost3 } from "./cost.js";
 
 const SHOWN_CHANGES = 6;
-const count = (n) => Number(n).toLocaleString("en-US");
+const count = (n) => int(n);
 const plural = (n, one, many) => `${count(n)} ${n === 1 ? one : many}`;
 const trim = (v) => String(Number(Number(v).toFixed(4)));
 
@@ -84,9 +85,9 @@ export function Timeline(c, v, { width, height }) {
     if (open && isEdit) {
       const changes = ev.changes ?? [], total = ev.changed ?? changes.length;
       el = el
-        .when(Boolean(ev.why), (e) => e.child(div().id(`wt-ev-why-${ev.id}`).text_size(12).line_height("17px").text_color(c.grey900).child(`Why: ${ev.why}`)))
-        .child(v_flex().id(`wt-ev-changes-${ev.id}`).gap(1).children(changes.slice(0, SHOWN_CHANGES).map((ch, n) => h_flex().id(`wt-ev-change-${ev.id}-${n}`).gap(8).text_size(12)
-          .child(div().w(210).flex_none().truncate().text_color(c.grey900).child(changeName(v.net, ch)))
+        .when(Boolean(ev.why), (e) => e.child(div().id(`wt-ev-why-${ev.id}`).text_size(12.5).line_height("17px").text_color(c.navy).child(`Why: ${ev.why}`)))
+        .child(v_flex().id(`wt-ev-changes-${ev.id}`).gap(1).children(changes.slice(0, SHOWN_CHANGES).map((ch, n) => h_flex().id(`wt-ev-change-${ev.id}-${n}`).gap(8).text_size(12.5)
+          .child(div().w(210).flex_none().truncate().text_color(c.navy).child(changeName(v.net, ch)))
           .child(div().flex_none().font_medium().child(`${signed(ch.old)} to ${signed(ch.new)}`))))
           .when(total > SHOWN_CHANGES, (e) => e.child(div().text_size(11.5).text_color(c.grey500).child(`and ${count(total - SHOWN_CHANGES)} more`))))
         .when(!ev.undone, (e) => e.child(h_flex().pt(2).child(Button(c, `wt-ev-undo-${ev.id}`, v.busy === ev.id ? "Taking it back" : "Take this edit back", (_e, cx) => v.undo(ev.id, cx), { small: true, disabled: v.busy === ev.id }))));
@@ -95,13 +96,13 @@ export function Timeline(c, v, { width, height }) {
   };
   return v_flex().id("wt-timeline").w(width).h(height).flex_none().gap(6)
     .child(h_flex().gap(8).items_center()
-      .child(div().text_size(13).font_semibold().child("What the agent is doing"))
+      .child(div().text_size(12.5).font_semibold().child("What the agent is doing"))
       .when(facts.alone, (e) => e.child(div().id("wt-alone").flex_none().px(6).h(20).flex().items_center().bg(c.goodLight).text_color(c.good).text_size(11.5).font_medium()
         .tooltip("The record shows no sandbox was allowed and the network was never run").child("From the weights alone")))
       .child(div().flex_1())
       .when(Boolean(facts.changed), (e) => e.child(div().id("wt-ledger-changed").flex_none().text_size(11.5).text_color(c.grey500).child(facts.changed))))
     .when(facts.allowed.length > 0, (e) => e.child(div().id("wt-ledger").text_size(11.5).line_height("16px").text_color(c.grey500).child(`${facts.allowed.join(". ")}.`)))
-    .when(Boolean(v.undoNote), (e) => e.child(div().id("wt-note").text_size(12).text_color(c.fail).child(v.undoNote)))
+    .when(Boolean(v.undoNote), (e) => e.child(div().id("wt-note").text_size(12.5).text_color(c.fail).child(v.undoNote)))
     .child(div().id("wt-events").flex_1().min_h(0).overflow_y_scroll().border_1().border_color(c.rule)
       .child(events.length
         ? v_flex().children(events.map(row))

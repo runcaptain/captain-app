@@ -4,6 +4,7 @@
 // picked weight, the chain rule as three factors multiplied, each named in words.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
+import { int } from "./kit/num.js";
 import { chain, answerOf } from "./net.js";
 import { neuronName, signed, plain } from "./inspect.js";
 
@@ -51,7 +52,7 @@ export function chainRows(net, run, grad, at) {
     rows: [
       { id: "before", label: `How active ${from} is`, value: plain(c.before) },
       { id: "steep", label: `How steep the squish is at ${to}`, value: plain(c.steep) },
-      { id: "behind", label: c.last ? `How far off ${to} is` : `How far off ${to} is, added up over the ${paths.toLocaleString("en-US")} ${paths === 1 ? "path" : "paths"} from it to the cost`, value: signed(c.behind) },
+      { id: "behind", label: c.last ? `How far off ${to} is` : `How far off ${to} is, added up over the ${int(paths)} ${paths === 1 ? "path" : "paths"} from it to the cost`, value: signed(c.behind) },
     ],
     product: signed(c.exact ? c.product : c.gradient),
   };
@@ -62,13 +63,13 @@ export function ChainBlock(c, v) {
   if (!v.selW || !v.grad || !v.run) return null;
   const r = chainRows(v.net, v.run, v.grad, v.selW);
   return v_flex().id("wt-chain").gap(4).p(8).border_1().border_color(c.rule)
-    .child(div().text_size(12).font_semibold().child("The chain rule for the picked weight"))
+    .child(div().text_size(12.5).font_semibold().child("The chain rule for the picked weight"))
     .child(div().text_size(11.5).line_height("17px").text_color(c.grey500).child("How much the cost moves when this weight moves a little: three numbers, multiplied."))
-    .children(r.rows.map((row, n) => h_flex().id(`wt-chain-${row.id}`).gap(8).items_start().text_size(12)
+    .children(r.rows.map((row, n) => h_flex().id(`wt-chain-${row.id}`).gap(8).items_start().text_size(12.5)
       .child(div().w(12).flex_none().text_color(c.grey500).child(n ? "x" : ""))
-      .child(div().flex_1().min_w(0).line_height("17px").text_color(c.grey900).child(row.label))
+      .child(div().flex_1().min_w(0).line_height("17px").text_color(c.navy).child(row.label))
       .child(div().w(64).flex_none().text_right().font_medium().child(row.value))))
-    .child(h_flex().id("wt-chain-product").gap(8).pt(4).border_t(1).border_color(c.rule).text_size(12)
+    .child(h_flex().id("wt-chain-product").gap(8).pt(4).border_t(1).border_color(c.rule).text_size(12.5)
       .child(div().w(12).flex_none().text_color(c.grey500).child("="))
       .child(div().flex_1().min_w(0).line_height("17px").child("The cost's slope for this weight (its gradient)"))
       .child(div().w(64).flex_none().text_right().font_semibold().child(r.product)))
@@ -79,7 +80,7 @@ export function ChainBlock(c, v) {
 /** The walk's controls and its sentence, laid over the drawing. `v` is the page. */
 export function WalkControls(c, v) {
   const step = v.walk.step, of = stepsOf(v.net);
-  const btn = (id, text, tip, go, off = false) => div().id(id).h(24).px(8).flex().flex_none().items_center().text_size(12).border_1()
+  const btn = (id, text, tip, go, off = false) => div().id(id).h(24).px(8).flex().flex_none().items_center().text_size(12.5).border_1()
     .bg(c.surface).border_color(c.grey300).text_color(off ? c.grey500 : c.navy)
     .when(!off, (e) => e.cursor_pointer().hover((s) => s.border_color(c.blue).text_color(c.blue)).on_click((_e, cx) => go(cx)))
     .tooltip(tip).on_mouse_down("left", (_e, cx) => cx.stop_propagation?.()).child(text);

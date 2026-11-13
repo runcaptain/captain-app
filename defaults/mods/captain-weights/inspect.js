@@ -4,6 +4,7 @@
 // says what the numbers mean. `neuronFacts` is the numbers alone, so a test can check them against the network.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
+import { int } from "./kit/num.js";
 import { squishOf } from "./net.js";
 
 const ROWS = 8; // the most incoming or outgoing weights listed; the rest are counted
@@ -85,7 +86,7 @@ export function nudgeSentence(f) {
     : `For this input the cost wants this neuron dimmer (desired nudge ${signed(f.nudge)}).`;
 }
 
-const label = (c, text) => div().text_size(11).text_color(c.grey500).child(text);
+const label = (c, text) => div().text_size(11.5).text_color(c.grey500).child(text);
 const big = (c, id, text) => div().id(id).text_size(15).font_semibold().child(text);
 
 /** A weight's row: where it comes from or goes to, a bar for its size in its sign's colour, the number with its
@@ -95,10 +96,10 @@ function weightRow(c, id, r, top, on, right, onPick) {
   return h_flex().id(id).h(24).gap(8).items_center().px(4).cursor_pointer().when(on, (e) => e.bg(c.blueLight))
     .hover((s) => s.bg(c.blueLight)).tooltip("Pick this weight")
     .on_click(onPick)
-    .child(div().w(104).flex_none().truncate().text_size(12).text_color(c.grey900).child(r.name))
+    .child(div().w(104).flex_none().truncate().text_size(12.5).text_color(c.navy).child(r.name))
     .child(div().w(44).h(6).flex_none().bg(c.surface2).child(div().h_full().w(Math.max(1, Math.round(44 * m))).bg(r.w >= 0 ? c.blue : c.fail)))
-    .child(div().w(54).flex_none().text_right().text_size(12).font_medium().text_color(c.navy).child(signed(r.w)))
-    .child(div().flex_1().min_w(0).truncate().text_right().text_size(11).text_color(c.grey500).child(right));
+    .child(div().w(54).flex_none().text_right().text_size(12.5).font_medium().text_color(c.navy).child(signed(r.w)))
+    .child(div().flex_1().min_w(0).truncate().text_right().text_size(11.5).text_color(c.grey500).child(right));
 }
 
 /** The panel. `v` is the page: {net, run, grad, sel, selW} and pickWeight(at, cx). `slot` is one element or a list,
@@ -107,24 +108,23 @@ export function Inspector(c, v, slot = null) {
   const { net, run, grad, sel, selW } = v;
   if (!sel) {
     return v_flex().id("wt-inspect").gap(8)
-      .child(div().text_size(13).font_semibold().child("Open a neuron"))
+      .child(div().text_size(12.5).font_semibold().child("Open a neuron"))
       .child(div().text_size(12.5).line_height("18px").text_color(c.grey500).child("Click a circle in the drawing to see its weights, its bias and how it got its activation."));
   }
   const f = neuronFacts(net, run, grad, sel);
   const title = f.name.charAt(0).toUpperCase() + f.name.slice(1);
   let out = v_flex().id("wt-inspect").gap(12)
-    .child(div().id("wt-inspect-name").text_size(13).font_semibold().child(title))
-    .child(div().id("wt-inspect-says").text_size(12.5).line_height("18px").text_color(c.grey900).child(selW ? weightSentence(net, selW) : neuronSentence(net, f)));
+    .child(div().id("wt-inspect-name").text_size(12.5).font_semibold().child(title))
+    .child(div().id("wt-inspect-says").text_size(12.5).line_height("18px").text_color(c.navy).child(selW ? weightSentence(net, selW) : neuronSentence(net, f)));
   // The three numbers of the neuron itself.
+  // The neuron's own three numbers. Each term says what it is on hover, in plain words.
+  const fact = (id, name, value, tip) => v_flex().id(`${id}-box`).gap(2).tooltip(tip).child(label(c, name)).child(big(c, id, value));
   out = out.child(h_flex().gap(18)
-    .child(v_flex().gap(2).child(label(c, "Activation")).child(big(c, "wt-inspect-a", f.activation == null ? "not run" : plain(f.activation))))
+    .child(fact("wt-inspect-a", "Activation", f.activation == null ? "not run" : plain(f.activation),
+      f.isInput ? "Activation: how bright this neuron is. For an input, it is the input's own value." : `Activation: how bright this neuron is. It is the weighted sum after the squish (${SQUISH_WORDS[f.squish] ?? f.squish}).`))
     .when(!f.isInput, (e) => e
-      .child(v_flex().gap(2).child(label(c, "Weighted sum")).child(big(c, "wt-inspect-z", f.sum == null ? "not run" : plain(f.sum))))
-      .child(v_flex().gap(2).child(label(c, "Bias")).child(big(c, "wt-inspect-b", plain(f.bias))))));
-  if (!f.isInput) {
-    out = out.child(div().id("wt-inspect-how").text_size(11.5).line_height("17px").text_color(c.grey500)
-      .child(`The weighted sum is each weight times the activation it comes from, added up, plus the bias. The squish is ${SQUISH_WORDS[f.squish] ?? f.squish}.`));
-  }
+      .child(fact("wt-inspect-z", "Weighted sum", f.sum == null ? "not run" : plain(f.sum), "Weighted sum: each weight times the activation it comes from, added up, plus the bias."))
+      .child(fact("wt-inspect-b", "Bias", plain(f.bias), "Bias: a number added to the weighted sum. It sets how much the weights must add up to before the neuron turns on."))));
   const nudge = nudgeSentence(f);
   if (nudge) out = out.child(div().id("wt-inspect-nudge").p(8).bg(c.surface2).text_size(12.5).line_height("18px").text_color(c.navy).child(nudge));
   for (const x of [].concat(slot ?? [])) if (x) out = out.child(x);
@@ -134,14 +134,14 @@ export function Inspector(c, v, slot = null) {
     const sorted = rows.slice().sort((p, q) => Math.abs(q.adds ?? q.w) - Math.abs(p.adds ?? p.w) || Math.abs(q.w) - Math.abs(p.w));
     const shown = rows.length > ROWS ? sorted.slice(0, ROWS) : rows;
     return v_flex().id(id).gap(2)
-      .child(h_flex().pb(2).child(div().flex_1().text_size(12).font_semibold().child(heading)).child(label(c, right.head)))
+      .child(h_flex().pb(2).child(div().flex_1().text_size(12.5).font_semibold().child(heading)).child(label(c, right.head)))
       .children(shown.map((r) => { const at = pick(r); return weightRow(c, `${id}-${at.j}-${at.i}`, r, top, !!selW && selW.k === at.k && selW.j === at.j && selW.i === at.i, right.cell(r), (_e, cx) => v.pickWeight(at, cx)); }))
       .when(rows.length > shown.length, (e) => e.child(div().id(`${id}-more`).px(4).pt(2).text_size(11.5).text_color(c.grey500)
-        .child(`and ${(rows.length - shown.length).toLocaleString("en-US")} more, smaller for this input`)));
+        .child(`and ${int(rows.length - shown.length)} more, smaller for this input`)));
   };
   const showGrad = grad != null;
   if (f.incoming) {
-    out = out.child(list("wt-in-w", `Weights coming in (${f.incoming.length.toLocaleString("en-US")})`, f.incoming, (r) => ({ k: sel.k - 1, j: sel.j, i: r.i }),
+    out = out.child(list("wt-in-w", `Weights coming in (${int(f.incoming.length)})`, f.incoming, (r) => ({ k: sel.k - 1, j: sel.j, i: r.i }),
       showGrad ? { head: "the cost's slope for it", cell: (r) => signed(r.gradient) }
         : { head: "times activation, adds", cell: (r) => (r.a == null ? "" : `x ${plain(r.a)} = ${signed(r.adds)}`) }));
     if (showGrad) out = out.child(div().id("wt-inspect-bg").px(4).text_size(11.5).text_color(c.grey500).child(`The cost's slope for the bias: ${signed(f.biasGradient)}. A positive slope means the cost falls when the number goes down.`));

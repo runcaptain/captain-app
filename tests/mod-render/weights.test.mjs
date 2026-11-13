@@ -120,6 +120,13 @@ test('the words: no arrows, no long dashes, no backend words', async () => {
     assert.ok(!/[←-⇿⟰-⟿⤀-⥿]/.test(src), `${f}: an arrow character`);
     assert.ok(!/[–—]/.test(src), `${f}: a long dash`);
     assert.ok(!/setTimeout|setInterval/.test(src), `${f}: the app has no setTimeout`);
+    // The app's JavaScript has no locale data: 13002 would print without its comma. kit/num.js groups digits.
+    assert.ok(!/toLocaleString|Intl\./.test(src), `${f}: use int() from kit/num.js`);
+    // Off the drawing (where words scale with the zoom), three text sizes and two text colours.
+    if (!['draw.js', 'canvas.js'].includes(f)) {
+      for (const m of src.matchAll(/text_size\(([^)]+)\)/g)) assert.ok(['15', '12.5', '11.5'].includes(m[1]), `${f}: text size ${m[1]}`);
+      assert.ok(!/text_color\(c\.grey900\)/.test(src), `${f}: a third text colour`);
+    }
     for (const lit of src.match(/"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g) ?? []) assert.ok(!/\b(engine|daemon|core)s?\b/i.test(lit), `${f}: ${lit}`);
   }
   for (const id of [null, TINY, DIGITS]) {
