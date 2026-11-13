@@ -40,14 +40,14 @@ const LEDGER = [
   ['captain-project/main.js', 'captain.explorer.rev', 'a form said the Explorer changed', 'signal'],
   ['captain-project/main.js', 'this.shipPath.jobWake', 'once a minute while a model is deployed: words that depend on the time (how long until it stops by itself)', 'clock'],
   ['captain-project/main.js', 'const pid = this.pid();', 'until the services first answer, the page is asked for again', 'starting'],
-  ['captain-nav/main.js', 'captain.context.changed', 'the things pinned for agents: a file in the app\'s home, re-read every 3 seconds because a terminal can write it', 'todo'],
+  ['captain-nav/main.js', 'captain.context.changed', 'a window pinned or removed something for the agent. What a terminal pins arrives on the live channel ("pins")', 'signal'],
   ['captain-nav/main.js', 'captain.agent.open', 'a request to open the agent pane', 'signal'],
   ['captain-nav/main.js', 'placeChanged()', 'the place to run work picked on the cloud chip', 'signal'],
   ['captain-nav/main.js', 'this.state !== "ready"', 'until the services first answer, the sidebar asks again', 'starting'],
   ['captain-nav/explorer.js', 'this.openMlflow(cx)', 'the MLflow heading opened before its list had loaded', 'signal'],
   ['captain-nav/explorer.js', 'captain.explorer.rev', 'a form said the Explorer changed', 'signal'],
   ['captain-nav/explorer.js', 'captain.scope', "the Explorer's own pick changed", 'signal'],
-  ['captain-nav/teamviews.js', 'this.sync(cx)', "the team's shared views: files synced every 2 seconds", 'todo'],
+  ['captain-nav/teamviews.js', 'this.project === undefined', "until the services say where the project folder is. A changed view arrives on the live channel (\"views\")", 'starting'],
   ['captain-team/main.js', 'this.connectionRead', 'a sign-in in progress, asked about at the pace the sign-in service sets; and the connection until it has been read once', 'outside'],
   ['captain-engine/main.js', 'this.asking', 'the price of a training run while its form is open', 'typing'],
   ['captain-engine/main.js', 'captain.explorer.rev', 'a form said the Explorer changed', 'signal'],
@@ -59,7 +59,7 @@ const LEDGER = [
 // A mod moved to the live channel has no timer of its own that reads data.
 const DONE = ['captain-deployments', 'captain-data', 'captain-runs', 'captain-notebooks', 'captain-project', 'captain-cloud', 'captain-handoff', 'captain-team', 'captain-import', 'captain-engine', 'captain-evaluation', 'captain-forms'];
 // The most timers still reading data. It only goes down.
-const TODO_MAX = 2;
+const TODO_MAX = 0;
 
 const found = [];
 for (const mod of fs.readdirSync(mods).filter((m) => m.startsWith('captain-')).sort()) {

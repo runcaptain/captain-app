@@ -192,11 +192,14 @@ export default class CaptainNav extends View {
       this.pins = [];
       const reload = (cx) => cx.spawn(async (cx) => { const next = await loadPins(); if (JSON.stringify(next) !== JSON.stringify(this.pins)) { this.pins = next; cx.notify(); } });
       // The first read is on the timer too: nothing here reads a file while the sidebar starts.
-      let changed = shared("captain.context.changed") ?? null, ws = workspace(), n = 0;
+      // Read when a window pins or removes something (the shared value), when the workspace changes, and the moment
+      // the file changes on disk, which is how `cst context add` in a terminal shows (the live channel: "pins").
+      let changed = shared("captain.context.changed") ?? null, ws = workspace(), first = true;
       cx.timer.every(500, (cx) => {
         const now = shared("captain.context.changed") ?? null;
-        if (now !== changed || workspace() !== ws || n++ % 6 === 0) { changed = now; ws = workspace(); reload(cx); }
+        if (now !== changed || workspace() !== ws || first) { first = false; changed = now; ws = workspace(); reload(cx); }
       });
+      watchLive(cx, ["pins"], (cx) => reload(cx));
       // `cst app open <target>` (an agent showing the person something): the window puts it in shared
       // "captain.agent.open" {…, at}. Only one that arrives while this window runs is acted on.
       let opened = shared("captain.agent.open")?.at ?? null;

@@ -172,7 +172,9 @@ def test_no_listeners_is_cheap_and_a_topic_stops_counting_ten_seconds_after_its_
         CH.bump("jobs", f"job:{i}")
     assert time.perf_counter() - t0 < 0.5, "a bump with nobody listening costs next to nothing"
     monkeypatch.setattr(CH, "LINGER_S", 0.4)
-    seq = svc.get("/api/changes")["seq"]
+    # A client's first request, which learns where the feed is, counts as listening to the topics it names.
+    seq = svc.get("/api/changes", topics="settings")["seq"]
+    assert CH.listening("settings") and not CH.listening("deployed")
     t, box = _waiter(svc, seq, "deployed,deployment:shop")
     assert CH.listening("deployed") and CH.listening("deployment:") and not CH.listening("notebooks"), "while its request is open"
     CH.bump("deployed")
@@ -257,6 +259,46 @@ def test_a_live_run_tells_its_end_at_once_and_one_written_by_another_process_is_
     rid = out.stdout.strip().splitlines()[-1]
     assert "answer" in box and set(_t(box["answer"])) == {"runs", f"run:{rid}"}, box
     assert box["at"] - done < 0.8, f"told {box['at'] - done:.2f} s after the other process wrote it"
+
+
+def test_the_agent_pins_and_the_teams_views_are_told_when_their_files_change(svc, tmp_path, monkeypatch):
+    """Two folders on this computer that a terminal writes and the sidebar shows, neither in the workspace. The
+    sidebar read each on a clock (every 3 s and every 2 s). They are told on `pins` and `views` now."""
+    import os
+
+    home = tmp_path / "app-home"
+    project = tmp_path / "captain"
+    (home / "context").mkdir(parents=True)
+    (project / "views" / "returns").mkdir(parents=True)
+    (project / "views" / "returns" / "mod.json").write_text('{"title": "Returns"}')
+    (project / "views" / "returns" / "main.js").write_text("// one")
+    pins = CH.watch_folder(lambda: str(home / "context"), lambda name: {"pins"}, ("pins",))
+    views = CH.watch_folder(lambda: str(project / "views"), lambda name: {"views"}, ("views",), deep=True)
+    try:
+        seq = svc.get("/api/changes")["seq"]
+        t, box = _waiter(svc, seq, "pins")
+        time.sleep(0.5)   # the folder's first look
+        wrote = time.perf_counter()
+        (home / "context" / "t.json").write_text('{"items": [{"ref": "dataset:demo-catalog"}]}')   # `cst context add`
+        t.join(3)
+        assert _t(box["answer"]) == ["pins"] and box["at"] - wrote < 0.8, box
+        # a view's file saved in place by an editor: its folder's time does not move, the file's does
+        seq = CH.FEED.seq
+        t, box = _waiter(svc, seq, "views")
+        time.sleep(0.5)
+        wrote = time.perf_counter()
+        f = project / "views" / "returns" / "main.js"
+        with open(f, "r+") as fh:
+            fh.write("// two, saved in place")
+        os.utime(f, None)
+        t.join(3)
+        assert _t(box["answer"]) == ["views"] and box["at"] - wrote < 0.8, box
+        # nobody listens to them: nothing looks
+        time.sleep(11.0 if CH.LINGER_S > 5 else CH.LINGER_S + 1.0)
+        assert pins.thread is None and views.thread is None, "with no listener the folders are not looked at"
+    finally:
+        CH._FOLDERS.remove(pins)
+        CH._FOLDERS.remove(views)
 
 
 def test_a_missed_sequence_gets_reset(svc):

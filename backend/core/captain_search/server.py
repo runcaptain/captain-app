@@ -3309,6 +3309,36 @@ def _topics(text: str | None) -> list[str] | None:
     return ts or None
 
 
+def _watch_side_folders() -> None:
+    """Two folders on this computer that a terminal writes and the sidebar shows, neither in the workspace: what a
+    person pinned for their agent (`cst context add`), and the team's own screens in the project folder
+    (captain/views/). The change feed looks at each while someone listens, so the sidebar reads them when they
+    change and not on a clock. Topics: `pins` and `views`."""
+    from . import agent_context as AC
+    from . import extensions as X
+
+    kept = {"at": 0.0, "path": None}
+
+    def views() -> str | None:
+        # Which folder is the project's is asked again every few seconds: `cst project use` changes it.
+        if time.monotonic() - kept["at"] > 3.0:
+            kept["at"] = time.monotonic()
+            try:
+                p = X.find_project(ctx().workspace.name)
+                kept["path"] = str(p / "views") if p else None
+            except Exception:  # noqa: BLE001
+                kept["path"] = None
+        return kept["path"]
+
+    CH.watch_folder(lambda: os.path.join(AC.app_home(), "context"), lambda name: {"pins"}, ("pins",))
+    CH.watch_folder(views, lambda name: {"views"}, ("views",), deep=True)
+
+
+_watch_side_folders()
+from . import live as _live_runs  # noqa: E402,F401  its folder of runs written by other processes is watched from the start
+from . import notebook as _notebook_drafts  # noqa: E402,F401  and the notebooks' drafts
+
+
 @app.get("/api/changes", dependencies=A)
 async def changes_wait(since: int | None = None, topics: str | None = None, wait: float | None = None, hold: float | None = None,
                        client: str | None = None):
@@ -3325,6 +3355,10 @@ async def changes_wait(since: int | None = None, topics: str | None = None, wait
     store = ctx().store  # the workspace this client is looking at is watched for writes made outside this process
     part = lambda a: {**a, "partial": CH.partial(store, _topics(topics))}  # noqa: E731
     if not since:
+        # A client's first request learns where the feed is. It counts as listening from now, so the watchers for
+        # outside writes take their first look at once, not a second later when the client first waits: a change
+        # made in between would be part of that first look, and never told.
+        CH.FEED.touch(_topics(topics))
         return part(CH.FEED.answer(since, _topics(topics)))
     hold = wait if wait is not None else hold
     if hold is not None and float(hold) <= 0:

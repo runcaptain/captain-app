@@ -9,6 +9,7 @@
 // .captain-team-view). The list is published as shared "captain.team.views" for the sidebar.
 import { exec, appHome, appBinary, setShared, shared } from "herdr";
 import { api } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 
 const MARK = ".captain-team-view";
 const API = 1;
@@ -25,11 +26,15 @@ export class TeamViews {
 
   start(cx) {
     this.sync(cx);
-    cx.timer.every(2000, (cx) => this.sync(cx));
+    // Until the services have said where the project folder is, ask again. From then on the views are read the
+    // moment a file under the project's views/ changes, or the project folder itself does (the live channel:
+    // "views"). Nothing is read on a clock.
+    cx.timer.every(2000, (cx) => { if (this.project === undefined) this.sync(cx); });
+    watchLive(cx, ["views"], (cx) => { this.askedAt = 0; this.sync(cx); });
   }
 
   sync(cx) {
-    if (this.busy) return;
+    if (this.busy) { this.again = true; return; } // told while reading: read once more after
     this.busy = true;
     cx.spawn(async (cx) => {
       try {
@@ -39,6 +44,7 @@ export class TeamViews {
       } finally {
         this.busy = false;
         cx.notify();
+        if (this.again) { this.again = false; Promise.resolve().then(() => this.sync(cx)); }
       }
     });
   }
