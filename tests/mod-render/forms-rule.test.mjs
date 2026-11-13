@@ -24,6 +24,7 @@ globalThis.fetch = async (url, opts = {}) => {
     const taken = (world.taken ?? []).includes(id);
     return reply(200, { label, id, taken, next: taken ? `${id}-2` : id, text: taken ? `You already have a cloud account called ${id}. Captain will call this one ${id}-2.` : `Captain will call it ${id}.` });
   }
+  if (p === '/api/cloud/check') { const v = u.searchParams.get('value'); return reply(200, v === 'us-west-9' ? { ok: false, text: 'AWS has no region called us-west-9. Did you mean us-west-1, us-west-2?' } : { ok: true, text: null }); }
   if (p === '/api/cloud/signin') return reply(200, world.signedIn ? { found: true, text: null } : { found: false, text: 'No Modal sign-in on this computer yet. Run `modal token new` in a terminal, then come back.' });
   if (p === '/api/cloud/profiles' && opts.method === 'POST') return world.refuse ? reply(400, { error: world.refuse }) : reply(200, { name: body.name });
   if ((opts.method ?? 'GET') !== 'GET') return reply(400, { error: RAW });   // every other write is refused with the raw sentence
@@ -122,6 +123,24 @@ h.mod.asked.auth.at = 0;                                  // the few seconds bet
 await pause(h, 50);
 assert.equal(byId(h, 'f-auth-problem').length, 0, 'found on the next look');
 assert.ok(canPress(h));
+
+// A region that doesn't exist is said while it is typed, under the Region field, and the button is off until it is fixed.
+world = { signedIn: true };
+h = await open('cloud');
+await h.click('f-provider-aws');
+for (let i = 0; i < 20 && h.mod.values.auth === undefined; i++) await h.idle(30);
+await type(h, 'name', 'Work');
+await type(h, 'region', 'us-west-9');
+await pause(h);
+assert.equal(text(h, 'f-region-problem'), 'AWS has no region called us-west-9. Did you mean us-west-1, us-west-2?', `under Region: ${h.text()}`);
+assert.ok(!canPress(h) && text(h, 'form-why').startsWith('AWS has no region called us-west-9'));
+await type(h, 'region', 'us-west-1');
+await pause(h);
+assert.equal(byId(h, 'f-region-problem').length, 0, 'fixed, and the sentence is gone');
+assert.ok(canPress(h));
+await type(h, 'region', '');
+await pause(h);
+assert.ok(canPress(h), 'a region is optional: empty is fine');
 
 // ---- what comes back after the button is never raw, and goes under its field ----------------------------------
 world = { signedIn: true, refuse: RAW };

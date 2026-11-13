@@ -128,5 +128,27 @@ assert.ok(!h.text().includes('Agrees with its own labeler'));
 // Words a person shouldn't see.
 t = h.text();
 for (const bad of [/\bengine\b/i, /\bdaemon\b/i, /\bcst /, /[←-⇿]/, /—/]) assert.ok(!bad.test(t), `no ${bad} on the page`);
+// While something runs, the page says what, and no button on the Data or Models rows can start it again.
+{
+  const starters = (hh) => hh.byIdPrefix('').filter((e) => /^(in-add|exp-new|start-baseline|start-train|ph-next-go|exp-\d+-(judge|champion)|in-[a-z0-9_-]+-(pick|change|newer|generate|more))$/.test(e.call('id')?.[0] ?? ''));
+  await h.idle(60);
+  const before = starters(h);
+  assert.ok(before.length >= 2 && before.some((e) => e.call('on_click')), `the page has buttons that start something: ${before.map((e) => e.call('id')[0])}`);
+  h.mod.busy = true; h.mod.busyWhat = 'Starting the comparison of demo-tuned';
+  await h.idle(30);
+  const during = starters(h);
+  assert.deepEqual(during.filter((e) => e.call('on_click')).map((e) => e.call('id')[0]), [], 'no button that starts something can be pressed while something runs');
+  assert.equal(h.byIdPrefix('ph-next-go').length, 0, 'the Next banner offers no button');
+  assert.ok(h.text().includes('Starting the comparison of demo-tuned...'), `and it says what is running: ${h.text().slice(0, 400)}`);
+  h.mod.busy = false; h.mod.busyWhat = null;
+  await h.idle(30);
+  assert.ok(starters(h).some((e) => e.call('on_click')) && !h.text().includes('Starting the comparison'), 'when it ends, the buttons are back');
+  // A deploy in progress counts too: the page is one place, and Ship's work turns the other buttons off.
+  h.mod.shipPath.busy = 'Stopping it';
+  await h.idle(30);
+  assert.ok(h.text().includes('Stopping it...') && starters(h).every((e) => !e.call('on_click')), 'a stop in progress is said, and nothing else can start');
+  h.mod.shipPath.busy = null;
+  await h.idle(30);
+}
 console.log('project-page render test: ok');
 process.exit(0);

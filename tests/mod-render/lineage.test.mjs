@@ -253,7 +253,29 @@ console.log('lineage fit: ok');
   const first = gp.ops[0][1][0][0];
   g3.pan = { x: g3.pan.x + 5, y: g3.pan.y };
   assert.notDeepEqual(g3.grid(220, 110).ops[0][1][0][0], first, 'the grid moves with the pan');
+  // A big canvas never builds more than 500 dots (thousands took longer than a frame is allowed), and the same
+  // canvas and offset give back the path already built.
+  const big = g3.grid(1300, 800);
+  assert.ok(big.ops.length <= 500 && big.ops.length > 100, `a capped grid: ${big.ops.length} dots`);
+  assert.equal(g3.grid(1300, 800), big, 'not rebuilt when nothing moved');
+  g3.zoom = 0.45;
+  assert.ok(g3.grid(1300, 800).ops.length <= 500, 'zoomed out too');
   g3.zoom = 0.3;
   assert.equal(g3.grid(220, 110), null, 'zoomed far out, the dots would touch: no grid');
 }
 console.log('lineage node graph: ok');
+
+// Every connector runs left to right: a box that reads from one the same distance from the focus is pushed a
+// column past it, never left beside it. A loop in the records doesn't hang the layout.
+{
+  const g = { nodes: ['c', 'q', 'j', 'm', 'e'].map((id) => ({ id, kind: 'dataset' })),
+    edges: [['c', 'q'], ['c', 'm'], ['q', 'j'], ['q', 'e'], ['m', 'e'], ['j', 'e']].map(([from, to]) => ({ from, to })) };
+  const L = levels(g, 'c', 9, 9);
+  assert.deepEqual(['c', 'q', 'm', 'j', 'e'].map((id) => L.get(id)), [0, 1, 1, 2, 3], 'the evaluation sits past the judgments it reads');
+  for (const e of g.edges) assert.ok(L.get(e.to) > L.get(e.from), `${e.from} to ${e.to} runs left to right`);
+  const up = levels({ nodes: g.nodes, edges: [['a', 'b'], ['b', 'f'], ['a', 'f']].map(([from, to]) => ({ from, to })) }, 'f', 9, 9);
+  assert.deepEqual(['a', 'b', 'f'].map((id) => up.get(id)), [-2, -1, 0], 'upstream too');
+  const loop = levels({ nodes: g.nodes, edges: [['c', 'q'], ['q', 'j'], ['j', 'q']].map(([from, to]) => ({ from, to })) }, 'c', 9, 9);
+  assert.ok(loop.get('q') > 0 && loop.get('j') > 0, 'a loop still lays out');
+}
+console.log('lineage columns: ok');

@@ -1,0 +1,2 @@
+{"project": "shop", "kind": "search-events", "recipe": {"id": "search-events", "label": "Search ranking from events"}, "inputs": [], "notes": [], "next": null,
+ "start": {"starter": {"can": false, "done": false, "needs": []}}, "experiments": {"count": 0}, "ship": {"registry": {}, "ready": false, "staging": null, "steps": []}}

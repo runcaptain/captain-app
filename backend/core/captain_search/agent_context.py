@@ -106,7 +106,7 @@ def resolve(ctx: Context, raw: str) -> dict:
         return {"ref": f"project:{p['id']}", "kind": "project", "label": p["name"]}
     if kind == "staging":
         p = project()
-        return {"ref": f"staging:{p['id']}", "kind": "staging", "label": f"staging for {p['name']}"}
+        return {"ref": f"staging:{p['id']}", "kind": "staging", "label": f"what is deployed for {p['name']}"}
     if kind == "dataset":
         r = versioned("dataset", "dataset")
         return {"ref": f"dataset:{r}", "kind": "dataset", "label": r}
