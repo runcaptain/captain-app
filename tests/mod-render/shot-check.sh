@@ -320,6 +320,8 @@ props_of() {
     # the networks Captain's services make, so the backend these pictures run must have the weights routes.
     captain-weights:list) echo '{}' ;;
     captain-weights:tiny-neuron) echo '{"show": {"model": "starter:tiny", "input": 3, "neuron": [1, 1]}}' ;;
+    captain-weights:tiny-staged) echo '{"show": {"model": "starter:tiny", "input": 3, "neuron": [1, 1], "stagedValue": -9}}' ;;
+    captain-weights:tiny-staged-halve) echo '{"show": {"model": "starter:tiny", "input": 3, "neuron": [1, 0], "stagedNeuron": {"op": "scale", "factor": 0.5}}}' ;;
     captain-weights:tiny-walk) echo '{"show": {"model": "starter:tiny", "input": 3, "walk": 2}}' ;;
     captain-weights:tiny-plain) echo '{"show": {"model": "starter:tiny", "input": 1}}' ;;
     captain-weights:services-tiny-neuron) echo '{"show": {"model": "tiny", "input": 1, "neuron": [1, 1], "ask": true}}' ;;

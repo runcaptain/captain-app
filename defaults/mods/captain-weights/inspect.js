@@ -105,7 +105,8 @@ function weightRow(c, id, r, top, on, right, onPick) {
 /** The panel. `v` is the page: {net, run, grad, sel, selW} and pickWeight(at, cx). `slot` is one element or a list,
  *  drawn under the neuron's own numbers (the chain rule for a picked weight, the hand tools). */
 export function Inspector(c, v, slot = null) {
-  const { net, run, grad, sel, selW } = v;
+  // While a change by hand waits to be saved, the panel shows the network as the drawing does: with the change.
+  const { run, grad, sel, selW } = v, net = v.shown ?? v.net, soon = v.staged ? ", if saved" : "";
   if (!sel) {
     return v_flex().id("wt-inspect").gap(8)
       .child(div().text_size(12.5).font_semibold().child("Open a neuron"))
@@ -120,11 +121,11 @@ export function Inspector(c, v, slot = null) {
   // The neuron's own three numbers. Each term says what it is on hover, in plain words.
   const fact = (id, name, value, tip) => v_flex().id(`${id}-box`).gap(2).tooltip(tip).child(label(c, name)).child(big(c, id, value));
   out = out.child(h_flex().gap(18)
-    .child(fact("wt-inspect-a", "Activation", f.activation == null ? "not run" : plain(f.activation),
+    .child(fact("wt-inspect-a", `Activation${soon}`, f.activation == null ? "not run" : plain(f.activation),
       f.isInput ? "Activation: how bright this neuron is. For an input, it is the input's own value." : `Activation: how bright this neuron is. It is the weighted sum after the squish (${SQUISH_WORDS[f.squish] ?? f.squish}).`))
     .when(!f.isInput, (e) => e
-      .child(fact("wt-inspect-z", "Weighted sum", f.sum == null ? "not run" : plain(f.sum), "Weighted sum: each weight times the activation it comes from, added up, plus the bias."))
-      .child(fact("wt-inspect-b", "Bias", plain(f.bias), "Bias: a number added to the weighted sum. It sets how much the weights must add up to before the neuron turns on."))));
+      .child(fact("wt-inspect-z", `Weighted sum${soon}`, f.sum == null ? "not run" : plain(f.sum), "Weighted sum: each weight times the activation it comes from, added up, plus the bias."))
+      .child(fact("wt-inspect-b", `Bias${soon}`, plain(f.bias), "Bias: a number added to the weighted sum. It sets how much the weights must add up to before the neuron turns on."))));
   const nudge = nudgeSentence(f);
   if (nudge) out = out.child(div().id("wt-inspect-nudge").p(8).bg(c.surface2).text_size(12.5).line_height("18px").text_color(c.navy).child(nudge));
   for (const x of [].concat(slot ?? [])) if (x) out = out.child(x);

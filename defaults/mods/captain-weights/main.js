@@ -27,7 +27,7 @@ import { NetworkCanvas, layoutOf } from "./draw.js";
 import { Inspector } from "./inspect.js";
 import { CostPanel } from "./cost.js";
 import { Timeline, ledgerFacts } from "./timeline.js";
-import { HandBlock, handTarget, dragSpan, TRACK_W, selectionPin, starters } from "./hand.js";
+import { HandBlock, handTarget, dragSpan, TRACK_W, selectionPin, starters, withStaged, stagedChanges, stagedRequest, stagedName } from "./hand.js";
 import { askAgent } from "./kit/agent.js";
 import { DeployLine, startDeploy } from "./deploy.js";
 import { WalkButtons, walkWords, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
@@ -85,9 +85,17 @@ export default class CaptainWeights extends View {
     this.seen = null;       // the last event's number already on screen: newer ones pulse
     this.busy = null;       // the edit being taken back, or "hand" while a change by hand is sent
     this.note = null;       // why the last change by hand could not be made
-    this.drag = null;       // a number being dragged: {x0, from, k, j, i}
+    this.drag = null;       // the dot being dragged: {x0, from}
+    this.staged = null;     // a change by hand that is not saved: {kind: "value", k, j, i, value} or {kind: "neuron", k, j, op, factor} (hand.js)
+    this.shown = null;      // the network as drawn: the open one, or the open one with the staged change while one waits
+    this.dropped = null;    // one quiet sentence after a staged change was dropped by leaving it
+    this.typo = null;       // what to type, while the box holds something that is not a number
+    this.synced = "";       // the text the page last wrote into the box: the saved value
     this.handInput = InputState.new({ placeholder: "a number" }); // the value typed for the picked number
-    this.handInput.on("submit", (_e, ecx) => this.setTyped(ecx ?? cx));
+    // Typing stages the value. Enter does the same and no more: saving is a click on "Set this value".
+    this.handInput.on("change", (_e, ecx) => this.stageTyped(ecx ?? cx));
+    this.handInput.on("submit", (_e, ecx) => this.stageTyped(ecx ?? cx));
+    this.handle = cx.focus_handle?.() ?? null; // so Escape reaches the page
     this.reads = 0;         // how many times the network has been asked for: an older answer never replaces a newer
     this.stop = null;       // stops listening to the change feed
     this.pz = new PanZoom("wt");
@@ -123,6 +131,7 @@ export default class CaptainWeights extends View {
 
   /** Open a network: read its session and its numbers, run it on its first input, and listen for changes. */
   open(model, cx) {
+    this.leave();
     this.model = model; this.net = null; this.problem = null; this.sel = null; this.selW = null; this.inputAt = 0;
     this.session = null; this.test = null; this.openEdit = null; this.readFor = null; this.seen = null; this.pulse = null; this.note = null; this.undoNote = null; this.drag = null;
     this.walk = { step: 0, playing: false }; this.mode = "values";
@@ -249,9 +258,12 @@ export default class CaptainWeights extends View {
     if (Array.isArray(w.weight)) { this.selW = { k: w.weight[0], j: w.weight[1], i: w.weight[2] }; this.sel = { k: w.weight[0] + 1, j: w.weight[1] }; }
     if (w.mode === "nudges") this.mode = "nudges";
     if (w.ask) this.askOpen = true;
+    this.syncInput();
+    const t = handTarget(this);
+    if (t && Number.isFinite(w.stagedValue)) { this.staged = { kind: "value", k: t.k, j: t.j, i: t.i, value: w.stagedValue }; this.handInput.set_value(String(w.stagedValue)); }
+    if (this.sel?.k > 0 && w.stagedNeuron) this.staged = { kind: "neuron", k: this.sel.k - 1, j: this.sel.j, ...w.stagedNeuron };
     this.rerun();
     for (let n = 0; n < (w.walk ?? 0); n++) this.stepWalk(1, { notify() {} });
-    this.syncInput();
   }
 
   /** New numbers for the open network: keep the input and the selection, and run it again. */
@@ -260,15 +272,19 @@ export default class CaptainWeights extends View {
     this.layout = layoutOf(net);
     this.inputAt = Math.min(this.inputAt, Math.max(0, net.examples.length - 1));
     this.rerun();
-    if (!this.drag) this.syncInput();
+    // With a change staged the box keeps what the person typed. Only the saved value it is compared with moves.
+    if (!this.staged) this.syncInput(); else { const t = handTarget(this); if (t) this.synced = String(Number(t.value.toFixed(4))); }
     if (this.show) { const w = this.show; this.show = null; this.stage(w); }
   }
 
   rerun() {
     const e = this.net?.examples?.[this.inputAt];
-    this.run = e ? forward(this.net, e.x) : null;
+    // While a change by hand waits to be saved, the drawing and this input's cost show the network as it would be.
+    // The open network's own numbers are not touched.
+    const net = this.shown = this.net && this.staged ? withStaged(this.net, this.staged) : this.net;
+    this.run = e ? forward(net, e.x) : null;
     // Worked out here from the numbers the page already has: looking never spends an agent's allowance.
-    this.grad = e && this.wantsGrad() ? backward(this.net, e.x, e.y, this.run) : null;
+    this.grad = e && this.wantsGrad() ? backward(net, e.x, e.y, this.run) : null;
   }
 
   /** Whether anything on screen needs the gradients. */
@@ -286,7 +302,7 @@ export default class CaptainWeights extends View {
     if (step > 0) this.mode = "values";
     this.rerun();
     // Beside a terminal the neuron panel would take half the drawing, so there the walk opens nothing by itself.
-    if (step > 0 && !this.selW && this.grad && this.width >= WIDE) { const at = steepestWeight(this.grad, this.net.layers.length - 1); this.selW = at; this.sel = { k: at.k + 1, j: at.j }; }
+    if (step > 0 && !this.selW && !this.staged && this.grad && this.width >= WIDE) { const at = steepestWeight(this.grad, this.net.layers.length - 1); this.selW = at; this.sel = { k: at.k + 1, j: at.j }; this.syncInput(); }
     cx.notify();
   }
   /** Play from the start (or pause). */
@@ -299,71 +315,116 @@ export default class CaptainWeights extends View {
   /** Picking what the lines show also leaves the backward walk. */
   setMode(mode, cx) { this.mode = mode; this.walk = { step: 0, playing: false }; this.rerun(); cx.notify(); }
 
-  pickInput(n, cx) { this.inputAt = n; this.rerun(); cx.notify(); }
-  pickNeuron(at, cx) { this.sel = this.sel && this.sel.k === at.k && this.sel.j === at.j ? null : at; this.selW = null; this.syncInput(); cx.notify(); }
-  pickWeight(at, cx) { this.selW = at; this.sel = { k: at.k + 1, j: at.j }; this.syncInput(); cx.notify(); }
+  pickInput(n, cx) { this.leave(); this.inputAt = n; this.rerun(); cx.notify(); }
+  pickNeuron(at, cx) { this.leave(); this.sel = this.sel && this.sel.k === at.k && this.sel.j === at.j ? null : at; this.selW = null; this.syncInput(); this.rerun(); cx.notify(); }
+  pickWeight(at, cx) { this.leave(); this.selW = at; this.sel = { k: at.k + 1, j: at.j }; this.syncInput(); this.rerun(); cx.notify(); }
+  closeNeuron(cx) { this.leave(); this.sel = null; this.selW = null; this.rerun(); cx.notify(); }
 
-  /** The typed value starts as the number it would change. */
-  syncInput() { const t = handTarget(this); this.note = null; if (t) this.handInput.set_value(String(Number(t.value.toFixed(4)))); }
+  /** The box starts as the number it would change. */
+  syncInput() { const t = handTarget(this); this.note = null; this.typo = null; if (t) { this.synced = String(Number(t.value.toFixed(4))); this.handInput.set_value(this.synced); } }
 
-  /** Send one change by hand through the adapter, then read again: it lands in the timeline like the agent's. */
-  commit(req, cx, undoLocal = null) {
-    if (this.busy || !this.session) return;
-    this.busy = "hand"; this.note = null;
+  /** Going somewhere else (another neuron, another input, another network, the list) with a change not saved
+   *  drops it, and one quiet line says so. Nothing is ever saved by leaving. */
+  leave() {
+    const name = stagedName(this);
+    this.dropped = name ? `Your unsaved change to ${name} was dropped. Nothing was saved.` : null;
+    this.staged = null; this.drag = null; this.typo = null;
+  }
+
+  /** Stage what is typed in the box. It changes nothing in the network: "Set this value" does. */
+  stageTyped(cx) {
+    const t = handTarget(this), text = String(this.handInput.value() ?? "").trim(), value = Number(text);
+    if (!t || this.busy) return;
+    this.dropped = null; this.note = null;
+    // The page's own text (the saved value), or the saved value typed again: nothing is staged.
+    if (text === this.synced || (text && value === t.value)) { this.typo = null; if (this.staged?.kind === "value") { this.staged = null; this.rerun(); } return cx.notify(); }
+    if (!text || !Number.isFinite(value)) { this.typo = "Type a number, such as -1.5."; if (this.staged?.kind === "value") { this.staged = null; this.rerun(); } return cx.notify(); }
+    this.typo = null;
+    this.staged = { kind: "value", k: t.k, j: t.j, i: t.i, value };
+    this.rerun();
+    cx.notify();
+  }
+
+  /** Stage halving, doubling or zeroing the open neuron. */
+  stageNeuron(what, cx) {
+    if (!this.sel || this.sel.k === 0 || this.busy) return;
+    this.dropped = null; this.note = null;
+    this.syncInput();
+    this.staged = { kind: "neuron", k: this.sel.k - 1, j: this.sel.j, ...what };
+    this.handle?.focus?.();
+    this.rerun();
+    cx.notify();
+  }
+
+  /** Drop the staged change: the drawing, the cost and the box go back to the saved numbers. */
+  putBack(cx) {
+    if (this.busy) return;
+    this.staged = null; this.drag = null;
+    this.syncInput();
+    this.rerun();
+    cx.notify();
+  }
+
+  /** Save the staged change as one edit through the adapter, then read again: it lands in the timeline like the
+   *  agent's. This is the only place the page changes a network by hand. A refusal leaves the change staged. */
+  saveStaged(cx) {
+    const s = this.staged;
+    if (!s || this.busy || !this.session) return;
+    this.busy = "hand"; this.note = null; this.drag = null;
     cx.notify();
     cx.spawn(async (cx) => {
       const e = this.net.examples[this.inputAt];
-      const r = await sendEdit(this.session.id, { ...req, aim: e ? { index: this.inputAt, x: e.x, y: e.y } : undefined, by: "you" });
+      const r = await sendEdit(this.session.id, { ...stagedRequest(s), aim: e ? { index: this.inputAt, x: e.x, y: e.y } : undefined, by: "you" });
       this.busy = null;
-      if (!r.ok) { undoLocal?.(); this.rerun(); this.note = plainError(r.error, "Captain couldn't make that change."); }
+      if (!r.ok) this.note = plainError(r.error, "Captain couldn't make that change.");
+      else if (this.staged === s) {
+        // The page's copy takes the saved numbers at once, so the drawing does not jump back while it reads again.
+        for (const c of stagedChanges(this.net, s)) { if (c.i == null) this.net.layers[c.k].b[c.j] = c.value; else this.net.layers[c.k].W[c.j][c.i] = c.value; }
+        this.staged = null;
+        this.syncInput();
+        this.rerun();
+      }
       this.read(cx);
       cx.notify();
     });
   }
 
-  /** Set the picked number to the value typed. */
-  setTyped(cx) {
-    const t = handTarget(this), text = String(this.handInput.value() ?? "").trim(), value = Number(text);
-    if (!t) return;
-    if (!text || !Number.isFinite(value)) { this.note = "Type a number, such as -1.5."; return cx.notify(); }
-    if (value === t.value) return;
-    this.commit({ op: "set", layer: t.k + 1, neuron: t.j, from: t.i, value }, cx);
+  /** Dragging the dot stages a value as it moves: the drawing and the cost for this input follow it, marked as not
+   *  saved. Letting go sends nothing. */
+  dragStart(x, cx) {
+    const t = handTarget(this);
+    if (!t || this.busy) return;
+    this.drag = { x0: x, from: this.staged?.kind === "value" ? this.staged.value : t.value };
+    this.handle?.focus?.();
+    cx.notify();
   }
-
-  /** Halve, double or zero the open neuron. */
-  editNeuron(what, cx) {
-    if (!this.sel || this.sel.k === 0) return;
-    this.commit({ ...what, layer: this.sel.k, neuron: this.sel.j }, cx);
-  }
-
-  /** Dragging a number: the page's own copy of the network follows the pointer, so the drawing and the cost for
-   *  this input move at once. The edit is sent when the drag ends. */
-  dragStart(x, cx) { const t = handTarget(this); if (!t || this.busy) return; this.drag = { x0: x, from: t.value, k: t.k, j: t.j, i: t.i }; cx.notify(); }
-  put(d, value) { if (d.i == null) this.net.layers[d.k].b[d.j] = value; else this.net.layers[d.k].W[d.j][d.i] = value; }
   dragMove(x, cx) {
-    const d = this.drag;
-    if (!d) return;
-    this.put(d, Number((d.from + ((x - d.x0) / TRACK_W) * dragSpan(d.from)).toFixed(3)));
+    const d = this.drag, t = handTarget(this);
+    if (!d || !t) return;
+    const value = Number((d.from + ((x - d.x0) / TRACK_W) * dragSpan(t.value)).toFixed(3));
+    this.dropped = null; this.typo = null;
+    if (value !== t.value) this.staged = { kind: "value", k: t.k, j: t.j, i: t.i, value };
+    else if (this.staged?.kind === "value") this.staged = null;
+    this.handInput.set_value(this.staged?.kind === "value" ? String(value) : this.synced);
     this.rerun();
     cx.notify();
   }
-  dragEnd(cx) {
-    const d = this.drag;
-    if (!d) return;
-    this.drag = null;
-    const value = d.i == null ? this.net.layers[d.k].b[d.j] : this.net.layers[d.k].W[d.j][d.i];
-    this.syncInput();
-    if (value === d.from) return cx.notify();
-    this.commit({ op: "set", layer: d.k + 1, neuron: d.j, from: d.i, value }, cx, () => this.put(d, d.from));
+  dragEnd(cx) { if (!this.drag) return; this.drag = null; cx.notify(); }
+
+  /** Escape puts a staged change back. */
+  key(e, cx) {
+    if ((e?.key ?? e?.keystroke) !== "escape" || !this.staged) return;
+    this.putBack(cx);
+    cx.stop_propagation?.();
   }
 
   /** Start an agent on one of the three tasks, with what is selected written into the prompt. */
   ask(starter, cx) { cx.spawn(async (cx) => { await askAgent(cx, starter.prompt); }); }
-  back(cx) { this.stop?.(); this.stop = null; this.model = null; this.net = null; this.session = null; this.problem = null; this.sel = null; this.selW = null; this.loadList(cx); cx.notify(); }
+  back(cx) { this.leave(); this.stop?.(); this.stop = null; this.model = null; this.net = null; this.session = null; this.problem = null; this.sel = null; this.selW = null; this.loadList(cx); cx.notify(); }
 
   /** What the drawing needs to know. */
   drawing() {
-    return { net: this.net, run: this.run, grad: this.grad, sel: this.sel, selW: this.selW, mode: this.mode, walkedFrom: walkedFrom(this.net, this.walk.step), pulse: this.pulse };
+    return { net: this.shown ?? this.net, run: this.run, grad: this.grad, sel: this.sel, selW: this.selW, mode: this.mode, walkedFrom: walkedFrom(this.net, this.walk.step), pulse: this.pulse };
   }
 
   /** The top of the page: where this is (with the way back), the network in one line, how much of it has
@@ -414,6 +475,7 @@ export default class CaptainWeights extends View {
   chooser(c) {
     const rows = this.list ?? [];
     return v_flex().id("wt-chooser").flex_1().min_h(0).px(20).py(24).gap(14)
+      .when(Boolean(this.dropped), (e) => e.child(div().id("wt-dropped").max_w(560).text_size(11.5).line_height("16px").text_color(c.grey500).child(this.dropped)))
       .child(div().max_w(560).text_size(12.5).line_height("19px").text_color(c.grey500)
         .child("Open a network to see inside it: every neuron, weight and bias is drawn, and what an agent reads or changes shows as it happens."))
       .when(!this.list, (e) => e.child(div().max_w(560).child(Skeleton(c, 2))))
@@ -452,7 +514,9 @@ export default class CaptainWeights extends View {
   controls(c) {
     return h_flex().id("wt-controls").flex_none().px(20).pb(8).gap(6).items_center().flex_wrap()
       .child(this.modes(c))
-      .child(div().flex_1())
+      // One quiet line: the drawing is showing a change that is not saved, or one was just dropped by leaving it.
+      .child(div().id("wt-staged-says").flex_1().min_w(0).truncate().px(6).text_size(11.5).text_color(this.staged ? c.blue : c.grey500)
+        .child(this.staged ? "Not saved: this is a preview." : this.dropped ?? ""))
       .child(WalkButtons(c, this));
   }
 
@@ -472,7 +536,7 @@ export default class CaptainWeights extends View {
   side(c, w, narrow) {
     return div().id("wt-side").w(w).flex_none().h_full().overflow_y_scroll().child(v_flex().p(14).gap(12)
       .when(narrow, (e) => e.child(h_flex().child(div().flex_1()).child(div().id("wt-side-close").text_size(11.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
-        .on_click((_e, cx) => { this.sel = null; this.selW = null; cx.notify(); }).child("Close this neuron"))))
+        .on_click((_e, cx) => this.closeNeuron(cx)).child("Close this neuron"))))
       .child(Inspector(c, this, [ChainBlock(c, this), HandBlock(c, this)])));
   }
 
@@ -492,6 +556,8 @@ export default class CaptainWeights extends View {
     const ch = Math.max(180, H - headH - 44 - (tight ? 72 : 38) - (this.askOpen ? 42 : 0) - (this.deploy ? 34 : 0) - BAND_H - 14 - saysH);
     const costW = Math.min(520, Math.max(300, Math.round((W - 40) * 0.45)));
     return v_flex().id("weights").size_full().bg(c.canvas).text_color(c.navy).font_family(FONT)
+      .when(Boolean(this.handle), (e) => e.track_focus(this.handle))
+      .on_key_down((e, cx) => this.key(e, cx))
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1 || Math.abs(size.height - this.height) > 1) { this.width = size.width; this.height = size.height; cx.notify(); } })
       .child(this.header(c))
       .when(!this.model, (e) => e.child(this.chooser(c)))
@@ -511,7 +577,7 @@ export default class CaptainWeights extends View {
             .when(!tight, (y) => y.child(div().w(1).h_full().flex_none().bg(c.rule)))
             .child(this.side(c, tight ? W : rail, narrow))))
         .when(walking, (x) => x.child(div().id("wt-walk-says").h(saysH).flex_none().px(20).pt(6).overflow_hidden().text_size(12.5).line_height("18px")
-          .child(walkWords(net, this.run, this.grad, this.walk.step, net.examples[this.inputAt].y))))
+          .child(walkWords(this.shown ?? net, this.run, this.grad, this.walk.step, net.examples[this.inputAt].y))))
         .when(!tight, (x) => x.child(h_flex().id("wt-band").h(BAND_H).flex_none().border_t(1).border_color(c.rule).bg(c.surface)
           .child(div().pl(20).pt(10).child(CostPanel(c, this, { width: costW, height: BAND_H - 12 })))
           .child(div().w(16).flex_none())
