@@ -59,6 +59,7 @@ export class MlflowList {
     this.experiments = null; // [...] | {error}
     this.models = null; // [...] | {error}
     this.modelsSaid = null; // why there are none yet, or that this is the last read, in the services' words
+    this.expSaid = null;    // the same, for the experiments
     this.open = new Set(); // experiment ids and model names shown open
     this.runs = new Map(); // experiment id -> [...] | {error} | null (loading)
     this.linking = null; // `${model}@${version}`: its pipeline list is open
@@ -86,7 +87,11 @@ export class MlflowList {
     this.fetch(cx);
   }
 
-  fetch(cx) {
+  /** A person asked to read again now. The services still wait out a limit the tracking server set, and say so. */
+  readAgain(cx) { this.fetch(cx, true); }
+
+  fetch(cx, fresh = false) {
+    const q = fresh ? "?fresh=true" : "";
     cx.spawn(async (cx) => {
       const s = await api("/api/mlflow", { scoped: false });
       // The services are still starting: ask again shortly, never sit on the placeholder.
@@ -95,10 +100,12 @@ export class MlflowList {
       if (!s.ok) { this.status = { error: said(s, "Couldn't read the MLflow settings.") }; cx.notify(); return; }
       this.status = s.data;
       if (!s.data.configured) { cx.notify(); return; }
-      const [e, m] = await Promise.all([api("/api/mlflow/experiments", { scoped: false, timeout: 60 }), api("/api/mlflow/models", { scoped: false, timeout: 60 })]);
-      this.experiments = e.ok ? e.data : { error: said(e, "Couldn't read MLflow's experiments.") };
-      // The services answer at once: {models, state, text}. `text` says why there is nothing yet, or that this is
-      // the last read, when the catalog is still being read or is limiting requests. (An older shape was the list.)
+      const [e, m] = await Promise.all([api(`/api/mlflow/experiments${q}`, { scoped: false, timeout: 60 }), api(`/api/mlflow/models${q}`, { scoped: false, timeout: 60 })]);
+      // Both are answered at once: {experiments | models, state, text}. `text` says why there is nothing yet, or
+      // that this is the last read, while the server is being read or is limiting requests. (An older shape was the list.)
+      const ed = e.ok ? e.data : null;
+      this.experiments = !e.ok ? { error: said(e, "Couldn't read MLflow's experiments.") } : Array.isArray(ed) ? ed : ed?.experiments ?? [];
+      this.expSaid = ed && !Array.isArray(ed) && ed.state !== "ready" ? ed.text ?? null : null;
       const md = m.ok ? m.data : null;
       this.models = !m.ok ? { error: said(m, "Couldn't read MLflow's registered models.") } : Array.isArray(md) ? md : md?.models ?? [];
       this.modelsSaid = md && !Array.isArray(md) && md.state !== "ready" ? md.text ?? null : null;
@@ -180,7 +187,8 @@ export class MlflowList {
       .child(div().px(10).pt(4).text_size(11).text_color(c.grey500).child("MLflow experiments"))
       .when(exps === null, (e) => e.child(div().px(10).child(Skeleton(c, 2))))
       .when(!!exps?.error, (e) => e.child(div().px(10).text_size(12).text_color(c.fail).child(exps.error)))
-      .when(Array.isArray(exps) && !exps.length, (e) => e.child(div().px(10).text_size(12).text_color(c.grey500).child("No MLflow experiments yet.")))
+      .when(Array.isArray(exps) && Boolean(this.expSaid), (e) => e.child(div().id(`${id}-exps-said`).px(10).text_size(12).text_color(c.grey500).child(this.expSaid)))
+      .when(Array.isArray(exps) && !exps.length && !this.expSaid, (e) => e.child(div().px(10).text_size(12).text_color(c.grey500).child("No MLflow experiments yet.")))
       .children(Array.isArray(exps) ? exps.flatMap((x) => {
         const open = this.open.has(x.id);
         const runs = this.runs.get(x.id);

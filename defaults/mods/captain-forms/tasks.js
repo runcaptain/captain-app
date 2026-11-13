@@ -649,7 +649,9 @@ export const TASKS = [
       const r = await api("/api/mlflow", { method: "PUT", body: v.from === "databricks" ? { databricks_connection: v.conn } : { uri: String(v.uri).trim(), token_secret: tokenSecret } });
       if (!r.ok) return ok(r, "");
       setShared("captain.mlflow.changed", Date.now()); // an open MLflow list reads again
-      const t = await api("/api/mlflow/experiments", { timeout: 60 });
+      // Does the connection just saved work? One call, waited for (check=true): the list on the screens is read
+      // behind its answer and never fails, so it can't say whether a login was refused.
+      const t = await api("/api/mlflow/experiments?check=true", { timeout: 60 });
       if (t.ok) return { ok: true, message: `Connected MLflow: ${t.data.length} experiment${t.data.length === 1 ? "" : "s"}.` };
       return { ok: false, error: `Saved, but Captain couldn't read MLflow. ${plain(t.data?.error ?? t.error)}` };
     },

@@ -78,17 +78,20 @@ def test_a_refused_login_reaches_the_app_as_a_sentence(ctx, monkeypatch):
     h = {"Authorization": f"Bearer {server.TOKEN}"}
     assert c.put("/api/mlflow", headers=h, json={"uri": "https://mlflow.example.com"}).status_code == 200
     monkeypatch.setattr(httpx, "request", lambda *a, **k: httpx.Response(403, request=httpx.Request("POST", "https://x")))
-    r = c.get("/api/mlflow/experiments", headers=h)
+    # The Connect MLflow form asks whether the connection works (check=true): a refusal is its error, in words.
+    r = c.get("/api/mlflow/experiments?check=true", headers=h)
     assert r.status_code == 403 and r.json()["error"].startswith("MLflow refused the login")
 
     def down(*a, **k):
         raise httpx.ConnectError("no route", request=httpx.Request("POST", "https://x"))
 
     monkeypatch.setattr(httpx, "request", down)
-    r = c.get("/api/mlflow/experiments", headers=h)
+    r = c.get("/api/mlflow/experiments?check=true", headers=h)
     assert r.status_code == 502 and r.json()["error"] == ("Couldn't reach MLflow at mlflow.example.com. Check the address in "
                                                          "Connect MLflow, and that the server is running.")
-    # The models are read behind the answer, so that route says the same sentence as a state, not as a failure.
+    # The lists on the screens are read behind their answers, so those routes say the same sentence as a state,
+    # never as a failure. The experiments, too.
+    assert c.get("/api/mlflow/experiments", headers=h).status_code == 200
     import time
 
     from captain_search import mlflow_bridge as MF
@@ -242,9 +245,16 @@ def test_a_rate_limit_stops_the_read_and_is_said_in_words_never_as_an_error(ctx,
         MF.models_kept(ctx)
     time.sleep(0.3)
     assert catalog.calls == 4, "no call is made before the wait is over, however often the screen asks"
+    # a person's "Read again" does not get past it either
+    assert MF.models_kept(ctx, fresh=True)["state"] == "limited" and MF.experiments_kept(ctx, fresh=True)["state"] == "limited"
+    time.sleep(0.2)
+    assert catalog.calls == 4, "Read again obeys the wait: nothing was sent, for the models or the experiments"
+    with pytest.raises(MF.RateLimited, match="Try again in"):
+        MF.runs(ctx, "1", paced=True)
+    assert catalog.calls == 4, "nor for an experiment's runs"
     # the wait is over and the limit is lifted: the next ask reads, and the list arrives
-    key = next(iter(MF._STATE))
-    MF._STATE[key]["until"] = time.monotonic() - 1
+    srv = next(iter(MF._WAIT))
+    MF._WAIT[srv]["until"] = time.monotonic() - 1
     catalog.limit_after = None
     seq = CH.FEED.seq
     assert MF.models_kept(ctx)["state"] == "reading"
@@ -258,10 +268,10 @@ def test_a_limit_with_no_wait_given_backs_off_longer_each_time(ctx, catalog):
     MF.models_kept(ctx)
     assert _until(lambda: MF.models_kept(ctx)["state"] == "limited")
     first = MF.models_kept(ctx)["retry_in_s"]
-    key = next(iter(MF._STATE))
-    MF._STATE[key]["until"] = time.monotonic() - 1
+    srv = next(iter(MF._WAIT))
+    MF._WAIT[srv]["until"] = time.monotonic() - 1
     MF.models_kept(ctx)
-    assert _until(lambda: MF._STATE[key].get("tries") == 2 and MF._STATE[key]["state"] == "limited")
+    assert _until(lambda: MF._WAIT[srv].get("tries") == 2 and MF.limited_for(ctx) > 0)
     second = MF.models_kept(ctx)["retry_in_s"]
     assert 28 <= first <= 30 and 58 <= second <= 60, f"half a minute, then a minute: {first} s, {second} s"
     assert catalog.calls == 2, "one call for each try, never a loop"
@@ -317,3 +327,40 @@ def test_the_calls_made_are_counted_and_said_in_the_log(ctx, catalog, tmp_path):
         assert f"read {len(catalog.names)} registered models with {1 + len(catalog.names)} calls" in text and "calls to the server since the services started" in text
     finally:
         applog.stop()
+
+
+def test_the_experiments_follow_the_same_rules_and_what_is_kept_stands_five_minutes(ctx, catalog, monkeypatch):
+    assert MF.KEEP_S == 300.0, "kept five minutes: the server's limit can be a whole organisation's"
+    real = catalog.request
+
+    def request(method, url, json=None, params=None, headers=None, timeout=None):
+        if "experiments/search" in url:
+            catalog.calls += 1
+            catalog.times.append((time.monotonic(), timeout))
+            return httpx.Response(200, json={"experiments": [{"experiment_id": "1", "name": "/rankers"}]}, request=httpx.Request(method, url))
+        return real(method, url, json=json, params=params, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(httpx, "request", request)
+    a = MF.experiments_kept(ctx)
+    assert (a["experiments"], a["state"]) == ([], "reading") and a["text"].startswith("Reading the experiments.")
+    assert _until(lambda: MF.experiments_kept(ctx)["state"] == "ready")
+    assert [e["name"] for e in MF.experiments_kept(ctx)["experiments"]] == ["/rankers"]
+    n = catalog.calls
+    for _ in range(10):
+        MF.experiments_kept(ctx)
+        MF.models_kept(ctx)
+    assert _until(lambda: MF.models_kept(ctx)["state"] == "ready")
+    after_models = catalog.calls
+    assert after_models == n + 1 + len(catalog.names), "the models were read once, the experiments not again"
+    for _ in range(10):
+        MF.experiments_kept(ctx)
+        MF.models_kept(ctx)
+    time.sleep(0.2)
+    assert catalog.calls == after_models, "asked again and again inside five minutes: nothing is sent"
+    # a person's "Read again": at once it says so, but not sooner than a few seconds after the last read
+    assert MF.models_kept(ctx, fresh=True)["state"] == "ready" and catalog.calls == after_models, "just read: not read again yet"
+    for k in MF._KEPT:
+        MF._KEPT[k]["at"] -= MF.AGAIN_S + 1
+    b = MF.models_kept(ctx, fresh=True)
+    assert b["state"] == "reading" and b["text"] == "Reading again." and len(b["models"]) == len(catalog.names), "the last read stays on screen while it reads"
+    assert _until(lambda: catalog.calls == after_models + 1 + len(catalog.names))

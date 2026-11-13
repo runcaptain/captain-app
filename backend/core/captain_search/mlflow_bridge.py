@@ -171,15 +171,21 @@ def _ts(ms) -> str | None:
         return None
 
 
-def experiments(ctx: Context, limit: int = 200) -> list[dict]:
-    out = _call(ctx, "POST", "experiments/search", {"max_results": min(limit, 1000)})
+def experiments(ctx: Context, limit: int = 200, timeout: float = 60, paced: bool = False) -> list[dict]:
+    out = _call(ctx, "POST", "experiments/search", {"max_results": min(limit, 1000)}, timeout, paced)
     return [{"id": e["experiment_id"], "name": e.get("name"), "stage": e.get("lifecycle_stage"),
              "updated": _ts(e.get("last_update_time"))} for e in out.get("experiments", [])]
 
 
-def runs(ctx: Context, experiment_id: str, limit: int = 100, order: str = "attributes.start_time DESC") -> list[dict]:
+def runs(ctx: Context, experiment_id: str, limit: int = 100, order: str = "attributes.start_time DESC", paced: bool = False) -> list[dict]:
+    """An experiment's runs. `paced` is the app asking for a person who opened the experiment: it takes its turn
+    behind the background reads, and while the server has said to slow down it is not asked at all."""
+    if paced:
+        left = limited_for(ctx)
+        if left > 0:
+            raise RateLimited(f"The model catalog is limiting requests. Try again in {_span(max(1, int(round(left))))}.", left)
     out = _call(ctx, "POST", "runs/search", {"experiment_ids": [experiment_id], "max_results": min(limit, 1000),
-                                              "order_by": [order]})
+                                              "order_by": [order]}, CALL_S if paced else 60, paced)
     res = []
     for r in out.get("runs", []):
         info, data = r.get("info", {}), r.get("data", {})
@@ -290,26 +296,35 @@ def models(ctx: Context, limit: int = 200, include_system: bool = False, timeout
 # read stops and waits as long as it was told (or half a minute, then longer), never retrying in a loop. Nothing
 # the server does is an error of the app's: the route never fails for it.
 
-KEEP_S = 30.0          # how long a kept answer is given without reading again behind it
+KEEP_S = 300.0         # how long a kept answer is given without reading again behind it: five minutes, since the
+                       # server's limit can be a whole organisation's
+AGAIN_S = 10.0         # the soonest a person's "Read again" reads again
 CALL_S = 10.0          # the limit on each call of a background read
 LIMITED_S = 30.0       # how long to wait after being told to slow down, when the server did not say
 LIMITED_MAX_S = 600.0
 FAILED_S = 60.0        # how long to wait after any other failure
 _KEPT: dict = {}       # key -> {"at": monotonic, "value": [...]}
-_STATE: dict = {}      # key -> {"state": reading|limited|failed, "why": str, "until": monotonic, "tries": n}
+_STATE: dict = {}      # key -> {"state": reading|failed, "why": str, "until": monotonic}
+_WAIT: dict = {}       # server -> {"until": monotonic, "tries": n}: told to slow down, for everything read from it
 _REFRESHING: set = set()
 _keep_lock = threading.Lock()
 
+WHAT = {"models": "registered models", "experiments": "experiments"}
 
-def _keep_key(ctx: Context, include_system: bool) -> str:
+
+def _server(ctx: Context) -> str:
     doc = _read(ctx)[0]
-    return hashlib.sha256(json.dumps([ctx.workspace.name, doc.get("uri"), doc.get("databricks_connection"), bool(include_system)]).encode()).hexdigest()[:20]
+    return hashlib.sha256(json.dumps([ctx.workspace.name, doc.get("uri"), doc.get("databricks_connection")]).encode()).hexdigest()[:20]
+
+
+def _keep_key(ctx: Context, include_system: bool, kind: str = "models") -> str:
+    return f"{kind}-{_server(ctx)}" + ("-sys" if include_system else "")
 
 
 def _keep_file(key: str) -> str:
     from .workspace import home
 
-    return os.path.join(home(), "cache", f"mlflow-models-{key}.json")
+    return os.path.join(home(), "cache", f"mlflow-{key}.json")
 
 
 def _keep(key: str, value: list) -> None:
@@ -345,51 +360,60 @@ def _log(message: str) -> None:
         pass
 
 
-def _read_behind(ctx: Context, key: str, include_system: bool) -> None:
-    """Read the models in the background, once, however many asks arrive meanwhile. On a rate limit or any other
-    failure nothing is asked again before the wait is over: the next ask after that starts another read."""
+def limited_for(ctx: Context) -> float:
+    """How many seconds are left of a wait the server asked for. 0 when it has not, or the wait is over."""
     with _keep_lock:
-        st = _STATE.get(key)
-        if key in _REFRESHING or (st and st.get("until", 0) > time.monotonic()):
-            return
+        w = _WAIT.get(_server(ctx))
+    return max(0.0, w["until"] - time.monotonic()) if w else 0.0
+
+
+def _read_behind(ctx: Context, key: str, kind: str, read) -> bool:
+    """Read in the background, once, however many asks arrive meanwhile. While the server has said to slow down,
+    or just after a failure, nothing is asked: the next ask after the wait starts another read. Returns whether
+    a read was started."""
+    srv = _server(ctx)
+    with _keep_lock:
+        st, w = _STATE.get(key), _WAIT.get(srv)
+        now = time.monotonic()
+        if key in _REFRESHING or (w and w["until"] > now) or (st and st.get("until", 0) > now):
+            return False
         _REFRESHING.add(key)
-        tries = (st or {}).get("tries", 0)
-        _STATE[key] = {"state": "reading", "why": None, "until": 0, "tries": tries}
+        _STATE[key] = {"state": "reading", "why": None, "until": 0}
 
     def go():
         began, calls = time.monotonic(), CALLS["n"]
         try:
-            new = models(ctx, include_system=include_system, timeout=CALL_S, paced=True)
+            new = read()
             with _keep_lock:
                 old = (_KEPT.get(key) or {}).get("value")
+                was = _WAIT.pop(srv, None)
             _keep(key, new)
-            _log(f"read {len(new)} registered models with {CALLS['n'] - calls} calls in {time.monotonic() - began:.1f} s ({CALLS['n']} calls to the server since the services started)")
-            if new != old or tries:
+            _log(f"read {len(new)} {WHAT[kind]} with {CALLS['n'] - calls} calls in {time.monotonic() - began:.1f} s ({CALLS['n']} calls to the server since the services started)")
+            if new != old or was:
                 _tell()
         except RateLimited as e:
-            wait = e.wait if e.wait else min(LIMITED_MAX_S, LIMITED_S * 2 ** tries)
             with _keep_lock:
-                _STATE[key] = {"state": "limited", "why": "the model catalog is limiting requests", "until": time.monotonic() + wait, "tries": tries + 1}
-            _log(f"the model catalog is limiting requests: stopped after {CALLS['n'] - calls} calls, not asking again for {wait:.0f} s ({CALLS['n']} calls since the services started)")
+                tries = (_WAIT.get(srv) or {}).get("tries", 0)
+                wait = e.wait if e.wait else min(LIMITED_MAX_S, LIMITED_S * 2 ** tries)
+                _WAIT[srv] = {"until": time.monotonic() + wait, "tries": tries + 1}
+                _STATE.pop(key, None)
+            _log(f"the server is limiting requests: stopped after {CALLS['n'] - calls} calls, not asking again for {wait:.0f} s ({CALLS['n']} calls since the services started)")
             _tell()
         except Exception as e:  # noqa: BLE001  whatever the server did, the route does not fail for it
             with _keep_lock:
-                _STATE[key] = {"state": "failed", "why": str(e)[:200] or "the server could not be reached", "until": time.monotonic() + FAILED_S, "tries": tries + 1}
-            _log(f"the registered models could not be read after {CALLS['n'] - calls} calls: {str(e)[:200]}")
+                _STATE[key] = {"state": "failed", "why": str(e)[:200] or "the server could not be reached", "until": time.monotonic() + FAILED_S}
+            _log(f"the {WHAT[kind]} could not be read after {CALLS['n'] - calls} calls: {str(e)[:200]}")
             _tell()
         finally:
             with _keep_lock:
                 _REFRESHING.discard(key)
 
-    threading.Thread(target=go, daemon=True, name="mlflow-models").start()
+    threading.Thread(target=go, daemon=True, name=f"mlflow-{kind}").start()
+    return True
 
 
-def models_kept(ctx: Context, include_system: bool = False) -> dict:
-    """{models, state, text, retry_in_s}, at once, always. `models` is what was read last (in this run or an
-    earlier one), or an empty list when nothing has been read yet. `state` is "ready", "reading", "limited" (the
-    server said to slow down) or "failed", and `text` says it in words when it is not ready. A read runs behind
-    the answer when what is kept is older than half a minute, and the change feed says `mlflow` when it lands."""
-    key = _keep_key(ctx, include_system)
+def _kept(ctx: Context, kind: str, key: str, read, fresh: bool = False) -> dict:
+    """{<kind>, state, text, retry_in_s}, at once, always. See `models_kept`."""
     with _keep_lock:
         hit = _KEPT.get(key)
     if hit is None:
@@ -400,22 +424,45 @@ def models_kept(ctx: Context, include_system: bool = False) -> dict:
                 hit = _KEPT.setdefault(key, hit)
         except (OSError, ValueError, KeyError):
             hit = None
-    if hit is None or time.monotonic() - hit["at"] > KEEP_S:
-        _read_behind(ctx, key, include_system)
+    age = time.monotonic() - hit["at"] if hit else float("inf")
+    # A person's "Read again" reads now, but not more often than every few seconds, and never past a wait the
+    # server asked for: `_read_behind` holds to that.
+    if hit is None or age > KEEP_S or (fresh and age > AGAIN_S):
+        _read_behind(ctx, key, kind, read)
     with _keep_lock:
         st = dict(_STATE.get(key) or {})
     value = hit["value"] if hit else []
-    left = max(0, int(round(st.get("until", 0) - time.monotonic()))) if st.get("until") else 0
-    again = f"trying again in {_span(left)}" if left else "trying again shortly"
-    if st.get("state") == "limited":
-        text = (f"Could not be read: {st['why']}, {again}." if not hit else f"Showing the last read: {st['why']}, {again}.")
-        return {"models": value, "state": "limited", "text": text, "retry_in_s": left}
+    wait = limited_for(ctx)
+    if wait > 0:
+        left = max(1, int(round(wait)))
+        text = (f"Could not be read: the model catalog is limiting requests, trying again in {_span(left)}." if not hit
+                else f"Showing the last read: the model catalog is limiting requests, trying again in {_span(left)}.")
+        return {kind: value, "state": "limited", "text": text, "retry_in_s": left}
     if st.get("state") == "failed":
-        text = (f"Could not be read: {_plain(st['why'])} {again[0].upper() + again[1:]}." if not hit else f"Showing the last read. {again[0].upper() + again[1:]}.")
-        return {"models": value, "state": "failed", "text": text, "retry_in_s": left}
+        left = max(0, int(round(st.get("until", 0) - time.monotonic())))
+        again = f"Trying again in {_span(left)}." if left else "Trying again shortly."
+        text = f"Could not be read: {_plain(st['why'])} {again}" if not hit else f"Showing the last read. {again}"
+        return {kind: value, "state": "failed", "text": text, "retry_in_s": left}
     if hit is None:
-        return {"models": [], "state": "reading", "text": "Reading the registered models. A hosted catalog can take a few seconds.", "retry_in_s": 0}
-    return {"models": value, "state": "ready", "text": None, "retry_in_s": 0}
+        return {kind: [], "state": "reading", "text": f"Reading the {WHAT[kind]}. A hosted catalog can take a few seconds.", "retry_in_s": 0}
+    if st.get("state") == "reading" and fresh:
+        return {kind: value, "state": "reading", "text": "Reading again.", "retry_in_s": 0}
+    return {kind: value, "state": "ready", "text": None, "retry_in_s": 0}
+
+
+def models_kept(ctx: Context, include_system: bool = False, fresh: bool = False) -> dict:
+    """{models, state, text, retry_in_s}, at once, always. `models` is what was read last (in this run or an
+    earlier one), or an empty list when nothing has been read yet. `state` is "ready", "reading", "limited" (the
+    server said to slow down) or "failed", and `text` says it in words when it is not ready. A read runs behind
+    the answer when what is kept is older than five minutes, or when a person asks to read again (`fresh`), and
+    the change feed says `mlflow` when it lands."""
+    return _kept(ctx, "models", _keep_key(ctx, include_system, "models"),
+                 lambda: models(ctx, include_system=include_system, timeout=CALL_S, paced=True), fresh)
+
+
+def experiments_kept(ctx: Context, fresh: bool = False) -> dict:
+    """{experiments, state, text, retry_in_s}: the experiments, by the same rules as `models_kept`."""
+    return _kept(ctx, "experiments", _keep_key(ctx, False, "experiments"), lambda: experiments(ctx, timeout=CALL_S, paced=True), fresh)
 
 
 def _span(seconds: int) -> str:
@@ -432,6 +479,7 @@ def forget_models() -> None:
     with _keep_lock:
         _KEPT.clear()
         _STATE.clear()
+        _WAIT.clear()
 
 
 def _legacy_models(ctx: Context, limit: int = 200, timeout: float = 60, paced: bool = False) -> list[dict]:
