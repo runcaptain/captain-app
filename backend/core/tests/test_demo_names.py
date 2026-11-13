@@ -16,7 +16,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 NAMES = json.loads((ROOT / "tests" / "demo-names.json").read_text())
 IDS, LABELS = set(NAMES["ids"]), set(NAMES["labels"])
-VIEWS = ("empty", "leftover", "stopped", "stopped-open", "one", "several", "failed", "found", "deploying", "busy", "model", "model-details")
+VIEWS = ("empty", "leftover", "stopped", "stopped-open", "one", "several", "failed", "found", "deploying", "busy", "model", "model-details", "model-calls")
 # A project given by name: project: "x", "project_name": "X", project_id='x'. Not a path, a sentence or a variable.
 GIVEN = re.compile(r'''\bproject(?:_name|Name|_id|_label)?["']?\s*[:=]\s*["']([A-Za-z0-9][A-Za-z0-9 _.-]{0,40})["']''')
 
