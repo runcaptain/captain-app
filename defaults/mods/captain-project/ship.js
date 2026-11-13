@@ -16,6 +16,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { exec, appHome, openOverlay, run } from "herdr";
 import { MONO } from "./kit/tokens.js";
 import { api } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { Badge, Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { costState, costSlice } from "./kit/cost.js";
@@ -227,17 +228,29 @@ export class Ship {
     return open ?? [...xs].reverse().find((e) => e.evaluation) ?? xs[xs.length - 1] ?? null;
   }
 
+  /** Wait for a job to end. Nothing is asked on a clock: the job says so itself on the live channel (`job:<id>`,
+   *  on every step, progress line and its end), and each time it does the job is read once. While the channel is
+   *  down the kit calls every two seconds instead, so the wait still ends. */
   async wait(id, minutes) {
-    for (let i = 0; i < minutes * 120; i++) {
-      const r = await api(`/api/jobs/${enc(id)}`, { scoped: false });
-      // The services no longer know the job (they were restarted), or staging itself already said the work is
-      // over: stop waiting. What is true is read from the project, not from a job that can't answer.
-      if (r.status === 404 || (i > 0 && !this.busy)) return { ok: true, result: null };
-      if (r.ok && r.data?.status === "done") return { ok: true, result: r.data.result };
-      if (r.ok && r.data?.status === "failed") return { ok: false, error: plainError(r.data.message, "It didn't finish.") };
-      if (r.ok && r.data?.message && r.data.status === "running" && this.busy) { this.busy = r.data.message; this.cx?.notify(); }
-      try { await exec("sleep", ["0.5"]); } catch { break; }
-    }
+    const until = Date.now() + minutes * 60000;
+    let wake = null, told = false;
+    const stop = watchLive(this.cx, [`job:${id}`], () => { told = true; wake?.(); });
+    this.jobWake = () => wake?.(); // the page's minute clock, so a job that says nothing still meets its deadline
+    try {
+      for (let i = 0; Date.now() < until; i++) {
+        told = false;
+        const r = await api(`/api/jobs/${enc(id)}`, { scoped: false });
+        // The services no longer know the job (they were restarted), or staging itself already said the work is
+        // over: stop waiting. What is true is read from the project, not from a job that can't answer.
+        if (r.status === 404 || (i > 0 && !this.busy)) return { ok: true, result: null };
+        if (r.ok && r.data?.status === "done") return { ok: true, result: r.data.result };
+        if (r.ok && r.data?.status === "failed") return { ok: false, error: plainError(r.data.message, "It didn't finish.") };
+        if (r.ok && r.data?.message && r.data.status === "running" && this.busy) { this.busy = r.data.message; this.cx?.notify(); }
+        // Told while reading: read again at once. Else wait to be told.
+        if (!told) await new Promise((resolve) => { wake = resolve; });
+        wake = null;
+      }
+    } finally { stop(); this.jobWake = null; }
     return { ok: false, error: "It's still starting. Look again in a minute." };
   }
 

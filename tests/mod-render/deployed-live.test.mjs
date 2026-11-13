@@ -56,7 +56,8 @@ fs.cpSync(path.join(root, 'defaults/mods/captain-project'), pdir, { recursive: t
 const { default: Page } = await import(path.join(pdir, 'main.js'));
 const { MONO } = await import(path.join(pdir, 'kit/tokens.js'));
 const byId = (h, id) => h.byIdPrefix(id).filter((e) => e.call('id')?.[0] === id);
-const until = async (h, ok, what, tries = 240) => { for (let i = 0; i < tries && !ok(); i++) await h.idle(150); assert.ok(ok(), `${what}: ${h.text().slice(-1500)}`); };
+// The app's timers run (the live channel's own among them): the page hears a job end, it does not ask on a clock.
+const until = async (h, ok, what, tries = 240) => { for (let i = 0; i < tries && !ok(); i++) { await h.layoutLists({}); await h.idle(150); } assert.ok(ok(), `${what}: ${h.text().slice(-1500)}`); };
 const clean = (t, where) => {
   for (const bad of [/\bengine\b/i, /\bdaemon\b/i, /\bcst /, /CST_[A-Z]/, /[\u2190-\u21ff]/, /\u2014/, /\bpipeline/i, /\bchampion\b/i, /render-test-key/, /[Ss]taging\b/, /\bStage (it|the)\b/, /\bstaged\b/])
     assert.ok(!bad.test(t), `no ${bad} ${where}: ${t.match(bad)?.[0]} in ...${t.slice(Math.max(0, t.search(bad) - 80), t.search(bad) + 60)}`);
