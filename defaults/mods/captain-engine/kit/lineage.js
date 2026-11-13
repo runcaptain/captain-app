@@ -158,7 +158,7 @@ export class LineageGraph {
   set(graph, focus) {
     this.graph = graph ?? { nodes: [], edges: [] };
     if (focus !== undefined) {
-      if (focus !== this.focus) { this.column = null; this.colEdges = []; this.sel = null; this.moved = new Map(); this.pan = { x: 0, y: 0 }; this.zoom = 1; this.fitted = false; }
+      if (focus !== this.focus) { this.column = null; this.colEdges = []; this.sel = null; this.moved = new Map(); this.pan = { x: 0, y: 0 }; this.zoom = 1; this.fitted = false; this.touched = false; }
       this.focus = focus;
     }
     if (this.sel && !(this.graph.nodes ?? []).some((n) => n.id === this.sel)) this.sel = null;
@@ -343,10 +343,16 @@ export class LineageGraph {
     const H = opts.height > 0 ? Math.max(300, opts.height) : Math.max(320, Math.min(620, L.height + 16));
     if (opts.width > 0) {
       this.view = { w: opts.width, h: H };
-      if (!this.fitted && L.pos.size) {
+      // Fitted when it first has boxes, and again whenever the canvas changes size or the graph grows (a screen
+      // learns its real width a moment after it first draws), until the person pans, zooms or drags: then the
+      // view is theirs.
+      const sized = `${opts.width}x${H}:${L.pos.size}`;
+      if (L.pos.size && (!this.fitted || (!this.touched && sized !== this.fitFor))) {
         this.fitted = true;
+        this.fitFor = sized;
         const E = this.extent(L);
         if (E.w > opts.width || E.h > H) this.fit(L, opts.width, H);
+        else { this.zoom = 1; this.pan = { x: Math.max(0, (opts.width - E.w) / 2), y: Math.max(0, (H - E.h) / 2) }; }
       }
     }
     const z = this.zoom;
@@ -441,6 +447,7 @@ export class LineageGraph {
           const dx = (e.position?.x ?? 0) - p.x0, dy = (e.position?.y ?? 0) - p.y0;
           if (!p.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
           p.moved = true;
+          this.touched = true;
           if (p.kind === "node") this.moved.set(p.id, { x: p.ox + dx / this.zoom, y: p.oy + dy / this.zoom });
           else this.pan = { x: p.ox + dx, y: p.oy + dy };
           cx.notify();
@@ -457,6 +464,7 @@ export class LineageGraph {
           view(e);
           cx.stop_propagation?.();
           const d = e.delta ?? { x: 0, y: 0 };
+          this.touched = true;
           if (e.modifiers?.platform || e.modifiers?.control) {
             const lp = e.local_position ?? (e.bounds && e.position ? { x: e.position.x - e.bounds.x, y: e.position.y - e.bounds.y } : { x: 0, y: 0 });
             this.zoomBy(Math.exp(d.y * 0.005), lp.x, lp.y);
@@ -469,9 +477,9 @@ export class LineageGraph {
         .child(this.details(c, L) ?? div())
         .child(this.minimap(c, L, vw, vh) ?? div())
         .child(h_flex().absolute().top(8).right(8).gap(4)
-          .child(zoomBtn("out", "-", "Zoom out", () => this.zoomBy(1 / 1.2, (vw || L.width) / 2, vh / 2)))
-          .child(zoomBtn("in", "+", "Zoom in", () => this.zoomBy(1.2, (vw || L.width) / 2, vh / 2)))
-          .child(zoomBtn("fit", "Fit", "Show the whole graph", () => { this.moved = new Map(); this.fit(L, vw || L.width, vh); }))))
+          .child(zoomBtn("out", "-", "Zoom out", () => { this.touched = true; this.zoomBy(1 / 1.2, (vw || L.width) / 2, vh / 2); }))
+          .child(zoomBtn("in", "+", "Zoom in", () => { this.touched = true; this.zoomBy(1.2, (vw || L.width) / 2, vh / 2); }))
+          .child(zoomBtn("fit", "Fit", "Show the whole graph", () => { this.moved = new Map(); this.touched = false; this.fit(L, vw || L.width, vh); }))))
       .child(div().id(`${this.id}-hint`).text_size(11).text_color(c.grey500).child("Hover a box to see what feeds it and what it feeds. Click one to open it. Drag to move, Command and scroll to zoom."))
       .child(h_flex().flex_wrap().gap(12).text_size(11).text_color(c.grey500)
         .children([...new Set([...L.pos.keys()].map((id) => L.byId.get(id)?.kind))].filter(Boolean).map((k) =>
