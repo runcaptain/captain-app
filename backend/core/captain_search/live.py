@@ -92,63 +92,27 @@ def _listed(rid: str) -> None:
 
 # ---- runs written by another process ----------------------------------------------------------------------------
 # A run started from a terminal, or by a job on this computer, writes its files in the live folder, which is not in
-# the workspace. While someone listens to runs, the folder is looked at once a second: a file that changed tells
-# its run, and a header that changed tells the list too.
+# the workspace. While someone listens to runs the change feed looks at the folder once a second: a file that
+# changed tells its run, and a header that changed tells the list too.
 
-_watch: dict = {"thread": None, "seen": {}, "primed": False}
-
-
-def _look() -> set[str]:
-    now: dict[str, int] = {}
-    try:
-        with os.scandir(_dir()) as it:
-            for e in it:
-                if e.name.endswith((".json", ".jsonl")):
-                    now[e.name] = e.stat().st_mtime_ns
-    except OSError:
+def _file_topics(name: str) -> set[str]:
+    if not name.endswith((".json", ".jsonl")):
         return set()
-    before, first = _watch["seen"], not _watch["primed"]
-    _watch["seen"], _watch["primed"] = now, True
-    out: set[str] = set()
-    if first:
-        return out
-    for name in set(now) | set(before):
-        if now.get(name) == before.get(name):
-            continue
-        rid = name.rsplit(".", 1)[0]
-        if time.monotonic() - _TOLD.get(rid, 0.0) < 1.5:
-            continue   # this process wrote it and told it already
-        out.add(f"run:{rid}")
-        if name.endswith(".json"):
-            out.add("runs")
-    return out
+    rid = name.rsplit(".", 1)[0]
+    return {f"run:{rid}"} | ({"runs"} if name.endswith(".json") else set())
 
 
-def _watching() -> None:
+def _file_mine(name: str) -> bool:
+    return time.monotonic() - _TOLD.get(name.rsplit(".", 1)[0], 0.0) < 1.5   # this process wrote it and told it
+
+
+def _watch_folder() -> None:
     from . import changes
 
-    while changes.listening("runs") or changes.listening("run:"):
-        t0 = time.monotonic()
-        try:
-            ts = _look()
-            if ts:
-                changes.bump(*ts)
-        except Exception:  # noqa: BLE001
-            pass
-        time.sleep(max(0.05, 1.0 - (time.monotonic() - t0)))
-    _watch["thread"], _watch["primed"] = None, False
+    changes.watch_folder(_dir, _file_topics, ("runs", "run:"), _file_mine)
 
 
-def watch_folder() -> None:
-    """Start looking at the live folder if someone listens to runs and nothing is looking. Called by the change
-    feed each time a request starts listening."""
-    from . import changes
-
-    t = _watch["thread"]
-    if (t is not None and t.is_alive()) or not (changes.listening("runs") or changes.listening("run:")):
-        return
-    _watch["thread"] = threading.Thread(target=_watching, daemon=True, name="watch-live-runs")
-    _watch["thread"].start()
+_watch_folder()
 
 
 def _write_header(rid: str, head: dict) -> None:

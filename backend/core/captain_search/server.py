@@ -3298,15 +3298,6 @@ def _topics(text: str | None) -> list[str] | None:
     return ts or None
 
 
-def _watch_live_folder() -> None:
-    from . import live as LV
-
-    LV.watch_folder()
-
-
-CH.on_listen(_watch_live_folder)  # runs written by another process on this computer (live.py)
-
-
 @app.get("/api/changes", dependencies=A)
 async def changes_wait(since: int | None = None, topics: str | None = None, wait: float | None = None, hold: float | None = None,
                        client: str | None = None):

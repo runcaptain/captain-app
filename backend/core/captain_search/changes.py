@@ -536,6 +536,69 @@ def watch(store) -> None:
         _WATCHERS[uri].ensure()
 
 
+class FolderWatch:
+    """One folder on this computer that is not in the workspace, written by other processes: the live runs' folder,
+    the notebooks' drafts. While someone listens to one of `listens`, its files' change times are looked at once a
+    second, and `topics(name)` says what a changed file tells. `mine(name)` is true for a file this process just
+    wrote and told about itself."""
+
+    def __init__(self, path, topics, listens: tuple, mine=None):
+        self.path, self.topics, self.listens, self.mine = path, topics, tuple(listens), mine
+        self.seen: dict[str, int] = {}
+        self.primed = False
+        self.thread: threading.Thread | None = None
+
+    def wanted(self) -> bool:
+        return any(FEED.listening(t) for t in self.listens)
+
+    def look(self) -> set[str]:
+        now: dict[str, int] = {}
+        try:
+            with os.scandir(self.path()) as it:
+                for e in it:
+                    if not e.name.endswith(".tmp"):
+                        now[e.name] = e.stat().st_mtime_ns
+        except OSError:
+            now = {}
+        before, first = self.seen, not self.primed
+        self.seen, self.primed = now, True
+        out: set[str] = set()
+        if first:
+            return out
+        for name in set(now) | set(before):
+            if now.get(name) != before.get(name) and not (self.mine and self.mine(name)):
+                out |= set(self.topics(name) or ())
+        return out
+
+    def run(self) -> None:
+        while self.wanted():
+            t0 = time.monotonic()
+            try:
+                ts = self.look()
+                if ts:
+                    FEED.bump(*ts)
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(max(0.05, 1.0 - (time.monotonic() - t0)))
+        self.thread, self.primed = None, False
+
+    def ensure(self) -> None:
+        if (self.thread is not None and self.thread.is_alive()) or not self.wanted():
+            return
+        self.thread = threading.Thread(target=self.run, daemon=True, name="changes-folder")
+        self.thread.start()
+
+
+_FOLDERS: list[FolderWatch] = []
+
+
+def watch_folder(path, topics, listens: tuple, mine=None) -> FolderWatch:
+    """Look at a folder outside the workspace while someone listens to `listens`. `path()` gives the folder."""
+    w = FolderWatch(path, topics, listens, mine)
+    _FOLDERS.append(w)
+    return w
+
+
 _CLOUD_HOOKS: list = []   # called each time a request starts listening, so a watcher starts at once
 
 
@@ -547,7 +610,7 @@ def on_listen(fn) -> None:
 
 
 def _wake_watchers() -> None:
-    for w in list(_WATCHERS.values()):
+    for w in list(_WATCHERS.values()) + list(_FOLDERS):
         try:
             w.ensure()
         except Exception:  # noqa: BLE001

@@ -71,6 +71,36 @@ def save_draft(ctx: Context, name: str, nb: dict) -> None:
     with open(p + ".tmp", "w") as fh:
         json.dump(nb, fh)
     os.replace(p + ".tmp", p)
+    _told()
+
+
+def _told() -> None:
+    """A draft is a file on this computer, not a write to the workspace: the change feed is told by hand."""
+    try:
+        from .. import changes
+
+        changes.bump("notebooks")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _watch_drafts() -> None:
+    """Drafts written by another process (`cst notebook new` in a terminal) are in a folder outside the workspace:
+    the change feed looks at it once a second while someone listens to notebooks."""
+    from .. import changes
+    from ..workspace import home as _home
+
+    def folder() -> str:
+        # every workspace's drafts sit under one folder: the newest change in any of them is news for the list
+        return os.path.join(_home(), "drafts")
+
+    def topics(name: str) -> set[str]:
+        return {"notebooks"}
+
+    changes.watch_folder(folder, topics, ("notebooks",))
+
+
+_watch_drafts()
 
 
 def save_revision(ctx: Context, name: str, nb: dict, message: str = "") -> NotebookRevision:
@@ -82,6 +112,7 @@ def save_revision(ctx: Context, name: str, nb: dict, message: str = "") -> Noteb
     m = ctx.registry.publish(m)
     try:
         os.unlink(_draft_path(ctx, name))
+        _told()
     except FileNotFoundError:
         pass
     return m
