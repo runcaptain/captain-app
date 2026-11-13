@@ -12,6 +12,7 @@ import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { ago, money, ms, count, Spark, Updated, deployingWords, spanWords } from "./words.js";
 import { ModelPage } from "./model.js";
+import { watchLive } from "./live.js";
 
 const UP = ["running", "asleep", "starting", "unknown"];
 
@@ -54,18 +55,17 @@ export default class CaptainDeployments extends View {
     this.takeOpen(cx);
     this.load(cx);
     watchWorkspace(cx, (cx) => { this.page = null; this.load(cx); });
-    // Live: the list is read every few seconds, always, so a deploy or a stop made here, on another screen or in
-    // a terminal shows by itself. It never pauses for an action: a person pressed Stop, the read stopped with it,
-    // and the row said "Stopping" for good while the cloud had long since removed the model.
-    cx.timer.every(5000, (cx) => this.load(cx));
-    // Work the services do as a job is followed from here, once a second, on the screen's own timer.
-    cx.timer.every(1000, (cx) => this.follow(cx));
-    // While a model is being deployed its row counts the seconds on this page's own clock, and the list is read
-    // more often, so the step changes and the finished model show as they happen.
-    cx.timer.every(1000, (cx) => { if (this.deployingNow()) cx.notify(); });
-    cx.timer.every(2000, (cx) => { if (this.deployingNow()) this.load(cx); });
-    cx.timer.every(5000, (cx) => cx.notify());  // so "Updated just now" moves on, and says so if the reads stop
-    cx.timer.every(60000, (cx) => this.page?.refresh(cx));  // an open model's page: where it runs and its numbers
+    // Live: the screen listens to the app's change feed and reads again the moment something it shows changes:
+    // the list, an open model's page, a job it started. Whoever made the change, here, on another screen, in a
+    // terminal or in the cloud's own console. It asks nothing on a clock while the channel is up.
+    this.live = this.demo ? { up: () => true, kick() {} }  // a sample has nothing to listen to
+      : watchLive(cx, () => this.topics(), (cx, changed, reset) => this.heard(cx, changed, reset));
+    // The page's own clock, once a second: a deploying row's seconds and "Not updating". It reads nothing.
+    cx.timer.every(1000, (cx) => { if (this.deployingNow() || Object.keys(this.following).length || !this.live.up()) cx.notify(); this.giveUp(cx); });
+    // Only while the channel is down: read the list and ask after jobs every two seconds, and try the channel again.
+    cx.timer.every(2000, (cx) => { if (this.live.up()) return; this.load(cx); this.follow(cx); this.live.kick(cx); });
+    // An open model's numbers are paid reads with no topic of their own: once a minute, as before.
+    cx.timer.every(60000, (cx) => this.page?.refresh(cx));
     // A link on another screen can't reach this screen's props: it sets the shared "open" value and selects this
     // place. Looked at a few times a second, as the other screens do, so the link lands without a wait.
     cx.timer.every(300, (cx) => this.takeOpen(cx));
@@ -84,6 +84,19 @@ export default class CaptainDeployments extends View {
     const row = this.d?.rows.find((x) => x.id === o.open);
     if (row) this.openRow(row, cx);
     else { this.wanted = o.open; this.load(cx, true); }  // not read yet, or made a moment ago: ask, then open it
+  }
+
+  /** What this screen shows now, as topics on the change feed. */
+  topics() {
+    return ["deployed", ...(this.page?.row?.project ? [`deployment:${this.page.row.project}`] : []),
+      ...Object.values(this.following).map((f) => `job:${f.job}`)];
+  }
+
+  /** Something this screen shows changed. `reset` is the first answer, or a feed that lost track: read it all. */
+  heard(cx, changed, reset) {
+    if (reset || changed.includes("deployed")) this.load(cx);
+    if (reset || changed.some((t) => t.startsWith("job:"))) this.follow(cx, reset ? null : changed);
+    if (this.page && (reset || changed.includes(`deployment:${this.page.row.project}`))) this.page.refresh(cx);
   }
 
   deployingNow() {
@@ -143,6 +156,8 @@ export default class CaptainDeployments extends View {
     try { r = await call(); } catch (e) { r = { ok: false, error: String(e?.message ?? e) }; }
     if (r.ok && r.data?.job) {
       this.following[row.id] = { job: r.data.job, words, kind, read: this.reads, heard: Date.now(), polling: false };
+      this.live.kick(cx);  // listen to this job from now
+      this.follow(cx);     // and read it once: it may be over already
       return cx.notify();
     }
     this.finish(cx, row.id, r.ok ? (r.data?.text ?? null) : plainError(r.error, "That did not work."));
@@ -160,25 +175,30 @@ export default class CaptainDeployments extends View {
   /** Ask after each job being followed, once a second. Nothing here waits in a loop: the script engine has no
    *  timer of its own to wait on, and a loop that tried one died after its first look, leaving the row "Stopping"
    *  for ever. A job that can't be asked after for two minutes is given up on, and the list says where it stands. */
-  follow(cx) {
+  giveUp(cx) {
+    for (const [id, f] of Object.entries(this.following))
+      if (Date.now() - f.heard > 120000) this.finish(cx, id, `${f.words}: Captain could not tell how that ended. The list shows where it stands now.`);
+  }
+
+  follow(cx, changed = null) {
     for (const [id, f] of Object.entries(this.following)) {
-      if (Date.now() - f.heard > 120000) {
-        this.finish(cx, id, `${f.words}: Captain could not tell how that ended. The list shows where it stands now.`);
-        continue;
-      }
-      if (f.polling) continue;
+      if (changed && !changed.includes(`job:${f.job}`)) continue;
+      if (f.polling) { f.again = true; continue; }  // told again while reading: read once more after
       f.polling = true;
       cx.spawn(async (cx) => {
         let j;
         try { j = await api(`/api/jobs/${encodeURIComponent(f.job)}`, { timeout: 10 }); } catch (e) { j = { ok: false }; }
         f.polling = false;
-        if (this.following[id] !== f || !j.ok) return;  // settled meanwhile, or not heard: asked again next second
+        if (this.following[id] !== f) return;  // settled meanwhile
+        if (f.again) { f.again = false; this.follow(cx, [`job:${f.job}`]); }
+        if (!j.ok) return;  // not heard: the next change, or the fallback tick, asks again
         f.heard = Date.now();
         const log = j.data?.log ?? [];
         // The job's own title is not a step ("stopping the deployed model of <id>"): the row already says what is being done.
         const step = [j.data?.message, log[log.length - 1]].find((x) => x && x !== log[0] && x !== "done" && !String(x).startsWith("done: "));
         this.busy[id] = step ? `${f.words}: ${String(step).replace(/[.]+$/, "")}` : f.words;
-        if (j.data?.status === "done") return this.finish(cx, id, j.data?.result?.text ?? `${f.words}: done.`);
+        // What the job said it did, when it said anything. Otherwise the list, read at once, is what there is to say.
+        if (j.data?.status === "done") return this.finish(cx, id, j.data?.result?.text ?? null);
         if (j.data?.status === "failed") return this.finish(cx, id, plainError(j.data?.error ?? j.data?.message, "That did not work."));
         cx.notify();
       });
@@ -387,7 +407,9 @@ export default class CaptainDeployments extends View {
 
   openRow(r, cx, part = null) {
     this.page = new ModelPage(r, part, () => { this.page = null; }, this.demo?.model ?? null);
+    this.page.isLive = () => !this.demo && this.live.up();  // its title says "Live" while the channel is up
     this.page.load(cx);
+    this.live.kick(cx);  // listen to this model from now
     cx.notify();
   }
 
@@ -469,7 +491,8 @@ export default class CaptainDeployments extends View {
         // The list is read every 5 seconds. If the last good read is older than 15, the screen is not keeping up,
         // and it says so: "Updated 3 min ago" beside a row that is no longer true reads as if all were well.
         problem: notAsked.length ? `${[...new Set(notAsked.map((a) => a.cloud_label))].join(" and ")} could not be reached. Trying again.`
-          : this.readAt && !this.demo && Date.now() - this.readAt > 15000 ? "Not updating. Refresh" : null }));
+          : this.readAt && !this.demo && !this.live.up() && Date.now() - this.readAt > 15000 ? "Not updating. Refresh" : null,
+        live: this.live.up() }));
     const none = !here.length;
     const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small });
     const n = earlier.length;

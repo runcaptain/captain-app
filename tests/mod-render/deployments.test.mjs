@@ -20,6 +20,14 @@ const numbers = (requests, extra = {}) => ({ range: '24h', range_text: 'the last
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), p = u.pathname, m = opts.method ?? 'GET';
   sent.push([m, p + u.search, opts.body ? JSON.parse(opts.body) : null]);
+  // The change feed: a request held open until the test says something changed. Off unless `world.live` is set,
+  // so the screen's fallback (the channel is down) is what the older tests exercise.
+  if (p === '/api/changes') {
+    if (!world.live) return reply(404, { detail: 'no feed' });
+    world.listened = (u.searchParams.get('topics') ?? '').split(',').filter(Boolean);
+    if (!Number(u.searchParams.get('since'))) return reply(200, { seq: world.seq = (world.seq ?? 1000) + 1, changed: [] });
+    return new Promise((answer) => { world.waiting = (changed, more = {}) => answer(reply(200, { seq: world.seq += 1, changed, ...more })); });
+  }
   if (p === '/api/deployed' && world.deployedFail) return reply(500, { detail: 'no answer' });
   if (p === '/api/deployed') return reply(200, world.deployed);
   // Work the services do as a job: `world.jobs[id]` is the list of answers it gives, one per ask, the last repeating.
@@ -501,6 +509,67 @@ Date.now = realNow;
 world.deployedFail = false;
 await tick(h); await tick(h);
 assert.ok(!h.text().includes('Not updating') && h.text().includes('Updated just now'), 'and recovers with the next good read');
+
+// ---- live: the screen listens to the change feed, and asks nothing on a clock ----
+const tell = async (changed, more) => { const w = world.waiting; world.waiting = null; w(changed, more); await h.idle(150); };
+h = await open({ live: true, seq: 1000, deployed: RUNNING2, numbers: { shop: numbers(8640) } });
+await h.idle(150);
+assert.ok(h.text().includes('Live') && !/Updated/.test(h.text()), `with the channel up the title says Live: ${h.text().slice(0, 120)}`);
+assert.deepEqual(world.listened, ['deployed'], 'it listens for what it shows');
+let quietReads = listReads();
+await tick(h); await tick(h);
+assert.equal(listReads(), quietReads, 'nothing is asked on a clock while the channel is up');
+// A model stopped somewhere else: the feed says "deployed" changed, and the list is read at once.
+world.deployed = STOPPED;
+await tell(['deployed']);
+assert.ok(shown(h) === 'trail' && listReads() === quietReads + 1, `the row went the moment the feed said so, with one read: ${shown(h)}`);
+// An action here: the job is listened to, and each thing it says is read as it is said. No asking in between.
+world.deployed = RUNNING2; await tell(['deployed']);
+world.stopJob = 'job-9';
+world.jobs = { 'job-9': [{ status: 'running', message: TITLE, log: [TITLE] }, { status: 'running', message: 'Removing the endpoint.', log: [TITLE, 'Removing the endpoint.'] },
+  { status: 'done', message: 'done', log: [TITLE, 'done: {}'], result: { text: 'Stopped. It no longer answers or bills.' } }] };
+const jobReads = () => sent.filter((x) => x[1].startsWith('/api/jobs/job-9')).length;
+await h.click('dep-stop-shop:staging');
+await h.idle(150);
+assert.ok(world.listened.includes('job:job-9') && world.listened.includes('deployed'), `the job is listened to: ${world.listened}`);
+assert.ok(h.text().includes('Stopping on AWS...') && jobReads() === 1, 'read once when it starts');
+await tick(h); await tick(h);
+assert.equal(jobReads(), 1, 'and not asked after on a clock');
+await tell(['job:job-9', 'jobs']);
+assert.ok(h.text().includes('Stopping on AWS: Removing the endpoint...') && jobReads() === 2, `its step, the moment it says it: ${h.text().slice(0, 300)}`);
+world.deployed = STOPPED;
+await tell(['job:job-9', 'deployed', 'deployment:shop']);
+assert.ok(byId(h, 'dep-busy-shop:staging').length === 0 && shown(h) === 'trail' && (h.text().includes('Stopped. It no longer answers or bills.') || h.text().includes('Stopped by dana, just now.')),
+  `and its end: ${h.text().slice(0, 300)}`);
+// An open model's page listens to that model.
+world.deployed = RUNNING2; await tell(['deployed']);
+await h.click('dep-open-shop:staging');
+await h.idle(150);
+assert.ok(world.listened.includes('deployment:shop'), `the open page's model is listened to: ${world.listened}`);
+assert.ok(h.text().includes('Live') && !/Updated \d/.test(h.text()), 'the page says Live too, and no time that climbs');
+const whereReads = () => sent.filter((x) => x[1].includes('/deployed/where')).length;
+const beforeWhere = whereReads();
+await tell(['deployment:shop']);
+assert.ok(whereReads() > beforeWhere, 'the page reads again when its model changes');
+// A feed that lost track says so, and everything is read again.
+quietReads = listReads();
+await tell([], { reset: true });
+assert.ok(listReads() > quietReads, 'reset: read it all again');
+// The channel dies: after 15 seconds with no good read the title says so, and the screen reads on a 2 second tick.
+h = await open({ live: true, seq: 2000, deployed: RUNNING2, numbers: { shop: numbers(8640) } });
+await h.idle(150);
+assert.ok(h.text().includes('Live'));
+world.live = false; world.deployedFail = true;
+{ const w = world.waiting; world.waiting = null; w?.([]); await h.idle(100); }
+Date.now = () => realNow() + 16000;
+await tick(h);
+assert.ok(h.text().includes('Not updating. Refresh') && !h.text().includes('Live'), `a dead channel is said: ${h.text().slice(0, 200)}`);
+Date.now = realNow;
+world.deployedFail = false;
+quietReads = listReads();
+await tick(h);
+assert.ok(listReads() > quietReads, 'the fallback reads while the channel is down');
+world.stopJob = null; world.jobs = null; world.seq = 1000;
 
 // ---- requests come from the request log, and the cloud's chart is named for what it is ----
 // Proven on a real endpoint: 29 requests for results, and 178 calls counted by the cloud, most of them Captain's own checks.
