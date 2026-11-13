@@ -35,6 +35,8 @@ export default class CaptainNotebooks extends View {
       if (o?.section !== "notebooks" || o.at === this.opened) return;
       this.opened = o.at;
       const nb = this.nb;
+      // The sidebar's entry: Notebooks' home, the list. An open notebook's draft is saved first.
+      if (o.home) { nb.home(cx); return; }
       if (o.seedSql) {
         nb.seedSql = { conn: o.seedSql.conn, sql: o.seedSql.sql };
         nb.newName.set_value(String(o.seedSql.name ?? "query"));
