@@ -89,6 +89,14 @@ export async function projectOf(model) {
   return { ok: true, data: r.data.find((m) => m?.id === model)?.project ?? null };
 }
 
+/** The workspace's projects, for choosing where a deployment goes: [{id, name}]. */
+export async function listProjects() {
+  const r = await api("/api/projects", { scoped: false, timeout: 15 });
+  if (!r?.ok) return { ok: false, error: r?.error };
+  const rows = Array.isArray(r.data) ? r.data : r.data?.projects ?? [];
+  return { ok: true, data: rows.filter((x) => x?.id).map((x) => ({ id: x.id, name: x.name ?? x.label ?? x.id })) };
+}
+
 /** Save the session as a new version and deploy that version to `host` ("local" is this computer), as one job.
  *  Resolves to {job, run, plan, saved: {ref, text}, session}. A refusal is a sentence. */
 export async function sendDeploy(project, sessionId, host = "local") {

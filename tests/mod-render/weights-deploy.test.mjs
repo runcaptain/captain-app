@@ -22,6 +22,7 @@ weightsTransport(async (path, opts) => {
   const method = opts?.method ?? (opts?.body !== undefined ? 'POST' : 'GET');
   asked.push([method, path, opts?.body]);
   const p = path.split('?')[0], net = starter(TINY);
+  if (p === '/api/projects') return { ok: true, data: state.projects ?? [] };
   if (p === '/api/weights/models') return { ok: true, data: [{ id: 'tiny', name: 'tiny', sizes: [2, 3, 1], project: state.project }] };
   if (p === '/api/weights/models/tiny/session') return { ok: true, data: { id: 'ws-1', model: 'tiny', ledger: LEDGER, events: [], saved: state.deploy === 'none' ? [] : ['tiny@v2'] } };
   if (p === '/api/weights/models/tiny') return { ok: true, data: { ...net, id: 'tiny', name: 'tiny', test: [] } };
@@ -105,8 +106,26 @@ test('a deployment belongs to a project: the network\'s own, else the one picked
   state.project = null;
   await h.click('wt-deploy-go');
   await h.idle(30);
-  assert.equal(textOf(h, 'wt-deploy-text'), 'A deployment belongs to a project. Pick a project in the Explorer, then deploy again.');
+  assert.equal(textOf(h, 'wt-deploy-text'), 'A deployment belongs to a project. Make a project first, then deploy again.');
   assert.ok(!asked.some(([m]) => m === 'POST'), 'nothing was sent');
+  // Several projects and none picked: the page asks which, right there, and goes on with the answer.
+  state.projects = [{ id: 'garden', name: 'Garden centre' }, { id: 'shop', name: 'Demo shop' }];
+  await h.click('wt-deploy-go');
+  await h.idle(30);
+  assert.equal(textOf(h, 'wt-deploy-text'), 'Deploy into which project?');
+  assert.deepEqual(h.byIdPrefix('wt-deploy-into-').map((e) => e.call('id')[0]), ['wt-deploy-into-garden', 'wt-deploy-into-shop']);
+  assert.ok(!asked.some(([m]) => m === 'POST'), 'still nothing sent');
+  await h.click('wt-deploy-into-shop');
+  await h.idle(30);
+  assert.ok(asked.some(([m, p]) => m === 'POST' && p === '/api/projects/shop/deploy'), 'the project chosen on the page');
+  // One project: no question to ask.
+  h = await page();
+  asked.length = 0; state.deploy = 'none'; state.projects = [{ id: 'shop', name: 'Demo shop' }];
+  await h.click('wt-deploy-go');
+  await h.idle(30);
+  assert.ok(asked.some(([m, p]) => m === 'POST' && p === '/api/projects/shop/deploy'), 'the only project');
+  h = await page();
+  asked.length = 0; state.deploy = 'none'; state.projects = [];
   globalThis.__shared['captain.scope'] = { kind: 'project', id: 'shop', label: 'Demo shop' };
   await h.click('wt-deploy-go');
   await h.idle(30);
