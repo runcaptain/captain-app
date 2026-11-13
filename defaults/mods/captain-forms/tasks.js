@@ -23,7 +23,7 @@ const kindOf = (ctx, v) => (ctx.kinds ?? []).find((k) => k.kind === v.kind);
 const ok = (r, done) => {
   if (r.ok && !r.data?.error && !r.data?.exit_code) return { ok: true, message: done };
   if (r.failed) return { ok: false, error: r.error };
-  if (r.status >= 500) return { ok: false, error: `Captain's services hit a problem (error ${r.status}). Try again; if it keeps happening, tell us.` };
+  if (r.status >= 500) return { ok: false, error: "Captain's services hit a problem. Try again. If it keeps happening, tell us." };
   return { ok: false, error: plain(r.data?.error ?? r.error) };
 };
 // A failed readiness check's fixing action: the task that makes the missing evidence, pre-filled.
@@ -186,14 +186,22 @@ export const TASKS = [
     about: "Name it, say what you're building, and list what it reads. Nothing here is fixed: inputs and the trainer can be changed on the project's page.",
     load: async () => ({ recipes: await recipes() }),
     fields: [
-      { key: "name", label: "Name", placeholder: "Outdoor store search", required: true },
-      { key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true,
+      // Any words: the project's id is made from them, and shown under the field.
+      { key: "name", label: "Name", name: "project", placeholder: "Outdoor store search", required: true },
+      { key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true, missing: "Choose what you're building.",
         options: (ctx) => [...recipeOptions(ctx), { value: "other", label: "Something else", icon: "plus", about: "Any other model. Say what it is, then list what it reads.", needs: "whatever your training reads." }] },
-      { key: "what", label: "What is it?", required: true, placeholder: "A fraud score for each payment, from past chargebacks", when: (v) => v.recipe === "other",
+      { key: "what", label: "What is it?", required: true, missing: "Say what it is, in a few words.", placeholder: "A fraud score for each payment, from past chargebacks", when: (v) => v.recipe === "other",
         help: "In your own words." },
       // The inputs, filled from the kind picked above and then the person's: add, rename and remove before creating.
       { key: "inputs", label: "Inputs", kind: "rows", when: (v) => Boolean(v.recipe), seedOn: (v) => v.recipe, placeholder: "Product embeddings",
         seed: (ctx, v) => ((ctx.recipes ?? []).find((r) => r.id === v.recipe)?.slots ?? []).map((x) => ({ id: x.id, label: x.label ?? x.id, kind: (x.accepts ?? ["any"])[0], required: Boolean(x.required) })),
+        // Checked as the list is edited, not after the button: an input with no name, or two with one name.
+        check: (rows) => {
+          const names = rows.map((x) => String(x.label ?? "").trim().toLowerCase());
+          if (names.some((n) => !n)) return "Every input needs a name. Name it, or remove it.";
+          const twice = names.find((n, i) => names.indexOf(n) !== i);
+          return twice ? `Two inputs are named ${twice}. Give each its own name.` : null;
+        },
         kinds: INPUT_KINDS, addLabel: "Add an input", empty: "No inputs yet. Add what your training reads, or add them later on the project's page.",
         help: "What training reads. Rename one, remove one, or add your own. You choose the data for each on the project's page." },
       { key: "trainer", label: "How is it trained?", kind: "choice", required: true, default: (v) => (String(v.recipe ?? "").startsWith("search-") ? "builtin" : "command"), resetOn: "recipe",
@@ -202,13 +210,13 @@ export const TASKS = [
         help: (_ctx, v) => (v.trainer === "builtin" ? "A search ranker Captain trains from products and search events. It needs both among the inputs."
           : v.trainer === "repo" ? "Captain runs the command in your repo. It reads the inputs and reports its results."
           : "Any command. It reads the inputs and reports its results.") },
-      { key: "repo", label: "Repo address", required: true, placeholder: "https://github.com/your-team/ranker.git", when: (v) => v.trainer === "repo" },
+      { key: "repo", label: "Repo address", required: true, missing: "Give the address of your training repo.",
+        check: (v) => (/^(https?:\/\/|git@|ssh:\/\/|\/|~\/|\.\.?\/)\S+$/.test(String(v).trim()) ? null : "That doesn't look like a repo address. It starts with https://, git@ or a folder path."), placeholder: "https://github.com/your-team/ranker.git", when: (v) => v.trainer === "repo" },
       { key: "command", label: "Training command", placeholder: "python train.py", optional: true, when: (v) => v.trainer === "command" || v.trainer === "repo" },
       { key: "description", label: "What it's for", optional: true, placeholder: "Product search for the outdoor storefront" },
     ],
     submit: async (v) => {
       const inputs = (v.inputs ?? []).map((x) => ({ ...(x.id ? { id: x.id } : {}), label: String(x.label ?? "").trim(), kind: x.kind, ...(x.required ? { required: true } : {}) }));
-      if (inputs.some((x) => !x.label)) return { ok: false, error: "Every input needs a name. Name it, or remove it." };
       // Only what the form was given is sent: with no list of inputs the kind's own are used, as before.
       const body = { name: v.name.trim(), kind: v.recipe, ...(v.inputs !== undefined ? { slots: inputs } : {}),
         ...(v.trainer ? { trainer: { how: v.trainer, ...(v.command && v.trainer !== "builtin" ? { command: v.command.trim() } : {}), ...(v.trainer === "repo" ? { repo: String(v.repo ?? "").trim() } : {}) } } : {}),
@@ -562,9 +570,18 @@ export const TASKS = [
     load: async () => ({ providers: (await api("/api/cloud/providers")).data ?? [] }),
     fields: [
       { key: "provider", label: "Cloud", kind: "choice", required: true, options: (ctx) => (ctx.providers ?? []).map((p) => ({ value: p.provider, label: { aws: "AWS", gcp: "Google Cloud", azure: "Azure", modal: "Modal" }[p.provider] ?? p.provider, brand: p.provider })) },
+      // The sign-in this choice relies on is looked for by itself, and again every few seconds, so a person who
+      // signs in from a terminal sees it found when they come back. No button asks.
       { key: "auth", label: "Sign in with", kind: "choice", required: true, when: (v) => Boolean(v.provider),
-        options: (ctx, v) => ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).map((a) => ({ value: a.mode, label: a.label })) },
-      { key: "name", label: "Name", placeholder: "work", required: true, help: "How you'll pick this login later." },
+        options: (ctx, v) => ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).map((a) => ({ value: a.mode, label: a.label })),
+        statusOn: (v) => [v.provider, v.auth], recheck: 3000,
+        status: async (_ctx, v) => {
+          if (!v.provider || !v.auth) return null;
+          const r = await api(`/api/cloud/signin?provider=${encodeURIComponent(v.provider)}&auth=${encodeURIComponent(v.auth)}`, { scoped: false });
+          return r.ok && r.data?.found === false ? { text: r.data.text, problem: true } : null;
+        } },
+      // Any words: Captain keeps them as the label and makes its own id from them (checks.js, naming.py).
+      { key: "name", label: "Name", name: "cloud", placeholder: "GPU cloud", required: true },
       // Modal picks where it runs by itself, so it is asked for no region.
       { key: "region", label: "Region", placeholder: "us-west-1", optional: true, when: (v) => v.provider !== "modal" },
       // The sign-in mode's own fields come from the services (cloud.providers), secrets masked.
@@ -572,12 +589,12 @@ export const TASKS = [
     ],
     submit: async (v, ctx) => {
       const spec = ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).find((a) => a.mode === v.auth)?.fields ?? [];
-      if (((await api("/api/cloud/profiles")).data ?? []).some((p) => p.name === v.name)) return { ok: false, error: `You already have a cloud account named ${v.name}. Pick another name.` };
       const fields = {}, secrets = {};
+      const id = v.name_id, said = String(v.name ?? "").trim();
       for (const f of spec) if (v[`af:${f.name}`]) (f.secret ? secrets : fields)[f.name] = v[`af:${f.name}`];
-      const r = await api("/api/cloud/profiles", { body: { name: v.name, provider: v.provider, auth: v.auth, region: v.region || undefined, fields, secrets } });
-      if (r.ok) await api(`/api/cloud/profiles/${encodeURIComponent(v.name)}/test`, { method: "POST", body: {}, timeout: 60 });
-      return ok(r, `Connected ${v.name}.`);
+      const r = await api("/api/cloud/profiles", { body: { name: id, label: said, provider: v.provider, auth: v.auth, region: v.region || undefined, fields, secrets } });
+      if (r.ok) await api(`/api/cloud/profiles/${encodeURIComponent(r.data?.name ?? id)}/test`, { method: "POST", body: {}, timeout: 60 });
+      return ok(r, `Connected ${said}.`);
     },
   },
   {

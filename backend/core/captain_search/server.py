@@ -3294,12 +3294,79 @@ def cloud_profiles():
             for p in cloud.profiles()]
 
 
-@app.post("/api/cloud/profiles", dependencies=A)
-def cloud_add(body: dict):
+@app.get("/api/names/propose", dependencies=A)
+def names_propose(label: str = "", kind: str = "cloud"):
+    """What a form shows under a name field as the person types: {label, id, taken, next, text}. `id` is what
+    Captain makes from the words typed (naming.make_id), `next` the next free one when that is taken. Kinds:
+    cloud, project, compute, connection. Any other kind gets an id and is never "taken"."""
+    from . import naming as NM
+
+    c = ctx()
+    taken: list = []
+    try:
+        if kind == "cloud":
+            from . import cloud
+
+            taken = [p["name"] for p in cloud.profiles()]
+        elif kind == "project":
+            from . import projects as PR
+
+            taken = [p["id"] for p in PR.listing(c)]
+        elif kind == "compute":
+            from . import compute as C
+
+            taken = [t["name"] for t in C.listing(c)]
+        elif kind == "connection":
+            taken = list(c.registry.names("connection"))
+    except Exception:  # noqa: BLE001  what is taken can't be read just now: the id is still right, and saving checks again
+        taken = []
+    out = NM.propose(label, kind, taken)
+    if kind == "project":
+        # A project's id is made by the rule projects already use, so what the form shows is what is created.
+        from . import projects as PR
+
+        try:
+            wanted = PR.slug(out["label"])
+        except ValueError:
+            wanted = "project"
+        nxt = NM.free(wanted, taken)
+        # No second id is offered for a project: two projects with one name would be told apart only by a number.
+        out.update(id=wanted, next=wanted, taken=nxt != wanted,
+                   text=(f"You already have a project called {wanted}. Give this one another name." if nxt != wanted
+                         else f"Captain will call it {wanted}."))
+    return out
+
+
+@app.get("/api/cloud/signin", dependencies=A)
+def cloud_signin(provider: str, auth: str):
+    """Is the sign-in this choice relies on found on this computer? {found: true | false | null, text}. The Connect a
+    cloud account form asks by itself, as the person chooses."""
     from . import cloud
 
-    p = cloud.add_profile(body["name"], body["provider"], body["auth"], body.get("region"), body.get("fields") or {},
+    return cloud.signin_found(provider, auth)
+
+
+@app.post("/api/cloud/profiles", dependencies=A)
+def cloud_add(body: dict):
+    """{name, provider, auth, region?, fields?, secrets?, label?}. `name` can be any words: Captain keeps them as the
+    label and makes the id from them (naming.make_id), so a name is never refused for its spelling."""
+    from . import cloud
+    from . import naming as NM
+
+    said = " ".join(str(body.get("label") or body.get("name") or "").split())
+    name = str(body.get("name") or "")
+    if not NM.is_id(name):
+        name = NM.make_id(name or said, "login")
+    if any(p["name"] == name for p in cloud.profiles()):
+        raise HTTPException(409, f"You already have a cloud account called {name}. Give this one another name.")
+    p = cloud.add_profile(name, body["provider"], body["auth"], body.get("region"), body.get("fields") or {},
                           body.get("secrets") or {})
+    if said and said != name:
+        try:
+            cloud.set_label(name, said)
+            p = {**p, "label": said}
+        except Exception:  # noqa: BLE001  the login is saved: a label that can't be kept is not a failure
+            pass
     return {k: v for k, v in p.items() if k != "secret_fields"}
 
 
