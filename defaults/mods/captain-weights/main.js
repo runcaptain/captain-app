@@ -20,7 +20,7 @@ import { SendToAgent } from "./kit/context.js";
 import { Button, Skeleton, Submenus, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { int } from "./kit/num.js";
-import { listNetworks, readNetwork, readSession, readTestCost, watchWeights, sendUndo, sendEdit, readDescription, isParts, weightsCanned } from "./adapter.js";
+import { listNetworks, readNetwork, readSession, readTestCost, watchWeights, sendUndo, sendEdit, readDescription, isParts, partsFrom, weightsCanned } from "./adapter.js";
 import { forward, backward, countOf } from "./net.js";
 import { PanZoom } from "./canvas.js";
 import { NetworkCanvas, layoutOf } from "./draw.js";
@@ -30,7 +30,7 @@ import { Timeline, ledgerFacts } from "./timeline.js";
 import { HandBlock, handTarget, dragSpan, TRACK_W, selectionPin, starters, withStaged, stagedChanges, stagedRequest, stagedName } from "./hand.js";
 import { askAgent } from "./kit/agent.js";
 import { DeployLine, startDeploy } from "./deploy.js";
-import { partsState, partsFacts, partsPin, openPart, loadPart, PartPanel, RankerPanel, TreeBar, rankerOf, READ_ONLY } from "./parts.js";
+import { partsState, partsFacts, partsPin, openPart, loadPart, loadRanker, showView, PartPanel, RankerPanel, TreeBar, rankerOf, READ_ONLY } from "./parts.js";
 import { PartsCanvas, TreeCanvas, partsLayout } from "./partsdraw.js";
 import { WalkButtons, walkWords, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
@@ -160,7 +160,7 @@ export default class CaptainWeights extends View {
       if (this.kind !== "network") {
         const d = await readDescription(model);
         if (mine !== this.reads || model !== this.model) return;
-        if (d.ok && isParts(d.data)) return this.takeParts(d.data, cx);
+        if (d.ok && isParts(d.data)) return this.takeParts(partsFrom(d.data), cx);
         if (this.kind === "parts") return cx.notify(); // it could not be read again: what is on screen stays
         if (d.ok) this.kind = "network";
       }
@@ -229,6 +229,7 @@ export default class CaptainWeights extends View {
       if (w.rankers) { this.pm.view = "rankers"; this.pm.rankerAt = w.ranker ?? 0; this.pm.treeAt = w.tree ?? 0; }
     }
     if (this.pm.sel) loadPart(this, cx);
+    if (this.pm.view === "rankers") loadRanker(this, cx);
     cx.notify();
   }
 
@@ -524,7 +525,7 @@ export default class CaptainWeights extends View {
           .child(div().text_size(12.5).font_medium().child(m.name))
           // A trained model says its kind in words and how many numbers it has, then where it came from.
           .when(isParts(m), (e) => e.child(div().id(`wt-open-kind-${m.id}`).text_size(12.5).line_height("17px").text_color(c.grey500).child(partsFacts(m)))
-            .when(Boolean(m.source), (x) => x.child(div().id(`wt-open-source-${m.id}`).text_size(11.5).line_height("16px").text_color(c.grey500).child(m.source))))
+            .when(Boolean(m.says), (x) => x.child(div().id(`wt-open-says-${m.id}`).text_size(11.5).line_height("16px").text_color(c.grey500).child(m.says))))
           .when(!isParts(m) && Boolean(m.says), (e) => e.child(div().text_size(12.5).line_height("17px").text_color(c.grey500).child(m.says))))
         .child(Button(c, `wt-open-btn-${m.id}`, `Open ${m.name}`, (_e, cx) => this.open(m.id, cx), { small: true })))))
       // Without the services there is only the tiny network: say where the bigger one comes from.
@@ -592,20 +593,20 @@ export default class CaptainWeights extends View {
     const ch = Math.max(180, H - 84 - 44 - 14);
     const cw = Math.max(200, W - 40 - (rail && !tight ? rail + 1 : 0));
     const strip = h_flex().id("wt-parts-bar").h(44).flex_none().px(20).gap(10).items_center()
-      .when(rankers.length > 0, (e) => e.child(Submenus(c, [{ id: "model", label: "Model" }, { id: "rankers", label: "Rankers" }], onRankers ? "rankers" : "model", (id, cx) => { pm.view = id; cx.notify(); })))
-      .child(div().id("wt-read-only").flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(READ_ONLY));
+      .when(rankers.length > 0, (e) => e.child(Submenus(c, [{ id: "model", label: "Model" }, { id: "rankers", label: "Rankers" }], onRankers ? "rankers" : "model", (id, cx) => showView(this, id, cx))))
+      .child(div().id("wt-read-only").flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(pm.model.read_only ?? READ_ONLY));
     const panel = (inner, close) => div().id("wt-side").w(tight ? W : rail).flex_none().h_full().overflow_y_scroll().child(v_flex().p(14).gap(12)
       .when(Boolean(close) && narrow, (e) => e.child(h_flex().child(div().flex_1()).child(div().id("wt-side-close").text_size(11.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
         .on_click((_e, cx) => { pm.sel = null; cx.notify(); }).child("Close this part"))))
       .child(inner));
     const rule = div().w(1).h_full().flex_none().bg(c.rule);
     if (onRankers) {
-      const r = rankerOf(this), tree = r?.shown?.[pm.treeAt] ?? null;
+      const r = rankerOf(this), tree = r?.shown?.[pm.treeAt] ?? null, waiting = !r && !pm.rankerProblem;
       this.treePz ??= new PanZoom("wr");
       // On a page too tight for both side by side, the inputs sit over the tree.
       const half = Math.round(ch * 0.46), BAR = 36;
       const drawn = (w, h) => v_flex().w(w).child(TreeBar(c, this)).child(tree ? TreeCanvas(c, tree, { id: "wr", pz: this.treePz, width: w, height: h - BAR })
-        : div().id("wr-none").w(w).text_size(12.5).line_height("18px").text_color(c.grey500).child("No tree of this ranker was sent to draw."));
+        : div().id("wr-none").w(w).text_size(12.5).line_height("18px").text_color(c.grey500).child(waiting ? "Reading the ranker." : "No tree of this ranker was sent to draw."));
       return v_flex().flex_1().min_h(0).child(strip)
         .when(!tight, (e) => e.child(h_flex().flex_1().min_h(0).child(div().pl(20).child(drawn(cw, ch))).child(rule).child(panel(RankerPanel(c, this), false))))
         .when(tight, (e) => e.child(div().h(half).flex_none().overflow_y_scroll().child(div().px(20).pb(10).child(RankerPanel(c, this)))).child(div().pl(20).child(drawn(W - 40, ch - half))));

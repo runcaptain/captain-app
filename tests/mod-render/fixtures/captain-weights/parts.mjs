@@ -1,9 +1,11 @@
-// A made-up model of parts for the Weights page's tests and pictures: a small transformer "session model" (width 8)
-// with two tree rankers, in the shapes of defaults/mods/captain-weights/shapes.js (PartsModel, Heatmap, RowStats,
-// NearRows). Every name and every number here is invented by this file. Nothing comes from a real model.
+// A made-up trained model for the Weights page's tests and pictures: a small transformer "session model" (width 8,
+// two layers, two heads) with two tree rankers, answered in the shapes Captain's services use for the kind
+// "session-ranker" (backend/core/captain_search/docs/weights.md, "A trained session model with rankers").
+// Every name and every number here is invented by this file. Nothing comes from a real model.
 export const PARTS = 'demo-session';
+export const SESSION = 'ws-demo';
 
-const WIDTH = 8;
+const W = 8, HIDDEN = 16, HEADS = 2;
 // A small seeded generator, so the same numbers come out on every run.
 function rand(seed) {
   let a = seed >>> 0;
@@ -16,85 +18,110 @@ export function matrix(name, rows, cols) {
   return Array.from({ length: rows }, () => Array.from({ length: cols }, () => Number((r() * 2 - 1).toFixed(4))));
 }
 
-const t = (id, name, shape, extra = {}) => ({ id, name, shape, parameters: shape[0] * shape[1], ...extra });
-const part = (id, kind, name, shape, tensors, extra = {}) => ({ id, kind, name, shape, parameters: tensors.reduce((n, x) => n + x.parameters, 0), tensors, ...extra });
-const table = (id, name, rows, of) => part(id, 'embedding', name, [rows, WIDTH], [t('table', 'The table', [rows, WIDTH])], { rows_are: of });
-const attention = (id, block, from) => part(id, 'attention', `Attention ${block}`, [WIDTH, WIDTH], [
-  t('qk', 'Query-key', [WIDTH, WIDTH], { per_head: true }), t('ov', 'Output-value', [WIDTH, WIDTH], { per_head: true }),
-  t('query', 'Query', [WIDTH, WIDTH]), t('key', 'Key', [WIDTH, WIDTH]), t('value', 'Value', [WIDTH, WIDTH]), t('output', 'Output', [WIDTH, WIDTH]),
-].map((x) => (x.per_head ? { ...x, parameters: 0 } : x)), { block, heads: 2, feeds_from: from });
-const norm = (id, block, from) => part(id, 'norm', 'Norm', [2, WIDTH], [t('scale', 'Scale and shift', [2, WIDTH])], { block, feeds_from: from });
-const feed = (id, block, from) => part(id, 'feed_forward', `Feed-forward ${block}`, [WIDTH * 2, WIDTH], [t('in', 'Into the hidden step', [WIDTH * 2, WIDTH]), t('out', 'Out of the hidden step', [WIDTH, WIDTH * 2])], { block, feeds_from: from });
-
 const ITEMS = ['Blue kettle', 'Red kettle', 'Tea towel', 'Garden trowel', 'Seed tray', 'Watering can', 'Picture book', 'Story book', 'Wooden train', 'Toy drum', 'Gift card', 'Wrapping paper'];
-const KINDS = ['Looked at', 'Added to basket', 'Bought', 'Searched'];
-const rowName = (partId, row) => (partId === 'emb-item' ? ITEMS[row] : partId === 'emb-kind' ? KINDS[row] : partId === 'emb-pos' ? `Place ${row + 1}` : null);
 
-const tree = (n, nodes) => ({ tree: n, nodes });
-/** The made-up model, whole. */
-export function partsModel() {
+/** Every tensor of the made-up model: name -> shape, as the training code would name them. */
+export function tensorShapes({ tall = false } = {}) {
+  const sh = { 'item.weight': [tall ? 1000 : 12, W], 'act.weight': [4, W], 'pos.weight': [6, W], 'text.weight': [W, 16], 'text.bias': [W], 'ln.weight': [W], 'ln.bias': [W] };
+  for (const k of [0, 1]) Object.assign(sh, {
+    [`L${k}.self_attn.in_proj_weight`]: [3 * W, W], [`L${k}.self_attn.in_proj_bias`]: [3 * W], [`L${k}.self_attn.out_proj.weight`]: [W, W], [`L${k}.self_attn.out_proj.bias`]: [W],
+    [`L${k}.norm1.weight`]: [W], [`L${k}.norm1.bias`]: [W], [`L${k}.linear1.weight`]: [HIDDEN, W], [`L${k}.linear1.bias`]: [HIDDEN],
+    [`L${k}.linear2.weight`]: [W, HIDDEN], [`L${k}.linear2.bias`]: [W], [`L${k}.norm2.weight`]: [W], [`L${k}.norm2.bias`]: [W] });
+  Object.assign(sh, { 'buy.weight': [1, W], 'buy.bias': [1], 'logit_scale': [] });
+  return sh;
+}
+const numbers = (sh, names) => names.reduce((n, t) => n + (sh[t].length ? sh[t].reduce((a, b) => a * b, 1) : 1), 0);
+
+/** The services' description of the model: its parts, no numbers (`GET /api/weights/models/demo-session`). */
+export function partsModel(o = {}) {
+  const sh = tensorShapes(o);
+  const part = (id, kind, name, says, tensors, feeds_from, more = {}) => ({ id, kind, name, says, technical: id, tensors, shape: sh[tensors[0]], parameters: numbers(sh, tensors), feeds_from, ...more });
+  const table = (stem, name, what, known = true) => part(stem, 'embedding', name, `embedding table: one row of ${W} numbers for each of ${sh[`${stem}.weight`][0]} values. ${what[0].toUpperCase()}${what.slice(1)}.`,
+    [`${stem}.weight`], [], { side: 'session', rows: sh[`${stem}.weight`][0], width: W, embeds: known ? what : null, meaning_from: known ? 'name' : null });
   const parts = [
-    table('emb-item', 'Item table', 12, 'items'),
-    table('emb-kind', 'Event kind table', 4, 'kinds of event'),
-    table('emb-pos', 'Position table', 6, 'places in the session'),
-    part('proj', 'projection', 'Text projection', [WIDTH, 16], [t('weight', 'The projection', [WIDTH, 16])]),
-    attention('attn-1', 1, ['emb-item', 'emb-kind', 'emb-pos', 'proj']),
-    norm('norm-1a', 1, ['attn-1']),
-    feed('ff-1', 1, ['norm-1a']),
-    norm('norm-1b', 1, ['ff-1']),
-    attention('attn-2', 2, ['norm-1b']),
-    norm('norm-2a', 2, ['attn-2']),
-    feed('ff-2', 2, ['norm-2a']),
-    norm('norm-2b', 2, ['ff-2']),
-    part('head-next', 'head', 'Next item head', [12, WIDTH], [t('weight', 'The head', [12, WIDTH])], { feeds_from: ['norm-2b'] }),
-    part('head-buy', 'head', 'Will buy head', [1, WIDTH], [t('weight', 'The head', [1, WIDTH])], { feeds_from: ['norm-2b'] }),
+    table('item', 'item table', 'which item the event was about'),
+    table('act', 'action table', 'what kind of event it was'),
+    table('pos', 'position table', 'where in the session the event sits'),
+    part('text', 'projection', 'text projection', `projection: turns the item's text vector of 16 numbers into ${W}, the model's width.`, ['text.weight', 'text.bias'], [], { side: 'session', inputs: 16, outputs: W }),
+    part('ln', 'norm', 'norm ln', 'norm: rescales each vector so its numbers stay in a steady range.', ['ln.weight', 'ln.bias'], ['item', 'act', 'pos', 'text'], { side: 'session', width: W }),
   ];
-  const rankers = [
-    { id: 'rank-first', name: 'First ranker', trees: 40,
-      inputs: [{ name: 'price', splits: 31, gain_share: 0.46 }, { name: 'days since last visit', splits: 22, gain_share: 0.29 }, { name: 'items seen', splits: 18, gain_share: 0.25 }, { name: 'hour of day', splits: 0, gain_share: 0 }],
-      unused: ['hour of day'],
-      shown: [
-        tree(0, [{ id: 0, input: 'price', threshold: 12.5, yes: 1, no: 2 }, { id: 1, input: 'items seen', threshold: 3, yes: 3, no: 4 }, { id: 2, input: 'days since last visit', threshold: 7, yes: 5, no: 6 },
-          { id: 3, leaf: 0.21 }, { id: 4, leaf: -0.05 }, { id: 5, leaf: -0.18 }, { id: 6, leaf: 0.09 }]),
-        tree(1, [{ id: 0, input: 'days since last visit', threshold: 2, yes: 1, no: 2 }, { id: 1, leaf: -0.11 }, { id: 2, input: 'price', threshold: 30, yes: 3, no: 4 }, { id: 3, leaf: -0.07 }, { id: 4, leaf: 0.14 }]),
-      ] },
-    { id: 'rank-second', name: 'Second ranker', trees: 25,
-      inputs: [{ name: 'model score', splits: 40, gain_share: 0.7 }, { name: 'price', splits: 12, gain_share: 0.3 }],
-      unused: [],
-      shown: [tree(0, [{ id: 0, input: 'model score', threshold: 0.5, yes: 1, no: 2 }, { id: 1, leaf: 0.3 }, { id: 2, leaf: -0.2 }])] },
-  ];
+  let last = ['ln'];
+  for (const k of [0, 1]) {
+    const a = `L${k}.self_attn`;
+    const mats = ['query', 'key', 'value'].map((role, i) => ({ role, name: `${role}: made-up words`, tensor: `${a}.in_proj_weight`, rows: [i * W, (i + 1) * W], shape: [W, W] }));
+    mats.push({ role: 'output', name: 'output: how what was copied is written back', tensor: `${a}.out_proj.weight`, rows: [0, W], shape: [W, W] });
+    parts.push(part(a, 'attention', `attention, layer ${k + 1}`, 'attention: which earlier events this one looks at, and what it copies from them.',
+      [`${a}.in_proj_weight`, `${a}.in_proj_bias`, `${a}.out_proj.weight`, `${a}.out_proj.bias`], last, { side: 'session', layer: k, width: W, heads: o.heads === null ? null : HEADS, head_width: W / HEADS, matrices: mats }));
+    parts.push(part(`L${k}.norm1`, 'norm', `norm after attention, layer ${k + 1}`, 'norm: rescales each vector so its numbers stay in a steady range.', [`L${k}.norm1.weight`, `L${k}.norm1.bias`], [a], { side: 'session', layer: k, width: W }));
+    parts.push(part(`L${k}.ff`, 'feed_forward', `feed-forward, layer ${k + 1}`, `feed-forward: reworks each event's vector on its own, from ${W} numbers up to ${HIDDEN} and back.`,
+      [`L${k}.linear1.weight`, `L${k}.linear1.bias`, `L${k}.linear2.weight`, `L${k}.linear2.bias`], [`L${k}.norm1`], { side: 'session', layer: k, inputs: W, hidden: HIDDEN }));
+    parts.push(part(`L${k}.norm2`, 'norm', `norm after feed-forward, layer ${k + 1}`, 'norm: rescales each vector so its numbers stay in a steady range.', [`L${k}.norm2.weight`, `L${k}.norm2.bias`], [`L${k}.ff`], { side: 'session', layer: k, width: W }));
+    last = [`L${k}.norm2`];
+  }
+  parts.push(part('buy', 'head', 'head buy', `small head at the end: ${W} numbers in, 1 out. What it is for is not stated in the file.`, ['buy.weight', 'buy.bias'], last, { side: 'session', inputs: W, outputs: 1 }));
+  parts.push(part('logit_scale', 'scale', 'score sharpness', 'one number: how sharply the scores of candidates are told apart.', ['logit_scale'], [], { side: null }));
   const parameters = parts.reduce((n, p) => n + p.parameters, 0);
-  return { id: PARTS, name: 'Demo session model', kind: 'parts', kind_words: 'Session model with rankers', parameters, width: WIDTH, source: 'Imported from a made-up training run.', parts, rankers };
+  return { id: PARTS, name: PARTS, version: 1, says: `A session model, width ${W}, 2 layers, 2 heads, with 2 tree rankers.`, numbers: false, sizes: [], layers: [], examples: [], test: [],
+    kind: 'session-ranker', kind_says: 'session model with rankers', width: W, depth: 2, heads: o.heads === null ? null : HEADS,
+    heads_says: o.heads === null ? 'Unknown. The shapes do not tell how many heads there are, and no file beside them says.' : '2 heads, as model.json says. The shapes alone cannot tell.',
+    parameters, parts, wiring_says: 'The order of the parts is the usual one for these names. The file holds numbers, not wiring, so it is not confirmed.',
+    rankers: [{ name: 'full', objective: 'lambdarank', trees: 40, inputs: 4 }, { name: 'quick', objective: 'binary', trees: 25, inputs: 2 }],
+    source: { from: '/models/demo/v1', read_at: '2026-11-13T10:00:00Z', files: {} },
+    can: { read: true, edit: false, run: false, deploy: false, says: 'This model can be read here, not changed or run yet.' } };
 }
 
-const norms = (m) => m.map((row) => Math.hypot(...row));
-const cosine = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0) / ((Math.hypot(...a) * Math.hypot(...b)) || 1);
+const leaf = (n, value) => ({ leaf: n, value, count: 10 });
+const ask = (input, name, threshold, left, right, more = {}) => ({ input, name, threshold, gain: 5, categorical: false, missing_goes: 'left', left, right, ...more });
+/** The services' answer for one ranker (`GET /api/weights/models/demo-session/trees?ranker=`). A value at or below
+ *  the threshold goes left. */
+export function rankerAnswer(ranker = 'full') {
+  if (ranker === 'quick') return { model: PARTS, version: 1, ranker: 'quick', rankers: ['full', 'quick'], kind: 'trees', objective: 'binary', trees: 25, inputs: 2, unused: [],
+    by_input: [{ input: 0, name: 'model score', splits: 40, gain: 70, share: 0.7, trees: 25 }, { input: 1, name: 'price', splits: 12, gain: 30, share: 0.3, trees: 9 }],
+    first_trees: [{ tree: 0, leaves: 2, depth: 1, root: ask(0, 'model score', 0.5, leaf(0, -0.2), leaf(1, 0.3)) }] };
+  return { model: PARTS, version: 1, ranker: 'full', rankers: ['full', 'quick'], names_from: 'the cols file', kind: 'trees', objective: 'lambdarank', trees: 40, inputs: 4,
+    unused: [{ input: 3, name: 'hour of day', constant: true }],
+    unused_says: '1 of 4 inputs are never asked about by any tree, so changing them cannot change the answer: hour of day.',
+    // As the services send it: in the inputs' own order, not by gain.
+    by_input: [{ input: 0, name: 'items seen', splits: 18, gain: 25, share: 0.25, trees: 12 }, { input: 1, name: 'price', splits: 31, gain: 46, share: 0.46, trees: 30 },
+      { input: 2, name: 'days since last visit', splits: 22, gain: 29, share: 0.29, trees: 20 }, { input: 3, name: 'hour of day', splits: 0, gain: 0, share: 0, trees: 0 }],
+    first_trees: [
+      { tree: 0, leaves: 4, depth: 2, root: ask(1, 'price', 12.5, ask(0, 'items seen', 3, leaf(0, -0.05), leaf(1, 0.21)), ask(2, 'days since last visit', 7, leaf(2, 0.09), leaf(3, -0.18))) },
+      { tree: 1, leaves: 3, depth: 2, root: ask(2, 'days since last visit', 2, leaf(0, -0.11), ask(1, 'price', 30, leaf(1, -0.07), leaf(2, 0.14))) },
+      { tree: 2, leaves: 2, depth: 1, root: ask(0, 'shop section', 3, leaf(0, 0.02), leaf(1, -0.02), { categorical: true }) },
+    ],
+    rule: 'At each question, a value at or below the threshold goes left. Anything else goes right.' };
+}
 
-/** Answers for the services' routes over the made-up model, or undefined for any other path. `wide` makes every
- *  heatmap answer as a 96 by 96 matrix the services already reduced to 64 by 64. */
-export function partsRoutes(path, { wide = false } = {}) {
+const cosine = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0) / ((Math.hypot(...a) * Math.hypot(...b)) || 1);
+const span = (text, size) => { if (!text) return [0, size]; const [a, b] = String(text).split(':'); return [Number(a || 0), Number(b || size)]; };
+
+/** Answers for the services' routes over the made-up model, or undefined for any other path. `tall` gives the
+ *  item table 1,000 rows. `heads: null` is a model whose files do not say how many heads it has. */
+export function partsRoutes(path, o = {}) {
   const [p, q = ''] = path.split('?');
   const arg = Object.fromEntries(q.split('&').filter(Boolean).map((kv) => kv.split('=').map(decodeURIComponent)));
-  const m = partsModel();
-  if (p === '/api/weights/models') return { ok: true, data: [{ id: m.id, name: m.name, kind: m.kind, kind_words: m.kind_words, parameters: m.parameters, source: m.source }] };
+  const m = partsModel(o), sh = tensorShapes(o);
+  if (p === '/api/weights/models') return { ok: true, data: [{ id: m.id, name: m.name, says: m.says, sizes: [], parameters: m.parameters, versions: [1], kind: m.kind, kind_says: m.kind_says }] };
   if (p === `/api/weights/models/${PARTS}`) return { ok: true, data: m };
-  const at = new RegExp(`^/api/weights/models/${PARTS}/parts/([^/]+)/(heatmap|rows|nearest)$`).exec(p);
+  if (p === `/api/weights/models/${PARTS}/session`) return { ok: true, data: { id: SESSION, model: PARTS, ledger: { raw_weights: true, weights_read: 0, changed: 0, total: m.parameters }, events: [] } };
+  if (p === `/api/weights/models/${PARTS}/trees`) return ['full', 'quick', undefined].includes(arg.ranker) ? { ok: true, data: rankerAnswer(arg.ranker) } : { ok: false, error: `${PARTS} has no ranker named '${arg.ranker}'.` };
+  const at = new RegExp(`^/api/weights/sessions/${SESSION}/(heatmap|nearest|attention)$`).exec(p);
   if (!at) return undefined;
-  const it = m.parts.find((x) => x.id === at[1]);
-  if (!it) return { ok: false, error: 'There is no part with that name.' };
-  const tensor = it.tensors.find((x) => x.id === arg.tensor) ?? it.tensors[0];
-  const name = `${it.id}/${tensor.id}/${tensor.per_head ? arg.head ?? 0 : ''}`;
-  const values = matrix(name, tensor.shape[0], tensor.shape[1]);
-  if (at[2] === 'heatmap') {
-    if (wide) return { ok: true, data: { tensor: tensor.id, shape: [96, 96], shown: [64, 64], reduced: true, values: matrix(name, 64, 64) } };
-    return { ok: true, data: { tensor: tensor.id, shape: tensor.shape, shown: tensor.shape, reduced: false, values } };
+  if (at[1] === 'attention') {
+    const head = Number(arg.head ?? 0), grid = matrix(`L${arg.layer}/${arg.matrix}/${head}`, W, W);
+    return { ok: true, data: { layer: Number(arg.layer), part: `L${arg.layer}.self_attn`, width: W, heads: HEADS, run: false,
+      of: [{ head, head_width: W / HEADS, query_key: { shape: [W, W] }, output_value: { shape: [W, W] }, reads: [], matrix: { which: arg.matrix, grid, scale: 1 } }] } };
   }
-  if (at[2] === 'rows') {
-    const n = norms(values);
-    return { ok: true, data: values.map((row, r) => ({ row: r, name: rowName(it.id, r), norm: n[r], mean: row.reduce((s, v) => s + v, 0) / row.length, largest: Math.max(...row.map(Math.abs)) }))
-      .sort((a, b) => b.norm - a.norm).slice(0, Number(arg.top ?? 8)) };
+  const shape = sh[arg.tensor];
+  if (!shape) return { ok: false, error: `There is no tensor named ${arg.tensor}.` };
+  const [R, C] = shape.length === 2 ? shape : [1, shape[0] ?? 1], all = matrix(arg.tensor, R, C);
+  if (at[1] === 'heatmap') {
+    const [r0, r1] = span(arg.rows, R), grid = all.slice(r0, r1);
+    return { ok: true, data: { tensor: arg.tensor, shape, rows: [r0, r1], cols: [0, C], grid_shape: [grid.length, C], scale: 1, min: -1, max: 1, grid, grids: [] } };
   }
-  const row = Number(arg.row ?? 0);
-  return { ok: true, data: { row, name: rowName(it.id, row), nearest: values.map((v, r) => ({ row: r, name: rowName(it.id, r), similarity: cosine(values[row], v) })).filter((x) => x.row !== row)
-    .sort((a, b) => b.similarity - a.similarity).slice(0, Number(arg.top ?? 8)) } };
+  const row = Number(arg.row ?? 0), names = arg.tensor === 'item.weight' && R === ITEMS.length ? ITEMS : null;
+  const one = (r) => ({ row: r, label: names ? names[r] : null, cosine: cosine(all[row], all[r]), norm: Math.hypot(...all[r]) });
+  const order = all.map((_v, r) => r).filter((r) => r !== row).sort((a, b) => cosine(all[row], all[b]) - cosine(all[row], all[a]));
+  return { ok: true, data: { tensor: arg.tensor, rows: R, width: C, row, label: names ? names[row] : null, norm: Math.hypot(...all[row]),
+    nearest: order.slice(0, Number(arg.top ?? 10)).map(one), farthest: order.slice(-3).reverse().map(one) } };
 }

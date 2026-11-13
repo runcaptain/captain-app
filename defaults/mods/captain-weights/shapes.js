@@ -12,13 +12,18 @@
 //   POST /api/weights/sessions/{session}/edits      <- EditRequest   -> WeightEvent
 //   POST /api/weights/sessions/{session}/undo       <- {edit: id, by} -> WeightEvent
 //
-// A trained model too big to draw neuron by neuron (a transformer with tree rankers, say) is a "model of parts".
-// It is read here, never edited or run:
+// A trained model too big to draw neuron by neuron (the services' kind "session-ranker": a small transformer with
+// tree rankers) is a "model of parts". It is read here, never edited or run. adapter.js turns the services'
+// answers into the shapes below:
 //
-//   GET  /api/weights/models/{model}                              -> PartsModel (kind "parts")
-//   GET  /api/weights/models/{model}/parts/{part}/heatmap?tensor=&head=&max= -> Heatmap
-//   GET  /api/weights/models/{model}/parts/{part}/rows?tensor=&head=&top=    -> [RowStats]
-//   GET  /api/weights/models/{model}/parts/{part}/nearest?row=&top=          -> NearRows
+//   GET  /api/weights/models/{model}                                  -> the description, no numbers -> PartsModel
+//   GET  /api/weights/models/{model}/session                          -> the session the screen looks through
+//   GET  /api/weights/sessions/{s}/heatmap?tensor=&rows=a:b&watch=1   -> Heatmap
+//   GET  /api/weights/sessions/{s}/attention?layer=&head=&matrix=&watch=1 -> one head's matrix -> Heatmap
+//   GET  /api/weights/sessions/{s}/nearest?tensor=&row=&top=&watch=1  -> NearRows
+//   GET  /api/weights/models/{model}/trees?ranker=&trees=             -> Ranker
+//
+// `watch=1` is a screen's look: it is not counted against what an agent was allowed.
 //
 // Live topics (the app's change feed, kit/live.js): `weights:<model>` when the model's numbers change, and
 // `weights-session:<session>` when the session's record gains an event. The page reads the session again on
@@ -33,7 +38,7 @@
  */
 
 /**
- * A model of parts. A NetworkSummary for one carries kind, kind_words, parameters and source too.
+ * A model of parts, as adapter.js `partsFrom` makes it from the services' description.
  * @typedef {object} PartsModel
  * @property {string} id
  * @property {string} name
@@ -41,28 +46,38 @@
  * @property {string} kind_words      what it is, in words: "Session model with rankers"
  * @property {number} parameters      how many numbers it has
  * @property {string} [source]        where it came from, in one sentence
- * @property {number} [width]         the model's own width
+ * @property {string} [wiring]        what the services say about how sure the order of the parts is
  * @property {Part[]} parts           left to right, as the data flows
- * @property {Ranker[]} [rankers]
+ * @property {{id: string, name: string, trees: number|null}[]} rankers   each is read whole (Ranker) when opened
  *
  * @typedef {object} Part
  * @property {string} id
- * @property {"embedding"|"projection"|"attention"|"feed_forward"|"norm"|"head"} kind
+ * @property {"embedding"|"projection"|"attention"|"feed_forward"|"norm"|"head"|"scale"|"other"} kind
  * @property {string} name
+ * @property {string} says            the services' own sentence about it
  * @property {[number, number]} shape rows and columns of its main matrix
  * @property {number} parameters
- * @property {string[]} [feeds_from]  the parts whose output it reads
- * @property {number} [block]         which attention block it belongs to, from 1
- * @property {number} [heads]         for attention
- * @property {string} [rows_are]      for an embedding table: what a row stands for ("items")
- * @property {{id: string, name: string, shape: [number, number], parameters: number, per_head?: boolean}[]} tensors
+ * @property {string[]} feeds_from    the parts whose output it reads
+ * @property {number} [block]         which layer it belongs to, from 1
+ * @property {number|null} heads      for attention. Null when the files do not say
+ * @property {"session"|"candidate"|null} side
+ * @property {string|null} embeds     for a table: what a row stands for, when known. `guessed` when from its name
+ * @property {PartTensor[]} tensors
+ *
+ * @typedef {object} PartTensor       one matrix of a part that can be drawn
+ * @property {string} id
+ * @property {string} name            in plain words
+ * @property {string} [technical]     its name in the training code
+ * @property {[number, number]} [shape]
+ * @property {boolean} [per_head]     one matrix per attention head
+ * @property {object} how             how adapter.js asks for it
  *
  * @typedef {object} Ranker
  * @property {string} id
  * @property {string} name
- * @property {number} trees           how many trees it has
+ * @property {number|null} trees      how many trees it has
  * @property {{name: string, splits: number, gain_share: number}[]} inputs   gain_share from 0 to 1
- * @property {string[]} unused        inputs no tree ever splits on
+ * @property {string[]} unused        inputs no tree ever asks about
  * @property {{tree: number, nodes: TreeNode[]}[]} shown   the first trees, whole
  *
  * @typedef {object} TreeNode         a split ({input, threshold, yes, no}: `yes` when the input is above the
@@ -70,6 +85,7 @@
  * @property {number} id
  * @property {string} [input]
  * @property {number} [threshold]
+ * @property {boolean} [categorical]
  * @property {number} [yes]
  * @property {number} [no]
  * @property {number} [leaf]
@@ -77,16 +93,8 @@
  * @typedef {object} Heatmap
  * @property {string} tensor
  * @property {[number, number]} shape   the matrix's own size
- * @property {[number, number]} shown   the size of `values`
- * @property {boolean} reduced          the services averaged it down to fit
+ * @property {number} from              the first of its rows in `values` (a tall table is sent a window at a time)
  * @property {number[][]} values
- *
- * @typedef {object} RowStats
- * @property {number} row
- * @property {string|null} [name]
- * @property {number} norm              the row's length as a vector
- * @property {number} mean
- * @property {number} largest           its largest number, ignoring sign
  *
  * @typedef {object} NearRows           the rows of a table most like one row
  * @property {number} row               the row asked about

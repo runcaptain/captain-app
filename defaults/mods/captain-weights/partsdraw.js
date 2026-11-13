@@ -21,51 +21,53 @@ export const shapeWords = (shape) => (Array.isArray(shape) && shape.length === 2
 export const countWords = (n) => `${int(n)} ${n === 1 ? "number" : "numbers"}`;
 
 /** Where every block sits, in the drawing's own units: {boxes: [{part, x, y, w, h}], lines: [{from, to}],
- *  captions: [{text, x, w}], width, height}. Embedding tables share the first column; every other part has its
- *  own, in the order the model lists them. */
+ *  captions: [{text, x, y, w}], width, height}. Embedding tables share the first column; every other part has its
+ *  own, in the order the model lists them; heads at the end share the last. A model with a candidate side (the
+ *  parts that read the item being scored) has that side as a second row under the first. */
 export function partsLayout(model) {
-  const parts = model.parts ?? [];
-  const tables = parts.filter((p) => p.kind === "embedding"), rest = parts.filter((p) => p.kind !== "embedding");
-  const most = Math.max(1, ...tables.map((p) => p.shape?.[0] ?? 1));
-  // A table's height follows its rows, between a block that still holds its three lines and one twice that.
-  const heightOf = (p) => (p.kind === "embedding" ? Math.round(58 + 62 * Math.sqrt((p.shape?.[0] ?? 1) / most))
-    : p.kind === "attention" ? 72 + Math.max(1, p.heads ?? 1) * (HEAD_H + 4) : p.kind === "norm" ? 58 : 64);
-  const stackH = tables.reduce((h, p) => h + heightOf(p), 0) + Math.max(0, tables.length - 1) * 14;
-  // Heads at the end sit one under another, like the tables at the start.
-  const heads = []; while (rest.length && rest.at(-1).kind === "head") heads.unshift(rest.pop());
-  const headsH = heads.reduce((h, p) => h + heightOf(p), 0) + Math.max(0, heads.length - 1) * 14;
-  const inner = Math.max(stackH, headsH, ...rest.map(heightOf), 64);
-  const mid = PAD + CAPTION + inner / 2;
-  const boxes = [], at = new Map();
-  let x = PAD;
-  const stack = (list, total) => {
-    let y = mid - total / 2;
-    for (const p of list) { const b = { part: p, x, y, w: BLOCK_W, h: heightOf(p) }; boxes.push(b); at.set(p.id, b); y += b.h + 14; }
-    if (list.length) x += BLOCK_W + GAP;
-  };
-  stack(tables, stackH);
-  for (const p of rest) {
-    const w = p.kind === "norm" ? NORM_W : BLOCK_W, h = heightOf(p);
-    const b = { part: p, x, y: mid - h / 2, w, h };
-    boxes.push(b); at.set(p.id, b);
-    x += w + GAP;
-  }
-  stack(heads, headsH);
-  // A line for each part a block reads from. A part that names none reads from the block before it.
-  const lines = [];
-  boxes.forEach((b, n) => {
-    const from = b.part.feeds_from ?? (b.part.kind === "embedding" || n === 0 ? [] : null);
-    if (from) for (const id of from) { if (at.has(id)) lines.push({ from: at.get(id), to: b }); }
-    else { const prev = boxes.slice(0, n).reverse().find((o) => o.x < b.x); if (prev) lines.push({ from: prev, to: b }); }
+  const all = model.parts ?? [];
+  const sides = [all.filter((p) => p.side !== "candidate"), all.filter((p) => p.side === "candidate")].filter((g) => g.length);
+  const boxes = [], at = new Map(), captions = [];
+  let top = PAD, width = PAD * 2;
+  sides.forEach((parts, n) => {
+    const tables = parts.filter((p) => p.kind === "embedding"), rest = parts.filter((p) => p.kind !== "embedding");
+    const most = Math.max(1, ...tables.map((p) => p.shape?.[0] ?? 1));
+    // A table's height follows its rows, between a block that still holds its three lines and one twice that.
+    const heightOf = (p) => (p.kind === "embedding" ? Math.round(58 + 62 * Math.sqrt((p.shape?.[0] ?? 1) / most))
+      : p.kind === "attention" ? 72 + Math.max(1, p.heads ?? 1) * (HEAD_H + 4) : p.kind === "norm" ? 58 : 64);
+    const total = (list) => list.reduce((h, p) => h + heightOf(p), 0) + Math.max(0, list.length - 1) * 14;
+    // Heads at the end sit one under another, like the tables at the start.
+    const heads = []; while (rest.length && rest.at(-1).kind === "head") heads.unshift(rest.pop());
+    const inner = Math.max(total(tables), total(heads), ...rest.map(heightOf), 64);
+    const mid = top + CAPTION + inner / 2;
+    let x = PAD;
+    const stack = (list) => {
+      let y = mid - total(list) / 2;
+      for (const p of list) { const b = { part: p, x, y, w: BLOCK_W, h: heightOf(p) }; boxes.push(b); at.set(p.id, b); y += b.h + 14; }
+      if (list.length) x += BLOCK_W + GAP;
+    };
+    stack(tables);
+    for (const p of rest) {
+      const w = p.kind === "norm" ? NORM_W : BLOCK_W, h = heightOf(p);
+      const b = { part: p, x, y: mid - h / 2, w, h };
+      boxes.push(b); at.set(p.id, b);
+      x += w + GAP;
+    }
+    stack(heads);
+    // Names over the columns: the tables, each layer's blocks, the heads.
+    const side = sides.length > 1 ? (n === 0 ? "Session side: " : "Candidate side: ") : "";
+    if (tables.length) captions.push({ text: `${side}Lookup tables`, x: at.get(tables[0].id).x, y: top, w: BLOCK_W + GAP });
+    const groups = new Map();
+    for (const p of rest) if (p.block != null) { const b = at.get(p.id), g = groups.get(p.block) ?? { x0: b.x, x1: b.x + b.w }; g.x0 = Math.min(g.x0, b.x); g.x1 = Math.max(g.x1, b.x + b.w); groups.set(p.block, g); }
+    for (const [k, g] of groups) captions.push({ text: `Layer ${int(k)}`, x: g.x0, y: top, w: g.x1 - g.x0 });
+    if (heads.length) captions.push({ text: heads.length === 1 ? "Head" : "Heads", x: at.get(heads[0].id).x, y: top, w: BLOCK_W });
+    width = Math.max(width, x - GAP + PAD);
+    top += CAPTION + inner + PAD;
   });
-  // Blocks of one attention block share a name over them.
-  const captions = [];
-  if (tables.length) captions.push({ text: "Lookup tables", x: at.get(tables[0].id).x, w: BLOCK_W });
-  const groups = new Map();
-  for (const b of boxes) if (b.part.block != null) { const g = groups.get(b.part.block) ?? { x0: b.x, x1: b.x + b.w }; g.x0 = Math.min(g.x0, b.x); g.x1 = Math.max(g.x1, b.x + b.w); groups.set(b.part.block, g); }
-  for (const [n, g] of groups) captions.push({ text: `Block ${int(n)}`, x: g.x0, w: g.x1 - g.x0 });
-  if (heads.length) captions.push({ text: heads.length === 1 ? "Head" : "Heads", x: at.get(heads[0].id).x, w: BLOCK_W });
-  return { boxes, lines, captions, width: x - GAP + PAD, height: PAD * 2 + CAPTION + inner };
+  // A line for each part a block reads from.
+  const lines = [];
+  for (const b of boxes) for (const id of b.part.feeds_from ?? []) if (at.has(id)) lines.push({ from: at.get(id), to: b });
+  return { boxes, lines, captions, width, height: top };
 }
 
 /** The joining lines as one path. */
@@ -87,7 +89,7 @@ export function PartsCanvas(c, model, o) {
   const z = pz.zoom;
   const over = [];
   for (const cap of L.captions) {
-    const [x, y] = pz.at(cap.x, PAD);
+    const [x, y] = pz.at(cap.x, cap.y);
     over.push(div().absolute().left(x).top(y).w(cap.w * z).text_size(10.5 * z).text_color(c.grey500).child(cap.text));
   }
   for (const b of L.boxes) {
@@ -135,16 +137,16 @@ export function thresholdWords(v) {
   const a = Math.abs(v);
   return String(Number(a >= 100 ? v.toFixed(0) : a >= 1 ? v.toFixed(2) : v.toPrecision(3)));
 }
-/** A split as a sentence: "price above 12.5". */
-export const splitWords = (n) => `${n.input} above ${thresholdWords(n.threshold)}`;
+/** A split as a sentence: "price above 12.5". A split on a category asks whether the value is outside a set. */
+export const splitWords = (n) => (n.categorical ? `${n.input} outside the set it lists` : `${n.input} above ${thresholdWords(n.threshold)}`);
 /** What a leaf adds to the score: "adds +0.21". */
 export function leafWords(v) {
   const a = Math.abs(v);
   return `adds ${v < 0 ? "-" : "+"}${a >= 0.1 || a === 0 ? a.toFixed(2) : String(Number(a.toPrecision(2)))}`;
 }
 
-/** Where a tree's boxes sit: the root on top, a split's "yes" child to the left and its "no" child to the right,
- *  leaves evenly spaced. {boxes: [{node, x, y, w, h}], lines: [{from, to, says}], width, height}. */
+/** Where a tree's boxes sit: the root on top, a split's "no" child to the left and its "yes" child to the right
+ *  (a larger value goes right, as on a number line), leaves evenly spaced. {boxes: [{node, x, y, w, h}], lines: [{from, to, says}], width, height}. */
 export function treeLayout(nodes) {
   const by = new Map((nodes ?? []).map((n) => [n.id, n]));
   const kids = new Set(); for (const n of by.values()) { if (n.yes != null) kids.add(n.yes); if (n.no != null) kids.add(n.no); }
@@ -158,14 +160,14 @@ export function treeLayout(nodes) {
     const leaf = n.leaf != null || (n.yes == null && n.no == null);
     const w = leaf ? LEAF_W : NODE_W, h = leaf ? LEAF_H : NODE_H, y = PAD + depth * LEVEL;
     if (leaf) { const b = { node: n, leaf, x: nextX, y, w, h }; nextX += w + SIDE; boxes.push(b); return b; }
-    const a = place(by.get(n.yes), depth + 1), d = place(by.get(n.no), depth + 1);
+    const a = place(by.get(n.no), depth + 1), d = place(by.get(n.yes), depth + 1);
     const under = [a, d].filter(Boolean);
     const cx = under.length ? under.reduce((s, b) => s + b.x + b.w / 2, 0) / under.length : nextX + w / 2;
     const b = { node: n, leaf, x: cx - w / 2, y, w, h };
     if (!under.length) nextX += w + SIDE;
     boxes.push(b);
-    if (a) lines.push({ from: b, to: a, says: "yes" });
-    if (d) lines.push({ from: b, to: d, says: "no" });
+    if (a) lines.push({ from: b, to: a, says: "no" });
+    if (d) lines.push({ from: b, to: d, says: "yes" });
     return b;
   };
   place(root, 0);
@@ -186,7 +188,7 @@ export function TreeCanvas(c, tree, o) {
     const [x, y] = pz.at(b.x, b.y);
     over.push(div().id(`${o.id}-node-${b.node.id}`).absolute().left(x).top(y).w(b.w * z).h(b.h * z).flex().items_center().justify_center().px(4 * z).overflow_hidden()
       .bg(c.surface).border_1().border_color(b.leaf ? c.grey300 : c.grey500).text_size((b.leaf ? 10.5 : 11.5) * z).text_color(c.navy)
-      .tooltip(b.leaf ? "A leaf: what this path adds to the score" : `A split: is ${b.node.input} above ${thresholdWords(b.node.threshold)}?`)
+      .tooltip(b.leaf ? "A leaf: what this path adds to the score" : `A split, which is one question: ${splitWords(b.node)}?`)
       .child(div().truncate().child(b.leaf ? leafWords(b.node.leaf ?? 0) : splitWords(b.node))));
   }
   for (const l of L.lines) {
