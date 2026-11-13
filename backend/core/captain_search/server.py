@@ -3386,6 +3386,16 @@ def names_propose(label: str = "", kind: str = "cloud"):
     return out
 
 
+@app.get("/api/cloud/check", dependencies=A)
+def cloud_check(provider: str, field: str, value: str = ""):
+    """Can this value of a cloud login's field work? {ok, text}. The Connect a cloud account form asks as the person
+    types, so a mistake shows under the field. Today it checks the region: on AWS against the list of regions, on
+    Google Cloud and Azure by its shape. An empty value is fine. It calls no cloud."""
+    from . import cloud
+
+    return cloud.check_field(provider, field, value)
+
+
 @app.get("/api/cloud/signin", dependencies=A)
 def cloud_signin(provider: str, auth: str):
     """Is the sign-in this choice relies on found on this computer? {found: true | false | null, text}. The Connect a
