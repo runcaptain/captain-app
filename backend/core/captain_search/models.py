@@ -158,14 +158,38 @@ def import_registry(ctx: Context, uri: str | None = None, profile: str | None = 
     return ctx.registry.publish(snap)
 
 
+_SNAPS: dict = {}   # (workspace, its storage, the copy's name) -> (version, the copy, read and checked)
+
+
+def _snap(ctx: Context, name: str) -> RegistrySnapshot:
+    """The newest copy of one registry, read and checked once. A copy is written once under its version number and
+    never changed, so the one already read stands until a newer version is listed. Asking which version is the
+    newest is one listing. Reading a copy again is parsing every model's manifest: on a registry of about a hundred
+    versions that was a third of a second, on every read of the list of projects."""
+    vs = ctx.registry.versions("registry", name)
+    if not vs:
+        return ctx.registry.load("registry", name)   # raises NotFound, in the registry's own words
+    key = (ctx.workspace.org, ctx.workspace.name, ctx.workspace.storage_uri, name)
+    hit = _SNAPS.get(key)
+    if hit and hit[0] == vs[-1]:
+        return hit[1]
+    snap = ctx.registry.load("registry", name, vs[-1])
+    _SNAPS[key] = (vs[-1], snap)
+    return snap
+
+
+def _snaps(ctx: Context) -> list[RegistrySnapshot]:
+    """The newest copy of every registry this workspace has read."""
+    return [_snap(ctx, n) for n in ctx.registry.names("registry")]
+
+
 def latest(ctx: Context) -> RegistrySnapshot | None:
-    names = ctx.registry.names("registry")
-    snaps = [ctx.registry.load("registry", n) for n in names]
+    snaps = _snaps(ctx)
     return max(snaps, key=lambda s: s.created_at) if snaps else None
 
 
 def latest_for(ctx: Context, uri: str) -> RegistrySnapshot | None:
-    snaps = [s for s in (ctx.registry.load("registry", n) for n in ctx.registry.names("registry")) if s.uri.rstrip("/") == uri.rstrip("/")]
+    snaps = [s for s in _snaps(ctx) if s.uri.rstrip("/") == uri.rstrip("/")]
     return max(snaps, key=lambda s: s.created_at) if snaps else None
 
 
@@ -174,10 +198,15 @@ def all_latest(ctx: Context) -> list[RegistrySnapshot]:
     from .attach import _read
 
     uris = [r["uri"] for r in _read(ctx)[0]["registries"]]
+    snaps = _snaps(ctx)   # read once, however many registries are attached
     if not uris:
-        snaps = [ctx.registry.load("registry", n) for n in ctx.registry.names("registry")]
         uris = sorted({s.uri for s in snaps})
-    return [s for s in (latest_for(ctx, u) for u in uris) if s]
+    out = []
+    for u in uris:
+        mine = [s for s in snaps if s.uri.rstrip("/") == u.rstrip("/")]
+        if mine:
+            out.append(max(mine, key=lambda s: s.created_at))
+    return out
 
 
 def listing(ctx: Context) -> list[dict]:
