@@ -32,7 +32,7 @@ from ulid import ULID
 
 from .workspace import home, whoami
 
-KINDS = ("backtest", "training", "sweep", "custom")
+KINDS = ("backtest", "training", "sweep", "deploy", "custom")
 _lock = threading.Lock()
 
 
@@ -102,6 +102,9 @@ class Run:
             self.head["events"] = self._n
             if type_ == "stage":
                 self.head["stage"] = data.get("name")
+                # When this step began, in seconds since the run started: the screen counts the step's own time
+                # from it on its own clock, so the time moves while the step prints nothing.
+                self.head["stage_at"] = ev["at"]
                 self.head.setdefault("stages", [])
                 if data.get("name") not in self.head["stages"]:
                     self.head["stages"].append(data.get("name"))
@@ -112,6 +115,16 @@ class Run:
                 self.head["updated"] = _now()
                 _write_header(self.id, self.head)
                 self._last_head = now
+
+    def plan(self, steps: list[dict]) -> None:
+        """The steps this run will go through, known before it starts: [{title, seconds?, usually?}]. `seconds` is
+        what the step usually takes, and `usually` the same in words. The screen draws every step from the start,
+        fills its bar from them, and says what is usual for the step that is running."""
+        with _lock:
+            self.head["steps"] = [{"title": str(s.get("title") or ""), "seconds": s.get("seconds"), "usually": s.get("usually")} for s in steps]
+            self.head["stages"] = [s["title"] for s in self.head["steps"]]
+            self.head["updated"] = _now()
+            _write_header(self.id, self.head)
 
     def stage(self, name: str, index: int | None = None, of: int | None = None) -> None:
         self.emit("stage", name=name, index=index, of=of)

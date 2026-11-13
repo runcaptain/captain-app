@@ -221,4 +221,19 @@ assert.ok(text.includes('Connect a database'), 'the one filled button connects o
 const sorted = [...h.timings].sort((a, b) => a - b);
 console.log(`renders: ${h.timings.length}, median ${sorted[Math.floor(sorted.length / 2)].toFixed(2)} ms, slowest ${sorted.at(-1).toFixed(1)} ms (V8; QuickJS in the app is slower, see RISKS.md)`);
 assert.ok(Math.max(...h.timings) < 50, 'a render took 50 ms or more');
+// Five tables or fewer in all: nothing to fold away, so the groups show open until the person closes one. A
+// project picked in the Explorer with one dataset shows it at once. The top search finds a table in any group.
+{
+  const c = h.mod.catalog, keep = [c.rows, c.groups, new Set(c.open), c.matched];
+  c.matched = null; c.open = new Set(); c.shut = new Set();
+  c.rows = merged.rows.filter((r) => r.kind === 'dataset').slice(0, 2);
+  c.groups = groupsOf(c.rows);
+  assert.ok(c.few() && c.isOpen('kept'), 'a short list is open');
+  c.toggle(h.cx, 'kept');
+  assert.ok(!c.isOpen('kept'), 'and can be closed');
+  c.toggle(h.cx, 'kept');
+  assert.ok(c.isOpen('kept'), 'and opened again');
+  [c.rows, c.groups, c.open, c.matched] = keep; c.shut = new Set();
+  assert.ok(!c.few(), 'a long list starts folded');
+}
 console.log('captain-data render test: ok');

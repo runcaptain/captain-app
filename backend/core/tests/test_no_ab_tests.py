@@ -155,3 +155,41 @@ def test_a_model_that_ran_in_a_cloud_is_never_started_on_this_computer_because_n
     SG.unstage(ws, "shop")
     # and a project that never ran in a cloud still deploys here when no place is named, as before
     assert SG.stage(ws, "shop")["kind"] == "local"
+
+
+def test_a_model_in_a_cloud_is_asked_how_it_is_at_most_once_a_minute_however_often_a_page_reads(ws, monkeypatch):  # noqa: F811
+    """On SageMaker every call to the endpoint counts as traffic. A project page left open read the status every
+    five seconds, and 24 test searches showed as 160 requests in an hour."""
+    calls = []
+    monkeypatch.setattr(SG, "call", lambda ctx, rec, op, body, *a, **k: (calls.append(op), {"ok": True, "requests": 24, "traffic": {"real": 0}})[1])
+    SG.forget_asked()
+    cloud = {"id": "stg-cloud-1", "kind": "aws-sagemaker", "status": "running", "how": "captain"}
+    for _ in range(170):                                   # fourteen minutes of a page reading every five seconds
+        assert SG.ask_status(ws, cloud)["requests"] == 24
+        SG.read_flush(ws, cloud)
+    assert calls == ["status", "flush"], f"one question and one flush, not {len(calls)} calls"
+    assert SG.ask_status(ws, cloud)["asked_ago_s"] >= 0, "the answer says how old it is"
+    # a person asking for the requests list still gets a fresh log
+    SG.read_flush(ws, cloud, asked_for=True)
+    assert calls == ["status", "flush", "flush"]
+    # a minute later it is asked again
+    SG._ASKED["stg-cloud-1"] = (SG._ASKED["stg-cloud-1"][0] - 61, SG._ASKED["stg-cloud-1"][1])
+    SG.ask_status(ws, cloud)
+    assert calls.count("status") == 2
+    # a model that is down is not called every few seconds either
+    calls.clear()
+    SG.forget_asked()
+    monkeypatch.setattr(SG, "call", lambda ctx, rec, op, body, *a, **k: (calls.append(op), (_ for _ in ()).throw(ValueError("no answer")))[1])
+    for _ in range(20):
+        with pytest.raises(ValueError, match="no answer"):
+            SG.ask_status(ws, cloud)
+    assert calls == ["status"]
+    # on this computer nothing counts it, so it is asked every time
+    calls.clear()
+    monkeypatch.setattr(SG, "call", lambda ctx, rec, op, body, *a, **k: (calls.append(op), {"ok": True})[1])
+    here = {"id": "stg-local-1", "kind": "local", "status": "running", "how": "captain"}
+    for _ in range(5):
+        SG.ask_status(ws, here)
+        SG.read_flush(ws, here)
+    assert calls == ["status", "flush"] * 5
+    SG.forget_asked()

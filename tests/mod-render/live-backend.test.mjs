@@ -67,6 +67,9 @@ await until(runs, (t) => t.includes('demo-historic-replay') && t.includes('demos
 assert.ok(!/Couldn't load your runs/.test(runs.text()), 'Runs: no load error');
 await until(runs, (t) => /B minus A/.test(t), 'Runs opens the first evaluation with its comparison in place');
 const data = await mount('captain-data');
+// Tables are grouped and the groups start closed: the tables Captain keeps are one group, opened here.
+await until(data, (t) => t.includes('Kept in Captain'), 'Data lists its groups');
+await data.click('cat-group-kept');
 await until(data, (t) => t.includes('demo-catalog'), 'Data lists the datasets');
 
 // 2. The backend dies. Each screen's next request fails in transport. (Past the kit's 15 s patience for services
