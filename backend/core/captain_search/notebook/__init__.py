@@ -103,13 +103,74 @@ def load(ctx: Context, name: str) -> tuple[int | None, dict, bool]:
     return latest, json.loads(ctx.registry.get_blob(m.files[0])), False
 
 
+RENAMED = "notebooks-renamed.json"  # {old name: {"to": new name, "at": the old name's last version then}}
+
+
+def _renamed(ctx: Context) -> tuple[dict, str | None]:
+    try:
+        body, tag = ctx.store.get_with_tag(RENAMED)
+        return json.loads(body) or {}, tag
+    except NotFound:
+        return {}, None
+
+
+def _hidden(ctx: Context, name: str, latest: int | None, has_draft: bool, renamed: dict) -> bool:
+    """A name a notebook was renamed away from stays in the registry (saved versions are never rewritten), and is
+    left out of the list until someone saves or drafts under it again."""
+    r = renamed.get(name)
+    return bool(r) and not has_draft and latest == r.get("at")
+
+
+def rename(ctx: Context, old: str, label: str) -> dict:
+    """Give a notebook another name. Any words do: the id is made from them (naming.make_id). Its unsaved draft
+    moves with it. Its latest saved version is saved again under the new name, as version 1 there; the earlier
+    versions stay in the registry under the old name, which leaves the list. {name, from, version, changed}."""
+    from ..naming import make_id
+    from ..storage.backend import Conflict
+
+    new = make_id(label, "notebook")
+    if new == old:
+        return {"name": old, "from": old, "version": None, "changed": False}
+    renamed, _ = _renamed(ctx)
+    for row in listing(ctx):
+        if row["name"] == new:
+            raise ValueError(f"You already have a notebook called {new}. Pick another name.")
+    saved = ctx.registry.versions("notebook", old)
+    draft = _draft_path(ctx, old)
+    has_draft = os.path.exists(draft)
+    if not saved and not has_draft:
+        raise NotFound(f"no notebook named {old}")
+    version = None
+    if saved:
+        m = ctx.registry.load("notebook", old, saved[-1])
+        nb = json.loads(ctx.registry.get_blob(m.files[0]))
+        # save_revision clears the new name's draft, so the old draft is moved after it.
+        version = save_revision(ctx, new, nb, f"renamed from {old}").version
+    if has_draft:
+        os.replace(draft, _draft_path(ctx, new))
+    if saved:
+        for _ in range(10):
+            doc, tag = _renamed(ctx)
+            doc[old] = {"to": new, "at": saved[-1]}
+            doc.pop(new, None)
+            try:
+                ctx.store.put_if(RENAMED, json.dumps(doc, sort_keys=True).encode(), tag)
+                break
+            except Conflict:
+                continue
+    return {"name": new, "from": old, "version": version, "changed": True}
+
+
 def listing(ctx: Context) -> list[dict]:
     names = set(ctx.registry.names("notebook"))
     d = os.path.join(home(), "drafts", ctx.workspace.name)
     drafts = {f[:-6].replace("__", "/") for f in os.listdir(d)} if os.path.isdir(d) else set()
+    renamed, _ = _renamed(ctx)
     out = []
     for n in sorted(names | drafts):
         vs = ctx.registry.versions("notebook", n) if n in names else []
+        if _hidden(ctx, n, vs[-1] if vs else None, n in drafts, renamed):
+            continue
         out.append({"name": n, "latest": vs[-1] if vs else None, "has_draft": n in drafts})
     return out
 

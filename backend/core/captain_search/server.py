@@ -3167,6 +3167,20 @@ def notebook_save(name: str, body: dict):
     return {"version": m.version}
 
 
+@app.post("/api/notebooks/{name:path}/rename", dependencies=A)
+def notebook_rename(name: str, body: dict):
+    """{to: any words}. The id is made from the words. {name, from, version, changed}: the notebook's new name."""
+    to = str((body or {}).get("to") or "").strip()
+    if not to:
+        raise HTTPException(400, "Give it a name.")
+    try:
+        return NB.rename(ctx(), name, to)
+    except NotFound:
+        raise HTTPException(404, f"There is no notebook called {name}.") from None
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
 @app.post("/api/notebooks/{name:path}/import", dependencies=A)
 def notebook_import(name: str, body: dict):
     """Body: {notebook: <.ipynb JSON>} or {filename, content} in any supported format."""

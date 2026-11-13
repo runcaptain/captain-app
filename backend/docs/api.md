@@ -1167,3 +1167,9 @@ else one Captain found next to the dataset's file (`.../images/{pid}/{value}` an
 `POST /api/media/thumbs {srcs, size, dest}` makes JPEG thumbnails (64, 160 or 480 px) into the app's `cache/thumbs`
 folder, through the workspace's login for buckets, 8 at a time and cached by address. The grid shows the first image
 of each cell and an opened row shows all of them.
+
+- `POST /api/notebooks/{name}/rename {to}`: rename a notebook. `to` is any words, and the id is made from them with
+  the naming rule. Answers `{name, from, version, changed}`. An unsaved draft moves with the name. The latest saved
+  version is saved again under the new name as its version 1, and the earlier versions stay in the registry under
+  the old name, which leaves `GET /api/notebooks` until someone saves or drafts under it again. A name in use is
+  refused with a sentence (400), a notebook that does not exist is 404.

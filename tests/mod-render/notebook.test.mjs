@@ -15,6 +15,7 @@ const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
 globalThis.__fixtures = path.join(here, 'fixtures/captain-data-notebook');
 globalThis.__routes = [
+  [/^\/api\/notebooks\/[^?]+\/rename$/, 'renamed'],
   [/^\/api\/notebooks\/[^?]+\/draft$/, 'draft'],
   [/^\/api\/notebooks\/[^?]+\/save$/, 'save'],
   [/^\/api\/notebooks\/[^?]+\/import$/, 'import'],
@@ -177,6 +178,29 @@ await h.click('nb-fmt-quarto');
 await h.idle();
 assert.ok((globalThis.__written ?? []).some((p) => p.endsWith('/Downloads/weekly-check.qmd')), 'exported file written');
 assert.ok(h.text().includes('Exported to ~/Downloads/weekly-check.qmd.'), 'export note');
+
+// Rename: a click on the title shows the field with the name in it. Any words do, the line under the field says
+// what it will be called, and the page and the list follow the new name.
+{
+  const was = h.mod.nb.open.name;
+  await h.click('nb-title');
+  assert.equal(h.mod.nb.renameTo.value(), was, 'the field starts with its name');
+  assert.equal(h.byIdPrefix('nb-rename-go')[0].call('on_click'), undefined, 'the same name: Rename is off');
+  h.mod.nb.renameTo.set_value('Weekly review, Q4');
+  await h.layoutLists({});
+  assert.ok(h.text().includes('Captain will call it weekly-review-q4.'), 'said as it is typed');
+  await h.click('nb-rename-go');
+  await h.idle(40);
+  assert.equal(h.mod.nb.open.name, 'weekly-review-q4', 'the page follows');
+  assert.ok(h.mod.nb.list.some((n) => n.name === 'weekly-review-q4') && !h.mod.nb.list.some((n) => n.name === was), 'and the list');
+  assert.ok(h.text().includes('Renamed to weekly-review-q4.') && h.byIdPrefix('nb-rename-field').length === 0);
+  assert.ok(h.asked().some((p) => p.endsWith(`/api/notebooks/${was}/rename`)), 'the services were asked under the old name');
+  // From its row in the list too, and Cancel puts the title back.
+  await h.click('nb-rename-row');
+  assert.equal(h.byIdPrefix('nb-rename-field').length, 1);
+  await h.click('nb-rename-cancel');
+  assert.equal(h.byIdPrefix('nb-title').length, 1);
+}
 
 // Import: reads the file, posts it, says what it was.
 globalThis.__files = { '/tmp/Downloads/analysis.py': 'import marimo\n' };

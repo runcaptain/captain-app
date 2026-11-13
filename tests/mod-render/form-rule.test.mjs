@@ -30,6 +30,24 @@ k = newNameCheck('Weekly', [{ name: 'weekly' }]);
 assert.deepEqual([k.text, k.off], ['You already have a notebook called weekly. This opens it.', null], 'a name in use is said as it is typed, and is not an error');
 assert.equal(newNameCheck('!!!', []).id, 'notebook', 'never empty, never refused');
 
+// ---- renaming a notebook -----------------------------------------------------------------------------------------
+{
+  const { renameCheck } = await import('../../defaults/mods/captain-notebooks/notebooks.js');
+  assert.equal(renameCheck('', 'weekly', []).off, 'Give it a name.');
+  assert.deepEqual(renameCheck('Weekly review, Q4', 'untitled-notebook', []), { id: 'weekly-review-q4', text: 'Captain will call it weekly-review-q4.', off: null }, 'any words');
+  assert.equal(renameCheck('weekly', 'weekly', []).off, 'That is its name already.');
+  const taken = renameCheck('Other', 'weekly', [{ name: 'other' }]);
+  assert.ok(taken.bad && taken.off && taken.text === 'You already have a notebook called other. Pick another name.', 'a name in use is said as it is typed');
+  // Renaming saves the unsaved work first, asks the services, and the page and the list follow the new name.
+  const asked = [];
+  globalThis.__routes = [[/\/draft$/, 'ok', 'PUT'], [/\/rename$/, 'renamed', 'POST']];
+  const src = read('defaults/mods/captain-notebooks/notebooks.js');
+  const body = src.slice(src.indexOf('  rename(cx) {'), src.indexOf('  flushDraft(cx) {'));
+  assert.ok(body.indexOf('/draft') < body.indexOf('/rename') && body.includes('this.open.name = name') && body.includes('this.list = (this.list ?? []).map') && body.includes('sayError('), 'draft first, then rename, then the page and list follow; a refusal is a sentence');
+  assert.ok(src.includes('"nb-title"') && src.includes('"nb-rename-row"') && src.includes('"nb-rename-says"'), 'from the title, from the row, with its line under the field');
+  void asked;
+}
+
 // ---- a notebook to import ----------------------------------------------------------------------------------------
 assert.equal(importPathCheck('', null).off, 'Type the path of a notebook file.');
 assert.deepEqual(importPathCheck('~/x.ipynb', 'checking'), { text: 'Checking...', off: null }, 'it says it is looking, and does not make a fast typist wait');

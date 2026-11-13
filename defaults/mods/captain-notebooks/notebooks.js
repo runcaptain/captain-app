@@ -10,7 +10,7 @@ import { idFrom, sayError } from "./kit/checks.js";
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input, EditorState, Editor } from "gpui-base";
 import { readTextFile, writeTextFile, home, theme } from "herdr";
-import { api } from "./kit/cst.js";
+import { api, recordsChanged } from "./kit/cst.js";
 import { MONO, palette, isDark } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -48,6 +48,16 @@ export function newNameCheck(typed, list) {
   const id = idFrom(words, "notebook");
   const has = (list ?? []).some((n) => n.name === id);
   return { id, text: has ? `You already have a notebook called ${id}. This opens it.` : id === words ? null : `Captain will call it ${id}.`, off: null, has };
+}
+
+/** A new name typed for a notebook, checked as it is typed: {id, text, off}. Any words do. */
+export function renameCheck(typed, current, list) {
+  const words = String(typed ?? "").trim();
+  if (!words) return { id: null, text: null, off: "Give it a name." };
+  const id = idFrom(words, "notebook");
+  if (id === current) return { id, text: "That is its name already.", off: "That is its name already." };
+  if ((list ?? []).some((n) => n.name === id)) return { id, text: `You already have a notebook called ${id}. Pick another name.`, off: "That name is taken.", bad: true };
+  return { id, text: id === words ? null : `Captain will call it ${id}.`, off: null };
 }
 
 /** A path typed for a notebook to import, checked as it is typed: {text, off}. */
@@ -91,6 +101,10 @@ export class Notebooks {
     this.newName.on?.("change", (_e, cx) => cx.notify());
     this.importPath.on?.("change", (_e, cx) => cx.notify());
     this.pathFound = null; // {path, found}: whether a file is at the path typed
+    this.renameTo = InputState.new({ placeholder: "A new name" });
+    this.renameTo.on?.("change", (_e, cx) => cx.notify());
+    this.renameTo.on?.("submit", (_e, cx) => this.rename(cx));
+    this.renaming = false;
     this.sqlTools = new SqlTools(this);
   }
 
@@ -227,6 +241,38 @@ export class Notebooks {
     this.checkPath(cx);
     if (this.open?.base !== undefined && this.dirty && !this.savingDraft && Date.now() - this.lastEdit > 1500) this.flushDraft(cx);
     if ([...this.state.values()].some((s) => s.status === "running")) cx.notify();
+  }
+
+  /** Show the field that renames the open notebook, filled with its name. */
+  startRename(cx) {
+    if (!this.open?.name || this.open.error || this.open.loading) return;
+    this.renaming = true;
+    this.renameTo.set_value(this.open.name);
+    cx.notify();
+  }
+
+  /** Rename the open notebook to the words typed. Unsaved work is saved as a draft first, so it moves with the
+   *  name. The page, the list and what the screen tells agents all follow the new name. */
+  rename(cx) {
+    const old = this.open?.name;
+    const k = renameCheck(this.renameTo.value(), old, this.list);
+    if (!old || k.off || this.renameBusy) return;
+    this.renameBusy = true;
+    const nb = this.dirty ? toNotebook(this.cells, this.open.base) : null;
+    cx.spawn(async (cx) => {
+      if (nb) { await api(`/api/notebooks/${enc(old)}/draft`, { method: "PUT", body: { notebook: nb } }); this.dirty = false; }
+      const r = await api(`/api/notebooks/${enc(old)}/rename`, { body: { to: this.renameTo.value().trim() } });
+      this.renameBusy = false;
+      if (!r.ok) { this.note = { text: sayError(r.data?.error ?? r.data?.detail ?? r.error).text || "Couldn't rename it.", tone: "fail" }; cx.notify(); return; }
+      const name = r.data.name;
+      this.renaming = false;
+      if (this.open?.name === old) { this.open.name = name; if (r.data.version != null) this.open.version = r.data.version; }
+      this.list = (this.list ?? []).map((n) => (n.name === old ? { ...n, name, latest: r.data.version ?? n.latest } : n));
+      this.note = { text: `Renamed to ${name}.`, tone: "good" };
+      recordsChanged("notebook");
+      cx.notify();
+    });
+    cx.notify();
   }
 
   flushDraft(cx) {
@@ -534,7 +580,10 @@ export class Notebooks {
             .child(this.icon("file-text", 14, on ? c.blue : c.grey500))
             .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(on ? c.blue : c.navy).child(n.name))
             .when(n.latest != null, (e) => e.child(div().flex_none().px(4).border_1().border_color(c.grey300).text_size(10.5).font_family(MONO).text_color(c.grey900).child(`v${n.latest}`)))
-            .when(!!n.has_draft, (e) => e.child(div().flex_none().text_size(10.5).text_color(c.grey500).child("draft")));
+            .when(!!n.has_draft, (e) => e.child(div().flex_none().text_size(10.5).text_color(c.grey500).child("draft")))
+            // The open notebook can be renamed from its row too.
+            .when(on && !this.renaming, (e) => e.child(div().id("nb-rename-row").flex_none().text_size(11).text_color(c.blue).hover((s) => s.underline())
+              .on_click((_e, cx) => this.startRename(cx)).child("Rename")));
         })));
   }
 
@@ -555,7 +604,20 @@ export class Notebooks {
     return v_flex().flex_1().min_w(0).h_full()
       .child(h_flex().flex_none().flex_wrap().gap(8).px(20).py(10).items_center().border_b(1).border_color(c.rule)
         .child(this.icon("file-text", 16, c.navy))
-        .child(div().min_w(0).truncate().text_size(15).font_medium().font_family(MONO).child(o.name))
+        // The title is the way in to renaming: a click on it, or the Rename button, shows the field.
+        .when(!this.renaming, (e) => e
+          .child(div().id("nb-title").min_w(0).truncate().text_size(15).font_medium().font_family(MONO).cursor_pointer().hover((s) => s.text_color(c.blue))
+            .tooltip("Rename this notebook").on_click((_e, cx) => this.startRename(cx)).child(o.name)))
+        .when(this.renaming, (e) => {
+          const k = renameCheck(this.renameTo.value(), o.name, this.list);
+          return e.child(v_flex().id("nb-rename").gap(3)
+            .child(h_flex().gap(6).items_center()
+              .child(h_flex().id("nb-rename-field").w(240).h(28).px(8).items_center().border_1().border_color(k.bad ? c.fail : c.blue)
+                .child(Input.new(this.renameTo).w_full().text_size(12.5).text_color(c.navy)))
+              .child(div().id("nb-rename-go-wrap").when(!!k.off, (x) => x.tooltip(k.off)).child(Button(c, "nb-rename-go", this.renameBusy ? "Renaming" : "Rename", (_e, cx) => this.rename(cx), { small: true, kind: "primary", disabled: !!k.off || !!this.renameBusy })))
+              .child(Button(c, "nb-rename-cancel", "Cancel", (_e, cx) => { this.renaming = false; cx.notify(); }, { small: true, kind: "quiet" })))
+            .when(!!k.text, (x) => x.child(div().id("nb-rename-says").text_size(11.5).text_color(k.bad ? c.fail : c.grey500).child(k.text))));
+        })
         .when(o.version != null, (e) => e.child(div().flex_none().px(4).border_1().border_color(c.grey300).text_size(10.5).font_family(MONO).text_color(c.grey900).child(`v${o.version}`)))
         .child(h_flex().gap(5).items_center().text_size(11.5).text_color(c.grey500)
           .child(div().size(7).rounded_full().bg(this.kstate === "busy" ? c.blue : this.kstate === "idle" ? c.good : this.kstate === "lost" ? c.fail : c.grey300))

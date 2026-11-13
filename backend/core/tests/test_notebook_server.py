@@ -183,3 +183,52 @@ def test_kernel_pages_a_result_over_the_socket(ctx):
             assert "Run its cell again" in err["evalue"]
     finally:
         c.delete(f"/api/kernels/{sid}", headers=h)
+
+
+def test_rename_takes_any_words_and_moves_the_draft(ctx):
+    assert "demo-zero-results" in [n["name"] for n in NB.listing(ctx)]
+    # A saved notebook with an unsaved draft on top.
+    _, nb, _ = NB.load(ctx, "demo-zero-results")
+    draft = json.loads(json.dumps(nb))
+    draft["cells"].append({"cell_type": "markdown", "metadata": {}, "source": "not saved yet"})
+    NB.save_draft(ctx, "demo-zero-results", draft)
+    out = NB.rename(ctx, "demo-zero-results", "Zero results, by week")
+    assert out == {"name": "zero-results-by-week", "from": "demo-zero-results", "version": 1, "changed": True}
+    names = {n["name"]: n for n in NB.listing(ctx)}
+    assert "demo-zero-results" not in names, "the old name leaves the list"
+    assert names["zero-results-by-week"] == {"name": "zero-results-by-week", "latest": 1, "has_draft": True}
+    v, got, from_draft = NB.load(ctx, "zero-results-by-week")
+    assert v == 1 and from_draft and got["cells"][-1]["source"] == "not saved yet", "the unsaved work came with it"
+    # The earlier versions are still in the registry under the old name: saved versions are never rewritten.
+    assert ctx.registry.versions("notebook", "demo-zero-results")
+    # The same name again changes nothing, and a name in use is refused in plain words.
+    assert NB.rename(ctx, "zero-results-by-week", "zero results by week")["changed"] is False
+    NB.save_revision(ctx, "other", NB.new_notebook(), "x")
+    with pytest.raises(ValueError, match="You already have a notebook called other"):
+        NB.rename(ctx, "zero-results-by-week", "Other")
+    from captain_search.storage.backend import NotFound
+
+    with pytest.raises(NotFound):
+        NB.rename(ctx, "never-was", "x")
+    # A notebook that is only a draft: the draft moves, and nothing is published.
+    NB.save_draft(ctx, "untitled-notebook", NB.new_notebook())
+    out = NB.rename(ctx, "untitled-notebook", "Weekly review")
+    assert out["name"] == "weekly-review" and out["version"] is None
+    names = {n["name"]: n for n in NB.listing(ctx)}
+    assert "untitled-notebook" not in names and names["weekly-review"]["latest"] is None and names["weekly-review"]["has_draft"]
+    # Someone starts a new notebook under a name that was renamed away from: it shows again.
+    NB.save_draft(ctx, "demo-zero-results", NB.new_notebook())
+    assert "demo-zero-results" in [n["name"] for n in NB.listing(ctx)]
+
+
+def test_rename_route(ctx, monkeypatch):
+    from captain_search import server
+
+    server._ctx = None
+    c = TestClient(server.app)
+    h = {"Authorization": f"Bearer {server.TOKEN}"}
+    r = c.post("/api/notebooks/demo-zero-results/rename", headers=h, json={"to": "GPU cloud notes"})
+    assert r.status_code == 200 and r.json()["name"] == "gpu-cloud-notes"
+    assert c.post("/api/notebooks/gpu-cloud-notes/rename", headers=h, json={"to": "  "}).json()["error"] == "Give it a name."
+    assert c.post("/api/notebooks/never-was/rename", headers=h, json={"to": "x"}).status_code == 404
+    assert "gpu-cloud-notes" in [n["name"] for n in c.get("/api/notebooks", headers=h).json()]
