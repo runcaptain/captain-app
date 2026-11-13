@@ -161,11 +161,10 @@ export class Live {
   }
 
   /** New events since the last ask. Called every second while the open run is going. */
-  /** The page's own clock, once a second: a running run's time counts up, heard from or not. It asks nothing of
-   *  a run that is going: its events arrive through the live channel (`read`). */
+  /** The page's own clock, once a second: a running run's time counts up, heard from or not. It reads nothing:
+   *  a run's events arrive through the live channel (`read`), and so does a finished run's cost (`askCost`). */
   clock(cx) {
     if (this.run && !this.run.error && going(this.run.head?.status)) cx.notify();
-    if (this.sel && !this.busy && this.run && !this.run.error && !going(this.run.head.status)) this.askCost(cx);
   }
 
   /** The open run changed: read its new events. Told again while reading: read once more after. */
@@ -176,17 +175,19 @@ export class Live {
   }
 
   /** As `read`, on the clock's name: what the tests and older callers use. */
-  tick(cx) { this.clock(cx); if (this.sel && !this.busy && !(this.run && !this.run.error && !going(this.run.head.status))) this.fetch(cx); }
+  tick(cx) {
+    this.clock(cx);
+    if (!this.sel || this.busy) return;
+    if (this.run && !this.run.error && !going(this.run.head.status)) this.askCost(cx); else this.fetch(cx);
+  }
 
-  /** A finished run that went out as a job: what the job cost. The cost is written a moment after the job ends, so
-   *  this asks a few times, a few seconds apart, and then stops. */
+  /** A finished run that went out as a job: what the job cost. The cost is written on the job's record a moment
+   *  after the job ends. That write is told on the job's topic, and this is called then. Nothing asks on a clock. */
   askCost(cx) {
     const run = this.run;
     const job = run?.head?.job;
-    if (!job || run.cost || run.costAsking || (run.costTries ?? 0) >= 6 || Date.now() - (run.costAt ?? 0) < 4000) return;
+    if (!job || run.cost || run.costAsking) return;
     run.costAsking = true;
-    run.costAt = Date.now();
-    run.costTries = (run.costTries ?? 0) + 1;
     cx.spawn(async (cx) => {
       const r = await api(`/api/jobs/${encodeURIComponent(job)}`, { timeout: 60 });
       run.costAsking = false;
@@ -214,6 +215,9 @@ export class Live {
       const row = (this.list ?? []).find((x) => x.id === id);
       if (row) Object.assign(row, run.head);
       if (going(was) && !going(run.head.status)) this.host.onLiveEnded?.(cx, run.head);
+      // A finished run that went out as a job: what it cost, read once now. The cost is written on the job's record
+      // a moment after it ends, and that write is told on the job's topic, where it is read again (main.js).
+      if (!going(run.head.status)) this.askCost(cx);
       this.active = (this.list ?? []).filter((x) => going(x.status)).length;
       cx.notify();
     });

@@ -34,7 +34,7 @@ def ws(tmp_path, monkeypatch):
     host = Host()
     monkeypatch.setattr(J, "_target", lambda ctx, rec: {"kind": "demo"})
     monkeypatch.setattr(J.P, "get", lambda target, ctx=None: host)
-    monkeypatch.setattr(J, "_with_cost", lambda ctx, rec: rec)
+    monkeypatch.setattr(J, "_with_cost", lambda ctx, rec: {**rec, "cost": {"usd": 0.12, "text": "About $0.12."}})
     J._save(ctx, {"id": "j1", "state": "running", "handle": {"id": "h1"}, "target": "gpu-batch", "target_kind": "demo", "label": "a demo job"})
     J._save(ctx, {"id": "j0", "state": "succeeded", "handle": {"id": "h0"}, "target": "gpu-batch", "target_kind": "demo", "label": "an older job"})
     ctx.host = host
@@ -74,6 +74,10 @@ def test_a_job_that_ends_on_its_host_is_told_and_a_finished_one_is_not_asked_aga
                 break
         assert _names(got) == ["jobs"] and time.perf_counter() - ended < 1.5, "the list is told when the state is saved"
         assert J.load(ws, "j1")["state"] == "succeeded" and J.load(ws, "j1")["finished_at"]
+        # What it cost is on the record in the same write, so the screen that hears `job:j1` reads the cost then:
+        # a finished run's cost is not asked for on a clock.
+        assert J.load(ws, "j1")["cost"] == {"usd": 0.12, "text": "About $0.12."}
+        assert "job:j1" in _names(CH.FEED.answer(seq, {"job:j1"}))
         time.sleep(0.5)
         n = ws.host.asks
         time.sleep(1.0)

@@ -166,8 +166,7 @@ export default class CaptainRuns extends View {
     this.reg = new Regression(this);
     cx.timer.every(150, (cx) => { if (this.tab === "runs" && this.kind === "backtests") this.cmp.tick(cx); });
     this.loadAll(cx);
-    // One clock, once a second, for what ticks on the page: a running run's elapsed time. It reads nothing but a
-    // finished run's cost, which is written a moment after its job ends and has no topic of its own.
+    // One clock, once a second, for what ticks on the page: a running run's elapsed time. It reads nothing.
     cx.timer.every(1000, (cx) => { if (this.kind === "live") this.live.clock(cx); });
     // Everything else stays current from the one live channel (kit/live.js): what is running now, an open run's
     // events, the jobs and an open job's log. Read the moment it changes, whoever changed it.
@@ -459,6 +458,8 @@ export default class CaptainRuns extends View {
     // The open live run: its new events. A run that went out as a job is also read on when its job says something.
     const sel = this.live.sel, job = this.live.run?.head?.job;
     if (sel && this.kind === "live" && (has(`run:${sel}`) || (job && has(`job:${job}`)))) this.live.read(cx);
+    // A finished run's cost lands on its job's record a moment after the job ends: read it when the job says so.
+    if (sel && job && has(`job:${job}`) && this.live.run && !this.live.run.error && !going(this.live.run.head?.status)) this.live.askCost(cx);
     // The jobs: the list when one changes state, and the open job's log when it says something.
     if (has("jobs")) this.jobs.load(cx, false); // the services ask each place themselves while someone listens
     if (this.jobs.sel && has(`job:${this.jobs.sel}`)) this.jobs.follow(cx, this.jobs.sel);
