@@ -33,7 +33,7 @@ def _calls(aws, name):  # noqa: F811
 def test_a_running_endpoint_is_reported_as_the_cloud_reports_it(ws, aws):  # noqa: F811
     rec = SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
     d = FL.deployed(ws, fresh=True)
-    assert [a["ok"] for a in d["asked"]] == [True] and d["asked"][0]["cloud"] == "aws" and d["text"] == "1 deployed."
+    assert [a["ok"] for a in d["asked"]] == [True] and d["asked"][0]["cloud"] == "aws" and d["text"] == "1 model running."
     r = d["rows"][0]
     assert (r["project"], r["env"], r["model_version"], r["cloud"], r["region"], r["machine"]) == ("shop", "staging", ws.candidate, "aws", "us-west-1", "ml.t2.medium")
     assert (r["state"], r["link"], r["name"], r["copies"]["now"]) == ("running", "linked", rec["endpoint"]["name"], 1)
@@ -68,7 +68,7 @@ def test_things_in_the_cloud_that_no_project_knows_are_listed(ws, aws):  # noqa:
     assert r["state_text"] == "Found in your AWS account, not linked to a project." and r["state"] == "running" and r["machine"] == "ml.m5.large"
     assert r["project"] == "another-workspaces-project" and r["project_name"] is None and r["model_version"] is None and r["can"] == ["link", "remove"]
     assert r["copies"]["now"] == 2 and r["id"] == "cloud:aws:p:us-west-1:other-team-ranker-staging"
-    assert d["text"] == "1 deployed, 2 found in your cloud with no project."
+    assert d["text"] == "1 model running, 2 found in your cloud with no project."
     assert not any(r["name"] == "payments-fraud-model" for r in d["rows"])
 
 
@@ -353,3 +353,14 @@ def test_what_was_created_names_each_thing_and_leaves_out_captains_own_note(ws, 
     assert not any("Made by the first deploy" in t["kind_label"] or "target" in t["kind"] for t in place["things"])  # Captain's note is not in the account
     assert place["login"] == "aws" and place["login_shown"] is None and place["text"].startswith("7 things in your AWS account.")
     assert FL._same_word("aws", "aws") and FL._same_word("AWS", "aws") and not FL._same_word("work-aws", "aws") and FL._same_word(None, "modal")
+
+
+def test_the_summary_counts_models_the_way_a_person_would():
+    s = FL._summary
+    assert s(0, [], 0) == "No models are deployed yet."
+    assert s(1, [], 0) == "1 model running." and s(3, [], 0) == "3 models running."
+    assert s(0, ["stopped"], 0) == "1 model, stopped." and s(0, ["failed"], 0) == "1 model, not running."
+    assert s(0, ["stopped", "gone"], 0) == "2 models, none running."
+    assert s(2, ["stopped"], 0) == "2 models running, 1 stopped." and s(1, ["stopped", "failed"], 0) == "1 model running, 2 not running."
+    assert s(1, [], 2) == "1 model running, 2 found in your cloud with no project."
+    assert s(0, [], 1) == "No models of yours are deployed, 1 found in your cloud with no project."

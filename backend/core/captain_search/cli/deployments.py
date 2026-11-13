@@ -142,7 +142,7 @@ def deployments_list(running: bool = typer.Option(False, "--running", help="only
     lines = [f"{(r['project_name'] or r['name'] or '')[:22]:22} {r['state_label'][:24]:24} {r['where'][:40]:40} "
              f"{(r['model_version'] or 'not linked to a project')[:34]:34} {r['state_text']}" for r in rows]
     lines += [f"Could not ask {a['cloud_label']} ({a['login'] or 'no login'}): {a['error']}" for a in d["asked"] if not a["ok"]]
-    emit({**d, "rows": rows}, "\n".join(lines + ([d["text"]] if d["rows"] else [])) if lines else ("Nothing is deployed." if not d["rows"] else d["text"]))
+    emit({**d, "rows": rows}, "\n".join(lines + ([d["text"]] if d["rows"] else [])) if lines else d["text"])
 
 
 @deployments_app.command("sync")

@@ -313,9 +313,7 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
     up = sum(1 for r in mine if r["state"] in ("running", "asleep", "starting"))
     loose = len(rows) - len(mine)
     could_not = [a for a in asked if not a["ok"]]
-    text = ("Nothing is deployed. Deploy a model from a project's page to see it here." if not rows else
-            f"{up} deployed" + (f", {len(mine) - up} not running" if len(mine) - up else "")
-            + (f", {loose} found in your cloud with no project" if loose else "") + ".")
+    text = _summary(up, [r["state"] for r in mine if r["state"] not in ("running", "asleep", "starting")], loose)
     if could_not:
         text += " Could not ask " + ", ".join(sorted({a["cloud_label"] for a in could_not})) + " just now."
     out = {"rows": rows, "asked": asked, "text": text, "read_at": _now(), "ttl_s": TTL_S}
@@ -348,6 +346,26 @@ def _same(tag, value) -> bool:
     if not tag or not value:
         return False
     return str(tag) == str(value) or str(tag) == clean_name(str(value), 60)
+
+
+def _summary(up: int, down: list[str], loose: int) -> str:
+    """The line beside the screen's title, counting models as a person would: "2 models running, 1 stopped",
+    "1 model, not running", "No models are deployed yet."."""
+    n = up + len(down)
+    if not n and not loose:
+        return "No models are deployed yet."
+    models = lambda k: f"{k} model{'s' if k != 1 else ''}"  # noqa: E731
+    # "stopped" when every one that is down was stopped. Otherwise some failed or could not be checked.
+    word = "stopped" if all(s in ("stopped", "gone") for s in down) else "not running"
+    if not n:
+        said = "No models of yours are deployed"
+    elif not down:
+        said = f"{models(up)} running"
+    elif not up:
+        said = f"{models(n)}, {word if word == 'stopped' else 'not running'}" if n == 1 else f"{models(n)}, none running"
+    else:
+        said = f"{models(up)} running, {len(down)} {word}"
+    return said + (f", {loose} found in your cloud with no project" if loose else "") + "."
 
 
 def _iso(s) -> bool:

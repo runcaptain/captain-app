@@ -59,9 +59,9 @@ const filled = (h) => h.byIdPrefix('').filter((e) => e.calls?.some?.((x) => x[0]
 // ---- nothing deployed ----
 let h = await open({ deployed: { rows: [], asked: [], text: 'Nothing is deployed. Deploy a model from a project\'s page to see it here.', read_at: '' } });
 let t = h.text();
-assert.ok(t.includes('Deployments') && t.includes('Nothing is deployed') && byId(h, 'dep-go-projects').length === 1 && t.includes('Deploy a model'), `empty: ${t}`);
+assert.ok(t.includes('Deployments') && t.includes('Models') && t.includes('No models are deployed yet.') && byId(h, 'dep-go-projects').length === 1 && t.includes('Deploy a model'), `empty: ${t}`);
 assert.equal(byId(h, 'dep-filters').length, 0, 'no filters over an empty list');
-assert.ok(!t.includes('What Captain created in your accounts'), 'no second section when nothing was created');
+assert.equal(byId(h, 'dep-created').length, 0, 'nothing about an account when nothing was created');
 
 // Nothing deployed, and things from an earlier deploy still in the account: the page is not empty. It says nothing
 // is deployed, offers to deploy, and lists what Captain created there with "Remove everything".
@@ -73,8 +73,16 @@ h = await open({ deployed: { rows: [], asked: [], text: 'Nothing is deployed.', 
     { kind: 'codebuild-project', name: 'captain-serving-build', what_for: "Builds the model's image inside your account. It runs only when an image is built." },
     { kind: 'bucket', name: 'captain-serving-us-west-1', what_for: "Holds the model's files and its request log." }] }] } });
 t = h.text();
-assert.ok(t.includes('Nothing is deployed') && t.includes('Deploy a model') && t.includes('What Captain created in your accounts'), `nothing deployed, but not an empty page: ${t}`);
+// The screen is a list of models first. What is in the account is one closed line at the bottom, until opened.
+assert.ok(t.includes('No models are deployed yet.') && t.includes('Deploy a model'), `no models, said under Models: ${t}`);
+assert.ok(t.includes('Set up in your AWS account: 5 things Captain created so it can deploy there.') && byId(h, 'dep-setup-show-aws').length === 1, `one line for the account: ${t}`);
+assert.ok(t.indexOf('Models') < t.indexOf('Set up in your AWS account'), 'the models come first');
+assert.equal(byId(h, 'dep-thing-aws-0').length, 0, 'closed: the things are not listed');
+assert.equal(byId(h, 'dep-setup-remove-aws').length, 0, 'closed: nothing to remove by accident');
+await h.click('dep-setup-show-aws');
+t = h.text();
 for (let i = 0; i < 5; i++) assert.equal(byId(h, `dep-thing-aws-${i}`).length, 1, `thing ${i} of the five is listed`);
+assert.ok(t.includes('Hide'), 'and it can be closed again');
 assert.ok(t.includes("Holds the model's files and its request log.") && byId(h, 'dep-setup-remove-aws').length === 1 && t.includes('Remove everything'), 'each with what it is for, and Remove everything');
 await h.click('dep-setup-remove-aws');
 assert.ok(h.text().includes('Remove everything Captain created in your AWS account?'), 'it asks first');
@@ -89,7 +97,10 @@ h = await open({ deployed: { rows: [OLD], asked, text: '0 deployed, 1 not runnin
     { kind: 's3-object', kind_label: 'Build package', name: 's3://captain-serving-000000000000-us-west-1/build/serving.zip', short: 'serving.zip', what_for: "The files the model's image is built from. Kept so the image can be built again without sending them." },
     { kind: 'log-group', kind_label: 'Build log', name: '/aws/codebuild/captain-serving-build', short: 'captain-serving-build', what_for: 'What the image build printed while it ran. Kept so a build that failed can be read.' }] }] } });
 t = h.text();
-assert.ok(t.includes('Nothing is running') && byId(h, 'dep-go-projects').length === 1 && t.includes('Deploy a model'), `nothing running: says so, and offers to deploy: ${t}`);
+assert.ok(t.includes('Models') && t.includes('None is running. Start one again below, or deploy one from a project\'s page.') && byId(h, 'dep-go-projects').length === 1, `nothing running: says so, and offers to deploy: ${t}`);
+assert.ok(t.indexOf('Kids range') < t.indexOf('Set up in your AWS account'), 'the model is above the account line');
+await h.click('dep-setup-show-aws');
+t = h.text();
 assert.equal(shown(h), 'kids', 'the stopped model is right there, not behind a filter');
 assert.ok(byId(h, `dep-start-${OLD.id}`).length === 1 && byId(h, `dep-remove-${OLD.id}`).length === 1, 'with Start again and Remove from the cloud');
 assert.ok(t.includes('Build package') && t.includes('serving.zip') && t.includes('Build log') && !t.includes('| Made by the first deploy |') && !t.includes('s3://'), `each thing is named for what it is: ${t}`);
@@ -178,9 +189,11 @@ await h.click('dep-link-trail');
 await h.idle(60);
 assert.deepEqual(sent.find((x) => x[1] === '/api/deployed/link')?.[2], { id: FOUND.id, project: 'trail' });
 
-// What Captain created in each account, with what each thing is for.
+// What Captain created in each account: one line each, opened to see what each thing is for.
+await h.click('dep-setup-show-aws');
+await h.click('dep-setup-show-gcp');
 t = h.text();
-assert.ok(t.includes('What Captain created in your accounts') && t.includes("Holds the model's image in your account.") && t.includes('In use by Demo shop. Stop that model first to remove these.'), `the setup section: ${t}`);
+assert.ok(t.includes('Set up in your AWS account: 2 things') && t.includes('Set up in your Google Cloud account: 1 thing Captain created') && t.includes("Holds the model's image in your account.") && t.includes('In use by Demo shop. Stop that model first to remove these.'), `the setup lines: ${t}`);
 assert.equal(byId(h, 'dep-setup-remove-aws').length, 0, 'in use: no removal offered');
 assert.equal(byId(h, 'dep-setup-remove-gcp').length, 1, 'not in use: Remove everything');
 await h.click('dep-setup-remove-gcp');
@@ -273,7 +286,7 @@ const main = fs.readFileSync(path.join(dir, 'main.js'), 'utf8'), model = fs.read
 assert.equal((main.match(/font_family\(/g) ?? []).length, 1, 'one typeface on the list, set once');
 assert.equal((model.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font only for the address a person copies');
 assert.ok(!/model-part-/.test(model) && /Submenus\(c, PARTS/.test(model) && (model.match(/\{ id: "[a-z]+", label:/g) ?? []).length === 2, 'the model page declares two submenus');
-assert.equal((main.match(/kind: "primary"/g) ?? []).length, 3, 'three filled buttons in the source, never two on screen: nothing deployed, nothing running, and an open question (which hides the others)');
+assert.equal((main.match(/kind: "primary"/g) ?? []).length, 2, 'two filled buttons in the source, never both on screen: Deploy a model when nothing is answering, and an open question, which hides it');
 assert.equal((model.match(/kind: "primary"/g) ?? []).length, 0, 'the model page has no filled button');
 // A name in the cloud is shown as the cloud has it ("captain-shop-staging"). Captain's own words never say these.
 for (const bad of [/\bengine\b/i, /\bdaemon\b/i, /\bpipeline/i, /\bendpoint config\b/i, /(^|[^-])\bstaging\b/i]) assert.ok(!bad.test(t), `no ${bad} on screen`);

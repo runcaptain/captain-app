@@ -7,7 +7,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { theme, props, run, shared, setShared } from "herdr";
 import { api, watchWorkspace } from "./kit/cst.js";
 import { palette, isDark, FONT } from "./kit/tokens.js";
-import { Button, Empty, Problem, plainError } from "./kit/ui.js";
+import { Button, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { ago, money, ms, count, Spark } from "./words.js";
@@ -31,6 +31,7 @@ export default class CaptainDeployments extends View {
     this.projects = null;     // for "Link to a project"
     this.page = null;         // the model page, when a row is open
     this.menu = null;         // which picker is open: "cloud", "project" or none
+    this.shownSetup = {};     // cloud -> whether what Captain created there is opened up
     this.wanted = props()?.open ?? null;  // "<project>:<env>": open that model's page once the list is read
     // The picture check hands the screen its rows (props.demo), so every state can be drawn with nothing deployed
     // and no cloud asked. A screen drawn this way does nothing: its buttons reach no service.
@@ -199,8 +200,9 @@ export default class CaptainDeployments extends View {
     return v_flex().id(`dep-row-${r.id}`).gap(6).py(12).border_b(1).border_color(c.rule)
       .child(h_flex().gap(10).items_center()
         .child(r.cloud === "local" ? svg(icon("monitor")).size(16).text_color(c.navy) : Brand(c, r.cloud, 16))
-        .child(div().id(`dep-name-${r.id}`).text_size(14).font_semibold().text_color(c.navy).child(found ? r.name : (r.project_name ?? r.project)))
-        .child(div().min_w(0).truncate().text_size(13).text_color(c.grey500).child(found ? "" : (r.model_version ?? "Model version not known")))
+        // The project and the model first, and largest: they are what a person looks for.
+        .child(div().id(`dep-name-${r.id}`).text_size(16).font_semibold().text_color(c.navy).child(found ? r.name : (r.project_name ?? r.project)))
+        .child(div().id(`dep-model-${r.id}`).min_w(0).truncate().text_size(14).text_color(c.grey900).child(found ? "" : (r.model_version ?? "Model version not known")))
         .child(div().flex_1())
         .when(hour.length > 1 && !found, (e) => e.child(Spark(c, `dep-spark-${r.id}`, hour))))
       .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
@@ -217,22 +219,30 @@ export default class CaptainDeployments extends View {
     cx.notify();
   }
 
+  // What the first deploy made in one account. Closed at first, as one line: it is there to be found and removed,
+  // not the thing this screen is about.
   setup(c, place) {
     const id = `setup-${place.cloud}`;
-    return v_flex().id(`dep-setup-${place.cloud}`).gap(6).py(12).border_b(1).border_color(c.rule)
-      .child(h_flex().gap(10).items_center()
-        .child(Brand(c, place.cloud, 16))
-        .child(div().text_size(14).font_semibold().text_color(c.navy).child(place.cloud_label))
-        // The login's name only when it says something the cloud's name does not ("aws" beside AWS says nothing).
-        .child(div().text_size(13).text_color(c.grey500).child([place.region, "login_shown" in place ? place.login_shown : place.login].filter(Boolean).join(", "))))
-      .children(place.things.map((t, i) => h_flex().id(`dep-thing-${place.cloud}-${i}`).gap(8).items_start()
+    const open = Boolean(this.shownSetup[place.cloud]) || this.ask?.id === id;
+    const n = place.things.length;
+    const line = h_flex().id(`dep-setup-${place.cloud}`).gap(10).items_center().py(8)
+      .child(Brand(c, place.cloud, 14))
+      .child(div().flex_1().min_w(0).text_size(13).line_height("19px").text_color(c.grey900)
+        .child(`Set up in your ${place.cloud_label} account: ${n} thing${n === 1 ? "" : "s"} Captain created so it can deploy there.`))
+      .child(Button(c, `dep-setup-show-${place.cloud}`, open ? "Hide" : "Show", (_e, cx) => { this.shownSetup[place.cloud] = !open; cx.notify(); }, { small: true }));
+    if (!open) return line;
+    const where = [place.region, "login_shown" in place ? place.login_shown : place.login].filter(Boolean).join(", ");
+    return v_flex().gap(6).pb(10).border_b(1).border_color(c.rule)
+      .child(line)
+      .when(Boolean(where), (e) => e.child(div().pl(24).text_size(12.5).text_color(c.grey500).child(where)))
+      .children(place.things.map((t, i) => h_flex().id(`dep-thing-${place.cloud}-${i}`).pl(24).gap(8).items_start()
         .child(div().w(150).flex_none().truncate().text_size(12.5).text_color(c.grey500).child(t.kind_label ?? ""))
         .child(div().w(230).flex_none().truncate().text_size(12.5).text_color(c.navy).child(t.short ?? t.name))
         .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey500).child(t.what_for))))
-      .when(Boolean(place.in_use_by?.length), (e) => e.child(div().text_size(12.5).text_color(c.grey500)
+      .when(Boolean(place.in_use_by?.length), (e) => e.child(div().pl(24).text_size(12.5).text_color(c.grey500)
         .child(`In use by ${place.in_use_by.join(", ")}. Stop that model first to remove these.`)))
-      .when(this.ask?.id === id, (e) => e.child(this.question(c)))
-      .when(this.ask?.id !== id && place.can_remove, (e) => e.child(h_flex().child(this.busy[id]
+      .when(this.ask?.id === id, (e) => e.child(div().pl(24).child(this.question(c))))
+      .when(this.ask?.id !== id && place.can_remove, (e) => e.child(h_flex().pl(24).child(this.busy[id]
         ? div().text_size(12.5).text_color(c.grey500).child("Removing...")
         : Button(c, `dep-setup-remove-${place.cloud}`, "Remove everything", (_e, cx) => this.removeSetup(place, cx), { small: true }))));
   }
@@ -278,26 +288,29 @@ export default class CaptainDeployments extends View {
       // With nothing deployed the page itself says so: the line beside the title would only repeat it.
       .child(div().id("dep-summary").flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(d.rows.length ? d.text : ""))
       .child(Button(c, "dep-refresh", "Ask the clouds again", (_e, cx) => this.load(cx, true), { small: true }));
+    const none = !d.rows.length;
+    const noneUp = !none && !d.rows.some((r) => UP.includes(r.state) && r.link !== "unlinked");
+    const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", () => run("layout.select", { stack: props()?.stack ?? "sections", child: "project" }), { kind: "primary", small });
     const body = v_flex().gap(18)
       .when(Boolean(this.note), (e) => e.child(div().id("dep-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)))
       .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(13).line_height("19px").text_color(c.fail)
         .child(`Captain could not ask ${a.cloud_label}${a.login ? ` (${a.login})` : ""} just now: ${plainError(a.error, "no reason given")}. What is shown for it is Captain's own record.`)))
-      // Nothing answering right now, though there are deployments: say so, and offer the next step. The stopped
-      // ones are listed right below, each with Start again and Remove.
-      .when(Boolean(d.rows.length) && !d.rows.some((r) => UP.includes(r.state) && r.link !== "unlinked"), (e) => e.child(h_flex().id("dep-none-running").gap(12).items_center()
-        .child(div().text_size(14).font_semibold().text_color(c.navy).child("Nothing is running"))
-        .child(div().flex_1().text_size(13).text_color(c.grey500).child("Start a stopped model again below, or deploy one from a project's page."))
-        .when(!this.ask, (x) => x.child(Button(c, "dep-go-projects", "Deploy a model", () => run("layout.select", { stack: props()?.stack ?? "sections", child: "project" }), { kind: "primary", small: true })))))
-      .child(d.rows.length ? this.filters(c, d.rows) : div())
-      .child(v_flex().id("dep-list")
-        .children(rows.map((r) => this.row(c, r)))
-        .when(!d.rows.length, (e) => e.child(Empty(c, "Nothing is deployed", "Deploy one from a project's page. It shows here with where it runs, its traffic and what it costs.",
-          Button(c, "dep-go-projects", "Deploy a model", () => run("layout.select", { stack: props()?.stack ?? "sections", child: "project" }), { kind: "primary" }))))
-        .when(Boolean(d.rows.length) && !rows.length, (e) => e.child(div().id("dep-none-shown").py(16).text_size(13).text_color(c.grey500)
-          .child(this.show === "running" ? "Nothing is running. Stopped ones are under Stopped." : "Nothing matches. Change what is shown above."))))
-      .when(Boolean(places.length), (e) => e.child(v_flex().id("dep-created")
-        .child(div().text_size(15).font_semibold().text_color(c.navy).child("What Captain created in your accounts"))
-        .child(div().pt(3).text_size(12.5).line_height("18px").text_color(c.grey500).child("Made by the first deploy to each cloud. Remove them when you no longer deploy there."))
+      // The list of models is what this screen is: it is always here, under its own heading, even with nothing in it.
+      .child(v_flex().id("dep-models").gap(10)
+        .child(h_flex().gap(12).items_center()
+          .child(div().text_size(15).font_semibold().text_color(c.navy).child("Models"))
+          .child(div().id("dep-models-line").flex_1().text_size(13).text_color(c.grey500)
+            .child(none ? "No models are deployed yet. Deploy one from a project's page, and it shows here with where it runs, its traffic and what it costs."
+              : noneUp ? "None is running. Start one again below, or deploy one from a project's page." : ""))
+          // The next step, when nothing is answering. An open question takes the filled button in its place.
+          .when((none || noneUp) && !this.ask, (e) => e.child(deploy(true))))
+        .child(none ? div() : this.filters(c, d.rows))
+        .child(v_flex().id("dep-list")
+          .children(rows.map((r) => this.row(c, r)))
+          .when(!none && !rows.length, (e) => e.child(div().id("dep-none-shown").py(16).text_size(13).text_color(c.grey500)
+            .child(this.show === "running" ? "No model is running. Stopped ones are under Stopped." : "No model matches. Change what is shown above.")))))
+      // Last and small: what the first deploy to each cloud made, one line each until it is opened.
+      .when(Boolean(places.length), (e) => e.child(v_flex().id("dep-created").pt(6)
         .children(places.map((p) => this.setup(c, p)))));
     return frame(v_flex().size_full().child(head).child(div().id("dep-body").flex_1().min_h(0).overflow_y_scroll().px(24).py(18).child(body)));
   }
