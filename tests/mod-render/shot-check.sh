@@ -280,6 +280,9 @@ covered && { echo "an overlay still covers the window: $(app status | python3 -c
 props_of() {
   case "$1" in
     captain-runs:side) python3 tests/mod-render/first-query.py "$CSTH" ;;
+    # The Deployments screen with sample rows (empty, leftover, stopped, one, several, failed, found, model): nothing
+    # is deployed and no cloud is asked. Demo names only in that file.
+    captain-deployments:*) python3 tests/mod-render/deployments-demo.py "${1#captain-deployments:}" ;;
     captain-runs:compare) echo '{"tab": "compare"}' ;;
     captain-notebooks:notebook) echo '{"notebook": "shot-notebook", "runAll": true}' ;;
     captain-data:sources) echo '{"tab": "sources"}' ;;

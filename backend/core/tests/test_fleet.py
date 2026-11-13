@@ -364,3 +364,24 @@ def test_the_summary_counts_models_the_way_a_person_would():
     assert s(2, ["stopped"], 0) == "2 models running, 1 stopped." and s(1, ["stopped", "failed"], 0) == "1 model running, 2 not running."
     assert s(1, [], 2) == "1 model running, 2 found in your cloud with no project."
     assert s(0, [], 1) == "No models of yours are deployed, 1 found in your cloud with no project."
+
+
+def test_a_row_says_who_and_when_in_words_and_names_the_model_plainly(ws):  # noqa: F811
+    """From a real screen on 2026-11-12: "Stopped: stopped by <an email address>", and the model shown as
+    "<project>/starter-ranker@v2" beside the project's own name."""
+    import datetime as dt
+
+    assert FL.model_words("shop/starter-ranker@v2", "shop") == "starter-ranker, version 2"
+    assert FL.model_words("shop/starter-ranker@v2") == "shop/starter-ranker, version 2" and FL.model_words("other/x@v1", "shop") == "other/x, version 1"
+    assert FL.model_words("plain", "shop") == "plain" and FL.model_words(None) is None
+    assert FL.short_name("dana@example.com") == "dana" and FL.short_name("dana") == "dana" and FL.short_name(None) is None
+    t = lambda **kw: (dt.datetime.now(dt.timezone.utc) - dt.timedelta(**kw)).isoformat(timespec="seconds")  # noqa: E731
+    assert FL._stopped_words("stopped by dana@example.com", t(minutes=20)) == "Stopped by dana, 20 minutes ago."
+    assert FL._stopped_words("stopped by itself: no requests for 240 minutes", t(hours=3)) == "Stopped by itself, 3 hours ago: no requests for 240 minutes."
+    assert FL._stopped_words("it did not start", t(days=2)) == "Stopped, 2 days ago: it did not start."
+    assert FL._stopped_words(None, None) == "Stopped." and FL._stopped_words("stopped by dana", t(seconds=10)) == "Stopped by dana, just now."
+    SG.stage(ws, "shop", baseline=True, target="local", confirm=True)
+    SG.unstage(ws, "shop")
+    r = FL.deployed(ws, fresh=True)["rows"][0]
+    assert r["state_text"].startswith("Stopped by ") and r["state_text"].endswith("just now.") and "stopped by" not in r["state_text"][1:] and "@" not in r["state_text"]
+    assert r["model_label"] == FL.model_words(r["model_version"], "shop") and not r["model_label"].startswith("shop/") and r["by_name"] and "@" not in r["by_name"]

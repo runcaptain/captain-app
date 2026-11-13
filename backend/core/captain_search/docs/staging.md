@@ -494,7 +494,7 @@ that were up, and its cost: the hourly rate, today and this month. Ranges: 15 mi
 
 | Host | Requests, errors, response time | CPU, memory, copies over time | Cost today and this month |
 |---|---|---|---|
-| AWS | CloudWatch | CloudWatch | The hours each copy was up, as CloudWatch saw them, at the list price |
+| AWS | CloudWatch | CloudWatch for processor and memory, when AWS has published them (it does not always). Copies up now from AWS's own count | Captain's own record of when it was up, at the list price |
 | Modal | The request log | Not read yet. Copies up now come from Modal | Captain's own record of when it was up |
 | Google Cloud | The request log | Not read yet | Captain's own record |
 | Azure | The request log | Not read yet | Captain's own record |
@@ -502,23 +502,35 @@ that were up, and its cost: the hourly rate, today and this month. Ranges: 15 mi
 
 What a host does not report is said in a sentence (`not_read`). It is never shown as a zero.
 
-On AWS, the copies up come from a count: every copy reports its CPU to CloudWatch once a minute, so the number of
-reports in a minute is the number of copies. Sixty reports are one copy up for one hour, and that is what the cost
-is worked out from. It is an estimate at the list price. The AWS bill is the final word.
+**What AWS has, and what it does not, as found on a real account on 2026-11-12.** For an endpoint that ran for an
+hour on ml.t2.medium, AWS held every request number (requests, failures, response time), by endpoint name and
+variant. It held no processor or memory numbers at all: they were never published for it. So:
+
+- Requests, failures and response time are read from AWS. Response time arrives in microseconds and is shown in
+  milliseconds.
+- Processor and memory are shown when AWS has them. When it has none, the answer says "AWS has not published
+  processor and memory numbers for this endpoint.", and no empty chart is drawn.
+- Hours and cost come from Captain's own record of when the model was up, at the list price for its machine:
+  its ledger of finished runs, or the start and stop times when the ledger holds nothing. It is an estimate, and
+  the AWS bill is the final word. The hours were first counted from the processor reports each copy sends. With
+  none sent, an hour of running counted as nothing.
+- Copies are the number AWS says are up now, and the fewest and most it may run, in words. There is no chart of
+  copies over time, because no history of them is kept that can be relied on.
 
 The median over a range is the median minute, weighted by its requests. The 95th percentile is the slowest
 minute's 95th, among minutes that carried real traffic, because a percentile of percentiles is not a percentile
 and CloudWatch reports by the minute. CPU is a share of one core: 100% is one core in full use.
 
-**What reading costs.** CloudWatch charges about a cent for a thousand metrics read, and each look reads eleven.
+**What reading costs.** CloudWatch charges about a cent for a thousand metrics read, and each look reads ten.
 A cloud's numbers are counted by the minute and arrive a minute or two late, so asking more often buys nothing.
-The answer for a deployment and range is kept for one minute, and the month's cost for ten. A screen left open on
-one deployment all day reads about 16,000 metrics, about 16 cents.
+The answer for a deployment and range is kept for one minute. The cost asks AWS nothing. A screen left open on
+one deployment all day reads about 14,000 metrics, about 14 cents.
 
 Every call is read-only, and none is sent to the model, so a sleeping host stays asleep.
 
-**Not run on a real account yet.** Tested against the AWS stand-in. The metric names and the once-a-minute report
-are AWS's documented behaviour, and the first real read should be checked against the CloudWatch console.
+**Run on a real account once, 2026-11-12,** for a stopped endpoint: the state, the request numbers and the
+missing processor numbers above are from that read. The charts of a running endpoint under real traffic have not
+been checked against the CloudWatch console yet.
 
 ## Cost, and stopping by itself
 

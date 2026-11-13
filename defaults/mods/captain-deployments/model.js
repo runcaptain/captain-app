@@ -120,6 +120,9 @@ export class ModelPage {
         .when(has("copies"), (e) => e.child(chart("model-chart-copies", "Copies running", s.copies_now ? `${s.copies_now} now, ${s.copies_peak} at the most` : "", b.map((x) => x.copies))))
         .when(has("cpu"), (e) => e.child(chart("model-chart-cpu", "Processor in use", `${s.cpu}% of one core on average, ${s.cpu_peak}% at the most`, b.map((x) => x.cpu))))
         .when(has("memory"), (e) => e.child(chart("model-chart-memory", "Memory in use", `${s.memory}% on average, ${s.memory_peak}% at the most`, b.map((x) => x.memory)))))
+      // How many copies, in words: the cloud's count now and what it may run. There is no chart of it, because no
+      // cloud keeps a history of it that can be relied on.
+      .when(Boolean(s.copies_text), (e) => e.child(div().id("model-copies-line").text_size(13).line_height("19px").text_color(c.navy).child(s.copies_text)))
       .child(div().id("model-source").text_size(12.5).line_height("18px").text_color(c.grey500).child([n.source_text, ...(n.not_read ?? [])].join(" ")));
   }
 
@@ -173,7 +176,7 @@ export class ModelPage {
       .child(Button(c, "model-close", "All deployments", (_e, cx) => { this.close(); cx.notify(); }, { small: true }))
       .child(r.cloud === "local" ? svg(icon("monitor")).size(16).text_color(c.navy) : Brand(c, r.cloud, 16))
       .child(div().id("model-title").text_size(18).font_semibold().text_color(c.navy).child(r.project_name ?? r.name ?? ""))
-      .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(r.model_version ?? ""));
+      .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(r.model_label ?? r.model_version ?? ""));
     const top = v_flex().gap(6)
       .child(div().id("model-state").text_size(14).line_height("20px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
       .child(div().text_size(12.5).line_height("18px").text_color(c.grey500)

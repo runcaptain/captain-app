@@ -141,6 +141,19 @@ export default class CaptainDeployments extends View {
     cx.notify();
   }
 
+  /** "Deploy a model": a model is deployed from its project's page. With one project, go there. With several, ask
+   *  which. With none, go to the projects, where one is made. */
+  deployFrom(cx) {
+    const go = (list) => {
+      if (list.length === 1) return this.openProject({ project: list[0].id, project_name: list[0].name });
+      if (!list.length) return run("layout.select", { stack: props()?.stack ?? "sections", child: "project" });
+      this.ask = { id: "deploy", pick: "deploy", text: "Which project's model do you want to deploy?" };
+      cx.notify();
+    };
+    if (this.projects) return go(this.projects);
+    cx.spawn(async (cx) => { const r = await api("/api/projects"); this.projects = r.ok ? (r.data.projects ?? r.data.rows ?? r.data ?? []) : []; go(this.projects); cx.notify(); });
+  }
+
   openProject(row) {
     setShared("captain.scope", { kind: "project", id: row.project, label: row.project_name ?? row.project });
     return run("layout.select", { stack: props()?.stack ?? "sections", child: "project" });
@@ -156,8 +169,11 @@ export default class CaptainDeployments extends View {
     if (a.pick) {
       const list = this.projects;
       return box.child(h_flex().gap(8).flex_wrap()
-        .children((list ?? []).map((p) => Button(c, `dep-link-${p.id}`, p.name ?? p.id, (_e, cx) => cx.spawn((cx) => this.act(cx, { id: a.id }, "Linking",
-          () => api("/api/deployed/link", { method: "POST", body: { id: a.id, project: p.id } }))), { small: true })))
+        // Picking a project either gives it something found in a cloud, or goes to it to deploy from there.
+        .children((list ?? []).map((p) => (a.pick === "deploy"
+          ? Button(c, `dep-deploy-in-${p.id}`, p.name ?? p.id, (_e, cx) => { this.ask = null; cx.notify(); this.openProject({ project: p.id, project_name: p.name }); }, { small: true })
+          : Button(c, `dep-link-${p.id}`, p.name ?? p.id, (_e, cx) => cx.spawn((cx) => this.act(cx, { id: a.id }, "Linking",
+            () => api("/api/deployed/link", { method: "POST", body: { id: a.id, project: p.id } }))), { small: true }))))
         .when(list && !list.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("There are no projects yet. Make one first.")))
         .when(!list, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("Reading your projects...")))
         .child(Button(c, "dep-ask-no", "Cancel", (_e, cx) => { this.ask = null; cx.notify(); }, { small: true })));
@@ -186,8 +202,9 @@ export default class CaptainDeployments extends View {
             : [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true }),
               ...(r.model_version ? [Button(c, `dep-start-${r.id}`, "Start again", (_e, cx) => this.start(r, cx), { small: true })] : []),
               Button(c, `dep-remove-${r.id}`, "Remove from the cloud", (_e, cx) => this.remove(r, cx), { small: true })];
-    const when = ago(r.state === "stopped" || r.state === "gone" ? r.stopped_at ?? r.since : r.since);
-    const who = r.by ? [`Deployed by ${r.by}`, when].filter(Boolean).join(", ") : when ? `Made ${when}` : null;
+    // Who deployed it and when, by the name before the @. When it stopped is in the state's own sentence.
+    const when = ago(r.since);
+    const who = r.by ? [`Deployed by ${r.by_name ?? r.by}`, when].filter(Boolean).join(", ") : when ? `Made ${when}` : null;
     const numbers = found || !n ? null : [
       s.requests != null ? `${count(s.requests)} request${s.requests === 1 ? "" : "s"} in 24 hours` : null,
       s.requests ? (s.errors ? `${count(s.errors)} failed` : "none failed") : null,
@@ -195,16 +212,18 @@ export default class CaptainDeployments extends View {
     ].filter(Boolean).join(", ");
     const cost = found || !n?.cost ? null : [
       n.cost.hourly_usd ? `${money(n.cost.hourly_usd)} an hour` : up ? null : "Costs nothing now",
-      n.cost.month_usd != null ? `${money(n.cost.month_usd)} this month` : null,
+      // Said only when there is something to say: a month's cost that is not known is not "$0.00".
+      n.cost.month_usd > 0 ? `about ${money(n.cost.month_usd)} this month` : null,
     ].filter(Boolean).join(", ");
     return v_flex().id(`dep-row-${r.id}`).gap(6).py(12).border_b(1).border_color(c.rule)
       .child(h_flex().gap(10).items_center()
         .child(r.cloud === "local" ? svg(icon("monitor")).size(16).text_color(c.navy) : Brand(c, r.cloud, 16))
         // The project and the model first, and largest: they are what a person looks for.
         .child(div().id(`dep-name-${r.id}`).text_size(16).font_semibold().text_color(c.navy).child(found ? r.name : (r.project_name ?? r.project)))
-        .child(div().id(`dep-model-${r.id}`).min_w(0).truncate().text_size(14).text_color(c.grey900).child(found ? "" : (r.model_version ?? "Model version not known")))
+        .child(div().id(`dep-model-${r.id}`).min_w(0).truncate().text_size(14).text_color(c.grey900).child(found ? "" : (r.model_label ?? r.model_version ?? "Model version not known")))
         .child(div().flex_1())
-        .when(hour.length > 1 && !found, (e) => e.child(Spark(c, `dep-spark-${r.id}`, hour))))
+        // Drawn only when the last hour had requests: an empty chart is a faint line that says nothing.
+        .when(hour.some((v) => v > 0) && !found, (e) => e.child(Spark(c, `dep-spark-${r.id}`, hour))))
       .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
       .child(div().text_size(12.5).line_height("18px").text_color(c.grey500)
         .child([r.where, numbers, cost, who].filter(Boolean).join(". ") + "."))
@@ -290,7 +309,7 @@ export default class CaptainDeployments extends View {
       .child(Button(c, "dep-refresh", "Ask the clouds again", (_e, cx) => this.load(cx, true), { small: true }));
     const none = !d.rows.length;
     const noneUp = !none && !d.rows.some((r) => UP.includes(r.state) && r.link !== "unlinked");
-    const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", () => run("layout.select", { stack: props()?.stack ?? "sections", child: "project" }), { kind: "primary", small });
+    const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small });
     const body = v_flex().gap(18)
       .when(Boolean(this.note), (e) => e.child(div().id("dep-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)))
       .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(13).line_height("19px").text_color(c.fail)
@@ -304,6 +323,7 @@ export default class CaptainDeployments extends View {
               : noneUp ? "None is running. Start one again below, or deploy one from a project's page." : ""))
           // The next step, when nothing is answering. An open question takes the filled button in its place.
           .when((none || noneUp) && !this.ask, (e) => e.child(deploy(true))))
+        .when(this.ask?.id === "deploy", (e) => e.child(this.question(c)))
         .child(none ? div() : this.filters(c, d.rows))
         .child(v_flex().id("dep-list")
           .children(rows.map((r) => this.row(c, r)))

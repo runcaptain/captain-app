@@ -13,8 +13,8 @@ globalThis.__shared = { 'captain.daemon': { state: 'ready', base: 'http://captai
 let world, sent;
 const reply = (status, data) => ({ status, ok: status < 300, text: async () => JSON.stringify(data) });
 const numbers = (requests, extra = {}) => ({ range: '24h', range_text: 'the last 24 hours', bucket_seconds: 300, source: 'cloud', source_text: "From AWS's own metrics (CloudWatch). They arrive a minute or two late.", not_read: [],
-  buckets: Array.from({ length: 288 }, (_, i) => ({ t: String(i), requests: requests / 288, errors: 0, p50_ms: 3, p95_ms: 9, cpu: 20, memory: 5, copies: 1 })),
-  summary: { requests, errors: 0, per_minute: requests / 1440, per_minute_peak: 12, p50_ms: 3.1, p95_ms: 9.4, cpu: 20, cpu_peak: 35, memory: 5, memory_peak: 6, copies_now: 1, copies_peak: 1 },
+  buckets: Array.from({ length: 288 }, (_, i) => ({ t: String(i), requests: requests / 288, errors: 0, p50_ms: 3, p95_ms: 9, cpu: 20, memory: 5, copies: null })),
+  summary: { requests, errors: 0, per_minute: requests / 1440, per_minute_peak: 12, p50_ms: 3.1, p95_ms: 9.4, cpu: 20, cpu_peak: 35, memory: 5, memory_peak: 6, copies_now: 1, copies_min: 1, copies_max: 3, copies_text: '1 copy up now. It may run 1 to 3.' },
   cost: { hourly_usd: 0.066, rate_usd: 0.066, today_usd: 0.92, month_usd: 14.3, text: 'About $0.07 an hour for each copy while it is up. Your AWS bill is the final word.' },
   text: `${requests.toLocaleString('en-US')} requests in the last 24 hours, no errors. Median 3.1 ms, 95th percentile 9.4 ms at the endpoint.`, ...extra });
 globalThis.fetch = async (url, opts = {}) => {
@@ -31,9 +31,9 @@ globalThis.fetch = async (url, opts = {}) => {
   if (p.endsWith('/staging/scale')) return reply(200, { text: 'Keeps 1 up at all times. It never sleeps, and bills for each copy by the hour. 1 up now.' });
   return reply(200, { text: 'Done.' });
 };
-const row = (o) => ({ env: 'staging', login: 'work-aws', copies: { now: 1, min: null, max: null }, since: new Date(Date.now() - 7200000).toISOString(), by: 'dana', link: 'linked',
+const row = (o) => ({ env: 'staging', login: 'work-aws', copies: { now: 1, min: null, max: null }, since: new Date(Date.now() - 7200000).toISOString(), by: 'dana@example.com', by_name: 'dana', link: 'linked',
   corrected: [], sleeps: false, address: null, state_label: 'Running', can: [], ...o });
-const SHOP = row({ id: 'shop:staging', project: 'shop', project_name: 'Demo shop', model_version: 'shop/starter-ranker@v2', cloud: 'aws', cloud_label: 'AWS', region: 'us-west-1',
+const SHOP = row({ id: 'shop:staging', project: 'shop', project_name: 'Demo shop', model_version: 'shop/starter-ranker@v2', model_label: 'starter-ranker, version 2', cloud: 'aws', cloud_label: 'AWS', region: 'us-west-1',
   machine: 'ml.t2.medium', where: 'AWS, us-west-1, ml.t2.medium', name: 'captain-shop-staging', state: 'running', state_text: 'Running on 1 copy.' });
 const TRAIL = row({ id: 'trail:staging', project: 'trail', project_name: 'Trail gear', model_version: 'trail/starter-ranker@v1', cloud: 'modal', cloud_label: 'Modal', login: 'modal', region: null,
   machine: '1 CPU, 2 GB', where: 'Modal, 1 CPU, 2 GB', name: 'captain-trail-staging', state: 'asleep', state_text: 'Asleep. It wakes on the next request and bills nothing until then.',
@@ -102,6 +102,15 @@ assert.ok(t.indexOf('Kids range') < t.indexOf('Set up in your AWS account'), 'th
 await h.click('dep-setup-show-aws');
 t = h.text();
 assert.equal(shown(h), 'kids', 'the stopped model is right there, not behind a filter');
+assert.equal(byId(h, `dep-spark-${OLD.id}`).length, 0, 'no small chart for a model with no requests in the last hour');
+assert.ok(!h.text().includes('$0.00 this month'), 'a cost that is not known is not shown as nothing');
+// "Deploy a model" with several projects asks which, and goes to that project.
+await h.click('dep-go-projects');
+await h.idle(80);
+assert.ok(h.text().includes("Which project's model do you want to deploy?") && byId(h, 'dep-deploy-in-shop').length === 1 && byId(h, 'dep-deploy-in-trail').length === 1, `asks which project: ${h.text().slice(0, 300)}`);
+await h.click('dep-deploy-in-trail');
+assert.deepEqual(globalThis.__shared['captain.scope'], { kind: 'project', id: 'trail', label: 'Trail gear' }, 'and goes to it');
+assert.equal(byId(h, 'dep-ask').length, 0, 'the question closes');
 assert.ok(byId(h, `dep-start-${OLD.id}`).length === 1 && byId(h, `dep-remove-${OLD.id}`).length === 1, 'with Start again and Remove from the cloud');
 assert.ok(t.includes('Build package') && t.includes('serving.zip') && t.includes('Build log') && !t.includes('| Made by the first deploy |') && !t.includes('s3://'), `each thing is named for what it is: ${t}`);
 assert.ok(t.includes('us-west-1') && !/us-west-1, aws\b/.test(t), 'a login named for its cloud is not repeated');
@@ -112,9 +121,10 @@ await h.click('dep-ask-no');
 // ---- one running ----
 h = await open({ deployed: { rows: [SHOP], asked, text: '1 deployed.', read_at: '' }, numbers: { shop: numbers(8640) } });
 t = h.text();
-assert.ok(t.includes('Demo shop') && t.includes('shop/starter-ranker@v2') && t.includes('Running on 1 copy.'), `the model, its version and its state in words: ${t}`);
+assert.ok(t.includes('Demo shop') && t.includes('starter-ranker, version 2') && !t.includes('shop/starter-ranker@v2') && t.includes('Running on 1 copy.'), `the model without its project said twice, and its state in words: ${t}`);
+assert.ok(t.includes('Deployed by dana, 2 h ago') && !t.includes('@example.com'), 'a person by the name before the @');
 assert.ok(t.includes('AWS, us-west-1, ml.t2.medium') && t.includes('8,640 requests in 24 hours, none failed, typically 3.1 ms'), `where, and its traffic: ${t}`);
-assert.ok(t.includes('$0.07 an hour, $14.30 this month') && t.includes('Deployed by dana, 2 h ago'), `cost and who: ${t}`);
+assert.ok(t.includes('$0.07 an hour, about $14.30 this month') && t.includes('Deployed by dana, 2 h ago'), `cost and who: ${t}`);
 assert.equal(byId(h, 'dep-spark-shop:staging').length, 1, 'a small chart of the last hour');
 for (const id of ['dep-open-shop:staging', 'dep-stop-shop:staging', 'dep-back-shop:staging']) assert.equal(byId(h, id).length, 1, `a running model has ${id}`);
 assert.ok(t.includes('Go back to an earlier version') && !t.includes('Start again') && !t.includes('Remove from the cloud'), 'a running model is stopped before it is removed');
@@ -215,8 +225,10 @@ await h.click('dep-open-shop:staging');
 await h.idle(150);
 t = h.text();
 assert.ok(t.includes('All deployments') && t.includes('Demo shop') && t.includes('Running on 1 copy.') && t.includes('Its name in the cloud') && t.includes('captain-shop-staging'), `the page: ${t}`);
-for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time', 'Processor in use', 'Memory in use', 'Copies running'])
+for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time', 'Processor in use', 'Memory in use'])
   assert.ok(t.includes(label), `the model page has ${label}`);
+// Copies are said in words, from the cloud's count now and its settings. No chart: no history of them is kept.
+assert.ok(t.includes('1 copy up now. It may run 1 to 3.') && byId(h, 'model-chart-copies').length === 0 && !t.includes('Copies running'), `copies in words: ${t}`);
 // Two submenus and no more, drawn with the kit's control.
 assert.ok(byId(h, 'submenu-traffic').length === 1 && byId(h, 'submenu-details').length === 1 && h.byIdPrefix('submenu-').filter((e) => /^submenu-[a-z]+$/.test(e.call('id')?.[0] ?? '')).length === 2, 'two submenus');
 assert.ok(t.includes('Traffic and cost') && t.includes('Details'), 'named for what is in them');
@@ -249,6 +261,18 @@ assert.ok(h.text().includes('Ask the clouds again'), 'back to the list');
 await h.click('dep-back-shop:staging');
 await h.idle(120);
 assert.ok(h.text().includes('Put this version back') && h.text().indexOf('Earlier versions') < h.text().indexOf('Requests it answered'), 'straight to the versions');
+
+// What a real endpoint looked like on 2026-11-12: AWS had every request number and had published no processor or
+// memory numbers at all. Those two charts are left out and a sentence says why. Nothing is drawn empty.
+h = await open({ deployed: { rows: [SHOP], asked, text: '1 model running.', read_at: '' }, numbers: { shop: numbers(8640, {
+  buckets: Array.from({ length: 288 }, (_, i) => ({ t: String(i), requests: 30, errors: 0, p50_ms: 3, p95_ms: 9, cpu: null, memory: null, copies: null })),
+  not_read: ['AWS has not published processor and memory numbers for this endpoint.'] }) } });
+await h.click('dep-open-shop:staging');
+await h.idle(150);
+t = h.text();
+assert.ok(byId(h, 'model-chart-requests').length === 1 && byId(h, 'model-chart-time').length === 1, 'requests and response time are drawn');
+assert.ok(byId(h, 'model-chart-cpu').length === 0 && byId(h, 'model-chart-memory').length === 0 && !t.includes('Processor in use') && !t.includes('Memory in use'), 'no empty processor or memory chart');
+assert.ok(t.includes('AWS has not published processor and memory numbers for this endpoint.'), `and it says why: ${t}`);
 
 // Another screen can ask for one model's page ("Open in Deployments" on a project's page).
 globalThis.__props = { open: 'shop:staging' };
