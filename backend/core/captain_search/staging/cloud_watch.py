@@ -8,13 +8,22 @@ the same way.
 
 Rules it keeps:
   - Nobody listening, nothing asked. It starts with the first listener and stops with the last.
+  - A place with nothing of Captain's on it is asked every 15 seconds, only to find things made there with no
+    project. It is asked every second while something of Captain's is deployed there or being deployed.
   - It never calls a model. The listing is the cloud's control plane.
   - It never reads the paid numbers (metrics). Those stay on their own ration.
   - An error slows it down: asked again after 2, 4, 8 and up to 60 seconds. A cloud that says "slow down" is asked
     no more than once every 15 seconds, rising to a minute, and the list says so in words.
   - It is never asking more than half the time: after an ask that took a while, it waits at least as long again.
     Asking Modal what is there starts a process (`modal app list`) that takes about a second and real CPU, so
-    Modal is asked every two seconds, not every one.
+    Modal is asked every five seconds while something is deployed there, and once a minute otherwise.
+
+What asking Modal costs, as an estimate (2026-11-12): starting the process and loading Modal's command took 0.19
+seconds and 0.18 seconds of one processor, the median of five runs of a command of the same shape that touches no
+network and no workspace (`python -m modal app list --help`) on a laptop. At one ask every five seconds that is
+about 4% of one processor while a screen is open, before the network round trip, which was not measured: the only
+Modal workspace on the machine it was timed on runs production, and nothing was run against it. Listing through
+Modal's library inside the service, with no process to start, would remove that cost.
 """
 from __future__ import annotations
 
@@ -25,8 +34,14 @@ from ..workspace import Context
 from . import announce as AN
 from . import fleet as FL
 
-EVERY_S = 1.0          # how often a place is asked while all is well
-EVERY_BY_CLOUD = {"modal": 2.0}   # a cloud whose listing costs more than a network call
+EVERY_S = 1.0          # how often the watcher looks for listeners and at Captain's own records
+# How often a place is asked, in seconds. Busy: something of Captain's is deployed there and not stopped, or a
+# deploy to it is under way. Idle: a login with nothing of Captain's on it, asked only to find things made there
+# with no project. Most logins are idle most of the time, and a listing every second for nothing is waste.
+BUSY_S = {"modal": 5.0}    # Modal's listing costs more than a network call (see the notes above)
+IDLE_S = {"modal": 60.0}
+BUSY_DEFAULT_S, IDLE_DEFAULT_S = 1.0, 15.0
+SCALE = 1.0            # tests shrink every pace by this
 ERROR_MAX_S = 60.0     # the slowest it asks after plain errors: 2, 4, 8 and up to this
 SLOW_MIN_S = 15.0      # the fastest it asks a cloud that said to slow down
 SLOW_MAX_S = 60.0
@@ -49,9 +64,25 @@ def _sig(things: list[dict], err: str | None) -> tuple:
     return (bool(err), tuple(sorted(tuple(sorted((str(k), str(v)) for k, v in t.items())) for t in things)))
 
 
-def every(cloud: str) -> float:
-    """How often this cloud is asked while all is well."""
-    return max(EVERY_S, EVERY_BY_CLOUD.get(cloud, EVERY_S)) if EVERY_S >= 1.0 else EVERY_S * EVERY_BY_CLOUD.get(cloud, 1.0)
+def every(cloud: str, is_busy: bool = True) -> float:
+    """How often this cloud is asked while all is well: every second while something of Captain's is there
+    (Modal every 5), every 15 seconds while nothing is (Modal once a minute)."""
+    return (BUSY_S.get(cloud, BUSY_DEFAULT_S) if is_busy else IDLE_S.get(cloud, IDLE_DEFAULT_S)) * SCALE
+
+
+def busy(ctx: Context, src: dict) -> bool:
+    """Is something of Captain's on this place: a deployment record there that is not stopped, or a deploy to it
+    under way? Read from Captain's own records, which costs nothing."""
+    try:
+        for _pr, _env, rec in FL._records(ctx):
+            if str(rec.get("status")) in ("stopped", "removed", "None"):
+                continue
+            cloud, login, _region, _target = FL._where_of(ctx, rec)
+            if cloud == src["cloud"] and (login == src.get("login") or not login or not src.get("login")):
+                return True
+        return any(g.get("host") == src["cloud"] for g in FL._deploying(ctx).values())
+    except Exception:  # noqa: BLE001  when in doubt, look often
+        return True
 
 
 def _slow(err: str | None) -> bool:
@@ -64,7 +95,7 @@ def recent(ctx: Context, src: dict) -> tuple[list[dict], str | None] | None:
     While someone is looking, the list is read from here and makes no call of its own."""
     with _lock:
         p = _places.get(_key(ctx, src))
-        if p and p.get("at") and time.monotonic() - p["at"] < max(FRESH_S, p.get("wait", p.get("every", EVERY_S)) * 1.5):
+        if p and p.get("at") and time.monotonic() - p["at"] < max(FRESH_S * SCALE, p.get("wait", p.get("every", EVERY_S)) * 1.5):
             return list(p["things"]), p["err"]
     return None
 
@@ -79,10 +110,10 @@ def status(ctx: Context) -> list[dict]:
                 continue
             label = FL.CLOUDS.get(cloud, cloud)
             every = p.get("every", EVERY_S)
-            base = globals()["every"](cloud)
+            base = globals()["every"](cloud, p.get("busy", True))
             text = (f"{label} asked Captain to slow down. Asking every {every:g} seconds." if p.get("slowed")
                     else f"{label} could not be asked. Trying again every {every:g} seconds." if p.get("err") and every > base else None)
-            out.append({"cloud": cloud, "login": login, "region": region, "every_s": every, "slowed": bool(p.get("slowed")), "text": text,
+            out.append({"cloud": cloud, "login": login, "region": region, "every_s": every, "slowed": bool(p.get("slowed")), "text": text, "busy": bool(p.get("busy", True)),
                         "took_s": round(p.get("took") or 0.0, 3)})
     return out
 
@@ -92,7 +123,8 @@ def look(ctx: Context, src: dict) -> bool:
     began = time.monotonic()
     things, err = FL._ask(ctx, src)
     took = time.monotonic() - began
-    k, base = _key(ctx, src), every(src["cloud"])
+    is_busy = busy(ctx, src)
+    k, base = _key(ctx, src), every(src["cloud"], is_busy)
     sig = _sig(things, err)
     with _lock:
         p = _places.setdefault(k, {"every": base})
@@ -104,7 +136,7 @@ def look(ctx: Context, src: dict) -> bool:
             p["every"] = min(SLOW_MAX_S, max(SLOW_MIN_S, p["every"] * 2)) if slow else min(ERROR_MAX_S, max(base * 2, p["every"] * 2))
         else:
             p["slowed"], p["every"] = False, base
-        p["took"] = took
+        p["took"], p["busy"] = took, is_busy
         p["wait"] = max(p["every"], took)  # never asking more than half the time
         # An answer that could not be had does not replace the last good one as "what is there".
         p.update(things=things if not err else p.get("things", []), err=err, at=time.monotonic(), sig=sig)
@@ -145,17 +177,24 @@ def _watch_place(ctx: Context, src: dict, stop: threading.Event) -> None:
     while not stop.is_set() and wanted():
         look(ctx, src)
         with _lock:
-            wait = _places.get(k, {}).get("wait", every(src["cloud"]))
-        stop.wait(wait)
+            p = dict(_places.get(k, {}))
+        due = time.monotonic() + p.get("wait", every(src["cloud"]))
+        # Waited in short steps, so an idle place is asked at once when a deploy to it starts, not up to 15
+        # seconds (or a minute, on Modal) later.
+        while not stop.is_set() and wanted() and time.monotonic() < due:
+            stop.wait(min(EVERY_S * SCALE, max(0.0, due - time.monotonic())))
+            if not p.get("busy", True) and not p.get("err") and busy(ctx, src):
+                break
     with _lock:
         _places.pop(k, None)   # nobody is looking: what was seen is no longer fresh, and is not kept
 
 
-def run(ctx: Context, stop: threading.Event | None = None, idle_s: float = EVERY_S) -> None:
+def run(ctx: Context, stop: threading.Event | None = None, idle_s: float | None = None) -> None:
     """The watcher for one workspace: runs until `stop` is set. With nobody listening it asks nothing and only
     checks, once a second, whether someone has started to. Each place gets its own thread, so a cloud that is slow
     or slowed never holds up another."""
     stop = stop or threading.Event()
+    idle_s = EVERY_S * SCALE if idle_s is None else idle_s
     threads: dict[tuple, threading.Thread] = {}
     mark = None
     while not stop.is_set():
