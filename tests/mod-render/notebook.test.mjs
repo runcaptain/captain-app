@@ -15,6 +15,7 @@ const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
 globalThis.__fixtures = path.join(here, 'fixtures/captain-data-notebook');
 globalThis.__routes = [
+  [/^\/api\/notebooks\/[^?]+\/rename$/, 'renamed'],
   [/^\/api\/notebooks\/[^?]+\/draft$/, 'draft'],
   [/^\/api\/notebooks\/[^?]+\/save$/, 'save'],
   [/^\/api\/notebooks\/[^?]+\/import$/, 'import'],
@@ -177,6 +178,33 @@ await h.click('nb-fmt-quarto');
 await h.idle();
 assert.ok((globalThis.__written ?? []).some((p) => p.endsWith('/Downloads/weekly-check.qmd')), 'exported file written');
 assert.ok(h.text().includes('Exported to ~/Downloads/weekly-check.qmd.'), 'export note');
+
+// Rename: a click on the title shows the field with the name in it. Any words do. Only what the notebook is called
+// changes: its id, its version, its cells and its Python session are the same before and after.
+{
+  const nb = h.mod.nb;
+  const id = nb.open.name, version = nb.open.version, kernel = nb.kernel, cells = nb.cells, dirty = nb.dirty;
+  await h.click('nb-title');
+  assert.equal(nb.renameTo.value(), id, 'the field starts with its name');
+  assert.equal(h.byIdPrefix('nb-rename-go')[0].call('on_click'), undefined, 'the same name: Rename is off');
+  nb.renameTo.set_value('Weekly review, Q4');
+  await h.layoutLists({});
+  const before = h.asked().length;
+  await h.click('nb-rename-go');
+  await h.idle(40);
+  assert.deepEqual(h.asked().slice(before).filter((p) => !p.includes('/api/kernels')), [`/api/notebooks/${id}/rename`], 'one request, and no draft or save');
+  assert.deepEqual([nb.open.name, nb.open.version, nb.kernel, nb.cells, nb.dirty], [id, version, kernel, cells, dirty], 'the id, the version, the cells and the Python session are untouched');
+  assert.equal(nb.list.find((n) => n.name === id).label, 'Weekly review, Q4', 'the list has its new name');
+  let t = h.text();
+  assert.ok(t.includes('Weekly review, Q4') && t.includes('Renamed to Weekly review, Q4.') && h.byIdPrefix('nb-rename-field').length === 0, 'the title and the row show it');
+  assert.equal(h.byIdPrefix('nb-id').length, 1, 'its id sits small under the name, for commands');
+  // Every row has Rename, and Cancel puts the title back.
+  assert.equal(h.byIdPrefix('nb-rename-row-').length, nb.list.length, 'Rename on every row');
+  await h.click(`nb-rename-row-${id}`);
+  assert.equal(nb.renameTo.value(), 'Weekly review, Q4', 'the field starts with the name it has now');
+  await h.click('nb-rename-cancel');
+  assert.equal(h.byIdPrefix('nb-title').length, 1);
+}
 
 // Import: reads the file, posts it, says what it was.
 globalThis.__files = { '/tmp/Downloads/analysis.py': 'import marimo\n' };

@@ -3152,7 +3152,7 @@ def notebook(name: str):
         v, nb, draft = NB.load(ctx(), name)
     except NotFound:
         v, nb, draft = None, NB.new_notebook(), True
-    return {"name": name, "version": v, "notebook": nb, "draft": draft}
+    return {"name": name, "label": NB.label_of(name, NB._labels(ctx())[0]), "version": v, "notebook": nb, "draft": draft}
 
 
 @app.put("/api/notebooks/{name:path}/draft", dependencies=A)
@@ -3165,6 +3165,16 @@ def notebook_draft(name: str, body: dict):
 def notebook_save(name: str, body: dict):
     m = NB.save_revision(ctx(), name, body["notebook"], body.get("message", ""))
     return {"version": m.version}
+
+
+@app.post("/api/notebooks/{name:path}/rename", dependencies=A)
+def notebook_rename(name: str, body: dict):
+    """{to: any words}. Changes the notebook's label only: its id, file, versions and Python session stay.
+    {name, label, changed}."""
+    try:
+        return NB.rename(ctx(), name, str((body or {}).get("to") or ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
 
 
 @app.post("/api/notebooks/{name:path}/import", dependencies=A)

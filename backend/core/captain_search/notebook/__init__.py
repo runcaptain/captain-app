@@ -103,14 +103,62 @@ def load(ctx: Context, name: str) -> tuple[int | None, dict, bool]:
     return latest, json.loads(ctx.registry.get_blob(m.files[0])), False
 
 
+LABELS = "notebook-labels.json"  # {id: the name a person gave it}
+UNTITLED = re.compile(r"^untitled-notebook(?:-(\d+))?$")
+
+
+def _labels(ctx: Context) -> tuple[dict, str | None]:
+    try:
+        body, tag = ctx.store.get_with_tag(LABELS)
+        return json.loads(body) or {}, tag
+    except NotFound:
+        return {}, None
+
+
+def label_of(name: str, labels: dict) -> str:
+    """What a person sees for a notebook: the name they gave it, else its id. One started without a name reads
+    "Untitled notebook" (then "Untitled notebook 2") until it is named."""
+    if labels.get(name):
+        return labels[name]
+    m = UNTITLED.match(name)
+    return ("Untitled notebook" + (f" {m.group(1)}" if m.group(1) else "")) if m else name
+
+
+def rename(ctx: Context, name: str, label: str) -> dict:
+    """Give a notebook another name. Only its label changes: one small record. Its id, its file, every saved
+    version and a running Python session stay exactly as they are. Any words do. {name, label, changed}."""
+    from ..storage.backend import Conflict
+
+    check_name(name)
+    label = " ".join(str(label or "").split())[:120]
+    if not label:
+        raise ValueError("Give it a name.")
+    labels, _ = _labels(ctx)
+    if label_of(name, labels) == label:
+        return {"name": name, "label": label, "changed": False}
+    for row in listing(ctx):
+        if row["name"] != name and row["label"].lower() == label.lower():
+            raise ValueError(f"You already have a notebook called {label}. Pick another name.")
+    for _ in range(10):
+        doc, tag = _labels(ctx)
+        doc[name] = label
+        try:
+            ctx.store.put_if(LABELS, json.dumps(doc, sort_keys=True).encode(), tag)
+            return {"name": name, "label": label, "changed": True}
+        except Conflict:
+            continue
+    raise Conflict("the names kept changing while saving. Try again.")
+
+
 def listing(ctx: Context) -> list[dict]:
     names = set(ctx.registry.names("notebook"))
     d = os.path.join(home(), "drafts", ctx.workspace.name)
     drafts = {f[:-6].replace("__", "/") for f in os.listdir(d)} if os.path.isdir(d) else set()
+    labels, _ = _labels(ctx)
     out = []
     for n in sorted(names | drafts):
         vs = ctx.registry.versions("notebook", n) if n in names else []
-        out.append({"name": n, "latest": vs[-1] if vs else None, "has_draft": n in drafts})
+        out.append({"name": n, "label": label_of(n, labels), "latest": vs[-1] if vs else None, "has_draft": n in drafts})
     return out
 
 
