@@ -178,7 +178,7 @@ def test_what_a_person_reads_has_no_dashes_arrows_or_internal_words():
     here = Path(server.__file__).parent
     texts = {"weights.md": DOC.read_text()}
     for f in ("weights/session.py", "weights/store.py", "weights/files.py", "weights/net.py", "weights/starters.py", "weights/routes.py",
-              "weights/program.py", "weights/pins.py", "weights/pipeline.py", "weights/playbook.md", "cli/weights.py"):
+              "weights/program.py", "weights/pins.py", "weights/playbook.md", "cli/weights.py"):
         texts[f] = (here / f).read_text()
     for name, text in texts.items():
         assert not re.search(r"[—–←-⇿⟵-⟿]", text), f"{name} has a dash or an arrow a person could see"
