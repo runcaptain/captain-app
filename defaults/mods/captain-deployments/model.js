@@ -213,15 +213,17 @@ export class ModelPage {
     const where = v_flex().id("model-where").gap(2)
       .child(div().pb(4).text_size(14).font_semibold().text_color(c.navy).child("Where it runs"))
       .children((w?.facts ?? []).map((f) => h_flex().id(`model-where-${f.id}`).gap(12).py(5).items_start().border_b(1).border_color(c.rule)
-        .child(div().w(150).flex_none().text_size(12.5).line_height("18px").text_color(c.grey500).child(f.label))
+        .child(div().w(128).flex_none().text_size(12.5).line_height("18px").text_color(c.grey500).child(f.label))
         .child(f.copy
           // The code font only for what is copied. A request of several lines shows its first, and Copy takes it all.
-          ? div().id(`model-where-${f.id}-value`).flex_1().min_w(0).truncate().text_size(12.5).line_height("18px").font_family(MONO).text_color(c.navy)
+          // An address or a name wraps and is never cut: in a narrow window the address read "https://ru..." and
+          // said nothing. A command stays on one line, because wrapped it ran to ten.
+          ? div().id(`model-where-${f.id}-value`).flex_1().min_w(0).when(/\s/.test(String(f.value).trim()), (e) => e.truncate()).text_size(12.5).line_height("18px").font_family(MONO).text_color(c.navy)
             .child(String(f.value).split("\n").find((x) => x.trim() && !x.trim().startsWith("#")) ?? String(f.value))
           : div().id(`model-where-${f.id}-value`).flex_1().min_w(0).text_size(13).line_height("18px").text_color(c.navy).child(String(f.value)))
         .when(Boolean(f.copy), (e) => e.child(Button(c, `model-where-${f.id}-copy`, this.copiedFact === f.id ? "Copied" : "Copy",
           (_e, cx) => { cx.write_to_clipboard?.(String(f.value)); this.copiedFact = f.id; cx.notify(); }, { small: true })))
-        .child(div().w(150).flex_none().text_size(12).line_height("18px").text_color(c.grey500).child(f.source_text ?? ""))))
+        .child(div().w(128).flex_none().text_size(12).line_height("18px").text_color(c.grey500).child(f.source_text ?? ""))))
       .child(div().id("model-where-text").pt(6).text_size(12.5).line_height("18px").text_color(c.grey500).child(w ? (w.text ?? "") : "Reading where it runs..."));
     return v_flex().id("model-page").size_full().child(head)
       .child(div().id("model-body").flex_1().min_h(0).overflow_y_scroll().px(24).py(18).child(v_flex().gap(18).child(top).child(where).child(parts).child(this.body(c))));
