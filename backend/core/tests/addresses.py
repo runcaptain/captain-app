@@ -54,6 +54,14 @@ WRAPPERS = {
 }
 
 
+# A file that hands api() on under another name, so a test can put its own in: {file: the other name}. Calls by
+# that name are read as calls to api(), and the hand-over itself (`(path, opts) => api(path, opts)`) is not a call
+# with an address of its own.
+ALIASES = {
+    "mods/captain-weights/adapter.js": "ask",
+}
+
+
 def named(files) -> tuple[dict[tuple[str, str], list[str]], int]:
     """Every address given to api(...) as text in these files: {(method, address): [file:line]}, and how many
     calls pass a variable, which can't be read here. In an address, \\x00 stands for a value filled in at run
@@ -62,7 +70,9 @@ def named(files) -> tuple[dict[tuple[str, str], list[str]], int]:
     variable = 0
     for f in files:
         src = f.read_text()
-        for m in re.finditer(r"(?<![\w.$])api\(\s*", src):
+        alias = next((n for name, n in ALIASES.items() if f.as_posix().endswith(name)), None)
+        calls = r"(?<![\w.$])(?:api" + (f"|{re.escape(alias)}" if alias else "") + r")\(\s*"
+        for m in re.finditer(calls, src):
             i = m.end()
             if i >= len(src):
                 continue
@@ -76,6 +86,8 @@ def named(files) -> tuple[dict[tuple[str, str], list[str]], int]:
                 # Not a call: the function's own definition, or the word in a comment ("resolves like api()").
                 if before.rstrip().endswith("function") or src[i] == ")" or "//" in before or before.lstrip().startswith(("*", "/*")):
                     continue
+                if alias and re.search(r"\(path, opts\)\s*=>\s*$", before) and src.startswith("path, opts)", i):
+                    continue  # the hand-over to api() under the other name: its callers are read by that name
                 line = src[:m.start()].count("\n") + 1
                 where = f"{f.relative_to(DEFAULTS)}:{line}"
                 # A helper that builds the address may say what it builds, so it is checked like any other:

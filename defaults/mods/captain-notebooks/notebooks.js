@@ -99,6 +99,9 @@ export class Notebooks {
     this.kernel = null;
     this.kstate = "off";
     this.dirty = false;
+    this.elsewhere = null;    // {stamp, revision}: the open notebook changed elsewhere and this screen has typing of its own
+    this.kept = null;         // the stamp the person chose to keep theirs over
+    this.mine = new Set();    // stamps this screen wrote itself: never "elsewhere"
     this.lastEdit = 0;
     this.savingDraft = false;
     this.note = null; // {text, tone}
@@ -132,8 +135,59 @@ export class Notebooks {
       if (JSON.stringify(next) === JSON.stringify(this.list)) return;
       this.list = next;
       this.listError = null;
+      this.checkElsewhere(cx);
       cx.notify();
     });
+  }
+
+  /** The open notebook changed somewhere else (another window, `cst notebook` in a terminal, an agent): its stamp
+   *  in the list is no longer the one this screen read or wrote. With nothing of the person's own on screen, it is
+   *  read again quietly. With typing that is not saved as a version, or a cell running, nothing is touched: one
+   *  line asks. A person's typing is never overwritten. */
+  checkElsewhere(cx) {
+    const o = this.open;
+    if (!o?.name || o.loading || o.error || !o.stamp || this.savingDraft || this.savingVersion) return;
+    const now = this.list?.find((n) => n.name === o.name)?.stamp;
+    if (!now || now === o.stamp || this.mine.has(now) || now === this.elsewhere?.stamp || now === this.kept) return;
+    const revision = !String(now).startsWith("draft:");
+    const running = [...this.state.values()].some((s) => s.status === "running");
+    // Mine: typing not yet saved, a draft of mine that a version saved elsewhere would replace, or work under way.
+    if (this.dirty || running || (o.draft && revision)) { this.elsewhere = { stamp: now, revision }; return; }
+    this.reloadOpen(cx, false);
+  }
+
+  /** Read the open notebook again and show it. `chosen` is the person pressing Reload: what they typed here is
+   *  let go. When a version was saved elsewhere, this screen's draft is thrown away first, or it would still be
+   *  what opens. When the draft itself was changed elsewhere, it is that draft that is read. The Python session is
+   *  left running: its variables are still there. */
+  reloadOpen(cx, chosen) {
+    const name = this.open?.name;
+    if (!name) return;
+    const discard = chosen && this.elsewhere?.revision === true;
+    if (chosen) this.dirty = false;
+    this.elsewhere = null;
+    cx.spawn(async (cx) => {
+      if (discard) await api(`/api/notebooks/${enc(name)}/draft`, { method: "DELETE" });
+      const r = await api(`/api/notebooks/${enc(name)}`);
+      if (this.open?.name !== name || !r.ok) return;
+      if (this.dirty) return; // typed while it was being read: leave it, the next change asks
+      this.open = { name, version: r.data.version, base: r.data.notebook, draft: !!r.data.draft, stamp: r.data.stamp };
+      this.state.clear();
+      this.grids.clear();
+      this.releaseEditors();
+      this.cells = fromNotebook(r.data.notebook);
+      if (!this.cells.length) this.cells = [newCell("sql", [], this.conns?.[0]?.name)];
+      for (const cell of this.cells) this.prepare(cell);
+      this.note = { text: chosen ? "Reloaded. This is the notebook as it was changed elsewhere." : "This notebook changed elsewhere. It was read again.", tone: "muted" };
+      cx.notify();
+    });
+  }
+
+  /** Keep what is on screen: the change made elsewhere is not asked about again. Saving will replace it. */
+  keepMine(cx) {
+    this.kept = this.elsewhere?.stamp ?? null;
+    this.elsewhere = null;
+    cx.notify();
   }
 
   load(cx) {
@@ -200,7 +254,8 @@ export class Notebooks {
       const r = await api(`/api/notebooks/${enc(name)}`);
       if (this.open?.name !== name) return;
       if (!r.ok) { this.open = { name, error: "Couldn't open this notebook." }; cx.notify(); return; }
-      this.open = { name, version: r.data.version, base: r.data.notebook, draft: !!r.data.draft };
+      this.open = { name, version: r.data.version, base: r.data.notebook, draft: !!r.data.draft, stamp: r.data.stamp ?? null };
+      this.elsewhere = null; this.kept = null;
       this.cells = fromNotebook(r.data.notebook);
       if (!this.cells.length) this.cells = [newCell("sql", [], this.conns?.[0]?.name)];
       // Opened from a table's example query: that query, on its connection, as the first cell.
@@ -298,7 +353,7 @@ export class Notebooks {
       const r = await api(`/api/notebooks/${enc(name)}/draft`, { method: "PUT", body: { notebook: nb } });
       this.savingDraft = false;
       if (!r.ok) { this.dirty = true; this.note = { text: "Couldn't save the draft. Captain will try again.", tone: "fail" }; }
-      else if (this.open?.name === name) this.open.draft = true;
+      else if (this.open?.name === name) { this.open.draft = true; if (r.data?.stamp) { this.mine.add(r.data.stamp); this.open.stamp = r.data.stamp; } }
       cx.notify();
     });
   }
@@ -308,10 +363,14 @@ export class Notebooks {
     const name = this.open.name;
     const nb = toNotebook(this.cells, this.open.base);
     this.note = { text: "Saving", tone: "muted" };
+    this.savingVersion = true;
     cx.spawn(async (cx) => {
       const r = await api(`/api/notebooks/${enc(name)}/save`, { body: { notebook: nb, message: "" } });
+      this.savingVersion = false;
       if (this.open?.name !== name) return;
       if (r.ok) {
+        if (r.data.stamp) { this.mine.add(r.data.stamp); this.open.stamp = r.data.stamp; }
+        this.elsewhere = null;
         this.open.version = r.data.version;
         this.open.draft = false;
         this.dirty = false;
@@ -645,6 +704,11 @@ export class Notebooks {
       .when(this.exporting, (e) => e.child(h_flex().flex_none().flex_wrap().gap(6).px(20).py(8).items_center().border_b(1).border_color(c.rule).bg(c.surface2)
         .child(div().text_size(12).text_color(c.grey900).child("Export the saved version as"))
         .children(this.formats.map((f) => Button(c, `nb-fmt-${f.id}`, f.label, (_e, cx) => this.exportFile(cx, f.id), { kind: "quiet", small: true })))))
+      // Changed elsewhere while the person has typing of their own here: one quiet line, and nothing is touched.
+      .when(!!this.elsewhere, (e) => e.child(h_flex().id("nb-elsewhere").flex_none().px(20).py(6).gap(8).items_center().text_size(12).text_color(c.grey900).bg(c.surface2)
+        .child(div().flex_1().min_w(0).child("This notebook changed elsewhere. Reload, or keep yours."))
+        .child(Button(c, "nb-elsewhere-reload", "Reload", (_e, cx) => this.reloadOpen(cx, true), { kind: "quiet", small: true }))
+        .child(Button(c, "nb-elsewhere-keep", "Keep mine", (_e, cx) => this.keepMine(cx), { kind: "quiet", small: true }))))
       .when(!!this.note, (e) => e.child(h_flex().flex_none().px(20).py(6).gap(8).items_center().text_size(12)
         .text_color(this.note.tone === "fail" ? c.fail : this.note.tone === "good" ? c.good : c.grey900)
         .child(div().flex_1().min_w(0).child(this.note.text))

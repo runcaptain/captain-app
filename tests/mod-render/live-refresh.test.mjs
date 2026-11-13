@@ -146,8 +146,11 @@ const swap = (file, to) => { globalThis.__routes.find((r) => r[1] === file)[1] =
 {
   const { Notebooks } = await import('../../defaults/mods/captain-notebooks/notebooks.js');
   const src = fs.readFileSync(path.join(root, 'defaults/mods/captain-notebooks/notebooks.js'), 'utf8');
-  const body = src.slice(src.indexOf('  refreshList(cx) {'), src.indexOf('  load(cx) {'));
-  assert.ok(body.includes('api("/api/notebooks")') && !body.includes('this.open =') && !body.includes('openNotebook'), 'it asks for the list and leaves the open notebook alone');
+  const body = src.slice(src.indexOf('  refreshList(cx) {'), src.indexOf('  /** The open notebook changed somewhere else'));
+  assert.ok(body.includes('api("/api/notebooks")') && !body.includes('this.open =') && !body.includes('openNotebook'), 'it asks for the list and does not reopen the open notebook');
+  // Whether the open notebook changed elsewhere is looked at with each list. What it then does is its own test
+  // (notebook-elsewhere-live): reload quietly, or ask, and never overwrite typing.
+  assert.ok(body.includes('this.checkElsewhere(cx)'), 'and looks at whether the open notebook changed elsewhere');
   assert.ok(typeof Notebooks.prototype.refreshList === 'function');
   assert.ok(/keepFresh\(cx, "notebooks"/.test(fs.readFileSync(path.join(root, 'defaults/mods/captain-notebooks/main.js'), 'utf8')));
 }
