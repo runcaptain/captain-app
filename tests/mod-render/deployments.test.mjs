@@ -28,13 +28,29 @@ globalThis.fetch = async (url, opts = {}) => {
     { n: 1, model_version: 'shop/keyword-baseline@v1', at: new Date(Date.now() - 86400000).toISOString(), by: 'dana', live: false, can_roll_back: true }] });
   if (p.endsWith('/staging/requests')) return reply(200, { rows: [{ request_id: 'r1', ts: new Date().toISOString(), query: 'trail running shoes', model_version: 'shop/starter-ranker@v2', ms: 3.2 }], total: 1 });
   if (p.endsWith('/staging/logs')) return reply(200, { rows: [{ ts: '2026-11-12T10:00:00+00:00', text: 'Loaded 480 products.', level: 'info' }] });
+  if (p.endsWith('/deployed/where')) return reply(200, world.where ?? { from_cloud: true, text: 'Read from AWS just now.', facts: [
+    { id: 'address', label: 'Address', value: 'https://runtime.sagemaker.us-west-1.amazonaws.com/endpoints/captain-shop/invocations', copy: true, source: 'cloud', source_text: 'From AWS' },
+    { id: 'call', label: 'How to call it', value: '# Get a ranking.\naws sagemaker-runtime invoke-endpoint --region us-west-1 --endpoint-name captain-shop \\\n  --body \'{"key": "\'"$CAPTAIN_STAGING_KEY"\'", "traffic": "test"}\' /dev/stdout', copy: true, source: 'record', source_text: "From Captain's record" },
+    { id: 'cloud', label: 'Cloud and account', value: 'AWS, account ending 1234', copy: false, source: 'cloud', source_text: 'From AWS' },
+    { id: 'region', label: 'Region', value: 'us-west-1', copy: false, source: 'record', source_text: "From Captain's record" },
+    { id: 'machine', label: 'Machine', value: 'ml.t2.medium: 2 virtual CPUs, 4 GB memory, about $0.07 an hour for each copy', copy: false, source: 'cloud', source_text: 'From AWS' },
+    { id: 'copies', label: 'Copies', value: '1 up now. Fewest 1, most 3', copy: false, source: 'cloud', source_text: 'From AWS' },
+    { id: 'image', label: 'Image', value: '000000000000.dkr.ecr.us-west-1.amazonaws.com/captain-serving:1, built 5 hours ago', copy: false, source: 'cloud', source_text: 'From AWS' },
+    { id: 'files', label: 'Model files', value: 's3://captain-serving-000000000000-us-west-1/demo/staging/shop/bundle.json', copy: false, source: 'record', source_text: "From Captain's record" },
+    { id: 'role', label: 'Role it runs as', value: 'arn:aws:iam::000000000000:role/captain-serving', copy: false, source: 'cloud', source_text: 'From AWS' },
+    { id: 'logs', label: 'Logs', value: '/aws/sagemaker/Endpoints/captain-shop', copy: true, source: 'cloud', source_text: 'From AWS' },
+    { id: 'stops', label: 'Stops by itself after', value: '240 minutes with no requests', copy: false, source: 'record', source_text: "From Captain's record" },
+    { id: 'by', label: 'Deployed by', value: 'dana, 2 hours ago', copy: false, source: 'record', source_text: "From Captain's record" },
+    { id: 'version', label: 'Version', value: 'starter-ranker, version 2 (shop/starter-ranker@v2)', copy: false, source: 'record', source_text: "From Captain's record" }] });
   if (p.endsWith('/staging/scale')) return reply(200, { text: 'Keeps 1 up at all times. It never sleeps, and bills for each copy by the hour. 1 up now.' });
   return reply(200, { text: 'Done.' });
 };
 const row = (o) => ({ env: 'staging', login: 'work-aws', copies: { now: 1, min: null, max: null }, since: new Date(Date.now() - 7200000).toISOString(), by: 'dana@example.com', by_name: 'dana', link: 'linked',
   corrected: [], sleeps: false, address: null, state_label: 'Running', can: [], in_cloud: true, remembered_text: null, ...o });
 const SHOP = row({ id: 'shop:staging', project: 'shop', project_name: 'Demo shop', model_version: 'shop/starter-ranker@v2', model_label: 'starter-ranker, version 2', cloud: 'aws', cloud_label: 'AWS', region: 'us-west-1',
-  machine: 'ml.t2.medium', where: 'AWS, us-west-1, ml.t2.medium', name: 'captain-shop-staging', state: 'running', state_text: 'Running on 1 copy.' });
+  machine: 'ml.t2.medium', where: 'AWS, us-west-1, ml.t2.medium', name: 'captain-shop', state: 'running', state_text: 'Running on 1 copy.',
+  address: 'https://runtime.sagemaker.us-west-1.amazonaws.com/endpoints/captain-shop/invocations', account: 'account ending 1234',
+  machine_words: 'ml.t2.medium: 2 virtual CPUs, 4 GB memory', copies_words: '1 copy up now, may run 1 to 3' });
 const TRAIL = row({ id: 'trail:staging', project: 'trail', project_name: 'Trail gear', model_version: 'trail/starter-ranker@v1', cloud: 'modal', cloud_label: 'Modal', login: 'modal', region: null,
   machine: '1 CPU, 2 GB', where: 'Modal, 1 CPU, 2 GB', name: 'captain-trail-staging', state: 'asleep', state_text: 'Asleep. It wakes on the next request and bills nothing until then.',
   sleeps: true, address: 'https://demo--captain-trail-staging.modal.run' });
@@ -146,8 +162,13 @@ h = await open({ deployed: { rows: [SHOP], asked, text: '1 deployed.', read_at: 
 t = h.text();
 assert.ok(t.includes('Demo shop') && t.includes('starter-ranker, version 2') && !t.includes('shop/starter-ranker@v2') && t.includes('Running on 1 copy.'), `the model without its project said twice, and its state in words: ${t}`);
 assert.ok(t.includes('Deployed by dana, 2 h ago') && !t.includes('@example.com'), 'a person by the name before the @');
-assert.ok(t.includes('AWS, us-west-1, ml.t2.medium') && t.includes('8,640 requests in 24 hours, none failed, typically 3.1 ms'), `where, and its traffic: ${t}`);
-assert.ok(t.includes('$0.07 an hour, about $14.30 this month') && t.includes('Deployed by dana, 2 h ago'), `cost and who: ${t}`);
+// Where it lives, on the row: the address a site calls, to copy, and one line about the system it runs on.
+assert.equal(byId(h, 'dep-address-shop:staging').length, 1);
+assert.ok(t.includes('https://runtime.sagemaker.us-west-1.amazonaws.com/endpoints/captain-shop/invocations') && byId(h, 'dep-copy-shop:staging').length === 1, `the address, with Copy: ${t}`);
+assert.ok(t.includes('AWS, account ending 1234. us-west-1. ml.t2.medium: 2 virtual CPUs, 4 GB memory. 1 copy up now, may run 1 to 3. Deployed by dana, 2 h ago.'), `the system in one line: ${t}`);
+assert.ok(t.includes('8,640 requests in 24 hours, none failed, typically 3.1 ms. $0.07 an hour, about $14.30 this month.'), `its traffic and cost: ${t}`);
+await h.click('dep-copy-shop:staging');
+assert.ok(h.text().includes('Copied'), 'Copy says it copied');
 assert.equal(byId(h, 'dep-spark-shop:staging').length, 1, 'a small chart of the last hour');
 for (const id of ['dep-open-shop:staging', 'dep-stop-shop:staging', 'dep-back-shop:staging']) assert.equal(byId(h, id).length, 1, `a running model has ${id}`);
 assert.ok(t.includes('Go back to an earlier version') && !t.includes('Start again') && !t.includes('Remove from the cloud'), 'a running model is stopped before it is removed');
@@ -234,7 +255,20 @@ h = await open({ deployed: { rows: [SHOP], asked, text: '1 deployed.', read_at: 
 await h.click('dep-open-shop:staging');
 await h.idle(150);
 t = h.text();
-assert.ok(t.includes('All deployments') && t.includes('Demo shop') && t.includes('Running on 1 copy.') && t.includes('Its name in the cloud') && t.includes('captain-shop-staging'), `the page: ${t}`);
+assert.ok(t.includes('All deployments') && t.includes('Demo shop') && t.includes('Running on 1 copy.'), `the page: ${t}`);
+// "Where it runs" is first on the page: a small table, each value saying whether it was read from the cloud.
+assert.ok(sent.some((x) => x[1].startsWith('/api/projects/shop/deployed/where')), 'it is read from the services');
+assert.ok(t.indexOf('Where it runs') < t.indexOf('Traffic and cost'), 'before the numbers');
+for (const label of ['Address', 'How to call it', 'Cloud and account', 'Region', 'Machine', 'Copies', 'Image', 'Model files', 'Role it runs as', 'Logs', 'Stops by itself after', 'Deployed by', 'Version'])
+  assert.ok(t.includes(label), `Where it runs has ${label}`);
+assert.ok(t.includes('AWS, account ending 1234') && t.includes('ml.t2.medium: 2 virtual CPUs, 4 GB memory, about $0.07 an hour for each copy') && t.includes('1 up now. Fewest 1, most 3'), `the system: ${t}`);
+assert.ok(t.includes('From AWS') && t.includes("From Captain's record") && t.includes('Read from AWS just now.'), 'each value says where it came from');
+// What a person copies has Copy: the address, a test request, the log's name. A request of several lines shows its first.
+for (const id of ['address', 'call', 'logs']) assert.equal(byId(h, `model-where-${id}-copy`).length, 1, `${id} can be copied`);
+assert.equal(byId(h, 'model-where-region-copy').length, 0, 'a region is read, not copied');
+assert.ok(t.includes('aws sagemaker-runtime invoke-endpoint --region us-west-1 --endpoint-name captain-shop') && !t.includes('# Get a ranking.'), 'the request by its first real line');
+await h.click('model-where-call-copy');
+assert.ok(h.text().includes('Copied'), 'Copy says it copied');
 for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time', 'Processor in use', 'Memory in use'])
   assert.ok(t.includes(label), `the model page has ${label}`);
 // Copies are said in words, from the cloud's count now and its settings. No chart: no history of them is kept.
@@ -317,12 +351,14 @@ for (const f of ['main.js', 'model.js', 'words.js']) {
   assert.ok(!/kind: "quiet"/.test(src), `${f}: no blue link buttons that do things`);
 }
 const main = fs.readFileSync(path.join(dir, 'main.js'), 'utf8'), model = fs.readFileSync(path.join(dir, 'model.js'), 'utf8');
-assert.equal((main.match(/font_family\(/g) ?? []).length, 1, 'one typeface on the list, set once');
-assert.equal((model.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font only for the address a person copies');
+assert.equal((main.match(/font_family\(FONT\)/g) ?? []).length, 1, 'one typeface on the list, set once');
+assert.equal((main.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font on the list only for the address a person copies');
+assert.equal((model.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font on the page only for what a person copies');
 assert.ok(!/model-part-/.test(model) && /Submenus\(c, PARTS/.test(model) && (model.match(/\{ id: "[a-z]+", label:/g) ?? []).length === 2, 'the model page declares two submenus');
 assert.equal((main.match(/kind: "primary"/g) ?? []).length, 2, 'two filled buttons in the source, never both on screen: Deploy a model when nothing is answering, and an open question, which hides it');
 assert.equal((model.match(/kind: "primary"/g) ?? []).length, 0, 'the model page has no filled button');
-// A name in the cloud is shown as the cloud has it ("captain-shop-staging"). Captain's own words never say these.
-for (const bad of [/\bengine\b/i, /\bdaemon\b/i, /\bpipeline/i, /\bendpoint config\b/i, /(^|[^-])\bstaging\b/i]) assert.ok(!bad.test(t), `no ${bad} on screen`);
+// A name in the cloud and a path in storage are shown as they are ("captain-shop-staging", ".../staging/shop/...").
+// Captain's own words never say these.
+for (const bad of [/\bengine\b/i, /\bdaemon\b/i, /\bpipeline/i, /\bendpoint config\b/i, /(^|[^-/_])\bstaging\b(?!\/)/i]) assert.ok(!bad.test(t), `no ${bad} on screen`);
 console.log('deployments render test: ok');
 process.exit(0);

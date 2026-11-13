@@ -24,8 +24,7 @@ HEADROOM_TIMES = 2.0
 HEADROOM_MB = 1024.0
 # What a SageMaker hosting machine has, in MB. The price comes from the price table. Machines with a GPU are left
 # out: a ranker Captain serves does not use one.
-SAGEMAKER_MEMORY = {"ml.t2.medium": 4096, "ml.c5.large": 4096, "ml.m5.large": 8192, "ml.c5.xlarge": 8192, "ml.m5.xlarge": 16384,
-                    "ml.c5.2xlarge": 16384, "ml.m5.2xlarge": 32768}
+SAGEMAKER_MEMORY = {name: m["memory_mb"] for name, m in PT.SAGEMAKER_MACHINES.items()}
 # One copy on Modal: CPU cores and memory. Modal takes any memory; these are the steps Captain offers.
 MODAL_SIZES = [(1, 1024), (1, 2048), (1, 4096), (2, 8192), (4, 16384), (8, 32768)]
 # Cloud Run: memory steps and the fewest vCPU Cloud Run allows with each.
@@ -115,6 +114,30 @@ def pick(ctx: Context, host: str, region: str | None, need_mb: float) -> dict:
     text = (f"{s['name']}: this model needs about {_gb(need_mb)}, and this has {_gb(s['memory_mb'])}."
             + (" The smallest that leaves room to spare." if by == "smallest" else " Your choice in Settings."))
     return {**s, "hourly_usd": round(s["hourly_usd"], 6), "need_mb": round(need_mb), "room_mb": round(room), "by": by, "text": text}
+
+
+def machine_facts(host: str, config: dict | None, region: str | None = None, name: str | None = None) -> dict:
+    """What a deployment's machine is, on any host: {name, cpus, memory_mb, hourly_usd, words}. `words` is how a row
+    says it: "ml.t2.medium: 2 virtual CPUs, 4 GB memory", or "1 CPU, 2 GB memory" where the size is its own facts.
+    From the price table for a named machine, from the size itself elsewhere. Unknown parts are None."""
+    cfg = config or {}
+    name = name or cfg.get("instance_type")
+    if host == "aws" and name:
+        m = PT.SAGEMAKER_MACHINES.get(name) or {}
+        price = next((s["hourly_usd"] for s in sizes("aws", region) if s["name"] == name), None)
+        cpus, mem = m.get("cpus"), m.get("memory_mb")
+        words = f"{name}: {cpus} virtual CPUs, {_gb(mem)} memory" if cpus and mem else name
+        return {"name": name, "cpus": cpus, "memory_mb": mem, "hourly_usd": price, "words": words}
+    try:
+        cpus, mem = float(cfg.get("cpu") or 0) or None, int(float(cfg.get("memory_mb") or 0)) or None
+    except (TypeError, ValueError):
+        cpus, mem = None, None
+    if host == "local" or not (cpus and mem):
+        return {"name": None, "cpus": cpus, "memory_mb": mem, "hourly_usd": 0.0 if host == "local" else None, "words": None}
+    price = next((s["hourly_usd"] for s in sizes(host, region) if s["cpu"] == cpus and s["memory_mb"] == mem), None)
+    unit = "CPU" if host == "modal" else "virtual CPU"
+    return {"name": None, "cpus": cpus, "memory_mb": mem, "hourly_usd": price,
+            "words": f"{cpus:g} {unit}{'s' if cpus != 1 else ''}, {_gb(mem)} memory"}
 
 
 def offered(host: str, region: str | None) -> list[dict]:
