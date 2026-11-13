@@ -62,9 +62,12 @@ def import_model(body: dict):
     b = _body(body)
     if not b.get("folder"):
         raise S.WeightsError("Name the folder that holds the model's manifest and tensors.")
-    m = WS.import_folder(_ctx(), str(b["folder"]), b.get("name"))
-    return {"model": m["name"], "version": m["version"], "ref": WS.ref_of(m["name"], m["version"]), "parameters": m["parameters"],
-            "sizes": m["sizes"]}
+    import os
+
+    from . import pipeline as WP
+
+    folder = os.path.abspath(str(b["folder"]))
+    return WP.collect(_ctx(), folder, folder, b.get("name"))
 
 
 @router.get("/compare")

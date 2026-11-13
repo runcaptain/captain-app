@@ -433,16 +433,19 @@ def export(folder: str, npz: bool = typer.Option(False, "--npz", help="write ten
 @weights_app.command("import")
 def import_(folder: str, name: Optional[str] = typer.Option(None, "--name", help="the model's name here. Left out: the manifest's"),
             project: Optional[str] = typer.Option(None, "--project", help="also put it in this project")):
-    """Bring in a model folder (manifest.json and its tensor files) made by any training code, as a new version."""
+    """Bring in a model folder (manifest.json and its tensor files) made by any training code, as a new version.
+    A cost.jsonl in the folder is kept with it as the training's cost per step."""
     if S.dry_run:
         return emit({"dry_run": True, "would": f"import {folder}"}, f"would import {folder}")
     c = ctx()
-    m = _do(WST.import_folder, c, folder, name)
+    from ..weights import pipeline as WP
+
+    out = _do(WP.collect, c, os.path.abspath(folder), os.path.abspath(folder), name)
     if project:
-        _do(WST.assign, c, m["name"], project)
-    out = {"model": m["name"], "version": m["version"], "ref": WST.ref_of(m["name"], m["version"]), "parameters": m["parameters"],
-           "sizes": m["sizes"], "project": project}
-    emit(out, f"imported {out['ref']}: {'-'.join(str(s) for s in m['sizes'])}, {m['parameters']:,} numbers. Open it with `cst weights open {m['name']}`.")
+        _do(WST.assign, c, out["model"], project)
+    out["project"] = project
+    emit(out, f"imported {out['ref']}: {'-'.join(str(s) for s in out['sizes'])}, {out['parameters']:,} numbers"
+              + (f", with {out['cost_points']:,} cost points" if out["cost_points"] else "") + f". Open it with `cst weights open {out['model']}`.")
 
 
 @weights_app.command("assign")

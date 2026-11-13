@@ -15,6 +15,8 @@ The full contract is docs/trainer-contract.md in this package (`cst docs trainer
   CST_OUT           an empty folder. The command writes CST_OUT/result.yaml with any of:
                     metrics, params, artifact_dir, registry_ref, spec (merged into the new spec), training_commit,
                     known_issues, description, cost {train_usd, train_gpu_hours, gpu_type, serve_usd_per_1k}
+                    network_dir, network_name: a folder with a network's manifest and tensors, which becomes a
+                    weights model version. CST_OUT/cost.jsonl, one {"step", "cost"} per line, streams to the live run.
   CST_PIPELINE, CST_WORKSPACE, CST_PYTHON (the Python Captain itself runs on, which built-in trainers start from),
   and CST_TRAIN_OUT (a file path, the older way to write the same result; still read)
 The new version's parent is the old one. It records the inputs, params and metrics. Files under artifact_dir are
@@ -43,7 +45,7 @@ from .model.entities import ReproStatus, new_id, utcnow
 from .workspace import Context, whoami
 
 ALLOWED_OUT = {"spec", "registry_ref", "training_commit", "known_issues", "description", "cost", "metrics",
-               "params", "artifact_dir"}
+               "params", "artifact_dir", "network_dir", "network_name"}
 LABEL_SOURCE_VALUES = ("human", "llm", "clicks", "simulated")
 # judgment_source on a judgments dataset, in the words of the contract
 LABEL_SOURCES = {"human": "human", "llm": "llm", "click": "clicks", "clicks": "clicks", "heuristic": "simulated",
@@ -268,6 +270,9 @@ def _train_here(ctx: Context, pm, train: dict, live, own: bool, inputs: list[dic
         killer = threading.Timer(timeout, lambda: (timed_out.set(), p.kill()))
         killer.start()
         lines: list[str] = []
+        from .weights import pipeline as WP
+
+        costs = WP.follow(out_dir, live)   # CST_OUT/cost.jsonl, streamed to the live run as it is written
         try:
             assert p.stdout is not None
             for line in p.stdout:
@@ -277,6 +282,7 @@ def _train_here(ctx: Context, pm, train: dict, live, own: bool, inputs: list[dic
             code = p.wait()
         finally:
             killer.cancel()
+            costs.stop()
         if timed_out.is_set():
             raise ValueError(f"the training command ran past its {timeout} s timeout and was stopped")
         wall = round(time.time() - t0, 2)
@@ -290,6 +296,10 @@ def _train_here(ctx: Context, pm, train: dict, live, own: bool, inputs: list[dic
         if os.path.exists(new_path):
             result = _merge(result, _read_result(new_path))
         art = _artifact_files(ctx, out_dir, str(result["artifact_dir"])) if result.get("artifact_dir") else None
+        network = None
+        if result.get("network_dir"):   # a network the command wrote: it opens in Weights as a model version
+            network = WP.collect(ctx, out_dir, str(result["network_dir"]), str(result.get("network_name") or pm.name),
+                                 {"by": "a training command", "pipeline": ref(pm), "command": str(train["command"])[:2000]})
     live.stage("Publish the new version", 2, 2)
     metrics = result.get("metrics") or {}
     if not isinstance(metrics, dict):
@@ -311,7 +321,7 @@ def _train_here(ctx: Context, pm, train: dict, live, own: bool, inputs: list[dic
         "train_metrics": metrics, "train_params": {**params, **(result.get("params") or {})},
         "parents": [ref(pm)], "source": {"kind": "retrain", "command": str(train["command"])[:2000],
                                          **({"job": os.environ["CST_JOB_ID"]} if os.environ.get("CST_JOB_ID") else {})},
-        "tags": {**pm.tags, "retrained_from": ref(pm)}})
+        "tags": {**pm.tags, "retrained_from": ref(pm), **({"weights_model": network["ref"]} if network else {})}})
     new = ctx.registry.publish(type(pm).model_validate(new.model_dump()))
     cost = dict(result.get("cost") or {})
     note = f"training wall time {wall:.0f} s on this machine"
@@ -324,4 +334,4 @@ def _train_here(ctx: Context, pm, train: dict, live, own: bool, inputs: list[dic
         live.end("done", ref=ref(new), summary=f"Published {ref(new)} from {ref(pm)} in {wall:.0f} s")
     return {"pipeline": ref(new), "name": new.name, "version": new.version, "parent": ref(pm), "compute": "local",
             "wall_s": wall, "metrics": metrics or None, "params": new.train_params, "inputs": new.train_inputs,
-            "artifact_files": len(art or []), "log_tail": tail[-800:]}
+            "artifact_files": len(art or []), "log_tail": tail[-800:], **({"network": network} if network else {})}

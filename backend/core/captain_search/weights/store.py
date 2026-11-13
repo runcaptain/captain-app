@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import os
 import re
 
 import numpy as np
@@ -290,5 +291,33 @@ def import_folder(ctx, folder: str, name: str | None = None, **extra) -> dict:
         ly["outputs"], ly["inputs"] = (int(s) for s in np.asarray(tensors[ly["weight"]]).shape)
     for k, t in keep["tensors"].items():
         t["shape"], t["dtype"] = list(np.asarray(tensors[k]).shape), "float32"
+    if "training" in extra and isinstance(keep.get("training"), dict):
+        extra = {**extra, "training": {**keep["training"], **extra["training"]}}
     keep.update(extra)
+    # A set that comes as a file (x and y in an .npz) is stored beside the versions, named by its content.
+    sets_out = {}
+    for which, spec in (keep.get("sets") or {}).items():
+        if not isinstance(spec, dict):
+            raise WeightsError(f"The set {which} is described by an object: a file with x and y, or a generator.")
+        if spec.get("file"):
+            rel = str(spec["file"]).replace("\\", "/")
+            if os.path.isabs(rel) or ".." in rel.split("/"):
+                raise WeightsError(f"The set file {spec['file']!r} must be a name inside the model's own folder.")
+            try:
+                with open(os.path.join(folder, rel), "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                raise WeightsError(f"The manifest names the set file {spec['file']}, and it is not in the folder.") from None
+            got = F.npz_loads(data)
+            if "x" not in got or "y" not in got or len(got["x"]) != len(got["y"]):
+                raise WeightsError(f"The set {which} should hold `x` (inputs) and `y` (wanted outputs), one row each per example.")
+            key = f"sets/{hashlib.sha256(data).hexdigest()[:12]}-{os.path.basename(rel)}"
+            try:
+                ctx.store.put_new(f"{ROOT}/{name}/{key}", data)
+            except AlreadyExists:
+                pass
+            spec = {**spec, "file": key, "n": int(len(got["x"]))}
+        sets_out[which] = spec
+    if sets_out:
+        keep["sets"] = sets_out
     return save_packed(ctx, name, keep, tensors)

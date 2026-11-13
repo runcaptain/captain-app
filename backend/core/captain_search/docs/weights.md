@@ -149,7 +149,7 @@ Each line: the command, the route, and what comes back. `{s}` is the session id.
 | | `GET /api/weights/models/{model}/session` | the newest session on the model, made if there is none |
 | `cst weights sessions <model>` | `GET /api/weights/models/{model}/sessions` | `[{id, model, version, who, opened_at, events, edits}]`, newest first |
 | `cst weights assign <model> <project>` | `POST /api/weights/models/{model}/project` | `{model, project}`. Body: `{"project": "shop"}` |
-| `cst weights import <folder> [--name]` | `POST /api/weights/import` | `{model, version, ref, parameters, sizes}`. Body: `{"folder": "...", "name": "..."}` |
+| `cst weights import <folder> [--name]` | `POST /api/weights/import` | `{model, version, ref, parameters, sizes, cost_points}`. Body: `{"folder": "...", "name": "..."}` |
 | `cst weights session` | `GET /api/weights/sessions/{s}` | a session |
 | `cst weights layers` | `GET /api/weights/sessions/{s}/layers` | `{sizes, cost, parameters, layers: [...]}` |
 | `cst weights read <tensor> [--rows 0:2] [--cols 0:4]` | `GET /api/weights/sessions/{s}/read?tensor=&rows=&cols=` | `{tensor, shape, rows, cols, values, count}` |
@@ -375,10 +375,12 @@ to both and reads the session again. `cst weights` in a terminal is heard too.
 
 ## Bring your own training
 
-See `cst docs trainer-contract`, "Writing a network". In short: the training command writes a manifest and
-tensors into a folder under `CST_OUT`, names it in `result.yaml` as `network_dir`, and may append one JSON line
-per step to `CST_OUT/cost.jsonl`. Captain opens the network as a weights model and streams the cost to Runs.
-`cst weights import <folder> --name <model>` does the same for a folder made any other way.
+See `cst docs trainer-contract`, "Writing a network", which has a ten-line example. In short: the training
+command writes a manifest and tensors into a folder under `CST_OUT`, names it in `result.yaml` as `network_dir`,
+and may append one JSON line per step to `CST_OUT/cost.jsonl`. Captain stores the network as a weights model
+version and puts each cost point on the live run as it is written. `cst weights import <folder> --name <model>`
+brings in a folder made any other way. A model's own sets come along as `.npz` files with `x` and `y`. The cost
+history is kept in the manifest under `training.cost` as `[step, cost]` pairs.
 
 ## Limits
 
