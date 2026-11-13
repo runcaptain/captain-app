@@ -20,8 +20,10 @@ const numbers = (requests, extra = {}) => ({ range: '24h', range_text: 'the last
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), p = u.pathname, m = opts.method ?? 'GET';
   sent.push([m, p + u.search, opts.body ? JSON.parse(opts.body) : null]);
+  if (p === '/api/deployed' && world.deployedFail) return reply(500, { detail: 'no answer' });
   if (p === '/api/deployed') return reply(200, world.deployed);
   // Work the services do as a job: `world.jobs[id]` is the list of answers it gives, one per ask, the last repeating.
+  if (p.startsWith('/api/jobs/') && world.jobsFail) return reply(500, { detail: 'no answer' });
   if (p.startsWith('/api/jobs/')) { const steps = world.jobs?.[p.split('/')[3]] ?? [{ status: 'done' }]; return reply(200, steps.length > 1 ? steps.shift() : steps[0]); }
   if (m === 'POST' && p.endsWith('/unstage') && world.stopJob) return reply(200, { job: world.stopJob });
   // The plan for a deploy: what the confirm is built from. `world.plan` overrides it, or fails it.
@@ -421,24 +423,84 @@ const numberReads = () => sent.filter((x) => x[1].includes('/deployed/numbers'))
 const beforeNumbers = numberReads();
 await tick(h);
 assert.equal(numberReads(), beforeNumbers, 'the numbers stay on their one-minute ration');
-// An action that the services do as a job is followed to its end. While it runs the row says what is being done,
-// with the step it is on, and no button is offered that would do it again.
-world.stopJob = 'job-1';
-world.jobs = { 'job-1': [{ status: 'running', message: 'Removing the endpoint.' }, { status: 'running', message: 'Removing the model.' }, { status: 'done', result: { text: 'Stopped. It no longer answers or bills.' } }] };
-const stopping = h.click('dep-stop-shop:staging');
-await h.idle(150);
-assert.ok(h.text().includes('Stopping: Removing the endpoint') && byId(h, 'dep-busy-shop:staging').length === 1, `the row says what is happening, with the step: ${h.text().slice(0, 400)}`);
-for (const id of ['dep-stop-shop:staging', 'dep-open-shop:staging', 'dep-back-shop:staging']) assert.equal(byId(h, id).length, 0, `no ${id} while it runs`);
-world.deployed = { rows: [{ ...SHOP, state: 'stopped', state_text: 'Stopped by dana, just now.', in_cloud: false, remembered_text: 'Nothing of it is running in AWS and nothing is billing. Captain remembers it so you can start it again.' }, TRAIL],
+// ---- an action is followed on the screen's timer, and the list never stops being read ----
+// A person pressed Stop on a running AWS model. The cloud removed it and Captain's record said stopped, but the
+// screen said "Stopping: stopping the deployed model of <id>..." for good, with "Updated 3 min ago". The follower
+// waited between looks with a timer the app's script engine does not have, died after its first look, and the
+// list read was switched off while an action ran.
+const { readFileSync, readdirSync } = await import('node:fs');
+for (const f of readdirSync('defaults/mods/captain-deployments').filter((x) => x.endsWith('.js')))
+  assert.ok(!/\bset(Timeout|Interval)\s*\(/.test(readFileSync(`defaults/mods/captain-deployments/${f}`, 'utf8')), `${f} waits on a timer the app does not have`);
+const listReads = () => sent.filter((x) => x[1].startsWith('/api/deployed') && !x[1].includes('created')).length;
+const STOPPED = { rows: [{ ...SHOP, state: 'stopped', state_text: 'Stopped by dana, just now.', in_cloud: false, remembered_text: 'Nothing of it is running in AWS and nothing is billing. Captain remembers it so you can start it again.' }, TRAIL],
   asked, text: '1 model running.', stopped_earlier: 1, read_at: '' };
-await stopping;
-for (let i = 0; i < 40 && byId(h, 'dep-busy-shop:staging').length; i++) await h.idle(150);
-await h.idle(150);
-// When it ends: what it said, and the list as it now is, at once, from the action's own result.
+const RUNNING2 = { rows: [SHOP, TRAIL], asked, text: '2 models running.', read_at: '' };
+// The job as the services really make it: its title is its first message and its first log line.
+const TITLE = 'stopping the deployed model of shop';
+world.stopJob = 'job-1';
+world.jobs = { 'job-1': [{ status: 'running', message: TITLE, log: [TITLE] }, { status: 'running', message: TITLE, log: [TITLE, 'Removing the endpoint.'] },
+  { status: 'done', message: 'done', log: [TITLE, 'Removing the endpoint.', 'done: {}'], result: { text: 'Stopped. It no longer answers or bills.' } }] };
+await h.click('dep-stop-shop:staging');
+await h.idle(100);
+assert.ok(h.text().includes('Stopping on AWS...') && !h.text().includes(TITLE) && byId(h, 'dep-busy-shop:staging').length === 1, `it says what is being done, in words, not the job's title: ${h.text().slice(0, 500)}`);
+for (const id of ['dep-stop-shop:staging', 'dep-open-shop:staging', 'dep-back-shop:staging']) assert.equal(byId(h, id).length, 0, `no ${id} while it runs`);
+const readsAtStop = listReads();
+await tick(h);
+assert.ok(!h.text().includes(TITLE), `the job's title is never shown as a step: ${h.text().slice(0, 500)}`);
+assert.ok(listReads() > readsAtStop, 'the list is still read while the action runs');
+for (let i = 0; i < 4 && !h.text().includes('Removing the endpoint'); i++) await tick(h);
+assert.ok(h.text().includes('Stopping on AWS: Removing the endpoint...') || h.text().includes('Stopped. It no longer answers or bills.'), `then the step it is on: ${h.text().slice(0, 500)}`);
+world.deployed = STOPPED;
+await tick(h); await tick(h);
 assert.ok(h.text().includes('Stopped. It no longer answers or bills.') && byId(h, 'dep-busy-shop:staging').length === 0, `it says what was done: ${h.text().slice(0, 300)}`);
 assert.ok(shown(h) === 'trail' && h.text().includes('Stopped earlier: 1 model.') && h.text().includes('1 model running.'), `and the list is the truth, without a click: ${shown(h)}`);
 assert.ok(sent.some((x) => x[1] === '/api/deployed?fresh=true'), 'read fresh after the action');
-world.stopJob = null; world.jobs = null;
+
+// A job that is over before the first look at it.
+world.deployed = RUNNING2; await tick(h); await tick(h);
+assert.equal(shown(h), 'shop trail');
+world.jobs = { 'job-1': [{ status: 'done', message: 'done', log: [TITLE, 'done: {}'], result: {} }] };
+await h.click('dep-stop-shop:staging');
+await h.idle(100);
+world.deployed = STOPPED;
+await tick(h); await tick(h);
+assert.ok(byId(h, 'dep-busy-shop:staging').length === 0 && shown(h) === 'trail' && !h.text().includes('Stopping'), `a job that ended at once is seen: ${h.text().slice(0, 300)}`);
+
+// The list is the truth: the cloud says the model is gone while the job still says running. The row is settled.
+world.deployed = RUNNING2; await tick(h); await tick(h);
+world.jobs = { 'job-1': [{ status: 'running', message: TITLE, log: [TITLE] }] };
+await h.click('dep-stop-shop:staging');
+await h.idle(100);
+world.deployed = STOPPED;
+await tick(h); await tick(h);
+assert.ok(byId(h, 'dep-busy-shop:staging').length === 0 && shown(h) === 'trail' && h.text().includes('Stopped by dana, just now.'), `settled from the list, whatever the job says: ${h.text().slice(0, 400)}`);
+
+// A job that can't be asked after: for two minutes the row waits, then it gives up and shows what the list says.
+world.deployed = RUNNING2; await tick(h); await tick(h);
+world.jobs = { 'job-1': null };
+world.jobsFail = true;
+await h.click('dep-stop-shop:staging');
+await h.idle(100);
+await tick(h);
+assert.equal(byId(h, 'dep-busy-shop:staging').length, 1, 'not heard yet: it waits');
+const realNow = Date.now;
+Date.now = () => realNow() + 121000;
+await tick(h); await tick(h);
+Date.now = realNow;
+await tick(h);
+assert.ok(byId(h, 'dep-busy-shop:staging').length === 0 && h.text().includes('Captain could not tell how that ended. The list shows where it stands now.') && byId(h, 'dep-stop-shop:staging').length === 1,
+  `given up on, with one line, and the row has its buttons back: ${h.text().slice(0, 400)}`);
+world.jobsFail = false; world.stopJob = null; world.jobs = null;
+
+// "Updated" never climbs: with no good read for more than 15 seconds the screen says it is not updating.
+world.deployedFail = true;
+Date.now = () => realNow() + 16000;
+await tick(h);
+assert.ok(h.text().includes('Not updating. Refresh') && !/Updated \d+ (s|min) ago/.test(h.text()), `it says so: ${h.text().slice(0, 200)}`);
+Date.now = realNow;
+world.deployedFail = false;
+await tick(h); await tick(h);
+assert.ok(!h.text().includes('Not updating') && h.text().includes('Updated just now'), 'and recovers with the next good read');
 
 // ---- requests come from the request log, and the cloud's chart is named for what it is ----
 // Proven on a real endpoint: 29 requests for results, and 178 calls counted by the cloud, most of them Captain's own checks.

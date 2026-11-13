@@ -26,6 +26,7 @@ export default class CaptainDeployments extends View {
     this.project = null;
     this.ask = null;          // an open question: {kind, id, text, yes}
     this.busy = {};           // row id -> what is being done to it, in words
+    this.following = {};      // row id -> the job doing it: {job, words, kind, read, heard, polling}
     this.note = null;         // what the last action said
     this.projects = null;     // for "Link to a project"
     this.page = null;         // the model page, when a row is open
@@ -53,14 +54,17 @@ export default class CaptainDeployments extends View {
     this.takeOpen(cx);
     this.load(cx);
     watchWorkspace(cx, (cx) => { this.page = null; this.load(cx); });
-    // Live: the list is read every few seconds, so a deploy or a stop made on another screen or in a terminal
-    // shows by itself. A read is skipped while an action here is running: its own result comes next.
-    cx.timer.every(5000, (cx) => { if (!Object.keys(this.busy).length) this.load(cx); });
+    // Live: the list is read every few seconds, always, so a deploy or a stop made here, on another screen or in
+    // a terminal shows by itself. It never pauses for an action: a person pressed Stop, the read stopped with it,
+    // and the row said "Stopping" for good while the cloud had long since removed the model.
+    cx.timer.every(5000, (cx) => this.load(cx));
+    // Work the services do as a job is followed from here, once a second, on the screen's own timer.
+    cx.timer.every(1000, (cx) => this.follow(cx));
     // While a model is being deployed its row counts the seconds on this page's own clock, and the list is read
     // more often, so the step changes and the finished model show as they happen.
     cx.timer.every(1000, (cx) => { if (this.deployingNow()) cx.notify(); });
-    cx.timer.every(2000, (cx) => { if (this.deployingNow() && !Object.keys(this.busy).length) this.load(cx); });
-    cx.timer.every(20000, (cx) => cx.notify());  // so "Updated just now" turns into "a minute ago" without a read
+    cx.timer.every(2000, (cx) => { if (this.deployingNow()) this.load(cx); });
+    cx.timer.every(5000, (cx) => cx.notify());  // so "Updated just now" moves on, and says so if the reads stop
     cx.timer.every(60000, (cx) => this.page?.refresh(cx));  // an open model's page: where it runs and its numbers
     // A link on another screen can't reach this screen's props: it sets the shared "open" value and selects this
     // place. Looked at a few times a second, as the other screens do, so the link lands without a wait.
@@ -96,7 +100,7 @@ export default class CaptainDeployments extends View {
     cx.spawn(async (cx) => {
       const r = await api(`/api/deployed${fresh ? "?fresh=true" : ""}`, { timeout: 60 });
       if (mine < this.floor) return;  // asked before the last action finished: older than what the person did
-      if (r.ok) { this.d = r.data; this.problem = null; this.readAt = Date.now(); } else if (!this.d) this.problem = r;
+      if (r.ok) { this.d = r.data; this.problem = null; this.readAt = Date.now(); this.settle(cx, r.data.rows, mine); } else if (!this.d) this.problem = r;
       if (r.ok && this.wanted) {  // asked for by another screen ("Open in Deployments" on a project's page)
         const row = r.data.rows.find((x) => x.id === this.wanted);
         this.wanted = null;
@@ -127,34 +131,76 @@ export default class CaptainDeployments extends View {
 
   /** Do something to a deployment and show it happening. While it runs the row says what is being done, with the
    *  step it is on, and offers no button that would do it again. Work the services do as a job (stopping,
-   *  starting, removing) is followed to its end. When it ends, what it said is shown and the list is read at once. */
-  async act(cx, row, words, call) {
+   *  starting, removing) is followed by `follow`, on the screen's timer. `kind` says what the list will show when
+   *  it is over ("gone" for a stop or a removal), so the row can be settled from the list alone. */
+  async act(cx, row, words, call, kind = "other") {
     this.ask = null;
     if (this.demo) return cx.notify();
     this.busy[row.id] = words;
     this.note = null;
     cx.notify();
-    let r = await call();
-    let said = r.ok ? (r.data?.text ?? null) : plainError(r.error, "That did not work.");
-    const job = r.ok ? r.data?.job : null;
-    for (let i = 0; job && i < 1800; i++) {  // half an hour at the most: a first deploy to a cloud takes minutes
-      const j = await api(`/api/jobs/${encodeURIComponent(job)}`, { timeout: 30 });
-      if (!j.ok) { said = plainError(j.error, "Captain lost track of that work. Look at the list for where it stands."); break; }
-      const step = j.data?.message || (j.data?.log ?? []).slice(-1)[0];
-      this.busy[row.id] = step ? `${words}: ${String(step).replace(/[.]+$/, "")}` : words;
-      cx.notify();
-      if (j.data?.status === "done") { said = j.data?.result?.text ?? said ?? `${words}: done.`; break; }
-      if (j.data?.status === "failed") { said = plainError(j.data?.error ?? j.data?.message, "That did not work."); break; }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    let r;
+    try { r = await call(); } catch (e) { r = { ok: false, error: String(e?.message ?? e) }; }
+    if (r.ok && r.data?.job) {
+      this.following[row.id] = { job: r.data.job, words, kind, read: this.reads, heard: Date.now(), polling: false };
+      return cx.notify();
     }
-    delete this.busy[row.id];
-    this.note = said;
+    this.finish(cx, row.id, r.ok ? (r.data?.text ?? null) : plainError(r.error, "That did not work."));
+  }
+
+  /** An action is over: the row gets its buttons back, what was said is shown, and the list is read at once. */
+  finish(cx, id, said) {
+    delete this.busy[id];
+    delete this.following[id];
+    this.note = said ?? null;
     this.floor = this.reads + 1;  // anything read before now is older than this action
     this.load(cx, true);
   }
 
+  /** Ask after each job being followed, once a second. Nothing here waits in a loop: the script engine has no
+   *  timer of its own to wait on, and a loop that tried one died after its first look, leaving the row "Stopping"
+   *  for ever. A job that can't be asked after for two minutes is given up on, and the list says where it stands. */
+  follow(cx) {
+    for (const [id, f] of Object.entries(this.following)) {
+      if (Date.now() - f.heard > 120000) {
+        this.finish(cx, id, `${f.words}: Captain could not tell how that ended. The list shows where it stands now.`);
+        continue;
+      }
+      if (f.polling) continue;
+      f.polling = true;
+      cx.spawn(async (cx) => {
+        let j;
+        try { j = await api(`/api/jobs/${encodeURIComponent(f.job)}`, { timeout: 10 }); } catch (e) { j = { ok: false }; }
+        f.polling = false;
+        if (this.following[id] !== f || !j.ok) return;  // settled meanwhile, or not heard: asked again next second
+        f.heard = Date.now();
+        const log = j.data?.log ?? [];
+        // The job's own title is not a step ("stopping the deployed model of <id>"): the row already says what is being done.
+        const step = [j.data?.message, log[log.length - 1]].find((x) => x && x !== log[0] && x !== "done" && !String(x).startsWith("done: "));
+        this.busy[id] = step ? `${f.words}: ${String(step).replace(/[.]+$/, "")}` : f.words;
+        if (j.data?.status === "done") return this.finish(cx, id, j.data?.result?.text ?? `${f.words}: done.`);
+        if (j.data?.status === "failed") return this.finish(cx, id, plainError(j.data?.error ?? j.data?.message, "That did not work."));
+        cx.notify();
+      });
+    }
+  }
+
+  /** The list is the truth. A stop or a removal is over the moment the list, read after it began, no longer has
+   *  the model in a cloud, whatever the job says or fails to say. */
+  settle(cx, rows, mine) {
+    for (const [id, f] of Object.entries(this.following)) {
+      if (f.kind !== "gone" || mine <= f.read) continue;
+      const row = rows.find((x) => x.id === id);
+      if (row && row.in_cloud && !["stopped", "gone"].includes(row.state)) continue;
+      delete this.busy[id];
+      delete this.following[id];
+      this.note = row?.state_text ?? `${f.words}: done.`;
+    }
+  }
+
   stop(row, cx) {
-    cx.spawn((cx) => this.act(cx, row, "Stopping", () => api(`/api/projects/${encodeURIComponent(row.project)}/unstage`, { method: "POST", body: { env: row.env }, timeout: 600 })));
+    cx.spawn((cx) => this.act(cx, row, row.cloud === "local" ? "Stopping" : `Stopping on ${row.cloud_label}`,
+      () => api(`/api/projects/${encodeURIComponent(row.project)}/unstage`, { method: "POST", body: { env: row.env }, timeout: 600 }), "gone"));
   }
 
   /** Start a stopped model again, in the place it was. The services are asked for the plan first, so the question
@@ -186,7 +232,7 @@ export default class CaptainDeployments extends View {
         : `Remove ${row.project_name}'s model from ${row.cloud_label}? It stops answering, and what Captain made for it there is deleted. It cannot be undone.`,
       go: (cx) => cx.spawn((cx) => this.act(cx, row, `Removing from ${row.cloud_label}`, () => found
         ? api("/api/deployed/remove", { method: "POST", body: { id: row.id, confirm: true }, timeout: 600 })
-        : api(`/api/projects/${encodeURIComponent(row.project)}/deploy?env=${encodeURIComponent(row.env ?? "staging")}`, { method: "DELETE", timeout: 600 }))) };
+        : api(`/api/projects/${encodeURIComponent(row.project)}/deploy?env=${encodeURIComponent(row.env ?? "staging")}`, { method: "DELETE", timeout: 600 }), "gone")) };
     cx.notify();
   }
 
@@ -420,7 +466,10 @@ export default class CaptainDeployments extends View {
       // It keeps itself up to date, and says when it last was, or that a cloud could not be reached. No button to
       // press: a small refresh icon is there for someone who wants to ask now.
       .child(Updated(c, "dep-updated", { readAt: this.readAt, icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.load(cx, true),
-        problem: notAsked.length ? `${[...new Set(notAsked.map((a) => a.cloud_label))].join(" and ")} could not be reached. Trying again.` : null }));
+        // The list is read every 5 seconds. If the last good read is older than 15, the screen is not keeping up,
+        // and it says so: "Updated 3 min ago" beside a row that is no longer true reads as if all were well.
+        problem: notAsked.length ? `${[...new Set(notAsked.map((a) => a.cloud_label))].join(" and ")} could not be reached. Trying again.`
+          : this.readAt && !this.demo && Date.now() - this.readAt > 15000 ? "Not updating. Refresh" : null }));
     const none = !here.length;
     const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small });
     const n = earlier.length;
