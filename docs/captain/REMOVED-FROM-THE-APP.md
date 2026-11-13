@@ -16,10 +16,3 @@ This list is here so a later cleanup knows what to look at. Nothing on it has be
 | The tour's steps "Open an experiment" and "Record a decision" | | `/api/onboarding` no longer lists them | The tour ends at an offline evaluation |
 | The old evaluation form's fields | | | The form task `backtest` keeps its fields for a caller that hands every value over. The New menu and the palette open `captain-evaluation` |
 | The engine page's Experiments tab | | `/api/investigations` is no longer asked for by that page | |
-
-Asked for and not built, because a run can't do it yet. These are in `GET /api/evaluations/options` under
-`not_yet`:
-
-- how many results deep a measure looks;
-- which slices a run reports;
-- which measures a run computes.

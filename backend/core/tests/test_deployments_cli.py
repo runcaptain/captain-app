@@ -114,6 +114,6 @@ def test_start_again_and_remove(ws, logins, modal):  # noqa: F811
     assert code != 0 and "Confirm with --yes" in out and len(modal.stops) == stops
     code, out = cst("deployments", "remove", "shop", "--yes")
     # Modal keeps a stopped app's name in its list: what matters is that it was stopped, and that the cloud read agrees.
-    assert code == 0 and len(modal.stops) == stops + 1 and SG.state(ws, "shop")["status"] != "running"
+    assert code == 0 and len(modal.stops) == stops + 1 and SG.state(ws, "shop") is None and "Nothing is left." in out
     FL.forget()
-    assert [r["state"] for r in FL.deployed(ws, fresh=True)["rows"]] == ["stopped"]
+    assert FL.deployed(ws, fresh=True)["rows"] == []  # removed means gone from the list, not stopped in it

@@ -65,7 +65,8 @@ def queries(ctx: Context, run_ref: str, a: str | None = None, b: str | None = No
     bt, qs, jmap = _context(ctx, run)
     ra, rb = _rankings(ctx, run, a), _rankings(ctx, run, b)
     ex = X.current(ctx).custom("metric")
-    pa, pb = M.per_query(ra, jmap, ex), M.per_query(rb, jmap, ex)
+    d = M.check_depths(run.depths)  # at the depths the run looked, so a query's numbers add up to the run's
+    pa, pb = M.per_query(ra, jmap, ex, d), M.per_query(rb, jmap, ex, d)
     rows = []
     for qid in sorted(set(pa) & set(pb)):
         q = qs.get(qid, {})
@@ -132,7 +133,8 @@ def query(ctx: Context, run_ref: str, qid: str, a: str | None = None, b: str | N
                 "grade": grades.get(pid), "other_rank": o, "moved": None if o is None else o - rank}
 
     ex = X.current(ctx).custom("metric")
-    pa, pb = M.per_query({qid: ra[qid]}, jmap, ex)[qid], M.per_query({qid: rb[qid]}, jmap, ex)[qid]
+    dp = M.check_depths(run.depths)
+    pa, pb = M.per_query({qid: ra[qid]}, jmap, ex, dp)[qid], M.per_query({qid: rb[qid]}, jmap, ex, dp)[qid]
     return {"run": f"{run.name}@v{run.version}", "query_id": qid, "query": qs.get(qid, {}).get("query"),
             "class": qs.get(qid, {}).get("class"), "a": {"arm": a, "ndcg10": pa["ndcg10"], "judged10": pa["judged10"],
                                                           "items": [item(pid, i + 1, pos_b) for i, pid in enumerate(la)]},
@@ -155,6 +157,10 @@ def compatibility(ctx: Context, run_ref: str) -> dict:
                          f"({bt.tags.get('train_labels') or 'its training labels'}), so a higher score {OWN_LABELER} rather than beating the other arm"})
     if not run.complete:
         warnings.append({"code": "incomplete", "text": "an arm has judged@10 under 90%, so its nDCG is understated"})
+    for words in M.non_default(run.depths):
+        warnings.append({"code": "depth", "text": words + " Compare it only with runs measured at the same depth"})
+    for words in M.measures_words(run.measures):
+        warnings.append({"code": "measures", "text": words + " The others were not asked for, so they have no number"})
     jud = [x.judged_at_10 for x in run.arms if x.judged_at_10 is not None]
     if len(jud) > 1 and max(jud) - min(jud) > 0.1:
         warnings.append({"code": "uneven-coverage", "text": f"judged@10 differs between arms ({min(jud):.0%} to {max(jud):.0%}), so part of the delta can come from coverage, not quality"})
@@ -185,6 +191,10 @@ def compare_runs(ctx: Context, a_ref: str, b_ref: str) -> dict:
         issues.append({"code": "different-metric", "text": f"different primary metrics ({ba.preregistration.primary_metric} vs {bb.preregistration.primary_metric})"})
     if ra.mode != rb.mode:
         issues.append({"code": "different-mode", "text": f"different modes ({ra.mode} vs {rb.mode})"})
+    da, db = M.check_depths(ra.depths), M.check_depths(rb.depths)
+    for k in M.DEFAULT_DEPTHS:
+        if da[k] != db[k]:
+            issues.append({"code": "different-depth", "text": f"{M.DEPTH_WORDS[k]} looks a different number of results deep ({da[k]} vs {db[k]}), so the two scores are not the same measure"})
     if ba.population != bb.population:
         issues.append({"code": "different-shoppers", "text": "different shopper populations, so simulated CTR and conversion are not comparable"})
     return {"a": f"{ra.name}@v{ra.version}", "b": f"{rb.name}@v{rb.version}", "comparable": not issues, "issues": issues}
@@ -222,7 +232,10 @@ def regression(ctx: Context, member=None, model: str | None = None, limit: int =
                          "model": p.get("b"), "against": p.get("a"), "metric": metric, "delta": p.get("delta"),
                          "ci_low": p.get("ci_low"), "ci_high": p.get("ci_high"), "comparison": p.get("verdict"),
                          "evidence": p.get("evidence"), "value": score.get(p.get("b")), "against_value": score.get(p.get("a")),
-                         "too_few_judged": not r.complete, "own_labeler": own, "independent": r.independent})
+                         "too_few_judged": not r.complete, "own_labeler": own, "independent": r.independent,
+                         # How deep the measures looked, and what about that is not the usual: it goes in the verdict.
+                         "depths": M.check_depths(r.depths), "not_usual": M.not_usual(r),
+                         "measures": list(r.measures), "slices": list(r.slices)})
     models = sorted({bare(r["model"]) for r in rows if r["model"]})
     if model:
         rows = [r for r in rows if bare(r["model"]) == bare(model)]

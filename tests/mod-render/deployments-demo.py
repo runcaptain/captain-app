@@ -17,9 +17,16 @@ def row(pid, name, version, cloud, label, region, machine, state, text, **kw):
             "login": kw.pop("login", "work-" + cloud), "region": region, "machine": machine, "where": where, "name": f"captain-{pid}-staging",
             "copies": {"now": kw.pop("copies", 1), "min": None, "max": None}, "state": state, "state_label": state.capitalize(), "state_text": text,
             "since": kw.pop("since", ago(hours=5)), "by": kw.pop("by", "dana"), "link": kw.pop("link", "linked"), "corrected": kw.pop("corrected", []),
-            "sleeps": cloud != "aws", "address": kw.pop("address", None), "stopped_at": kw.pop("stopped_at", None), "can": [],
+            "sleeps": cloud != "aws", "stopped_at": kw.pop("stopped_at", None), "can": [],
             # A stopped model is not in a cloud: Captain only remembers it.
             "in_cloud": state != "stopped",
+            # Where it lives, as a row says it: the address a site calls and the system it runs on.
+            "address": kw.pop("address", None) or (f"https://runtime.sagemaker.{region}.amazonaws.com/endpoints/captain-{pid}/invocations" if cloud == "aws" else
+                                                   f"https://captain-{pid}-demo.a.run.app" if cloud == "gcp" else f"https://captain-{pid}.demo.eastus.azurecontainerapps.io" if cloud == "azure" else None),
+            "account": {"aws": "account ending 1234", "gcp": "project demo-shop", "modal": "environment main", "azure": "resource group captain-serving"}.get(cloud),
+            "machine_words": (f"{machine}: 2 virtual CPUs, 4 GB memory" if cloud == "aws" and machine == "ml.t2.medium" else
+                              f"{machine}: 2 virtual CPUs, 8 GB memory" if cloud == "aws" else (machine.replace(" vCPU", " virtual CPU") + " memory") if machine else None),
+            "copies_words": None if state == "stopped" else "asleep, may run 0 to 1" if state == "asleep" else "1 copy up now, may run 1 to 3" if cloud == "aws" else "may run 0 to 2",
             "remembered_text": (f"Nothing of it is running in {label} and nothing is billing. Captain remembers it so you can start it again." if state == "stopped" else None),
             "model_label": (version.split("/", 1)[-1].replace("@v", ", version ") if version else None), "by_name": "dana", **kw}
 
@@ -104,6 +111,21 @@ demo = {"deployed": {"rows": rows, "asked": ASKED if rows else [], "text": text,
 if view == "model":
     demo["open"] = "shop:staging"
     demo["model"] = {"numbers": {k: numbers(k, 6.0) for k in ("15m", "1h", "24h", "7d")},
+                     "where": {"from_cloud": True, "text": "Read from AWS just now.", "facts": [
+                         {"id": i, "label": la, "value": v, "copy": cp, "source": src, "source_text": "From AWS" if src == "cloud" else "From Captain's record"}
+                         for i, la, v, cp, src in (
+                             ("address", "Address", "https://runtime.sagemaker.us-west-1.amazonaws.com/endpoints/captain-shop/invocations", True, "cloud"),
+                             ("call", "How to call it", "aws sagemaker-runtime invoke-endpoint --region us-west-1 --endpoint-name captain-shop --content-type application/json --body file://request.json /dev/stdout", True, "record"),
+                             ("cloud", "Cloud and account", "AWS, account ending 1234", False, "cloud"), ("region", "Region", "us-west-1", False, "record"),
+                             ("machine", "Machine", "ml.t2.medium: 2 virtual CPUs, 4 GB memory, about $0.07 an hour for each copy", False, "cloud"),
+                             ("copies", "Copies", "1 up now. Fewest 1, most 3", False, "cloud"),
+                             ("image", "Image", "000000000000.dkr.ecr.us-west-1.amazonaws.com/captain-serving:1, built 5 hours ago", False, "cloud"),
+                             ("files", "Model files", "s3://captain-serving-000000000000-us-west-1/demo/staging/shop/bundle.json", False, "record"),
+                             ("role", "Role it runs as", "arn:aws:iam::000000000000:role/captain-serving", False, "cloud"),
+                             ("logs", "Logs", "/aws/sagemaker/Endpoints/captain-shop", True, "cloud"),
+                             ("stops", "Stops by itself after", "240 minutes with no requests", False, "record"),
+                             ("by", "Deployed by", "dana, 5 hours ago", False, "record"),
+                             ("version", "Version", "starter-ranker, version 2 (shop/starter-ranker@v2)", False, "record"))]},
                      "requests": {"rows": [{"ts": ago(seconds=20 * i), "query": q, "model_version": "shop/starter-ranker@v2", "ms": 2.8 + i * 0.3}
                                            for i, q in enumerate(["trail running shoes", "waterproof jacket", "kids rain boots", "camping stove"])]},
                      "log": {"rows": [{"ts": ago(minutes=300), "text": "Loaded 480 products.", "level": "info"}]},

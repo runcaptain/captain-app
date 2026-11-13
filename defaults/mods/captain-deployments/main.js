@@ -6,7 +6,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, props, run, shared, setShared } from "herdr";
 import { api, watchWorkspace } from "./kit/cst.js";
-import { palette, isDark, FONT } from "./kit/tokens.js";
+import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Button, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
@@ -106,13 +106,26 @@ export default class CaptainDeployments extends View {
     cx.spawn((cx) => this.act(cx, row, "Stopping", () => api(`/api/projects/${encodeURIComponent(row.project)}/unstage`, { method: "POST", body: { env: row.env }, timeout: 600 })));
   }
 
+  /** Start a stopped model again, in the place it was. The services are asked for the plan first, so the question
+   *  names the place, says when that place has to be set up again, how long it takes and what it costs. It never
+   *  starts anywhere else: with no plan for that place, nothing is asked and the reason is shown. */
   start(row, cx) {
-    const cost = this.nums[row.id]?.cost?.rate_usd;
-    this.ask = { id: row.id, yes: "Start it again",
-      text: `Start ${row.model_version} again on ${row.where}?` + (cost ? ` It costs about ${money(cost)} an hour while it is up.` : ""),
-      go: (cx) => cx.spawn((cx) => this.act(cx, row, "Starting", () => api(`/api/projects/${encodeURIComponent(row.project)}/deploy`,
-        { method: "POST", body: { host: row.cloud, login: row.login, candidate: row.model_version, env: row.env, confirm: true }, timeout: 60 }))) };
+    const where = { host: row.cloud, login: row.login, candidate: row.model_version, env: row.env };
+    this.busy[row.id] = "Checking where it will run";
     cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${encodeURIComponent(row.project)}/deploy`, { method: "POST", body: { ...where, dry_run: true }, timeout: 60 });
+      delete this.busy[row.id];
+      if (!r.ok) { this.note = plainError(r.error, `It can't be started again on ${row.cloud_label} just now.`); return cx.notify(); }
+      const p = r.data;
+      this.ask = { id: row.id, yes: p.first_time && row.cloud !== "local" ? `Set up ${p.label} and start it` : "Start it again",
+        text: `Start ${row.model_label ?? row.model_version} again on ${p.label ?? row.cloud_label}? `
+          + (p.first_time && row.cloud !== "local" ? `This will set up ${p.label} again. ` : "")
+          + [p.minutes?.text, p.cost?.text].filter(Boolean).join(" "),
+        go: (cx) => cx.spawn((cx) => this.act(cx, row, `Starting on ${p.label ?? row.cloud_label}`, () => api(`/api/projects/${encodeURIComponent(row.project)}/deploy`,
+          { method: "POST", body: { ...where, confirm: true }, timeout: 60 }))) };
+      cx.notify();
+    });
   }
 
   remove(row, cx) {
@@ -120,7 +133,7 @@ export default class CaptainDeployments extends View {
     this.ask = { id: row.id, yes: "Remove it from the cloud",
       text: found ? `Remove ${row.name} from your ${row.cloud_label} account? It cannot be undone.`
         : `Remove ${row.project_name}'s model from ${row.cloud_label}? It stops answering, and what Captain made for it there is deleted. It cannot be undone.`,
-      go: (cx) => cx.spawn((cx) => this.act(cx, row, "Removing", () => found
+      go: (cx) => cx.spawn((cx) => this.act(cx, row, `Removing from ${row.cloud_label}`, () => found
         ? api("/api/deployed/remove", { method: "POST", body: { id: row.id, confirm: true }, timeout: 600 })
         : api(`/api/projects/${encodeURIComponent(row.project)}/deploy?env=${encodeURIComponent(row.env ?? "staging")}`, { method: "DELETE", timeout: 600 }))) };
     cx.notify();
@@ -236,8 +249,16 @@ export default class CaptainDeployments extends View {
         .when(hour.some((v) => v > 0) && !found, (e) => e.child(Spark(c, `dep-spark-${r.id}`, hour))))
       .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(wrong && r.in_cloud !== false ? c.fail : c.navy)
         .child(r.remembered_text ? `${r.state_text} ${r.remembered_text}` : r.state_text))
-      .child(div().text_size(12.5).line_height("18px").text_color(c.grey500)
-        .child([r.where, numbers, cost, who].filter(Boolean).join(". ") + "."))
+      // Where it lives: the address a site calls, to copy, and one line about the system it runs on.
+      .when(Boolean(r.address) && r.in_cloud !== false, (e) => e.child(h_flex().gap(8).items_center()
+        // The code font is for the one thing here a person copies, and nothing else.
+        .child(div().id(`dep-address-${r.id}`).min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(c.navy).child(String(r.address)))
+        .child(Button(c, `dep-copy-${r.id}`, this.copied === r.id ? "Copied" : "Copy", (_e, cx) => { cx.write_to_clipboard?.(String(r.address)); this.copied = r.id; cx.notify(); }, { small: true }))))
+      .child(div().id(`dep-system-${r.id}`).text_size(12.5).line_height("18px").text_color(c.grey500)
+        .child([[r.cloud_label, r.account].filter(Boolean).join(", "), r.cloud === "local" ? null : r.region, r.machine_words ?? (r.cloud === "local" ? null : r.machine),
+          r.copies_words, who].filter(Boolean).join(". ") + "."))
+      .when(Boolean(numbers || cost), (e) => e.child(div().id(`dep-numbers-${r.id}`).text_size(12.5).line_height("18px").text_color(c.grey500)
+        .child([numbers, cost].filter(Boolean).join(". ") + ".")))
       .children((r.corrected ?? []).map((x, i) => div().id(`dep-fixed-${r.id}-${i}`).text_size(12.5).line_height("18px").text_color(c.grey500).child(x)))
       .when(this.ask?.id === r.id, (e) => e.child(this.question(c)))
       .when(this.ask?.id !== r.id, (e) => e.child(h_flex().gap(8).flex_wrap().children(buttons)));

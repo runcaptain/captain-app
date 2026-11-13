@@ -4,7 +4,8 @@ shows a choice a run would ignore.
 - Measures: the offline ones a run computes from judgments (eval/metrics.py NAMES), the traffic-weighted nDCG a
   replay of logged searches adds, and the three that only simulated shoppers give. Every run computes all it can;
   the person picks the one that decides the verdict (the pre-registered primary measure).
-- Depth: each measure looks a fixed number of results deep. The runner has no setting for it.
+- Depth: how many results deep each measure looks is a setting of the evaluation (eval/metrics.py
+  DEFAULT_DEPTHS), recorded with each run.
 - Slices: a run always reports by the class of each question, and by traffic (head, torso, tail) when the
   questions carry weights. The runner has no setting for which.
 - Limits: the ones a plan takes, with their defaults.
@@ -28,20 +29,24 @@ SLICES = [
     {"id": "class", "label": "By group", "line": "One result per group of questions (the group column of your questions).", "needs": "a group on each question"},
     {"id": "traffic", "label": "By traffic", "line": "Head, torso and tail questions, by how often each was searched.", "needs": "a weight on each question (logged searches have one)"},
 ]
+# How deep a measure looks is the person's to set: each of these is a field, starting at the usual depth.
+DEPTHS = [{"id": k, "label": f"{M.DEPTH_WORDS[k]} looks this many results deep", "default": v, "max": M.MAX_DEPTH} for k, v in M.DEFAULT_DEPTHS.items()]
 LIMITS = [
     {"id": "mde", "label": "Smallest gain worth acting on", "default": 0.003, "line": "In the deciding measure. A smaller difference reads as no clear difference."},
     {"id": "population_size", "label": "Simulated shoppers", "default": 4000, "line": "How many shoppers replay the logged searches on each model.", "only": "logs"},
 ]
 # Asked for by the owner, and not something a run can do today: said so rather than drawn as a dead control.
-NOT_YET = [
-    {"what": "How many results deep", "why": "Each measure looks a fixed number deep: 10, or 50 for recall. The runner has no setting for it."},
-    {"what": "Which slices", "why": "A run always reports by group and by traffic. The runner has no setting to pick among them."},
-    {"what": "Which measures to compute", "why": "A run computes every measure it has the data for. You pick the one that decides the verdict."},
-]
+# Nothing the owner asked for is left unbuilt. The key stays so an older screen that reads it finds an empty list.
+NOT_YET: list[dict] = []
+# Columns of a set of questions that are not groups of questions, so they are never offered as a slice.
+NOT_GROUPS = ["query_id", "query", "weight"]
 
 
 def options() -> dict:
     offline = set(M.NAMES) | {"ndcg@10_tw"}
     # A measure the runner doesn't know is never offered.
     measures = [m for m in MEASURES if m["id"] in offline or m["id"] in ("ctr", "conversion", "rpv")]
-    return {"measures": measures, "slices": SLICES, "limits": LIMITS, "not_yet": NOT_YET, "default_measure": "ndcg@10"}
+    return {"measures": measures, "slices": SLICES, "limits": LIMITS, "depths": DEPTHS, "not_yet": NOT_YET, "default_measure": "ndcg@10",
+            # Which measures to compute is the person's choice (the deciding one always among them), and so is what
+            # to slice by: any column of the questions that is a group, plus traffic.
+            "choose_measures": True, "choose_slices": True, "not_groups": NOT_GROUPS, "usual_slices": ["class", "traffic"]}

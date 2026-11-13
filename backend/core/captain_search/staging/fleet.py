@@ -164,6 +164,43 @@ def _machine(ctx: Context, rec: dict, thing: dict | None, target: dict | None) -
     return None
 
 
+NO_FACTS = {"machine_words": None, "machine_hourly_usd": None, "account": None, "copies_words": None}
+
+
+def _system(ctx: Context, cloud: str, target: dict | None, region: str | None, machine: str | None, thing: dict | None, rec: dict) -> dict:
+    """The facts about the system a model runs on that a row says in one line: the machine in words (what it is, not
+    only its name), the account by its alias or last four digits, and how many copies it may run."""
+    from .. import compute_providers as P
+    from . import sizing as SZ
+
+    cfg = (target or {}).get("config") or {}
+    m = SZ.machine_facts(cloud, cfg, region, name=machine if cloud == "aws" else None)
+    account = None
+    if cloud == "aws" and target is not None:
+        try:
+            hint = getattr(P.get(target, ctx), "account_hint", None)
+            account = hint() if callable(hint) else None
+        except Exception:  # noqa: BLE001
+            account = None
+    elif cloud == "gcp":
+        account = f"project {cfg['project']}" if cfg.get("project") else None
+    elif cloud == "modal":
+        account = f"environment {cfg['environment']}" if cfg.get("environment") else None
+    elif cloud == "azure":
+        account = f"resource group {cfg['resource_group']}" if cfg.get("resource_group") else None
+    lo, hi = cfg.get("min_copies") or (cfg.get("instance_count") if cloud == "aws" else None), cfg.get("max_copies")
+    sc = rec.get("scale") or {}
+    lo, hi = sc.get("min", lo), sc.get("max", hi)
+    now = (thing or {}).get("copies_now")
+    copies = None
+    if now is not None or lo is not None:
+        lo_i, hi_i = (int(float(lo)) if lo is not None else None), (int(float(hi)) if hi is not None else None)
+        hi_i = hi_i if hi_i is not None else lo_i
+        copies = ((f"{now} cop{'y' if now == 1 else 'ies'} up now" if now is not None else "") +
+                  (f", may run {lo_i} to {hi_i}" if lo_i is not None and hi_i is not None and hi_i != lo_i else "")).lstrip(", ") or None
+    return {"machine_words": m["words"], "machine_hourly_usd": m["hourly_usd"], "account": account, "copies_words": copies}
+
+
 def _local_state(rec: dict) -> tuple[str, str | None]:
     import socket
 
@@ -218,10 +255,22 @@ def _row(pr: dict | None, env: str | None, rec: dict | None, cloud: str, login: 
                                 f"Nothing of it is running {'on this computer' if cloud == 'local' else 'in ' + CLOUDS.get(cloud, cloud)} and nothing is billing. "
                                 "Captain remembers it so you can start it again."),
             "resources": (thing or {}).get("resources") or [],
-            "sleeps": bool((rec or {}).get("scale_to_zero")), "address": ((rec or {}).get("endpoint") or {}).get("url"),
+            "sleeps": bool((rec or {}).get("scale_to_zero")), "address": _address(cloud, region, name, rec),
+            "version_n": (rec or {}).get("version_n"),
             "can": ([] if link == "unknown" else ["link", "remove"] if link == "unlinked" else
                     ["open", "stop", "rollback"] if state in ("running", "asleep", "starting") else
                     ["open", "remove"] if thing is not None else ["start", "forget"])}
+
+
+def _address(cloud: str, region: str | None, name: str | None, rec: dict | None) -> str | None:
+    """The address a site calls. On AWS a SageMaker endpoint has no address of its own: it is called through AWS, at
+    the invoke address made from its region and name. Elsewhere it is the endpoint's own URL."""
+    url = ((rec or {}).get("endpoint") or {}).get("url")
+    if url:
+        return url
+    if cloud == "aws" and name and region:
+        return f"https://runtime.sagemaker.{region}.amazonaws.com/endpoints/{name}/invocations"
+    return None
 
 
 def short_name(who) -> str | None:
@@ -333,7 +382,7 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
         cloud, login, region, target = _where_of(ctx, rec)
         if cloud == "local":
             state, reason = _local_state(rec)
-            rows.append(_row(pr, env, rec, "local", None, None, None, state, reason, "local", "This computer", []))
+            rows.append({**NO_FACTS, **_row(pr, env, rec, "local", None, None, None, state, reason, "local", "This computer", [])})
             continue
         things, err = _place(found, cloud, login, region)
         ok = things is not None and err is None
@@ -350,21 +399,22 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
         if thing is not None:
             matched.add(id(thing))
         machine = _machine(ctx, rec, thing, target)
+        facts = _system(ctx, cloud, target, region, machine, thing, rec)
         if not ok:
-            rows.append(_row(pr, env, rec, cloud, login, region, None, "unknown" if rec.get("status") in ("running", "starting") else
+            rows.append({**facts, **_row(pr, env, rec, cloud, login, region, None, "unknown" if rec.get("status") in ("running", "starting") else
                              ("failed" if rec.get("status") == "failed" else "stopped"),
                              f"Captain couldn't ask {CLOUDS.get(cloud, cloud)} just now: {err}" if rec.get("status") in ("running", "starting") else
-                             rec.get("stop_reason") or rec.get("error"), "unknown", machine, []))
+                             rec.get("stop_reason") or rec.get("error"), "unknown", machine, [])})
         elif thing is None:
             gone = any("removed outside Captain" in x for x in said) or rec.get("stop_reason") == "It was removed outside Captain."
-            rows.append(_row(pr, env, rec, cloud, login, region, None, "gone" if gone else ("failed" if rec.get("status") == "failed" else "stopped"),
-                             rec.get("stop_reason") or rec.get("error"), "gone" if gone else "linked", machine, said))
+            rows.append({**facts, **_row(pr, env, rec, cloud, login, region, None, "gone" if gone else ("failed" if rec.get("status") == "failed" else "stopped"),
+                             rec.get("stop_reason") or rec.get("error"), "gone" if gone else "linked", machine, said)})
         else:
-            rows.append(_row(pr, env, rec, cloud, login, region, thing, thing["state"], thing.get("reason"), "linked", machine, said))
+            rows.append({**facts, **_row(pr, env, rec, cloud, login, region, thing, thing["state"], thing.get("reason"), "linked", machine, said)})
     for (cloud, login, region), (things, _err) in found.items():
         for t in things or []:
             if id(t) not in matched:
-                rows.append(_row(None, None, None, cloud, login, t.get("region") or region, t, t["state"], t.get("reason"), "unlinked", t.get("machine"), []))
+                rows.append({**NO_FACTS, **_row(None, None, None, cloud, login, t.get("region") or region, t, t["state"], t.get("reason"), "unlinked", t.get("machine"), [])})
     order = {"failed": 0, "starting": 1, "running": 2, "asleep": 3, "unknown": 4, "gone": 5, "stopped": 6}
     rows.sort(key=lambda r: (order.get(r["state"], 9), -(dt.datetime.fromisoformat(r["since"]).timestamp() if _iso(r.get("since")) else 0)))
     mine = [r for r in rows if r["link"] != "unlinked"]
@@ -638,3 +688,89 @@ def forget_stopped(ctx: Context, pid: str, env: str = ENV, confirm: bool = False
         pass
     forget(ctx)
     return {"project": pid, "env": env, "text": f"Forgot {row['project_name']}'s stopped model. Nothing in the cloud changed."}
+
+
+# ---- where one model runs, in full -------------------------------------------------------------------
+
+
+def where_it_runs(ctx: Context, pid: str, env: str = ENV) -> dict:
+    """Where one deployed model lives, as a small table: {facts: [{id, label, value, copy, source}], text}. Each
+    value comes from the cloud's own describe call where there is one (`source: "cloud"`), and from Captain's record
+    otherwise (`source: "record"`), and says which. Read-only. A value nobody has is left out, never made up."""
+    from .. import compute as C
+    from .. import compute_providers as P
+    from . import sizing as SZ
+    from . import state
+    from . import traffic as TF
+
+    try:
+        rec = state(ctx, pid, env)
+    except NotFound:
+        rec = None
+    row = one(ctx, pid, env) if rec else None
+    if not rec or row is None:
+        raise ValueError(f"{pid} has no deployment.")
+    cloud, login, region, target = _where_of(ctx, rec)
+    label = CLOUDS.get(cloud, cloud)
+    got, why = {}, None
+    prov = None
+    if cloud != "local" and target is not None and row["in_cloud"]:
+        try:
+            prov = P.get(target, ctx)
+            fn = getattr(prov, "where", None)
+            got = fn(rec) if callable(fn) else {}
+        except Exception as e:  # noqa: BLE001
+            why = str(e)[:200]
+    facts: list[dict] = []
+
+    def add(fid: str, name: str, value, *, cloud_value=None, copy: bool = False):
+        v = cloud_value if cloud_value not in (None, "") else value
+        if v in (None, ""):
+            return
+        facts.append({"id": fid, "label": name, "value": str(v), "copy": copy, "source": "cloud" if cloud_value not in (None, "") else "record",
+                      "source_text": f"From {label}" if cloud_value not in (None, "") else "From Captain's record"})
+
+    cfg = (target or {}).get("config") or {}
+    add("address", "Address", row.get("address"), cloud_value=got.get("address"), copy=True)
+    try:
+        snip = TF.snippets(rec)
+        call = snip.get("aws cli") or snip.get("curl")
+        # A test request, so it is marked as one: it never counts as a shopper.
+        add("call", "How to call it", call.replace('"traffic": "real"', '"traffic": "test"') if call else None, copy=True)
+    except Exception:  # noqa: BLE001
+        pass
+    add("cloud", "Cloud and account", ", ".join(x for x in (label, row.get("account")) if x), cloud_value=(f"{label}, {got['account']}" if got.get("account") else None))
+    add("region", "Region", region)
+    m = SZ.machine_facts(cloud, cfg, region, name=got.get("machine") or (row.get("machine") if cloud == "aws" else None))
+    words = (m["words"] or row.get("machine")) if cloud != "local" else "This computer"
+    price = f", about ${m['hourly_usd']:.2f} an hour for each copy" if m.get("hourly_usd") else ""
+    add("machine", "Machine", (words + price) if words else None, cloud_value=((words + price) if got.get("machine") and words else None))
+    try:
+        sc = prov.scale(rec) if prov is not None and callable(getattr(prov, "scale", None)) else {}
+    except Exception:  # noqa: BLE001
+        sc = {}
+    now = got.get("copies_now", sc.get("copies_now"))
+    if sc.get("min_copies") is not None:
+        add("copies", "Copies", f"Fewest {sc['min_copies']}, most {sc['max_copies']}",
+            cloud_value=(f"{now} up now. Fewest {sc['min_copies']}, most {sc['max_copies']}" if now is not None else None))
+    built = ago_words(got.get("image_built"))
+    add("image", "Image", rec.get("image") or cfg.get("image"), cloud_value=(got["image"] + (f", built {built}" if built else "")) if got.get("image") else None)
+    files = None
+    try:
+        files = f"{C.serving_storage(ctx, target).rstrip('/')}/{rec['bundle']}" if target is not None and rec.get("bundle") else rec.get("bundle")
+    except Exception:  # noqa: BLE001
+        files = rec.get("bundle")
+    add("files", "Model files", files)
+    add("role", "Role it runs as", cfg.get("execution_role_arn") or cfg.get("service_account") or cfg.get("identity_id"), cloud_value=got.get("role"))
+    add("logs", "Logs", None, cloud_value=got.get("logs"), copy=True)
+    if rec.get("scale_to_zero"):
+        add("stops", "Stops by itself", "It sleeps when no requests arrive and wakes on the next one. It bills nothing while asleep.")
+    elif rec.get("idle_minutes"):
+        add("stops", "Stops by itself after", f"{float(rec['idle_minutes']):g} minutes with no requests")
+    when = ago_words(got.get("since") or rec.get("started_at"))
+    add("by", "Deployed by", ", ".join(x for x in (short_name(rec.get("started_by")), when) if x))
+    add("version", "Version", f"{row.get('model_label') or rec.get('model_version')}" + (f" ({rec['model_version']})" if row.get("model_label") and rec.get("model_version") else ""))
+    said = (f"Read from {label} just now." if got else f"{label} could not be asked just now ({why}). These are from Captain's record." if why else
+            "On this computer." if cloud == "local" else
+            f"Nothing of it is in {label} now. These are from Captain's record of when it ran." if not row["in_cloud"] else f"From Captain's record. Captain can't ask {label} for these yet.")
+    return {"project": pid, "env": env, "facts": facts, "text": said, "from_cloud": bool(got)}

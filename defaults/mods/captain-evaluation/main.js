@@ -14,9 +14,10 @@
 // runs line up in Runs, Compare. Opened with props {values: {test: "<name>"}} it starts from that saved test, so
 // "run it again on the new model" is picking the model and one click.
 //
-// Everything offered is something a run does (GET /api/evaluations/options reads the runner's own tables). Depth
-// and slices are fixed by the runner, so they are said, not offered: each measure's line says how deep it looks,
-// and the form says which slices every run reports.
+// Everything offered is something a run does (GET /api/evaluations/options reads the runner's own tables). How
+// deep each measure looks is a field, starting at the usual depth. Each measure has a box to leave it out of the
+// run (the deciding one is always computed). The result can be reported by any column of the questions that is a
+// group, and by traffic when they carry weights.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { theme, props, run, setShared, closeOverlay, openOverlay, home } from "herdr";
@@ -64,6 +65,10 @@ export function missing(v, state) {
   if (v.on === "saved" && (!v.queries || !v.judgments)) out.push("Pick the questions and the answers.");
   const m = (state.opts?.measures ?? []).find((x) => x.id === v.measure);
   if (m && !measureOk(m, v.on)) out.push(`${m.label} can't decide this evaluation: ${measureWhy(m)}`);
+  for (const d of state.opts?.depths ?? []) {
+    const n = Number(v.depths?.[d.id] ?? d.default);
+    if (!(Number.isInteger(n) && n >= 1 && n <= d.max)) out.push(`${d.label}: a whole number from 1 to ${d.max}.`);
+  }
   if (!(Number(v.mde) >= 0)) out.push("The smallest gain worth acting on is a number, 0 or more.");
   if (v.on === "logs" && !(Number(v.population_size) >= 1)) out.push("Simulated shoppers is a whole number, 1 or more.");
   return out;
@@ -79,7 +84,12 @@ export default class NewEvaluation extends View {
     const given = props()?.values ?? {};
     this.v = { name: given.name ?? "", models: given.b ? [given.b] : [], against: given.a ?? null, on: "own", src: "data", dataset: null, file: "",
       mapping: {}, default_grade: 3, logs: null, queries: given.queries ?? null, judgments: given.judgments ?? null,
-      measure: "ndcg@10", mde: "0.003", population_size: "4000", expect: "" };
+      measure: "ndcg@10", mde: "0.003", population_size: "4000", expect: "", depths: {},
+      // Measures left out of the run (none: every one the data allows), and what to slice by (null: the usual).
+      skip: [], slices: null };
+    this.sliceChoices = null; // a saved set's choices, from GET /api/evaluations/slices
+    this.slicesFor = null;
+    this.depthInputs = {}; // a field per measure that has a depth, made when the options arrive (never while drawing)
     if (given.queries || given.judgments) this.v.on = "saved";
     this.opts = null; this.pipelines = null; this.datasets = null; this.roles = new Map(); this.tests = null;
     this.preview = null; this.previewFor = null; this.previewing = false;
@@ -100,6 +110,8 @@ export default class NewEvaluation extends View {
     this.load(cx, given.test ?? null);
     cx.timer.every(500, (cx) => {
       if (this.previewDue && Date.now() > this.previewDue) { this.previewDue = null; this.loadPreview(cx); }
+      // What a saved set of questions can be sliced by: asked for once per set.
+      if (this.v.on === "saved" && this.v.queries && this.slicesFor !== this.v.queries) this.loadSlices(cx);
       cx.spawn(async (cx) => { if (await refreshEstimate(this.cost, this.costWant())) cx.notify(); });
     });
     // The form open over the page and what is filled in, for agents (cst app context).
@@ -120,6 +132,15 @@ export default class NewEvaluation extends View {
       this.roles = new Map((cl.ok ? cl.data?.classes ?? [] : []).map((k) => [k.name, k.role]));
       this.tests = t.ok && Array.isArray(t.data) ? t.data.filter((b) => b.mode !== "imported") : [];
       for (const l of this.opts.limits ?? []) if (this.v[l.id] === undefined || this.v[l.id] === "") this.set(l.id, String(l.default));
+      // How deep each measure looks: a field each, starting at the usual depth.
+      for (const d of this.opts.depths ?? []) {
+        if (this.depthInputs[d.id]) continue;
+        const st = InputState.new({ placeholder: String(d.default) });
+        this.v.depths[d.id] ??= String(d.default);
+        st.set_value(String(this.v.depths[d.id]));
+        st.on?.("change", (_e, cx) => { this.v.depths[d.id] = st.value(); cx.notify(); });
+        this.depthInputs[d.id] = st;
+      }
       if (!o.ok) this.error = "Couldn't read what an evaluation can measure. Close this and try again.";
       if (test) await this.startFrom(test);
       cx.notify();
@@ -151,7 +172,59 @@ export default class NewEvaluation extends View {
     this.v.measure = b.preregistration?.primary_metric ?? this.v.measure;
     this.set("mde", String(b.preregistration?.mde ?? this.v.mde));
     this.set("expect", b.preregistration?.hypothesis ?? "");
+    // The saved test's depths: the same measure, so its runs stay comparable.
+    // Its measures and slices too.
+    if ((b.measures ?? []).length) this.v.skip = (this.opts?.measures ?? []).map((m) => m.id).filter((id) => !b.measures.includes(id));
+    if ((b.slices ?? []).length) { this.v.slices = [...b.slices]; this.keepSlices = true; }
+    for (const [k, n] of Object.entries(b.depths ?? {})) { this.v.depths[k] = String(n); this.depthInputs[k]?.set_value(String(n)); }
     if (b.compute) { this.cost.where = b.compute; this.cost.picked = true; }
+  }
+
+  loadSlices(cx) {
+    const ref = this.v.queries;
+    this.slicesFor = ref;
+    this.sliceChoices = null;
+    // A saved test's own slices are kept; a set of questions picked by hand starts at the usual.
+    if (this.keepSlices) this.keepSlices = false; else this.v.slices = null;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/evaluations/slices?queries=${enc(ref)}`);
+      if (this.slicesFor !== ref) return;
+      this.sliceChoices = r.ok ? r.data : { columns: [], traffic: false, usual: [] };
+      cx.notify();
+    });
+  }
+
+  /** What this test's questions can be sliced by: [{id, label, sub}], and the usual ones among them. */
+  sliceOptions() {
+    const v = this.v;
+    if (v.on === "own") {
+      const m = v.mapping ?? {}, taken = new Set([m.query, m.product, m.grade, m.slice].filter(Boolean));
+      const cols = (this.preview?.columns ?? []).filter((x) => !taken.has(x) && !(this.opts?.not_groups ?? []).includes(x) && x !== "class");
+      return { options: [...(m.slice ? [{ id: "class", label: "Group", sub: m.slice }] : []), ...cols.map((x) => ({ id: x, label: x }))], usual: m.slice ? ["class"] : [] };
+    }
+    if (v.on === "saved") {
+      const ch = this.sliceChoices ?? { columns: [], traffic: false, usual: [] };
+      return { options: [...ch.columns.map((x) => ({ id: x.id, label: x.label, sub: `${x.groups} groups` })), ...(ch.traffic ? [{ id: "traffic", label: "Traffic", sub: "head, torso, tail" }] : [])], usual: ch.usual ?? [] };
+    }
+    return { options: [], usual: [] };
+  }
+
+  /** The slices in force: the person's choice, else the usual. */
+  slicesOn() { const { options, usual } = this.sliceOptions(); const ids = new Set(options.map((o) => o.id)); return (this.v.slices ?? usual).filter((x) => ids.has(x)); }
+
+  toggleSlice(cx, id) {
+    const on = this.slicesOn();
+    const next = on.includes(id) ? on.filter((x) => x !== id) : [...on, id];
+    // Nothing picked means the usual again: a run is never left with a choice that reads as "none" and does the usual.
+    this.v.slices = next.length ? next : null;
+    cx.notify();
+  }
+
+  /** The measures the run computes: every one this test's data allows, less the ones left out. The deciding one is
+   *  always among them. */
+  measuresOn() {
+    const v = this.v;
+    return (this.opts?.measures ?? []).filter((m) => measureOk(m, v.on) && (m.id === v.measure || !v.skip.includes(m.id))).map((m) => m.id);
   }
 
   // ---- the person's own table ---------------------------------------------------------------------------------
@@ -206,7 +279,9 @@ export default class NewEvaluation extends View {
       const fail = (r, fallback) => { this.busy = null; this.error = sentence(r.data?.error ?? r.data?.detail ?? (r.status ? r.error : null)) || fallback; cx.notify(); };
       let queries = v.queries, judgments = v.judgments;
       if (v.on === "own") {
-        const made = await api("/api/testsets", { body: { name, source: this.source(), mapping: v.mapping, default_grade: v.default_grade }, timeout: 120 });
+        // Columns picked to slice by are kept on each question.
+        const also = this.slicesOn().filter((x) => x !== "class" && x !== "traffic");
+        const made = await api("/api/testsets", { body: { name, source: this.source(), mapping: { ...v.mapping, ...(also.length ? { also } : {}) }, default_grade: v.default_grade }, timeout: 120 });
         if (!made.ok) return fail(made, "Couldn't make a test set from that table.");
         queries = made.data.queries; judgments = made.data.judgments;
       }
@@ -215,6 +290,12 @@ export default class NewEvaluation extends View {
         name, arms: [v.against, ...v.models], mode: v.on === "logs" ? "historic" : "simulated",
         ...(v.on === "logs" ? { logs: v.logs, population_size: Number(v.population_size) } : { queries, judgments }),
         hypothesis: v.expect.trim() || "Nothing was written down before the run.", primary: v.measure, mde: Number(v.mde), ...(where ? { compute: where } : {}),
+        // How deep each measure looks. All of them are sent, so the plan is explicit; the services keep what differs.
+        depths: Object.fromEntries((this.opts.depths ?? []).map((d) => [d.id, Number(v.depths[d.id] ?? d.default)])),
+        // Only when something was left out: none sent means every measure the data allows.
+        ...(v.skip.some((id) => id !== v.measure && (this.opts.measures ?? []).some((m) => m.id === id && measureOk(m, v.on))) ? { measures: this.measuresOn() } : {}),
+        // Only when the person chose: none sent means the usual slices.
+        ...(v.slices && this.slicesOn().length ? { slices: this.slicesOn() } : {}),
       }, timeout: 120 });
       if (!plan.ok) return fail(plan, "Couldn't save the test.");
       let live = null;
@@ -338,21 +419,60 @@ export default class NewEvaluation extends View {
     const v = this.v;
     const rows = (this.opts?.measures ?? []).map((m, i) => {
       const ok = measureOk(m, v.on), on = v.measure === m.id;
-      return h_flex().id(`ev-measure-${m.id}`).min_h(34).px(10).py(4).gap(10).items_center().border_b(1).border_color(c.rule)
+      // The depth this evaluation is set to, in the measure's name and its line.
+      const deep = Number(v.depths[m.id.replace(/_tw$/, "")] ?? m.depth);
+      const named = m.depth && Number.isInteger(deep) && deep > 0 && deep !== m.depth;
+      const label = named ? m.label.replace(`@${m.depth}`, `@${deep}`) : m.label;
+      const line = named ? m.line.replace(`first ${m.depth}`, `first ${deep}`) : m.line;
+      return h_flex().id(`ev-measure-row-${m.id}`).min_h(34).pr(10).gap(10).items_center().border_b(1).border_color(c.rule).bg(on ? c.blueLight : c.surface)
+        .child(h_flex().id(`ev-measure-${m.id}`).flex_1().min_w(0).min_h(34).pl(10).py(4).gap(10).items_center()
         .when(ok, (e) => e.cursor_pointer().hover((s) => s.bg(c.surface2)).on_click((_e, cx) => { v.measure = m.id; cx.notify(); }))
-        .bg(on ? c.blueLight : c.surface)
         .child(div().size(14).flex_none().rounded_full().border_1().border_color(on ? c.blue : c.grey300).flex().items_center().justify_center()
           .when(on, (e) => e.child(div().size(8).rounded_full().bg(c.blue))))
-        .child(div().w(190).flex_none().text_size(12.5).text_color(ok ? c.navy : c.grey500).child(m.label))
-        .child(div().flex_1().min_w(0).text_size(12).line_height("16px").text_color(c.grey900).child(ok ? m.line : `${m.line} Not for this test: ${measureWhy(m)}`));
+        .child(div().w(190).flex_none().text_size(12.5).text_color(ok ? c.navy : c.grey500).child(label))
+        .child(div().flex_1().min_w(0).text_size(12).line_height("16px").text_color(c.grey900).child(ok ? line : `${line} Not for this test: ${measureWhy(m)}`)))
+        // Computed or left out. The deciding measure is always computed, so its box can't be cleared.
+        .when(ok, (e) => {
+          const kept = on || !v.skip.includes(m.id);
+          return e.child(h_flex().id(`ev-compute-${m.id}`).flex_none().gap(5).items_center().text_size(12).text_color(on ? c.grey500 : c.navy)
+            .tooltip(on ? "The measure that decides the verdict is always computed." : kept ? "Leave this measure out of the run" : "Compute this measure")
+            .when(!on, (x) => x.cursor_pointer().on_click((_e, cx) => { v.skip = kept ? [...v.skip, m.id] : v.skip.filter((y) => y !== m.id); cx.notify(); }))
+            .child(div().size(14).flex().flex_none().items_center().justify_center().border_1().border_color(kept ? c.blue : c.grey300).bg(kept ? c.blue : c.surface)
+              .when(kept, (y) => y.child(svg(icon("check")).size(10).text_color(c.surface))))
+            .child(div().child(kept ? "Computed" : "Left out")));
+        });
     });
+    const { options } = this.sliceOptions(), sOn = this.slicesOn();
+    const left = (this.opts?.measures ?? []).filter((m) => measureOk(m, v.on) && m.id !== v.measure && v.skip.includes(m.id)).length;
     return [
-      div().text_size(12.5).text_color(c.grey900).child("Pick the measure that decides the verdict. Every measure below is computed and shown either way."),
+      div().id("ev-measures-line").text_size(12.5).text_color(c.grey900).child(left
+        ? `Pick the measure that decides the verdict. ${left} ${left === 1 ? "measure is" : "measures are"} left out: the result will say so.`
+        : "Pick the measure that decides the verdict. Every measure below is computed. Clear a box to leave one out."),
       v_flex().id("ev-measures").border_1().border_color(c.rule).children(rows),
-      // Slices are fixed by the runner: said, with what feeds them, rather than offered as a choice that does nothing.
-      div().id("ev-slices").text_size(12).line_height("17px").text_color(c.grey500)
-        .child(`Each run also reports its results ${(this.opts?.slices ?? []).map((s) => `${s.label.toLowerCase()} (needs ${s.needs})`).join(", and ")}.`),
+      // What to slice the result by: columns of the questions that are groups, and traffic when they carry weights.
+      this.label(c, "Also report the result by"),
+      v.on === "logs"
+        ? div().id("ev-slices").text_size(12).line_height("17px").text_color(c.grey500).child("Logged searches are reported by group, and by traffic: head, torso and tail.")
+        : options.length
+          ? h_flex().id("ev-slices").flex_wrap().gap(4).children(options.map((o) => this.chip(c, `ev-slice-${o.id}`, o.label, sOn.includes(o.id), (_e, cx) => this.toggleSlice(cx, o.id), { sub: o.sub })))
+          : div().id("ev-slices").text_size(12).line_height("17px").text_color(c.grey500)
+            .child(v.on === "own" ? "Pick a table first. Any other column of it can be a group to report by." : v.on === "saved" && v.queries && !this.sliceChoices ? "Reading the questions" : "These questions have no column to group them by."),
+      v.slices ? div().id("ev-slices-note").text_size(12).line_height("17px").text_color(c.grey900).child("Not the usual grouping. The result will say so.") : null,
     ];
+  }
+
+  /** How many results deep each measure looks: a field each, with the usual depth said. A run records its depths,
+   *  and two runs at different depths are never compared as the same measure. */
+  depths(c) {
+    const ds = this.opts?.depths ?? [];
+    if (!ds.length) return [];
+    const changed = ds.some((d) => Number(this.v.depths[d.id] ?? d.default) !== d.default);
+    return [...ds.map((d) => h_flex().id(`ev-depth-${d.id}`).gap(10).items_center()
+      .child(div().w(260).flex_none().text_size(12.5).child(d.label))
+      .when(!!this.depthInputs[d.id], (e) => e.child(this.field(c, `ev-depth-in-${d.id}`, this.depthInputs[d.id], 80)))
+      .child(div().flex_1().min_w(0).text_size(12).line_height("16px").text_color(c.grey500).child(`Usually ${d.default}. Up to ${d.max}.`))),
+    changed ? div().id("ev-depth-note").text_size(12).line_height("17px").text_color(c.grey900)
+      .child("These are not the usual depths. The result will say so, and it can only be compared with runs measured at the same depths.") : null];
   }
 
   limits(c) {
@@ -378,7 +498,7 @@ export default class NewEvaluation extends View {
         .child(this.section(c, "models", 1, "Which models", this.models(c)))
         .child(this.section(c, "on", 2, "What to test on", this.testOn(c)))
         .child(this.section(c, "measure", 3, "What decides it", this.measures(c)))
-        .child(this.section(c, "limits", 4, "Limits", this.limits(c)))
+        .child(this.section(c, "limits", 4, "Limits", this.limits(c), this.depths(c)))
         .child(this.section(c, "where", 5, "Where it runs", RunsOn(c, "ev-runs-on", this.cost, {
           onPick: (p, _e, cx) => { if (this.cost.where !== p.value) this.cost.estimate = null; this.cost.where = p.value; this.cost.confirming = false; cx.notify(); },
           onToggle: (_e, cx) => { this.cost.open = !this.cost.open; cx.notify(); },

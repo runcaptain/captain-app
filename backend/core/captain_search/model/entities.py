@@ -252,6 +252,14 @@ class Backtest(VersionBase):
     )
     preregistration: Preregistration
     surfaces: list[Surface] = Field(default_factory=list)
+    # How many results deep each measure looks: {"ndcg@10": 20, ...}. Empty means the usual depths
+    # (eval/metrics.py DEFAULT_DEPTHS). The measure names keep their usual depth in them; this says the real one.
+    depths: dict[str, int] = Field(default_factory=dict)
+    # The measures to compute (eval/metrics.py ALL_MEASURES). Empty means every one the data allows.
+    measures: list[str] = Field(default_factory=list)
+    # What to slice the result by: columns of the query set, and "traffic". Empty means the usual: by `class`, and
+    # by traffic when the questions carry weights.
+    slices: list[str] = Field(default_factory=list)
 
 
 class ArmResult(BaseModel):
@@ -275,6 +283,9 @@ class BacktestRun(VersionBase):
     compute: str = "local"
     arms: list[ArmResult]
     comparisons: list[dict[str, Any]] = Field(default_factory=list)  # paired CI, p
+    measures: list[str] = Field(default_factory=list)  # the measures the evaluation asked for. Empty: every one the data allowed
+    slices: list[str] = Field(default_factory=list)  # what the evaluation asked to be sliced by. Empty: the usual (class, and traffic)
+    depths: dict[str, int] = Field(default_factory=dict)  # the depth each measure looked, as run. Empty on runs from before depths: the usual ones
     independent: bool = True  # False when the click model reads the scoring judgments
     complete: bool = True  # False when any arm has judged@10 under 0.9
     cost_usd: float = 0.0

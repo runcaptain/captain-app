@@ -1163,10 +1163,13 @@ Experiments, Compare or Launch review: say what to do in Runs, or run the comman
 
 A dataset is a table Captain keeps versions of. A database's table is one Captain reads where it lives. Tables
 shows both, **grouped by place**: one collapsible group per connected database (its mark, its name and kind, a
-count) and one per folder of the tables Captain keeps. The owner on the first build: "A giant wall of tables is
+count), then ONE group, "Kept in Captain", for the tables Captain keeps. That group opens to its folders, nested
+by their path. A folder holding a single table shows the table, not a folder row, and tables in no folder come
+last. So a workspace with two databases shows three rows closed, however many folders it has. The owner on the first build: "A giant wall of tables is
 not good. It needs to be a dropdown... searchable with pagination per type of database."
 
 - Groups start closed. The ones a person opens are remembered for the workspace.
+- The header has one filled button, "Add a table". Dataset classes left the screen with Labels.
 - An open group shows its tables **five at a time**, with Previous, Next and "1 to 5 of 39", and its own search
   box. A database with more than 15 tables is grouped again by schema; a smaller one says the schema under
   "Where it lives".
@@ -1243,10 +1246,25 @@ runs, and the name it is saved under.
 - **The setup is saved under its name as a test.** The same name again is the same test on another model, and
   its runs line up in Runs, Compare. "Run it on another model" on an evaluation opens the form on that test:
   pick the model and run. `cst app open form:backtest --value test=<name>` does the same for a person.
-- Three things the owner asked for are not something a run can do, so the form says them instead of drawing a
-  control that does nothing: how many results deep (each measure looks 10 deep, recall 50), which slices (a
-  run always reports by group and by traffic), and which measures to compute (all of them).
-  `GET /api/evaluations/options` lists these under `not_yet`, with the reason.
+- **How many results deep each measure looks is a field** under Limits: nDCG, Precision, Recall and MRR, each
+  starting at its usual depth (10, 10, 50, 50), up to 200. The plan keeps what differs (`depths`,
+  `cst`'s `POST /api/backtests {depths: {"ndcg@10": 20}}`), the run records every depth it looked, and the
+  measure's key keeps its usual name. So read a run's `depths` before its numbers: `ndcg@10` in a run with
+  `depths["ndcg@10"] == 20` is nDCG at 20, and the screens say "nDCG@20".
+- **A run measured at other depths says so in its verdict sentence** ("... on nDCG@20. nDCG looks 20 results
+  deep, not the usual 10. Human graded."), in its warnings and in its report. Two runs at different depths are
+  never compared as the same measure: `GET /api/compare-runs` lists it as `different-depth`. Say the depth
+  whenever you quote such a number.
+- **Which measures to compute is a box on each measure.** Clearing one leaves it out of the run
+  (`measures` on `POST /api/backtests`). The measure that decides the verdict is always computed, and the
+  services refuse a choice without it. A measure left out has no number anywhere: a dash, never a zero.
+- **What to report the result by is a row of chips**: any column of the questions that is a group, and traffic
+  when the questions carry weights (`slices`; `GET /api/evaluations/slices?queries=` lists the choices). For a
+  person's own table, a column picked here is kept on each question (`mapping.also`). Nothing picked means the
+  usual: by group, then by traffic.
+- A run limited to some measures, or grouped another way, says so in its verdict sentence, like depth
+  ("Only nDCG and MRR were computed.", "Sliced by device."). Each row of `GET /api/regression` and
+  `GET /api/runs/{name}` carries these sentences in `not_usual`. `not_yet` in the options is empty now.
 - From a terminal the same thing is `cst backtest plan` then `cst backtest run`.
 
 ## Captain project page (Projects)

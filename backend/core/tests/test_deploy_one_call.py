@@ -94,7 +94,7 @@ def test_this_computer_deploys_with_no_confirm_and_skips_the_cloud_steps(ws, log
     assert [(s["id"], s["status"]) for s in out["steps"]] == [("check", "done"), ("access", "skipped"), ("image", "skipped"), ("start", "done"), ("ready", "done")]
     assert [d["title"] for k, d in seen if k == "step"] == ["Checking your account", "Starting the model", "Checking it answers"] and seen[-1][0] == "done"
     assert SG.state(ws, "shop")["status"] == "running" and DP.status(ws, "shop")["can"] == []
-    assert DP.remove(ws, "shop")["status"] == "removed" and SG.state(ws, "shop")["status"] == "stopped"
+    assert DP.remove(ws, "shop")["status"] == "removed" and SG.state(ws, "shop") is None  # removed and forgotten: nothing is left to act on
 
 
 # ---- Modal: the first time, the second time, a failure, retry, remove ----------------------------------------
@@ -263,7 +263,7 @@ def test_the_command_deploys_on_a_host_with_one_confirm_and_a_failure_says_what_
     ok = run.invoke(cli, ["deploy", "shop", "--on", "modal", "--yes"])
     assert ok.exit_code == 0 and "[4/5] Starting the model" in ok.output and ok.output.strip().splitlines()[-1].startswith("https://")
     gone = run.invoke(cli, ["deploy", "shop", "--remove"])
-    assert gone.exit_code == 0 and "Nothing of this deploy is left" in gone.output and not modal.volumes
+    assert gone.exit_code == 0 and "Nothing is left." in gone.output and "Removed from Modal" in gone.output and not modal.volumes
     assert run.invoke(cli, ["deploy", "shop", "--on", "azure", "--yes"]).exit_code != 0  # no Azure login connected
 
 

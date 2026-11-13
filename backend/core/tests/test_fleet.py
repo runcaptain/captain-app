@@ -407,3 +407,181 @@ def test_a_row_says_who_and_when_in_words_and_names_the_model_plainly(ws):  # no
     r = FL.deployed(ws, fresh=True)["rows"][0]
     assert r["state_text"].startswith("Stopped by ") and r["state_text"].endswith("just now.") and "stopped by" not in r["state_text"][1:] and "@" not in r["state_text"]
     assert r["model_label"] == FL.model_words(r["model_version"], "shop") and not r["model_label"].startswith("shop/") and r["by_name"] and "@" not in r["by_name"]
+
+
+# ---- where a model runs, in full -------------------------------------------------------------------
+
+
+def test_a_running_model_says_where_it_lives_from_the_clouds_own_describe(ws, aws):  # noqa: F811
+    """A person asked for "the endpoint and all info around the computer or system it runs in"."""
+    import datetime as dt
+
+    aws.image_pushed = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=5)
+    rec = SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
+    name = rec["endpoint"]["name"]
+    r = FL.deployed(ws, fresh=True)["rows"][0]
+    # On the row: the address a site calls, and one line of facts about the system.
+    assert r["address"] == f"https://runtime.sagemaker.us-west-1.amazonaws.com/endpoints/{name}/invocations"
+    assert r["machine_words"] == "ml.t2.medium: 2 virtual CPUs, 4 GB memory" and r["account"] == "account ending 1234" and r["copies_words"] == "1 copy up now"
+    w = FL.where_it_runs(ws, "shop")
+    f = {x["id"]: x for x in w["facts"]}
+    assert [x["label"] for x in w["facts"]] == ["Address", "How to call it", "Cloud and account", "Region", "Machine", "Copies", "Image", "Model files",
+                                                "Role it runs as", "Logs", "Stops by itself after", "Deployed by", "Version"]
+    assert w["from_cloud"] and w["text"] == "Read from AWS just now."
+    assert f["address"]["value"] == r["address"] and f["address"]["copy"] and f["address"]["source"] == "cloud" and f["address"]["source_text"] == "From AWS"
+    # A copyable test request for this host, with the key never in it, marked as test traffic.
+    call = f["call"]["value"]
+    assert "aws sagemaker-runtime invoke-endpoint" in call and f"--endpoint-name {name}" in call and f["call"]["copy"]
+    assert '"traffic": "test"' in call and '"traffic": "real"' not in call and SG._key(SG.state(ws, "shop")) not in call
+    assert f["cloud"]["value"] == "AWS, account ending 1234" and "000000001234" not in str(w)  # never the whole account number
+    assert f["region"]["value"] == "us-west-1" and f["region"]["source"] == "record"
+    assert f["machine"]["value"].startswith("ml.t2.medium: 2 virtual CPUs, 4 GB memory, about $0.07 an hour") and f["machine"]["source"] == "cloud"
+    assert f["copies"]["value"] == "1 up now. Fewest 1, most 1" and f["copies"]["source"] == "cloud"
+    assert f["image"]["value"] == f"{IMAGE}, built 5 hours ago" and f["role"]["value"] == ROLE and f["role"]["source"] == "cloud"
+    assert f["files"]["value"].startswith("s3://") and f["files"]["value"].endswith(rec["bundle"])
+    assert f["logs"]["value"] == f"/aws/sagemaker/Endpoints/{name}" and f["logs"]["copy"]
+    assert f["stops"]["value"].endswith("minutes with no requests") and f["by"]["value"].endswith("just now")
+    assert f["version"]["value"] == f"{FL.model_words(ws.candidate, 'shop')} ({ws.candidate})"
+    # An account with an alias is said by its alias.
+    aws.aliases = ["demo-team"]
+    from captain_search.compute_providers import aws as AWSP
+    AWSP.forget_clients()
+    FL.forget()
+    assert {x["id"]: x for x in FL.where_it_runs(ws, "shop")["facts"]}["cloud"]["value"] == "AWS, account demo-team"
+
+
+def test_where_it_runs_falls_back_to_captains_record_and_says_so(ws, aws, monkeypatch):  # noqa: F811
+    from captain_search.compute_providers.aws import SageMakerProvider
+
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    FL.deployed(ws, fresh=True)
+    monkeypatch.setattr(SageMakerProvider, "where", lambda self, rec: (_ for _ in ()).throw(RuntimeError("AccessDenied: sagemaker:DescribeEndpoint")))
+    w = FL.where_it_runs(ws, "shop")
+    assert not w["from_cloud"] and w["text"] == "AWS could not be asked just now (AccessDenied: sagemaker:DescribeEndpoint). These are from Captain's record."
+    f = {x["id"]: x for x in w["facts"]}
+    assert f["address"]["source"] == "record" and f["address"]["source_text"] == "From Captain's record" and f["machine"]["source"] == "record"
+    assert f["role"]["value"] == ROLE and f["role"]["source"] == "record" and "logs" not in f  # what nobody has is left out, not made up
+    # Stopped: nothing of it is in the cloud, and that is said.
+    monkeypatch.undo()
+    SG.unstage(ws, "shop")
+    FL.forget()
+    w = FL.where_it_runs(ws, "shop")
+    assert w["text"] == "Nothing of it is in AWS now. These are from Captain's record of when it ran." and not w["from_cloud"]
+    with pytest.raises(ValueError, match="has no deployment"):
+        FL.where_it_runs(ws, "trail")
+
+
+def test_where_it_runs_on_this_computer(ws):  # noqa: F811
+    SG.stage(ws, "shop", baseline=True, target="local", confirm=True)
+    r = FL.deployed(ws, fresh=True)["rows"][0]
+    assert r["address"].startswith("http://127.0.0.1:") and r["machine_words"] is None and r["account"] is None
+    f = {x["id"]: x for x in FL.where_it_runs(ws, "shop")["facts"]}
+    assert f["address"]["value"] == r["address"] and "curl" in f["call"]["value"] and '"traffic": "test"' in f["call"]["value"]
+    assert f["machine"]["value"] == "This computer" and FL.where_it_runs(ws, "shop")["text"] == "On this computer."
+    SG.unstage(ws, "shop")
+
+
+def test_where_it_runs_on_a_host_with_its_own_address(ws, logins, modal):  # noqa: F811
+    logins.append(LOGINS["modal"])
+    DP.run(ws, "shop", "modal", confirm=True)
+    r = FL.deployed(ws, fresh=True)["rows"][0]
+    assert r["address"].startswith("https://") and r["address"].endswith(".modal.run") and r["machine_words"] == "1 CPU, 2 GB memory"
+    assert r["account"] == f"environment {LOGINS['modal']['fields']['environment']}" and "may run 0 to 1" in r["copies_words"]
+    f = {x["id"]: x for x in FL.where_it_runs(ws, "shop")["facts"]}
+    assert f["address"]["value"] == r["address"] and "Authorization: Bearer $CAPTAIN_STAGING_KEY" in f["call"]["value"]
+    assert f["machine"]["value"].startswith("1 CPU, 2 GB memory, about $0.06 an hour") and f["stops"]["value"].startswith("It sleeps when no requests arrive")
+
+
+def test_every_size_a_host_offers_can_say_what_it_is():
+    from captain_search import price_table as PT
+    from captain_search.staging import sizing as SZ
+
+    for region in ("us-west-1", "us-east-1"):
+        for s in SZ.sizes("aws", region):
+            m = SZ.machine_facts("aws", s["config"], region)
+            assert m["cpus"] and m["memory_mb"] and m["hourly_usd"] and "virtual CPUs" in m["words"] and m["words"].startswith(s["name"] + ": "), s["name"]
+    assert set(PT.SAGEMAKER_MACHINES) == set(SZ.SAGEMAKER_MEMORY)
+    for host in ("modal", "gcp", "azure"):
+        for s in SZ.sizes(host, None):
+            m = SZ.machine_facts(host, s["config"])
+            assert m["words"] and "memory" in m["words"] and m["hourly_usd"] is not None, (host, s["name"])
+
+
+# ---- removing a deployment, and starting one again -------------------------------------------------
+
+
+def test_removing_a_deployment_ends_with_it_gone_from_every_list(ws, logins, modal):  # noqa: F811
+    """A person clicked "Remove from the cloud" and said "it still just leaves it there". The cloud had been emptied.
+    The row stayed, because Captain kept its record of a deployment that no longer existed anywhere."""
+    logins.append(LOGINS["modal"])
+    DP.run(ws, "shop", "modal", confirm=True)
+    SG.unstage(ws, "shop")  # stopped: remembered, with what the first deploy set up still there
+    assert [r["state"] for r in FL.deployed(ws, fresh=True)["rows"]] == ["stopped"] and FL.created(ws)["places"]
+    out = DP.remove(ws, "shop")
+    assert out["status"] == "removed" and out["left"] == [] and out["removed_setup"] and out["forgotten"]
+    assert out["text"].startswith("Removed from Modal: ") and "Captain set up" in out["text"] and out["text"].endswith("Nothing is left.")
+    # Nothing is left to act on: no row, no record, nothing in the account.
+    assert FL.deployed(ws, fresh=True)["rows"] == [] and SG.state(ws, "shop") is None and FL.created(ws)["places"] == []
+    assert DP.status(ws, "shop")["status"] == "removed"
+    # A running one: the model goes, then what was set up, then the record.
+    DP.run(ws, "shop", "modal", confirm=True)
+    out = DP.remove(ws, "shop")
+    assert "the deployed model and the " in out["text"] and FL.deployed(ws, fresh=True)["rows"] == [] and SG.state(ws, "shop") is None
+
+
+def test_a_removal_that_leaves_something_keeps_the_row_and_says_what_is_left(ws, logins, modal, monkeypatch):  # noqa: F811
+    from captain_search.staging import hosts as H
+
+    logins.append(LOGINS["modal"])
+    DP.run(ws, "shop", "modal", confirm=True)
+    SG.unstage(ws, "shop")
+    monkeypatch.setattr(type(H.get("modal")), "teardown", lambda self, ctx, progress=None: {
+        "status": "partial", "created": [{"type": "modal-volume", "name": "captain-serving", "error": "it still holds files"}]})
+    out = DP.remove(ws, "shop")
+    assert out["status"] == "partly removed" and not out["forgotten"]
+    assert out["text"] == ("Not everything could be removed from Modal. Still there: modal-volume captain-serving (it still holds files). "
+                           "Try again, or remove these in the cloud's own console.")
+    assert SG.state(ws, "shop") is not None and len(FL.deployed(ws, fresh=True)["rows"]) == 1  # the row stays, with something still to do
+
+
+def test_start_again_goes_back_to_the_same_cloud_and_never_to_this_computer(ws, logins, modal):  # noqa: F811
+    """After a removal on a real account, a model that had lived in AWS turned up on this computer: address
+    127.0.0.1, started and stopped fifteen seconds apart. Starting again must set the cloud up again, and say so."""
+    from captain_search.staging import hosts as H
+
+    logins.append(LOGINS["modal"])
+    DP.run(ws, "shop", "modal", confirm=True)
+    version = SG.state(ws, "shop")["model_version"]
+    SG.unstage(ws, "shop")
+    H.get("modal").teardown(ws)  # what the first deploy set up is gone, the stopped model is still remembered
+    row = FL.deployed(ws, fresh=True)["rows"][0]
+    assert row["cloud"] == "modal" and row["state"] == "stopped" and row["can"] == ["start", "forget"]
+    # What the confirm is built from: the place by name, that it will be set up again, how long, and the cost.
+    p = DP.plan(ws, "shop", row["cloud"], row["login"], candidate=version)
+    assert p["label"] == "Modal" and p["host"] == "modal" and p["first_time"] and p["needs_confirm"] and "minute" in p["minutes"]["text"] and p["cost"]["text"]
+    DP.run(ws, "shop", row["cloud"], row["login"], candidate=version, confirm=True)
+    rec = SG.state(ws, "shop")
+    assert rec["status"] == "running" and rec["kind"] != "local" and rec["host"] == "modal" and "127.0.0.1" not in str(rec.get("endpoint"))
+    assert FL.deployed(ws, fresh=True)["rows"][0]["cloud"] == "modal"
+
+
+def test_a_deploy_with_no_place_named_never_lands_on_this_computer(ws, logins, modal, monkeypatch, tmp_path):  # noqa: F811
+    from fastapi.testclient import TestClient
+
+    from captain_search import server
+
+    monkeypatch.setenv("CST_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(server, "ctx", lambda: ws)
+    logins.append(LOGINS["modal"])
+    DP.run(ws, "shop", "modal", confirm=True)
+    SG.unstage(ws, "shop")
+    c = TestClient(server.app)
+    h = {"Authorization": f"Bearer {server.TOKEN}"}
+    r = c.post("/api/projects/shop/deploy", headers=h, json={"candidate": SG.state(ws, "shop")["model_version"], "confirm": True})
+    assert r.status_code == 400, (r.status_code, r.text[:300])
+    said = r.json().get("detail") or r.json().get("error") or r.text
+    assert "Say where to deploy it. This model last ran on modal" in said and "never moves a model to this computer without being asked" in said
+    rec = SG.state(ws, "shop")
+    assert rec["status"] == "stopped" and rec["kind"] != "local"  # nothing was started anywhere
+    # Naming this computer is still allowed: that is a person asking for it.
+    assert c.post("/api/projects/shop/deploy", headers=h, json={"host": "local", "dry_run": True}).status_code == 200

@@ -1169,7 +1169,19 @@ def project_deploy(pid: str, body: dict | None = None):
     from .staging import deploy as DP
 
     c, b = ctx(), body or {}
-    args = dict(host=str(b.get("host") or "local"), login=b.get("login") or None, candidate=b.get("candidate") or None,
+    host = str(b.get("host") or "")
+    if not host:
+        # No place named. That once meant this computer, whatever the project ran on before, so a model that lived
+        # in a cloud could be started on this computer without anyone asking for it. A place is only assumed for a
+        # project that has never run anywhere else.
+        from . import staging as SG
+
+        last = SG.state(c, pid, str(b.get("env") or "staging")) or {}
+        if last and last.get("kind") != "local":
+            raise HTTPException(400, f"Say where to deploy it. This model last ran on {last.get('host') or 'a cloud'}, and no place was named. "
+                                     "Captain never moves a model to this computer without being asked.")
+        host = "local"
+    args = dict(host=host, login=b.get("login") or None, candidate=b.get("candidate") or None,
                 baseline=bool(b.get("baseline")), allow_large=bool(b.get("allow_large")))
     p = _staging_call(DP.plan, c, pid, **args)
     if isinstance(p, JSONResponse):
@@ -1554,6 +1566,20 @@ def deployed_created():
     from .staging import fleet as FL
 
     return FL.created(ctx())
+
+
+@app.get("/api/projects/{pid}/deployed/where", dependencies=A)
+def deployed_where(pid: str, env: str = "staging"):
+    """Where one deployed model lives, as a small table: {facts: [{id, label, value, copy, source, source_text}],
+    text}. Address, how to call it, cloud and account (alias or last four digits), region, machine (what it is and
+    its price), copies, image, model files, role, logs, when it stops by itself, who deployed it, version. Each
+    value is from the cloud's own describe call where there is one, else from Captain's record, and says which."""
+    from .staging import fleet as FL
+
+    try:
+        return FL.where_it_runs(ctx(), pid, env)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from None
 
 
 @app.post("/api/deployed/forget", dependencies=A)
@@ -3046,8 +3072,14 @@ def compare_runs(a: str, b: str):
 @app.get("/api/runs/{name:path}", dependencies=A)
 def run(name: str, v: int | None = None):
     c = ctx()
-    r = c.registry.load("backtest-run", name, v).model_dump(mode="json")
-    r["report"] = ops.backtest_report(c.registry.load("backtest-run", name, v), c.registry.load("backtest", name))
+    m = c.registry.load("backtest-run", name, v)
+    r = m.model_dump(mode="json")
+    r["report"] = ops.backtest_report(m, c.registry.load("backtest", name))
+    # How deep each measure looked in this run, and what about that is not the usual, as sentences.
+    from .eval import metrics as MX
+
+    r["depths"] = MX.check_depths(m.depths)
+    r["not_usual"] = MX.not_usual(m)
     return r
 
 
@@ -3535,13 +3567,31 @@ def population_add(body: dict):
 @app.post("/api/backtests", dependencies=A)
 def backtest_add(body: dict):
     """{name, arms, queries?, judgments?, population?, hypothesis, primary?, mde?, mode?, logs?, compute?, surfaces?,
-    population_size?}. population_size is how many simulated shoppers a replay of logged searches makes (4000 unless
+    population_size?, depths?}. depths is how many results deep each measure looks: {"ndcg@10": 20, "r@50": 100}
+    (the usual depth for any left out). measures is the list to compute (it must hold `primary`), every one the
+    data allows when left out. slices is what to slice the result by: columns of the questions, and "traffic",
+    the usual (class, then traffic) when left out. population_size is how many simulated shoppers a replay of logged searches makes (4000 unless
     given): a limit the form shows as a field rather than hiding."""
     return ops.backtest_plan(ctx(), body["name"], body["arms"], body.get("queries") or None, body.get("judgments") or None,
                              body.get("population") or None, body["hypothesis"], body.get("primary", "ndcg@10"),
                              float(body.get("mde", 0.003)), mode=body.get("mode", "simulated"), logs=body.get("logs") or None,
                              compute=body.get("compute") or None, surfaces=body.get("surfaces") or None,
-                             population_size=int(body.get("population_size") or 4000)).model_dump(mode="json")
+                             population_size=int(body.get("population_size") or 4000),
+                             depths=body.get("depths") or None, measures=body.get("measures") or None,
+                             slices=body.get("slices") or None).model_dump(mode="json")
+
+
+@app.get("/api/evaluations/slices", dependencies=A)
+def evaluation_slices(queries: str):
+    """What that set of questions can be sliced by: {columns: [{id, label, groups}], traffic, usual}."""
+    from . import segments as SEGS
+
+    c = ctx()
+    try:
+        m, rows, _ = ops.rows_of(c, queries)
+    except (KeyError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return SEGS.choices([f.get("name") for f in (m.schema_fields or [])] or (list(rows[0]) if rows else []), rows)
 
 
 @app.get("/api/evaluations/options", dependencies=A)

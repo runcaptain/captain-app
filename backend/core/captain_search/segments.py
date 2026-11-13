@@ -56,23 +56,75 @@ def _seg_rows(kind: str, groups: dict[str, list[str]], perq: dict[str, dict], ar
     return rows
 
 
-def segments(qs: list[dict], perq: dict[str, dict], arms: list[str], mde: float) -> list[dict]:
-    """perq: arm -> query_id -> per-query metrics (from metrics.per_query)."""
+USUAL = ("class", "traffic")
+# Columns of a query set that are not groups of questions: its key, its text, and its weight (which is traffic).
+NOT_GROUPS = ("query_id", "query", "weight")
+
+
+def check_slices(slices, columns: list[str]) -> list[str]:
+    """What an evaluation asked to be sliced by, or [] for the usual. Each is a column of the query set, or
+    "traffic". Refuses a column the query set does not have, and one that is not a group."""
+    if not slices:
+        return []
+    out = []
+    for s in (str(x) for x in slices):
+        if s == "traffic":
+            if "weight" not in columns:
+                raise ValueError("slicing by traffic needs a weight on each question, and this set of questions has none")
+        elif s in NOT_GROUPS:
+            raise ValueError(f"{s} is not a group of questions, so there is nothing to slice by")
+        elif s not in columns:
+            raise ValueError(f"the questions have no column named {s}. They have: {', '.join(c for c in columns if c not in NOT_GROUPS) or 'none to slice by'}.")
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def choices(columns: list[str], rows: list[dict]) -> dict:
+    """What a set of questions can be sliced by: {columns: [{id, label, groups}], traffic, usual}. A column is a
+    choice when it is a group (not the key, the text or the weight) and its questions fall into 2 to 50 groups."""
+    out = []
+    for c in columns:
+        if c in NOT_GROUPS:
+            continue
+        n = len({str(r.get(c)) for r in rows if r.get(c) is not None and str(r.get(c)) != ""})
+        if 2 <= n <= 50:
+            out.append({"id": c, "label": "Group" if c == "class" else c, "groups": n})
+    traffic = "weight" in columns and any(r.get("weight") is not None for r in rows)
+    return {"columns": out, "traffic": traffic, "usual": [c for c in USUAL if (c == "traffic" and traffic) or any(x["id"] == c for x in out)]}
+
+
+def slices_words(slices) -> list[str]:
+    """What is not the usual about the slices, as a sentence: ["Sliced by device and kind."]."""
+    if not slices or tuple(slices) == USUAL or tuple(slices) == ("class",):
+        return []
+    names = ["group" if s == "class" else s for s in slices]
+    return [f"Sliced by {names[0]}." if len(names) == 1 else f"Sliced by {', '.join(names[:-1])} and {names[-1]}."]
+
+
+def segments(qs: list[dict], perq: dict[str, dict], arms: list[str], mde: float, by: list[str] | None = None) -> list[dict]:
+    """perq: arm -> query_id -> per-query metrics (from metrics.per_query).
+    by: what to slice by, in order: columns of the questions, and "traffic". The usual when not given: `class`, then
+    traffic. A column where every question has the same value makes no slice."""
     if not perq or not any(perq.values()):
         return []
     out = []
-    classes: dict[str, list[str]] = {}
-    for q in qs:
-        if q.get("class"):
-            classes.setdefault(str(q["class"]), []).append(q["query_id"])
-    if len(classes) > 1:
-        out += _seg_rows("class", classes, perq, arms, mde)
-    bands = traffic_bands(qs)
-    if bands:
-        groups: dict[str, list[str]] = {}
-        for qid, b in bands.items():
-            groups.setdefault(b, []).append(qid)
-        out += _seg_rows("traffic", groups, perq, arms, mde)
+    for col in (by or USUAL):
+        if col == "traffic":
+            bands = traffic_bands(qs)
+            if bands:
+                groups: dict[str, list[str]] = {}
+                for qid, b in bands.items():
+                    groups.setdefault(b, []).append(qid)
+                out += _seg_rows("traffic", groups, perq, arms, mde)
+            continue
+        groups = {}
+        for q in qs:
+            v = q.get(col)
+            if v is not None and str(v) != "":
+                groups.setdefault(str(v), []).append(q["query_id"])
+        if len(groups) > 1:
+            out += _seg_rows(col, groups, perq, arms, mde)
     return out
 
 
@@ -92,8 +144,9 @@ def check_guardrails(g_list, arm: str, base: str, metrics: dict[str, dict]) -> l
     return out
 
 
-def score_surface(ctx, surface, arms: list[str], mde: float, rankings) -> dict:
-    """rankings(arm, queries) -> (ranks, ms), the same engine call the main run uses."""
+def score_surface(ctx, surface, arms: list[str], mde: float, rankings, depths: dict | None = None) -> dict:
+    """rankings(arm, queries) -> (ranks, ms), the same engine call the main run uses. `depths`: how deep each
+    measure looks in this run (eval/metrics.py), the usual depths when not given."""
     from .ops import judgments_map, rows_of
 
     _, qs, _ = rows_of(ctx, surface.queries)
@@ -101,7 +154,7 @@ def score_surface(ctx, surface, arms: list[str], mde: float, rankings) -> dict:
     perq, metrics, arm_rows = {}, {}, []
     for a in arms:
         ranks, _ = rankings(a, qs)
-        perq[a] = M.per_query(ranks, jmap, X.current(ctx).custom("metric"))
+        perq[a] = M.per_query(ranks, jmap, X.current(ctx).custom("metric"), depths)
         metrics[a] = M.summarize(perq[a])
         arm_rows.append({"arm": a, "metrics": metrics[a], "judged@10": metrics[a].get("judged@10")})
     base = arms[0]

@@ -593,6 +593,28 @@ Lists are sorted, filtered and paged on the server, because native mods must not
   no product or a grade outside 0 to 3 is skipped and counted.
 - `POST /api/backtests` also takes `population_size`: how many simulated shoppers a replay of logged searches makes
   (4000 unless given).
+- `POST /api/backtests` also takes `depths`: how many results deep each measure looks, `{"ndcg@10": 20, "p@10": 20,
+  "r@50": 100, "mrr": 20}`, a whole number from 1 to 200 each, the usual depth (10, 10, 50, 50) for any left out. The
+  plan keeps only what differs. A run records every depth it looked in `depths`, ranks at least that deep, and scores
+  its slices, surfaces and per-query numbers at the same depths. The keys keep their usual names: `ndcg@10` in a run
+  with `depths["ndcg@10"] == 20` is nDCG at 20. `GET /api/runs/{name}` and each row of `GET /api/regression` carry
+  `depths` and `not_usual` (sentences such as "nDCG looks 20 results deep, not the usual 10."). `/compatibility`
+  warns with code `depth`, and `GET /api/compare-runs` lists `different-depth` when two runs differ. A run recorded
+  before depths existed has none and reads as the usual depths. `GET /api/evaluations/options` lists the fields
+  under `depths`: `{id, label, default, max}`.
+- `POST /api/backtests` also takes `measures`: the measures to compute, from `ndcg@10, p@10, r@50, mrr, zero,
+  ndcg@10_tw, ctr, conversion, rpv`. It must hold `primary`, and each must be one the evaluation has data for (the
+  shopper measures need a population). Left out, a run computes every one the data allows. A run records `measures`,
+  compares the arms only on those, and keeps only those in each arm's scores (`judged@10` always stays). Slices are
+  scored on nDCG, so a run without `ndcg@10` has none.
+- `POST /api/backtests` also takes `slices`: what to slice the result by, in order. Each is a column of the questions,
+  or `traffic` (needs a weight on each question). Left out, a run slices the usual way: by `class`, then by traffic.
+  A segment row's `kind` is the column's name. `GET /api/evaluations/slices?queries=<ref>` lists the choices for a
+  set of questions: `{columns: [{id, label, groups}], traffic, usual}`, a column being a choice when its questions
+  fall into 2 to 50 groups. `POST /api/testsets` and `/preview` take `mapping.also`: columns of the table to keep on
+  each question, so a run can slice by them.
+- `not_usual` on a run and on a regression row holds every such sentence: depths, "Only nDCG and MRR were computed.",
+  "Sliced by device and season.". `/compatibility` warns with code `measures`.
 
 ## Regression testing (the Runs screen's Compare)
 
