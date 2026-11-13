@@ -127,3 +127,80 @@ def test_databricks_reads_unity_catalog_and_a_disabled_registry_isnt_a_login_err
         request=httpx.Request("POST", "https://x")))
     with pytest.raises(PermissionError, match="mlflow scope"):
         MF.experiments(ctx)
+
+
+# ---- the models are answered at once, and read again behind ------------------------------------------------------
+
+def test_the_models_are_answered_at_once_from_the_last_read_and_read_again_behind(ctx, monkeypatch):
+    """Reading the models took 5 to 11 seconds at every start, with the sidebar waiting, and was asked twice."""
+    import time
+
+    from captain_search import changes as CH
+    from captain_search import mlflow_bridge as MF
+
+    MF.configure(ctx, uri="https://mlflow.example.test")
+    MF.forget_models()
+    CH.reset_for_tests()
+    asked = []
+    now = {"models": [{"name": "ranker", "versions": []}]}
+
+    def slow(c, limit=200, include_system=False, timeout=60):
+        asked.append(timeout)
+        time.sleep(0.4)   # the tracking server takes its time
+        return [dict(m) for m in now["models"]]
+
+    monkeypatch.setattr(MF, "models", slow)
+    first = MF.models_kept(ctx)                       # never read before: this one waits
+    assert first == now["models"] and asked == [3.0], "each call to the server is limited to three seconds"
+    t0 = time.perf_counter()
+    assert MF.models_kept(ctx) == first and time.perf_counter() - t0 < 0.05 and len(asked) == 1, "the second ask is answered from what is kept"
+    # a new run of the services: nothing in memory, the file from last time answers at once, and it is read again behind
+    MF.forget_models()
+    now["models"] = [{"name": "ranker", "versions": []}, {"name": "reranker", "versions": []}]
+    seq = CH.FEED.seq
+    t0 = time.perf_counter()
+    again = MF.models_kept(ctx)
+    assert again == first and time.perf_counter() - t0 < 0.05, "at a start the last read is given at once"
+    twice = MF.models_kept(ctx)                       # the sidebar asks twice: one read behind, not two
+    assert twice == first
+    got = CH.FEED.wait(seq, {"mlflow"}, timeout=3.0)
+    assert [c["topic"] for c in got["changed"]] == ["mlflow"], "the new list is told, so the screen reads again"
+    assert len(asked) == 2, f"one read behind for the two asks: {len(asked) - 1}"
+    assert MF.models_kept(ctx) == now["models"], "and then gets the new list at once"
+    # the server can't be reached: what was read last stands, and nothing is raised at the screen
+    MF._KEPT[next(iter(MF._KEPT))]["at"] = float("-inf")
+    monkeypatch.setattr(MF, "models", lambda *a, **k: (_ for _ in ()).throw(ConnectionError("no route")))
+    assert MF.models_kept(ctx) == now["models"]
+    time.sleep(0.3)
+    assert MF.models_kept(ctx) == now["models"]
+    CH.reset_for_tests()
+
+
+def test_each_models_versions_are_asked_for_side_by_side_with_the_limit_given(ctx, monkeypatch):
+    import threading
+    import time
+
+    from captain_search import mlflow_bridge as MF
+
+    MF.configure(ctx, uri="https://mlflow.example.test")
+    seen = {"timeouts": set(), "at_once": 0, "now": 0}
+    lock = threading.Lock()
+
+    def request(method, url, json=None, params=None, headers=None, timeout=None):
+        seen["timeouts"].add(timeout)
+        if "registered-models/search" in url:
+            return httpx.Response(200, json={"registered_models": [{"name": f"m{i}"} for i in range(8)]}, request=httpx.Request(method, url))
+        with lock:
+            seen["now"] += 1
+            seen["at_once"] = max(seen["at_once"], seen["now"])
+        time.sleep(0.2)
+        with lock:
+            seen["now"] -= 1
+        return httpx.Response(200, json={"model_versions": [{"version": "1"}]}, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(httpx, "request", request)
+    t0 = time.perf_counter()
+    out = MF.models(ctx, timeout=3.0)
+    took = time.perf_counter() - t0
+    assert [m["name"] for m in out] == [f"m{i}" for i in range(8)] and all(m["versions"][0]["version"] == "1" for m in out), "in the server's order"
+    assert seen["timeouts"] == {3.0} and seen["at_once"] > 1 and took < 1.0, f"eight models' versions one after another would be 1.6 s: {took:.2f} s"

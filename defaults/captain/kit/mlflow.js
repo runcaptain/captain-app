@@ -16,6 +16,7 @@ import { Skeleton } from "./ui.js";
 import { icon } from "./icons.js";
 import { Brand } from "./brands.js";
 import { num, int } from "./num.js";
+import { watchLive } from "./live.js";
 
 const sentence = (t, fallback) => { const s = String(t ?? "").trim(); return s ? `${s[0].toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}` : fallback; };
 const said = (r, fallback) => sentence(r.data?.error ?? r.data?.detail ?? r.error, fallback);
@@ -70,6 +71,9 @@ export class MlflowList {
       this.watching = true;
       this.seen = shared("captain.mlflow.changed") ?? null;
       cx.timer.every(1000, (cx) => { const now = shared("captain.mlflow.changed") ?? null; if (now !== this.seen) { this.seen = now; this.reload(cx); } });
+      // The services answer the models at once from their last read and read again behind that. When the new read
+      // differs they say so on the live channel, and the list is read again, quietly: nothing open is closed.
+      watchLive(cx, ["mlflow"], (cx) => this.fetch(cx));
     }
     this.fetch(cx);
   }

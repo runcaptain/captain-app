@@ -373,3 +373,51 @@ def test_cst_app_stacks_prints_where_every_thread_of_the_running_services_is(tmp
     env = {**os.environ, "CST_HOME": str(home), "CAPTAIN_LOG_DIR": str(logs_dir)}
     gone = subprocess.run([os.path.join(os.path.dirname(sys.executable), "cst"), "app", "stacks"], env=env, capture_output=True, text=True)
     assert gone.returncode != 0 and "aren't running here" in (gone.stderr + gone.stdout)
+
+
+def test_services_on_a_home_of_their_own_log_there_not_into_the_persons_log(tmp_path, monkeypatch):
+    """The render tests start services on a temporary home. Their lines ("started: ... home /var/folders/.../T/
+    cst-everylive-.../cst") were written into the real ~/Library/Logs/Captain/services.log."""
+    import subprocess
+    import sys
+
+    monkeypatch.delenv("CAPTAIN_LOG_DIR", raising=False)
+    monkeypatch.delenv("CST_HOME", raising=False)
+    usual = applog.log_dir()
+    assert "Captain" in usual or "captain-app" in usual
+    # the usual home, said outright: still the person's own log
+    monkeypatch.setenv("CST_HOME", "~/.config/captain-search")
+    assert applog.log_dir() == usual
+    monkeypatch.setenv("CST_HOME", os.path.expanduser("~/.config/captain-search/"))
+    assert applog.log_dir() == usual
+    # a home of its own: its own log, beside it
+    own = tmp_path / "cst"
+    monkeypatch.setenv("CST_HOME", str(own))
+    assert applog.log_dir() == str(own / "logs")
+    # CAPTAIN_LOG_DIR still wins, as the app sets it for the services it starts
+    monkeypatch.setenv("CAPTAIN_LOG_DIR", str(tmp_path / "said"))
+    assert applog.log_dir() == str(tmp_path / "said")
+    # and the real thing: services started the way a render test starts them write nothing outside their home
+    env = {k: v for k, v in os.environ.items() if k not in ("CAPTAIN_LOG_DIR", "CLAUDECODE")}
+    env["CST_HOME"] = str(own)
+    cst = os.path.join(os.path.dirname(sys.executable), "cst")
+    subprocess.run([cst, "init", "lg", "--storage", str(tmp_path / "store")], env=env, capture_output=True)
+    real = pathlib.Path(usual) / "services.log"
+    before = real.stat().st_size if real.exists() else 0
+    proc = subprocess.Popen([cst, "serve"], env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        json.loads(proc.stdout.readline())
+        text = ""
+        for _ in range(100):
+            f = own / "logs" / "services.log"
+            text = f.read_text() if f.exists() else ""
+            if "started: cst" in text:
+                break
+            time.sleep(0.05)
+        assert "started: cst" in text and str(own) in text
+    finally:
+        proc.terminate()
+        proc.wait(10)
+    if real.exists():
+        added = real.read_text(errors="replace")[before:] if real.stat().st_size >= before else ""
+        assert str(own) not in added, "the test's services wrote into the person's own log"
