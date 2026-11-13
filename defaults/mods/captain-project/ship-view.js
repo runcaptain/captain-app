@@ -141,16 +141,17 @@ function removeCreated(ship, cx) {
   cx.spawn(async (cx) => {
     const pid = ship.pid();
     const r = await api(`/api/projects/${enc(pid)}/deploy`, { method: "DELETE", scoped: false, timeout: 60 });
-    let left = null;
+    let left = null, said = null;
     for (let i = 0; r.ok && i < 600 && ship.pid() === pid; i++) {
       const s = await api(`/api/projects/${enc(pid)}/deploy`, { scoped: false });
-      if (s.ok) { left = s.data?.exists_now ?? []; if (s.data?.status !== "running" && (s.data?.status !== "failed" || !left.length)) break; }
+      // What was removed, in the services' own sentence ("Removed from AWS: the endpoint and the 7 things ...").
+      if (s.ok) { left = s.data?.exists_now ?? []; if (s.data?.status === "removed") said = s.data.text ?? null; if (s.data?.status !== "running" && (s.data?.status !== "failed" || !left.length)) break; }
       try { await exec("sleep", ["1"]); } catch { break; }
     }
     ship.removing = false;
     const gone = r.ok && !(left ?? []).length;
     if (gone && ship.djob?.failed) ship.djob = { ...ship.djob, failed: { ...ship.djob.failed, exists: [], can: (ship.djob.failed.can ?? []).filter((x) => x !== "remove") } };
-    ship.removeNote = gone ? "Removed. Nothing from this deploy is left in your account."
+    ship.removeNote = gone ? said ?? "Removed. Nothing from this deploy is left in your account."
       : r.ok ? `Some of it is still there: ${(left ?? []).map((x) => `${x.resource} ${x.name}`).join(", ")}. Try again, or remove it in your cloud's console.`
       : plainError(r.error, "It couldn't be removed.");
     cx.notify();

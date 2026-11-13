@@ -61,6 +61,13 @@ const taskOf = (id) => TASKS.find((t) => t.id === id);
 const whole = (x) => { const n = Number(String(x ?? "").replace(/[,_\s]/g, "")); return Number.isInteger(n) ? n : NaN; };
 const wholeBetween = (lo, hi, what) => (v) => (whole(v) >= lo && whole(v) <= hi ? null : `${what} is a whole number from ${lo.toLocaleString("en-US")} to ${hi.toLocaleString("en-US")}.`);
 const aNumber = (example) => (v) => (String(v).trim() !== "" && Number.isFinite(Number(v)) ? null : `That needs to be a number, like ${example}.`);
+// A region that doesn't exist for that cloud, said while it is typed. The services hold the list and call no cloud.
+const regionOf = (providerOf) => async (value, v, ctx) => {
+  const provider = providerOf(v, ctx);
+  if (!provider) return null;
+  const r = await api(`/api/cloud/check?provider=${encodeURIComponent(provider)}&field=region&value=${encodeURIComponent(String(value ?? ""))}`, { scoped: false });
+  return r.ok && r.data?.ok === false ? r.data.text : null;
+};
 const fileThere = async (v) => {
   const path = String(v ?? "").trim().replace(/^~(?=\/|$)/, home());
   if (!path) return null;
@@ -607,7 +614,7 @@ export const TASKS = [
       // Any words: Captain keeps them as the label and makes its own id from them (checks.js, naming.py).
       { key: "name", label: "Name", name: "cloud", placeholder: "GPU cloud", required: true },
       // Modal picks where it runs by itself, so it is asked for no region.
-      { key: "region", label: "Region", placeholder: "us-west-1", optional: true, when: (v) => v.provider !== "modal" },
+      { key: "region", label: "Region", placeholder: "us-west-1", optional: true, when: (v) => v.provider !== "modal", checkAsync: regionOf((v) => v.provider) },
       // The sign-in mode's own fields come from the services (cloud.providers), secrets masked.
       { key: "*auth-fields", kind: "dynamic", fields: (ctx, v) => ((ctx.providers ?? []).find((p) => p.provider === v.provider)?.auth ?? []).find((a) => a.mode === v.auth)?.fields ?? [] },
     ],
@@ -671,7 +678,8 @@ export const TASKS = [
         when: (v, ctx) => Boolean(v.kind) && CLOUDS.includes(kindOf(ctx, v)?.provider),
         empty: "None yet for this cloud. Connect a cloud account first, from Cloud and compute.",
         options: (ctx, v) => (ctx.profiles ?? []).filter((p) => p.provider === kindOf(ctx, v)?.provider).map((p) => ({ value: p.name, label: p.name, brand: p.provider })) },
-      { key: "region", label: "Region", optional: true, placeholder: "us-west-1", when: (v, ctx) => Boolean(v.kind) && CLOUDS.includes(kindOf(ctx, v)?.provider) },
+      { key: "region", label: "Region", optional: true, placeholder: "us-west-1", when: (v, ctx) => Boolean(v.kind) && CLOUDS.includes(kindOf(ctx, v)?.provider),
+        checkAsync: regionOf((v, ctx) => kindOf(ctx, v)?.provider) },
       { key: "*kind-fields", kind: "dynamic", when: (v) => Boolean(v.kind),
         fields: (ctx, v) => (kindOf(ctx, v)?.fields ?? []).map((f) => ({ ...f, key: `${v.kind}.${f.name}`, optional: !f.required })) },
     ],
