@@ -202,7 +202,9 @@ globalThis.__shared['captain.scope'] = { kind: 'scope', id: brand.id, label: 'Ac
 const { default: DataMod } = await import(path.join(await copy('captain-data'), 'main.js'));
 const data = harness(DataMod);
 await data.start();
+// One dataset in all: with five tables or fewer the groups show open, so the brand's dataset is on screen at once.
 await until(data, () => data.text().includes('demo-catalog'), 'Data shows the brand\'s dataset');
+assert.ok(data.mod.catalog.few() && data.mod.catalog.isOpen('kept'), 'a short list is not folded away');
 for (const other of ['demo-queries', 'demo-judgments']) assert.ok(!data.text().includes(other), `Data hides ${other}, which isn't the brand's`);
 const { default: RunsMod } = await import(path.join(await copy('captain-runs'), 'main.js'));
 const runs = harness(RunsMod);

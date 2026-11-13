@@ -107,6 +107,7 @@ export class Catalog {
     this.rows = null; // null until the services answer
     this.connections = [];
     this.error = null;
+    this.shut = new Set(); // groups closed by hand while a short list shows them open
     this.page = new Map(); // group id -> the first row shown
     this.finds = new Map(); // group id -> its own search box (made when the rows arrive, never while drawing)
     this.find = InputState.new({ placeholder: "Search every table and column" });
@@ -164,11 +165,19 @@ export class Catalog {
     if (this.typed && Date.now() - this.typed > 350 && this.find.value().trim() !== (this.asked ?? "")) { this.typed = null; this.load(cx); }
   }
 
-  isOpen(id) { return this.matched ? this.matched.has(id) : this.open.has(id); }
+  /** Five tables or fewer in all (a new workspace, or a project picked in the Explorer that has one dataset): there
+   *  is no wall to fold away, so every group shows open until the person closes it. */
+  few() { return (this.rows ?? []).length > 0 && (this.rows ?? []).length <= PAGE; }
+
+  isOpen(id) {
+    if (this.matched) return this.matched.has(id);
+    return this.open.has(id) || (this.few() && !this.shut.has(id));
+  }
 
   toggle(cx, id) {
     if (this.matched) { if (this.matched.has(id)) this.matched.delete(id); else this.matched.add(id); }
-    else { if (this.open.has(id)) this.open.delete(id); else this.open.add(id); this.remember(); }
+    else if (this.isOpen(id)) { this.open.delete(id); this.shut.add(id); this.remember(); }
+    else { this.open.add(id); this.shut.delete(id); this.remember(); }
     cx.notify();
   }
 
