@@ -198,6 +198,7 @@ def _system(ctx: Context, cloud: str, target: dict | None, region: str | None, m
         hi_i = hi_i if hi_i is not None else lo_i
         copies = ((f"{now} cop{'y' if now == 1 else 'ies'} up now" if now is not None else "") +
                   (f", may run {lo_i} to {hi_i}" if lo_i is not None and hi_i is not None and hi_i != lo_i else "")).lstrip(", ") or None
+        copies = copies[0].upper() + copies[1:] if copies else None  # it is a sentence of its own in a row: "May run 0 to 2."
     return {"machine_words": m["words"], "machine_hourly_usd": m["hourly_usd"], "account": account, "copies_words": copies}
 
 

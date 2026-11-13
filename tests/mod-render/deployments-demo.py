@@ -26,7 +26,7 @@ def row(pid, name, version, cloud, label, region, machine, state, text, **kw):
             "account": {"aws": "account ending 1234", "gcp": "project demo-shop", "modal": "environment main", "azure": "resource group captain-serving"}.get(cloud),
             "machine_words": (f"{machine}: 2 virtual CPUs, 4 GB memory" if cloud == "aws" and machine == "ml.t2.medium" else
                               f"{machine}: 2 virtual CPUs, 8 GB memory" if cloud == "aws" else (machine.replace(" vCPU", " virtual CPU") + " memory") if machine else None),
-            "copies_words": None if state == "stopped" else "asleep, may run 0 to 1" if state == "asleep" else "1 copy up now, may run 1 to 3" if cloud == "aws" else "may run 0 to 2",
+            "copies_words": None if state == "stopped" else "Asleep, may run 0 to 1" if state == "asleep" else "1 copy up now, may run 1 to 3" if cloud == "aws" else "May run 0 to 2",
             "remembered_text": (f"Nothing of it is running in {label} and nothing is billing. Captain remembers it so you can start it again." if state == "stopped" else None),
             "model_label": (version.split("/", 1)[-1].replace("@v", ", version ") if version else None), "by_name": "dana", **kw}
 
@@ -68,7 +68,7 @@ GIFTS = row("gifts", "Gift finder", "gifts/starter-ranker@v3", "aws", "AWS", "us
             "Failed: The primary container did not pass the ping health check.", since=ago(minutes=40),
             corrected=["Captain's record said it was running. The cloud says it failed, so the record now says failed."])
 FOUND = {**row("an-older-project", None, None, "aws", "AWS", "us-west-1", "ml.m5.large", "running", "Found in your AWS account, not linked to a project.", link="unlinked", by=None, since=ago(days=19)),
-         "id": "cloud:aws:work-aws:us-west-1:captain-old-experiment-staging", "name": "captain-old-experiment-staging"}
+         "id": "cloud:aws:work-aws:us-west-1:captain-an-older-project", "name": "captain-an-older-project"}
 ASKED = [{"cloud": "aws", "cloud_label": "AWS", "login": "work-aws", "region": "us-west-1", "ok": True, "error": None, "found": 2}]
 CREATED = {"places": [
     {"cloud": "aws", "cloud_label": "AWS", "login": "work-aws", "region": "us-west-1", "in_use_by": ["Demo shop"], "can_remove": False, "text": "", "things": [
