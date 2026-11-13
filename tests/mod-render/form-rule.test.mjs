@@ -18,7 +18,10 @@ const { idFrom, sayError, looksRaw } = await import('../../defaults/captain/kit/
 
 // ---- a new notebook's name ---------------------------------------------------------------------------------------
 const { newNameCheck, importPathCheck, Notebooks } = await import('../../defaults/mods/captain-notebooks/notebooks.js');
-assert.deepEqual(newNameCheck('', []), { id: null, text: null, off: 'Give it a name.' }, 'nothing typed: the button is off, and says why');
+// A notebook does not need a name to start: with nothing typed the button works at once and Captain names it.
+assert.deepEqual(newNameCheck('', []), { id: 'untitled-notebook', text: null, off: null, untitled: true });
+assert.equal(newNameCheck('  ', [{ name: 'untitled-notebook' }]).id, 'untitled-notebook-2', 'then the next free one');
+assert.equal(newNameCheck('', [{ name: 'untitled-notebook' }, { name: 'untitled-notebook-2' }]).id, 'untitled-notebook-3');
 let k = newNameCheck('GPU cloud notes', []);
 assert.deepEqual([k.id, k.text, k.off], ['gpu-cloud-notes', 'Captain will call it gpu-cloud-notes.', null], 'any words are a name');
 assert.equal(idFrom('GPU cloud notes', 'notebook'), k.id, 'by the one rule');
@@ -43,10 +46,15 @@ assert.deepEqual(importPathCheck('~/x.ipynb', true), { text: null, off: null });
   let went = 0;
   const nb = Object.assign(Object.create(Notebooks.prototype), { icon: () => ({ kind: 'icon' }) });
   const draw = (check) => all(nb.field(palette(false), 'nb-new', { value: () => '' }, 'plus', 'New', () => went++, check));
-  let tree = draw(newNameCheck('', []));
-  assert.equal(tree.find((e) => idOf(e) === 'nb-new-go-wrap').call('tooltip')[0], 'Give it a name.', 'the reason is one hover away');
-  tree.find((e) => idOf(e) === 'nb-new-go').call('on_click')?.[0]?.({}, {});
-  assert.equal(went, 0, 'an off button does nothing');
+  // A check that says the button is off: its reason is one hover away, and a click does nothing.
+  let tree = draw({ text: null, off: 'Type the path of a notebook file.' });
+  assert.equal(tree.find((e) => idOf(e) === 'nb-new-go-wrap').call('tooltip')[0], 'Type the path of a notebook file.', 'the reason is one hover away');
+  assert.equal(tree.find((e) => idOf(e) === 'nb-new-go').call('on_click'), undefined, 'an off button has nothing to press');
+  // New, with no name typed: on.
+  tree = draw(newNameCheck('', []));
+  tree.find((e) => idOf(e) === 'nb-new-go').call('on_click')[0]({}, {});
+  assert.equal(went, 1, 'New works with nothing typed');
+  went = 0;
   tree = draw(newNameCheck('GPU cloud notes', []));
   assert.deepEqual(text(tree.find((e) => idOf(e) === 'nb-new-says')), ['Captain will call it gpu-cloud-notes.']);
   tree.find((e) => idOf(e) === 'nb-new-go').call('on_click')[0]({}, {});
@@ -55,7 +63,10 @@ assert.deepEqual(importPathCheck('~/x.ipynb', true), { text: null, off: null });
   const opened = [];
   const sub = Object.assign(Object.create(Notebooks.prototype), { list: [], newName: { value: () => '  ', set_value() {} }, openNotebook: (_cx, n) => opened.push(n) });
   sub.newNotebook({ notify() {} });
-  assert.deepEqual(opened, [], 'no name: nothing is made');
+  assert.deepEqual(opened, ['untitled-notebook'], 'no name: Captain names it');
+  sub.newNotebook({ notify() {} });
+  assert.deepEqual(opened, ['untitled-notebook', 'untitled-notebook-2'], 'and the next one gets the next name');
+  opened.length = 0;
   sub.newName = { value: () => 'GPU cloud notes', set_value() {} };
   sub.newNotebook({ notify() {} });
   assert.deepEqual(opened, ['gpu-cloud-notes']);

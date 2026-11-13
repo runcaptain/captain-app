@@ -38,7 +38,13 @@ const expand = (p) => String(p ?? "").trim().replace(/^~(?=\/|$)/, home());
  *  makes the id from them. `off` is why the button is off, or null. */
 export function newNameCheck(typed, list) {
   const words = String(typed ?? "").trim();
-  if (!words) return { id: null, text: null, off: "Give it a name." };
+  // No name typed: a notebook does not need one to start. Captain names it, and it can be renamed.
+  if (!words) {
+    const names = new Set((list ?? []).map((n) => n.name));
+    let id = "untitled-notebook";
+    for (let k = 2; names.has(id); k++) id = `untitled-notebook-${k}`;
+    return { id, text: null, off: null, untitled: true };
+  }
   const id = idFrom(words, "notebook");
   const has = (list ?? []).some((n) => n.name === id);
   return { id, text: has ? `You already have a notebook called ${id}. This opens it.` : id === words ? null : `Captain will call it ${id}.`, off: null, has };
