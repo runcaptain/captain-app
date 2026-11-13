@@ -20,7 +20,8 @@ import { watchLive, hear } from "./kit/live.js";
 import { Badge, Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { costState, costSlice } from "./kit/cost.js";
-import { ShipSection, DeployedView, loadPlaces as loadDeployPlaces, loadPlain, loadLive } from "./ship-view.js";
+import { ShipSection, DeployedView, loadPlaces as loadDeployPlaces, loadPlain, loadLive, waitWords } from "./ship-view.js";
+export { waitWords };
 import { RefreshMark } from "./deploy-tabs.js";
 import { DeploymentsList } from "./deploy-tabs.js";
 
@@ -152,7 +153,7 @@ export class Ship {
 
   /** One small write (shadow on or off, a test request, a decision), then read everything again. */
   act(cx, path, body, done, after) {
-    if (this.busy) return;
+    if (this.busy) return this.refuse(cx);
     this.cx = cx; this.note = null;
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(this.pid())}${path}`, { body: body ?? {}, scoped: false, timeout: 60 });
@@ -221,6 +222,13 @@ export class Ship {
   /** Whether a deploy's own panel is on screen: one in progress, or one that failed with nothing running. */
   jobShown() { this.settlePast(); return Boolean(this.djob); }
 
+  /** A click that can't be taken because something else is under way is answered with one plain sentence, never
+   *  dropped in silence. */
+  refuse(cx) {
+    this.note = { tone: "wait", text: waitWords(this.page.running?.() ?? this.busy) };
+    cx.notify();
+  }
+
   running() { return this.status?.status === "running"; }
   staged() { return this.status?.staged ?? null; }
 
@@ -284,7 +292,9 @@ export class Ship {
   }
 
   stop(cx) {
-    if (this.busy) return;
+    // Pressed again while it is stopping: the one stop is under way, and the screen says so. Pressed while
+    // something else runs: answered, not dropped.
+    if (this.busy) return String(this.busy).startsWith("Stopping") ? undefined : this.refuse(cx);
     this.cx = cx;
     this.busy = "Stopping it"; this.busyStep = "stage"; this.note = null; this.stopAsk = false;
     this.busyFor = { what: "stop" }; this.settled = null;
@@ -634,7 +644,7 @@ export class Ship {
 
   /** Put an earlier version back, after a yes. */
   rollBackTo(cx, n) {
-    if (this.busy) return;
+    if (this.busy) return String(this.busy).startsWith("Rolling back") ? undefined : this.refuse(cx);
     this.cx = cx;
     this.busy = `Rolling back to version ${n}`; this.busyStep = "stage"; this.note = null; this.verAsk = null;
     this.busyFor = { what: "stage", was: this.running() ? this.staged().id : null }; this.settled = null;

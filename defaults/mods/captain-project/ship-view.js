@@ -125,7 +125,9 @@ export function loadPlain(ship, cx) {
 
 /** Deploy to a place. A cloud answers first with its plan, and nothing starts without a yes. */
 export function deployTo(ship, cx, place, confirmed = false) {
+  // A deploy is under way: its own panel is on screen and says so. Anything else under way: answered in words.
   if (ship.djob && !ship.djob.failed) return;
+  if (ship.busy || ship.removing) { ship.dnote = { tone: "wait", text: waitWords(ship.page.running?.() ?? ship.busy) }; cx.notify(); return; }
   const cand = ship.pick();
   const body = { host: place.host, ...(place.login ? { login: place.login } : {}), ...(cand ? { candidate: cand.id } : { baseline: true }), ...(confirmed ? { confirm: true } : {}) };
   ship.dnote = null; ship.dasking = place.id;
@@ -407,7 +409,15 @@ const pastLine = (ship, c) => h_flex().id("ship-past").gap(8).items_center().fle
   .child(div().id("ship-past-text").flex_1().min_w(0).text_size(13).text_color(c.grey500).child(ship.dpast.text))
   .child(Button(c, "ship-past-dismiss", "Dismiss", (_e, cx) => { ship.dpast = null; cx.notify(); }, { small: true }));
 
-const note = (c, n) => div().id("ship-note").px(10).py(6).text_size(13).bg(n.tone === "fail" ? c.failLight : c.goodLight).text_color(n.tone === "fail" ? c.fail : c.good).child(n.text);
+/** One plain sentence for a click that can't be taken yet, from the few words that say what is under way
+ *  ("Stopping it", "Deploying to AWS", "Rolling back to version 2"). */
+export function waitWords(what) {
+  const w = String(what || "").replace(/ it$/, "").trim();
+  return w ? `Captain is still busy: ${w.charAt(0).toLowerCase()}${w.slice(1)}. Try again when that is done.` : "Captain is still busy with the last thing. Try again in a moment.";
+}
+
+const note = (c, n) => div().id("ship-note").px(10).py(6).text_size(13).bg(n.tone === "fail" ? c.failLight : n.tone === "wait" ? c.surface2 : c.goodLight)
+  .text_color(n.tone === "fail" ? c.fail : n.tone === "wait" ? c.grey900 : c.good).child(n.text);
 
 // ---- the deployed model's screen --------------------------------------------------------------------------------
 
