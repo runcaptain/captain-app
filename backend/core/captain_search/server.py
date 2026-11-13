@@ -1079,9 +1079,26 @@ def project_stage(pid: str, body: dict | None = None):
                         args[5], confirm=True, idle_minutes=b.get("idle_minutes") or None, progress=say,
                         allow_large=bool(b.get("allow_large")))
 
-    jid = _job(go, f"deploying {p['model_version']} for {pid}")
+    jid = _job(go, f"deploying {p['model_version']} for {pid}", _deployed_topics(pid))
     JOBS[jid]["compute"] = p["target"]
     return {"job": jid, "plan": p}
+
+
+def _deployed_topics(pid: str | None = None) -> tuple:
+    """What a change to a deployed model changes: the list, and that project's own model."""
+    from .staging import announce as AN
+
+    return tuple(t for t in ("deployed", AN.project(pid)) if t)
+
+
+def _told(result, pid: str | None = None):
+    """Announce a change to what is deployed that was made in the request itself, not as a job."""
+    from .staging import announce as AN
+    from .staging import fleet as FL
+
+    FL.forget()
+    AN.bump(*_deployed_topics(pid))
+    return result
 
 
 @app.post("/api/projects/{pid}/unstage", dependencies=A)
@@ -1092,7 +1109,7 @@ def project_unstage(pid: str, body: dict | None = None):
     c, env = ctx(), (body or {}).get("env") or "staging"
     if not SG.state(c, pid, env):
         raise HTTPException(400, f"Nothing is deployed for {pid}.")
-    return {"job": _job(lambda _p: SG.unstage(c, pid, env), f"stopping the deployed model of {pid}")}
+    return {"job": _job(lambda _p: SG.unstage(c, pid, env), f"stopping the deployed model of {pid}", _deployed_topics(pid))}
 
 
 @app.post("/api/projects/{pid}/staging/query", dependencies=A)
@@ -1220,7 +1237,7 @@ def project_deploy(pid: str, body: dict | None = None):
             lr.end("failed", error=str(e)[:600])
             raise
 
-    jid = _job(go, f"deploying {p['model_version']} to {p['label']}")
+    jid = _job(go, f"deploying {p['model_version']} to {p['label']}", _deployed_topics(pid))
     JOBS[jid].update(compute=p["host"], run=lr.id)
     return {"job": jid, "run": lr.id, "plan": p}
 
@@ -1237,7 +1254,7 @@ def project_deploy_remove(pid: str):
         say = lambda t: JOBS[jid]["log"].append(str(t)) or JOBS[jid].__setitem__("message", str(t))  # noqa: E731
         return DP.remove(c, pid, progress=say)
 
-    jid = _job(go, f"removing the deploy of {pid}")
+    jid = _job(go, f"removing the deploy of {pid}", _deployed_topics(pid))
     return {"job": jid}
 
 
@@ -1549,7 +1566,7 @@ def deployed_link(body: dict):
     from .staging import fleet as FL
 
     try:
-        return FL.link(ctx(), str(body.get("id") or ""), str(body.get("project") or ""), str(body.get("env") or "staging"))
+        return _told(FL.link(ctx(), str(body.get("id") or ""), str(body.get("project") or ""), str(body.get("env") or "staging")), str(body.get("project") or "") or None)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
 
@@ -1561,7 +1578,7 @@ def deployed_remove(body: dict):
     from .staging import fleet as FL
 
     try:
-        return FL.remove_found(ctx(), str(body.get("id") or ""), confirm=bool(body.get("confirm")))
+        return _told(FL.remove_found(ctx(), str(body.get("id") or ""), confirm=bool(body.get("confirm"))))
     except ValueError as e:
         raise HTTPException(409 if str(e).startswith("Confirm first") else 400, str(e)) from None
 
@@ -1598,7 +1615,7 @@ def deployed_forget(body: dict):
     from .staging import fleet as FL
 
     try:
-        return FL.forget_stopped(ctx(), str(body.get("project") or ""), str(body.get("env") or "staging"), confirm=bool(body.get("confirm")))
+        return _told(FL.forget_stopped(ctx(), str(body.get("project") or ""), str(body.get("env") or "staging"), confirm=bool(body.get("confirm"))), str(body.get("project") or "") or None)
     except ValueError as e:
         raise HTTPException(409 if str(e).startswith("Confirm first") else 400, str(e)) from None
 
@@ -2866,6 +2883,27 @@ def backtest(name: str):
     return m
 
 
+def _start_cloud_watch(every_s: float = 5.0) -> threading.Thread:
+    """While the service runs, keep a cloud watcher for the workspace in use. The watcher itself asks nothing until
+    a screen is listening for what is deployed, and stops asking when the last one leaves. This loop only makes
+    sure the workspace that is open now has one, since a person can switch workspaces."""
+    def loop():
+        import time
+
+        from .staging import watch as WT
+
+        while True:
+            try:
+                WT.start(ctx())
+            except Exception:  # noqa: BLE001  the watch never takes the service down
+                pass
+            time.sleep(every_s)
+
+    th = threading.Thread(target=loop, daemon=True, name="cst-cloud-watch")
+    th.start()
+    return th
+
+
 def _start_health_watch(every_s: float = 60.0) -> threading.Thread:
     """While the service runs, check every deployed model once a minute and record the result. A model that turns
     unhealthy sends its message from here, whether or not a window is open on it."""
@@ -2886,9 +2924,52 @@ def _start_health_watch(every_s: float = 60.0) -> threading.Thread:
     return th
 
 
-def _job(fn, label: str) -> str:
+class _Told(list):
+    """A job's log that says so when a line is added."""
+
+    def __init__(self, items, tell):
+        super().__init__(items)
+        self._tell = tell
+
+    def append(self, x):
+        super().append(x)
+        self._tell()
+
+
+class _Job(dict):
+    """A job's record that announces itself: every change of status, step, progress or message, every log line and
+    its end bump `job:<id>` and the topics it was started with, so a screen that is looking hears at once and
+    never has to ask after a job. Reads are plain dict reads."""
+
+    def __init__(self, data: dict, topics: tuple = ()):
+        super().__init__(data)
+        self._topics = tuple(t for t in topics if t)
+        dict.__setitem__(self, "log", _Told(data.get("log") or [], self.tell))
+
+    def tell(self):
+        from .staging import announce as AN
+
+        AN.bump(AN.job(self.get("id")), *self._topics)
+
+    def __setitem__(self, k, v):
+        changed = self.get(k) != v
+        dict.__setitem__(self, k, v)
+        if changed:
+            self.tell()
+
+    def update(self, *a, **kw):
+        new = dict(*a, **kw)
+        changed = any(self.get(k) != v for k, v in new.items())
+        dict.update(self, new)
+        if changed:
+            self.tell()
+
+
+def _job(fn, label: str, topics: tuple = ()) -> str:
+    """Run `fn` in the background as a job. `topics` are what its work changes ("deployed", a project's topic): they
+    are bumped with the job's own topic on every change, and once more when it ends."""
     jid = uuid.uuid4().hex[:12]
-    JOBS[jid] = {"id": jid, "status": "queued", "progress": 0.0, "message": label, "result": None, "log": [label], "compute": "local"}
+    JOBS[jid] = _Job({"id": jid, "status": "queued", "progress": 0.0, "message": label, "result": None, "log": [label], "compute": "local"}, topics)
 
     def go():
         JOBS[jid]["status"] = "running"
@@ -3865,6 +3946,7 @@ def serve(host: str = "127.0.0.1", port: int = 0, token: str | None = None, ui: 
 
     start_scheduler(ctx)
     _start_health_watch()
+    _start_cloud_watch()
     config = uvicorn.Config(app, log_level="warning", ws_ping_interval=30)
     server = uvicorn.Server(config)
     import signal as _signal
