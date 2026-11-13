@@ -95,6 +95,8 @@ test('it opens as blocks left to right, read only: nothing is written, edited, r
   assert.ok(two.boxes.find((b) => b.part.id === 'c_item').y > Math.max(...two.boxes.filter((b) => b.part.side !== 'candidate').map((b) => b.y + b.h)));
   assert.ok(two.captions.some((c) => c.text === 'Candidate side: Lookup tables'));
   // Read only, and said once.
+  assert.equal(textOf(h, 'wt-live'), 'Live', 'it listens on the change feed like any network');
+  assert.equal(h.byIdPrefix('wt-live-dot').length, 1);
   assert.equal(textOf(h, 'wt-read-only'), READ_ONLY);
   assert.equal(text.split(READ_ONLY).length - 1, 1, 'said once');
   for (const id of ['wt-hand', 'wt-walk', 'wt-modes', 'wt-inputs', 'wt-deploy-go', 'wt-ask', 'wt-cost', 'wt-band']) assert.equal(h.byIdPrefix(id).length, 0, `${id} is hidden`);

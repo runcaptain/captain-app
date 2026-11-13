@@ -24,7 +24,8 @@ export function deployWords(dp) {
   if (dp.state === "refused") return { text: dp.text, tone: "bad" };
   if (dp.state === "failed") return { text: dp.text || "The deploy did not finish.", tone: "bad", open: true };
   const what = dp.ref ? `${dp.ref.replace("@v", ", version ")}` : "This version";
-  if (dp.state === "running") return { text: `${what} is deploying to this computer.${dp.step ? ` Now: ${dp.step}.` : ""}`, tone: "plain", open: true };
+  // A deploy saves the session as a new version first, and the line says so.
+  if (dp.state === "running") return { text: `${dp.ref ? `Saved as ${what}, and deploying it` : `${what} is deploying`} to this computer.${dp.step ? ` Now: ${dp.step}.` : ""}`, tone: "plain", open: true };
   return { text: dp.address ? `${what} is deployed on this computer, at` : `${what} is deployed on this computer.`, tone: "plain", address: dp.address, open: true };
 }
 
