@@ -211,6 +211,13 @@ export async function sendUndo(sessionId, editId, by = "you") {
   return api(`/api/weights/sessions/${enc(sessionId)}/undo`, { method: "POST", body: { edit: editId, by }, timeout: 30 });
 }
 
+/** Save a session's changes as a new version of its network: {model, version, ref, changed}. This is the only
+ *  call that makes a version, besides a deploy. */
+export async function sendSave(sessionId, note = "") {
+  if (isLocalSession(sessionId)) return { ok: false, error: "This network lives only in the page, so it has no versions." };
+  return api(`/api/weights/sessions/${enc(sessionId)}/save`, { method: "POST", body: { note, by: "you" }, timeout: 60 });
+}
+
 /** Start an agent on a session with a goal. Captain's services start it, hold it to its limits and give the
  *  verdict. Body: {goal, max_edits, target_input, target_output}. Resolves to {job, session, agent, goal}. A
  *  network kept in this mod has no services behind it, so there is nothing to start. */

@@ -33,6 +33,7 @@ import { DeployLine, startDeploy } from "./deploy.js";
 import { partsState, partsFacts, partsPin, openPart, loadPart, loadRanker, showView, PartPanel, RankerPanel, TreeBar, rankerOf, READ_ONLY } from "./parts.js";
 import { PartsCanvas, TreeCanvas, partsLayout } from "./partsdraw.js";
 import { AgentStrip, stripHeight } from "./program.js";
+import { SaveLine, saveShows, SAVE_H } from "./save.js";
 import { WalkButtons, walkWords, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
 const TIGHT = 640; // under this width nothing fits side by side: an open neuron takes the drawing's place, and the cost is one line
@@ -118,6 +119,7 @@ export default class CaptainWeights extends View {
     this.goalInput = InputState.new({ placeholder: "What should the agent fix?" }); // the goal for an agent (program.js)
     this.agentRun = null;   // an agent started from here: {state, goal, job, says} (program.js)
     this.agentNote = null;  // why the agent could not be started or stopped
+    this.saved = null;      // a version saved from here, or why it could not be: {state, text} (save.js)
     this.reads = 0;         // how many times the network has been asked for: an older answer never replaces a newer
     this.stop = null;       // stops listening to the change feed
     this.pz = new PanZoom("wt");
@@ -154,7 +156,7 @@ export default class CaptainWeights extends View {
   /** Open a network: read its session and its numbers, run it on its first input, and listen for changes. */
   open(model, cx) {
     this.leave();
-    this.kind = null; this.pm = null; this.treePz = null; this.agentRun = null; this.agentNote = null;
+    this.kind = null; this.pm = null; this.treePz = null; this.agentRun = null; this.agentNote = null; this.saved = null;
     this.model = model; this.net = null; this.problem = null; this.sel = null; this.selW = null; this.inputAt = 0;
     this.session = null; this.test = null; this.openEdit = null; this.readFor = null; this.seen = null; this.pulse = null; this.note = null; this.undoNote = null; this.drag = null;
     this.walk = { step: 0, playing: false }; this.mode = "values";
@@ -488,7 +490,10 @@ export default class CaptainWeights extends View {
     const edited = (this.session?.edits?.length ?? 0) > 0 || (this.session?.events ?? []).some((e) => e.kind === "edit");
     facts.alone = facts.alone && edited;
     const starterModel = String(this.model ?? "").startsWith("starter:");
-    const live = !(net || pm) || starterModel ? "" : liveState().state === "live" ? "Live" : updatedWords(this.readAt);
+    // "Live" once the page is listening on the change feed, for a network and a trained model alike. The feed's
+    // first answer does not draw the page again, so waiting for it left a model read once saying "Updated just now".
+    const feed = liveState().state;
+    const live = !(net || pm) || starterModel ? "" : feed === "reconnecting" ? "Reconnecting" : this.stop ? "Live" : updatedWords(this.readAt);
     return v_flex().id("wt-head").flex_none().px(20).pt(12).pb(10).gap(3).border_b(1).border_color(c.rule)
       .child(h_flex().gap(8).items_center()
         .child(div().id("wt-back").flex_none().text_size(15).font_semibold().text_color(this.model ? c.blue : c.navy)
@@ -505,7 +510,9 @@ export default class CaptainWeights extends View {
           // The services' networks can be deployed. The tiny network kept in this page lives only while it is open.
           .when(!starterModel && Boolean(this.session), (x) => x.child(Button(c, "wt-deploy-go", "Deploy this version", (_e, cx) => startDeploy(this, cx),
             { small: true, disabled: this.deploy?.state === "asking" || this.deploy?.state === "running" }))))
-        .when(Boolean(live), (e) => e.child(div().id("wt-live").flex_none().text_size(11.5).text_color(c.grey500).child(live))))
+        .when(Boolean(live), (e) => e.child(h_flex().flex_none().gap(5).items_center()
+          .when(live === "Live", (x) => x.child(div().id("wt-live-dot").size(6).rounded_full().flex_none().bg(c.good)))
+          .child(div().id("wt-live").flex_none().text_size(11.5).text_color(c.grey500).child(live)))))
       // A model of parts: what it is and how many numbers, then where it came from.
       .when(Boolean(pm), (e) => e
         .child(div().id("wt-facts").min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(partsFacts(pm.model)))
@@ -650,7 +657,7 @@ export default class CaptainWeights extends View {
     // the drawing, where it hid the network's last column.
     const walking = Boolean(net) && this.walk.step > 0 && Boolean(this.grad);
     const saysH = walking ? (W < 560 ? 76 : 58) : 0;
-    const ch = Math.max(180, H - headH - 44 - (tight ? 72 : 38) - (this.askOpen ? (served ? stripHeight(W) : 42) : 0) - (this.deploy ? 34 : 0) - BAND_H - 14 - saysH);
+    const ch = Math.max(180, H - headH - 44 - (tight ? 72 : 38) - (this.askOpen ? (served ? stripHeight(W) : 42) : 0) - (this.deploy ? 34 : 0) - (saveShows(this) ? SAVE_H : 0) - BAND_H - 14 - saysH);
     // The neuron panel: always beside the drawing on a wide page; under a shorter drawing while a neuron is open
     // on a narrower one; and in the drawing's place only on a page too tight for both.
     const sp = splitOf(W, ch, Boolean(this.sel));
@@ -670,6 +677,8 @@ export default class CaptainWeights extends View {
         .child(Button(c, "wt-retry", "Try again", (_e, cx) => this.open(this.model, cx), { small: true }))))
       .when(Boolean(net), (e) => e
         .when(Boolean(this.deploy), (x) => x.child(DeployLine(c, this)))
+        // Changes that are in no version yet, and the one button that saves them.
+        .when(saveShows(this), (x) => x.child(SaveLine(c, this)))
         // A network the services hold: a goal for an agent they start. The one kept in this page: prompts to hand over.
         .when(this.askOpen, (x) => x.child(served ? AgentStrip(c, this) : this.askStrip(c)))
         .child(this.inputs(c))

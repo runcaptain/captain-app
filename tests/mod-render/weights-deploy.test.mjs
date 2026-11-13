@@ -56,7 +56,7 @@ test('one press saves the session and deploys it to this computer, and the line 
   await h.idle(30);
   const sent = asked.find(([m, p]) => m === 'POST' && p === '/api/projects/shop/deploy');
   assert.deepEqual(sent[2], { session: 'ws-1', host: 'local', by: 'you' }, 'the session and this computer, in the services\' shape');
-  assert.equal(textOf(h, 'wt-deploy-text'), 'tiny, version 2 is deploying to this computer. Now: Starting it.');
+  assert.equal(textOf(h, 'wt-deploy-text'), 'Saved as tiny, version 2, and deploying it to this computer. Now: Starting it.');
   assert.ok(!h.byIdPrefix('wt-deploy-go')[0].call('on_click'), 'it cannot be pressed again while it deploys');
   // Nothing more is asked until the feed says the deployment changed.
   const before = asked.length;
