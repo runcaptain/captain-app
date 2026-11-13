@@ -389,10 +389,15 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
             return hit[1]
     srcs = sources(ctx)
     asked, found = [], {}
+    from . import cloud_watch as WT
+
+    slowed = {(w["cloud"], w["login"], w["region"]): w["text"] for w in WT.status(ctx) if w.get("text")}
     for s in srcs:
-        things, err = _ask(ctx, s)
+        # While a screen is looking, a watcher asks each place every second: its answer is used, and this read
+        # makes no call of its own.
+        things, err = WT.recent(ctx, s) or _ask(ctx, s)
         asked.append({"cloud": s["cloud"], "cloud_label": CLOUDS[s["cloud"]], "login": s["login"], "region": s["region"], "ok": err is None,
-                      "error": err, "found": len(things)})
+                      "error": err, "found": len(things), "watching": slowed.get((s["cloud"], s["login"], s["region"]))})
         found[(s["cloud"], s["login"], s["region"])] = (things, err)
     rows, matched = [], set()
     for pr, env, rec in records:
