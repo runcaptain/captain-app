@@ -996,8 +996,31 @@ def test_cst_reads_the_older_layout(tmp_path):
     cst("weights", "open", "older")
     text = words("weights", "show", "older")
     for want in ("width 8, 3 layers, 2 heads", "2 heads, as the file says", "item vectors (cn): 20 by 8", "attention, layer 3",
-                 "tree ranker conv: 3 trees", "tree ranker full_nopcat_v1", "other files, kept unchanged and not read: blend.json, icp.json, offline_eval_a.json"):
+                 "tree ranker conv: 3 trees", "tree ranker full_nopcat_v1", "3 other files kept unchanged, not read"):
         assert want in text, want
     assert cst("weights", "attention", "--layer", "3")["layer"] == 2
     assert "item 1, price bucket 1, category category 1" in words("weights", "nearest", "cn", "0")
     assert "stored as float64" in words("weights", "edit", "set", "--tensor", "logit_scale", "--values", "3", code=1)
+
+
+def test_the_list_says_where_a_model_came_from_without_its_address_and_labels_can_be_read_by_range(svc, tmp_path):
+    folder, _ = make_enc_folder(svc.tmp / "somewhere-private")
+    R.import_from(svc.ctx, str(folder), "older")
+    rows = {r["id"]: r for r in svc.get("/api/weights/models")}
+    says = rows["older"]["source_says"]
+    assert re.fullmatch(r"Brought in from a training folder on this computer on \d{4}-\d\d-\d\d, 9 files kept unchanged\.", says), says
+    assert "somewhere-private" not in json.dumps(rows["older"]) and rows["tiny"]["source_says"] is None
+    assert svc.get("/api/weights/models/older")["source_says"] == says
+    m = WS.manifest(svc.ctx, "older")
+    assert R.source_says({**m, "source": {**m["source"], "from": "s3://made-up-models/arch/shop/v1"}}).startswith("Brought in from cloud storage on ")
+    sid = svc.post("/api/weights/sessions", {"model": "older"})["id"]
+    p = f"/api/weights/sessions/{sid}"
+    svc.post(p + "/edits", {"op": "zero", "tensor": "cn", "neurons": [0]})
+    svc.post(p + "/save")
+    assert "This version is older, version 1 with edits saved on " in {r["id"]: r for r in svc.get("/api/weights/models")}["older"]["source_says"]
+    part = svc.get(p + "/labels", tensor="cn", rows="5:8")
+    assert (part["rows"], part["rows_shown"]) == (ITEMS, [5, 8])
+    assert part["labels"] == ["item 5, price bucket 5, category category 5", "item 6, price bucket 0, category category 6", "item 7, price bucket 1, category category 0"]
+    assert svc.get(p + "/labels", tensor="cn")["rows_shown"] == [0, ITEMS] and len(svc.get(p + "/labels", tensor="cn", rows="3")["labels"]) == 1
+    assert svc.get(p + "/labels", tensor="act.weight", rows="0:2")["labels"] is None
+    assert "outside this tensor" in svc.get(p + "/labels", code=400, tensor="cn", rows="5:99")["error"]

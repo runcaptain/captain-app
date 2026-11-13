@@ -45,7 +45,7 @@ def parts_text(d: dict) -> str:
     for t in d.get("tables") or []:
         lines.append(f"lookup table {t['name']}: {_n(len(t['arrays']), 'array')}. {t['says']}")
     if d.get("other_files"):
-        lines.append("other files, kept unchanged and not read: " + ", ".join(f["name"] for f in d["other_files"]))
+        lines.append(f"{_n(len(d['other_files']), 'other file')} kept unchanged, not read")
     lines.append(d["can"]["says"])
     return "\n".join(lines)
 
@@ -53,7 +53,7 @@ def parts_text(d: dict) -> str:
 def show_text(w: dict) -> str:
     src = w.get("source") or {}
     return "\n".join([f"{w['name']} v{w['version']}. {w['says']}", parts_text(w),
-                      f"brought in from {src.get('from')}, {_n(len(src.get('files') or {}), 'file')} kept unchanged. Tensor digest {str(w.get('sha256'))[:16]}.",
+                      f"{w['source_says']} It came from {src.get('from')}. Tensor digest {str(w.get('sha256'))[:16]}.",
                       f"To read its numbers, open a session: `cst weights open {w['name']}`."])
 
 
@@ -68,13 +68,14 @@ def import_text(out: dict) -> str:
 def labels_text(r: dict) -> str:
     if not r["labels"]:
         return f"{r['tensor']}: {r['rows']:,} rows, numbered. " + (r["labels_says"] or "No list of names for them was saved beside the arrays.")
-    return "\n".join([f"{r['tensor']}: {r['rows']:,} rows. {r['labels_says']}"] + [f"  row {i}: {name}" for i, name in enumerate(r["labels"])])
+    return "\n".join([f"{r['tensor']}: {r['rows']:,} rows. {r['labels_says']}"] + [f"  row {i}: {name}" for i, name in enumerate(r["labels"], r["rows_shown"][0])])
 
 
 @weights_app.command("labels")
-def labels(tensor: str = typer.Argument(..., help="a table by name, such as price.weight"), session: Optional[str] = SESSION):
+def labels(tensor: str = typer.Argument(..., help="a table by name, such as price.weight"),
+           rows: Optional[str] = typer.Option(None, "--rows", help="only these rows, counted from 0: 3 or 0:50"), session: Optional[str] = SESSION):
     """What each row of a table stands for, when a list saved beside the arrays says: category names, price ranges."""
-    r = _do(R.labels, ctx(), _sid(session), tensor)
+    r = _do(R.labels, ctx(), _sid(session), tensor, rows=rows)
     emit(r, labels_text(r))
 
 

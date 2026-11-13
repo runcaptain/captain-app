@@ -565,6 +565,18 @@ def describe(m: dict) -> dict:
             "can": {"read": True, "edit": True, "run": False, "deploy": False, "says": NOT_YET, "edits_say": NOT_MEASURED}}
 
 
+def source_says(m: dict) -> str:
+    """Where a model came from, in one sentence a list can show. No folder, bucket or address is in it."""
+    src = m.get("source") or {}
+    place = "cloud storage" if is_address(src.get("from")) else "a training folder on this computer"
+    day = str(src.get("read_at") or "")[:10]
+    n = len(src.get("files") or {})
+    out = f"Brought in from {place}" + (f" on {day}" if day else "") + f", {S._plural(n, 'file')} kept unchanged."
+    if m.get("base"):
+        out += f" This version is {m['base'].replace('@v', ', version ')} with edits saved on {str(m.get('created_at') or '')[:10]}."
+    return out
+
+
 def whole(ctx, model: str, sid: str | None = None) -> dict | None:
     """This kind's answer to `GET /api/weights/models/{model}`: the description, with `parts` to draw. None for
     any other kind. No number is in it, with a session or without."""
@@ -576,7 +588,7 @@ def whole(ctx, model: str, sid: str | None = None) -> dict | None:
     src = m.get("source") or {}
     out = {"id": m["name"], "name": m["name"], "version": m.get("version"), "says": m.get("says") or "", "numbers": False,
            "sizes": [], "layers": [], "examples": [], "test": [], "synthetic": False, "data_note": (m.get("data") or {}).get("note") or "",
-           "base": m.get("base"), "note": m.get("note") or "", "cost": None, "sha256": m.get("sha256"),
+           "base": m.get("base"), "note": m.get("note") or "", "cost": None, "sha256": m.get("sha256"), "source_says": source_says(m),
            "source": {"from": src.get("from"), "read_at": src.get("read_at"), "files": src.get("files") or {},
                       "manifest_yaml": bool(src.get("manifest_yaml"))}, **d}
     if sid:
@@ -822,12 +834,14 @@ def _labels(m: dict, tensor: str, t: np.ndarray, cur: dict | None = None) -> dic
     return {**none, "says": f"{source} holds {made} for {rows:,} rows, so which row is which is not known. Rows are numbered.", "source": source}
 
 
-def labels(ctx, sid: str, tensor: str, by: str | None = None, watch: bool = False) -> dict:
-    """What each row of a table stands for, when a list saved beside the arrays says. Not an event: it shows no number."""
+def labels(ctx, sid: str, tensor: str, by: str | None = None, watch: bool = False, rows=None) -> dict:
+    """What each row of a table stands for, when a list saved beside the arrays says. Not an event: it shows no number.
+    `rows` (3 or 0:50) gives the names of those rows only."""
     def fn(st):
         t = _matrix(st, tensor)
         got = _labels(st.manifest, tensor, t, st.cur)
-        return {"tensor": tensor, "rows": int(t.shape[0]), "labels": got["names"], "labels_from": got["source"], "labels_says": got["says"],
+        r0, r1 = S._span(rows, t.shape[0], "Rows")
+        return {"tensor": tensor, "rows": int(t.shape[0]), "rows_shown": [r0, r1], "labels": got["names"][r0:r1] if got["names"] else None, "labels_from": got["source"], "labels_says": got["says"],
                 "extra_row": got["extra_row"], "sure": got["sure"]}
     return S._do(ctx, sid, fn, watch="record")
 
