@@ -121,6 +121,7 @@ class Feed:
         self._listening: collections.Counter = collections.Counter()
         self._left: dict[str, float] = {}   # topics someone listened to a moment ago
         self._heard: list = []              # callbacks told of every bump, for a connection that stays open
+        self._asks: dict[str, int] = {}     # client -> its newest request: an older one of the same client lets go
         self.last_listener = 0.0
 
     def bump(self, *topics: str) -> int:
@@ -180,10 +181,20 @@ class Feed:
         self.listen(ts)
         self.unlisten(ts)
 
-    def wait(self, since: int | None, topics=None, timeout: float = HOLD_S) -> dict:
+    def wait(self, since: int | None, topics=None, timeout: float = HOLD_S, client: str | None = None) -> dict:
         """Hold until one of `topics` changes after `since`, or `timeout` passes. With no `since` it answers at
-        once with the current sequence, so a client reads everything once and then waits from there."""
+        once with the current sequence, so a client reads everything once and then waits from there.
+
+        A client cannot end a request it has open. So when one that names itself (`client`) asks again, for
+        other topics, its older request answers at once with nothing: the new one is the one that counts."""
         want = None if topics is None else set(topics)
+        mine = None
+        if client:
+            with self.cond:
+                mine = self._asks[client] = self._asks.get(client, 0) + 1
+                if len(self._asks) > 4096:
+                    self._asks = {client: mine}
+                self.cond.notify_all()
         if not since:
             return self.answer(since, topics)
         end = time.monotonic() + max(0.0, float(timeout))
@@ -195,7 +206,7 @@ class Feed:
                     if changed or reset:
                         return {"seq": self.seq, "changed": changed, "reset": reset, "at": _now()}
                     left = end - time.monotonic()
-                    if left <= 0:
+                    if left <= 0 or (mine is not None and self._asks.get(client) != mine):
                         return {"seq": self.seq, "changed": [], "reset": False, "at": _now()}
                     self.cond.wait(left)
         finally:

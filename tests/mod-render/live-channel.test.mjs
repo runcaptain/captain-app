@@ -30,7 +30,7 @@ assert.equal(timers.length, 1, 'one timer for the whole mod, however many watche
 answer = () => ok(10);
 await tick();
 assert.equal(asked.length, 1);
-assert.equal(asked[0], `/api/changes?topics=${encodeURIComponent('deployed,deployment:shop,run:')}&wait=${WAIT_S}`, 'the first request has no since: it learns where the feed is');
+assert.equal(asked[0], `/api/changes?topics=${encodeURIComponent('deployed,deployment:shop,run:')}&wait=${WAIT_S}&client=${liveState().client}`, 'the first request has no since: it learns where the feed is');
 assert.deepEqual([liveState().state, liveState().seq], ['live', 10]);
 assert.deepEqual(heard, { list: [], page: [] }, 'learning where the feed is calls nobody: each screen read once when it showed');
 
@@ -101,5 +101,39 @@ answer = (path) => (path.includes('deployed,') ? ok(99, ['deployed']) : ok(30, [
 await tick(1000); await tick(1000);
 assert.equal(heard.list.length, quiet);
 assert.ok(!decodeURIComponent(asked.at(-1)).includes('deployed,'), 'only what is still watched is asked for');
+
+// ---- a new topic is listened to at once, not when the open request ends (up to 25 s) ------------------------------
+liveReset();
+asked.length = 0; held.length = 0;
+const page = [];
+answer = () => ok(40);
+let stopPage = watchLive(cx, ['project:shop'], (_cx, why, topics) => page.push([why, topics]));
+await tick();
+answer = null;
+await tick(1100); // the first answer came at once, so the next request waits a second
+assert.equal(held.length, 1, 'one request is open, for the first project');
+const open = asked.length;
+// The page opens another project: no tick, no wait.
+stopPage();
+stopPage = watchLive(cx, ['project:gifts'], (_cx, why, topics) => page.push([why, topics]));
+await new Promise((r) => setImmediate(r));
+assert.ok(asked.length > open, 'a new request went out the moment the topics changed');
+assert.ok(decodeURIComponent(asked.at(-1)).includes('topics=project:gifts&') && asked.at(-1).endsWith('&since=40'), asked.at(-1));
+assert.ok(asked.at(-1).includes(`&client=${liveState().client}`), 'it names this mod, so the feed lets the older request go');
+// The old request's answer, whenever it comes, is dropped: it cannot wind the sequence back or call anyone.
+const old = held.shift();
+held.pop()(ok(41, ['project:gifts']));
+await new Promise((r) => setImmediate(r));
+assert.deepEqual(page, [['changed', ['project:gifts']]], 'the new project is heard');
+old(ok(40, []));
+await new Promise((r) => setImmediate(r));
+assert.equal(liveState().seq, 41, 'an answer to a request left behind changes nothing');
+await tick(); await tick();
+assert.equal(held.length, 1, 'and still one request open, not two');
+// The same topics again do not reopen anything.
+const same = asked.length;
+watchLive(cx, ['project:gifts'], () => {});
+await new Promise((r) => setImmediate(r));
+assert.equal(asked.length, same, 'a second watcher of the same topic asks nothing new');
 console.log('live channel: ok');
 process.exit(0);

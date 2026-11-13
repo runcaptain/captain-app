@@ -31,6 +31,9 @@ const S = {
   state: "connecting", // connecting | live | reconnecting
   since: 0, // when the state last changed
   asking: false,
+  gen: 0, // rises when the topics change: an answer to an older request is dropped
+  askedFor: null, // the topics of the request that is open
+  client: `m${Math.random().toString(36).slice(2, 10)}`, // this mod's name to the feed, so it lets an older request go
   nextAsk: 0, // not before this time
   failures: 0,
   lastFallback: 0,
@@ -39,18 +42,21 @@ const S = {
   now: () => Date.now(),
 };
 
+let PUMPED = new WeakSet(); // the views that have a pump timer
+
 /** For tests: the request function and the clock. */
 export function liveTransport(ask, now) { if (ask) S.ask = ask; if (now) S.now = now; }
 
 /** Forget everything (a test starting over). */
 export function liveReset() {
   S.watchers.clear();
-  Object.assign(S, { seq: null, state: "connecting", since: 0, asking: false, nextAsk: 0, failures: 0, lastFallback: 0, pumping: false });
+  PUMPED = new WeakSet();
+  Object.assign(S, { seq: null, state: "connecting", since: 0, asking: false, gen: 0, askedFor: null, nextAsk: 0, failures: 0, lastFallback: 0, pumping: false });
 }
 
 /** "live" while the feed answers; "reconnecting" while it can't be reached (the screens are then re-read every two
  *  seconds); "connecting" before the first answer. `since` is when that began. */
-export function liveState() { return { state: S.state, since: S.since, seq: S.seq, watchers: S.watchers.size }; }
+export function liveState() { return { state: S.state, since: S.since, seq: S.seq, watchers: S.watchers.size, client: S.client }; }
 
 /** The words for a screen's Updated line. While the feed is down: "Reconnecting". Else how long ago `at` (a time
  *  in ms, the screen's last successful read) was: "Updated just now", "Updated 4 s ago", "Updated 3 min ago". */
@@ -100,10 +106,15 @@ export function livePump(cx) {
   S.asking = true;
   const topics = topicsAsked();
   const started = now;
-  const path = `/api/changes?topics=${encodeURIComponent(topics.join(","))}&wait=${WAIT_S}${S.seq !== null ? `&since=${S.seq}` : ""}`;
+  const gen = S.gen;
+  S.askedFor = topics.join(",");
+  const path = `/api/changes?topics=${encodeURIComponent(S.askedFor)}&wait=${WAIT_S}&client=${S.client}${S.seq !== null ? `&since=${S.seq}` : ""}`;
   const go = async (cx) => {
     let r;
     try { r = await S.ask(path, { timeout: WAIT_S + 4, scoped: false }); } catch { r = { ok: false }; }
+    // The topics changed while this was open: a newer request has taken its place, and this answer is dropped.
+    // Nothing is lost, since the newer one asked from the same sequence.
+    if (gen !== S.gen) return;
     S.asking = false;
     const took = S.now() - started;
     // A request held to its end with nothing to say comes back as a timeout from some transports: that is the feed
@@ -134,6 +145,17 @@ export function livePump(cx) {
   if (cx?.spawn) cx.spawn(go); else go(cx);
 }
 
+/** The watchers changed. If the topics they ask for are not the ones the open request asked for, that request is
+ *  left behind and a new one goes out now: a page that opens another thing is listening to it at once, not when
+ *  the old request ends (up to 25 s). The feed lets the old one go when it sees this client ask again. */
+function retopic(cx) {
+  if (S.askedFor === null || topicsAsked().join(",") === S.askedFor) return;
+  S.gen++;
+  S.asking = false;
+  S.nextAsk = 0;
+  if (S.watchers.size) livePump(cx);
+}
+
 /** Call `onChange(cx, why, topics)` when one of `topics` changes. `why` is "changed" (with the topics that did),
  *  "reset" or "reconnected" (something may have been missed: read everything), or "fallback" (the feed is down: this
  *  is the two-second re-read). Returns a function that stops watching. The first watcher in a mod starts the mod's
@@ -141,13 +163,15 @@ export function livePump(cx) {
 export function watchLive(cx, topics, onChange) {
   const w = { topics: [...new Set((Array.isArray(topics) ? topics : [topics]).filter(Boolean).map(String))], fn: onChange, cx };
   S.watchers.add(w);
-  // A new topic: the request in flight does not ask for it, so the next one goes out at once.
-  S.nextAsk = 0;
-  if (!S.pumping) {
+  // One pump for each view that watches: a view's timer goes away with the view, so a view opened later must
+  // not rely on the timer of one that is gone. Two pumps never ask twice: only one request is open at a time.
+  if (!PUMPED.has(cx)) {
+    PUMPED.add(cx);
     S.pumping = true;
     cx.timer.every(PUMP_MS, (cx) => livePump(cx));
   }
-  return () => { S.watchers.delete(w); };
+  retopic(cx);
+  return () => { S.watchers.delete(w); retopic(cx); };
 }
 
 /** Change what a watcher follows (a page that opens another thing): returns the new stop function. */

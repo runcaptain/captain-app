@@ -3293,10 +3293,12 @@ def _topics(text: str | None) -> list[str] | None:
 
 
 @app.get("/api/changes", dependencies=A)
-async def changes_wait(since: int | None = None, topics: str | None = None, wait: float | None = None, hold: float | None = None):
+async def changes_wait(since: int | None = None, topics: str | None = None, wait: float | None = None, hold: float | None = None,
+                       client: str | None = None):
     """Held open until one of `topics` (comma separated) changes after `since`, for `wait` seconds (25 at most,
     and when not given), then {seq, changed: [{topic, seq}], reset, at}: each topic with the sequence of its
-    latest change. `wait=0` answers at once. Ask again with the `seq` it gave. With no `since`, or 0, it answers at once with
+    latest change. `wait=0` answers at once. `client=<any name>`: when the same client asks again (its topics
+    changed), its older open request answers at once with nothing. Ask again with the `seq` it gave. With no `since`, or 0, it answers at once with
     the current `seq`: read everything once, then wait from there. A `since` older than the feed remembers, or
     from before the service restarted, answers at once with `reset: true`: read everything again. With no
     `topics` it answers for any change. Topics: projects, project:<id>, data, table:<name>, runs, run:<id>, jobs,
@@ -3315,7 +3317,7 @@ async def changes_wait(since: int | None = None, topics: str | None = None, wait
 
         # Its own threads: a client that waits must never take one from the requests that do work.
         _CHANGES_POOL = ThreadPoolExecutor(max_workers=64, thread_name_prefix="changes")
-    return part(await asyncio.get_running_loop().run_in_executor(_CHANGES_POOL, CH.FEED.wait, since, _topics(topics), max(0.0, min(float(CH.HOLD_S if hold is None else hold), CH.HOLD_S))))
+    return part(await asyncio.get_running_loop().run_in_executor(_CHANGES_POOL, CH.FEED.wait, since, _topics(topics), max(0.0, min(float(CH.HOLD_S if hold is None else hold), CH.HOLD_S)), client))
 
 
 @app.websocket("/api/changes/ws")

@@ -12,7 +12,7 @@ import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { ago, money, ms, count, Spark, Updated, deployingWords, spanWords } from "./words.js";
 import { ModelPage } from "./model.js";
-import { watchLive } from "./live.js";
+import { watchLive, liveState } from "./kit/live.js";
 
 const UP = ["running", "asleep", "starting", "unknown"];
 
@@ -65,11 +65,9 @@ export default class CaptainDeployments extends View {
     // the list, an open model's page, a job it started. Whoever made the change, here, on another screen, in a
     // terminal or in the cloud's own console. It asks nothing on a clock while the channel is up.
     this.live = this.demo ? this.live  // a sample has nothing to listen to
-      : watchLive(cx, () => this.topics(), (cx, changed, reset) => this.heard(cx, changed, reset));
+      : this.listen(cx);
     // The page's own clock, once a second: a deploying row's seconds and "Not updating". It reads nothing.
     cx.timer.every(1000, (cx) => { if (this.deployingNow() || Object.keys(this.following).length || !this.live.up()) cx.notify(); this.giveUp(cx); });
-    // Only while the channel is down: read the list and ask after jobs every two seconds, and try the channel again.
-    cx.timer.every(2000, (cx) => { if (this.live.up()) return; this.load(cx); this.follow(cx); this.live.kick(cx); });
     // An open model's numbers are paid reads with no topic of their own: once a minute, as before.
     cx.timer.every(60000, (cx) => this.page?.refresh(cx));
     // A link on another screen can't reach this screen's props: it sets the shared "open" value and selects this
@@ -96,6 +94,15 @@ export default class CaptainDeployments extends View {
   topics() {
     return ["deployed", ...(this.page?.row?.project ? [`deployment:${this.page.row.project}`] : []),
       ...Object.values(this.following).map((f) => `job:${f.job}`)];
+  }
+
+  /** The kit's one live channel (kit/live.js), in the shape this screen uses: `up()` says whether it is alive.
+   *  It watches the list, and every deployed model and every job by kind, and `heard` picks its own from them, so
+   *  a page opened or a job started is listened to already. While the channel is down the kit calls every two
+   *  seconds, which reads the list, the open page and the jobs again. */
+  listen(cx) {
+    watchLive(cx, ["deployed", "deployment:", "job:"], (cx, why, topics) => this.heard(cx, why === "changed" ? topics : [], why !== "changed"));
+    return { up: () => liveState().state === "live", kick() {} };
   }
 
   /** Something this screen shows changed. `reset` is the first answer, or a feed that lost track: read it all. */

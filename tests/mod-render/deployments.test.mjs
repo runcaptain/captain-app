@@ -83,10 +83,17 @@ const FOUND = row({ id: 'cloud:aws:work-aws:us-west-1:captain-old-experiment-sta
 const asked = [{ cloud: 'aws', cloud_label: 'AWS', login: 'work-aws', region: 'us-west-1', ok: true, error: null, found: 1 }];
 
 const { default: Deployments } = await import(path.join(dir, 'main.js'));
-const open = async (w) => { world = w; sent = []; const h = harness(Deployments); await h.start(); for (let i = 0; i < 60 && !h.mod.d; i++) await h.idle(30); await h.idle(120); return h; };
+// The screen listens through the kit's one live channel (kit/live.js). The test holds the channel's clock: each
+// tick is a little over two seconds, which is the kit's re-read while the channel is down.
+const { liveTransport, liveReset } = await import(path.join(dir, 'kit/live.js'));
+let liveNow = 5_000_000;
+liveTransport(null, () => liveNow);
+const open = async (w) => { liveReset(); world = w; sent = []; const h = harness(Deployments); await h.start(); for (let i = 0; i < 60 && !h.mod.d; i++) await h.idle(30); await h.idle(120);
+  // One pass of the timers: the channel asks the feed for the first time, and finds it up or down.
+  liveNow += 2100; await h.layoutLists({}); await h.idle(80); sent = sent.filter((x) => !x[1].startsWith('/api/changes')); return h; };
 const byId = (h, id) => h.byIdPrefix(id).filter((e) => e.call('id')?.[0] === id);
 // The harness runs a screen's timers only when asked: this is one tick of them, then whatever they started.
-const tick = async (h) => { await h.layoutLists({}); await h.idle(80); };
+const tick = async (h) => { liveNow += 2100; await h.layoutLists({}); await h.idle(80); };
 const shown = (h) => ['shop', 'trail', 'kids', 'gifts'].filter((p) => byId(h, `dep-row-${p}:staging`).length === 1).join(' ');
 const filled = (h) => h.byIdPrefix('').filter((e) => e.calls?.some?.((x) => x[0] === 'bg' && x[1]?.[0] === h.palette?.solid));
 
@@ -460,7 +467,8 @@ for (let i = 0; i < 4 && !h.text().includes('Removing the endpoint'); i++) await
 assert.ok(h.text().includes('Stopping on AWS: Removing the endpoint...') || h.text().includes('Stopped. It no longer answers or bills.'), `then the step it is on: ${h.text().slice(0, 500)}`);
 world.deployed = STOPPED;
 await tick(h); await tick(h);
-assert.ok(h.text().includes('Stopped. It no longer answers or bills.') && byId(h, 'dep-busy-shop:staging').length === 0, `it says what was done: ${h.text().slice(0, 300)}`);
+// Whichever lands first says it: the job's own last words, or the list's (the row is already stopped there).
+assert.ok((h.text().includes('Stopped. It no longer answers or bills.') || h.text().includes('Stopped by dana, just now.')) && byId(h, 'dep-busy-shop:staging').length === 0, `it says what was done: ${h.text().slice(0, 300)}`);
 assert.ok(shown(h) === 'trail' && h.text().includes('Stopped earlier: 1 model.') && h.text().includes('1 model running.'), `and the list is the truth, without a click: ${shown(h)}`);
 assert.ok(sent.some((x) => x[1] === '/api/deployed?fresh=true'), 'read fresh after the action');
 
@@ -523,11 +531,14 @@ assert.ok(!h.text().includes('Not updating') && h.text().includes('Updated just 
 }
 
 // ---- live: the screen listens to the change feed, and asks nothing on a clock ----
-const tell = async (changed, more) => { const w = world.waiting; world.waiting = null; w(changed, more); await h.idle(150); };
+// The feed answers the request it holds, and the kit opens the next one on its own timer.
+const tell = async (changed, more) => { const w = world.waiting; world.waiting = null; w(changed, more); await h.idle(150); await tick(h); };
+const KINDS = ['deployed', 'deployment:', 'job:'];
 h = await open({ live: true, seq: 1000, deployed: RUNNING2, numbers: { shop: numbers(8640) } });
+await tick(h); await tick(h); // the channel learns where the feed is, then holds a request open
 await h.idle(150);
 assert.ok(h.text().includes('Live') && !/Updated/.test(h.text()), `with the channel up the title says Live: ${h.text().slice(0, 120)}`);
-assert.deepEqual(world.listened, ['deployed'], 'it listens for what it shows');
+assert.deepEqual(world.listened, KINDS, 'it listens for the list, and for every model and every job by kind, so a page or a job is heard at once');
 let quietReads = listReads();
 await tick(h); await tick(h);
 assert.equal(listReads(), quietReads, 'nothing is asked on a clock while the channel is up');
@@ -545,7 +556,7 @@ world.jobs = { 'job-9': [{ status: 'running', message: TITLE, log: [TITLE] }, { 
 const jobReads = () => sent.filter((x) => x[1].startsWith('/api/jobs/job-9')).length;
 await h.click('dep-stop-shop:staging');
 await h.idle(150);
-assert.ok(world.listened.includes('job:job-9') && world.listened.includes('deployed'), `the job is listened to: ${world.listened}`);
+assert.deepEqual(world.listened, KINDS, `the job is listened to: ${world.listened}`);
 assert.ok(h.text().includes('Stopping on AWS...') && jobReads() === 1, 'read once when it starts');
 await tick(h); await tick(h);
 assert.equal(jobReads(), 1, 'and not asked after on a clock');
@@ -559,7 +570,7 @@ assert.ok(byId(h, 'dep-busy-shop:staging').length === 0 && shown(h) === 'trail' 
 world.deployed = RUNNING2; await tell(['deployed']);
 await h.click('dep-open-shop:staging');
 await h.idle(150);
-assert.ok(world.listened.includes('deployment:shop'), `the open page's model is listened to: ${world.listened}`);
+assert.deepEqual(world.listened, KINDS, `the open page's model is listened to: ${world.listened}`);
 assert.ok(h.text().includes('Live') && !/Updated \d/.test(h.text()), 'the page says Live too, and no time that climbs');
 const whereReads = () => sent.filter((x) => x[1].includes('/deployed/where')).length;
 const beforeWhere = whereReads();
@@ -571,6 +582,7 @@ await tell([], { reset: true });
 assert.ok(listReads() > quietReads, 'reset: read it all again');
 // The channel dies: after 15 seconds with no good read the title says so, and the screen reads on a 2 second tick.
 h = await open({ live: true, seq: 2000, deployed: RUNNING2, numbers: { shop: numbers(8640) } });
+await tick(h); await tick(h);
 await h.idle(150);
 assert.ok(h.text().includes('Live'));
 world.live = false; world.deployedFail = true;
