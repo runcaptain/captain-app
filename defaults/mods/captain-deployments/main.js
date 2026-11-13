@@ -12,6 +12,7 @@ import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { ago, money, ms, count, Spark, Updated, deployingWords, spanWords } from "./words.js";
 import { ModelPage } from "./model.js";
+import { ModelCard } from "./card.js";
 import { watchLive, liveState } from "./kit/live.js";
 
 const UP = ["running", "asleep", "starting", "unknown"];
@@ -339,95 +340,55 @@ export default class CaptainDeployments extends View {
       .child(Button(c, "dep-ask-no", "Cancel", (_e, cx) => { this.ask = null; cx.notify(); }, { small: true })));
   }
 
-  /** A model being deployed: what is being done now, how long it has taken and how long it usually takes, counted
-   *  on this page's clock, then each step with its state. No button: nothing can be done to a model still being made. */
-  deployingRow(c, r) {
-    const g = r.deploying;
-    const word = { done: "Done", running: "Now", pending: "Next", skipped: "Not needed", failed: "Failed" };
-    return v_flex().id(`dep-row-${r.id}`).gap(6).py(12).border_b(1).border_color(c.rule)
-      .child(h_flex().gap(10).items_center()
-        .child(r.cloud === "local" ? svg(icon("monitor")).size(16).text_color(c.navy) : Brand(c, r.cloud, 16))
-        .child(div().id(`dep-name-${r.id}`).text_size(16).font_semibold().text_color(c.navy).child(r.project_name ?? r.project))
-        .child(div().id(`dep-model-${r.id}`).min_w(0).truncate().text_size(14).text_color(c.grey900).child(r.model_label ?? r.model_version ?? "")))
-      .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(c.navy).child(deployingWords(g)))
-      .children((g.steps ?? []).map((st, i) => h_flex().id(`dep-step-${r.id}-${i}`).gap(10).items_center()
-        .child(div().w(84).flex_none().text_size(12.5).text_color(st.status === "running" ? c.navy : c.grey500).when(st.status === "running", (e) => e.font_semibold()).child(word[st.status] ?? ""))
-        .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(st.status === "running" ? c.navy : c.grey500).child(st.title ?? ""))
-        .child(div().w(190).flex_none().text_size(12.5).text_color(c.grey500)
-          .child(st.status === "done" && st.seconds != null ? spanWords(st.seconds) : st.status === "running" || st.status === "pending" ? (st.typical ? `usually ${st.typical}` : "") : ""))))
-      .when(Boolean(g.last_line), (e) => e.child(div().id(`dep-line-${r.id}`).text_size(12.5).line_height("18px").text_color(c.grey500).child(String(g.last_line))))
-      .child(div().text_size(12.5).text_color(c.grey500).child([r.by_name ? `Started by ${r.by_name}` : null, ago(r.since)].filter(Boolean).join(", ") + "."));
+  /** One model as its card (card.js): the one action that matters now, and the rest behind Details. `page` is the
+   *  card as the header of the model's own page, where the rest is shown and Details is not offered. */
+  card(c, r, page = false) {
+    const up = UP.includes(r.state), found = r.link === "unlinked", inCloud = r.in_cloud !== false;
+    const deploying = r.state === "deploying" && r.deploying;
+    const a = (id, label, go, kind) => ({ id: `dep-${id}-${r.id}`, label, go, kind });
+    const details = a("open", "Details", (_e, cx) => this.openRow(r, cx));
+    const remove = a("remove", "Remove from the cloud", (_e, cx) => this.remove(r, cx));
+    const start = (label) => (r.model_version ? a("start", label, (_e, cx) => this.start(r, cx)) : null);
+    let action = null, more = [];
+    if (deploying) { /* nothing can be done to a model still being made */ }
+    else if (found) { action = a("link", "Link to a project", (_e, cx) => this.linkTo(r, cx)); more = [remove]; }
+    else if (r.link === "unknown") more = [details];
+    else if (up) { action = a("stop", "Stop", (_e, cx) => this.stop(r, cx), "secondary"); more = [details]; }
+    // In a cloud and not answering: the one thing to do is deploy it again. It can also be removed.
+    // Removing it is behind Details, on its own page.
+    else if (inCloud) { action = start("Deploy again"); more = page ? [remove] : [details]; }
+    // Stopped earlier: nothing of it is in a cloud. It can be started again, or forgotten.
+    else { action = start("Start again"); more = [a("forget", "Forget it", (_e, cx) => this.forgetIt(r, cx))]; }
+    if (page) more = more.filter((x) => x !== details);
+    const copied = this.copied?.startsWith(`${r.id}:`) ? this.copied.slice(r.id.length + 1) : null;
+    return ModelCard(c, r, {
+      numbers: this.nums[r.id] ?? null, busy: this.busy[r.id] ?? null, action, more, copied,
+      question: this.ask?.id === r.id ? this.question(c) : null,
+      // What Captain corrected in its own record is bookkeeping: on the model's page, not on its card in the list.
+      notes: [...(page ? (r.corrected ?? []) : []), ...(r.deploying && !deploying ? [`A new version is on its way. ${deployingWords(r.deploying)}`] : [])],
+      raw: page,
+      onCopy: (what, _e, cx) => this.copy(r, what, cx),
+    });
+  }
+
+  /** Copy the address, or a request that tries it. The request is read from the model's own facts when asked for. */
+  copy(r, what, cx) {
+    const done = (text) => { if (text) cx.write_to_clipboard?.(String(text)); this.copied = `${r.id}:${what}`; cx.notify(); };
+    if (what === "address" || this.demo) return done(what === "address" ? r.address : this.demo?.model?.where?.facts?.find((f) => f.id === "call")?.value);
+    cx.spawn(async (cx) => {
+      const w = await api(`/api/projects/${encodeURIComponent(r.project)}/deployed/where?env=${encodeURIComponent(r.env ?? "staging")}`, { timeout: 60 });
+      const call = w.ok ? w.data?.facts?.find((f) => f.id === "call")?.value : null;
+      if (call) done(call); else { this.note = "A test request could not be made for this model just now."; cx.notify(); }
+    });
   }
 
   row(c, r) {
-    if (r.state === "deploying" && r.deploying) return this.deployingRow(c, r);
-    const n = this.nums[r.id];
-    const s = n?.summary ?? {};
-    const busy = this.busy[r.id];
-    const up = UP.includes(r.state);
-    const found = r.link === "unlinked";
-    const wrong = r.state === "failed" || r.state === "gone";
-    // The last hour, from the newest twelve five-minute counts of the day's numbers.
-    const hour = (n?.buckets ?? []).slice(-12).map((b) => b.requests ?? 0);
-    const buttons = busy ? [div().id(`dep-busy-${r.id}`).text_size(12.5).text_color(c.grey500).child(`${busy}...`)]
-      : found ? [Button(c, `dep-link-${r.id}`, "Link to a project", (_e, cx) => this.linkTo(r, cx), { small: true }),
-        Button(c, `dep-remove-${r.id}`, "Remove from the cloud", (_e, cx) => this.remove(r, cx), { small: true })]
-        : r.link === "unknown" ? [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true })]
-          : up ? [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true }),
-            Button(c, `dep-stop-${r.id}`, "Stop", (_e, cx) => this.stop(r, cx), { small: true }),
-            Button(c, `dep-back-${r.id}`, "Go back to an earlier version", (_e, cx) => this.openRow(r, cx, "details"), { small: true })]
-            // Something in a cloud that is not answering (it failed): it can be looked at, and removed from the cloud.
-            : r.in_cloud !== false ? [Button(c, `dep-open-${r.id}`, "Open", (_e, cx) => this.openRow(r, cx), { small: true }),
-              Button(c, `dep-remove-${r.id}`, "Remove from the cloud", (_e, cx) => this.remove(r, cx), { small: true })]
-              // Stopped earlier: nothing of it is in a cloud, so there is nothing to remove from one. Captain can start
-              // it again, or forget it.
-              : [...(r.model_version ? [Button(c, `dep-start-${r.id}`, "Start again", (_e, cx) => this.start(r, cx), { small: true })] : []),
-                Button(c, `dep-forget-${r.id}`, "Forget it", (_e, cx) => this.forgetIt(r, cx), { small: true })];
-    // Who deployed it and when, by the name before the @. When it stopped is in the state's own sentence.
-    const when = ago(r.since);
-    const who = r.by ? [`Deployed by ${r.by_name ?? r.by}`, when].filter(Boolean).join(", ") : when ? `Made ${when}` : null;
-    const numbers = found || !n ? null : [
-      s.requests != null ? `${count(s.requests)} request${s.requests === 1 ? "" : "s"} in 24 hours` : null,
-      s.requests ? (s.errors ? `${count(s.errors)} failed` : "none failed") : null,
-      s.p50_ms != null ? `typically ${ms(s.p50_ms)}` : null,
-    ].filter(Boolean).join(", ");
-    const cost = found || !n?.cost ? null : [
-      n.cost.hourly_usd ? `${money(n.cost.hourly_usd)} an hour` : up ? null : "Costs nothing now",
-      // Said only when there is something to say: a month's cost that is not known is not "$0.00".
-      n.cost.month_usd > 0 ? `about ${money(n.cost.month_usd)} this month` : null,
-    ].filter(Boolean).join(", ");
-    return v_flex().id(`dep-row-${r.id}`).gap(6).py(12).border_b(1).border_color(c.rule)
-      .child(h_flex().gap(10).items_center()
-        .child(r.cloud === "local" ? svg(icon("monitor")).size(16).text_color(c.navy) : Brand(c, r.cloud, 16))
-        // The project and the model first, and largest: they are what a person looks for.
-        .child(div().id(`dep-name-${r.id}`).text_size(16).font_semibold().text_color(c.navy).child(found ? r.name : (r.project_name ?? r.project)))
-        .child(div().id(`dep-model-${r.id}`).min_w(0).truncate().text_size(14).text_color(c.grey900).child(found ? "" : (r.model_label ?? r.model_version ?? "Model version not known")))
-        .child(div().flex_1())
-        // Drawn only when the last hour had requests: an empty chart is a faint line that says nothing.
-        .when(hour.some((v) => v > 0) && !found, (e) => e.child(Spark(c, `dep-spark-${r.id}`, hour))))
-      .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(wrong && r.in_cloud !== false ? c.fail : c.navy)
-        .child(r.remembered_text ? `${r.state_text} ${r.remembered_text}` : r.state_text))
-      // A new version going onto a model that is running: it keeps answering, and the row says what is happening.
-      .when(Boolean(r.deploying), (e) => e.child(div().id(`dep-new-version-${r.id}`).text_size(13).line_height("19px").text_color(c.navy)
-        .child(`A new version is on its way. ${deployingWords(r.deploying)}`)))
-      // Where it lives: the address a site calls, to copy, and one line about the system it runs on.
-      .when(Boolean(r.address) && r.in_cloud !== false, (e) => e.child(h_flex().gap(8).items_center()
-        // The code font is for the one thing here a person copies, and nothing else.
-        .child(div().id(`dep-address-${r.id}`).min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(c.navy).child(String(r.address)))
-        .child(Button(c, `dep-copy-${r.id}`, this.copied === r.id ? "Copied" : "Copy", (_e, cx) => { cx.write_to_clipboard?.(String(r.address)); this.copied = r.id; cx.notify(); }, { small: true }))))
-      .child(div().id(`dep-system-${r.id}`).text_size(12.5).line_height("18px").text_color(c.grey500)
-        .child([[r.cloud_label, r.account].filter(Boolean).join(", "), r.cloud === "local" ? null : r.region, r.machine_words ?? (r.cloud === "local" ? null : r.machine),
-          r.copies_words, who].filter(Boolean).join(". ") + "."))
-      .when(Boolean(numbers || cost), (e) => e.child(div().id(`dep-numbers-${r.id}`).text_size(12.5).line_height("18px").text_color(c.grey500)
-        .child([numbers, cost].filter(Boolean).join(". ") + ".")))
-      .children((r.corrected ?? []).map((x, i) => div().id(`dep-fixed-${r.id}-${i}`).text_size(12.5).line_height("18px").text_color(c.grey500).child(x)))
-      .when(this.ask?.id === r.id, (e) => e.child(this.question(c)))
-      .when(this.ask?.id !== r.id, (e) => e.child(h_flex().gap(8).flex_wrap().children(buttons)));
+    return this.card(c, r);
   }
 
   openRow(r, cx, part = null) {
     this.page = new ModelPage(r, part, () => { this.page = null; }, this.demo?.model ?? null);
-    this.page.isLive = () => !this.demo && this.live.up();  // its title says "Live" while the channel is up
+    this.page.isLive = () => this.live.up();  // its title says "Live" while the channel is up, as the list's does
     this.page.load(cx);
     this.live.kick(cx);  // listen to this model from now
     cx.notify();
@@ -477,21 +438,22 @@ export default class CaptainDeployments extends View {
       .child(div().child(this[key] ? (list.find(([id]) => id === this[key])?.[1] ?? every) : every))
       .child(svg(icon(this.menu === key ? "chevron-up" : "chevron-down")).size(12).text_color(c.grey500));
     const open = this.menu === "cloud" ? ["cloud", "Every cloud", clouds] : this.menu === "project" ? ["project", "Every project", projects] : null;
-    if (clouds.length < 2 && projects.length < 2) return div();
-    return v_flex().id("dep-filters").gap(6)
-      .child(h_flex().gap(6).items_center()
-        .child(div().flex_1())
+    // The pickers sit on the title's line. An open one lists its choices on a line under the title.
+    if (clouds.length < 2 && projects.length < 2) return { pickers: null, list: null };
+    return {
+      pickers: h_flex().id("dep-filters").flex_none().gap(6).items_center()
         .when(clouds.length > 1, (e) => e.child(picker("cloud", "Every cloud", clouds)))
-        .when(projects.length > 1, (e) => e.child(picker("project", "Every project", projects))))
-      .when(Boolean(open), (e) => e.child(h_flex().id("dep-pick-list").gap(6).flex_wrap().justify_end()
+        .when(projects.length > 1, (e) => e.child(picker("project", "Every project", projects))),
+      list: open ? h_flex().id("dep-pick-list").gap(6).flex_wrap().justify_end()
         .child(chip(`dep-${open[0]}-all`, open[1], this[open[0]] === null, set(open[0], null)))
-        .children(open[2].map(([id, name]) => chip(`dep-${open[0]}-${id}`, name, this[open[0]] === id, set(open[0], id))))));
+        .children(open[2].map(([id, name]) => chip(`dep-${open[0]}-${id}`, name, this[open[0]] === id, set(open[0], id)))) : null,
+    };
   }
 
   render(cx) {
     const c = palette(isDark(theme()));
     const frame = (body) => v_flex().id("deployments").size_full().bg(c.canvas).font_family(FONT).text_color(c.navy).child(body);
-    if (this.page) return frame(this.page.render(c, cx));
+    if (this.page) return frame(this.page.render(c, cx, this.card(c, this.page.row, true)));
     const d = this.d;
     if (!d) return frame(div().p(24).child(Problem(c, this.problem ?? { starting: true }, (cx) => this.load(cx))));
     const picked = (r) => (!this.cloud || r.cloud === this.cloud) && (!this.project || r.project === this.project);
@@ -501,10 +463,18 @@ export default class CaptainDeployments extends View {
     const rows = here.filter(picked);
     const notAsked = d.asked.filter((a) => !a.ok);
     const places = this.created?.places ?? [];
+    const none = !here.length;
+    // Nothing at all: no model, none stopped earlier, nothing set up in any account. The page is one quiet card
+    // that says what this screen is for and offers the one thing to do.
+    const bare = none && !earlier.length && !places.length;
+    const filters = none ? { pickers: null, list: null } : this.filters(c, here);
     const head = h_flex().h(56).flex_none().px(24).gap(12).items_center().border_b(1).border_color(c.rule)
       .child(div().text_size(18).font_semibold().text_color(c.navy).child("Deployments"))
       // With nothing deployed the page itself says so: the line beside the title would only repeat it.
       .child(div().id("dep-summary").flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(d.text))
+      // The cloud and the project to show, at the right of the title's line. Each only when there is a choice.
+      .when(Boolean(filters.pickers), (e) => e.child(filters.pickers))
+      .when(!here.length && !bare && !this.ask, (e) => e.child(Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small: true })))
       // It keeps itself up to date, and says when it last was, or that a cloud could not be reached. No button to
       // press: a small refresh icon is there for someone who wants to ask now.
       .child(Updated(c, "dep-updated", { readAt: this.readAt, icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.load(cx, true),
@@ -513,29 +483,26 @@ export default class CaptainDeployments extends View {
         problem: notAsked.length ? `${[...new Set(notAsked.map((a) => a.cloud_label))].join(" and ")} could not be reached. Trying again.`
           : this.readAt && !this.demo && !this.live.up() && Date.now() - this.readAt > 15000 ? "Not updating. Refresh" : null,
         live: this.live.up() }));
-    const none = !here.length;
     const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small });
     const n = earlier.length;
     const body = v_flex().gap(18)
+      .when(Boolean(filters.list), (e) => e.child(filters.list))
       .when(Boolean(this.note), (e) => e.child(div().id("dep-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)))
       // Why a cloud could not be reached, once, in words a person can act on. What is shown for it is Captain's record.
       .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(12.5).line_height("18px").text_color(c.grey500)
         .child(`${a.cloud_label}${a.login && a.login.toLowerCase() !== a.cloud ? ` (${a.login})` : ""}: ${plainError(a.error, "no reason given")}. What is shown for it is Captain's own record.`)))
       // The list of models is what this screen is: it is always here, under its own heading, even with nothing in it.
       .child(v_flex().id("dep-models").gap(10)
-        .child(h_flex().gap(12).items_center()
-          .child(div().text_size(15).font_semibold().text_color(c.navy).child("Models"))
-          // The title already says "No models running.": saying it again here read as an echo.
-          .child(div().id("dep-models-line").flex_1())
-          // The next step, when nothing is answering. An open question takes the filled button in its place.
-          .when(none && !this.ask, (e) => e.child(deploy(true))))
         .when(this.ask?.id === "deploy", (e) => e.child(this.question(c)))
         // With nothing at all (no model, none stopped earlier, nothing set up in any account), one line says what
         // this screen is for. With anything else on the page, the page says it.
-        .when(none && !n && !places.length, (e) => e.child(div().id("dep-what-for").text_size(13).line_height("19px").text_color(c.grey500)
-          .child("A model you deploy from a project's page shows here: where it runs, the address to call, its traffic and what it costs. You can stop it, start it again or remove it from here.")))
-        .child(none ? div() : this.filters(c, here))
-        .child(v_flex().id("dep-list")
+        .when(bare, (e) => e.child(v_flex().id("dep-empty").w_full().items_center().gap(12).px(24).py(56).bg(c.surface).border_1().border_color(c.rule)
+          .child(svg(icon("rocket")).size(28).text_color(c.grey500))
+          .child(div().text_size(17).font_semibold().text_color(c.navy).child("Nothing is deployed yet"))
+          .child(div().id("dep-what-for").max_w(520).text_center().text_size(12.5).line_height("19px").text_color(c.grey500)
+            .child("A model you deploy from a project's page shows here: where it runs, the address to call, its traffic and what it costs. You can stop it, start it again or remove it from here."))
+          .when(!this.ask, (x) => x.child(div().pt(6).child(deploy(false))))))
+        .child(v_flex().id("dep-list").gap(14)
           .children(rows.map((r) => this.row(c, r)))
           .when(!none && !rows.length, (e) => e.child(div().id("dep-none-shown").py(16).text_size(13).text_color(c.grey500).child("No model matches. Change the cloud or the project above.")))))
       // Stopped earlier: one closed line. Nothing of these is in a cloud. Captain remembers them so they can be
@@ -545,7 +512,7 @@ export default class CaptainDeployments extends View {
           .child(div().id("dep-earlier-line").flex_1().text_size(13).line_height("19px").text_color(c.grey900).child(`Stopped earlier: ${n} model${n === 1 ? "" : "s"}.`))
           .child(Button(c, "dep-earlier-show", this.shownEarlier || earlier.some((r) => this.ask?.id === r.id) ? "Hide" : "Show",
             (_e, cx) => { this.shownEarlier = !this.shownEarlier; cx.notify(); }, { small: true })))
-        .when(this.shownEarlier || earlier.some((r) => this.ask?.id === r.id), (x) => x.children(earlier.map((r) => this.row(c, r))))))
+        .when(this.shownEarlier || earlier.some((r) => this.ask?.id === r.id), (x) => x.child(v_flex().gap(14).pt(6).children(earlier.map((r) => this.row(c, r)))))))
       // Last and small: what the first deploy to each cloud made, one line each until it is opened.
       .when(Boolean(places.length), (e) => e.child(v_flex().id("dep-created").pt(6)
         .children(places.map((p) => this.setup(c, p)))));
