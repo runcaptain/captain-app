@@ -181,6 +181,7 @@ test('one filled button at most, on every state of the page', async () => {
   }
   const h = await page(DIGITS);
   await h.click('wt-n-2-3');
+  h.mod.pickWeight({ k: 1, j: 3, i: 0 }, h.cx);
   await h.click('wt-walk-next');
   await h.click('wt-ask');
   assert.ok(h.byIdPrefix('wt-hand').length > 0 && h.byIdPrefix('wt-chain').length > 0 && h.byIdPrefix('wt-ask-').length === 3);

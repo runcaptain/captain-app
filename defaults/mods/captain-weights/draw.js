@@ -22,6 +22,7 @@ const CELL = 6; // a picture's pixel, in drawing units
 const HEAT_GAP = 34; // between the input picture and the weights picture under it
 const PAD = 28;
 const LINES_TO_STRIP = 24;
+const SHORT_NAME = 3; // a name this short sits beside its circle; a longer one sits over it
 
 /** Where everything sits, in the drawing's own units. Independent of the input and of what is selected, so the
  *  picture does not jump when a person clicks. */
@@ -30,8 +31,9 @@ export function layoutOf(net) {
   const kindOf = (k) => (k === 0 && net.inputShape && net.inputShape[0] * net.inputShape[1] === sizes[0] ? "image" : sizes[k] > DOTS_MAX ? "strip" : "dots");
   const most = Math.max(1, ...sizes.filter((_n, k) => kindOf(k) === "dots"));
   const r = most <= 6 ? 24 : most <= 16 ? 11 : most <= 32 ? 7 : 4;
-  const pitch = r * 2 + (r >= 20 ? 30 : r >= 10 ? 8 : 3);
-  const gap = r >= 20 ? 190 : 150;
+  // A small network has room for words: a neuron's name sits over its circle and its bias under it.
+  const pitch = r * 2 + (r >= 20 ? 44 : r >= 10 ? 8 : 3);
+  const gap = r >= 20 ? 130 : 150;
   const cols = [];
   let x = PAD;
   for (let k = 0; k < sizes.length; k++) {
@@ -51,9 +53,12 @@ export function layoutOf(net) {
     cols.push({ k, kind, n, x, w, h, ...extra });
     x += w + gap;
   }
-  const height = Math.max(...cols.map((c) => c.h)) + PAD * 2 + 22; // 22: the caption under each column
-  for (const c of cols) c.top = PAD + (height - PAD * 2 - 22 - c.h) / 2;
-  const width = x - gap + PAD + 70; // 70: the output's names
+  const foot = r >= 20 ? 40 : 22; // the caption under each column, clear of a bias written under the last circle
+  const height = Math.max(...cols.map((c) => c.h)) + PAD * 2 + foot;
+  for (const c of cols) c.top = PAD + (height - PAD * 2 - foot - c.h) / 2;
+  // Short output names ("0" to "9") sit beside their circles; longer ones sit over them and need no room.
+  const beside = (net.outputNames ?? []).some((n) => String(n).length <= SHORT_NAME);
+  const width = x - gap + PAD + (beside ? 70 : 0);
   /** The middle of neuron j of column k (a strip's cell for a strip; null for a picture). */
   const centre = (k, j) => {
     const c = cols[k];
@@ -168,7 +173,8 @@ export function shapesFor(L, s, c) {
     const colour = pulsed ? tint(c.warn, "ff") : tint(l.v >= 0 ? c.blue : c.fail, dim ? "1f" : STRENGTH[level(l.m, 3)]);
     // A line is kept as its two ends and its width on screen at 100%. It becomes a polygon only when it is
     // mapped through the view (lineQuad), so its width never depends on the zoom twice.
-    add(colour, { line: [x1, y1, x2, y2], w: (0.6 + 3.4 * l.m) * (pulsed ? 1.6 + 0.8 * (s.pulse.phase ?? 0) : chosen ? 1.5 : 1) });
+    // A crowded column gets thinner lines than a network of a few neurons: hundreds of thick lines are a blot.
+    add(colour, { line: [x1, y1, x2, y2], w: (L.r >= 20 ? 0.6 + 3.4 * l.m : 0.5 + 2 * l.m) * (pulsed ? 1.6 + 0.8 * (s.pulse.phase ?? 0) : chosen ? 1.5 : 1) });
   }
   // Nudge marks: a small triangle beside a neuron, pointing up (blue) when the cost wants it brighter and down
   // (red) when it wants it dimmer, larger for a larger wish. Shown for the columns the backward walk has reached,
@@ -182,7 +188,7 @@ export function shapesFor(L, s, c) {
       for (let j = 0; j < col.n; j++) {
         const m = Math.abs(wish[j]) / top;
         if (m < 0.03) continue;
-        const p = L.centre(col.k, j), size = L.r * (0.35 + 0.55 * m), x = p.x - L.r - size * 0.9, up = wish[j] > 0;
+        const p = L.centre(col.k, j), size = Math.min(14, L.r * (0.3 + 0.4 * m)), x = p.x - L.r - size * 0.9, up = wish[j] > 0;
         const tip = up ? p.y - size * 0.6 : p.y + size * 0.6, base = up ? p.y + size * 0.4 : p.y - size * 0.4;
         add(tint(up ? c.blue : c.fail, col.k === net.layers.length ? "ff" : "99"), [[x, tip], [x + size * 0.55, base], [x - size * 0.55, base]]);
       }
@@ -201,7 +207,10 @@ export function NetworkCanvas(c, s, o) {
   const L = o.layout ?? layoutOf(net);
   const w = Math.max(200, o.width), h = Math.max(160, o.height);
   // Where the view opens: on the open neuron when the whole network would not fit readably.
-  const f = o.focus && L.cols[o.focus.k]?.kind !== "image" ? L.centre(o.focus.k, o.focus.j) : null;
+  let f = o.focus && L.cols[o.focus.k]?.kind !== "image" ? L.centre(o.focus.k, o.focus.j) : null;
+  // A first-column neuron of a picture network: its weights picture matters as much as the circle, so the view
+  // opens between the two.
+  if (f && o.focus.k === 1 && L.cols[0].kind === "image") { const im = L.cols[0]; f = { x: (im.x + im.w / 2 + f.x) / 2, y: (im.top + im.heatTop + (im.rows * CELL) / 2 + f.y) / 2 }; }
   pz.settle(L.width, L.height, w, h, f);
   const z = pz.zoom, paint = globalThis.window?.paint_path;
   // The shapes depend on the network, the input, what is open, the mode and the pulse, never on the view. They
@@ -232,9 +241,9 @@ export function NetworkCanvas(c, s, o) {
       const [, hy] = pz.at(0, col.top + col.heatTop);
       const open = sel && sel.k === 1;
       over.push(div().id(`${o.id}-heat`).absolute().left(cx0).top(hy).w(col.w * z).h(col.rows * CELL * z).border_1().border_color(open ? c.blue : c.rule)
-        .when(!open, (e) => e.flex().items_center().justify_center().p(10 * z).text_center().text_size(10.5 * z).text_color(c.grey500).child("Click a neuron in the next column to see its weights here")));
+        .when(!open, (e) => e.flex().items_center().justify_center().child(div().w((col.w - 20) * z).text_center().text_size(10.5 * z).line_height(`${Math.round(15 * z)}px`).text_color(c.grey500).child("Click a neuron in the next column to see its weights here"))));
       over.push(div().absolute().left(cx0).top(hy - 16 * z).w(col.w * z + 120 * z).text_size(10.5 * z).text_color(open ? c.navy : c.grey500)
-        .child(open ? `What neuron ${sel.j + 1} responds to: its ${col.n} weights` : ""));
+        .child(open ? `What neuron ${sel.j + 1} responds to` : ""));
       continue;
     }
     if (col.kind === "strip") {
@@ -242,7 +251,7 @@ export function NetworkCanvas(c, s, o) {
       continue;
     }
     const a = run?.a?.[col.k];
-    const showBias = col.k > 0 && (few || (sel && sel.k === col.k));
+    // Every bias on a network small enough; otherwise only the open neuron's, so a column is not a wall of numbers.
     for (let j = 0; j < col.n; j++) {
       const p = L.centre(col.k, j), [x, y] = pz.at(p.x - L.r, p.y - L.r), d = L.r * 2 * z;
       const v = a ? Math.min(1, Math.max(0, a[j])) : 0;
@@ -259,18 +268,23 @@ export function NetworkCanvas(c, s, o) {
         .child(div().absolute().inset_0().rounded_full().bg(tint(c.navy, alpha)))
         .when(L.r >= 20 && !!a, (e) => e.child(div().absolute().inset_0().flex().items_center().justify_center().text_size(11.5 * z).font_medium()
           .text_color(v > 0.55 ? c.surface : c.navy).child(two(a[j])))));
-      if (showBias) {
-        over.push(div().id(`${o.id}-b-${col.k}-${j}`).absolute().left(x + d * 0.72).top(y + d * 0.78).text_size((L.r >= 20 ? 10.5 : 9) * z).text_color(c.grey500)
-          .child(`bias ${two(net.layers[col.k - 1].b[j])}`));
+      if (col.k > 0 && (few || on)) {
+        // Under the circle where there is room; in a tight column, to its left, over the lines.
+        const roomy = L.r >= 20;
+        const [bx, by] = roomy ? pz.at(p.x - 50, p.y + L.r + 2) : pz.at(p.x - L.r - 62, p.y - 7);
+        over.push(div().id(`${o.id}-b-${col.k}-${j}`).absolute().left(bx).top(by).w((roomy ? 100 : 58) * z).when(roomy, (e) => e.text_center()).when(!roomy, (e) => e.text_right().bg(c.surface2))
+          .text_size((roomy ? 10.5 : 10) * z).text_color(on ? c.navy : c.grey500).child(`bias ${two(net.layers[col.k - 1].b[j])}`));
       }
-      if (col.k === L_out && label != null) {
-        const [lx, ly] = pz.at(p.x + L.r + 8, p.y - 8);
-        over.push(div().absolute().left(lx).top(ly).text_size(11.5 * z).text_color(j === answer ? c.navy : c.grey500).when(j === answer, (e) => e.font_semibold())
-          .child(j === answer && net.sizes[L_out] > 1 ? `${label}, its answer` : label));
-      }
-      if (col.k === 0 && label != null) {
-        const [lx, ly] = pz.at(p.x - L.r - 100, p.y - 8);
-        over.push(div().absolute().left(lx).top(ly).w(92 * z).text_right().text_size(11.5 * z).text_color(c.grey500).child(label));
+      if (label != null && String(label).length > SHORT_NAME) {
+        // A name in words: over the circle, centred.
+        const [lx, ly] = pz.at(p.x - 80, p.y - L.r - 16);
+        over.push(div().absolute().left(lx).top(ly).w(160 * z).text_center().text_size(11 * z).text_color(col.k === L_out && j === answer ? c.navy : c.grey500).child(label));
+      } else if (label != null) {
+        // A short name: beside the circle, outward. The network's answer is marked in words.
+        const out = col.k === L_out;
+        const [lx, ly] = pz.at(out ? p.x + L.r + 8 : p.x - L.r - 40, p.y - 8);
+        over.push(div().absolute().left(lx).top(ly).when(!out, (e) => e.w(32 * z).text_right()).text_size(11.5 * z).text_color(out && j === answer ? c.navy : c.grey500).when(out && j === answer, (e) => e.font_semibold())
+          .child(out && j === answer && net.sizes[L_out] > 1 ? `${label}, its answer` : label));
       }
     }
   }
@@ -278,7 +292,10 @@ export function NetworkCanvas(c, s, o) {
   if (few) {
     for (let k = 0; k < net.layers.length; k++) for (let j = 0; j < net.layers[k].W.length; j++) for (let i = 0; i < net.layers[k].W[j].length; i++) {
       const a = L.centre(k, i), b = L.centre(k + 1, j);
-      const [x, y] = pz.at(a.x + L.r + (b.x - a.x - L.r * 2) * 0.3, a.y + (b.y - a.y) * 0.3);
+      // Lines from different neurons cross: numbers from the first sit nearer their start than numbers from the
+      // second, so two never land on the same spot.
+      const t = 0.2 + 0.2 * (i % 2);
+      const [x, y] = pz.at(a.x + L.r + (b.x - a.x - L.r * 2) * t, a.y + (b.y - a.y) * t);
       const on = s.selW && s.selW.k === k && s.selW.j === j && s.selW.i === i;
       over.push(div().id(`${o.id}-w-${k}-${j}-${i}`).absolute().left(x - 16 * z).top(y - 8 * z).px(3 * z).bg(c.surface2).cursor_pointer()
         .border_1().border_color(on ? c.blue : "#00000000").text_size(10 * z).text_color(on ? c.blue : c.grey900)

@@ -82,8 +82,9 @@ test('an agent\'s read, run and edit appear as lines the moment the feed tells, 
   const lines = h.byIdPrefix('wt-ev-line-').map((e) => e.call('id')[0]);
   assert.deepEqual(lines, ['wt-ev-line-e3', 'wt-ev-line-e2', 'wt-ev-line-e1']);
   // The ledger moved with it.
-  assert.ok(textOf(h, 'wt-ledger').includes('Raw weights: allowed, 2 read'));
-  assert.ok(textOf(h, 'wt-ledger').includes('Forward passes (runs of the network): 1 of 50 used'));
+  assert.equal(textOf(h, 'wt-ledger'), 'Raw weights: 2 read. Sandbox: allowed. Forward passes: 1 of 50 used.');
+  // The short line's terms are spelled out on hover.
+  assert.ok(h.byIdPrefix('wt-ledger').find((e) => e.call('id')[0] === 'wt-ledger').call('tooltip')[0].includes('A sandbox (code run on the numbers): allowed. Forward passes (runs of the network): 1 of 50 used'));
   assert.equal(textOf(h, 'wt-ledger-changed'), '1 of 13 numbers changed (7.7%)');
   assert.equal(h.byIdPrefix('wt-alone').length, 0, 'a session with a sandbox and a run is not "from the weights alone"');
 });
@@ -130,8 +131,7 @@ test('"From the weights alone" shows only when the ledger says no sandbox and no
   serve(LEDGER);
   let h = await page('tiny');
   assert.equal(textOf(h, 'wt-alone'), 'From the weights alone');
-  assert.ok(textOf(h, 'wt-ledger').includes('A sandbox (code run on the numbers): not allowed'));
-  assert.ok(textOf(h, 'wt-ledger').includes('Forward passes (runs of the network): 0 of 20 used'));
+  assert.equal(textOf(h, 'wt-ledger'), 'Raw weights: 13 read. Sandbox: not allowed. Forward passes: 0 of 20 used.');
   // The services' own network drew: cross-entropy, their names, and the test set scored by them.
   assert.ok(textOf(h, 'wt-title') === 'tiny' && h.text().includes('exactly one is high'));
   assert.equal(textOf(h, 'wt-cost-test'), '0.190');
@@ -144,7 +144,7 @@ test('"From the weights alone" shows only when the ledger says no sandbox and no
   h = await page('tiny');
   assert.equal(textOf(h, 'wt-cost-test'), '0.170');
   assert.equal(asked.filter(([p]) => p.endsWith('/evaluate')).length, 0, 'the last score in the record is used');
-  assert.ok(h.text().includes('You scored the network on the test set.'));
+  assert.ok(!h.text().includes('You scored the network on the test set.'), 'the page\'s own scoring is not listed as something done to the network');
   serve(LEDGER);
   h = await page('tiny');
   const no = [

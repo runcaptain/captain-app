@@ -109,9 +109,9 @@ test('the digit reader: a first-column neuron lists its strongest 8 of 784 and c
   const top = f.incoming.slice().sort((p, q) => Math.abs(q.adds) - Math.abs(p.adds)).slice(0, 8);
   assert.ok(top.every((r) => r.a > 0), 'lit pixels');
   // The picture's label promises nothing about what it looks like.
-  assert.ok(text.includes('What neuron 5 responds to: its 784 weights'));
+  assert.ok(text.includes('What neuron 5 responds to'));
   const label = h.byIdPrefix('wt-heat').length && text.split(' | ').find((t) => t.startsWith('What neuron 5 responds to'));
-  assert.equal(label, 'What neuron 5 responds to: its 784 weights', 'no word about what the picture looks like');
+  assert.equal(label, 'What neuron 5 responds to', 'no word about what the picture looks like');
 });
 
 test('numbers read the same everywhere: a sign, two places, four for small ones', () => {

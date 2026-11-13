@@ -64,9 +64,16 @@ export function ledgerFacts(ledger) {
     Number.isFinite(l.forward_allowed) ? `Forward passes (runs of the network): ${count(l.forward_used ?? 0)} of ${count(l.forward_allowed)} used` : null,
     l.gradients_computed === true ? "Gradients were worked out" : null,
   ].filter(Boolean);
+  // The same, short, for a line that must fit beside a terminal. The long form is its tooltip.
+  const short = [
+    l.raw_weights === true ? `Raw weights: ${count(l.weights_read ?? 0)} read` : l.raw_weights === false ? "Raw weights: not allowed" : null,
+    l.sandbox === true ? "Sandbox: allowed" : l.sandbox === false ? "Sandbox: not allowed" : null,
+    Number.isFinite(l.forward_allowed) ? `Forward passes: ${count(l.forward_used ?? 0)} of ${count(l.forward_allowed)} used` : null,
+    l.gradients_computed === true ? "Gradients worked out" : null,
+  ].filter(Boolean);
   const share = l.total > 0 && Number.isFinite(l.changed) ? (100 * l.changed) / l.total : null;
   const changed = share == null ? null : `${count(l.changed)} of ${count(l.total)} numbers changed (${share === 0 ? "0" : share < 0.1 ? share.toFixed(3) : share.toFixed(1)}%)`;
-  return { allowed, changed, alone };
+  return { allowed, short, changed, alone };
 }
 
 /** What a change's number is called: "the bias", or "the weight from First input". */
@@ -77,7 +84,8 @@ function changeName(net, c) {
 /** The panel. `v` is the page: {net, session, openEdit, busy} with openTimeline(id, cx) and undo(id, cx). */
 export function Timeline(c, v, { width, height }) {
   const s = v.session;
-    const events = (s?.events ?? []).slice().reverse();
+    // The page itself asks for the test set's score when it opens: that is not something done to the network.
+  const events = (s?.events ?? []).filter((e) => !(e.kind === "evaluate" && e.by === "you")).reverse();
   const row = (ev) => {
     const open = ev.id === v.openEdit, isEdit = ev.kind === "edit";
     let el = v_flex().id(`wt-ev-${ev.id}`).px(8).py(5).gap(4).when(open, (e) => e.bg(c.surface2))

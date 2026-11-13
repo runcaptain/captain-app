@@ -50,9 +50,10 @@ export function threeNumbers(ev, net = null) {
 }
 
 function Curve(c, v, steps, w, h) {
-  const box = div().id("wt-cost-curve").relative().w(w).h(h).flex_none().border_1().border_color(c.rule);
   const shown = steps.slice(-MAX_POINTS);
-  if (shown.length < 2) return box.child(div().absolute().inset_0().flex().items_center().justify_center().text_size(11.5).text_color(c.grey500).child("Each edit adds a point here."));
+  // Before the first edit there is no curve to draw: one line says what will come, and no empty box.
+  if (shown.length < 2) return div().id("wt-cost-curve").flex_1().min_w(0).pt(18).text_size(11.5).line_height("16px").text_color(c.grey500).child("Each edit adds a point to a curve here.");
+  const box = div().id("wt-cost-curve").relative().w(w).h(h).flex_none().border_1().border_color(c.rule);
   const ys = shown.map((s) => s.cost), lo = Math.min(0, ...ys), hi = Math.max(...ys, 1e-9), span = hi - lo || 1;
   const X = (n) => 10 + (n / (shown.length - 1)) * (w - 20), Y = (y) => 8 + (1 - (y - lo) / span) * (h - 16);
   const paint = globalThis.window?.paint_path;
@@ -73,7 +74,7 @@ function Curve(c, v, steps, w, h) {
 }
 
 /** The panel. `v` is the page: {net, run, inputAt, test, session, openEdit} and openTimeline(id, cx). */
-export function CostPanel(c, v, { width, height }) {
+export function CostPanel(c, v, { width, height, compact = false }) {
   const { net, run } = v;
   const e = net.examples[v.inputAt];
   const here = run && e ? costOf(net, run.a.at(-1), e.y) : null;
@@ -86,6 +87,14 @@ export function CostPanel(c, v, { width, height }) {
     .child(div().id(id).text_size(15).font_semibold().child(value))
     .child(div().id(`${id}-under`).text_size(11.5).text_color(c.grey500).child(under));
   const curveW = Math.max(90, Math.min(260, width - 250));
+  // Where there is no room for the panel: the two numbers in one line, and nothing else.
+  if (compact) {
+    return h_flex().id("wt-cost").w(width).h(height).flex_none().gap(14).items_center().text_size(12.5)
+      .child(div().flex_none().font_semibold().child("Cost"))
+      .child(h_flex().gap(5).flex_none().child(div().text_color(c.grey500).child("This input")).child(div().id("wt-cost-input").font_semibold().child(here == null ? "not run" : cost3(here))))
+      .child(h_flex().gap(5).min_w(0).child(div().flex_none().text_color(c.grey500).child("Test set")).child(div().id("wt-cost-test").flex_none().font_semibold().child(t ? cost3(t.cost) : "reading"))
+        .child(div().id("wt-cost-test-under").min_w(0).truncate().text_color(c.grey500).child(t?.of ? `${count(t.right)} of ${count(t.of)} right` : "")));
+  }
   return v_flex().id("wt-cost").w(width).h(height).flex_none().gap(8)
     .child(h_flex().gap(6).items_center()
       .child(div().text_size(12.5).font_semibold().child("Cost"))

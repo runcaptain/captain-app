@@ -124,7 +124,7 @@ test('the digit reader: the input is a picture, a first-column neuron opens its 
   const run = forward(net, net.examples[8].x);
   const rest = shapesFor(L, { net, run, sel: null, mode: 'values' }, c);
   await h.click('wt-n-1-4');
-  assert.ok(h.text().includes('What neuron 5 responds to: its 784 weights'));
+  assert.ok(h.text().includes('What neuron 5 responds to'));
   const open = shapesFor(L, { net, run, sel: { k: 1, j: 4 }, mode: 'values' }, c);
   assert.ok(open.count > rest.count + 100, 'the weights picture adds cells');
   for (const s of [rest, open]) assert.ok(s.count <= MAX_SHAPES && s.dropped === 0, `${s.count} shapes, ${s.dropped} left out`);
@@ -218,7 +218,11 @@ test('a network too big to read whole opens at 100% on the open neuron; one that
   let pz = new PanZoom('t');
   pz.settle(400, 300, 800, 500);
   assert.ok(pz.zoom > 1 && Math.abs(pz.pan.x - (800 - 400 * pz.zoom) / 2) < 1e-9);
-  // Would have to shrink below what is readable: 100%, with the focus in the middle.
+  // Too big, and nothing open: fitted whole all the same, so the first look is the whole network.
+  pz = new PanZoom('t');
+  pz.settle(1400, 600, 600, 400);
+  assert.ok(pz.zoom < 0.8 && pz.at(1400, 0)[0] <= 600 && pz.at(0, 0)[0] >= 0);
+  // Too big, with a neuron open: 100%, with the neuron in the middle.
   pz = new PanZoom('t');
   pz.settle(1400, 600, 600, 400, { x: 900, y: 300 });
   assert.equal(pz.zoom, 1);

@@ -31,8 +31,8 @@ export function walkWords(net, run, grad, step, wanted) {
     return `Step 1 of ${of}. The output's error: the network said "${name(said)}" and "${name(want)}" was wanted, so the cost wants "${name(want)}" brighter and the others dimmer. The marks beside the outputs show how much.`;
   }
   const k = L - (step - 1); // the layer reached: it joins column k to column k + 1
-  const behind = k > 0 ? ` The neurons of ${columnName(net, k)} cannot be changed directly: each mark there is a wish, the sum of what every neuron after it wants.` : " The input cannot be changed, so the walk ends here.";
-  return `Step ${step} of ${of}. The nudges reach the weights into ${columnName(net, k + 1)}. A line is thicker where the cost's slope for that weight is larger, blue where the cost wants it up and red where it wants it down.${behind}`;
+  const behind = k > 0 ? ` The marks on ${columnName(net, k)} are wishes: its neurons cannot be changed directly.` : " The input cannot be changed, so the walk ends here.";
+  return `Step ${step} of ${of}. The nudges reach the weights into ${columnName(net, k + 1)}: a line is thicker where the cost's slope is larger, blue to go up, red to go down.${behind}`;
 }
 
 /** The weight with the largest slope in a layer: the one the walk picks when a person has picked none. */
@@ -77,24 +77,25 @@ export function ChainBlock(c, v) {
       .child("Softmax ties the outputs together, so here the three do not multiply to the slope. The slope shown is the true one.")));
 }
 
-/** The walk's controls and its sentence, laid over the drawing. `v` is the page. */
-export function WalkControls(c, v) {
+/** The walk's three controls, for the row above the drawing. `v` is the page. Leaving the walk is "The weights"
+ *  in the same row. */
+export function WalkButtons(c, v) {
   const step = v.walk.step, of = stepsOf(v.net);
-  const btn = (id, text, tip, go, off = false) => div().id(id).h(24).px(8).flex().flex_none().items_center().text_size(12.5).border_1()
+  const btn = (id, text, tip, go, off = false) => div().id(id).h(26).px(9).flex().flex_none().items_center().text_size(12.5).border_1()
     .bg(c.surface).border_color(c.grey300).text_color(off ? c.grey500 : c.navy)
     .when(!off, (e) => e.cursor_pointer().hover((s) => s.border_color(c.blue).text_color(c.blue)).on_click((_e, cx) => go(cx)))
-    .tooltip(tip).on_mouse_down("left", (_e, cx) => cx.stop_propagation?.()).child(text);
+    .tooltip(tip).child(text);
+  return h_flex().id("wt-walk").flex_none().gap(6).items_center()
+    .child(btn("wt-walk-play", v.walk.playing ? "Pause" : step >= of ? "Walk the error back again" : "Walk the error back", "Backpropagation, played: the output's error, then each layer's nudges, one step at a time", (cx) => v.playWalk(cx)))
+    .child(btn("wt-walk-next", "Next step", "One step further back", (cx) => v.stepWalk(1, cx), step >= of))
+    .child(btn("wt-walk-prev", "Previous step", "One step toward the output", (cx) => v.stepWalk(-1, cx), step <= 0));
+}
+
+/** What the walk's step shows, in a sentence laid over the foot of the drawing. Null when not walking. */
+export function WalkSays(c, v, width) {
   const e = v.net.examples[v.inputAt];
-  return [
-    h_flex().id("wt-walk").absolute().top(8).left(8).gap(4).items_center()
-      .child(btn("wt-walk-play", v.walk.playing ? "Pause" : step >= of ? "Walk the error back again" : "Walk the error back", "Backpropagation, played: the output's error, then each layer's nudges, one step at a time", (cx) => v.playWalk(cx)))
-      .child(btn("wt-walk-next", "Next step", "One step further back", (cx) => v.stepWalk(1, cx), step >= of))
-      .child(btn("wt-walk-prev", "Previous step", "One step toward the output", (cx) => v.stepWalk(-1, cx), step <= 0))
-      .when(step > 0, (x) => x.child(btn("wt-walk-stop", "Show the weights again", "Leave the walk and draw the weights", (cx) => v.stopWalk(cx)))),
-    step > 0 && e
-      ? div().id("wt-walk-says").absolute().left(8).bottom(8).max_w(560).p(8).bg(c.surface).border_1().border_color(c.grey300).text_size(12.5).line_height("18px")
-        .on_mouse_down("left", (_e, cx) => cx.stop_propagation?.())
-        .child(walkWords(v.net, v.run, v.grad, step, e.y))
-      : null,
-  ].filter(Boolean);
+  if (!(v.walk.step > 0) || !e) return null;
+  return div().id("wt-walk-says").absolute().left(8).bottom(8).w(Math.max(200, Math.min(600, width - 16))).p(8).bg(c.surface).border_1().border_color(c.grey300).text_size(12.5).line_height("18px")
+    .on_mouse_down("left", (_e, cx) => cx.stop_propagation?.())
+    .child(walkWords(v.net, v.run, v.grad, v.walk.step, e.y));
 }

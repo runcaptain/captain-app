@@ -96,10 +96,10 @@ function weightRow(c, id, r, top, on, right, onPick) {
   return h_flex().id(id).h(24).gap(8).items_center().px(4).cursor_pointer().when(on, (e) => e.bg(c.blueLight))
     .hover((s) => s.bg(c.blueLight)).tooltip("Pick this weight")
     .on_click(onPick)
-    .child(div().w(104).flex_none().truncate().text_size(12.5).text_color(c.navy).child(r.name))
-    .child(div().w(44).h(6).flex_none().bg(c.surface2).child(div().h_full().w(Math.max(1, Math.round(44 * m))).bg(r.w >= 0 ? c.blue : c.fail)))
-    .child(div().w(54).flex_none().text_right().text_size(12.5).font_medium().text_color(c.navy).child(signed(r.w)))
-    .child(div().flex_1().min_w(0).truncate().text_right().text_size(11.5).text_color(c.grey500).child(right));
+    .child(div().w(84).flex_none().truncate().text_size(12.5).text_color(c.navy).tooltip(r.name).child(r.name))
+    .child(div().w(20).h(6).flex_none().bg(c.surface2).child(div().h_full().w(Math.max(1, Math.round(20 * m))).bg(r.w >= 0 ? c.blue : c.fail)))
+    .child(div().w(48).flex_none().text_right().text_size(12.5).font_medium().text_color(c.navy).child(signed(r.w)))
+    .child(div().flex_1().min_w(0).text_right().text_size(11.5).text_color(c.grey500).child(right));
 }
 
 /** The panel. `v` is the page: {net, run, grad, sel, selW} and pickWeight(at, cx). `slot` is one element or a list,
@@ -143,7 +143,7 @@ export function Inspector(c, v, slot = null) {
   if (f.incoming) {
     out = out.child(list("wt-in-w", `Weights coming in (${int(f.incoming.length)})`, f.incoming, (r) => ({ k: sel.k - 1, j: sel.j, i: r.i }),
       showGrad ? { head: "the cost's slope for it", cell: (r) => signed(r.gradient) }
-        : { head: "times activation, adds", cell: (r) => (r.a == null ? "" : `x ${plain(r.a)} = ${signed(r.adds)}`) }));
+        : { head: "times its activation", cell: (r) => (r.a == null ? "" : `x ${plain(r.a)} = ${signed(r.adds)}`) }));
     if (showGrad) out = out.child(div().id("wt-inspect-bg").px(4).text_size(11.5).text_color(c.grey500).child(`The cost's slope for the bias: ${signed(f.biasGradient)}. A positive slope means the cost falls when the number goes down.`));
   }
   if (f.outgoing) {

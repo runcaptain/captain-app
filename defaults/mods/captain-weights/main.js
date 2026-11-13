@@ -29,8 +29,9 @@ import { CostPanel } from "./cost.js";
 import { Timeline, ledgerFacts } from "./timeline.js";
 import { HandBlock, handTarget, dragSpan, TRACK_W, selectionPin, starters } from "./hand.js";
 import { askAgent } from "./kit/agent.js";
-import { WalkControls, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
+import { WalkButtons, WalkSays, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
+const TIGHT = 640; // under this width nothing fits side by side: an open neuron takes the drawing's place, and the cost is one line
 const WIDE = 1100; // from this width the neuron panel is always beside the drawing; below it, only while a neuron is open
 const PULSE_BEAT_MS = 120, PULSE_BEATS = 22; // touched neurons and weights pulse for about 2.6 seconds after an event
 const BAND_H = 190; // the cost and the timeline, under the drawing
@@ -45,7 +46,11 @@ export function factsOf(net) {
 
 export default class CaptainWeights extends View {
   init(_props, cx) {
-    this.model = props()?.model ?? null; // the network open, or null for the list
+    // For the picture check only, which can't click: props.show sets the page up as if a person had (a network, an
+    // input, an open neuron, a picked weight, the mode, how far the walk has gone). Honoured only in the app's
+    // test window (the app sets `app.testWindow` at each start): in a person's app a layout naming it does nothing.
+    this.show = shared("app.testWindow") === true ? (props()?.show ?? null) : null;
+    this.model = this.show?.model ?? props()?.model ?? null; // the network open, or null for the list
     this.list = null;       // the networks that can be opened
     this.net = null;        // the open network (shapes.js Network)
     this.problem = null;    // why it could not be read, in a sentence
@@ -204,6 +209,18 @@ export default class CaptainWeights extends View {
   /** Show an edit: its three numbers under the cost, and its line open in the timeline. */
   openTimeline(id, cx) { this.openEdit = this.openEdit === id ? null : id; cx.notify(); }
 
+  /** Set the page up as the picture check asks (see `show` in init). */
+  stage(w) {
+    if (Number.isInteger(w.input)) this.inputAt = Math.min(w.input, this.net.examples.length - 1);
+    if (Array.isArray(w.neuron)) this.sel = { k: w.neuron[0], j: w.neuron[1] };
+    if (Array.isArray(w.weight)) { this.selW = { k: w.weight[0], j: w.weight[1], i: w.weight[2] }; this.sel = { k: w.weight[0] + 1, j: w.weight[1] }; }
+    if (w.mode === "nudges") this.mode = "nudges";
+    if (w.ask) this.askOpen = true;
+    this.rerun();
+    for (let n = 0; n < (w.walk ?? 0); n++) this.stepWalk(1, { notify() {} });
+    this.syncInput();
+  }
+
   /** New numbers for the open network: keep the input and the selection, and run it again. */
   take(net) {
     this.net = net;
@@ -211,6 +228,7 @@ export default class CaptainWeights extends View {
     this.inputAt = Math.min(this.inputAt, Math.max(0, net.examples.length - 1));
     this.rerun();
     if (!this.drag) this.syncInput();
+    if (this.show) { const w = this.show; this.show = null; this.stage(w); }
   }
 
   rerun() {
@@ -234,7 +252,8 @@ export default class CaptainWeights extends View {
     if (step >= of) this.walk.playing = false;
     if (step > 0) this.mode = "values";
     this.rerun();
-    if (step > 0 && !this.selW && this.grad) { const at = steepestWeight(this.grad, this.net.layers.length - 1); this.selW = at; this.sel = { k: at.k + 1, j: at.j }; }
+    // Beside a terminal the neuron panel would take half the drawing, so there the walk opens nothing by itself.
+    if (step > 0 && !this.selW && this.grad && this.width >= WIDE) { const at = steepestWeight(this.grad, this.net.layers.length - 1); this.selW = at; this.sel = { k: at.k + 1, j: at.j }; }
     cx.notify();
   }
   /** Play from the start (or pause). */
@@ -244,8 +263,8 @@ export default class CaptainWeights extends View {
     this.walk.playing = true;
     this.stepWalk(1, cx);
   }
-  stopWalk(cx) { this.walk = { step: 0, playing: false }; this.rerun(); cx.notify(); }
-  setMode(mode, cx) { this.mode = mode; if (mode === "nudges") this.walk = { step: 0, playing: false }; this.rerun(); cx.notify(); }
+  /** Picking what the lines show also leaves the backward walk. */
+  setMode(mode, cx) { this.mode = mode; this.walk = { step: 0, playing: false }; this.rerun(); cx.notify(); }
 
   pickInput(n, cx) { this.inputAt = n; this.rerun(); cx.notify(); }
   pickNeuron(at, cx) { this.sel = this.sel && this.sel.k === at.k && this.sel.j === at.j ? null : at; this.selW = null; this.syncInput(); cx.notify(); }
@@ -340,7 +359,7 @@ export default class CaptainWeights extends View {
         .when(facts.allowed.length > 0 || facts.alone, (x) => x.child(h_flex().gap(8).items_center()
           .when(facts.alone, (y) => y.child(div().id("wt-alone").flex_none().px(6).h(20).flex().items_center().bg(c.goodLight).text_color(c.good).text_size(11.5).font_medium()
             .tooltip("The record shows no sandbox was allowed and the network was never run").child("From the weights alone")))
-          .child(div().id("wt-ledger").flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).tooltip(`${facts.allowed.join(". ")}.`).child(`${facts.allowed.join(". ")}.`)))));
+          .child(div().id("wt-ledger").flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).tooltip(`${facts.allowed.join(". ")}.`).child(`${facts.short.join(". ")}.`)))));
   }
 
   /** The three things to ask an agent, written around what is selected. Shown when "Ask an agent" is pressed. */
@@ -385,13 +404,20 @@ export default class CaptainWeights extends View {
             .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy)
             .on_click((_e, cx) => this.pickInput(n, cx)).child(e.name);
         }))
-        .when(start + PAGE < ex.length, (e) => e.child(step("wt-in-later", "Later inputs", start + PAGE))))
-      .child(this.modes(c));
+        .when(start + PAGE < ex.length, (e) => e.child(step("wt-in-later", "Later inputs", start + PAGE))));
+  }
+
+  /** The row above the drawing: what the lines show, and the backward walk. */
+  controls(c) {
+    return h_flex().id("wt-controls").flex_none().px(20).pb(8).gap(6).items_center().flex_wrap()
+      .child(this.modes(c))
+      .child(div().flex_1())
+      .child(WalkButtons(c, this));
   }
 
   /** What the lines show: the weights, or the way the cost wants each one moved. */
   modes(c) {
-    const pick = (id, text, mode, tip) => { const on = this.mode === mode; return div().id(id).h(26).px(9).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+    const pick = (id, text, mode, tip) => { const on = this.mode === mode && this.walk.step === 0; return div().id(id).h(26).px(9).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
       .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).tooltip(tip)
       .on_click((_e, cx) => this.setMode(mode, cx)).child(text); };
     return h_flex().id("wt-modes").flex_none().gap(6).items_center()
@@ -412,11 +438,13 @@ export default class CaptainWeights extends View {
   render() {
     const c = palette(isDark(theme()));
     const net = this.net, W = this.width, H = this.height;
-    const narrow = W < WIDE;
-    const rail = narrow ? (this.sel ? Math.min(300, Math.round(W * 0.4)) : 0) : 340;
+    const narrow = W < WIDE, tight = W < TIGHT;
+    // The neuron panel: always beside the drawing on a wide page; beside it only while a neuron is open on a
+    // narrow one; and in the drawing's place on a page too tight for both.
+    const rail = tight ? (this.sel ? W - 40 : 0) : narrow ? (this.sel ? Math.min(296, Math.round(W * 0.4)) : 0) : 340;
     const headH = net ? 84 : 46;
-    const cw = Math.max(260, W - 40 - (rail ? rail + 1 : 0));
-    const ch = Math.max(200, H - headH - 44 - (this.askOpen ? 42 : 0) - BAND_H - 14);
+    const cw = Math.max(200, W - 40 - (rail && !tight ? rail + 1 : 0));
+    const ch = Math.max(180, H - headH - 44 - (tight ? 72 : 38) - (this.askOpen ? 42 : 0) - BAND_H - 14);
     const costW = Math.min(520, Math.max(300, Math.round((W - 40) * 0.45)));
     return v_flex().id("weights").size_full().bg(c.canvas).text_color(c.navy).font_family(FONT)
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1 || Math.abs(size.height - this.height) > 1) { this.width = size.width; this.height = size.height; cx.notify(); } })
@@ -429,16 +457,20 @@ export default class CaptainWeights extends View {
       .when(Boolean(net), (e) => e
         .when(this.askOpen, (x) => x.child(this.askStrip(c)))
         .child(this.inputs(c))
+        .child(this.controls(c))
         .child(h_flex().flex_1().min_h(0)
-          .child(div().pl(20).child(NetworkCanvas(c, this.drawing(), { id: "wt", pz: this.pz, layout: this.layout, width: cw, height: ch, extra: WalkControls(c, this), focus: this.sel, keep: this.keep,
-            onNeuron: (at, cx) => this.pickNeuron(at, cx), onWeight: (at, cx) => this.pickWeight(at, cx) })))
+          .when(!(tight && rail > 0), (x) => x.child(div().pl(20).child(NetworkCanvas(c, this.drawing(), { id: "wt", pz: this.pz, layout: this.layout, width: cw, height: ch, extra: [WalkSays(c, this, cw)].filter(Boolean), focus: this.sel, keep: this.keep,
+            onNeuron: (at, cx) => this.pickNeuron(at, cx), onWeight: (at, cx) => this.pickWeight(at, cx) }))))
           .when(rail > 0, (x) => x
-            .child(div().w(1).h_full().flex_none().bg(c.rule))
-            .child(this.side(c, rail, narrow))))
-        .child(h_flex().id("wt-band").h(BAND_H).flex_none().border_t(1).border_color(c.rule).bg(c.surface)
+            .when(!tight, (y) => y.child(div().w(1).h_full().flex_none().bg(c.rule)))
+            .child(this.side(c, tight ? W : rail, narrow))))
+        .when(!tight, (x) => x.child(h_flex().id("wt-band").h(BAND_H).flex_none().border_t(1).border_color(c.rule).bg(c.surface)
           .child(div().pl(20).pt(10).child(CostPanel(c, this, { width: costW, height: BAND_H - 12 })))
           .child(div().w(16).flex_none())
           .child(div().w(1).h_full().flex_none().bg(c.rule))
-          .child(div().pl(14).pt(10).child(Timeline(c, this, { width: Math.max(220, W - costW - 20 - 16 - 1 - 14 - 16), height: BAND_H - 22 })))));
+          .child(div().pl(14).pt(10).child(Timeline(c, this, { width: Math.max(220, W - costW - 20 - 16 - 1 - 14 - 16), height: BAND_H - 22 })))))
+        .when(tight, (x) => x.child(v_flex().id("wt-band").h(BAND_H).flex_none().border_t(1).border_color(c.rule).bg(c.surface).px(20).pt(6).gap(4)
+          .child(CostPanel(c, this, { width: W - 40, height: 28, compact: true }))
+          .child(Timeline(c, this, { width: W - 40, height: BAND_H - 28 - 22 })))));
   }
 }

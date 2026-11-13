@@ -60,8 +60,8 @@ test('stepping on the tiny network: what is drawn at each step matches the refer
   await h.click('wt-walk-next');
   d = h.mod.drawing();
   assert.equal(d.walkedFrom, 1);
-  assert.ok(textOf(h, 'wt-walk-says').startsWith('Step 2 of 3. The nudges reach the weights into the output.'));
-  assert.ok(textOf(h, 'wt-walk-says').includes('each mark there is a wish'));
+  assert.ok(textOf(h, 'wt-walk-says').startsWith('Step 2 of 3. The nudges reach the weights into the output:'));
+  assert.ok(textOf(h, 'wt-walk-says').includes('The marks on the hidden column are wishes: its neurons cannot be changed directly.'));
   // The lines into the output now show the nudge the cost wants: the negative of a slope measured by hand.
   for (let i = 0; i < 3; i++) near(lineValue(d, 1, 0, i), -measured(net, e.x, e.y, 1, 0, i));
   assert.equal(lineValue(d, 0, 1, 0), 6, 'the layer not reached still shows its weights');
@@ -77,7 +77,7 @@ test('stepping on the tiny network: what is drawn at each step matches the refer
   // Next does nothing more; Previous goes back a layer; the last Previous leaves the walk.
   await h.click('wt-walk-prev');
   assert.equal(h.mod.drawing().walkedFrom, 1);
-  await h.click('wt-walk-stop');
+  await h.click('wt-mode-values');
   assert.equal(h.mod.drawing().walkedFrom, null);
   assert.equal(h.mod.drawing().grad, null);
   assert.equal(h.byIdPrefix('wt-walk-says').length, 0);
@@ -86,6 +86,7 @@ test('stepping on the tiny network: what is drawn at each step matches the refer
 test('the chain rule for a picked weight: three named factors, and their product is the measured slope', async () => {
   const h = await page(TINY);
   await h.click('wt-in-3');
+  h.mod.width = 1300; // wide: the neuron panel is always there, so the walk may fill it
   await h.click('wt-walk-next');
   const net = starter(TINY), e = net.examples[3];
   const run = forward(net, e.x), grad = backward(net, e.x, e.y, run);
@@ -117,6 +118,18 @@ test('the chain rule for a picked weight: three named factors, and their product
   const big = chainRows(dn, drun, dg, { k: 0, j: 3, i: lit });
   assert.equal(big.paths, 160);
   assert.equal(big.product, signed(measured(dn, de.x, de.y, 0, 3, lit)));
+});
+
+test('beside a terminal the walk opens no panel by itself: the drawing keeps its width', async () => {
+  const h = await page(TINY);
+  const w0 = h.byIdPrefix('wt-canvas')[0].call('w')[0];
+  await h.click('wt-walk-next');
+  assert.equal(h.mod.selW, null);
+  assert.equal(h.byIdPrefix('wt-canvas')[0].call('w')[0], w0);
+  // "The weights" is not lit while the walk shows nudges, and pressing it leaves the walk.
+  assert.equal(h.mod.walk.step, 1);
+  await h.click('wt-mode-values');
+  assert.equal(h.mod.walk.step, 0);
 });
 
 test('with no weight picked and no walk, there is no chain rule block', async () => {

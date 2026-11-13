@@ -73,7 +73,7 @@ test('their tiny network opens: cross-entropy, 24 practice inputs, the test set 
   assert.deepEqual(asked.find(([p]) => p.endsWith('/evaluate')).slice(1), ['POST', { by: 'you' }], 'asked as the person, not the agent');
   // A person's own session: no sandbox, nothing run.
   assert.equal(textOf(h, 'wt-alone'), 'From the weights alone');
-  assert.ok(textOf(h, 'wt-ledger').includes('Forward passes (runs of the network): 0 of 50 used'));
+  assert.ok(textOf(h, 'wt-ledger').includes('Forward passes: 0 of 50 used'));
   // Nudges work on their network too: gradients for cross-entropy, worked out in the page.
   await h.click('wt-n-2-0');
   await h.click('wt-mode-nudges');
@@ -117,7 +117,7 @@ test('an agent opens a newer session and edits: the page moves to it and says wh
   await h.layoutLists({});
   const end = h.text();
   assert.equal(h.byIdPrefix('wt-alone').length, 0, 'one forward pass was used: no longer from the weights alone');
-  assert.ok(textOf(h, 'wt-ledger').includes('Forward passes (runs of the network): 1 of 20 used'));
+  assert.ok(textOf(h, 'wt-ledger').includes('Forward passes: 1 of 20 used'));
   assert.ok(end.includes('Agent ran the network on "practice 0".'));
   assert.ok(end.includes('You took back an edit to layer 1, neuron 2.'));
   assert.ok(end.includes('Agent scaled 2 weights into layer 1, neuron 2, by 0.5.') && end.includes('Taken back.'));

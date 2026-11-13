@@ -43,7 +43,7 @@ test('the two numbers match the reference network, and follow the chosen input',
   assert.equal(textOf(h, 'wt-cost-test-under'), '3 of 4 right');
   assert.ok(h.text().includes('Test set (4 inputs)'));
   assert.ok(textOf(h, 'wt-cost-says').startsWith('Cost is one number for how wrong the network is'), 'the term has its plain words beside it');
-  assert.ok(h.text().includes('Each edit adds a point here.'), 'no curve before the first edit');
+  assert.ok(h.text().includes('Each edit adds a point to a curve here.'), 'no curve before the first edit');
   assert.equal(h.byIdPrefix('wt-cost-edit').length, 0, 'no three numbers before the first edit');
 });
 
