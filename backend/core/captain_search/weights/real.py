@@ -335,11 +335,17 @@ def _store(ctx, name: str, m: dict, blobs: dict[str, bytes]) -> dict:
     raise WeightsError(f"Could not find a free version number for {name}. Try again.")
 
 
+def _file(ctx, m: dict, rel: str) -> bytes:
+    """One of a version's kept files. A version saved from a session keeps none of its own: they are its root's."""
+    name, version = WS.split_ref(m["files_at"]) if m.get("files_at") else (m["name"], m["version"])
+    return ctx.store.get(WS._key(name, version, rel))
+
+
 def load(ctx, m: dict) -> tuple[dict, dict[str, np.ndarray]]:
     """A version's manifest and its tensors, each in the number type it was saved with."""
     out: dict[str, np.ndarray] = {}
     for fname in sorted({t["file"] for t in m["tensors"].values()}):
-        got, _ = _arrays(ctx.store.get(WS._key(m["name"], m["version"], fname)), fname)
+        got, _ = _arrays(_file(ctx, m, fname), fname)
         for k, t in m["tensors"].items():
             if t["file"] == fname:
                 if k not in got:
@@ -652,7 +658,9 @@ def stats(ctx, sid: str, tensor: str | None = None, neurons: bool = False, by: s
                 raise WeightsError("Name one tensor to get a line per row.")
             t = _matrix(st, tensor).astype(float)
             norm = np.linalg.norm(t, axis=1)
-            out["rows"] = [{"row": j, "norm": float(norm[j]), "mean": float(t[j].mean()), "min": float(t[j].min()), "max": float(t[j].max()),
+            got = _labels(st.manifest, tensor, t)
+            out["labels_says"] = got["says"]
+            out["rows"] = [{"row": j, "label": got["names"][j] if got["names"] else None, "norm": float(norm[j]), "mean": float(t[j].mean()), "min": float(t[j].min()), "max": float(t[j].max()),
                             "zero_share": float((t[j] == 0).mean()), "dead": bool((t[j] == 0).all())} for j in range(min(t.shape[0], ROWS_CAP))]
             out["rows_of"] = int(t.shape[0])
         if not st.watch:
@@ -690,16 +698,71 @@ def heatmap(ctx, sid: str, layer=None, neuron=None, by: str | None = None, watch
     return S._do(ctx, sid, fn, watch)
 
 
-def _labels(m: dict, tensor: str, rows: int) -> tuple[list[str] | None, str]:
-    """Names for a table's rows, when a list saved beside the arrays has exactly one name per row."""
+EXTRA = "none or unknown"
+
+
+def _extra_row(t: np.ndarray) -> tuple[int, bool]:
+    """Where a table's one extra row sits, and whether that is clear: (row, sure). A row whose numbers are all near
+    zero beside the others is the odd one. When neither end stands out, row 0 is taken, as a guess."""
+    size = np.linalg.norm(np.asarray(t, dtype=float), axis=1)
+    mid = float(np.median(size[1:-1])) if len(size) > 2 else float(np.median(size))
+    first, last = bool(size[0] <= 0.1 * mid), bool(size[-1] <= 0.1 * mid)
+    if first != last:
+        return (0 if first else len(size) - 1), True
+    return 0, False
+
+
+def _ranges(edges: list[float]) -> list[str]:
+    """The ranges that a list of edges cuts the number line into: below the first, between each pair, above the last."""
+    e = [f"{float(v):.2f}" for v in edges]
+    return [f"below {e[0]}"] + [f"{a} to {b}" for a, b in zip(e, e[1:])] + [f"{e[-1]} and up"]
+
+
+def _labels(m: dict, tensor: str, t: np.ndarray) -> dict:
+    """Names for a table's rows, from a list saved beside the arrays: {names, says, source, extra_row, sure}.
+
+    A list with one name per row names them. A list one short of the rows names them too, with the row left over
+    called "none or unknown": at the end whose row is near zero, or at row 0 as a guess when neither is. A price
+    table is named from `edges`, the cut points between its ranges."""
+    rows = int(t.shape[0])
+    none = {"names": None, "says": "", "source": None, "extra_row": None, "sure": None}
     stem = tensor.rsplit(".", 1)[0]
-    key = (stem[2:] if stem.startswith("c_") else stem).split(".")[0] + "_vocab"
-    f = (m.get("facts") or {}).get(key)
-    if not f or f.get("kind") != "text" or not isinstance(f.get("value"), list):
-        return None, ""
-    if len(f["value"]) == rows:
-        return f["value"], f"Rows are named from {key}, saved beside the arrays."
-    return None, f"{key} lists {len(f['value']):,} names for {rows:,} rows, so which row has which name is not certain. Rows are numbered."
+    key = (stem[2:] if stem.startswith("c_") else stem).split(".")[0]
+    facts = m.get("facts") or {}
+    f, source, what = facts.get(key + "_vocab"), key + "_vocab", "names"
+    have = f["value"] if f and f.get("kind") == "text" and isinstance(f.get("value"), list) else None
+    if have is None and key == "price":
+        f, source, what = facts.get("edges"), "edges", "ranges"
+        if f and f.get("kind") == "numbers" and isinstance(f.get("value"), list) and len(f["value"]) >= 2:
+            have = _ranges(f["value"])
+            if rows not in (len(have), len(have) + 1):     # the edges may also be the two ends of the ranges
+                inner = have[1:-1]
+                have = inner if rows in (len(inner), len(inner) + 1) else have
+    if have is None:
+        return none
+    made = f"{len(f['value']):,} edges, which make {len(have):,} ranges" if what == "ranges" else f"{len(have):,} names"
+    if len(have) == rows:
+        return {"names": list(have), "says": f"Rows are named from {source}, saved beside the arrays: {made}, one for each row.",
+                "source": source, "extra_row": None, "sure": True}
+    if len(have) == rows - 1:
+        at, sure = _extra_row(t)
+        names = [EXTRA] + list(have) if at == 0 else list(have) + [EXTRA]
+        where = "row 0" if at == 0 else f"the last row, {rows - 1}"
+        why = ("That row's numbers are all near zero beside the others, so it is the odd one." if sure
+               else "Neither end stands out, so its place is a guess: every name may be one row off.")
+        return {"names": names, "says": f"{source} holds {made} for {rows:,} rows, one row more. The extra row is taken to be {where}, "
+                                        f"called \"{EXTRA}\". {why}", "source": source, "extra_row": at, "sure": sure}
+    return {**none, "says": f"{source} holds {made} for {rows:,} rows, so which row is which is not known. Rows are numbered.", "source": source}
+
+
+def labels(ctx, sid: str, tensor: str, by: str | None = None, watch: bool = False) -> dict:
+    """What each row of a table stands for, when a list saved beside the arrays says. Not an event: it shows no number."""
+    def fn(st):
+        t = _matrix(st, tensor)
+        got = _labels(st.manifest, tensor, t)
+        return {"tensor": tensor, "rows": int(t.shape[0]), "labels": got["names"], "labels_from": got["source"], "labels_says": got["says"],
+                "extra_row": got["extra_row"], "sure": got["sure"]}
+    return S._do(ctx, sid, fn, watch="record")
 
 
 def nearest(ctx, sid: str, tensor: str, row=0, top: int = 10, by: str | None = None, watch: bool = False) -> dict:
@@ -717,7 +780,8 @@ def nearest(ctx, sid: str, tensor: str, row=0, top: int = 10, by: str | None = N
         cos = (t @ t[j]) / (safe * (size[j] or 1.0))
         cos[size == 0] = 0.0
         order = [int(i) for i in np.argsort(-cos, kind="stable") if int(i) != j]
-        names, says = _labels(st.manifest, tensor, t.shape[0])
+        got = _labels(st.manifest, tensor, t)
+        names, says = got["names"], got["says"]
         one = lambda i: {"row": i, "label": names[i] if names else None, "cosine": float(cos[i]), "norm": float(size[i])}  # noqa: E731
         if not st.watch:
             st.event("read", f"{S._Who(st, by)} looked for the rows of {tensor} nearest to row {j}.", by, op="nearest", tensor=tensor,
@@ -740,7 +804,8 @@ def directions(ctx, sid: str, tensor: str, top: int = 5, by: str | None = None, 
         power = s ** 2
         total = float(power.sum()) or 1.0
         share = power / total
-        names, says = _labels(st.manifest, tensor, t.shape[0])
+        got = _labels(st.manifest, tensor, t)
+        names, says = got["names"], got["says"]
         out = []
         for i in range(min(n, len(s))):
             amount = u[:, i] * s[i]
@@ -815,7 +880,7 @@ def attention(ctx, sid: str, layer=0, head=None, heads=None, matrix: str | None 
             for p, e in tables:
                 through = e @ ov.T
                 per_row = np.linalg.norm(through, axis=1)
-                names, _ = _labels(st.manifest, p["tensors"][0], e.shape[0])
+                names = _labels(st.manifest, p["tensors"][0], e)["names"]
                 reads.append({"table": p["id"], "name": p["name"], "rows": int(e.shape[0]), "row_size": rms(e),
                               "query": rms(e @ q[sl].T), "key": rms(e @ key[sl].T), "value": rms(through),
                               "strongest": [{"row": int(r), "label": names[int(r)] if names else None, "value": float(per_row[r])}
@@ -847,6 +912,124 @@ OPS = {"layers": layers, "session_layers": _no_layers, "read": read, "stats": st
 
 # ---- the tree rankers ------------------------------------------------------------------------------------------------------------
 
+def _ranker(ctx, m: dict, pick: dict, shown: int) -> dict:
+    parsed = T.parse(_file(ctx, m, pick["file"]).decode(errors="replace"))
+    named = T.names_from(_file(ctx, m, pick["cols"]), parsed["inputs"]) if pick.get("cols") else []
+    return T.summary(parsed, named or None, shown)
+
+
+def rankers(ctx, model: str) -> dict:
+    """A model's tree rankers side by side: which inputs each one asks about, and which none of them does."""
+    name, version = WS.split_ref(model)
+    m = WS.manifest(ctx, name, version)
+    have = (m.get("rankers") or []) if is_real(m) else []
+    if not have:
+        raise WeightsError(f"{name} has no tree rankers. They come with a session model brought in from its training folder.")
+    each = {r["name"]: _ranker(ctx, m, r, 0) for r in have}
+    order: list[str] = []
+    for s in each.values():
+        order += [i["name"] for i in sorted(s["by_input"], key=lambda i: i["input"]) if i["name"] not in order]
+    rows = []
+    for nm in order:
+        by = {}
+        for rn, s in each.items():
+            hit = next((i for i in s["by_input"] if i["name"] == nm), None)
+            by[rn] = None if hit is None else {"splits": hit["splits"], "gain": hit["gain"], "share": hit["share"]}
+        used = [rn for rn, v in by.items() if v and v["splits"]]
+        rows.append({"name": nm, "group": T.group_of(nm), "by": by, "used_by": used, "unused_by": [rn for rn in by if rn not in used]})
+    rows.sort(key=lambda r: -max((v["share"] for v in r["by"].values() if v), default=0.0))
+    none = [r["name"] for r in rows if not r["used_by"]]
+    every = [r["name"] for r in rows if len(r["used_by"]) == len(each)]
+    names = list(each)
+    said = ", ".join(none[:8]) + (f" and {len(none) - 8} more" if len(none) > 8 else "")
+    return {"model": name, "version": m["version"], "says": T.SAYS,
+            "rankers": [{"name": rn, "objective": s["objective"], "trees": s["trees"], "inputs": s["inputs"],
+                         "used": s["inputs"] - len(s["unused"]), "unused": [u["name"] for u in s["unused"]]} for rn, s in each.items()],
+            "inputs": rows, "used_by_all": every, "used_by_some": [r["name"] for r in rows if 0 < len(r["used_by"]) < len(each)],
+            "unused_by_all": none,
+            "unused_by_all_says": (f"{len(none)} of {len(rows)} inputs are asked about by none of the {S._plural(len(each), 'ranker')} "
+                                   f"({', '.join(names)}), so they change no answer: {said}." if none
+                                   else f"Every input is asked about by at least one of the {S._plural(len(each), 'ranker')}."),
+            "same_inputs": all(s["inputs"] == len(rows) for s in each.values())}
+
+
+# ---- what can be brought in from a folder of versions ----------------------------------------------------------------------------
+
+VERSIONS_MOST = 500
+DESCRIBED_MOST = 200
+END = "weights/" + SESSION_FILE
+
+
+def _one_line(raw: bytes | None) -> str | None:
+    """A version's own one-line description, from its MANIFEST.yaml."""
+    if raw is None:
+        return None
+    try:
+        import yaml
+
+        got = yaml.safe_load(raw.decode())
+    except Exception:  # noqa: BLE001  a manifest that cannot be parsed has no description
+        return None
+    if not isinstance(got, dict):
+        return None
+    for k in ("description", "summary", "says", "title", "notes"):
+        if isinstance(got.get(k), str) and got[k].strip():
+            return " ".join(got[k].split())[:200]
+    scalars = [f"{k}: {v}" for k, v in got.items() if isinstance(v, (str, int, float)) and not isinstance(v, bool)][:4]
+    return ", ".join(scalars)[:200] or None
+
+
+def registry(where: str) -> dict:
+    """The version folders under a folder or an s3:// address that can be brought in: each one that holds
+    weights/sess.npz, with the one-line description from its MANIFEST.yaml. Read only. Nothing is written there."""
+    if not isinstance(where, str) or not where.strip():
+        raise WeightsError("Name the folder or the s3:// address that holds the versions.")
+    where = where.strip()
+    if is_address(where):
+        from ..storage.backend import S3Store
+
+        u = urlparse(where)
+        if not u.netloc:
+            raise WeightsError("An S3 address is written s3://bucket/folder.")
+        store = _cloud(lambda: S3Store(u.netloc, u.path.strip("/")))
+        keys = _cloud(lambda: store.list(""))
+        root = where.rstrip("/")
+        paths = sorted({k[:-len(END)].rstrip("/") for k in keys if k == END or k.endswith("/" + END)})
+        have = set(keys)
+        count = lambda p: sum(1 for k in keys if k.startswith((p + "/" if p else "") + "weights/"))  # noqa: E731
+        read = lambda p: _cloud(lambda: store.get((p + "/" if p else "") + "MANIFEST.yaml")) if (p + "/" if p else "") + "MANIFEST.yaml" in have else None  # noqa: E731
+    else:
+        root = os.path.abspath(where)
+        if not os.path.isdir(root):
+            raise WeightsError(f"{where} is not a folder.")
+        paths = []
+        for d, subs, _files in os.walk(root):
+            subs[:] = sorted(s for s in subs if not s.startswith("."))
+            rel = os.path.relpath(d, root)
+            if rel.count(os.sep) >= 6:
+                subs[:] = []
+            if os.path.isfile(os.path.join(d, "weights", SESSION_FILE)):
+                paths.append("" if rel == "." else rel.replace(os.sep, "/"))
+                subs[:] = []
+        count = lambda p: len([f for f in os.listdir(os.path.join(root, p, "weights")) if _wanted(f)])  # noqa: E731
+
+        def read(p):
+            try:
+                with open(os.path.join(root, p, "MANIFEST.yaml"), "rb") as f:
+                    return f.read()
+            except OSError:
+                return None
+    rows = []
+    for i, p in enumerate(paths[:VERSIONS_MOST]):
+        raw = read(p) if i < DESCRIBED_MOST else None
+        rows.append({"path": p, "address": f"{root}/{p}" if p else root, "name": p.split("/")[-1] if p else root.split("/")[-1],
+                     "description": _one_line(raw), "has_manifest": raw is not None, "files": count(p)})
+    return {"from": root, "versions": rows, "count": len(paths), "listed": len(rows), "read_only": True,
+            "says": (f"{S._plural(len(paths), 'version')} can be brought in from here." if paths
+                     else "No version was found here. A version is a folder that holds weights/sess.npz.")
+                    + " Nothing was written there. Bring one in with `cst weights import <address> --as <name>`."}
+
+
 def trees(ctx, model: str, ranker: str | None = None, trees: int = T.TREES_SHOWN) -> dict:
     """One of a model's tree rankers, read from its file: per input its questions and their gain, the inputs no tree
     asks about, and the first few trees to draw. A version of the model is named like `name@v2`."""
@@ -860,9 +1043,7 @@ def trees(ctx, model: str, ranker: str | None = None, trees: int = T.TREES_SHOWN
     if pick is None:
         raise WeightsError(f"{name} has no ranker named {ranker!r}. Its rankers are: {', '.join(names)}.")
     v = m["version"]
-    parsed = T.parse(ctx.store.get(WS._key(name, v, pick["file"])).decode(errors="replace"))
-    named = T.names_from(ctx.store.get(WS._key(name, v, pick["cols"])), parsed["inputs"]) if pick.get("cols") else []
-    out = T.summary(parsed, named or None, trees)
+    out = _ranker(ctx, m, pick, trees)
     return {"model": name, "version": v, "ranker": pick["name"], "rankers": names, "names_from": pick.get("names_from"),
             "file": pick["file"].split("/")[-1], "sha256": ((m.get("source") or {}).get("files") or {}).get(pick["file"].split("/")[-1], {}).get("sha256"),
             **out, "cannot": NOT_YET}

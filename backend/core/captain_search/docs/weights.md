@@ -481,6 +481,19 @@ version folder (with `weights/` and `MANIFEST.yaml` inside) or the `weights` fol
 this computer's default cloud login. Only the `weights/` files and `MANIFEST.yaml` are fetched, and nothing is ever
 written to the address.
 
+**What can be brought in.** `cst weights registry <folder or s3://...>` and `GET /api/weights/registry?from=` list the
+version folders under a folder or an address: every folder that holds `weights/sess.npz`, with the one-line description
+from its `MANIFEST.yaml`. It only lists and reads. Nothing is written there. Each row's `address` is what `import` takes.
+
+```json
+{"from": "/models", "count": 2, "listed": 2, "read_only": true,
+ "versions": [{"path": "arch-a/shop/v2", "address": "/models/arch-a/shop/v2", "name": "v2", "description": "wider, two layers",
+               "has_manifest": true, "files": 10}],
+ "says": "2 versions can be brought in from here. Nothing was written there. Bring one in with `cst weights import <address> --as <name>`."}
+```
+
+At most 500 versions are listed, and the first 200 get their description.
+
 The model is stored as kind `session-ranker` ("session model with rankers"). Every file is kept exactly as it came
 under `weights/<model>/v<N>/files/`, and the manifest records where it came from, each file's SHA-256 and size, and
 one digest over all the tensors. A version is written once. Arrays that are text, or numbers that are not learned
@@ -560,11 +573,26 @@ do not apply. Nothing here runs the model.
 | `cst weights nearest <tensor> <row> [--top 10]` | `GET /api/weights/sessions/{s}/nearest?tensor=&row=&top=` | the rows that point the same way as one row |
 | `cst weights directions <tensor> [--top 5]` | `GET /api/weights/sessions/{s}/directions?tensor=&top=` | a table's largest directions |
 | `cst weights attention [--layer 1] [--head 2] [--heads 2] [--matrix query_key]` | `GET /api/weights/sessions/{s}/attention?layer=&head=&heads=&matrix=` | what each head looks for and what it copies |
+| `cst weights labels <tensor>` | `GET /api/weights/sessions/{s}/labels?tensor=` | what each row of a table stands for, when a saved list says |
 
 One read or heatmap sends at most 200,000 numbers. `read` and `heatmap` need a session that may see raw weights and
 are counted in `weights_read`. `nearest` and `directions` also work on any table of a fully connected network.
 
-`nearest`, by cosine. `label` is filled only when a list saved beside the arrays has exactly one name per row:
+**Row names.** `labels` names a table's rows from a list saved beside the arrays: `<table>_vocab` (so `cat_vocab` for
+`cat.s.weight`), or `edges` for a price table, whose cut points make ranges ("1.00 to 2.00"). A list with one name per
+row names them. A list one short of the rows names them too, and the row left over is called "none or unknown": at the
+end whose row is all near zero, or at row 0 as a guess when neither end stands out. `sure` is false for a guess, and
+`labels_says` says so. Any other length names nothing. It shows no number, so it is not an event.
+
+```json
+{"tensor": "price.weight", "rows": 6, "labels": ["none or unknown", "below 1.00", "1.00 to 2.00", "2.00 to 3.00", "3.00 to 4.00", "4.00 and up"],
+ "labels_from": "edges", "extra_row": 0, "sure": false,
+ "labels_says": "edges holds 4 edges, which make 5 ranges for 6 rows, one row more. The extra row is taken to be row 0, called \"none or unknown\". Neither end stands out, so its place is a guess: every name may be one row off."}
+```
+
+The same names are the `label` of every row that `nearest`, `directions`, `attention` and `stats` list.
+
+`nearest`, by cosine:
 
 ```json
 {"tensor": "act.weight", "rows": 5, "width": 8, "row": 0, "label": null, "norm": 2.0,
@@ -622,6 +650,24 @@ LightGBM's text format, read with plain Python.
  "rule": "At each question, a value at or below the threshold goes left. Anything else goes right.",
  "cannot": "This model can be read here, not changed or run yet."}
 ```
+
+`groups` folds the inputs by the start of their names, up to the first underscore (`s1_pos` is in `s1_`), largest
+gain first: `[{"prefix": "f_", "count": 2, "used": 2, "unused": 0, "splits": 2, "gain": 14.0, "share": 0.7, "inputs": [0, 1]}]`.
+Each row of `by_input` and `unused` has its `group`. The names are the short codes the training used.
+
+`cst weights rankers <model>` and `GET /api/weights/models/{model}/rankers` put a model's rankers side by side:
+
+```json
+{"model": "shop-session", "version": 1,
+ "rankers": [{"name": "full", "objective": "lambdarank", "trees": 3, "inputs": 5, "used": 4, "unused": ["s1_never"]}],
+ "inputs": [{"name": "s1_recency", "group": "s1_", "used_by": ["full", "pclick"], "unused_by": ["patc"],
+             "by": {"full": {"splits": 1, "gain": 1.0, "share": 0.05}, "patc": {"splits": 0, "gain": 0.0, "share": 0.0}}}],
+ "used_by_all": ["f_views"], "used_by_some": ["s1_recency"], "unused_by_all": ["s1_never"],
+ "unused_by_all_says": "1 of 5 inputs are asked about by none of the 3 rankers (full, patc, pclick), so they change no answer: s1_never.",
+ "same_inputs": true}
+```
+
+`inputs` are matched by name across the rankers. `by` is `null` for a ranker that does not have the input at all.
 
 `by_input` lists every input, largest gain first: how many questions are asked about it (`splits`), their total
 `gain` from training, its `share` of all gain, and how many trees use it. `unused` is every input with no question

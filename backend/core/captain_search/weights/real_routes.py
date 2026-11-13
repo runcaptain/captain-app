@@ -2,6 +2,8 @@
 docs/weights.md. They are added to the one weights router, so they are served under /api/weights like the rest."""
 from __future__ import annotations
 
+from fastapi import Query
+
 from . import real as R
 from .routes import _ctx, router
 
@@ -25,3 +27,18 @@ def attention(sid: str, layer: int = 0, head: int | None = None, heads: int | No
 @router.get("/models/{model}/trees")
 def trees(model: str, ranker: str | None = None, trees: int = 3):
     return R.trees(_ctx(), model, ranker, trees)
+
+
+@router.get("/sessions/{sid}/labels")
+def labels(sid: str, tensor: str):
+    return R.labels(_ctx(), sid, tensor)
+
+
+@router.get("/models/{model}/rankers")
+def rankers(model: str):
+    return R.rankers(_ctx(), model)
+
+
+@router.get("/registry")
+def registry(where: str = Query(..., alias="from")):
+    return R.registry(where)

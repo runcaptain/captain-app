@@ -32,7 +32,8 @@ def parts_text(d: dict) -> str:
     lines = [f"{d['kind_says']}: width {d['width']}, {_n(d['depth'], 'layer')}, {_head_words(d)}, {d['parameters']:,} numbers.",
              d["heads_says"]]
     for p in d["parts"]:
-        lines.append(f"  {p['name']} ({p['technical']}): {_shape(p['shape'])}, {p['parameters']:,} numbers. {p['says']}")
+        size = f"{_shape(p['shape'])}, {p['parameters']:,} numbers" if p["shape"] else "one number"
+        lines.append(f"  {p['name']} ({p['technical']}): {size}. {p['says']}")
         for mt in p.get("matrices") or []:
             lines.append(f"      {mt['name']}: rows {mt['rows'][0]}:{mt['rows'][1]} of {mt['tensor']}")
     lines.append(d["wiring_says"])
@@ -60,6 +61,19 @@ def import_text(out: dict) -> str:
             + (f"tree rankers: {', '.join(out['rankers'])}\n" if out["rankers"] else "")
             + (f"kept as facts, not tensors: {', '.join(out['facts'])}\n" if out["facts"] else "")
             + f"tensor digest: {out['sha256']}\n{R.NOT_YET}\nSee its parts with `cst weights show {out['model']}`.")
+
+
+def labels_text(r: dict) -> str:
+    if not r["labels"]:
+        return f"{r['tensor']}: {r['rows']:,} rows, numbered. " + (r["labels_says"] or "No list of names for them was saved beside the arrays.")
+    return "\n".join([f"{r['tensor']}: {r['rows']:,} rows. {r['labels_says']}"] + [f"  row {i}: {name}" for i, name in enumerate(r["labels"])])
+
+
+@weights_app.command("labels")
+def labels(tensor: str = typer.Argument(..., help="a table by name, such as price.weight"), session: Optional[str] = SESSION):
+    """What each row of a table stands for, when a list saved beside the arrays says: category names, price ranges."""
+    r = _do(R.labels, ctx(), _sid(session), tensor)
+    emit(r, labels_text(r))
 
 
 def _row(r: dict) -> str:
@@ -128,6 +142,27 @@ def trees(model: str = typer.Argument(..., help="a session model with rankers, o
              f"{r['splits']:,} questions, objective {r['objective']}.", r["says"], "", "NOT USED: " + r["unused_says"], "",
              "inputs by how much their questions gained:"]
     lines += [f"  {i['name']}: {_n(i['splits'], 'question')}, {i['share'] * 100:.1f}% of the gain" for i in r["by_input"][:max(0, inputs)] if i["splits"]]
+    lines += ["", "inputs by the start of their names:"]
+    lines += [f"  {g['prefix']}: {_n(g['count'], 'input')}, {g['unused']} not used, {g['share'] * 100:.1f}% of the gain" for g in r["groups"]]
     for t in r["first_trees"]:
         lines += ["", f"tree {t['tree'] + 1}: {_n(t['leaves'], 'leaf', 'leaves')}, {t['depth']} deep"] + _tree_lines(t["root"])
     emit(r, "\n".join(lines + ["", r["rule"]]))
+
+
+@weights_app.command("rankers")
+def rankers(model: str = typer.Argument(..., help="a session model with rankers, or one version of it")):
+    """The model's tree rankers side by side: which inputs each one asks about, and which none of them does."""
+    r = _do(R.rankers, ctx(), model)
+    lines = [f"{r['model']} v{r['version']}: " + ", ".join(f"{k['name']} uses {k['used']} of {k['inputs']} inputs" for k in r["rankers"]) + ".",
+             "", "NOT USED BY ANY: " + r["unused_by_all_says"], "",
+             f"used by all: {len(r['used_by_all'])}. Used by some and not others: {len(r['used_by_some'])}."]
+    lines += [f"  {i['name']}: used by {', '.join(i['used_by'])}, not by {', '.join(i['unused_by'])}" for i in r["inputs"] if i["used_by"] and i["unused_by"]]
+    emit(r, "\n".join(lines + ["", r["says"]]))
+
+
+@weights_app.command("registry")
+def registry(where: str = typer.Argument(..., help="a folder, or an s3:// address, that holds version folders")):
+    """The trained versions under a folder or an address that can be brought in. Read only: nothing is written there."""
+    r = _do(R.registry, where)
+    lines = [f"  {v['address']}" + (f"\n      {v['description']}" if v["description"] else "") for v in r["versions"]]
+    emit(r, "\n".join([r["says"]] + lines + ([f"  and {r['count'] - r['listed']} more"] if r["count"] > r["listed"] else [])))
