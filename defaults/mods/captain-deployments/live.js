@@ -45,8 +45,10 @@ function ask(cx, ch, topics, onChange) {
     ch.failed = false;
     ch.heardAt = Date.now();
     ch.seq = r.data.seq;
+    // The feed names each change either as a topic or as {topic, seq}: both are read.
+    const changed = (r.data.changed ?? []).map((x) => (typeof x === "string" ? x : x?.topic)).filter(Boolean);
     if (first || r.data.reset) onChange(cx, [], true);
-    else if (r.data.changed?.length) onChange(cx, r.data.changed, false);
+    else if (changed.length) onChange(cx, changed, false);
     ask(cx, ch, topics, onChange);  // and wait for the next change
   });
 }

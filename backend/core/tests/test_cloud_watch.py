@@ -40,7 +40,7 @@ def quiet(monkeypatch):
     CH.reset_for_tests()
     SEQ.clear()
     CH.FEED.hear(lambda _seq, topics: [SEQ.__setitem__(t, SEQ.get(t, 0) + 1) for t in topics])
-    monkeypatch.setattr(AN, "LINGER_S", 0.0)  # a listener that leaves is gone at once, so a test need not wait 30 s
+    monkeypatch.setattr(AN, "LINGER_S", 0.0)  # a listener that leaves is gone at once, so a test need not wait the feed's 10 seconds
     for name in ("seq", "listen", "unlisten"):
         monkeypatch.setattr(AN, name, getattr(_Feed, name), raising=False)
     WT.stop_all()
@@ -87,6 +87,10 @@ def test_with_nobody_listening_nothing_is_asked(ws, aws, monkeypatch):  # noqa: 
     time.sleep(0.5)
     assert _asks(aws) == before and WT.status(ws) == []  # silent: no call to the cloud, no place being watched
     assert AN.seq("deployed") == told
+    # Someone listening to another part of the app does not start it.
+    AN.listen("projects")
+    time.sleep(0.4)
+    assert _asks(aws) == before and WT.status(ws) == []
     stop.set()
     SG.unstage(ws, "shop")
 
@@ -221,3 +225,41 @@ def test_a_job_that_fails_announces_that_too(monkeypatch):
     jid = SV._job(work, "removing the deploy of shop", SV._deployed_topics("shop"))
     assert _until(lambda: SV.JOBS[jid]["status"] == "failed")
     assert AN.seq(f"job:{jid}") >= 2 and AN.seq("deployment:shop") >= 2 and SV.JOBS[jid]["message"] == "the cloud said no"
+
+
+def test_each_cloud_has_its_own_pace_and_a_slow_ask_is_never_more_than_half_the_time(ws, aws, monkeypatch):  # noqa: F811
+    """Asking Modal what is there starts a process that takes about a second and real CPU: every two seconds, not
+    one. And any place whose listing is slow is left alone for at least as long as the ask took."""
+    assert (WT.every("aws"), WT.every("gcp"), WT.every("azure"), WT.every("modal")) == (1.0, 1.0, 1.0, 2.0)
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    real = FL._ask
+
+    def slow(ctx, src):
+        time.sleep(0.3)
+        return real(ctx, src)
+
+    monkeypatch.setattr(FL, "_ask", slow)
+    monkeypatch.setattr(WT, "EVERY_S", 0.05)
+    src = next(x for x in FL.sources(ws) if x["cloud"] == "aws")
+    WT.look(ws, src)
+    with WT._lock:
+        p = dict(WT._places[WT._key(ws, src)])
+    assert p["took"] >= 0.3 and p["wait"] >= p["took"] > p["every"]
+    assert WT.status(ws)[0]["took_s"] >= 0.3
+    SG.unstage(ws, "shop")
+
+
+def test_errors_wait_two_four_eight_and_up_to_a_minute(ws, aws, monkeypatch):  # noqa: F811
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    monkeypatch.setattr(FL, "_ask", lambda ctx, src: ([], "Could not connect to the endpoint URL"))
+    src = next(x for x in FL.sources(ws) if x["cloud"] == "aws")
+    seen = []
+    for _ in range(8):
+        WT.look(ws, src)
+        seen.append(WT.status(ws)[0]["every_s"])
+    assert seen == [2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0] and not WT.status(ws)[0]["slowed"]
+    assert WT.status(ws)[0]["text"] == "AWS could not be asked. Trying again every 60 seconds."
+    monkeypatch.setattr(FL, "_ask", lambda ctx, src: ([], "ThrottlingException: Rate exceeded"))
+    WT.stop_all()
+    WT.look(ws, src)
+    assert WT.status(ws)[0]["every_s"] == 15.0 and WT.status(ws)[0]["slowed"]

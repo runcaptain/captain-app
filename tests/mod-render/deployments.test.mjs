@@ -524,7 +524,9 @@ world.deployed = STOPPED;
 await tell(['deployed']);
 assert.ok(shown(h) === 'trail' && listReads() === quietReads + 1, `the row went the moment the feed said so, with one read: ${shown(h)}`);
 // An action here: the job is listened to, and each thing it says is read as it is said. No asking in between.
-world.deployed = RUNNING2; await tell(['deployed']);
+// (The feed's newer answer names a change as {topic, seq}, and always carries `reset`: read the same.)
+world.deployed = RUNNING2; await tell([{ topic: 'deployed', seq: 1 }], { reset: false });
+assert.equal(shown(h), 'shop trail', 'a change named as {topic, seq} is read');
 world.stopJob = 'job-9';
 world.jobs = { 'job-9': [{ status: 'running', message: TITLE, log: [TITLE] }, { status: 'running', message: 'Removing the endpoint.', log: [TITLE, 'Removing the endpoint.'] },
   { status: 'done', message: 'done', log: [TITLE, 'done: {}'], result: { text: 'Stopped. It no longer answers or bills.' } }] };
