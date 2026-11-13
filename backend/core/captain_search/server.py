@@ -1033,7 +1033,23 @@ def project_staging(pid: str, env: str = "staging", sweep: bool = True):
     sweep (the default) an endpoint past its idle limit is stopped here."""
     from . import staging as SG
 
-    return _staging_call(SG.status, ctx(), pid, env, sweep)
+    c = ctx()
+    cloud = None
+    rec = SG.state(c, pid, env)
+    if rec and rec.get("kind") != "local":
+        # The cloud is the truth for a model deployed there: its record is set right from the cloud before it is
+        # read (staging/fleet.py, kept a few seconds). A model deployed, stopped or replaced from somewhere else
+        # then shows as it is. If the cloud can't be asked just now, the record stands as it is.
+        try:
+            from .staging import fleet as FL
+
+            row = FL.one(c, pid, env)
+            if row:
+                cloud = {k: row.get(k) for k in ("state", "state_label", "state_text", "link", "corrected", "copies")}
+        except Exception:  # noqa: BLE001
+            cloud = None
+    out = _staging_call(SG.status, c, pid, env, sweep)
+    return {**out, "cloud": cloud} if isinstance(out, dict) else out
 
 
 @app.post("/api/projects/{pid}/stage", dependencies=A)
@@ -1582,6 +1598,32 @@ def project_staging_rollback_to(pid: str, n: int, body: dict | None = None):
     if not any(r["n"] == n for r in _staging_call(RB.earlier, c, pid)):
         raise HTTPException(400, f"There is no earlier version {n} to go back to.")
     return {"job": _job(lambda _p: RB.go(c, pid, n, why), f"rolling {pid} back to version {n}")}
+
+
+@app.get("/api/projects/{pid}/staging/protect", dependencies=A)
+def project_staging_protect(pid: str):
+    """What the deployed model accepts: {limits: {max_request_kb, rate_per_s}, budget: {ms, fallback}, has_fallback,
+    size_text, rate_text, budget_text, key: {rotated_at, previous_until, previous_valid, can_rotate, why_not, text}}."""
+    from .staging import protect as PT
+
+    return _staging_call(PT.get, ctx(), pid)
+
+
+@app.put("/api/projects/{pid}/staging/protect", dependencies=A)
+def project_staging_protect_put(pid: str, body: dict):
+    """Any of {max_request_kb, rate_per_s, budget_ms, fallback}. Takes effect in a few seconds, with no restart."""
+    from .staging import protect as PT
+
+    return _staging_call(lambda c, p: PT.change(c, p, **{k: body[k] for k in ("max_request_kb", "rate_per_s", "budget_ms", "fallback") if k in body}), ctx(), pid)
+
+
+@app.post("/api/projects/{pid}/staging/key/rotate", dependencies=A)
+def project_staging_key_rotate(pid: str, body: dict | None = None):
+    """{grace_minutes?}: make a new key. The old one keeps working for the grace period (an hour unless given).
+    The answer never holds the key: it is copied the way it always is (GET .../staging/key)."""
+    from .staging import protect as PT
+
+    return _staging_call(PT.rotate_key, ctx(), pid, (body or {}).get("grace_minutes"))
 
 
 @app.get("/api/projects/{pid}/staging/rollbacks", dependencies=A)

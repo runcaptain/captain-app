@@ -17,14 +17,14 @@
 // (where the run stands, step by step).
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, Input } from "gpui-base";
-import { exec, openOverlay, run } from "herdr";
+import { exec, openOverlay, run, setShared } from "herdr";
 import { MONO } from "./kit/tokens.js";
 import { api } from "./kit/cst.js";
 import { Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { SendToAgent } from "./kit/context.js";
-import { LogsTab, SettingsTab, CopiesTab, Bars } from "./deploy-tabs.js";
+import { LogsTab, SettingsTab, CopiesTab, ProtectBox, Bars } from "./deploy-tabs.js";
 
 const enc = encodeURIComponent;
 const short = (ref) => String(ref ?? "").replace(/^.*\//, "");
@@ -112,7 +112,7 @@ export function loadPlain(ship, cx) {
   if (open === "requests") get("/staging/requests?limit=50", (d) => { ship.reqs = d; });
   if (open === "versions") { get("/staging/versions", (d) => { ship.vers = d; }); get("/staging/rollbacks", (d) => { ship.backs = d; }); }
   if (open === "logs") get(`/staging/logs?limit=300${ship.logBox.value().trim() ? `&q=${enc(ship.logBox.value().trim())}` : ""}`, (d) => { ship.logsD = d; });
-  if (open === "settings") { get("/staging/settings", (d) => { ship.setD = d; }); get("/staging/copies", (d) => { ship.copiesD = d; }); }
+  if (open === "settings") { get("/staging/settings", (d) => { ship.setD = d; }); get("/staging/protect", (d) => { ship.protD = d; }); get("/staging/copies", (d) => { ship.copiesD = d; }); }
 }
 
 /** Deploy to a place. A cloud answers first with its plan, and nothing starts without a yes. */
@@ -130,6 +130,31 @@ export function deployTo(ship, cx, place, confirmed = false) {
     ship.dconfirm = null;
     try { localStorage.setItem(`deploy-where:${ship.pid()}`, place.id); } catch {}
     await follow(ship, cx, place, r.data.plan?.steps ?? []);
+  });
+}
+
+/** Take away what a failed deploy left in the account (DELETE /deploy, a job), and say when it is gone. */
+function removeCreated(ship, cx) {
+  if (ship.removing) return;
+  ship.removing = true; ship.removeNote = null;
+  cx.notify();
+  cx.spawn(async (cx) => {
+    const pid = ship.pid();
+    const r = await api(`/api/projects/${enc(pid)}/deploy`, { method: "DELETE", scoped: false, timeout: 60 });
+    let left = null;
+    for (let i = 0; r.ok && i < 600 && ship.pid() === pid; i++) {
+      const s = await api(`/api/projects/${enc(pid)}/deploy`, { scoped: false });
+      if (s.ok) { left = s.data?.exists_now ?? []; if (s.data?.status !== "running" && (s.data?.status !== "failed" || !left.length)) break; }
+      try { await exec("sleep", ["1"]); } catch { break; }
+    }
+    ship.removing = false;
+    const gone = r.ok && !(left ?? []).length;
+    if (gone && ship.djob?.failed) ship.djob = { ...ship.djob, failed: { ...ship.djob.failed, exists: [], can: (ship.djob.failed.can ?? []).filter((x) => x !== "remove") } };
+    ship.removeNote = gone ? "Removed. Nothing from this deploy is left in your account."
+      : r.ok ? `Some of it is still there: ${(left ?? []).map((x) => `${x.resource} ${x.name}`).join(", ")}. Try again, or remove it in your cloud's console.`
+      : plainError(r.error, "It couldn't be removed.");
+    cx.notify();
+    loadPlaces(ship, cx);
   });
 }
 
@@ -153,7 +178,7 @@ async function follow(ship, cx, place, planned) {
           : { tone: "good", text: `Deployed to ${place.label}.` };
         break;
       }
-      if (d.status === "failed") { ship.djob = { ...ship.djob, failed: { text: plainError(d.error, "It didn't finish."), step: d.failed_step?.title ?? null, policy: d.policy ?? null } }; break; }
+      if (d.status === "failed") { ship.djob = { ...ship.djob, failed: { text: plainError(d.error, "It didn't finish."), step: d.failed_step?.title ?? null, policy: d.policy ?? null, can: d.can ?? ["retry"], exists: d.exists_now ?? [], fix: d.fix_text ?? null } }; break; }
       cx.notify();
     }
     try { await exec("sleep", ["0.5"]); } catch { break; }
@@ -287,9 +312,16 @@ function progressBox(ship, c) {
         .child(line(c, "ship-progress-policy-text", "Your login is missing a permission. Give this policy to whoever manages the account, then deploy again:"))
         .child(div().p(8).bg(c.surface2).font_family(MONO).text_size(12.5).line_height("18px").text_color(c.navy).child(JSON.stringify(failed.policy, null, 2)))
         .child(h_flex().child(Button(c, "ship-progress-copy-policy", "Copy the policy", (_e, cx) => ship.copy(cx, JSON.stringify(failed.policy, null, 2), "The policy is on your clipboard."), { small: true })))))
-      .child(h_flex().gap(8)
-        .child(Button(c, "ship-progress-again", "Deploy again", (_e, cx) => { const p = j.place; ship.djob = null; deployTo(ship, cx, p, true); }, { small: true, kind: "primary" }))
-        .child(Button(c, "ship-progress-close", "Close", (_e, cx) => { ship.djob = null; cx.notify(); }, { small: true }))));
+      // When deploying again cannot work, what to do in its place, in the services' own sentence.
+      .when(Boolean(failed.fix), (x) => x.child(line(c, "ship-progress-fix", failed.fix)))
+      // What the deploy left in the account, by name, with a way to take it away.
+      .when((failed.exists ?? []).length > 0, (x) => x.child(line(c, "ship-progress-exists", `This now exists in your account: ${failed.exists.map((r) => `${r.resource} ${r.name}`).join(", ")}.`)))
+      .when(Boolean(ship.removeNote), (x) => x.child(line(c, "ship-progress-remove-note", ship.removeNote, "grey500")))
+      .child(h_flex().gap(8).flex_wrap()
+        // "Deploy again" only when it can work.
+        .when((failed.can ?? ["retry"]).includes("retry"), (x) => x.child(Button(c, "ship-progress-again", "Deploy again", (_e, cx) => { const p = j.place; ship.djob = null; ship.removeNote = null; deployTo(ship, cx, p, true); }, { small: true, kind: "primary" })))
+        .when((failed.can ?? []).includes("remove") && (failed.exists ?? []).length > 0, (x) => x.child(Button(c, "ship-progress-remove", ship.removing ? "Removing..." : "Remove what was created", (_e, cx) => removeCreated(ship, cx), { small: true, disabled: Boolean(ship.removing) })))
+        .child(Button(c, "ship-progress-close", "Close", (_e, cx) => { ship.djob = null; ship.removeNote = null; cx.notify(); }, { small: true }))));
 }
 
 /** The bottom of the project page. Only where to deploy, or what is deployed. */
@@ -309,6 +341,10 @@ export function ShipSection(ship, c) {
         .child(div().id("ship-deployed-name").text_size(15).font_semibold().text_color(c.navy).child(short(s.model_version)))
         .child(div().flex_1().min_w(0))
         .child(Button(c, "ship-open", "Open it", (_e, cx) => ship.page.openDeployment(cx), { small: true })))
+      // The Deployments screen is where every deployed model is managed: this opens this one there.
+      .child(div().id("ship-open-in-deployments").text_size(12.5).text_color(c.blue).cursor_pointer()
+        .on_click(() => { setShared("captain.open", { section: "deployments", open: `${ship.pid()}:${s.env ?? "staging"}`, at: Date.now() }); run("layout.select", { stack: "sections", child: "deployments" }); })
+        .child("Open in Deployments"))
       .child(h_flex().gap(8).items_center().child(dot(c, ship.healthD?.status === "unhealthy" ? "fail" : w.tone)).child(line(c, "ship-deployed-state", w.text)))
       .when(ship.healthD?.status === "unhealthy", (e) => e.child(line(c, "ship-deployed-unhealthy", ship.healthD.text, "fail")))
       .when(Boolean(address), (e) => e.child(h_flex().gap(8).items_center().flex_wrap()
@@ -352,7 +388,7 @@ function moreItems(ship) {
     { id: "traffic", label: "Use it from your site", text: "The code your site pastes, the address of each model, and the key. You can test it quietly with a copy of your site's requests first." },
     { id: "versions", label: "Earlier versions", text: "Every version deployed here, newest first, and a way to put an earlier one back." },
     { id: "logs", label: "Logs", text: "What the model wrote down while it answered, line by line." },
-    { id: "settings", label: "Settings", text: "Where it runs, on what machine, and when it stops by itself." },
+    { id: "settings", label: "Settings", text: "Where it runs, on what machine, when it stops by itself, its key, and what it accepts from a site." },
   ].filter(Boolean);
 }
 
@@ -366,7 +402,7 @@ function moreBody(ship, c, id) {
     .child(ship.connectStep(c, connect));
   if (id === "versions") return ship.versionsTab(c);
   if (id === "logs") return LogsTab(ship, c);
-  if (id === "settings") return v_flex().gap(8).child(SettingsTab(ship, c)).child(CopiesTab(ship, c));
+  if (id === "settings") return v_flex().gap(8).child(SettingsTab(ship, c)).child(ProtectBox(ship, c)).child(CopiesTab(ship, c));
   return null;
 }
 

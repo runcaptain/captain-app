@@ -232,8 +232,8 @@ def _key(rec: dict) -> str | None:
     try:
         return get_secret(rec["key_secret"])
     except KeyError:
-        raise ValueError("this computer doesn't hold the key for the staging endpoint (it is kept in the keychain "
-                         "of the computer that staged it). Stage it again from here, or ask whoever staged it.") from None
+        raise ValueError("this computer doesn't hold the key for the deployed model (it is kept in the keychain "
+                         "of the computer that deployed it). Deploy it again from here, or ask whoever deployed it.") from None
 
 
 def control(ctx: Context, pid: str, env: str = ENV) -> dict:
@@ -261,7 +261,7 @@ def set_control(ctx: Context, pid: str, env: str, **fields) -> dict:
             return doc
         except Conflict:  # someone else wrote: read again
             time.sleep(0.01)
-    raise ValueError("the staging settings kept changing while saving. Try again.")
+    raise ValueError("the deployment's settings kept changing while saving. Try again.")
 
 
 # ---- choosing what to stage ----------------------------------------------------------------------
@@ -275,7 +275,7 @@ def _pick(ctx: Context, doc: dict, candidate: str | None, baseline: bool) -> tup
     exps = doc.get("experiments") or []
     if baseline:
         if not champ:
-            raise ValueError("This project has no baseline yet. Set one first, then stage it.")
+            raise ValueError("This project has no baseline yet. Set one first, then deploy it.")
         return {"baseline": champ}, "baseline", None
     exp = None
     if candidate:
@@ -287,7 +287,7 @@ def _pick(ctx: Context, doc: dict, candidate: str | None, baseline: bool) -> tup
         exp = (judged or rest or [None])[-1]
         target = exp["pipeline"] if exp else champ
         if not target:
-            raise ValueError("There is nothing to stage yet. Set a baseline or train a candidate first.")
+            raise ValueError("There is nothing to deploy yet. Set a baseline or train a candidate first.")
     if target == champ:
         return {"baseline": champ}, "baseline", None
     arms = {"candidate": target}
@@ -303,8 +303,8 @@ def _target(ctx: Context, name: str | None) -> dict:
     name = name or ST.default_compute(ctx, "serve") or "local"
     t = C.get(ctx, name)
     if t["kind"] != "local" and not C.can_stage(ctx, t):
-        raise ValueError(f"Compute target {name} ({t['kind']}) can't run a staging endpoint yet. Use a target that "
-                         "serving setup made (AWS, Modal, Google Cloud or Azure), or stage on this computer with --target local.")
+        raise ValueError(f"Compute target {name} ({t['kind']}) can't run a deployed model yet. Use a target that "
+                         "serving setup made (AWS, Modal, Google Cloud or Azure), or deploy on this computer with --target local.")
     return t
 
 
@@ -338,7 +338,7 @@ def plan(ctx: Context, pid: str, candidate: str | None = None, baseline: bool = 
             "arms": arms, "serve": serve, "experiment": exp, "model_version": arms[serve], "cost": c,
             "needs_confirm": bool(c["billing"]), "local_fit": local_fit, "preflight": pre, "warnings": (pre or {}).get("warnings") or [], "replaces": cur["model_version"] if cur and cur.get("status") == "running" else None,
             "how": "endpoint" if endpoint else "image" if image else "captain",
-            "text": (f"Stage {arms[serve]} on " + ("this computer" if t["kind"] == "local" else f"{t['name']} ({t['kind']})")
+            "text": (f"Deploy {arms[serve]} on " + ("this computer" if t["kind"] == "local" else f"{t['name']} ({t['kind']})")
                      + (f", beside the baseline {arms['baseline']}" if serve == "candidate" and arms.get("baseline") else "")
                      + ". " + c["text"] + "".join(" " + w for w in (pre or {}).get("warnings") or []))}
 
@@ -416,9 +416,9 @@ def _start_local(ctx: Context, bundle_key: str, bid: str, key_sha: str) -> dict:
         pass
     if not tail or "MemoryError" in tail or "Killed" in tail:
         # A process the system ends for using too much memory leaves no message of its own. Say what most likely happened.
-        raise ValueError("The staging endpoint ended while it was loading the catalog, most likely because this computer "
+        raise ValueError("The model stopped while it was loading the catalog, most likely because this computer "
                          "ran out of memory. Close other work and try again, or deploy it to a cloud.")
-    raise ValueError("The staging endpoint did not start on this computer." + (f" It said: {tail}" if tail else ""))
+    raise ValueError("The model did not start on this computer." + (f" It said: {tail}" if tail else ""))
 
 
 def _stop_local(ep: dict) -> bool:
@@ -473,7 +473,7 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
     if dry_run:
         return {**p, "dry_run": True}
     if p["kind"] == "local" and (p.get("local_fit") or {}).get("outcome") in ("wont-fit", "over-limit"):
-        raise ValueError(p["local_fit"]["text"] + (" To stage it here anyway, raise the limit in Settings, or pass --allow-large."
+        raise ValueError(p["local_fit"]["text"] + (" To deploy it here anyway, raise the limit in Settings, or pass --allow-large."
                                                    if p["local_fit"]["outcome"] == "over-limit" else ""))  # refused before anything starts, in the sentence the choice shows
     if p["needs_confirm"] and not confirm:
         raise NeedsConfirm("Confirm the cost first. " + p["cost"]["text"] + "".join(" " + w for w in p["warnings"]), p)
@@ -555,10 +555,10 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
             try:
                 set_secret(rec["key_secret"], key)
             except Exception as e:  # noqa: BLE001
-                raise ValueError("This computer has no keychain to keep the staging endpoint's key in "
-                                 f"({type(e).__name__}). Set {rec['key_secret']} in the environment and stage again.") from None
+                raise ValueError("This computer has no keychain to keep the deployed model's key in "
+                                 f"({type(e).__name__}). Set {rec['key_secret']} in the environment and deploy again.") from None
         set_control(ctx, pid, env, stage=bundle["id"], serve=p["serve"], split=None, experiment=None, salt=bundle["id"],
-                    idle_minutes=idle, shadow=None)
+                    idle_minutes=idle, shadow=None, **({} if old_key and key == old_key else {"keys": None}))
     _save(ctx, pid, env, rec)
     try:
         if t["kind"] == "local":
@@ -596,7 +596,7 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
                 set_secret(old["key_secret"], old_key)
             if old.get("bundle"):
                 set_control(ctx, pid, env, stage=old["id"], serve=old.get("serve"), split=None, experiment=None, salt=old["id"])
-            _save(ctx, pid, env, {**old, "error": f"Restaging {p['model_version']} did not work, so {old['model_version']} "
+            _save(ctx, pid, env, {**old, "error": f"Deploying {p['model_version']} did not work, so {old['model_version']} "
                                                   f"is still running. {str(e)[:400]}"})
         else:
             rec.pop("switching_from", None)
@@ -608,7 +608,7 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
         if arm_name == p["serve"] and p["how"] == "captain":
             _record_deploy(ctx, pid, env, r, t, {"type": t["kind"], "executed": True,
                                                  "endpoint": (rec["endpoint"] or {}).get("name") or (rec["endpoint"] or {}).get("url")})
-    _note(ctx, pid, f"staged {p['model_version']} on {'this computer' if t['kind'] == 'local' else t['name']}")
+    _note(ctx, pid, f"deployed {p['model_version']} on {'this computer' if t['kind'] == 'local' else t['name']}")
     return public(rec)
 
 
@@ -618,7 +618,7 @@ def unstage(ctx: Context, pid: str, env: str = ENV, reason: str | None = None) -
 
     rec = state(ctx, pid, env)
     if not rec:
-        raise ValueError(f"Nothing is staged for {pid}.")
+        raise ValueError(f"Nothing is deployed for {pid}.")
     left: list = []
     if rec.get("status") in ("running", "starting", "failed") or rec.get("resources"):
         if rec.get("kind") == "local":
@@ -650,7 +650,7 @@ def unstage(ctx: Context, pid: str, env: str = ENV, reason: str | None = None) -
                 stop_reason=rec.get("stop_reason") if was == "stopped" else (reason or f"stopped by {whoami()}"),
                 error=("Captain could not remove: " + ", ".join(f"{r['type']} {r['name']}" for r in left)) if left else None)
     if was != "stopped":
-        _note(ctx, pid, f"stopped staging ({rec['stop_reason']})")
+        _note(ctx, pid, f"stopped the deployed model ({rec['stop_reason']})")
         up = _ago(rec.get("started_at"))
         if rec.get("kind") != "local" and up is not None:
             # What it cost while it was up, beside its estimate, and into the project's running total.
@@ -659,7 +659,7 @@ def unstage(ctx: Context, pid: str, env: str = ENV, reason: str | None = None) -
                 from .. import cost_estimates as CE
 
                 spent = CE.note_actual(ctx, rec["id"], C2.get(ctx, rec["target"]), up, kind="staging", project=pid,
-                                       title=f"Staging {rec.get('model_version')}")
+                                       title=f"Deployed {rec.get('model_version')}")
                 rec = _save(ctx, pid, env, spent={"usd": spent.get("usd"), "text": spent.get("text")})
             except Exception:  # noqa: BLE001  a cost that can't be worked out never blocks a stop
                 pass
@@ -693,7 +693,7 @@ def status(ctx: Context, pid: str, env: str = ENV, sweep: bool = True) -> dict:
     rec = state(ctx, pid, env)
     if not rec:
         return {"project": pid, "env": env, "status": "none", "staged": None,
-                "text": "Nothing is staged. Staging runs a model version as a live endpoint you can try, with an address you can use."}
+                "text": "Nothing is deployed. Deploying runs a model version as a live endpoint you can try, with an address you can use."}
     out = {"project": pid, "env": env, "status": rec.get("status"), "staged": public(rec), "health": None}
     if rec.get("status") != "running":
         return {**out, "text": _status_text(rec, None)}
@@ -735,7 +735,7 @@ def status(ctx: Context, pid: str, env: str = ENV, sweep: bool = True) -> dict:
         rec = _save(ctx, pid, env, status="stopped", stopped_at=_now(), stop_reason=f"stopped by itself: {why}")
         if rec.get("resources"):
             unstage(ctx, pid, env)
-        _note(ctx, pid, f"staging stopped by itself ({why})")
+        _note(ctx, pid, f"the deployed model stopped by itself ({why})")
         rec = state(ctx, pid, env)
         return {**out, "status": "stopped", "staged": public(rec), "text": _status_text(rec, None)}
     if health and sweep and not rec.get("scale_to_zero") and health.get("idle_s", 0) >= float(health.get("idle_minutes") or rec.get("idle_minutes") or IDLE_MINUTES) * 60:
@@ -789,7 +789,7 @@ def _status_text(rec: dict, health: dict | None, asleep: str | None = None) -> s
     if s == "starting":
         return f"{rec['model_version']} is starting {where}."
     if s == "failed":
-        return f"Staging failed: {rec.get('error') or 'no reason recorded'}"
+        return f"The deploy failed: {rec.get('error') or 'no reason recorded'}"
     return f"Stopped ({rec.get('stop_reason') or 'no reason recorded'})."
 
 
@@ -801,7 +801,7 @@ def scale(ctx: Context, pid: str, env: str = ENV, min_copies: int | None = None,
 
     rec = state(ctx, pid, env)
     if not rec or rec.get("status") != "running":
-        raise ValueError("Staging is not running. Stage a model version first.")
+        raise ValueError("Nothing is deployed. Deploy a model first.")
     if rec.get("kind") == "local":
         if any(v is not None for v in (min_copies, max_copies, idle_seconds)):
             raise ValueError("On this computer there is one copy. Deploy it to a cloud to run more.")
@@ -817,7 +817,7 @@ def scale(ctx: Context, pid: str, env: str = ENV, min_copies: int | None = None,
         raise ValueError("The most copies is at least 1.")
     out = C.set_staged_scale(ctx, t, rec, min_copies=min_copies, max_copies=max_copies, idle_seconds=idle_seconds)
     _save(ctx, pid, env, scale=out.pop("scale", None) or rec.get("scale"))
-    _note(ctx, pid, "changed the staged endpoint's copies: " + out["text"])
+    _note(ctx, pid, "changed the deployed model's copies: " + out["text"])
     return {"project": pid, **out}
 
 
@@ -831,7 +831,7 @@ def call(ctx: Context, rec: dict, op: str, body: dict, arm: str | None = None, t
     from .. import compute as C
 
     if rec.get("status") != "running":
-        raise ValueError("Staging is not running. Stage a model version first.")
+        raise ValueError("Nothing is deployed. Deploy a model first.")
     if rec.get("kind") == "local":
         base = (rec.get("endpoint") or {}).get("url")
         if op == "status":
@@ -845,7 +845,7 @@ def call(ctx: Context, rec: dict, op: str, body: dict, arm: str | None = None, t
                 detail = r.json().get("detail")
             except Exception:  # noqa: BLE001
                 detail = r.text[:200]
-            raise ValueError(f"The staging endpoint refused the request: {detail}")
+            raise ValueError(f"The deployed model refused the request: {detail}")
         return r.json()
     t = C.get(ctx, rec["target"])
     if rec.get("how") == "image":
@@ -941,7 +941,7 @@ def query(ctx: Context, pid: str, q: str, k: int = 10, env: str = ENV) -> dict:
     requests are logged as test traffic, never as shoppers."""
     rec = serving(ctx, pid, env)
     if not rec or rec.get("status") != "running":
-        raise ValueError("Staging is not running. Stage a model version first.")
+        raise ValueError("Nothing is deployed. Deploy a model first.")
     if not str(q or "").strip():
         raise ValueError("Type a query to try.")
     arms = rec.get("arms") or {}

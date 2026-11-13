@@ -353,6 +353,42 @@ def deployments_rollback(name: str,
     emit(r, f"Rolled back to version {r['version']} ({r['rolled_back_to']}). {r['reason']}")
 
 
+@deployments_app.command("protect")
+def deployments_protect(name: str,
+                        max_request_kb: Optional[float] = typer.Option(None, "--max-request-kb", help="refuse a request bigger than this"),
+                        rate: Optional[float] = typer.Option(None, "--rate", help="requests a second each copy takes; 0 for no limit"),
+                        budget_ms: Optional[float] = typer.Option(None, "--budget-ms", help="how long this model may take before the compared model answers; 0 for none"),
+                        fallback: Optional[bool] = typer.Option(None, "--fallback/--no-fallback", help="answer with the compared model when this one is slow or fails")):
+    """What the deployed model accepts before a real site sends it traffic: a request size limit, a rate limit and
+    a time budget with a fallback answer. With no option, show them."""
+    from ..staging import protect as PT
+
+    c = ctx()
+    given = {k: v for k, v in (("max_request_kb", max_request_kb), ("rate_per_s", rate), ("budget_ms", budget_ms), ("fallback", fallback)) if v is not None}
+    r = _do(PT.change, c, name, **given) if given else _do(PT.get, c, name)
+    emit(r, "\n".join((r["size_text"], r["rate_text"], r["budget_text"], r["key"]["text"])))
+
+
+@deployments_app.command("key")
+def deployments_key(name: str,
+                    rotate: bool = typer.Option(False, "--rotate", help="make a new key; the old one keeps working for the grace period"),
+                    grace: Optional[float] = typer.Option(None, "--grace-minutes", help="how long the old key keeps working (60 unless given, 0 to end it now)"),
+                    show: bool = typer.Option(False, "--show", help="print the key itself, for the site that calls the model")):
+    """The deployed model's key: when it was last changed, and a way to change it with no downtime."""
+    from .. import staging as SG
+    from ..staging import protect as PT
+
+    c = ctx()
+    r = _do(PT.rotate_key, c, name, grace) if rotate else _do(PT.key_state, c, name)
+    if show:
+        try:
+            typer.echo(SG._key(SG.state(c, name)))  # only when asked for, and only to this terminal
+        except _staging_errors() as e:
+            fail(str(e))
+        return
+    emit(r, ("The key was changed. " if rotate else "") + r["text"] + ("" if r["can_rotate"] else f" {r['why_not']}"))
+
+
 @deployments_app.command("health")
 def deployments_health(name: str,
                        run: bool = typer.Option(False, "--check", help="run a check now and record it, instead of showing the last one"),

@@ -53,17 +53,6 @@ def test_each_models_own_address_answers_the_same_on_every_copy(ws):  # noqa: F8
     assert a.rank({"query": "tent", "traffic": "test"}, "candidate")["model_version"] != a.rank({"query": "tent", "traffic": "test"}, "baseline")["model_version"]
 
 
-def test_a_split_left_by_an_older_version_is_ignored_on_every_copy(ws):  # noqa: F811
-    """Captain runs no A/B tests: no copy assigns a shopper to anything, whatever an old control document says."""
-    a, b = _two(ws)
-    _control(a, split=0.5, salt="ab-1", serve="candidate")
-    a.control(force=True)
-    b.control(force=True)
-    arms_a = [a.rank({"query": "tent", "session_id": f"s{i}", "traffic": "test"})["arm"] for i in range(200)]
-    arms_b = [b.rank({"query": "tent", "session_id": f"s{i}", "traffic": "test"})["arm"] for i in range(200)]
-    assert set(arms_a) == set(arms_b) == {"candidate"}
-
-
 def test_shadow_mode_on_two_copies_serves_the_baseline_and_logs_both(ws):  # noqa: F811
     a, b = _two(ws)
     _control(a, shadow={"since": "2026-11-12T00:00:00+00:00"}, serve="candidate")

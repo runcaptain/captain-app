@@ -93,6 +93,29 @@ def assign(control: dict, arms, unit: str | None = None) -> str:
 OUTCOMES_GONE = ("Captain no longer collects what shoppers clicked or bought. Keep that in your own testing tool. To report how long a request took at your site, POST /timing with request_id and ms.")
 
 
+MAX_REQUEST_KB = 256  # until the control document says otherwise (staging/protect.py)
+
+
+class Refused(ValueError):
+    """A request refused for what it sent. `status` is the HTTP status the site gets with the sentence."""
+    status = 400
+    headers: dict | None = None
+
+
+class TooLarge(Refused):
+    status = 413
+
+
+class TooMany(Refused):
+    status = 429
+    headers = {"Retry-After": "1"}
+
+
+class TooSlow(Exception):
+    """The model took longer than its time budget and there was no other model to answer in its place."""
+    status = 504
+
+
 class Arm:
     def __init__(self, name: str, spec: dict, engine):
         self.name, self.pipeline, self.engine = name, spec["pipeline"], engine
@@ -158,6 +181,10 @@ class Runtime:
         self._lines: list[dict] = []    # log lines, each with the request it belongs to when there is one
         self._timings: list[dict] = []  # how long a request took as the site saw it, when the site reports it
         self.errors = self.refused = 0  # requests that failed in here, and requests refused for what they sent
+        self.fallbacks = 0  # requests answered with the compared model's results because this one was slow or failed
+        self._tokens, self._tokens_at = None, 0.0  # the rate limit's bucket
+        self._key_reload_at = 0.0
+        self._pool = None  # threads for requests run against a time budget
         self._unpublished = False
         self._control = dict(self.bundle.get("control") or {})
         self._control_at = 0.0
@@ -200,10 +227,73 @@ class Runtime:
         v = self._control.get("idle_minutes")
         return float(v) if v else self._idle_default
 
+    def _key_ok(self, h: str) -> bool:
+        """The key this copy started with, or the ones the control document names: the current key, and the one
+        before it until its grace period ends."""
+        import hmac
+
+        keys = self._control.get("keys") or {}
+        if not keys.get("current"):
+            return hmac.compare_digest(h, self.key_sha256)
+        # The key was changed since this copy started: the key it started with no longer counts by itself.
+        if hmac.compare_digest(h, str(keys["current"])):
+            return True
+        prev, until = keys.get("previous"), keys.get("previous_until")
+        return bool(prev) and bool(until) and hmac.compare_digest(h, str(prev)) and _now() < str(until)
+
     def authorized(self, key: str | None) -> bool:
         if not self.key_sha256:
             return True
-        return bool(key) and hashlib.sha256(str(key).encode()).hexdigest() == self.key_sha256
+        if not key:
+            return False
+        h = hashlib.sha256(str(key).encode()).hexdigest()
+        if self._key_ok(h):
+            return True
+        # A key this copy doesn't know may be one that was just changed: read the control document again before
+        # refusing, at most once a second, so a new key works at once on every copy.
+        now = self.clock()
+        if now - self._key_reload_at >= 1.0:
+            self._key_reload_at = now
+            self.control(force=True)
+            return self._key_ok(h)
+        return False
+
+    def _admit(self, body: dict, ctl: dict) -> None:
+        """Refuse a request that is too big, or one too many this second, with a sentence a person can act on."""
+        lim = ctl.get("limits") or {}
+        max_kb = lim.get("max_request_kb", MAX_REQUEST_KB)
+        size = len(json.dumps(body, default=str).encode())
+        if max_kb and size > float(max_kb) * 1024:
+            raise TooLarge(f"This request is {size / 1024:,.0f} KB. This deployment takes requests up to {float(max_kb):g} KB. "
+                           f"Send a smaller one, or raise the limit: cst deployments protect {self.pid} --max-request-kb <n>.")
+        rate = lim.get("rate_per_s")
+        if rate:
+            rate = float(rate)
+            with self._lock:
+                now = self.clock()
+                full = max(1.0, rate)  # a second's worth may arrive at once
+                self._tokens = full if self._tokens is None else min(full, self._tokens + (now - self._tokens_at) * rate)
+                self._tokens_at = now
+                ok = self._tokens >= 1.0
+                if ok:
+                    self._tokens -= 1.0
+            if not ok:
+                raise TooMany(f"Too many requests. This deployment takes {rate:g} a second on each copy. Send it again in a second, "
+                              f"or raise the limit: cst deployments protect {self.pid} --rate <n>.")
+
+    def _within(self, a, query: str, k: int, budget_ms: float):
+        """Rank, but wait no longer than the budget. A call that runs over is left to finish by itself."""
+        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import TimeoutError as _Timeout
+
+        if self._pool is None:
+            self._pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="staging-rank")
+        fut = self._pool.submit(a.rank, query, k)
+        try:
+            return fut.result(timeout=budget_ms / 1000.0)
+        except _Timeout:
+            fut.cancel()
+            raise TooSlow(f"took longer than the {budget_ms:g} ms budget") from None
 
     # ---- the work ------------------------------------------------------------------------------
 
@@ -216,6 +306,7 @@ class Runtime:
         session, user = body.get("session_id"), body.get("user_id")
         traffic = body.get("traffic") if body.get("traffic") in L.TRAFFIC else "unlabelled"  # never real by default
         ctl = self.control()
+        self._admit(body, ctl)
         if arm is not None and arm not in self.arms:
             raise ValueError(f"this endpoint has no {arm} arm. Loaded: {', '.join(self.arms)}")
         shadowing = arm is None and bool(ctl.get("shadow")) and {"baseline", "candidate"} <= set(self.arms)
@@ -223,12 +314,32 @@ class Runtime:
         a = self.arms[name]
         t0 = time.perf_counter()
         self.running += 1
+        bud = ctl.get("budget") or {}
+        budget = float(bud["ms"]) if bud.get("ms") else None
+        # The compared model answers in this one's place when this one is slow or fails. Only for the model a site
+        # is being served, never for a request that asked for one model by name.
+        other = self.arms.get("baseline") if name == "candidate" and arm is None and bud.get("fallback", True) else None
+        fell = None
         try:
-            ranked, feats = a.rank(query, k)
-        except Exception as e:  # noqa: BLE001
-            self.errors += 1
-            self.say(f"Ranking {query[:80]!r} with the {name} failed: {str(e)[:200]}", rid, "error")
-            raise
+            try:
+                ranked, feats = self._within(a, query, k, budget) if budget and name == "candidate" and arm is None else a.rank(query, k)
+            except Exception as e:  # noqa: BLE001
+                slow = isinstance(e, TooSlow)
+                if other is None:
+                    self.errors += 1
+                    self.say((f"Ranking {query[:80]!r} with the {name} took longer than the {budget:g} ms budget, and there is no other model to answer in its place."
+                              if slow else f"Ranking {query[:80]!r} with the {name} failed: {str(e)[:200]}"), rid, "error")
+                    if slow:
+                        raise TooSlow(f"This request took longer than the {budget:g} ms this deployment allows, and there is no other "
+                                      "model loaded to answer in its place.") from None
+                    raise
+                ranked, feats = other.rank(query, k)
+                fell = {"from": a.pipeline, "why": "slow" if slow else "failed", "budget_ms": budget,
+                        **({} if slow else {"error": str(e)[:200]})}
+                self.fallbacks += 1
+                self.say((f"The {name} took longer than {budget:g} ms on {query[:80]!r}, so the baseline answered." if slow
+                          else f"The {name} failed on {query[:80]!r} ({str(e)[:160]}), so the baseline answered."), rid, "warn")
+                a = other
         finally:
             self.running -= 1
         ms = round((time.perf_counter() - t0) * 1000, 3)
@@ -251,6 +362,8 @@ class Runtime:
                "forced": arm is not None, "copy": self.copy}  # which running copy answered, for a host with several
         if shadow:
             rec["shadow"] = shadow
+        if fell:
+            rec["fallback"] = fell
         with self._lock:
             self._req.append(rec)
             self.requests += 1
@@ -263,6 +376,8 @@ class Runtime:
             self.say(f"The candidate ranked it silently in {shadow['ms']:g} ms." if shadow.get("ms") is not None
                      else f"The candidate failed on it silently: {shadow.get('error')}", rid, "info" if shadow.get("ms") is not None else "error")
         out = {"request_id": rid, "ids": ids, "scores": rec["scores"], "arm": name, "model_version": a.pipeline, "ms": ms}
+        if fell:
+            out["fallback"] = {"why": fell["why"], "answered_by": a.pipeline}
         if body.get("explain"):
             out["signals"] = {p: dict(zip(a.names, feats[p])) for p in ids if p in feats}
             out["importance"] = a.importance
@@ -337,7 +452,7 @@ class Runtime:
                 "arms": {n: a.pipeline for n, a in self.arms.items()}, "serve": ctl.get("serve"),
                 "started_at": self.started_at, "uptime_s": round(now - self.started),
                 "requests": self.requests, "running": max(0, self.running), "traffic": dict(self.by_traffic),
-                "errors": self.errors, "refused": self.refused, "copy": self.copy, "ready_s": self.load_s, "memory_mb": _memory_mb(),
+                "errors": self.errors, "refused": self.refused, "fallbacks": self.fallbacks, "copy": self.copy, "ready_s": self.load_s, "memory_mb": _memory_mb(),
                 "last_real_at": self.last_real_at, "shadow": ctl.get("shadow") or None, "idle_s": round(idle),
                 "idle_minutes": self.idle_minutes,
                 "stops_in_s": None if self.bundle.get("scale_to_zero") else max(0, round(self.idle_minutes * 60 - idle)),
@@ -439,7 +554,9 @@ def make_app(rt: Runtime):
         except ValueError as e:
             rt.refused += 1
             rt.say(f"Refused a request: {str(e)[:200]}", level="warn")
-            raise HTTPException(400, str(e)) from None
+            raise HTTPException(getattr(e, "status", 400), str(e), headers=getattr(e, "headers", None)) from None
+        except TooSlow as e:
+            raise HTTPException(504, str(e)) from None
 
     @api.get("/ping")
     def ping():

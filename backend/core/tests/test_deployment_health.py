@@ -199,3 +199,37 @@ def test_the_health_addresses_and_the_watch_command(ws, hooks, monkeypatch):  # 
     assert "No webhook is set." in run("deployments", "alerts").output
     on = run("deployments", "alerts", "--webhook", "https://hooks.example.invalid/secret-part")
     assert "A webhook is set." in on.output and "secret-part" not in on.output
+
+
+def test_the_pages_read_sets_a_cloud_record_right_from_the_cloud_first_and_survives_a_cloud_that_cannot_be_asked(ws, monkeypatch):  # noqa: F811
+    """What the project page reads is the present: for a model in a cloud, the record is corrected from the cloud
+    before it is read. On this computer there is no cloud to ask."""
+    from captain_search.staging import fleet as FL
+
+    monkeypatch.setattr(server, "ctx", lambda *a, **k: ws)
+    c = TestClient(server.app)
+    hd = {"Authorization": f"Bearer {server.TOKEN}"}
+    asked = []
+
+    def one(ctx, pid, env="staging", fresh=False):
+        asked.append(pid)
+        # the cloud says it is running, though the record says a deploy failed: the record is set right
+        SG._save(ctx, pid, env, status="running", error=None)
+        return {"project": pid, "env": env, "state": "running", "state_label": "Running", "state_text": "In service.", "link": "linked",
+                "corrected": ["The record said failed. The cloud says it is running."], "copies": {"now": 1, "min": 1, "max": 1}}
+
+    monkeypatch.setattr(FL, "one", one)
+    monkeypatch.setattr(SG, "status", lambda ctx, pid, env="staging", sweep=True: {"status": (SG.state(ctx, pid, env) or {}).get("status") or "none", "staged": SG.public(SG.state(ctx, pid, env))})
+    # nothing deployed, and a model on this computer: the cloud is not asked
+    assert c.get("/api/projects/shop/staging", headers=hd).json()["cloud"] is None and asked == []
+    SG._save(ws, "shop", "staging", {"env": "staging", "status": "running", "kind": "local", "model_version": "shop/a@v1"})
+    assert c.get("/api/projects/shop/staging", headers=hd).json()["cloud"] is None and asked == []
+    # a model in a cloud whose record says the deploy failed
+    SG._save(ws, "shop", "staging", {"env": "staging", "status": "failed", "kind": "aws-sagemaker", "model_version": "shop/a@v1", "error": "An earlier attempt."})
+    got = c.get("/api/projects/shop/staging", headers=hd).json()
+    assert asked == ["shop"] and got["status"] == "running" and got["cloud"]["state"] == "running"
+    assert got["cloud"]["corrected"] == ["The record said failed. The cloud says it is running."]
+    # the cloud can't be asked: the page still gets the record, and says nothing it doesn't know
+    monkeypatch.setattr(FL, "one", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no network")))
+    got = c.get("/api/projects/shop/staging", headers=hd).json()
+    assert got["status"] == "running" and got["cloud"] is None

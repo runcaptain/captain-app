@@ -1279,6 +1279,11 @@ Explorer, opens its page. With no project it offers New project, which can pin a
   the inputs as a list to add to, rename and remove before creating (filled from the kind, never locked), then
   how it trains: Captain's built-in ranker, their own training command, or their own repo.
   `POST /api/projects {name, kind, what?, slots?, trainer?}`. A wrong form makes no project.
+- **Before a real site uses a deployed model**, in its Settings (`cst deployments protect|key <project>`): a
+  key that can be changed with no downtime (the old one keeps working for an hour, a day or a week), a request
+  size limit (413 with a sentence) and a rate limit (429, Retry-After), and a time budget: when this model is
+  slow or fails, the request is answered with the compared model's results and counted as a fallback, which
+  counts against the model's health. The key is never shown, only copied.
 - **Ship, in short**: 1 Deploy, 2 Try it, 3 Use it from your site. It ends at a running endpoint with its address. The Deploy row says
   where the model runs and who can reach it ("Running on this computer. Only this computer can reach it."). Step
   3 shows the code a site pastes (`cst projects staging-connect <project> --code python`), a Copy button for the

@@ -85,12 +85,12 @@ def test_settings_are_grouped_and_the_idle_time_can_be_changed_while_it_runs(ws)
     with pytest.raises(ValueError, match="between 5 minutes and 7 days"):
         OB.set_idle(ws, "shop", 1)
     SG.unstage(ws, "shop")
-    with pytest.raises(ValueError, match="Nothing is staged"):
+    with pytest.raises(ValueError, match="Nothing is deployed"):
         OB.set_idle(ws, "shop", 60)
 
 
 def test_cost_of_a_local_endpoint_is_none_and_says_so(ws):  # noqa: F811
-    assert OB.cost(ws, "shop")["text"] == "Nothing is staged, so nothing is costing anything."
+    assert OB.cost(ws, "shop")["text"] == "Nothing is deployed, so nothing is costing anything."
     SG.stage(ws, "shop", target="local", allow_large=True)
     c = OB.cost(ws, "shop")
     assert c["free"] and c["text"] == "Runs on this computer. No cloud cost." and c["month_usd"] == 0 and c["hourly_usd"] is None
@@ -127,7 +127,7 @@ def test_metrics_give_median_and_95th_percentile_at_the_endpoint_and_as_the_site
     assert m["buckets"][-1]["requests"] == 20 and m["buckets"][-1]["p50"] <= m["buckets"][-1]["p95"]
     assert m["summary"]["p50"] is not None and m["summary"]["errors"] == 0 and m["summary"]["copies"] == 1 and m["summary"]["copies_max"] == 1
     assert m["summary"]["site_p50"] is None and m["summary"]["site_text"].startswith("As your site sees it: not reported yet.")
-    assert m["markers"] and m["markers"][0]["text"].startswith("Version 1 staged: ") and m["markers"][0]["slot"] is not None
+    assert m["markers"] and m["markers"][0]["text"].startswith("Version 1 deployed: ") and m["markers"][0]["slot"] is not None
     assert m["text"].startswith("20 requests in the last 15 minutes, no errors. At the endpoint: median ")
     # the site reports what it saw: with an outcome, or by itself
     for i, r in enumerate(got[:10]):
@@ -148,13 +148,13 @@ def test_metrics_give_median_and_95th_percentile_at_the_endpoint_and_as_the_site
 
 
 def test_the_deployments_list_shows_live_and_stopped_across_projects(ws):  # noqa: F811
-    assert OB.deployments(ws)["rows"] == [] and OB.deployments(ws)["text"].startswith("Nothing is staged in any project.")
+    assert OB.deployments(ws)["rows"] == [] and OB.deployments(ws)["text"].startswith("Nothing is deployed in any project.")
     SG.stage(ws, "shop", target="local", allow_large=True)
     _site(ws, 5)
     d = OB.deployments(ws, "live")
     row = d["rows"][0]
     assert len(d["rows"]) == 1 and row["project"] == "shop" and row["status"] == "Handling requests" and row["copies"] == 1
-    assert row["requests_24h"] == 5 and sum(row["series"]) == 5 and len(row["series"]) == 30 and row["since_text"].startswith("Staged by ")
+    assert row["requests_24h"] == 5 and sum(row["series"]) == 5 and len(row["series"]) == 30 and row["since_text"].startswith("Deployed by ")
     assert row["where"] == "Running on this computer." and row["line"] == "Copies: 1 live. Requests: 0 running."
     assert OB.deployments(ws, "stopped")["rows"] == [] and OB.deployments(ws, "stopped")["text"] == "Nothing has been stopped yet."
     SG.unstage(ws, "shop")

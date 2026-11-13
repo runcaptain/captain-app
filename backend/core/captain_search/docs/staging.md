@@ -1,6 +1,6 @@
-# Staging: a model version as a live endpoint, in your own cloud
+# Deploying: a model version as a live endpoint, in your own cloud
 
-Staging runs one model version as a live endpoint you can query, beside the project's baseline. It runs on your
+Deploying runs one model version as a live endpoint you can query, beside the project's baseline. It runs on your
 compute target (a SageMaker endpoint in your AWS account) or, with `--target local`, as a process on this computer.
 Captain hosts nothing and never deploys to production: launch review is still the gate before that.
 
@@ -22,7 +22,7 @@ To compare models on real shoppers, split traffic in your own testing tool and s
 address (see "Use it from your site"). The old `cst projects ab-*` commands print one line saying so and exit 2.
 A record of a test left in a project by an older version is ignored, and nothing about a test can stop a deploy.
 
-## What can be staged
+## What can be deployed
 
 | The version | What happens |
 |---|---|
@@ -52,9 +52,9 @@ A local endpoint and a cloud endpoint load the same bundle, so what you try here
 
 Every route but `/ping` and `/healthz` needs the endpoint key: `Authorization: Bearer <key>` on a local endpoint.
 SageMaker exposes one route, so there the body carries it: `{"op": "rank", "key": "<key>", "query": ...}` to
-`InvokeEndpoint` (ops: `rank`, `timing`, `flush`, `status`, `reload`). The key is generated at stage time and kept
+`InvokeEndpoint` (ops: `rank`, `timing`, `flush`, `status`, `reload`). The key is generated when you deploy and kept
 in this computer's keychain as `STAGING_<PROJECT>_<ENV>_KEY`; the endpoint only ever holds its SHA-256. On a machine
-with no keychain, set that name in the environment before staging and that value is used. A local endpoint binds to
+with no keychain, set that name in the environment before deploying and that value is used. A local endpoint binds to
 127.0.0.1 only.
 
 `traffic` says where a request came from: `real`, `test`, or nothing (unlabelled). The Try it box sends `test`.
@@ -62,14 +62,14 @@ Only `real` ever counts as REAL_TRAFFIC evidence.
 
 ## Where it runs: this computer, or your cloud
 
-Before staging, Captain offers the places a model can run with what each costs: this computer (free, only you can
+Before a deploy, Captain offers the places a model can run with what each costs: this computer (free, only you can
 reach it) and the connected cloud (an hourly estimate, a site can reach it). The last choice is remembered per
 project.
 
-**A big model is staged in the cloud, not on this computer.** There is a size limit for staging here, separate from
+**A big model is deployed to a cloud, not on this computer.** There is a size limit for deploying here, separate from
 free memory: by default a model that needs more than 1 GB to serve (the estimate below, with headroom, counting the
 baseline beside it) is not offered on this computer, even when the memory is free. The choice is switched off with
-the reason and a link to the setting (Settings, Costs: "Largest model to stage on this computer": 250 MB, 500 MB,
+the reason and a link to the setting (Settings, Costs: "Largest model to deploy on this computer": 250 MB, 500 MB,
 1 GB, 2 GB, 4 GB or No limit). `cst projects stage --target local` refuses the same way unless `--allow-large` is
 passed. With a cloud connected the cloud is offered first.
 
@@ -80,17 +80,17 @@ a product for a trained ranker, 4.5 KB a product for a keyword version, 0.45 KB 
 the process, plus 30% headroom. A 200,000 product catalog with both versions needs about 3.4 GB, loads in about 7
 seconds, and answers a query in about 120 ms. If it won't fit, the choice is shown switched off with the reason
 ("This catalog needs about 9 GB of memory to serve, and this computer has 3 GB free. Deploy it to a cloud."). If
-it is tight, it is allowed with a warning. Staging is refused before anything starts when it won't fit, and an
+it is tight, it is allowed with a warning. A deploy is refused before anything starts when it won't fit, and an
 endpoint that runs out of memory while loading says so.
 
 **Set up serving in your AWS account** (`cst compute setup aws-serving --profile <login> --region <region>`, or
-the button on the deployment page) creates what a SageMaker staging target needs, after showing exactly what and
+the button on the deployment page) creates what a SageMaker serving target needs, after showing exactly what and
 a confirm: the role the endpoint runs as (it can read the serving bundle, write the request log, pull its image and
 delete its own endpoint, and nothing else), a repository for the serving image, the image, and the compute target.
 The image is built inside your account by AWS CodeBuild from the installed Captain (measured: 78 seconds, about
 $0.01),
 so no Docker is needed on your computer. Everything is named `<prefix>-serving...` and tagged `app=captain`.
-`--remove` takes it all away again and is refused while a model is staged there. `--policy` prints the exact
+`--remove` takes it all away again and is refused while a model is deployed there. `--policy` prints the exact
 policy your login needs, for an admin. A login that lacks a permission is told which step and which action.
 
 ## Deploy in one step
@@ -217,10 +217,10 @@ must start a certain way. It is read the first time a place is set up, and does 
 `cst projects stage` and `cst compute setup serving` below are the same work in two parts, kept for agents and
 scripts. They take the size they are given and do not pick one.
 
-## Hosts: every place a staged model can run
+## Hosts: every place a deployed model can run
 
-Every host has the same shape, so staging, the request log, the quiet test, the served-features check and
-unstage work the same everywhere. `cst compute setup serving <host> --options` lists what one asks, and
+Every host has the same shape, so deploying, the request log, the quiet test, the served-features check and
+stopping work the same everywhere. `cst compute setup serving <host> --options` lists what one asks, and
 `GET /api/serving/hosts` returns them all as cards.
 
 | Host | What runs | Sleeps when idle | Where the bundle and the log are kept | Address and key | Last real run |
@@ -248,7 +248,7 @@ never removes such an endpoint for being idle, and the runtime never stops itsel
 asks the host how many copies are up and only asks the endpoint itself when one is, so a page left open does not
 keep a copy awake and billing. An endpoint with no copy up reads "Asleep: no copy is up, and it costs nothing. It
 wakes on the next request." Its cost estimate is by the hour a copy is awake, and what is recorded when it stops is
-a ceiling: the whole time staged, as if one copy never slept.
+a ceiling: the whole time deployed, as if one copy never slept.
 
 **Storage.** The endpoint reads its bundle and writes its log in one place, and Captain reads and writes the same
 place. On Modal, Google Cloud and Azure that place is the host's own (a volume, a serving bucket), whatever the
@@ -259,8 +259,8 @@ reach nothing else. The log is published into the workspace from Captain's side.
 
 `cst compute setup serving modal [--set environment=<env>] [--set name_prefix=captain]` makes a Modal volume and
 the compute target `modal-serving`. There is no image repository and no role: Modal builds the image itself from
-the installed Captain the first time a model is staged. Each staged model is one Modal app and one Modal secret,
-named `<prefix>-<project>-staging`. The secret holds what the endpoint is told (which bundle, where its storage is,
+the installed Captain the first time a model is deployed. Each deployed model is one Modal app and one Modal secret,
+named `<prefix>-<project>`. The secret holds what the endpoint is told (which bundle, where its storage is,
 the SHA-256 of the endpoint key, never the key) and is deleted with the app. Modal signs in by itself
 (`modal token new`), so there is no cloud login to pick and no policy to copy.
 
@@ -282,7 +282,7 @@ its keyword baseline (480 products). Every quality number from that run is SIMUL
 | One request from a laptop 75 ms away, connection kept open | median 257 ms, 95th percentile 329 ms |
 | The same on a quiet endpoint | median 212 ms, 95th percentile 234 ms |
 | Ranking inside the endpoint | median 3.3 ms, 95th percentile 4.2 ms |
-| Unstage, and removing the setup | 19 s, 1 s |
+| Stop, and removing the setup | 19 s, 1 s |
 | Cost of the whole run (about 50 minutes, six deploys) | $0.05, from Modal's own billing summary |
 
 What that run found and fixed:
@@ -298,7 +298,7 @@ What that run found and fixed:
   log files took 10 to 15 s. The endpoint itself is not slowed by it.
 - Modal lists a stopped app for a while after it is stopped. It runs nothing and costs nothing.
 
-Known limits: one region (Modal's default), CPU only, a container image of your own (`--image`) can't be staged
+Known limits: one region (Modal's default), CPU only, a container image of your own (`--image`) can't be deployed
 there, and Modal keeps an idle copy at most 20 minutes.
 
 ### Google Cloud (Cloud Run)
@@ -309,7 +309,7 @@ cost estimate.
 `cst compute setup serving gcp --set profile=<login> [--set region=us-central1] [--set name_prefix=captain]` makes,
 in your own project: a service account the endpoint runs as, a serving bucket, an Artifact Registry repository, a
 second service account the image build runs as, the image (built by Cloud Build from the installed Captain, no
-Docker here), and the compute target `gcp-serving`. Each staged model is one Cloud Run service, deleted on unstage.
+Docker here), and the compute target `gcp-serving`. Each deployed model is one Cloud Run service, deleted when you stop it.
 
 - **Least privilege.** Every grant is on the one bucket or the one repository. The endpoint's account may read and
   add objects in the serving bucket. The build account may read the build folder, write its log beside it, and
@@ -333,8 +333,8 @@ cost estimate.
 `cst compute setup serving azure --set profile=<login> [--set region=eastus] [--set name_prefix=captain]` makes one
 resource group, `<prefix>-serving`, and puts everything in it: a storage account with one container, a managed
 identity the endpoint runs as, a Basic container registry, the image (built by the registry itself, no Docker
-here), a Container Apps environment on the Consumption plan, and the compute target `azure-serving`. Each staged
-model is one container app in that group, deleted on unstage. Removing the setup deletes the group, and is refused
+here), a Container Apps environment on the Consumption plan, and the compute target `azure-serving`. Each deployed
+model is one container app in that group, deleted when you stop it. Removing the setup deletes the group, and is refused
 if the group holds anything Captain did not make.
 
 - **Least privilege.** The identity may read and write that one container and pull that one image. The login that
@@ -388,8 +388,8 @@ the account, and Captain does not remove it.
   used before it stops the endpoint. Each copy leaves that in `staging/<project>/<env>/copies/<deployment>/`.
   Before this, one quiet copy could delete an endpoint another copy was busy on.
 
-**What is per copy.** A change to the running endpoint (shadow mode, the idle limit) reaches the copy that was told
-at once and the others within 3 seconds. `flush` and `status` reach one copy, whichever the host picks, so the newest
+**What is per copy.** A change of traffic (the quiet test, the idle limit) reaches the copy that was told at
+once and the others within 3 seconds. `flush` and `status` reach one copy, whichever the host picks, so the newest
 15 seconds of another copy's requests can be missing from a readout taken right after a flush.
 
 ## What is deployed: the cloud is the truth
@@ -449,10 +449,10 @@ It reads `GET /api/deployed`, so it shows what the clouds report, never Captain'
 - **Filters**: Running, Stopped, All. By cloud and by project when there is more than one.
 - **What Captain created in your accounts**: what the first deploy to each cloud made, with what each thing is
   for, and "Remove everything" when no model is deployed there.
-- **A model's page** (Open): its state, its address or its name in the cloud with Copy, then five parts. Traffic
-  and cost has the charts at full size over 15 minutes, 1 hour, 24 hours or 7 days: requests a minute, requests
-  that failed, response time, processor, memory and copies, and what it costs now, today and this month. The
-  others are the requests it answered, its log, the earlier versions with "Put this version back", and its copies
+- **A model's page** (Open): its state, its address or its name in the cloud with Copy, then two parts, "Traffic and cost"
+  and "Details". Traffic and cost has the charts at full size over 15 minutes, 1 hour, 24 hours or 7 days: requests a minute, requests
+  that failed, response time, processor, memory and copies, and what it costs now, today and this month. Details
+  has the requests it answered, its log, the earlier versions with "Put this version back", and its copies
   and machine.
 
 A cloud that could not be asked is said above the list, and nothing can be done to a deployment Captain could not
@@ -547,7 +547,7 @@ there will be no request log. If your sign-in is not allowed to ask IAM, it says
 ## What Captain creates in AWS, and how to find it
 
 One endpoint, one endpoint config and one model, named `<prefix>-<project>-<env>` (the target's "Name prefix for
-staging resources", `captain` unless set), each tagged `app=captain`, `project=<project>`, `env=<env>`. They are
+serving resources", `captain` unless set), each tagged `app=captain`, `project=<project>`, `env=<env>`. They are
 listed on the project (Details, or `cst projects staging <project>`), and `unstage` deletes exactly those and waits
 until the endpoint is gone. A start that fails removes what it created before it reports. Anything that could not
 be removed is named.
@@ -561,7 +561,7 @@ be removed is named.
 | `sagemaker:DeleteEndpoint` on its own endpoint | So an idle endpoint can stop itself |
 | Pull the serving image from ECR | SageMaker starts the container |
 
-A local staging endpoint writes the same log to the local workspace store.
+A model deployed on this computer writes the same log to the local workspace store.
 
 ## The request log
 
@@ -672,9 +672,9 @@ versions.
 
 ## The deployment page, tab by tab
 
-A staged model has its own page. The header carries the address, the key, a test request, where it runs, and a
+A deployed model has its own page. The header carries the address, the key, a test request, where it runs, and a
 chart of requests over a time range you pick (15 minutes, 1 hour, 24 hours, 7 days), with errors marked in red and
-a thin line where each version was staged. A small card stays in view on every tab and says which of three states
+a thin line where each version was deployed. A small card stays in view on every tab and says which of three states
 the endpoint is in: **stopped**, **idle** (up, ready, nothing to do, which is fine), or **handling requests**.
 
 | Tab | What it shows | From the terminal |
@@ -682,7 +682,7 @@ the endpoint is in: **stopped**, **idle** (up, ready, nothing to do, which is fi
 | Requests | Newest first. A row opens beside the list: the results, the signals served, both response times, and that request's own log lines. | |
 | Try it | A query against both versions. | `cst projects staging-query` |
 | Use it from your site | The code a site pastes, an address a model, the quiet test. | `staging-connect`, `shadow` |
-| Copies | The running copy: where, version, startup time, requests handled, peak memory, its state. Staging runs one copy, and none when idle. | |
+| Copies | The running copy: where, version, startup time, requests handled, peak memory, its state. On this computer it runs one copy, and none when idle. | |
 | Metrics | Requests, response time (median and 95th percentile), errors, copies, memory, requests being answered. | |
 | Versions | Every deploy, the live one marked, Roll back on recent ones. | `cst deployments history`, `rollback` |
 | Logs | Lines to the millisecond with a filter. Lines of requests handled at the same time can interleave. New lines arrive within about 15 seconds. | `cst deployments logs [-f] [--filter] [--request]` |
@@ -695,14 +695,14 @@ request. "As your site sees it" includes the network, and only the site can know
 2026-11-11 from a laptop to a SageMaker endpoint in us-west-1: a median of 0.2 ms at the endpoint and 111 ms as the
 caller saw it. The network is nearly all of it, which is why both are shown.
 
-**What to expect when staging in AWS** (measured twice on 2026-11-11, ml.t2.medium, us-west-1): building the
+**What to expect when deploying to AWS** (measured twice on 2026-11-11, ml.t2.medium, us-west-1): building the
 serving image in your account takes about a minute and a half (78 seconds), once. An endpoint is ready about two
 minutes after you confirm (115 and 126 seconds).
 
 ## The same thing from the terminal
 
 ```
-cst deploy <project> [--target local] [--yes]     stage the candidate. The last line printed is the address.
+cst deploy <project> [--target local] [--yes]     deploy the candidate. The last line printed is the address.
 cst deployments list [--stopped | --all]          state, copies, where and since when, across projects
 cst deployments history <project>                 each version: number, when, who, model version
 cst deployments logs <project> [-f]               the endpoint's log
@@ -711,7 +711,7 @@ cst deployments rollback <project> [version]      put an earlier version back (d
 ```
 
 `cst projects stage`, `staging` and `unstage` do the same and stay. `cst deploy promote|rollback|status|history`
-are the gated environment commands and are unchanged: a project that has one of those names is staged with
+are the gated environment commands and are unchanged: a project that has one of those names is deployed with
 `cst deploy to-staging <project>`.
 
 ## Health, and being told when it changes
@@ -771,3 +771,26 @@ through Captain follow it. A program that saved the address must read it again. 
 
 `GET /api/serving/machines` lists, per cloud, the sizes on offer and the one chosen in place of the smallest that
 fits. `PUT /api/settings/serving {host, machine}` saves a choice. An empty machine goes back to the smallest.
+
+## Before a real site sends traffic
+
+`cst deployments protect <project>` shows and sets three things. In the app they are in the deployed model's
+Settings. Each takes effect in a few seconds on every
+copy, with no restart.
+
+- **Request size.** `--max-request-kb 256` (the default). A bigger request gets 413 and a sentence.
+- **Requests a second.** `--rate 50`, or `--rate 0` for no limit (the default). More than that get 429, a
+  sentence and `Retry-After: 1`. The rate is per copy: three copies take three times as many.
+- **A time budget with a fallback answer.** `--budget-ms 200`. When this model takes longer, or fails, the
+  request is answered with the compared model's results. The answer carries `fallback: {why, answered_by}`, and
+  the request is logged under the model the shopper was given, with `fallback` on it. A fallback counts against
+  the model's health like a failed request. `--no-fallback` turns the fallback off. With no compared model
+  loaded, a request over the budget gets 504 and a sentence. Even with no budget, a model that fails is answered
+  by the compared model unless the fallback is off.
+
+**Changing the key with no downtime.** `cst deployments key <project> --rotate` makes a new key. The old one
+keeps working for an hour (`--grace-minutes N`, 0 to end it now), so a site can switch when it suits. The copy
+Captain reaches learns the new key at once, every other copy within a few seconds. `--show` prints the key. The
+key also stays the same across a redeploy and a roll back. A key set in the environment is not changed here.
+
+`GET|PUT /api/projects/<id>/staging/protect`, `POST /api/projects/<id>/staging/key/rotate {grace_minutes}`.

@@ -95,7 +95,7 @@ def copies(ctx: Context, pid: str, env: str = ENV) -> dict:
 
     rec = state(ctx, pid, env)
     if not rec:
-        return {"project": pid, "rows": [], "text": "Nothing is staged, so no copy is running."}
+        return {"project": pid, "rows": [], "text": "Nothing is deployed, so no copy is running."}
     s = status(ctx, pid, env, sweep=False)
     h = s.get("health")
     if s.get("status") != "running":
@@ -120,7 +120,7 @@ def copies(ctx: Context, pid: str, env: str = ENV) -> dict:
                 "text": f"{s.get('copies') or 1} up now. " + (sc.get("text") or "") + " Stopping the endpoint removes it.",
                 **({"warning": s["warning"]} if s.get("warning") else {})}
     return {"project": pid, "rows": [row], "minimum": 0, "maximum": 1,
-            "text": "One copy is running. Staging runs one copy, and none once it has been idle for "
+            "text": "One copy is running. A deployed model here runs one copy, and none once it has been idle for "
                     f"{_span(float(rec.get('idle_minutes') or 240) * 60)}. Stopping the copy stops the endpoint.",
             **({"warning": s["warning"]} if s.get("warning") else {})}
 
@@ -142,7 +142,7 @@ def logs(ctx: Context, pid: str, env: str = ENV, q: str | None = None, limit: in
     `request_id` the lines of one request, `since` the lines after a time (for following the log as it grows)."""
     rec = state(ctx, pid, env)
     if not rec:
-        return {"project": pid, "rows": [], "total": 0, "streaming": False, "text": "Nothing is staged, so there is no log."}
+        return {"project": pid, "rows": [], "total": 0, "streaming": False, "text": "Nothing is deployed, so there is no log."}
     if rec.get("how") == "image":
         return {"project": pid, "rows": [], "total": 0, "streaming": False,
                 "text": "This endpoint runs your own container, so its log is where your container writes it."}
@@ -161,7 +161,7 @@ def logs(ctx: Context, pid: str, env: str = ENV, q: str | None = None, limit: in
             "last": shown[-1]["ts"] if shown else since,
             "note": "Lines from requests handled at the same time can interleave. Times are UTC, to the millisecond.",
             "text": (f"{len(lines):,} of {total:,} lines match." if (q and q.strip()) or request_id else
-                     f"{total:,} line{'s' if total != 1 else ''} since this version was staged."
+                     f"{total:,} line{'s' if total != 1 else ''} since this version was deployed."
                      + (" New lines appear within about 15 seconds." if streaming else " The endpoint is stopped, so the log is complete."))
             if total else ("No lines yet." if streaming else "This version wrote no log lines.")}
 
@@ -173,7 +173,7 @@ def settings(ctx: Context, pid: str, env: str = ENV) -> dict:
 
     rec = state(ctx, pid, env)
     if not rec:
-        return {"project": pid, "groups": [], "text": "Nothing is staged."}
+        return {"project": pid, "groups": [], "text": "Nothing is deployed."}
     c = rec.get("cost") or {}
     idle = float(rec.get("idle_minutes") or 240)
     local = rec.get("kind") == "local"
@@ -186,7 +186,7 @@ def settings(ctx: Context, pid: str, env: str = ENV) -> dict:
             ["Serves", f"{rec.get('model_version')}" + (f", beside the baseline {rec['arms']['baseline']}" if (rec.get("arms") or {}).get("baseline") and rec.get("serve") != "baseline" else "")]]},
         {"title": "Copies", "rows": [
             ["Minimum", "None. It stops by itself when idle."], ["Maximum", "1"], ["Spare", "None"],
-            ["Why", "Staging is for trying a model on a share of traffic, so it runs one copy. Production scaling is your own deployment's job."]]},
+            ["Why", "This place runs one copy. For more, deploy it to a cloud that runs several."]]},
         {"title": "Stopping when idle", "edit": "idle", "rows": [
             ["Stops after", f"{_span(idle * 60)} with no requests"],
             ["Then", "The process ends." if local else "The endpoint deletes itself, so it stops billing."]]},
@@ -203,15 +203,15 @@ def settings(ctx: Context, pid: str, env: str = ENV) -> dict:
         groups[1] = {"title": "Copies", "rows": [
             ["Fewest", "None: it sleeps when nobody calls it." if not sc.get("min_copies") else f"{sc['min_copies']} kept up at all times"],
             ["Most", str(sc.get("max_copies") or 1)],
-            ["Why", "Staging is for trying a model on a share of traffic. Production scaling is your own deployment's job."]]}
+            ["Why", "Change how many copies run in the copies setting of this place."]]}
         groups[2] = {"title": "Sleeping when idle", "rows": [
             ["An idle copy stays up", f"{_span(secs)}" if secs else "As long as the host decides"],
             ["Then", "The host takes the copy away, and nothing bills. The next request starts one, which takes a few seconds."]]}
         return {"project": pid, "groups": groups, "idle_minutes": None, "idle_choices": [], "can_edit": False, "scale": sc,
-                "text": "This host sleeps when idle, so there is no idle time to set here. To change the machine, the copies or where it runs, stage it again."}
+                "text": "This host sleeps when idle, so there is no idle time to set here. To change the machine, the copies or where it runs, deploy it again."}
     return {"project": pid, "groups": groups, "idle_minutes": idle, "idle_choices": list(IDLE_CHOICES),
             "can_edit": rec.get("status") == "running" and rec.get("how") != "image",
-            "text": "Only the idle time can be changed while it runs. To change the machine or where it runs, stage it again."}
+            "text": "Only the idle time can be changed while it runs. To change the machine or where it runs, deploy it again."}
 
 
 def set_idle(ctx: Context, pid: str, minutes: float, env: str = ENV) -> dict:
@@ -226,7 +226,7 @@ def set_idle(ctx: Context, pid: str, minutes: float, env: str = ENV) -> dict:
         raise ValueError("the idle time is between 5 minutes and 7 days")
     rec = state(ctx, pid, env)
     if not rec or rec.get("status") != "running":
-        raise ValueError("Nothing is staged, so there is nothing to change. The idle time is chosen when you stage.")
+        raise ValueError("Nothing is deployed, so there is nothing to change. The idle time is chosen when you deploy.")
     if rec.get("scale_to_zero"):
         raise ValueError("This host puts the endpoint to sleep by itself when nobody calls it, so there is no idle time to set.")
     set_control(ctx, pid, env, idle_minutes=m)
@@ -246,7 +246,7 @@ def cost(ctx: Context, pid: str, env: str = ENV) -> dict:
 
     rec = state(ctx, pid, env)
     if not rec:
-        return {"project": pid, "free": True, "rows": [], "text": "Nothing is staged, so nothing is costing anything."}
+        return {"project": pid, "free": True, "rows": [], "text": "Nothing is deployed, so nothing is costing anything."}
     now = dt.datetime.now(dt.timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     day_start = now - dt.timedelta(hours=24)
@@ -326,7 +326,7 @@ def metrics(ctx: Context, pid: str, env: str = ENV, span: str = "1h") -> dict:
     empty = {"project": pid, "range": span, "range_text": words, "ranges": list(RANGES), "buckets": [], "markers": [],
              "summary": {}, "start": start.isoformat(timespec="seconds"), "end": now.isoformat(timespec="seconds")}
     if not rec:
-        return {**empty, "text": "Nothing is staged, so there is nothing to chart."}
+        return {**empty, "text": "Nothing is deployed, so there is nothing to chart."}
     got = _read(ctx, pid, env, rec, every_stage=True)
     seen_by = {str(t["request_id"]): float(t["ms"]) for t in got["timings"]}
     b = [{"at": (start + dt.timedelta(seconds=step * i)).isoformat(timespec="seconds"), "requests": 0, "errors": 0,
@@ -367,7 +367,7 @@ def metrics(ctx: Context, pid: str, env: str = ENV, span: str = "1h") -> dict:
         for i, d in enumerate(sorted(ops.history(ctx, f"{pid}-{env}"), key=lambda d: d.created_at)):
             if d.created_at >= start:
                 markers.append({"at": d.created_at.isoformat(timespec="seconds"), "n": i + 1, "model_version": d.pipeline,
-                                "slot": slot(d.created_at.isoformat()), "text": f"Version {i + 1} staged: {d.pipeline}"})
+                                "slot": slot(d.created_at.isoformat()), "text": f"Version {i + 1} deployed: {d.pipeline}"})
     except Exception:  # noqa: BLE001
         pass
     total = sum(x["requests"] for x in b)
@@ -431,7 +431,7 @@ def deployments(ctx: Context, which: str = "live") -> dict:
                          "state": a["state"], "status": a["label"], "where": where(rec)["text"].split(". ")[0] + "." if up else
                          ("On this computer." if rec.get("kind") == "local" else f"On {rec.get('target')}."),
                          "kind": rec.get("kind"), "by": rec.get("started_by"), "since": when,
-                         "since_text": (f"Staged by {rec.get('started_by') or 'someone'} {_span(ago)} ago" if up else
+                         "since_text": (f"Deployed by {rec.get('started_by') or 'someone'} {_span(ago)} ago" if up else
                                         f"Stopped {_span(ago)} ago" + (f": {rec['stop_reason']}" if rec.get("stop_reason") else ""))
                          if ago is not None else "",
                          "copies": 1 if up else 0, "running": (h or {}).get("running", 0) if up else 0,
@@ -440,6 +440,6 @@ def deployments(ctx: Context, which: str = "live") -> dict:
     rows.sort(key=lambda r: str(r.get("since") or ""), reverse=True)
     n_live = sum(1 for r in rows if r["state"] != "stopped")
     return {"which": which, "rows": rows,
-            "text": ("Nothing is staged in any project. Stage a model from a project's page to see it here." if not rows and which != "stopped"
+            "text": ("Nothing is deployed in any project. Deploy a model from a project's page to see it here." if not rows and which != "stopped"
                      else "Nothing has been stopped yet." if not rows else
                      f"{len(rows)} deployment{'s' if len(rows) != 1 else ''}" + (f", {n_live} live." if which == "all" else "."))}

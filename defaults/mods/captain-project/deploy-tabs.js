@@ -106,6 +106,44 @@ export function SettingsTab(ship, c) {
     .when(Boolean(ship.setNote), (e) => e.child(div().id("dep-set-note").text_size(12.5).text_color(ship.setNote.tone === "fail" ? c.fail : c.good).child(ship.setNote.text)));
 }
 
+/** What the deployed model accepts before a real site sends it traffic: its key, a request size and rate limit, and
+ *  a time budget with a fallback answer. Each sentence is the services' own. Each change takes effect in seconds. */
+export function ProtectBox(ship, c) {
+  const d = ship.protD;
+  if (!d) return shell(c, "dep-protect").child(lead(c, "dep-protect-text", "Reading what it accepts..."));
+  const save = (body) => (_e, cx) => ship.saveProtect(cx, body);
+  const chip = (id, label, on, click) => div().id(id).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+    .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).on_click(click).child(label);
+  const part = (id, title, text, chips) => v_flex().id(id).py(8).gap(4).border_t(1).border_color(c.rule)
+    .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(title))
+    .child(div().id(`${id}-text`).text_size(12.5).line_height("18px").text_color(c.grey900).child(text))
+    .child(h_flex().gap(6).flex_wrap().items_center().children(chips));
+  const lim = d.limits ?? {}, bud = d.budget ?? {}, key = d.key ?? {};
+  const asking = ship.keyAsk;
+  return shell(c, "dep-protect")
+    .child(lead(c, "dep-protect-text", "What it accepts from a site. Each change takes effect in a few seconds, with no restart."))
+    .child(v_flex().id("dep-key").py(8).gap(4).border_t(1).border_color(c.rule)
+      .child(div().text_size(12.5).font_semibold().text_color(c.navy).child("Key"))
+      .child(div().id("dep-key-text").text_size(12.5).line_height("18px").text_color(c.grey900).child(key.text ?? ""))
+      .when(!key.can_rotate && Boolean(key.why_not), (e) => e.child(div().id("dep-key-why").text_size(12.5).line_height("18px").text_color(c.grey500).child(key.why_not)))
+      .when(Boolean(key.can_rotate) && !asking, (e) => e.child(h_flex().gap(6)
+        .child(Button(c, "dep-key-copy", "Copy the key", (_e, cx) => ship.copyKey(cx), { small: true }))
+        .child(Button(c, "dep-key-change", "Change the key", (_e, cx) => { ship.keyAsk = { grace: 60 }; cx.notify(); }, { small: true }))))
+      .when(Boolean(asking), (e) => e.child(v_flex().id("dep-key-ask").mt(4).p(8).gap(6).bg(c.surface2).border_1().border_color(c.rule)
+        .child(div().text_size(12.5).line_height("18px").text_color(c.grey900).child("A new key is made. How long should the old one keep working, so your site can switch?"))
+        .child(h_flex().gap(6).flex_wrap().items_center()
+          .children([[60, "1 hour"], [1440, "1 day"], [10080, "1 week"], [0, "Stop it now"]].map(([m, label]) => chip(`dep-key-grace-${m}`, label, asking.grace === m, (_e, cx) => { ship.keyAsk = { grace: m }; cx.notify(); }))))
+        .child(h_flex().gap(6)
+          .child(Button(c, "dep-key-yes", "Change the key", (_e, cx) => ship.rotateKey(cx, asking.grace), { small: true }))
+          .child(Button(c, "dep-key-no", "Not now", (_e, cx) => { ship.keyAsk = null; cx.notify(); }, { small: true }))))))
+    .child(part("dep-size", "Request size", d.size_text ?? "", [[64, "64 KB"], [256, "256 KB"], [1024, "1 MB"]].map(([kb, label]) => chip(`dep-size-${kb}`, label, lim.max_request_kb === kb, save({ max_request_kb: kb })))))
+    .child(part("dep-rate", "Requests a second", d.rate_text ?? "", [[0, "No limit"], [10, "10"], [50, "50"], [200, "200"]].map(([n, label]) => chip(`dep-rate-${n}`, label, (lim.rate_per_s ?? 0) === n, save({ rate_per_s: n })))))
+    .child(part("dep-budget", "Time budget", d.budget_text ?? "", [
+      ...[[0, "None"], [100, "100 ms"], [200, "200 ms"], [500, "500 ms"]].map(([ms, label]) => chip(`dep-budget-${ms}`, label, (bud.ms ?? 0) === ms, save({ budget_ms: ms }))),
+      ...(d.has_fallback ? [chip("dep-fallback", bud.fallback ? "Fallback answer: on" : "Fallback answer: off", Boolean(bud.fallback), save({ fallback: !bud.fallback }))] : [])]))
+    .when(Boolean(ship.protNote), (e) => e.child(div().id("dep-protect-note").text_size(12.5).text_color(ship.protNote.tone === "fail" ? c.fail : c.good).child(ship.protNote.text)));
+}
+
 /** Every staged model across projects, as cards: who staged it and when, where it runs, its state, and a small
  *  chart of its last 24 hours with errors in red. Live and Stopped. Stopped ones stay findable. */
 export function DeploymentsList(ship, c) {

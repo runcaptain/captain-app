@@ -290,7 +290,7 @@ def test_an_endpoint_that_fails_to_come_up_is_removed(ws, aws):  # noqa: F811
         SG.stage(ws, "shop", target="sm", confirm=True)
     assert not aws.models and not aws.configs and not aws.endpoints
     assert SG.state(ws, "shop")["status"] == "failed"
-    assert "Staging failed" in SG.status(ws, "shop")["text"]
+    assert "The deploy failed" in SG.status(ws, "shop")["text"]
 
 
 def test_what_cannot_be_removed_is_named(ws, aws):  # noqa: F811

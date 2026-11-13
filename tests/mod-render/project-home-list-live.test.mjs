@@ -53,12 +53,29 @@ const until = async (ok, what, n = 80) => {
   for (let i = 0; i < n && !ok(h.text()); i++) { await h.layoutLists({}); await h.idle(150); }
   assert.ok(ok(h.text()), `${what}: ${h.text().slice(0, 1500)}`);
 };
-await until((t) => t.includes('Outdoor') && t.includes('Gifts') && t.includes('2 candidates'), 'project cards');
+await until((t) => t.includes('Outdoor') && t.includes('Gifts') && t.includes('2 models'), 'project cards');
 const t = h.text();
+const byId = (id) => h.byIdPrefix(id).filter((e) => e.call('id')?.[0] === id);
 assert.ok(!t.includes('Start with a project'), 'no empty state when projects exist');
-assert.ok(t.includes('demo-bm25') && t.includes('demo-tuned: agrees with its own labeler'), 'champion and the verdict worth showing');
-assert.ok(t.includes('No baseline yet') && t.includes('0 candidates') && t.includes('Nothing judged yet'), 'a new project reads as new');
-assert.ok(t.includes('Choose a catalog') && t.includes('New candidate'), `each card has its next action: ${t}`);
+// The page is "Projects", with no sentence under it. Each card: the name, what it is, how many models, its state in
+// one plain sentence that is not cut off, and where it is deployed. One "Open" button. No code font, no tags.
+assert.ok(byId('ph-name')[0].kids.join('') === 'Projects' && !t.includes('Home'), 'the page is called Projects');
+assert.ok(!t.includes('Each one is a search') && !t.includes('search you'), 'no description under the title, and nothing that assumes search');
+assert.ok(t.includes('2 models') && t.includes('demo-tuned: ') && t.includes('agrees with its own labeler'), `the model count and its state in a sentence: ${t}`);
+assert.ok(t.includes('0 models') && t.includes('No model yet.') && t.includes('Not deployed'), 'a new project reads as new');
+for (const word of ['candidate', 'No baseline yet', 'Nothing judged yet', 'New candidate', 'Choose a catalog']) assert.ok(!t.includes(word), `"${word}" is gone from the cards`);
+{
+  const { MONO } = await import(path.join(dir, 'kit/tokens.js'));
+  const mono = [];
+  const walk = (e) => { if (!e || typeof e !== 'object' || typeof e.call !== 'function') return; if (e.call('font_family')?.[0] === MONO) mono.push(e.call('id')?.[0] ?? '?'); for (const k of e.kids ?? []) walk(k); };
+  walk(h.mod.render());
+  assert.deepEqual(mono, [], 'no code font on the Projects list');
+  const state = h.byIdPrefix('ph-p-').filter((e) => /-state$/.test(e.call('id')?.[0] ?? ''));
+  assert.ok(state.length >= 2 && state.every((e) => !e.call('truncate')), 'the state sentence wraps: it is never cut off');
+  const cards = h.byIdPrefix('ph-p-').filter((e) => /^ph-p-\d+$/.test(e.call('id')?.[0] ?? ''));
+  for (const k of cards.keys()) assert.equal(h.byIdPrefix(`ph-p-${k}-open`).length, 1, 'one Open button a card');
+  assert.equal(h.byIdPrefix('ph-p-').filter((e) => /-next$/.test(e.call('id')?.[0] ?? '')).length, 0, 'and no other button');
+}
 assert.equal(h.byIdPrefix('ph-new').length, 1, 'New project stays, as a secondary button');
 
 // Clicking a card picks it, as the Explorer does, and the page opens on it.
@@ -67,16 +84,13 @@ await h.click(`ph-p-${i}`);
 assert.deepEqual(globalThis.__shared['captain.scope'], { kind: 'project', id: 'outdoor', label: 'Outdoor' });
 await until((x) => x.includes('Data') && x.includes('Models') && x.includes('Ship'), 'the project page opens');
 
-// The next action on the new project picks it and opens the pin form for its catalog.
+// The Open button on a card opens that project.
 globalThis.__shared['captain.scope'] = null;
 h.mod.allProjects(h.cx);
-await until((x) => x.includes('Gifts') && x.includes('Choose a catalog'), 'back to the list');
+await until((x) => x.includes('Gifts') && x.includes('No model yet.'), 'back to the list');
 globalThis.__overlays = [];
 const g = h.mod.projects.findIndex((p) => p.id === 'gifts');
-await h.click(`ph-p-${g}-next`);
-assert.equal(globalThis.__shared['captain.scope']?.id, 'gifts');
-const o = globalThis.__overlays.at(-1);
-assert.equal(o?.mod, 'captain-import', 'the input picker opens');
-assert.equal(o?.props?.input?.slot, 'catalog');
+await h.click(`ph-p-${g}-open`);
+assert.equal(globalThis.__shared['captain.scope']?.id, 'gifts', 'Open opens the project');
 console.log('project home list render test: ok');
 process.exit(0);

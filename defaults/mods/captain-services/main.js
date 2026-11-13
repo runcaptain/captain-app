@@ -103,7 +103,7 @@ export default class CaptainServices extends View {
             .border_color(this.localLimit === mb ? c.blue : c.grey300).bg(this.localLimit === mb ? c.blueLight : c.surface).text_color(this.localLimit === mb ? c.blue : c.navy)
             .on_click((_e, cx) => this.saveLimit(cx, mb)).child(label))))
         .child(div().id("local-limit-note").text_size(12).line_height("17px").text_color(c.grey500)
-          .child(this.limitNote ?? "A model that needs more memory than this to serve is staged in your cloud, not on this computer.")));
+          .child(this.limitNote ?? "A model that needs more memory than this to serve is deployed to a cloud, not on this computer.")));
   }
 
   /** Which machine a deployed model runs on, per cloud: the smallest it fits on unless a person picks a bigger one. */

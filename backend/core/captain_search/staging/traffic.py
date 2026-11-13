@@ -61,7 +61,7 @@ def signal_label(name: str) -> str:
 def _running(ctx: Context, pid: str, env: str) -> dict:
     rec = state(ctx, pid, env)
     if not rec or rec.get("status") != "running":
-        raise ValueError("Staging is not running. Stage a model version first.")
+        raise ValueError("Nothing is deployed. Deploy a model first.")
     return rec
 
 
@@ -585,7 +585,7 @@ def requests(ctx: Context, pid: str, env: str = ENV, limit: int = 50) -> dict:
     what kind of traffic it was. Newest first."""
     rec = state(ctx, pid, env)
     if not rec:
-        return {"project": pid, "rows": [], "total": 0, "text": "Nothing is staged, so there are no requests."}
+        return {"project": pid, "rows": [], "total": 0, "text": "Nothing is deployed, so there are no requests."}
     read_flush(ctx, rec)  # not on a sleeping host: reading a page must not wake a copy
     got = L.read(ctx, pid, env, rec["id"])
     reqs = sorted(got["requests"], key=lambda r: str(r.get("ts")), reverse=True)
@@ -593,7 +593,7 @@ def requests(ctx: Context, pid: str, env: str = ENV, limit: int = 50) -> dict:
              "model_version": r.get("model_version"), "ms": r.get("ms"), "results": len(r.get("ids") or []),
              "traffic": r.get("traffic") or "unlabelled", "status": "answered", "shadowed": bool(r.get("shadow"))} for r in reqs[:limit]]
     return {"project": pid, "stage": rec["id"], "rows": rows, "total": len(reqs),
-            "text": f"{len(reqs):,} request{'s' if len(reqs) != 1 else ''} since this version was staged." if reqs
+            "text": f"{len(reqs):,} request{'s' if len(reqs) != 1 else ''} since this version was deployed." if reqs
                     else "No requests yet. Try a query, or send a test request."}
 
 
@@ -602,7 +602,7 @@ def request(ctx: Context, pid: str, request_id: str, env: str = ENV) -> dict:
     the shopper did, and what the candidate would have returned when it was shadowed."""
     rec = state(ctx, pid, env)
     if not rec:
-        raise ValueError(f"Nothing is staged for {pid}.")
+        raise ValueError(f"Nothing is deployed for {pid}.")
     got = L.read(ctx, pid, env, rec["id"], extra=True)
     r = next((x for x in got["requests"] if str(x["request_id"]) == str(request_id)), None)
     if r is None:
@@ -647,7 +647,7 @@ def versions(ctx: Context, pid: str, env: str = ENV) -> dict:
     for r in rows[:5]:
         r["can_roll_back"] = bool(live) and not r["live"]
     return {"project": pid, "rows": rows, "live": live,
-            "text": f"{len(rows)} version{'s' if len(rows) != 1 else ''} staged so far." if rows else "Nothing has been staged yet."}
+            "text": f"{len(rows)} version{'s' if len(rows) != 1 else ''} deployed so far." if rows else "Nothing has been deployed yet."}
 
 
 def rollback_to(ctx: Context, pid: str, n: int | None, env: str = ENV, reason: str | None = None) -> dict:

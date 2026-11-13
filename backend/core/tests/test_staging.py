@@ -109,7 +109,7 @@ def test_stage_on_this_computer_then_rank_then_stop(ws):
     assert SG.unstage(ws, "shop")["status"] == "stopped"  # twice is fine
     # the project's history says what happened
     whats = [h["what"] for h in PS.get(ws, "shop")["history"]]
-    assert any(w.startswith("staged ") for w in whats) and any(w.startswith("stopped staging") for w in whats)
+    assert any(w.startswith("deployed ") for w in whats) and any(w.startswith("stopped the deployed model") for w in whats)
 
 
 def test_the_runtime_ranks_exactly_as_the_offline_engine_does(ws):
@@ -395,7 +395,7 @@ def test_a_failed_restage_keeps_the_endpoint_that_was_running(ws, monkeypatch):
     before = SG.state(ws, "shop")
 
     def boom(*a, **kw):
-        raise ValueError("The staging endpoint did not start on this computer.")
+        raise ValueError("The model did not start on this computer.")
 
     monkeypatch.setattr(SG, "_start_local", boom)
     with pytest.raises(ValueError, match="did not start"):
