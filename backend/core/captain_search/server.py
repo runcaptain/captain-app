@@ -1556,6 +1556,19 @@ def deployed_created():
     return FL.created(ctx())
 
 
+@app.post("/api/deployed/forget", dependencies=A)
+def deployed_forget(body: dict):
+    """{project, env?, confirm}: forget a model that was stopped earlier. Captain removes its own record of the
+    deployment. Nothing in any cloud changes: nothing of it is there. Without `confirm` it answers 409 with what
+    would happen. Refused while anything of it is still in a cloud."""
+    from .staging import fleet as FL
+
+    try:
+        return FL.forget_stopped(ctx(), str(body.get("project") or ""), str(body.get("env") or "staging"), confirm=bool(body.get("confirm")))
+    except ValueError as e:
+        raise HTTPException(409 if str(e).startswith("Confirm first") else 400, str(e)) from None
+
+
 @app.get("/api/deployed/differences", dependencies=A)
 def deployed_differences():
     """What differs between Captain's records and the cloud, after correcting it: {corrected, unlinked, not_asked,
