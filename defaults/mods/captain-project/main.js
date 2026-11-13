@@ -188,17 +188,19 @@ export default class ProjectHome extends View {
     if (this.stages && has(`project:${pid}`, "runs")) this.readSoon(cx);
   }
 
-  /** Read the page again, now, or right after the read that is on its way. */
+  /** Read the page again, now, or right after the read that is on its way (`load` looks at `readAgain` when
+   *  its answer lands). */
   readSoon(cx) {
-    if (!this.inFlight) return this.load(cx);
-    if (this.readAgain) return;
-    this.readAgain = true;
-    const wait = (cx) => {
-      if (this.inFlight) return cx.timer.after(100, wait);
-      this.readAgain = false;
-      this.load(cx);
-    };
-    cx.timer.after(100, wait);
+    if (this.inFlight) this.readAgain = true;
+    else this.load(cx);
+  }
+
+  /** A read's answer landed. If something changed while it was on its way, read once more. */
+  landed(cx) {
+    this.inFlight = false;
+    if (!this.readAgain) return;
+    this.readAgain = false;
+    Promise.resolve().then(() => this.load(cx));
   }
 
   /** The project shown: the Explorer's pick, else the last one opened here. */
@@ -232,7 +234,7 @@ export default class ProjectHome extends View {
       cx.spawn(async (cx) => {
         const r = await api("/api/projects", { scoped: false });
         if (seq !== this.seq) return;
-        this.inFlight = false;
+        this.landed(cx);
         // Still starting is not "no projects": keep waiting (the retry timer asks again), and only an answer that
         // lists nothing shows the empty state. Home is the first screen, so it often asks before the services are up.
         if (r.ok) { this.projects = Array.isArray(r.data) ? r.data : r.data?.projects ?? []; this.listProblem = null; this.loadSummaries(cx, seq); }
@@ -259,7 +261,7 @@ export default class ProjectHome extends View {
         api(`/api/projects/${enc(pid)}/proposals`, { scoped: false }),
       ]);
       if (seq !== this.seq) return;
-      this.inFlight = false;
+      this.landed(cx);
       if (sd?.ok) this.state = sd.data;
       const rl = rc?.ok ? (Array.isArray(rc.data) ? rc.data : rc.data?.recipes) : null;
       if (Array.isArray(rl)) this.recipes = rl;
