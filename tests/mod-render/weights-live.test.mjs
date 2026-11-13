@@ -61,12 +61,21 @@ test('an agent\'s read, run and edit appear as lines the moment the feed tells, 
   assert.ok(h.text().includes('Agent read 2 weights of layer 1.'), h.text());
   // What it touched pulsed. The harness runs the page's timers to their end, so the pulse has also finished:
   // its clock beat a fixed number of times and then armed nothing more.
-  let p = h.mod.pulsed;
-  assert.deepEqual([[...p.neurons], [...p.weights].sort()], [['1:1'], ['0:1:0', '0:1:1']], 'the neuron and the two weights it read pulsed');
-  assert.equal(h.mod.drawing().pulse, null, 'and the pulse ended by itself');
+  // What it touched is pulsing now.
+  let p = h.mod.drawing().pulse;
+  assert.ok(p, 'a pulse is showing');
+  assert.deepEqual([[...p.neurons], [...p.weights].sort()], [['1:1'], ['0:1:0', '0:1:1']], 'the neuron and the two weights it read pulse');
+  // Each beat arms the next, as one-shot timers do in the app, so the pulse moves on by itself and then ends:
+  // about 2.6 seconds of real time. After that nothing is armed.
+  const left0 = p.left;
+  await h.idle(500);
+  assert.ok(h.mod.drawing().pulse && h.mod.drawing().pulse.left < left0, 'the pulse moves on by itself, beat after beat');
+  await h.idle(2800);
+  assert.equal(h.mod.drawing().pulse, null, 'and it ended by itself');
   const beats = h.mod.beats;
-  await h.layoutLists({});
+  await h.idle(400);
   assert.equal(h.mod.beats, beats, 'no timer is armed while nothing pulses');
+  assert.deepEqual([...h.mod.pulsed.neurons], ['1:1']);
 
   localNote(sid, { kind: 'run', input: 'Both on', touched: { neurons: [[2, 0]], weights: [] } });
   const ev = localEdit(sid, { op: 'set', layer: 1, neuron: 1, from: null, value: -9, target: 3, by: 'agent', why: 'the bias keeps this neuron half off when both inputs are on' });

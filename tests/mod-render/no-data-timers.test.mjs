@@ -21,6 +21,8 @@ const mods = path.resolve(here, '../../defaults/mods');
 //   starting  until the services first answer, the screen's own first read is asked for again. Nothing after that.
 //   todo      still re-reads Captain's data on a timer.
 const LEDGER = [
+  ['captain-weights/main.js', 'this.takeOpen(cx)', 'a link from another screen, the palette or `cst app open` to open a network', 'signal'],
+  ['captain-weights/main.js', 'if (this.walk.playing) this.stepWalk(1, cx)', 'the backward walk, played: one step of the picture a beat. It reads nothing', 'clock'],
   ['captain-deployments/main.js', 'this.giveUp(cx)', 'the page clock: seconds on a deploying row, "Updated", giving up on a silent job', 'clock'],
   ['captain-deployments/main.js', 'this.page?.refresh(cx)', "an open model's traffic and cost from the cloud's own metrics, which the cloud charges for by the read", 'outside'],
   ['captain-deployments/main.js', 'this.takeOpen(cx)', 'a link from another screen to open a model', 'signal'],
