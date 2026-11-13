@@ -321,7 +321,7 @@ def arm_spec(ctx, bundle_key: str, name: str, ref: str, store=None) -> dict:
             pass
 
     for fname in F.tensor_files(root):
-        put(fname, ctx.store.get(WS._key(root["name"], root["version"], fname)))
+        put(fname, WS.read_file(ctx, root["name"], root["version"], fname))
     put(F.MANIFEST, json.dumps(root).encode())
     put(LINE, json.dumps({"ref": ref, "steps": steps, "sha256": WS.digest(tensors)}).encode())
     described = {k: m[k] for k in ("sizes", "layers", "inputs", "outputs", "cost", "parameters") if k in m}
@@ -599,17 +599,15 @@ def save_session(ctx, sid: str, note: str = "", by: str | None = None) -> dict:
     from ..weights import session as WSN
     from ..weights import store as WS
 
-    st = WSN._load(ctx, sid)
-    now = WS.digest(st.cur)
-    for ref in reversed(st.doc.get("saved") or []):
-        name, version = WS.split_ref(ref)
-        m = WS.manifest(ctx, name, version)
-        if m.get("sha256") == now:
-            return {"model": name, "version": int(version), "ref": ref, "base": m.get("base"), "saved": False,
-                    "text": f"{ref.replace('@', ' ')} already holds these numbers, so it was not saved again."}
-    if WS.digest(st.base) == now:
-        return {"model": st.model, "version": int(st.doc["version"]), "ref": WS.ref_of(st.model, st.doc["version"]), "base": None, "saved": False,
-                "text": f"This session has no edits, so there is no new version. {WS.ref_of(st.model, st.doc['version']).replace('@', ' ')} itself is deployed."}
+    cur = WSN.current_digest(ctx, sid)
+    if cur["matches"]:
+        name, version = WS.split_ref(cur["matches"])
+        return {"model": name, "version": int(version), "ref": cur["matches"], "base": WS.manifest(ctx, name, version).get("base"), "saved": False,
+                "text": f"{cur['matches'].replace('@', ' ')} already holds these numbers, so it was not saved again."}
+    if not cur["changed"]:
+        name, version = WS.split_ref(cur["base"])
+        return {"model": name, "version": int(version), "ref": cur["base"], "base": None, "saved": False,
+                "text": f"This session has no edits, so there is no new version. {cur['base'].replace('@', ' ')} itself is deployed."}
     out = WSN.save(ctx, sid, note=note, by=by)
     return {**out, "saved": True, "text": f"Saved as {out['ref'].replace('@', ' ')}: {str(out['base']).replace('@', ' ')} plus "
                                           f"{out['changed']:,} changed number{'s' if out['changed'] != 1 else ''}."}
