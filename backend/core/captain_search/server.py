@@ -3033,8 +3033,14 @@ def compare_runs(a: str, b: str):
 @app.get("/api/runs/{name:path}", dependencies=A)
 def run(name: str, v: int | None = None):
     c = ctx()
-    r = c.registry.load("backtest-run", name, v).model_dump(mode="json")
-    r["report"] = ops.backtest_report(c.registry.load("backtest-run", name, v), c.registry.load("backtest", name))
+    m = c.registry.load("backtest-run", name, v)
+    r = m.model_dump(mode="json")
+    r["report"] = ops.backtest_report(m, c.registry.load("backtest", name))
+    # How deep each measure looked in this run, and what about that is not the usual, as sentences.
+    from .eval import metrics as MX
+
+    r["depths"] = MX.check_depths(m.depths)
+    r["not_usual"] = MX.non_default(m.depths)
     return r
 
 
@@ -3455,13 +3461,15 @@ def population_add(body: dict):
 @app.post("/api/backtests", dependencies=A)
 def backtest_add(body: dict):
     """{name, arms, queries?, judgments?, population?, hypothesis, primary?, mde?, mode?, logs?, compute?, surfaces?,
-    population_size?}. population_size is how many simulated shoppers a replay of logged searches makes (4000 unless
+    population_size?, depths?}. depths is how many results deep each measure looks: {"ndcg@10": 20, "r@50": 100}
+    (the usual depth for any left out). population_size is how many simulated shoppers a replay of logged searches makes (4000 unless
     given): a limit the form shows as a field rather than hiding."""
     return ops.backtest_plan(ctx(), body["name"], body["arms"], body.get("queries") or None, body.get("judgments") or None,
                              body.get("population") or None, body["hypothesis"], body.get("primary", "ndcg@10"),
                              float(body.get("mde", 0.003)), mode=body.get("mode", "simulated"), logs=body.get("logs") or None,
                              compute=body.get("compute") or None, surfaces=body.get("surfaces") or None,
-                             population_size=int(body.get("population_size") or 4000)).model_dump(mode="json")
+                             population_size=int(body.get("population_size") or 4000),
+                             depths=body.get("depths") or None).model_dump(mode="json")
 
 
 @app.get("/api/evaluations/options", dependencies=A)

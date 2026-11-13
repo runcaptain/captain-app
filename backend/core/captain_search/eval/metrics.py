@@ -21,16 +21,58 @@ DEFINITIONS = {
 }
 
 
-def metrics(ranked, rel):
+# How many results deep each measure looks unless an evaluation says otherwise. The names keep their usual depth
+# in them ("ndcg@10") because they are identifiers used everywhere; an evaluation's `depths` says how deep it
+# really looked, and a run records it, so two runs at different depths are never read as the same measurement.
+DEFAULT_DEPTHS = {"ndcg@10": 10, "p@10": 10, "r@50": 50, "mrr": 50}
+MAX_DEPTH = 200
+DEPTH_WORDS = {"ndcg@10": "nDCG", "p@10": "Precision", "r@50": "Recall", "mrr": "MRR"}
+
+
+def check_depths(depths: dict | None) -> dict[str, int]:
+    """The depth of every measure that has one: the defaults, with what was asked for on top. Refuses a measure
+    that has no depth, and a depth that isn't a whole number from 1 to MAX_DEPTH."""
+    out = dict(DEFAULT_DEPTHS)
+    for k, v in (depths or {}).items():
+        if k not in DEFAULT_DEPTHS:
+            raise ValueError(f"{k} has no depth to set. Depth applies to {', '.join(DEFAULT_DEPTHS)}.")
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"the depth of {k} must be a whole number, not {v!r}") from None
+        if n != float(v) or not 1 <= n <= MAX_DEPTH:
+            raise ValueError(f"the depth of {k} must be a whole number from 1 to {MAX_DEPTH}, not {v!r}")
+        out[k] = n
+    return out
+
+
+def non_default(depths: dict | None) -> list[str]:
+    """What differs from the usual depths, as sentences: ["nDCG looks 20 results deep, not the usual 10."]."""
+    d = check_depths(depths) if depths else DEFAULT_DEPTHS
+    return [f"{DEPTH_WORDS[k]} looks {d[k]} results deep, not the usual {DEFAULT_DEPTHS[k]}." for k in DEFAULT_DEPTHS if d[k] != DEFAULT_DEPTHS[k]]
+
+
+def label(name: str, depths: dict | None) -> str:
+    """A measure's name with the depth it really looked: "ndcg@10" at depth 20 reads "ndcg@20"."""
+    d = check_depths(depths) if depths else DEFAULT_DEPTHS
+    base = name[:-3] if name.endswith("_tw") else name
+    if base in d and "@" in base and d[base] != DEFAULT_DEPTHS[base]:
+        return f"{base.split('@')[0]}@{d[base]}" + ("_tw" if name.endswith("_tw") else "")
+    return name
+
+
+def metrics(ranked, rel, depths: dict | None = None):
+    d = depths or DEFAULT_DEPTHS
+    kn, kp, kr, km = d["ndcg@10"], d["p@10"], d["r@50"], d["mrr"]
     g = lambda i: rel.get(str(i), 0)
-    dcg = sum((2 ** g(i) - 1) / math.log2(k + 2) for k, i in enumerate(ranked[:10]))
-    ideal = sum((2 ** x - 1) / math.log2(k + 2) for k, x in enumerate(sorted(rel.values(), reverse=True)[:10]))
+    dcg = sum((2 ** g(i) - 1) / math.log2(k + 2) for k, i in enumerate(ranked[:kn]))
+    ideal = sum((2 ** x - 1) / math.log2(k + 2) for k, x in enumerate(sorted(rel.values(), reverse=True)[:kn]))
     nrel = sum(1 for x in rel.values() if x >= 2)
-    first = next((k for k, i in enumerate(ranked[:50]) if g(i) >= 2), -1)
+    first = next((k for k, i in enumerate(ranked[:km]) if g(i) >= 2), -1)
     return {
         "ndcg10": dcg / ideal if ideal else 0.0,
-        "p10": sum(1 for i in ranked[:10] if g(i) >= 2) / 10,
-        "r50": (sum(1 for i in ranked[:50] if g(i) >= 2) / nrel) if nrel else 0.0,
+        "p10": sum(1 for i in ranked[:kp] if g(i) >= 2) / kp,
+        "r50": (sum(1 for i in ranked[:kr] if g(i) >= 2) / nrel) if nrel else 0.0,
         "mrr": 1 / (first + 1) if first >= 0 else 0.0,
         "zero": 1 if not ranked else 0,
     }
@@ -49,14 +91,17 @@ def pct(xs, p):
     return s[min(len(s) - 1, int(p / 100 * len(s)))] if s else None
 
 
-def per_query(results: dict[str, list[str]], judgments: dict[str, dict[str, int]], extra=()) -> dict[str, dict]:
+def per_query(results: dict[str, list[str]], judgments: dict[str, dict[str, int]], extra=(), depths: dict | None = None) -> dict[str, dict]:
     """results: query_id -> ranked product ids. judgments: query_id -> {product_id: grade}.
-    extra: custom metric extensions (extensions.Ext), computed under their own names."""
+    extra: custom metric extensions (extensions.Ext), computed under their own names.
+    depths: how deep each measure looks (check_depths), the usual depths when not given. The share of judged
+    results is taken at nDCG's depth, since that is the measure it protects."""
     out = {}
+    d = depths or DEFAULT_DEPTHS
     for qid, ranked in results.items():
         rel = judgments.get(qid, {})
-        m = metrics(ranked, rel)
-        m["judged10"] = judged_at(ranked, rel)
+        m = metrics(ranked, rel, d)
+        m["judged10"] = judged_at(ranked, rel, d["ndcg@10"])
         for e in extra:
             try:
                 m[e.name] = float(e.obj([str(x) for x in ranked], rel))

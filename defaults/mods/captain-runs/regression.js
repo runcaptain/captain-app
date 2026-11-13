@@ -12,7 +12,7 @@ import { api } from "./kit/cst.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { metricWords } from "./kit/words.js";
-import { runVerdict, modelName } from "./kit/verdict.js";
+import { runVerdict, modelName, metricAt } from "./kit/verdict.js";
 import { openForm } from "./kit/agent.js";
 
 const fmtD = (x) => (x === null || x === undefined ? "" : `${x >= 0 ? "+" : ""}${Number(x).toFixed(4)}`);
@@ -23,7 +23,8 @@ const ref = (r) => `${r.name}@v${r.version}`;
 
 /** The verdict of one row of GET /api/regression: {word, tone, sentence}. */
 export function rowVerdict(r) {
-  return runVerdict({ comparison: r.comparison, evidence: r.evidence, model: r.model, against: r.against, metric: r.metric, too_few_judged: r.too_few_judged, own_labeler: r.own_labeler });
+  return runVerdict({ comparison: r.comparison, evidence: r.evidence, model: r.model, against: r.against, metric: r.metric, too_few_judged: r.too_few_judged, own_labeler: r.own_labeler,
+    depths: r.depths ?? null, not_usual: r.not_usual ?? [] });
 }
 
 /** Two runs side by side, in one sentence: how the newer model's score differs, and why that difference has no
@@ -35,7 +36,7 @@ export function pairSentence(a, b, comparable) {
   const same = modelName(older.model) === modelName(newer.model);
   const who = same ? `${modelName(newer.model)} scored ${fmt4(newer.value)} in the newer run and ${fmt4(older.value)} in the older one`
     : `${modelName(newer.model)} scored ${fmt4(newer.value)} and ${modelName(older.model)} scored ${fmt4(older.value)}`;
-  return `On ${metricWords(a.metric)}, ${who}: a difference of ${fmtD(d)}. The two runs were scored separately, so this difference has no interval.`;
+  return `On ${metricWords(metricAt(a.metric, a.depths))}, ${who}: a difference of ${fmtD(d)}. The two runs were scored separately, so this difference has no interval.`;
 }
 
 export class Regression {
@@ -147,7 +148,7 @@ export class Regression {
               .child(div().flex_none().text_size(11).text_color(c.grey500).child(`run ${r.version}`)))
             .child(cell(modelName(r.model), narrow ? 130 : 160))
             .child(cell(modelName(r.against), narrow ? 130 : 160).text_color(c.grey900))
-            .when(!narrow, (x) => x.child(cell(metricWords(r.metric), 120).text_color(c.grey900)))
+            .when(!narrow, (x) => x.child(cell(metricWords(metricAt(r.metric, r.depths)), 120).text_color(c.grey900)))
             .child(cell(narrow ? fmtD(r.delta) : `${fmtD(r.delta)}  [${fmtD(r.ci_low)}, ${fmtD(r.ci_high)}]`, narrow ? 84 : 200, true))
             .child(div().id(`reg-verdict-${i}`).w(150).flex_none().px(8).truncate().text_color(tone(v.tone)).tooltip(v.sentence).child(v.word ?? "Not compared yet"));
         }))
@@ -176,7 +177,7 @@ export class Regression {
           .child(div().id(`reg-side-sentence-${k}`).flex_1().min_w(200).text_size(12.5).line_height("18px").child(v.sentence)))
         .child(fact(`${modelName(r.model)} scored`, fmt4(r.value)))
         .child(fact(`${modelName(r.against)} scored`, fmt4(r.against_value)))
-        .child(fact("Change", `${fmtD(r.delta)}  [${fmtD(r.ci_low)}, ${fmtD(r.ci_high)}] on ${metricWords(r.metric)}`));
+        .child(fact("Change", `${fmtD(r.delta)}  [${fmtD(r.ci_low)}, ${fmtD(r.ci_high)}] on ${metricWords(metricAt(r.metric, r.depths))}`));
     };
     const line = pairSentence(a, b, comparable);
     return v_flex().gap(10)

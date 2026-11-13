@@ -20,6 +20,7 @@ const root = path.resolve(here, '../..');
 const { runVerdict, runFacts, VERDICT_WORDS, EVIDENCE_SENTENCE, modelName } = await import(path.join(root, 'defaults/captain/kit/verdict.js'));
 
 // ---- 1. the verdict ------------------------------------------------------------------------------------------------
+const run = JSON.parse(fs.readFileSync(path.join(here, 'fixtures/captain-runs/run.json'), 'utf8'));
 assert.deepEqual(VERDICT_WORDS, { win: 'Better', noise: 'No clear difference', loss: 'Worse' });
 const facts = (over) => ({ comparison: 'win', evidence: 'HUMAN_GRADED', model: 'shop/ranker@v2', against: 'keyword-baseline@v1', metric: 'ndcg@10', ...over });
 
@@ -69,11 +70,27 @@ const both = runVerdict(facts({ comparison: 'win', evidence: 'SIMULATED', too_fe
 assert.equal(both.sentence, 'Too few judged results to say whether ranker is better than keyword-baseline on nDCG@10. It also agrees with its own labeler. Simulated events.');
 assert.equal(both.word, 'No clear difference');
 
+// Not the usual settings: said in the sentence, and the measure is named at the depth it really looked.
+const { metricAt } = await import(path.join(root, 'defaults/captain/kit/verdict.js'));
+assert.equal(metricAt('ndcg@10', { 'ndcg@10': 20 }), 'ndcg@20');
+assert.equal(metricAt('ndcg@10_tw', { 'ndcg@10': 20 }), 'ndcg@20_tw');
+assert.equal(metricAt('ndcg@10', { 'ndcg@10': 10, 'r@50': 100 }), 'ndcg@10');
+assert.equal(metricAt('mrr', { mrr: 5 }), 'mrr');
+assert.equal(metricAt('ndcg@10', null), 'ndcg@10');
+const deep = facts({ depths: { 'ndcg@10': 20, 'p@10': 10, 'r@50': 50, mrr: 50 }, not_usual: ['nDCG looks 20 results deep, not the usual 10.'] });
+assert.equal(runVerdict(deep).sentence, 'ranker is better than keyword-baseline on nDCG@20. nDCG looks 20 results deep, not the usual 10. Human graded.');
+assert.equal(runVerdict(deep).word, 'Better', 'a different depth does not change the word, only what it is a verdict on');
+// It joins the other honesty rules, never replaces them, and the evidence still ends the sentence.
+assert.equal(runVerdict({ ...deep, too_few_judged: true, own_labeler: true, evidence: 'SIMULATED' }).sentence,
+  'Too few judged results to say whether ranker is better than keyword-baseline on nDCG@20. It also agrees with its own labeler. nDCG looks 20 results deep, not the usual 10. Simulated events.');
+// The usual depths say nothing extra.
+assert.equal(runVerdict(facts({ depths: { 'ndcg@10': 10, 'p@10': 10, 'r@50': 50, mrr: 50 }, not_usual: [] })).sentence, 'ranker is better than keyword-baseline on nDCG@10. Human graded.');
+assert.deepEqual(runFacts({ ...run, depths: { 'ndcg@10': 20 }, not_usual: ['nDCG looks 20 results deep, not the usual 10.'] }, null).not_usual, ['nDCG looks 20 results deep, not the usual 10.']);
+
 // Before there is a comparison it claims nothing.
 assert.deepEqual([runVerdict(facts({ comparison: null })).word, runVerdict(facts({ comparison: null })).sentence], [null, 'ranker has not been compared with keyword-baseline yet.']);
 
 // The facts come from the run's record and its evaluation's.
-const run = JSON.parse(fs.readFileSync(path.join(here, 'fixtures/captain-runs/run.json'), 'utf8'));
 const f = runFacts(run, { tags: {} });
 assert.deepEqual([f.comparison, f.evidence, f.model, f.against, f.metric, f.too_few_judged, f.own_labeler], ['win', 'SIMULATED', 'demo-tuned@v1', 'demo-bm25@v1', 'ndcg@10', false, false]);
 assert.equal(runFacts({ ...run, complete: false }, null).too_few_judged, true, 'an arm with under 90% of its top 10 judged');

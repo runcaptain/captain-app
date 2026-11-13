@@ -95,10 +95,6 @@
  ],
  "not_yet": [
   {
-   "what": "How many results deep",
-   "why": "Each measure looks a fixed number deep: 10, or 50 for recall. The runner has no setting for it."
-  },
-  {
    "what": "Which slices",
    "why": "A run always reports by group and by traffic. The runner has no setting to pick among them."
   },
@@ -113,5 +109,31 @@
   "1": "Partial",
   "2": "Relevant",
   "3": "Exact"
- }
+ },
+ "depths": [
+  {
+   "id": "ndcg@10",
+   "label": "nDCG looks this many results deep",
+   "default": 10,
+   "max": 200
+  },
+  {
+   "id": "p@10",
+   "label": "Precision looks this many results deep",
+   "default": 10,
+   "max": 200
+  },
+  {
+   "id": "r@50",
+   "label": "Recall looks this many results deep",
+   "default": 50,
+   "max": 200
+  },
+  {
+   "id": "mrr",
+   "label": "MRR looks this many results deep",
+   "default": 50,
+   "max": 200
+  }
+ ]
 }

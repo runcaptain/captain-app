@@ -20,6 +20,5 @@ This list is here so a later cleanup knows what to look at. Nothing on it has be
 Asked for and not built, because a run can't do it yet. These are in `GET /api/evaluations/options` under
 `not_yet`:
 
-- how many results deep a measure looks;
 - which slices a run reports;
 - which measures a run computes.
