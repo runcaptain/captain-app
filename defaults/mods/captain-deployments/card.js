@@ -6,8 +6,8 @@
 //   numbers  Traffic, Speed and Cost: one large figure each, with a small caption
 //   footer   where it runs, which version, who deployed it and when
 //
-// Three text sizes: 17 for the name, 22 for a figure, 12.5 for everything else. Figures are in the code font, whose
-// digits are all one width, so a column of them lines up and a ticking number does not shake.
+// Three text sizes: 17 for the name, 22 for a figure, 12.5 for everything else. One typeface: the code font is only
+// for the address, which a person copies. A number that ticks in place has a fixed width, not another font.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { MONO } from "./kit/tokens.js";
@@ -31,7 +31,7 @@ function Figure(c, id, label, figure, caption, extra) {
   return v_flex().id(id).flex_1().min_w(140).gap(2)
     .child(div().text_size(SMALL).text_color(c.grey500).child(label))
     .child(h_flex().gap(10).items_end()
-      .child(div().id(`${id}-figure`).text_size(FIGURE).line_height("28px").font_family(MONO).font_medium().text_color(figure == null ? c.grey500 : c.navy).child(figure ?? "–"))
+      .child(div().id(`${id}-figure`).text_size(FIGURE).line_height("28px").font_medium().text_color(figure == null ? c.grey500 : c.navy).child(figure ?? "–"))
       .when(Boolean(extra), (e) => e.child(extra)))
     .child(div().id(`${id}-caption`).text_size(SMALL).line_height("18px").text_color(c.grey500).child(caption ?? ""));
 }
@@ -49,7 +49,8 @@ function Steps(c, r) {
       .child(div().w(16).flex_none().flex().items_center().justify_center().child(mark(st)))
       .child(div().flex_1().min_w(0).truncate().text_size(SMALL).text_color(st.status === "pending" ? c.grey500 : c.navy)
         .when(st.status === "running", (e) => e.font_semibold()).child(st.title ?? ""))
-      .child(div().flex_none().text_size(SMALL).font_family(MONO).text_color(st.status === "running" ? c.navy : c.grey500)
+      // A fixed width, so the seconds ticking in place do not push what is beside them about.
+      .child(div().w(76).flex_none().text_size(SMALL).text_color(st.status === "running" ? c.navy : c.grey500)
         .child(st.status === "done" && st.seconds != null ? spanWords(st.seconds)
           : st.status === "running" && began(st) != null ? spanWords(began(st)) : ""))
       .child(div().w(190).flex_none().text_size(SMALL).text_color(c.grey500)

@@ -713,11 +713,11 @@ for (const f of ['main.js', 'model.js', 'words.js']) {
 }
 const main = fs.readFileSync(path.join(dir, 'main.js'), 'utf8'), model = fs.readFileSync(path.join(dir, 'model.js'), 'utf8');
 assert.equal((main.match(/font_family\(FONT\)/g) ?? []).length, 1, 'one typeface on the list, set once');
-// The code font is for what a person copies (the address), and for figures: its digits are all one width, so a
-// column of them lines up and a number that ticks does not shake. Nothing else.
+// The code font is for what a person copies (the address), and nothing else: mixed fonts were the first complaint.
+// A number that ticks in place has a fixed width, not another font.
 const cardSrc = fs.readFileSync(path.join(dir, 'card.js'), 'utf8');
 assert.equal((main.match(/font_family\(MONO\)/g) ?? []).length, 0, 'no code font in the list itself');
-assert.equal((cardSrc.match(/font_family\(MONO\)/g) ?? []).length, 3, 'on the card: the address, a figure, a step\'s time');
+assert.equal((cardSrc.match(/font_family\(MONO\)/g) ?? []).length, 1, 'on the card: the address only');
 assert.equal((model.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font on the page only for what a person copies');
 assert.ok(!/model-part-/.test(model) && /Submenus\(c, PARTS/.test(model) && (model.match(/\{ id: "[a-z]+", label:/g) ?? []).length === 2, 'the model page declares two submenus');
 assert.equal((main.match(/kind: "primary"/g) ?? []).length, 2, 'two filled buttons in the source, never both on screen: Deploy a model when nothing is answering, and an open question, which hides it');
