@@ -594,10 +594,25 @@ def _target(ws):  # noqa: F811
     return ModalServingProvider(C.get(ws, H.get("modal").target), ws)
 
 
-def test_what_is_on_modal_is_asked_through_its_library_with_no_process_started(ws, modal):  # noqa: F811
+def test_the_library_listing_is_off_until_it_has_run_on_a_workspace_that_is_not_production(ws, modal):  # noqa: F811
+    """An unproven call through a part of Modal's library that is not public must not make its first run against
+    a workspace that serves customers. Off by default: the command answers, and the library is never asked."""
+    assert ModalServingProvider.LIBRARY_LIST is False
+    _setup(ws)
+    SG.stage(ws, "shop", target="modal-serving", confirm=True)
+    before = modal.library_lists
+    found = _target(ws).found("captain-search-test")
+    assert [f["state"] for f in found] == ["running"]
+    assert modal.library_lists == before and ModalServingProvider.listed_by == "command"
+    assert [t["name"] for t in _target(ws).tagged("shop", "staging")] == [found[0]["name"]] and modal.library_lists == before
+    SG.unstage(ws, "shop")
+
+
+def test_what_is_on_modal_is_asked_through_its_library_with_no_process_started(ws, modal, monkeypatch):  # noqa: F811
     """Listing by `modal app list` starts a process each time: about a fifth of a second of one processor, once
     every few seconds for as long as a screen is open. The library is already loaded and asks the same question.
-    NOT RUN ON A REAL WORKSPACE YET: this is the stand-in."""
+    NOT RUN ON A REAL WORKSPACE YET: this is the stand-in, with the path turned on for the test."""
+    monkeypatch.setattr(ModalServingProvider, "LIBRARY_LIST", True)
     _setup(ws)
     SG.stage(ws, "shop", target="modal-serving", confirm=True)
     commands = []
@@ -618,21 +633,19 @@ def test_what_is_on_modal_is_asked_through_its_library_with_no_process_started(w
 
 
 @pytest.mark.parametrize("fault", ["breaks", "state", "off"])
-def test_when_the_library_cannot_answer_the_command_does(ws, modal, fault):  # noqa: F811
+def test_when_the_library_cannot_answer_the_command_does(ws, modal, fault, monkeypatch):  # noqa: F811
     """The library path is unproven, so it never costs a listing: anything unexpected, and the command answers as
     it always has. A state the library does not know is unexpected, not a guess."""
     _setup(ws)
     SG.stage(ws, "shop", target="modal-serving", confirm=True)
+    monkeypatch.setattr(ModalServingProvider, "LIBRARY_LIST", fault != "off")
     if fault == "breaks":
         modal.library_breaks = "AppList is not a call this version has"
     elif fault == "state":
         modal.library_state = 999
-    else:
-        ModalServingProvider.LIBRARY_LIST = False
     try:
         found = _target(ws).found("captain-search-test")
         assert [f["state"] for f in found] == ["running"] and ModalServingProvider.listed_by == "command"
     finally:
-        ModalServingProvider.LIBRARY_LIST = True
         modal.library_breaks, modal.library_state = None, None
     SG.unstage(ws, "shop")

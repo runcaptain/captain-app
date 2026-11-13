@@ -325,10 +325,13 @@ class ModalServingProvider(HttpServing, ComputeProvider):
     # processor, before the network. Modal's library, already loaded in this process, asks the same question
     # with no process to start.
     #
-    # NOT RUN ON A REAL WORKSPACE YET. The library has no public call for listing apps (1.6.3), so this uses the
-    # one its own command uses. It is tried first, checked strictly, and on anything unexpected the command is
-    # used instead, as before. `listed_by` says which answered last.
-    LIBRARY_LIST = True
+    # NOT RUN ON A REAL WORKSPACE YET, AND OFF. The library has no public call for listing apps (1.6.3), so this
+    # uses the one its own command uses. An unproven call through a part of Modal's library that is not public
+    # must not make its first run against a workspace that serves customers. So it is off, and the command
+    # answers, as it always has. It turns on after one run on a workspace that is not production shows the two
+    # give the same list. When on, it is tried first, checked strictly, and on anything unexpected the command
+    # is used instead. `listed_by` says which answered last.
+    LIBRARY_LIST = False
     listed_by: str | None = None
 
     def _list_apps(self) -> list[dict]:
