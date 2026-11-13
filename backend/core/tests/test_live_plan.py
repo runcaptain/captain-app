@@ -24,6 +24,8 @@ def test_a_run_records_its_plan_and_when_each_step_began(tmp_path, monkeypatch):
     h = LV.header(r.id)
     assert h["stage"] == "Building the model's image" and h["stage_at"] > first >= 0
     assert h["stages"] == [s["title"] for s in h["steps"]], "a step in the plan is not listed twice"
+    # What really began is recorded: a planned step that is never announced was passed over.
+    assert h["seen"] == ["Checking your account", "Building the model's image"]
     r.end("done", summary="Ready")
     assert LV.header(r.id)["status"] == "done"
 

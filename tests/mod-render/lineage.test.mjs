@@ -237,6 +237,25 @@ console.log('lineage ranks: ok');
   const canvas = (function find(e) { if (!e || typeof e !== 'object') return null; if (e.call?.('id')?.[0] === 'fit-canvas') return e; for (const k of e.kids ?? []) { const r = find(k); if (r) return r; } return null; })(tree);
   assert.equal(canvas.call('h')[0], 420, 'room to pan in');
   assert.ok(ids.includes('fit-minimap'), 'the overview map says there is more');
+  // The focused box is at mid height too, with no band of empty canvas above the graph.
+  const midY = big.at(LB, 'n4').y + 26 + big.pan.y;
+  assert.ok(Math.abs(midY - 210) < 1, `the focused box is at mid height: ${midY}`);
+  // The map: 160 by 100, solid, bordered, 12 from the corner. A press or a drag on it moves the view.
+  const map = (function find(e) { if (!e || typeof e !== 'object') return null; if (e.call?.('id')?.[0] === 'fit-minimap') return e; for (const k of e.kids ?? []) { const r = find(k); if (r) return r; } return null; })(tree);
+  assert.deepEqual([map.call('w')[0], map.call('h')[0], map.call('right')[0], map.call('bottom')[0]], [160, 100, 12, 12]);
+  assert.ok(map.call('bg') && map.call('border_1') !== undefined, 'solid, with a border');
+  const before = { ...big.pan };
+  let drawn = 0;
+  map.call('on_mouse_down')[1]({ local_position: { x: 150, y: 50 } }, { notify: () => drawn++ });
+  assert.ok(big.pan.x < before.x && drawn === 1, 'a press near its right edge moves the view right');
+  const pressed = { ...big.pan };
+  map.call('on_mouse_move')[0]({ local_position: { x: 20, y: 50 } }, { notify: () => drawn++ });
+  assert.ok(big.pan.x > pressed.x, 'and a drag follows');
+  map.call('on_mouse_up')[1]({}, {});
+  const let_go = { ...big.pan };
+  map.call('on_mouse_move')[0]({ local_position: { x: 150, y: 50 } }, { notify: () => drawn++ });
+  assert.deepEqual(big.pan, let_go, 'not after the button is let go');
+  big.touched = false;
   // The first box of a chain: the view starts at the graph's left edge, not with empty canvas beside it.
   const first = new LineageGraph({ id: 'fit' });
   first.set(wide, 'n0');

@@ -38,6 +38,7 @@ const LANE = "\u0001"; // marks the id of a lane: the slot a connector takes thr
 const LANE_H = 10, LANE_GAP = 6; // a lane's height, and the space around it
 const MAX_FIT = 1.25; // Fit enlarges a small graph up to here: a box's title is then the size of body text
 const MARGIN = 24; // the space Fit leaves around the graph
+const MAP_W = 160, MAP_H = 100, MAP_MARGIN = 12; // the overview map, and its distance from the canvas's corner
 const WIDE_MIN_H = 420; // the least height of the canvas when the graph is wider than it
 const RADIUS = 8; // a box's corners
 const ALL = 99; // every step, each way: the whole chain
@@ -242,7 +243,10 @@ export class LineageGraph {
     // Centred on the focus across; never past the graph's own left or right edge.
     const cx = f ? f.x + NODE_W / 2 : PAD + (w - MARGIN * 2) / 2;
     const x = Math.min(MARGIN - PAD, Math.max(w - MARGIN - (L.width - PAD), w / 2 - cx));
-    const y = gh <= h - MARGIN * 2 ? (h - gh) / 2 - PAD : Math.min(MARGIN - PAD, Math.max(h - MARGIN - (L.height - PAD), h / 2 - (f ? f.y + NODE_H / 2 : L.height / 2)));
+    // And down: the focused box at mid height, without pushing a graph that fits off the canvas.
+    const want = h / 2 - (f ? f.y + NODE_H / 2 : L.height / 2);
+    const top = MARGIN - PAD, bottom = h - MARGIN - (L.height - PAD);
+    const y = Math.min(Math.max(top, bottom), Math.max(Math.min(top, bottom), want));
     this.pan = { x, y };
   }
 
@@ -424,21 +428,27 @@ export class LineageGraph {
     const E = this.extent(L);
     const z = this.zoom;
     if (!w || (E.w * z <= w && E.h * z <= h)) return null; // it all fits: no map needed
-    const MW = 150, MH = 96;
-    const s = Math.min(MW / E.w, MH / E.h);
-    const vx = -this.pan.x / z * s, vy = -this.pan.y / z * s, vw = w / z * s, vh = h / z * s;
-    return div().id(`${this.id}-minimap`).absolute().right(8).bottom(8).w(MW).h(MH).bg(c.surface).border_1().border_color(c.grey300).overflow_hidden()
-      .on_mouse_down("left", (e, cx) => {
-        cx.stop_propagation?.();
-        const lp = e.local_position;
-        if (!lp) return;
-        this.pan = { x: -(lp.x / s) * z + w / 2, y: -(lp.y / s) * z + h / 2 };
-        cx.notify();
-      })
+    const MW = MAP_W, MH = MAP_H, IN = 6;
+    // The whole graph, drawn small in the middle of the map, inside a margin.
+    const s = Math.min((MW - IN * 2) / E.w, (MH - IN * 2) / E.h);
+    const ox = (MW - E.w * s) / 2, oy = (MH - E.h * s) / 2;
+    const vx = ox - this.pan.x / z * s, vy = oy - this.pan.y / z * s, vw = w / z * s, vh = h / z * s;
+    // A press or a drag on the map puts that spot in the middle of the canvas.
+    const go = (e, cx) => {
+      const lp = e.local_position ?? (e.position && e.bounds ? { x: e.position.x - e.bounds.x, y: e.position.y - e.bounds.y } : null);
+      if (!lp) return;
+      this.touched = true;
+      this.pan = { x: -((lp.x - ox) / s) * z + w / 2, y: -((lp.y - oy) / s) * z + h / 2 };
+      cx.notify();
+    };
+    return div().id(`${this.id}-minimap`).absolute().right(MAP_MARGIN).bottom(MAP_MARGIN).w(MW).h(MH).bg(c.surface).border_1().border_color(c.grey500).overflow_hidden()
+      .on_mouse_down("left", (e, cx) => { cx.stop_propagation?.(); this.mapDrag = true; go(e, cx); })
+      .on_mouse_move((e, cx) => { if (this.mapDrag) { cx.stop_propagation?.(); go(e, cx); } })
+      .on_mouse_up("left", (_e, _cx) => { this.mapDrag = false; })
       .children([...L.pos.keys()].map((id) => {
         const q = this.at(L, id);
-        return div().absolute().left(q.x * s).top(q.y * s).w(Math.max(2, NODE_W * s)).h(Math.max(2, NODE_H * s))
-          .bg(id === this.sel ? c.blue : c.grey300);
+        return div().absolute().left(ox + q.x * s).top(oy + q.y * s).w(Math.max(2, NODE_W * s)).h(Math.max(2, NODE_H * s))
+          .bg(id === this.sel || id === this.focus ? c.blue : c.grey500);
       }))
       .child(div().absolute().left(vx).top(vy).w(vw).h(vh).border_1().border_color(c.blue));
   }
@@ -582,6 +592,7 @@ export class LineageGraph {
           cx.notify();
         })
         .on_mouse_up("left", (_e, cx) => {
+          this.mapDrag = false;
           const p = this.press;
           this.press = null;
           if (p?.moved) { this.dragEnd = Date.now(); cx.notify(); }
