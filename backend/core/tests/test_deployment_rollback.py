@@ -212,3 +212,11 @@ def test_the_key_a_site_holds_survives_a_redeploy_and_a_roll_back(ws):  # noqa: 
     RB.go(ws, "shop", None, "It is too slow")
     assert SG._key(SG.state(ws, "shop")) == key, "and so does a roll back"
     assert "switching_from" not in SG.state(ws, "shop") and "switching_from" not in SG.public(SG.state(ws, "shop"))
+
+
+def test_a_roll_back_never_takes_a_cloud_record_with_no_place_name_to_mean_this_computer():
+    """A record written before places were recorded has a kind and no host. It used to read as "local"."""
+    assert RB._place({"kind": "local"}) == "local" and RB._place({"host": "modal", "kind": "modal"}) == "modal"
+    assert RB._place({"kind": "aws-sagemaker"}) == "aws", "read from what kind of place it is"
+    with pytest.raises(ValueError, match="won't put a version back by guessing"):
+        RB._place({"kind": "something-else"})

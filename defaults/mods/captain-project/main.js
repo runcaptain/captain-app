@@ -129,10 +129,13 @@ export default class ProjectHome extends View {
     // The sidebar's Projects and the logo ask for the list of every project (captain-nav).
     cx.timer.every(300, (cx) => {
       const o = shared("captain.open");
-      if (o?.section !== "project" || !o.all || o.at === this.openedAll) return;
+      // {section: "project", home: true, all: true, at} on every click of the sidebar's Projects, a second click
+      // included. A link that names a project carries neither `home` nor `all`, and is left to open it.
+      if (o?.section !== "project" || !(o.home || o.all) || o.at === this.openedAll) return;
       this.openedAll = o.at;
       if (Date.now() - o.at > 10000) return; // from an earlier session
-      this.deployOpen = false; this.shipPath.listOpen = false;
+      // Whatever is open goes: the project's page, the deployed model's screen, an open menu.
+      this.deployOpen = false; this.shipPath.listOpen = false; this.shipPath.more = null; this.menuOpen = false; this.open = null;
       this.allProjects(cx);
     });
     watchWorkspace(cx, (cx) => { this.last = null; this.load(cx); });
