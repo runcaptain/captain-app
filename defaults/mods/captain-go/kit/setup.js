@@ -11,6 +11,7 @@ import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { pickFolder, openOverlay, run, spaces, shared, setShared } from "herdr";
 import { api } from "./cst.js";
+import { watchLive } from "./live.js";
 import { Button, plainError } from "./ui.js";
 import { icon } from "./icons.js";
 import { MONO } from "./tokens.js";
@@ -65,8 +66,9 @@ export class StorageSetup {
     this.regUri = InputState.new({ placeholder: "e.g. s3://acme-models/registry" });
     for (const st of [this.name, this.bucket, this.prefix]) st.on("change", () => { this.check = null; this.error = null; });
     this.loadProfiles(cx);
-    // A login connected meanwhile (Connect a cloud account opens over this) shows up without a reload.
-    cx.timer.every(3000, (cx) => { if (this.step === "storage" && this.where === "cloud") this.loadProfiles(cx); });
+    // A login connected meanwhile (Connect a cloud account opens over this) shows up at once, through the one live
+    // channel. No timer re-reads the logins.
+    watchLive(cx, ["logins"], (cx) => { if (this.step === "storage" && this.where === "cloud") this.loadProfiles(cx); });
   }
 
   loadProfiles(cx) {
