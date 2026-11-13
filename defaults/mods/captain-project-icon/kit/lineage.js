@@ -273,7 +273,9 @@ export class LineageGraph {
       const ca = colOf.get(a), cb = colOf.get(b);
       if (cb - ca <= 1) { chain.push([a, b]); continue; }
       const ids = [];
-      for (let ci = ca + 1; ci < cb; ci++) { const id = `${LANE}${a}${LANE}${b}${LANE}${ci}`; ids.push(id); named[ci].push(id); }
+      // One lane per box per column it skips: every connector leaving that box for a far column shares it, as one
+      // line, and they fan out after the last one. Five long connectors from one model are one lane, not five.
+      for (let ci = ca + 1; ci < cb; ci++) { const id = `${LANE}${a}${LANE}${ci}`; ids.push(id); if (!named[ci].includes(id)) named[ci].push(id); }
       lanes.set(`${a}\u0000${b}`, ids);
       [a, ...ids, b].forEach((x, i, all) => { if (i) chain.push([all[i - 1], x]); });
     }

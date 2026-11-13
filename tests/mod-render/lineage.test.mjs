@@ -255,6 +255,17 @@ console.log('lineage ranks: ok');
   assert.equal(ops.filter((m) => m === 'cubic_bezier_to').length, 8, 'six one-column curves, and two for the one that skips');
 }
 
+// Connectors from one box to several far boxes share one lane through each column they skip.
+{
+  const g = { nodes: ['a', 'm', 'x', 'y', 'z'].map((id) => ({ id, kind: 'dataset' })),
+    edges: [['a', 'm'], ['m', 'x'], ['m', 'y'], ['m', 'z'], ['a', 'x'], ['a', 'y'], ['a', 'z']].map(([from, to]) => ({ from, to })) };
+  const lg = new LineageGraph({ id: 'bus' });
+  lg.set(g, 'a');
+  const L = lg.layout();
+  const lanes = ['x', 'y', 'z'].map((t) => L.routes.get(`a\u0000${t}`)[0]);
+  assert.ok(lanes.every((v) => v.x === lanes[0].x && v.y === lanes[0].y), 'three long connectors, one lane');
+}
+
 // The untangler tries more than three sweeps and keeps the best order it saw.
 {
   const cols = [['a', 'b', 'c', 'd'], ['w', 'x', 'y', 'z'], ['p', 'q', 'r', 's']];
