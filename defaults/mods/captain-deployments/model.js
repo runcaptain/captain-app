@@ -54,6 +54,7 @@ export class ModelPage {
   refresh(cx) {
     if (this.demo || this.busy) return;
     this.where = null;
+    this.asked = true;  // a person pressed it: this one read may ask the model to write its log first
     this.load(cx);
   }
 
@@ -75,7 +76,11 @@ export class ModelPage {
       const n = await api(this.url(`/deployed/numbers?range=${this.range}&env=${encodeURIComponent(this.row.env ?? "staging")}`), { timeout: 60 });
       if (n.ok) this.n = n.data; else this.note = plainError(n.error, "The numbers could not be read.");
       cx.notify();
-      const [rq, lg, vs, sc] = await Promise.all([api(this.url("/staging/requests?limit=20")), api(this.url("/staging/logs?limit=60")),
+      // Opening the page and its timed reads never call the model: on a cloud each call counts as traffic there.
+      // Only the refresh control asks it to write its log first. Otherwise the log is up to 15 seconds behind.
+      const fresh = this.asked ? "&refresh=true" : "";
+      this.asked = false;
+      const [rq, lg, vs, sc] = await Promise.all([api(this.url(`/staging/requests?limit=20${fresh}`)), api(this.url(`/staging/logs?limit=60${fresh}`)),
         api(this.url("/staging/versions")), api(this.url("/staging/scale"))]);
       this.requests = rq.ok ? rq.data : { rows: [], text: plainError(rq.error, "") };
       this.log = lg.ok ? lg.data : { rows: [], note: plainError(lg.error, "") };
