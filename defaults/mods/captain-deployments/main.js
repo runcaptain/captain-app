@@ -67,7 +67,10 @@ export default class CaptainDeployments extends View {
     const o = shared("captain.open");
     if (!o || o.section !== "deployments" || !o.at || o.at === this.asked) return;
     this.asked = o.at;
-    if (!o.open) { this.page = null; this.wanted = null; return cx.notify(); }
+    // The sidebar's entry asks for the view's home, every click, the entry already shown included. Home is the
+    // list: any model's page is closed and forgotten, with whatever was open on it, and so is a model waiting to be
+    // opened, an open question and an open picker. A request for home wins over a page opened a moment before.
+    if (o.home || !o.open) { this.page = null; this.wanted = null; this.ask = null; this.menu = null; return cx.notify(); }
     const row = this.d?.rows.find((x) => x.id === o.open);
     if (row) this.openRow(row, cx);
     else { this.wanted = o.open; this.load(cx, true); }  // not read yet, or made a moment ago: ask, then open it

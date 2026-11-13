@@ -374,6 +374,29 @@ assert.ok(h.text().includes('All deployments') && h.text().includes('Demo shop')
 globalThis.__shared['captain.open'] = { section: 'deployments', at: 1004 };
 await tick(h);
 assert.ok(byId(h, 'dep-updated-refresh').length === 1 && byId(h, 'submenu-traffic').length === 0, '"All deployments" with no model shows the list');
+// The sidebar's rule: clicking Deployments always opens the list, every time, even on the entry already shown, and a
+// model's page with whatever was open on it is forgotten. The sidebar sends {section, home: true, at}.
+await h.click('dep-open-shop:staging');
+await h.idle(120);
+await h.click('submenu-details');
+assert.ok(byId(h, 'submenu-details').length === 1 && h.text().includes('Earlier versions'), 'on a model\'s page, in Details');
+globalThis.__shared['captain.open'] = { section: 'deployments', home: true, at: 2001 };
+await tick(h);
+assert.ok(byId(h, 'dep-updated-refresh').length === 1 && byId(h, 'submenu-details').length === 0 && h.mod.page === null, 'home: the list, and the page is forgotten');
+// Opening the same model again starts on its first part, not where the last look left off.
+await h.click('dep-open-shop:staging');
+await h.idle(120);
+assert.ok(h.text().includes('Requests a minute') && !h.text().includes('Put this version back'), 'a fresh look at the page');
+// A second click on the entry already shown goes home again.
+globalThis.__shared['captain.open'] = { section: 'deployments', home: true, at: 2002 };
+await tick(h);
+assert.equal(h.mod.page, null, 'home again');
+// Home wins over a model asked for a moment before, and drops a question or a picker left open.
+h.mod.wanted = 'trail:staging';
+await h.click('dep-pick-cloud');
+globalThis.__shared['captain.open'] = { section: 'deployments', home: true, open: 'trail:staging', at: 2003 };
+await tick(h);
+assert.ok(h.mod.page === null && h.mod.wanted === null && h.mod.menu === null && byId(h, 'dep-cloud-aws').length === 0, 'home wins, and nothing is left open');
 delete globalThis.__shared['captain.open'];
 
 // ---- live: the screen shows the truth without a click ----
