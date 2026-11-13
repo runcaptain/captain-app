@@ -23,7 +23,7 @@ import json
 from .. import project_state as PS
 from ..model.entities import new_id
 from ..workspace import Context, whoami
-from . import ENV, _note, _save, ask_status, call, key_name, read_flush, set_control, state
+from . import ENV, _note, _save, call, key_name, read_flush, set_control, state
 from . import logs as L
 
 TIMEOUT_MS = 300  # what the snippets give the endpoint before the site falls back to its own search
@@ -258,8 +258,21 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
         # load would keep a copy awake and billing.
         asleep = bool(rec.get("scale_to_zero")) and not _awake(ctx, rec)
         out["asleep"] = asleep
-        h = ask_status(ctx, rec) if rec.get("how") != "image" and not asleep else {}  # in a cloud: at most once a minute
-        t = h.get("traffic") or {}
+        if rec.get("kind") == "local":
+            h = call(ctx, rec, "status", {}) if rec.get("how") != "image" else {}
+            t = h.get("traffic") or {}
+        else:
+            # A model in a cloud is never called by a read a page repeats. How much traffic arrived is counted
+            # from the request log it writes by itself every 15 seconds.
+            h = {}
+            t = {"real": 0, "unlabelled": 0, "test": 0, "simulated": 0}
+            last = None
+            for r in L.read(ctx, pid, env, rec["id"])["requests"]:
+                k = r.get("traffic") or "unlabelled"
+                t[k] = t.get(k, 0) + 1
+                if k == "real" and str(r.get("ts") or "") > str(last or ""):
+                    last = r.get("ts")
+            h["last_real_at"] = last
         out.update(real=int(t.get("real") or 0), unlabelled=int(t.get("unlabelled") or 0), test=int(t.get("test") or 0), simulated=int(t.get("simulated") or 0),
                    last_real_at=h.get("last_real_at"))
     except Exception as e:  # noqa: BLE001
@@ -580,13 +593,14 @@ def differ(ctx: Context, pid: str, env: str = ENV, n: int = 40) -> dict:
 # ---- the deployment page's Requests and Versions tabs ---------------------------------------------
 
 
-def requests(ctx: Context, pid: str, env: str = ENV, limit: int = 50) -> dict:
+def requests(ctx: Context, pid: str, env: str = ENV, limit: int = 50, refresh: bool = False) -> dict:
     """The newest requests the endpoint answered: when, the query, which version answered, how long it took, and
     what kind of traffic it was. Newest first."""
     rec = state(ctx, pid, env)
     if not rec:
         return {"project": pid, "rows": [], "total": 0, "text": "Nothing is deployed, so there are no requests."}
-    read_flush(ctx, rec)  # not on a sleeping host: reading a page must not wake a copy
+    # A read the page repeats never calls a model in a cloud. `refresh` is a person asking for the newest now.
+    read_flush(ctx, rec, asked_for=refresh)
     got = L.read(ctx, pid, env, rec["id"])
     reqs = sorted(got["requests"], key=lambda r: str(r.get("ts")), reverse=True)
     rows = [{"request_id": r["request_id"], "ts": r.get("ts"), "query": r.get("query"), "arm": r.get("arm"),

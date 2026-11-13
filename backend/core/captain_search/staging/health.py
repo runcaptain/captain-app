@@ -36,7 +36,7 @@ MIN_REQUESTS = 20            # fewer than this in the window: the rates are not 
 DEFAULT_ERROR_RATE = 0.05    # until the person sets a target
 BAD_IN_A_ROW = 2
 PROBE_TIMEOUT_S = 5.0
-CLOUD_PROBE_EVERY_S = 300.0  # how often a model in a cloud is itself asked whether it answers
+CLOUD_PROBE_EVERY_S = 60.0  # how often the scheduled check asks a model in a cloud whether it answers: never faster
 
 
 def _now() -> dt.datetime:
@@ -148,7 +148,7 @@ def measure(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES
     if rec.get("how") != "image":
         try:
             # On this computer the model is asked on every check. In a cloud a check runs once a minute and every
-            # call counts as traffic there, so the model itself is asked every five minutes, and in between the
+            # call counts as traffic there, so the model itself is asked at most once a minute, by this check only, and in between the
             # last answer stands. Whether it is up at all comes from the cloud's own state, before this.
             st = (call(ctx, rec, "status", {}, timeout=PROBE_TIMEOUT_S) if rec.get("kind") == "local"
                   else ask_status(ctx, rec, max_age_s=CLOUD_PROBE_EVERY_S, timeout=PROBE_TIMEOUT_S))

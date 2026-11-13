@@ -1376,12 +1376,12 @@ def project_staging_differ(pid: str, env: str = "staging"):
 
 
 @app.get("/api/projects/{pid}/staging/requests", dependencies=A)
-def project_staging_requests(pid: str, limit: int = 50):
+def project_staging_requests(pid: str, limit: int = 50, refresh: bool = False):
     """The newest requests the endpoint answered: {rows: [{request_id, ts, query, arm, model_version, ms, results,
     traffic, status}], total}."""
     from .staging import traffic as TF
 
-    return _staging_call(TF.requests, ctx(), pid, "staging", min(200, max(1, limit)))
+    return _staging_call(TF.requests, ctx(), pid, "staging", min(200, max(1, limit)), refresh)
 
 
 @app.get("/api/projects/{pid}/staging/requests/{rid}", dependencies=A)
@@ -1473,12 +1473,13 @@ def project_staging_copies(pid: str):
 
 
 @app.get("/api/projects/{pid}/staging/logs", dependencies=A)
-def project_staging_logs(pid: str, q: str | None = None, limit: int = 300, request_id: str | None = None, since: str | None = None):
+def project_staging_logs(pid: str, q: str | None = None, limit: int = 300, request_id: str | None = None, since: str | None = None,
+                         refresh: bool = False):
     """The endpoint's log lines, oldest first: {rows: [{ts, text, level, request_id?}], total, matching, streaming,
     last, note}. `q` filters, `since` follows."""
     from .staging import observe as OB
 
-    return _staging_call(OB.logs, ctx(), pid, "staging", q, limit, request_id, since)
+    return _staging_call(OB.logs, ctx(), pid, "staging", q, limit, request_id, since, refresh)
 
 
 @app.get("/api/projects/{pid}/staging/settings", dependencies=A)

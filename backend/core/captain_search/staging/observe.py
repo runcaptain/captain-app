@@ -137,15 +137,18 @@ def _scale(ctx: Context, rec: dict) -> dict:
 
 
 def logs(ctx: Context, pid: str, env: str = ENV, q: str | None = None, limit: int = 300, request_id: str | None = None,
-         since: str | None = None) -> dict:
+         since: str | None = None, refresh: bool = False) -> dict:
     """The endpoint's log lines, oldest first, with times to the millisecond. `q` keeps lines containing it,
-    `request_id` the lines of one request, `since` the lines after a time (for following the log as it grows)."""
+    `request_id` the lines of one request, `since` the lines after a time (for following the log as it grows).
+    `refresh` is a person asking for the newest now: only then is a model in a cloud asked to write its log."""
     rec = state(ctx, pid, env)
     if not rec:
         return {"project": pid, "rows": [], "total": 0, "streaming": False, "text": "Nothing is deployed, so there is no log."}
     if rec.get("how") == "image":
         return {"project": pid, "rows": [], "total": 0, "streaming": False,
                 "text": "This endpoint runs your own container, so its log is where your container writes it."}
+    if refresh:
+        read_flush(ctx, rec, asked_for=True)
     lines = sorted(_read(ctx, pid, env, rec)["lines"], key=lambda x: str(x.get("ts")))
     total = len(lines)
     if request_id:

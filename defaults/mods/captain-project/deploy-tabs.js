@@ -71,6 +71,7 @@ export function LogsTab(ship, c) {
       .child(h_flex().id("dep-logs-filter").w(260).h(28).px(8).items_center().border_1().border_color(c.grey300)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(ship.logBox).w_full().text_size(12.5).text_color(c.navy)))
       .child(Button(c, "dep-logs-apply", "Filter", (_e, cx) => { ship.logsD = null; ship.loadTab(cx); cx.notify(); }, { small: true }))
+      .when(ship.running(), (e) => e.child(Button(c, "dep-logs-refresh", ship.refreshing === "logs" ? "Refreshing..." : "Refresh", (_e, cx) => ship.refreshNow(cx, "logs"), { small: true, disabled: Boolean(ship.refreshing) })))
       .when(Boolean(ship.logBox.value().trim()), (e) => e.child(Button(c, "dep-logs-clear", "Show all", (_e, cx) => { ship.logBox.set_value(""); ship.logsD = null; ship.loadTab(cx); cx.notify(); }, { small: true })))
       .child(div().flex_1().min_w(0))
       .when(Boolean(d?.streaming), (e) => e.child(h_flex().id("dep-logs-streaming").gap(6).items_center()

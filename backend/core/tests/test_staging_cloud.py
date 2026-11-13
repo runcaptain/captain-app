@@ -278,6 +278,9 @@ def test_stage_query_and_unstage_leave_nothing_behind(ws, aws):  # noqa: F811
 
     q = SG.query(ws, "shop", "jacket", k=4)
     assert len(q["staged"]["results"]) == 4 and q["baseline"]["model_version"] == ws.baseline
+    assert SG.status(ws, "shop")["status"] == "running" and SG.status(ws, "shop")["health"] is None, "running, from the cloud's own state, with no call to the model"
+    SG.forget_asked()
+    SG.ask_status(ws, SG.state(ws, "shop"))  # what a health check or "Check now" asks: a read a page repeats never calls the model
     s = SG.status(ws, "shop")
     assert s["status"] == "running" and s["health"]["requests"] == 2
     with pytest.raises(ProviderError, match="refused"):

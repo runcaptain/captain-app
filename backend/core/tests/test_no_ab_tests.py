@@ -21,6 +21,8 @@ from captain_search.staging import rollback as RB
 from captain_search.staging import runtime as RT
 from captain_search.staging import traffic as TF
 
+from test_deploy_one_call import logins  # noqa: F401  (fixture)
+from test_hosting_modal import modal  # noqa: F401  (fixture)
 from test_staging import _runtime, keychain, ws  # noqa: F401  (fixtures)
 
 LINE = "Captain no longer runs A/B tests. Give your own testing tool each model's address."
@@ -157,33 +159,77 @@ def test_a_model_that_ran_in_a_cloud_is_never_started_on_this_computer_because_n
     assert SG.stage(ws, "shop")["kind"] == "local"
 
 
-def test_a_model_in_a_cloud_is_asked_how_it_is_at_most_once_a_minute_however_often_a_page_reads(ws, monkeypatch):  # noqa: F811
-    """On SageMaker every call to the endpoint counts as traffic. A project page left open read the status every
-    five seconds, and 24 test searches showed as 160 requests in an hour."""
+def test_an_open_project_page_makes_no_call_to_a_cloud_model_over_sixty_seconds(ws, logins, modal, monkeypatch):  # noqa: F811
+    """AWS counted 160 calls in 14 minutes on a live model, most of them Captain's own: the project page asked the
+    model how it was, and to write its log, every five seconds. Every address the open page reads on its timer is
+    read here twelve times (sixty seconds at one read every five), and the model is called zero times."""
+    from fastapi.testclient import TestClient
+
+    from captain_search.staging import health as HL
+    from test_deploy_one_call import LOGINS
+
+    logins.append(LOGINS["modal"])
+    assert DP.run(ws, "shop", "modal", confirm=True)["status"] == "done"
+    rec = SG.state(ws, "shop")
+    assert rec["kind"] != "local"
+    SG.forget_asked()
     calls = []
-    monkeypatch.setattr(SG, "call", lambda ctx, rec, op, body, *a, **k: (calls.append(op), {"ok": True, "requests": 24, "traffic": {"real": 0}})[1])
+    real = SG.call
+    for mod in (SG, TF, HL):
+        monkeypatch.setattr(mod, "call", lambda ctx, r, op, body, *a, **k: (calls.append(op), real(ctx, r, op, body, *a, **k))[1])
+    monkeypatch.setattr(server, "ctx", lambda *a, **k: ws)
+    c = TestClient(server.app)
+    hd = {"Authorization": f"Bearer {server.TOKEN}"}
+    polled = ["/staging", "/staging/connect", "/staging/live", "/staging/health", "/staging/metrics?range=1h", "/shadow", "/staging/requests",
+              "/staging/logs", "/staging/copies", "/staging/settings", "/staging/cost", "/staging/versions", "/staging/rollbacks", "/deploy", "/stages"]
+    for _ in range(12):
+        for path in polled:
+            r = c.get(f"/api/projects/shop{path}", headers=hd)
+            assert r.status_code == 200, f"{path}: {r.status_code} {r.text[:200]}"
+    assert calls == [], f"an open page called the model {len(calls)} times: {calls[:10]}"
+    # the page still knows it is running, from the cloud's own state
+    assert c.get("/api/projects/shop/staging", headers=hd).json()["status"] == "running"
+    # what a person asks for does call it: a refresh of the requests, a refresh of the log, and Check now
+    c.get("/api/projects/shop/staging/requests?refresh=true", headers=hd)
+    c.get("/api/projects/shop/staging/logs?refresh=true", headers=hd)
+    assert calls == ["flush", "flush"]
+    calls.clear()
+    assert c.post("/api/projects/shop/staging/health/check", headers=hd, json={}).status_code == 200
+    assert calls == ["status"], "Check now asks the model once"
+    # and the scheduled check asks at its own rate: a second one inside the minute does not call again
+    calls.clear()
+    HL.check(ws, "shop", notify=False)
+    assert calls == []
+    # after that, the page's read can show what the check last heard, still without calling
+    assert c.get("/api/projects/shop/staging", headers=hd).status_code == 200 and calls == []
+    SG.forget_asked()
+
+
+def test_what_only_a_person_asks_for_still_reaches_a_cloud_model(ws, monkeypatch):  # noqa: F811
+    calls = []
+    monkeypatch.setattr(SG, "call", lambda ctx, rec, op, body, *a, **k: (calls.append(op), {"ok": True, "requests": 24})[1])
     SG.forget_asked()
     cloud = {"id": "stg-cloud-1", "kind": "aws-sagemaker", "status": "running", "how": "captain"}
-    for _ in range(170):                                   # fourteen minutes of a page reading every five seconds
-        assert SG.ask_status(ws, cloud)["requests"] == 24
-        SG.read_flush(ws, cloud)
-    assert calls == ["status", "flush"], f"one question and one flush, not {len(calls)} calls"
-    assert SG.ask_status(ws, cloud)["asked_ago_s"] >= 0, "the answer says how old it is"
-    # a person asking for the requests list still gets a fresh log
-    SG.read_flush(ws, cloud, asked_for=True)
-    assert calls == ["status", "flush", "flush"]
-    # a minute later it is asked again
-    SG._ASKED["stg-cloud-1"] = (SG._ASKED["stg-cloud-1"][0] - 61, SG._ASKED["stg-cloud-1"][1])
-    SG.ask_status(ws, cloud)
-    assert calls.count("status") == 2
-    # a model that is down is not called every few seconds either
+    assert SG.known_status(cloud) is None, "nothing is known before anything asked, and nothing is called to find out"
+    for _ in range(170):
+        SG.read_flush(ws, cloud)                           # a read a page repeats
+        SG.known_status(cloud)
+    assert calls == []
+    SG.read_flush(ws, cloud, asked_for=True)               # a person asked for the newest
+    assert SG.ask_status(ws, cloud)["requests"] == 24      # the health check, or Check now
+    assert calls == ["flush", "status"]
+    assert SG.known_status(cloud)["requests"] == 24 and SG.known_status(cloud)["asked_ago_s"] >= 0
+    for _ in range(20):
+        SG.ask_status(ws, cloud)                           # inside the minute: the last answer
+    assert calls == ["flush", "status"]
+    # a model that is down is not called again and again
     calls.clear()
     SG.forget_asked()
     monkeypatch.setattr(SG, "call", lambda ctx, rec, op, body, *a, **k: (calls.append(op), (_ for _ in ()).throw(ValueError("no answer")))[1])
     for _ in range(20):
         with pytest.raises(ValueError, match="no answer"):
             SG.ask_status(ws, cloud)
-    assert calls == ["status"]
+    assert calls == ["status"] and SG.known_status(cloud) is None
     # on this computer nothing counts it, so it is asked every time
     calls.clear()
     monkeypatch.setattr(SG, "call", lambda ctx, rec, op, body, *a, **k: (calls.append(op), {"ok": True})[1])

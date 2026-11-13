@@ -731,9 +731,10 @@ def status(ctx: Context, pid: str, env: str = ENV, sweep: bool = True) -> dict:
                 return {**out, "text": _status_text(rec, None, asleep="yes" if out["asleep"] else "unknown")}
             elif s["state"] == "running" and rec.get("how") != "image":
                 out["copies"] = s.get("copies")
-                # The cloud says it is running, and that is what "Running" means here. What only the model knows
-                # (requests since it started, memory) is asked at most once a minute, not on every read.
-                health = ask_status(ctx, rec)
+                # The cloud says it is running, and that is what "Running" means here. This read is repeated by a
+                # page, so it never calls the model: what only the model knows (requests since it started,
+                # memory) is what the health check last heard, on its own schedule.
+                health = known_status(rec)
             else:
                 out["status"] = "starting" if s["state"] == "starting" else out["status"]
     except Exception as e:  # noqa: BLE001
@@ -911,6 +912,15 @@ def ask_status(ctx: Context, rec: dict, max_age_s: float | None = None, timeout:
     return out
 
 
+def known_status(rec: dict) -> dict | None:
+    """What the model last said about itself, however old, with `asked_ago_s`. It never calls the model: this is
+    for a read a page repeats. None when it has not been asked yet (the health check asks, on its own schedule)."""
+    hit = _ASKED.get(rec.get("id"))
+    if not hit or isinstance(hit[1], Exception):
+        return None
+    return {**hit[1], "asked_ago_s": round(time.monotonic() - hit[0])}
+
+
 def forget_asked(rec_id: str | None = None) -> None:
     """Drop what was remembered (after a deploy or a stop, and in tests)."""
     if rec_id is None:
@@ -933,11 +943,9 @@ def read_flush(ctx: Context, rec: dict | None, asked_for: bool = False) -> bool:
         if rec.get("scale_to_zero") and awake is not None and not awake(ctx, rec):
             return False
         # In a cloud a flush is a call to the model, and a page repeats its reads. The model writes its own log
-        # every 15 seconds, so asking it on a timer adds nothing: at most once a minute, unless a person asked.
+        # every 15 seconds, so a read a page repeats never asks: only one a person asked for does.
         if rec.get("kind") != "local" and not asked_for:
-            last = _FLUSHED.get(rec.get("id"))
-            if last is not None and time.monotonic() - last < ASK_EVERY_S:
-                return False
+            return False
         _FLUSHED[rec.get("id")] = time.monotonic()
         call(ctx, rec, "flush", {})
         return True
