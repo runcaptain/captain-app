@@ -105,7 +105,7 @@ export function verdictOf(ev) {
 export default class ProjectHome extends View {
   init(_props, cx) {
     this.stages = null; this.exps = null; this.home = null; this.problem = null; this.projects = null;
-    this.open = null; this.everything = false; this.note = null; this.busy = false;
+    this.open = null; this.everything = false; this.note = null; this.busy = false; this.busyWhat = null;
     this.choosing = false; this.allModels = null; this.owners = {};
     try { this.last = localStorage.getItem("project") || null; } catch { this.last = null; }
     this.shipPath = new Ship(this); // Stage, Try it: made here, because a text box can't be made while drawing
@@ -264,7 +264,7 @@ export default class ProjectHome extends View {
       if (this.pinCheck && this.stages) {
         this.pinCheck = false;
         const name = this.project()?.name ?? pid;
-        try { await pin({ ref: `project:${pid}`, kind: "project", label: name }); await pin({ ref: `staging:${pid}`, kind: "staging", label: `staging for ${name}` }); }
+        try { await pin({ ref: `project:${pid}`, kind: "project", label: name }); await pin({ ref: `staging:${pid}`, kind: "staging", label: `what is deployed for ${name}` }); }
         catch (e) { this.note = { tone: "fail", text: `Pinning didn't work: ${String(e?.message ?? e)}` }; }
       }
       cx.notify();
@@ -310,13 +310,13 @@ export default class ProjectHome extends View {
   reload(cx) { setShared("captain.explorer.rev", Date.now()); this.load(cx); }
 
   /** One write, then read the project again. */
-  act(cx, path, body, done, after) {
+  act(cx, path, body, done, after, doing) {
     if (this.busy) return;
-    this.busy = true; this.note = null;
+    this.busy = true; this.busyWhat = doing ?? "Working on it"; this.note = null;
     cx.notify();
     cx.spawn(async (cx) => {
       const r = await api(path, { body, scoped: false });
-      this.busy = false;
+      this.busy = false; this.busyWhat = null;
       if (!r.ok) { this.note = { tone: "fail", text: plainError(r.data?.error ?? r.error, "That didn't work. Try again.") }; cx.notify(); return; }
       this.note = done ? { tone: "good", text: done } : null;
       after?.(r.data);
@@ -327,7 +327,8 @@ export default class ProjectHome extends View {
 
   backtest(cx, e) {
     this.act(cx, `/api/projects/${enc(this.pid())}/experiments/${enc(e.id)}/backtest`, {}, `Judging ${e.pipeline} against the baseline. It's open in Runs, live.`,
-      (d) => { if (d?.live) { setShared("captain.open", { section: "runs", live: d.live, at: Date.now() }); run("layout.select", { stack: "sections", child: "runs" }); } });
+      (d) => { if (d?.live) { setShared("captain.open", { section: "runs", live: d.live, at: Date.now() }); run("layout.select", { stack: "sections", child: "runs" }); } },
+      `Starting the comparison of ${inProject(parseRef(e.pipeline).name)}`);
   }
 
   /** Keyword search over the catalog as the baseline: no training. When the title column can't be told, a short
@@ -337,16 +338,17 @@ export default class ProjectHome extends View {
     cx.spawn(async (cx) => {
       const plan = await api(`/api/projects/${enc(this.pid())}/baseline-start`, { scoped: false });
       if (plan.ok && plan.data?.ask_title) return form("baseline", { project: this.pid(), columns: plan.data.columns ?? [] });
-      this.act(cx, `/api/projects/${enc(this.pid())}/baseline-start`, {}, "Keyword search is the baseline now. Candidates are judged against it.");
+      this.act(cx, `/api/projects/${enc(this.pid())}/baseline-start`, {}, "Keyword search is the baseline now. Candidates are judged against it.", null, "Setting up keyword search");
     });
   }
 
   makeChampion(cx, e) {
-    this.act(cx, `/api/projects/${enc(this.pid())}/champion`, { experiment: e.id, expect: this.exps?.champion ?? null }, `${e.pipeline} is the baseline now.`);
+    this.act(cx, `/api/projects/${enc(this.pid())}/champion`, { experiment: e.id, expect: this.exps?.champion ?? null }, `${e.pipeline} is the baseline now.`, null,
+      `Making ${inProject(parseRef(e.pipeline).name)} the model others are compared with`);
   }
 
   usePin(cx, slot, ref) {
-    this.act(cx, `/api/projects/${enc(this.pid())}/pin`, { [slot]: ref }, `${SLOTS[slot].title} now uses ${ref.replace(/:holdout$/, "")}.`);
+    this.act(cx, `/api/projects/${enc(this.pid())}/pin`, { [slot]: ref }, `${SLOTS[slot].title} now uses ${ref.replace(/:holdout$/, "")}.`, null, "Switching to the newer version");
   }
 
   values() {
@@ -394,23 +396,23 @@ export default class ProjectHome extends View {
     // One action per row. A newer version is offered in place of Change; everything else about the input (which
     // version, a snapshot or read live, removing it) is under Change.
     const action = missing
-      ? Button(c, `${id}-pick`, `Choose ${inp.noun}`, () => pickInput(this.pid(), inp), { small: true })
+      ? Button(c, `${id}-pick`, `Choose ${inp.noun}`, () => pickInput(this.pid(), inp), { small: true, disabled: Boolean(this.running()) })
       : newer
-        ? Button(c, `${id}-newer`, `Use version ${newer.version}`, (_e, cx) => this.usePin(cx, inp.slot, inp.next.ref), { small: true, disabled: this.busy })
-        : Button(c, `${id}-change`, "Change", () => pickInput(this.pid(), inp), { small: true });
+        ? Button(c, `${id}-newer`, `Use version ${newer.version}`, (_e, cx) => this.usePin(cx, inp.slot, inp.next.ref), { small: true, disabled: Boolean(this.running()) })
+        : Button(c, `${id}-change`, "Change", () => pickInput(this.pid(), inp), { small: true, disabled: Boolean(this.running()) });
     const r = parseRef(inp.pinned);
     // An empty events input on a project that has its catalog: simulated shoppers can make one (labelled simulated).
     const hasCatalog = (this.stages?.inputs ?? []).some((i) => (i.role ?? i.slot) === "catalog" && i.pinned);
     const generate = missing && hasCatalog && ((inp.role ?? inp.slot) === "events" || (inp.accepts ?? []).includes("events"))
       ? div().id(`${id}-gen-tip`).flex_none().tooltip("Simulated shoppers search your catalog. Results judged on these events are simulated.")
-        .child(Button(c, `${id}-generate`, "Generate simulated events", () => form("generate-events", { project: this.pid(), slot: inp.slot }), { small: true })) : null;
+        .child(Button(c, `${id}-generate`, "Generate simulated events", () => form("generate-events", { project: this.pid(), slot: inp.slot }), { small: true, disabled: Boolean(this.running()) })) : null;
     // What else can be done with an input sits under one More on its row: an older version, taking it off the project.
     const extra = [
       !missing && !live && r.version > 1 ? [`${id}-older`, "Use an older version", () => form("pin", { ...this.values(), slot: inp.slot })] : null,
       !inp.required ? [`${id}-remove`, "Remove from this project", (cx) => this.removeInput(cx, inp)] : null,
     ].filter(Boolean);
     const openMore = this.inputMenu === inp.slot;
-    const moreBtn = extra.length ? Popup.new(`${id}-more-pop`, Button(c, `${id}-more`, "More", (_e, cx) => { this.inputMenu = openMore ? null : inp.slot; cx.notify(); }, { small: true })).anchor("bottom_right")
+    const moreBtn = extra.length ? Popup.new(`${id}-more-pop`, Button(c, `${id}-more`, "More", (_e, cx) => { this.inputMenu = openMore ? null : inp.slot; cx.notify(); }, { small: true, disabled: Boolean(this.running()) })).anchor("bottom_right")
       .when(openMore, (e) => e.content(v_flex().id(`${id}-more-list`).w(220).py(4).bg(c.surface).border_1().border_color(c.grey300)
         .children(extra.map(([eid, label, act]) => h_flex().id(eid).h(30).px(10).items_center().cursor_pointer().text_size(12.5).text_color(c.navy).hover((s) => s.bg(c.surface2))
           .on_click((_e, cx) => { this.inputMenu = null; cx.notify(); act(cx); }).child(label))))) : null;
@@ -435,15 +437,16 @@ export default class ProjectHome extends View {
   }
 
   addCard(c) {
-    return Button(c, "in-add", "Add data", () => form("add-input", { project: this.pid() }), { small: true });
+    return Button(c, "in-add", "Add data", () => form("add-input", { project: this.pid() }), { small: true, disabled: Boolean(this.running()) });
   }
 
   removeInput(cx, inp) {
     if (this.busy) return;
-    this.busy = true;
+    this.busy = true; this.busyWhat = `Removing ${inp.label}`; this.inputMenu = null;
+    cx.notify();
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(this.pid())}/slots/${enc(inp.slot)}`, { method: "DELETE", scoped: false });
-      this.busy = false;
+      this.busy = false; this.busyWhat = null;
       this.note = r.ok ? { tone: "good", text: `${inp.label} removed from this project. Its data is kept.` } : { tone: "fail", text: plainError(r.data?.error ?? r.error, "Couldn't remove it.") };
       setShared("captain.explorer.rev", Date.now());
       this.load(cx);
@@ -466,11 +469,11 @@ export default class ProjectHome extends View {
    *  files a proposal. Nothing is applied until the person accepts it here. */
   startAssist(cx) {
     if (this.busy) return;
-    this.busy = true; this.note = null;
+    this.busy = true; this.busyWhat = "Asking the agent for a setup"; this.note = null;
     cx.notify();
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(this.pid())}/assist`, { body: {}, scoped: false });
-      this.busy = false;
+      this.busy = false; this.busyWhat = null;
       if (!r.ok) { this.note = { tone: "fail", text: plainError(r.data?.error ?? r.error, "The agent couldn't start.") }; cx.notify(); return; }
       this.assist = { status: "running", id: r.data?.assist, skipped: [], done: [] };
       await askAgent(cx, r.data?.prompt ?? "");
@@ -493,13 +496,14 @@ export default class ProjectHome extends View {
   accept(cx, only) {
     const a = this.assist, prop = a.proposal;
     if (this.busy) return;
-    this.busy = true;
+    this.busy = true; this.busyWhat = "Applying what you accepted";
+    cx.notify();
     cx.spawn(async (cx) => {
       // One accept per proposal: the services close it after, so the checked items go together.
       if (!only) only = [...(prop.slots ?? []).map((x) => x.slot).filter((x) => !(a.skipped ?? []).includes(x)),
         ...(prop.trainer && !a.scriptSkipped ? ["trainer"] : []), ...(prop.evaluation ? ["evaluation"] : [])];
       const r = await api(`/api/projects/${enc(this.pid())}/proposals/${enc(prop.id)}/accept`, { body: { only }, scoped: false });
-      this.busy = false;
+      this.busy = false; this.busyWhat = null;
       if (!r.ok) { this.note = { tone: "fail", text: plainError(r.data?.error ?? r.error, "Couldn't apply that.") }; cx.notify(); return; }
       a.done = [...only];
       a.toConnect = r.data?.to_connect ?? [];
@@ -655,8 +659,8 @@ export default class ProjectHome extends View {
           go("runs", { backtest: r.name, version: r.version ?? undefined });
         }, { small: true })))
         .child(Button(c, `exp-${i}-rerun`, "Rerun with changes", () => form("experiment", { ...this.values(), how: e.trainer === "lightgbm-ltr" ? "starter" : "own", base: name, labels: e.labels ?? undefined }), { small: true }))
-        .when(Boolean(champ) && !e.is_champion, (x) => x.child(Button(c, `exp-${i}-judge`, ev ? "Judge again against the baseline" : "Judge against the baseline", (_e, cx) => this.backtest(cx, e), { small: true, disabled: this.busy || e.status === "backtesting" })))
-        .when(!e.is_champion, (x) => x.child(Button(c, `exp-${i}-champion`, `Make it the baseline (${evWord})`, (_e, cx) => this.makeChampion(cx, e), { small: true, disabled: this.busy })))
+        .when(Boolean(champ) && !e.is_champion, (x) => x.child(Button(c, `exp-${i}-judge`, ev ? "Judge again against the baseline" : "Judge against the baseline", (_e, cx) => this.backtest(cx, e), { small: true, disabled: Boolean(this.running()) || e.status === "backtesting" })))
+        .when(!e.is_champion, (x) => x.child(Button(c, `exp-${i}-champion`, `Make it the baseline (${evWord})`, (_e, cx) => this.makeChampion(cx, e), { small: true, disabled: Boolean(this.running()) || e.status === "backtesting" })))
         .child(Button(c, `exp-${i}-publish`, "Save to the model registry", () => form("publish", { ...this.values(), pipeline: e.pipeline }), { small: true })));
   }
 
@@ -683,8 +687,8 @@ export default class ProjectHome extends View {
   guidedStart(c) {
     const baseDone = Boolean(this.exps?.champion ?? this.stages?.start?.baseline?.done);
     const steps = this.startSteps().map((st) => ({ ...st, button: !st.can ? null
-      : st.id === "baseline" ? Button(c, "start-baseline", st.button, (_e, cx) => this.baselineStart(cx), { small: true, disabled: this.busy })
-      : Button(c, "start-train", st.button, () => form("experiment", { ...this.values(), how: "starter" }), { small: true }) }));
+      : st.id === "baseline" ? Button(c, "start-baseline", st.button, (_e, cx) => this.baselineStart(cx), { small: true, disabled: Boolean(this.running()) })
+      : Button(c, "start-train", st.button, () => form("experiment", { ...this.values(), how: "starter" }), { small: true, disabled: Boolean(this.running()) }) }));
     return v_flex().id("exp-start").w_full().border_1().border_color(c.rule).bg(c.surface)
       .children(steps.map((st, k) => h_flex().id(`start-row-${st.id}`).p(12).gap(12).items_center().when(k > 0, (e) => e.border_t(1).border_color(c.rule))
         .child(st.done
@@ -701,7 +705,7 @@ export default class ProjectHome extends View {
   experiments(c) {
     const xs = this.exps?.experiments ?? [];
     const champ = this.exps?.champion;
-    const actions = [Button(c, "exp-new", "New model", () => form("experiment", { ...this.values() }), { small: true })];
+    const actions = [Button(c, "exp-new", "New model", () => form("experiment", { ...this.values() }), { small: true, disabled: Boolean(this.running()) })];
     const body = !xs.length
       ? this.guidedStart(c)
       : v_flex().w_full().border_1().border_color(c.rule).bg(c.surface).children(xs.map((e, i) => this.expRow(c, e, i)));
@@ -763,13 +767,14 @@ export default class ProjectHome extends View {
 
   change(cx, req, note) {
     if (this.busy) return;
-    this.busy = true;
+    this.busy = true; this.busyWhat = "Saving that";
+    cx.notify();
     cx.spawn(async (cx) => {
       for (const [path, opts] of req) {
         const r = await api(path, { ...opts, scoped: false });
-        if (!r.ok) { this.busy = false; this.note = { text: plainError(r.data?.error ?? r.error, "Couldn't save that."), tone: "fail" }; cx.notify(); return; }
+        if (!r.ok) { this.busy = false; this.busyWhat = null; this.note = { text: plainError(r.data?.error ?? r.error, "Couldn't save that."), tone: "fail" }; cx.notify(); return; }
       }
-      this.busy = false;
+      this.busy = false; this.busyWhat = null;
       this.note = { text: note, tone: "good" };
       setShared("captain.explorer.rev", Date.now());
       this.loadHome(cx);
@@ -1025,7 +1030,22 @@ export default class ProjectHome extends View {
     return { text: "Publish the baseline, or train another candidate to beat it.", label: null };
   }
 
+  /** What is running on this page right now, as a few words, or null. One place, so every button asks the same. */
+  running() {
+    if (this.busy) return this.busyWhat ?? "Working on it";
+    const s = this.shipPath;
+    if (s.djob && !s.djob.failed) return `Deploying to ${s.djob.place?.label ?? "it"}`;
+    if (s.busy) return String(s.busy);
+    if (s.removing) return "Removing what was created";
+    return null;
+  }
+
   nextLine(c) {
+    const now = this.running();
+    // While something runs the banner says what, and offers no button: nothing here can start it a second time.
+    if (now) return h_flex().id("ph-next").px(12).py(8).gap(10).items_center().bg(c.blueLight)
+      .child(svg(icon("clock")).size(14).flex_none().text_color(c.blue))
+      .child(div().id("ph-running").flex_1().min_w(0).text_size(12.5).text_color(c.navy).child(`${now}...`));
     const n = this.nextStep();
     const runIt = n.run ?? (n.action ? (cx) => this.runAction(cx, n.action) : null);
     return h_flex().id("ph-next").px(12).py(8).gap(10).items_center().bg(c.blueLight)

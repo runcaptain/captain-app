@@ -206,7 +206,7 @@ def setup_serving(cloud: str = typer.Argument(..., help="where to host: aws, mod
             return emit({"policy": pol, "text": p.get("login_text")}, _json.dumps(pol, indent=2) if pol else p.get("login_text") or "Nothing to grant.")
         if S.dry_run or not yes:
             lines = (["Would create:" if S.dry_run else "This will create:"] + [f"  {r['resource']:24} {r['name']:34} {r['why']}" for r in p["creates"]]
-                     + (["Each staged model adds:"] + [f"  {r['resource']:24} {r['name']:34} {r['why']}" for r in p["each_deploy"]] if p.get("each_deploy") else [])
+                     + (["Each deployed model adds:"] + [f"  {r['resource']:24} {r['name']:34} {r['why']}" for r in p["each_deploy"]] if p.get("each_deploy") else [])
                      + [p["cost"]["text"]])
             if S.dry_run:
                 return emit({**p, "dry_run": True}, "\n".join(lines))

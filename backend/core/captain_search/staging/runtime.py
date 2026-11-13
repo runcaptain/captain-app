@@ -539,7 +539,7 @@ class Runtime:
 def make_app(rt: Runtime):
     from fastapi import FastAPI, Header, HTTPException
 
-    api = FastAPI(title=f"Captain staging: {rt.pid}")
+    api = FastAPI(title=f"Captain deployed model: {rt.pid}")
 
     def check(authorization: str = "", key: str | None = None) -> None:
         tok = key or (authorization[7:] if authorization.lower().startswith("bearer ") else None)
