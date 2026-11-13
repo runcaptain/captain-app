@@ -203,7 +203,9 @@ def deployments_show(name: str, span: str = typer.Option("1h", "--range", help="
              + (f". Version {row['version_n']} of this deployment." if row.get("version_n") else "."),
              f"Traffic   {n['text']}"]
     if s.get("requests"):
-        lines.append(f"          {s['per_minute']:g} requests a minute on average, {s['per_minute_peak']:g} at the busiest.")
+        lines.append(f"          {s['per_minute']:g} requests a minute on average.")
+    if s.get("calls_text") and s.get("calls") != s.get("requests"):
+        lines.append(f"          {s['calls_text']}")
     if s.get("cpu") is not None:
         lines.append(f"Machine   CPU {s['cpu']:g}% on average, {s['cpu_peak']:g}% at the most. Memory {s['memory']:g}%.")
     if s.get("copies_text"):
