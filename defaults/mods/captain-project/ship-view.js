@@ -221,7 +221,7 @@ export function lastCheck(ship) { return ship.checkResult ?? ship.staged()?.chec
 // ---- small pieces -----------------------------------------------------------------------------------------------
 
 const dot = (c, tone) => div().size(8).flex_none().rounded_full().bg({ good: c.good, busy: c.blue, fail: c.fail, quiet: c.grey300 }[tone] ?? c.grey300);
-const line = (c, id, text, tone = "grey900") => div().id(id).text_size(12.5).line_height("18px").text_color(c[tone]).child(text);
+const line = (c, id, text, tone = "grey900") => div().id(id).text_size(13).line_height("18px").text_color(c[tone]).child(text);
 
 /** Which state the deployed model is in, as a sentence a person would say. */
 export function stateWords(ship) {
@@ -247,36 +247,35 @@ export function stateWords(ship) {
 function placeCard(ship, c, p) {
   const busy = Boolean(ship.djob) || Boolean(ship.dasking) || Boolean(ship.busy);
   const sub = p.sub;
-  // One place to deploy, as one card, in the language of the model's own card: its mark and name, one sentence,
-  // what it costs, and one Deploy button.
-  return v_flex().id(`ship-place-${p.id}`).flex_1().min_w(260).max_w(420).p(20).gap(10).bg(c.surface).border_1().border_color(c.rule)
-    .child(h_flex().gap(10).items_center()
-      .child(p.provider ? Brand(c, p.provider, 20) : svg(icon("monitor")).size(18).flex_none().text_color(c.grey900))
-      .child(div().text_size(15).font_semibold().text_color(c.navy).child(p.label))
-      .when(Boolean(sub), (e) => e.child(div().min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(sub))))
-    .child(line(c, `ship-place-${p.id}-reach`, p.reach ?? ""))
-    .child(line(c, `ship-place-${p.id}-cost`, p.cost))
-    .when(Boolean(p.machine), (e) => e.child(line(c, `ship-place-${p.id}-machine`, p.machine, "grey500")))
-    .when(Boolean(p.note), (e) => e.child(line(c, `ship-place-${p.id}-note`, p.note, "grey500")))
-    .when(Boolean(p.unproven), (e) => e.child(line(c, `ship-place-${p.id}-unproven`, p.unproven, "warn")))
-    .when(Boolean(p.why_not), (e) => e.child(line(c, `ship-place-${p.id}-why`, p.why_not, "fail")))
-    .when(p.why_not_action === "settings", (e) => e.child(div().id(`ship-place-${p.id}-limit`).text_size(12.5).text_color(c.blue).cursor_pointer()
-      .on_click(() => run("app.settings")).child("Change the limit in Settings")))
-    .child(div().flex_1())
-    .child(h_flex().pt(6).child(Button(c, `ship-deploy-${p.id}`, ship.dasking === p.id ? "Checking..." : "Deploy", (_e, cx) => deployTo(ship, cx, p),
-      { kind: "secondary", disabled: !p.can_deploy || busy })));
+  // One place to deploy, as one quiet row in the page's row language: its mark, its name, what deploying there
+  // means in a few plain lines, and one Deploy button at the row's end.
+  return h_flex().id(`ship-place-${p.id}`).w_full().min_h(44).px(12).py(8).gap(12).items_start().rounded(6).hover((x) => x.bg(c.hover))
+    .child(div().pt(2).flex_none().child(p.provider ? Brand(c, p.provider, 18) : svg(icon("monitor")).size(16).flex_none().text_color(c.grey900)))
+    .child(v_flex().flex_1().min_w(0).gap(2)
+      .child(h_flex().gap(8).items_center()
+        .child(div().flex_none().text_size(13).font_medium().text_color(c.navy).child(p.label))
+        .when(Boolean(sub), (e) => e.child(div().min_w(0).truncate().text_size(12).text_color(c.grey500).child(sub))))
+      .child(line(c, `ship-place-${p.id}-reach`, p.reach ?? ""))
+      .child(line(c, `ship-place-${p.id}-cost`, p.cost))
+      .when(Boolean(p.machine), (e) => e.child(line(c, `ship-place-${p.id}-machine`, p.machine, "grey500")))
+      .when(Boolean(p.note), (e) => e.child(line(c, `ship-place-${p.id}-note`, p.note, "grey500")))
+      .when(Boolean(p.unproven), (e) => e.child(line(c, `ship-place-${p.id}-unproven`, p.unproven, "warn")))
+      .when(Boolean(p.why_not), (e) => e.child(line(c, `ship-place-${p.id}-why`, p.why_not, "fail")))
+      .when(p.why_not_action === "settings", (e) => e.child(div().id(`ship-place-${p.id}-limit`).text_size(13).text_color(c.blue).cursor_pointer()
+        .on_click(() => run("app.settings")).child("Change the limit in Settings"))))
+    .child(div().flex_none().child(Button(c, `ship-deploy-${p.id}`, ship.dasking === p.id ? "Checking..." : "Deploy", (_e, cx) => deployTo(ship, cx, p),
+      { kind: "secondary", small: true, disabled: !p.can_deploy || busy })));
 }
 
 function connectCard(c, wide) {
   const open = () => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task: "cloud" } });
-  return v_flex().id("ship-connect-cloud").flex_1().min_w(260).when(!wide, (e) => e.max_w(420)).p(20).gap(10).bg(c.surface).border_1().border_color(c.rule)
-    .child(h_flex().gap(10).items_start().child(svg(icon("cloud")).size(18).flex_none().text_color(c.grey900))
-      // The long title wraps inside its card. On one line it ran out past the card's edge.
-      .child(div().flex_1().min_w(0).text_size(15).line_height("20px").font_semibold().text_color(c.navy).child(wide ? "Connect a cloud to deploy where a site can reach it" : "Connect a cloud")))
-    .child(line(c, "ship-connect-cloud-text", wide ? "On this computer only you can reach the model. Connect AWS, Google Cloud, Azure or Modal, and it gets an address your site can call."
-      : "Another place to deploy: AWS, Google Cloud, Azure or Modal."))
-    .child(div().flex_1())
-    .child(h_flex().pt(6).child(Button(c, "ship-connect-cloud-go", "Connect a cloud", open)));
+  return h_flex().id("ship-connect-cloud").w_full().min_h(44).px(12).py(8).gap(12).items_start().rounded(6).hover((x) => x.bg(c.hover))
+    .child(div().pt(2).flex_none().child(svg(icon("cloud")).size(16).flex_none().text_color(c.grey900)))
+    .child(v_flex().flex_1().min_w(0).gap(2)
+      .child(div().text_size(13).font_medium().text_color(c.navy).child(wide ? "Connect a cloud to deploy where a site can reach it" : "Connect a cloud"))
+      .child(line(c, "ship-connect-cloud-text", wide ? "On this computer only you can reach the model. Connect AWS, Google Cloud, Azure or Modal, and it gets an address your site can call."
+        : "Another place to deploy: AWS, Google Cloud, Azure or Modal.")))
+    .child(div().flex_none().child(Button(c, "ship-connect-cloud-go", "Connect a cloud", open, { small: true })));
 }
 
 /** Before a cloud deploy: what the host's own plan says will be made, what it costs, how long it takes. One button.
@@ -290,11 +289,11 @@ function confirmBox(ship, c) {
     .when(!plan.creates?.short && (plan.exists ?? []).length > 0, (e) => e.child(line(c, "ship-confirm-skips", "Everything it needs is already set up in your account. Only the model itself is new.")))
     .children(groups.map((g, i) => v_flex().id(`ship-confirm-g${i}`).gap(2)
       .child(h_flex().gap(10).items_start()
-        .child(div().w(190).flex_none().text_size(12.5).font_medium().text_color(c.navy).child(g.title))
-        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey900).child(g.summary ?? `${count((g.items ?? []).length, "thing")}`)))
+        .child(div().w(190).flex_none().text_size(13).font_medium().text_color(c.navy).child(g.title))
+        .child(div().flex_1().min_w(0).text_size(13).line_height("18px").text_color(c.grey900).child(g.summary ?? `${count((g.items ?? []).length, "thing")}`)))
       .when(all, (x) => x.children((g.items ?? []).map((it, j) => h_flex().id(`ship-confirm-g${i}-i${j}`).pl(200).gap(8).items_start()
-        .child(div().flex_none().text_size(12.5).text_color(c.navy).child(it.name ?? ""))
-        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey500).child([it.resource, it.why].filter(Boolean).join(". "))))))))
+        .child(div().flex_none().text_size(13).text_color(c.navy).child(it.name ?? ""))
+        .child(div().flex_1().min_w(0).text_size(13).line_height("18px").text_color(c.grey500).child([it.resource, it.why].filter(Boolean).join(". "))))))))
     .when(n > 0, (e) => e.child(h_flex().child(Button(c, "ship-confirm-all", all ? "Show less" : `Show everything (${count(n, "thing")})`, (_e, cx) => { ship.dconfirm.all = !all; cx.notify(); }, { small: true }))))
     .when(Boolean(plan.machine?.text ?? place.machine), (e) => e.child(line(c, "ship-confirm-machine", plan.machine?.text ?? place.machine)))
     .when(all && (plan.exists ?? []).length > 0, (e) => e.child(line(c, "ship-confirm-exists", `Already there, and used as it is: ${plan.exists.map((x) => x.name).join(", ")}.`, "grey500")))
@@ -314,17 +313,17 @@ function progressBox(ship, c) {
   return v_flex().id("ship-progress").w_full().p(14).gap(6).bg(c.surface).border_1().border_color(failed ? c.fail : c.rule)
     .child(h_flex().gap(8).items_center()
       .child(div().id("ship-progress-title").flex_1().text_size(15).font_semibold().text_color(c.navy).child(failed ? `Deploying to ${j.place.label} stopped` : `Deploying to ${j.place.label}`))
-      .when(!failed, (e) => e.child(div().id("ship-progress-elapsed").text_size(12.5).text_color(c.grey500).child(took((Date.now() - j.started) / 1000)))))
+      .when(!failed, (e) => e.child(div().id("ship-progress-elapsed").text_size(13).text_color(c.grey500).child(took((Date.now() - j.started) / 1000)))))
     .children(j.steps.map((s, i) => h_flex().id(`ship-step-${i}`).gap(10).items_center()
       .child(dot(c, tone(s)))
-      .child(div().flex_1().min_w(0).text_size(12.5).text_color(s.status === "pending" ? c.grey500 : c.navy).child(s.title))
-      .child(div().flex_none().text_size(12.5).text_color(s.status === "failed" ? c.fail : c.grey500).child(word(s)))))
+      .child(div().flex_1().min_w(0).text_size(13).text_color(s.status === "pending" ? c.grey500 : c.navy).child(s.title))
+      .child(div().flex_none().text_size(13).text_color(s.status === "failed" ? c.fail : c.grey500).child(word(s)))))
     .when(!j.steps.length && !failed, (e) => e.child(line(c, "ship-progress-message", "Starting...", "grey500")))
     .when(Boolean(failed), (e) => e
       .child(line(c, "ship-progress-problem", failed.text, "fail"))
       .when(Boolean(failed.policy), (x) => x.child(v_flex().id("ship-progress-policy").gap(4)
         .child(line(c, "ship-progress-policy-text", "Your login is missing a permission. Give this policy to whoever manages the account, then deploy again:"))
-        .child(div().p(8).bg(c.surface2).font_family(MONO).text_size(12.5).line_height("18px").text_color(c.navy).child(JSON.stringify(failed.policy, null, 2)))
+        .child(div().p(8).bg(c.surface2).font_family(MONO).text_size(13).line_height("18px").text_color(c.navy).child(JSON.stringify(failed.policy, null, 2)))
         .child(h_flex().child(Button(c, "ship-progress-copy-policy", "Copy the policy", (_e, cx) => ship.copy(cx, JSON.stringify(failed.policy, null, 2), "The policy is on your clipboard."), { small: true })))))
       // When deploying again cannot work, what to do in its place, in the services' own sentence.
       .when(Boolean(failed.fix), (x) => x.child(line(c, "ship-progress-fix", failed.fix)))
@@ -372,13 +371,13 @@ export function ShipSection(ship, c) {
         .child(div().flex_1().min_w(0))
         .child(Button(c, "ship-open", "Open it", (_e, cx) => ship.page.openDeployment(cx), { small: true })))
       // The Deployments screen is where every deployed model is managed: this opens this one there.
-      .child(div().id("ship-open-in-deployments").text_size(12.5).text_color(c.blue).cursor_pointer()
+      .child(div().id("ship-open-in-deployments").text_size(13).text_color(c.blue).cursor_pointer()
         .on_click(() => { setShared("captain.open", { section: "deployments", open: `${ship.pid()}:${s.env ?? "staging"}`, at: Date.now() }); run("layout.select", { stack: "sections", child: "deployments" }); })
         .child("Open in Deployments"))
       .child(h_flex().gap(8).items_center().child(dot(c, ship.healthD?.status === "unhealthy" ? "fail" : w.tone)).child(line(c, "ship-deployed-state", w.text)))
       .when(ship.healthD?.status === "unhealthy", (e) => e.child(line(c, "ship-deployed-unhealthy", ship.healthD.text, "fail")))
       .when(Boolean(address), (e) => e.child(h_flex().gap(8).items_center().flex_wrap()
-        .child(div().id("ship-deployed-address").min_w(0).max_w_full().truncate().font_family(MONO).text_size(12.5).text_color(c.navy).child(address))
+        .child(div().id("ship-deployed-address").min_w(0).max_w_full().truncate().font_family(MONO).text_size(13).text_color(c.navy).child(address))
         .child(Button(c, "ship-deployed-copy", "Copy", (_e, cx) => ship.copy(cx, address, "The address is on your clipboard."), { small: true })))))
       .when(Boolean(ship.dpast), (e) => e.child(pastLine(ship, c)))
       .when(Boolean(ship.dnote), (e) => e.child(note(c, ship.dnote)));
@@ -390,7 +389,7 @@ export function ShipSection(ship, c) {
     .child(line(c, "ship-question", `Where should ${what} run?`))
     .when(!d, (e) => e.child(line(c, "ship-loading", "Looking at where it can run...", "grey500")))
     .when(Boolean(d?.problem), (e) => e.child(line(c, "ship-places-problem", d.problem, "fail")))
-    .when(Boolean(d), (e) => e.child(h_flex().id("ship-places").flex_wrap().items_stretch().gap(14)
+    .when(Boolean(d), (e) => e.child(v_flex().id("ship-places").w_full().gap(2)
       .children(places.map((p) => placeCard(ship, c, p)))
       .child(connectCard(c, clouds.length === 0))))
     .when(Boolean(s) && !on && !ship.page.deployOpen, (e) => e.child(line(c, "ship-last", `Last deployed: ${short(s.model_version)}. ${stateWords(ship).text}${s.spent?.text ? ` ${s.spent.text}.` : ""}`, "grey500")))
@@ -399,10 +398,10 @@ export function ShipSection(ship, c) {
 
 /** An earlier failure, once a model is running: one line, and a way to put it away. */
 const pastLine = (ship, c) => h_flex().id("ship-past").gap(8).items_center().flex_wrap()
-  .child(div().id("ship-past-text").flex_1().min_w(0).text_size(12.5).text_color(c.grey500).child(ship.dpast.text))
+  .child(div().id("ship-past-text").flex_1().min_w(0).text_size(13).text_color(c.grey500).child(ship.dpast.text))
   .child(Button(c, "ship-past-dismiss", "Dismiss", (_e, cx) => { ship.dpast = null; cx.notify(); }, { small: true }));
 
-const note = (c, n) => div().id("ship-note").px(10).py(6).text_size(12.5).bg(n.tone === "fail" ? c.failLight : c.goodLight).text_color(n.tone === "fail" ? c.fail : c.good).child(n.text);
+const note = (c, n) => div().id("ship-note").px(10).py(6).text_size(13).bg(n.tone === "fail" ? c.failLight : c.goodLight).text_color(n.tone === "fail" ? c.fail : c.good).child(n.text);
 
 // ---- the deployed model's screen --------------------------------------------------------------------------------
 
@@ -445,14 +444,14 @@ function differBody(ship, c) {
     .when(!d.queries.length, (e) => e.child(line(c, "dep-differ-none", d.none_differ ?? (d.checked ? `None of the ${d.checked} searches checked come back different.` : "There are no searches to compare yet."))))
     .children(d.queries.slice(0, 10).map((q, i) => h_flex().id(`dep-differ-${i}`).gap(8).items_center().py(3).cursor_pointer().hover((x) => x.bg(c.surface2))
       .on_click((_e, cx) => ship.tryQuery(cx, q.query))
-      .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.blue).child(q.query))
-      .child(div().flex_none().text_size(12.5).text_color(c.grey500).child(`${q.moved} of the top 10 in another place`))));
+      .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.blue).child(q.query))
+      .child(div().flex_none().text_size(13).text_color(c.grey500).child(`${q.moved} of the top 10 in another place`))));
 }
 
 /** Its health as last recorded, what healthy means here, and a way to change that or check now. */
 function healthBody(ship, c) {
   const h = ship.healthD, t = h?.target ?? {};
-  const choice = (id, label, on, body) => div().id(id).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+  const choice = (id, label, on, body) => div().id(id).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(13).border_1()
     .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy)
     .on_click((_e, cx) => healthDo(ship, cx, body)).child(label);
   return v_flex().id("dep-health").w_full().p(12).gap(8).bg(c.surface).border_1().border_color(c.rule)
@@ -460,14 +459,14 @@ function healthBody(ship, c) {
     // Where each fact came from, so a person can tell what Captain looked at and what it did not call.
     .when((h?.sources ?? []).length > 0, (e) => e.child(v_flex().id("dep-health-sources").gap(2)
       .children(h.sources.map((x, i) => h_flex().id(`dep-health-source-${i}`).gap(10).items_start()
-        .child(div().w(250).flex_none().text_size(12.5).text_color(c.grey500).child(x.fact))
-        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey900).child(x.from))))))
+        .child(div().w(250).flex_none().text_size(13).text_color(c.grey500).child(x.fact))
+        .child(div().flex_1().min_w(0).text_size(13).line_height("18px").text_color(c.grey900).child(x.from))))))
     .when(Boolean(h?.checked_at), (e) => e.child(line(c, "dep-health-when", `Last checked ${String(h.checked_at).slice(11, 16)} UTC.${h.last_request_at ? ` Last request ${String(h.last_request_at).slice(11, 16)} UTC.` : ""}`, "grey500")))
     .child(v_flex().gap(4)
-      .child(div().text_size(12.5).font_medium().text_color(c.navy).child("Unhealthy when 95 in 100 requests take longer than"))
+      .child(div().text_size(13).font_medium().text_color(c.navy).child("Unhealthy when 95 in 100 requests take longer than"))
       .child(h_flex().gap(6).flex_wrap().children([[50, "50 ms"], [200, "200 ms"], [500, "500 ms"], [1000, "1 second"]].map(([v, label]) => choice(`dep-health-p95-${v}`, label, t.p95_ms === v, { p95_ms: v, error_rate: t.error_rate })))))
     .child(v_flex().gap(4)
-      .child(div().text_size(12.5).font_medium().text_color(c.navy).child("Unhealthy when more requests than this fail"))
+      .child(div().text_size(13).font_medium().text_color(c.navy).child("Unhealthy when more requests than this fail"))
       .child(h_flex().gap(6).flex_wrap().children([[0.001, "1 in 1,000"], [0.01, "1 in 100"], [0.05, "5 in 100"]].map(([v, label]) => choice(`dep-health-err-${String(v).replace(".", "_")}`, label, t.error_rate === v, { error_rate: v, ...(t.p95_ms != null ? { p95_ms: t.p95_ms } : {}) })))))
     .when(!t.set, (e) => e.child(line(c, "dep-health-default", "No target is set yet. Until one is, only a model that stops answering or fails more than 5 in 100 requests counts as unhealthy.", "grey500")))
     .when(Boolean(ship.healthNote), (e) => e.child(line(c, "dep-health-note", ship.healthNote, "grey500")))
@@ -522,48 +521,48 @@ export function DeployedView(ship, c) {
   const top = v_flex().id("deployed").w_full().p(14).gap(10).bg(c.surface).border_1().border_color(c.rule)
     .child(h_flex().gap(8).items_center().flex_wrap()
       .child(div().id("ship-name").text_size(15).font_semibold().text_color(c.navy).child(short(s.model_version)))
-      .when(on && Boolean(s.arms?.baseline) && s.serve !== "baseline", (e) => e.child(div().id("ship-beside").text_size(12.5).text_color(c.grey500).child(`compared with ${short(s.arms.baseline)}`)))
+      .when(on && Boolean(s.arms?.baseline) && s.serve !== "baseline", (e) => e.child(div().id("ship-beside").text_size(13).text_color(c.grey500).child(`compared with ${short(s.arms.baseline)}`)))
       .child(div().flex_1().min_w(0))
       .when(on && !ship.busy, (e) => e.child(Button(c, "ship-stop", "Stop", (_e, cx) => { ship.stopAsk = true; cx.notify(); }, { small: true })))
-      .when(Boolean(ship.busy), (e) => e.child(div().id("ship-busy").text_size(12.5).text_color(c.grey500).child(`${ship.busy}...`))))
+      .when(Boolean(ship.busy), (e) => e.child(div().id("ship-busy").text_size(13).text_color(c.grey500).child(`${ship.busy}...`))))
     .child(h_flex().gap(8).items_center().child(dot(c, w.tone)).child(line(c, "dep-state", w.text, "navy")))
     // Unhealthy is said here, at the top, in words: what is wrong, and since when.
     .when(ship.healthD?.status === "unhealthy" && on, (e) => e.child(v_flex().id("dep-unhealthy").p(10).gap(4).bg(c.failLight)
       .child(line(c, "dep-unhealthy-text", ship.healthD.text, "fail"))
-      .child(div().id("dep-unhealthy-open").text_size(12.5).text_color(c.blue).cursor_pointer()
+      .child(div().id("dep-unhealthy-open").text_size(13).text_color(c.blue).cursor_pointer()
         .on_click((_e, cx) => { ship.more = "health"; cx.notify(); }).child("See its health and your targets"))))
     // A failed check is a reason not to put it in production: said here, at the top, in words, not only behind More.
     .when(lastCheck(ship)?.status === "fail", (e) => e.child(v_flex().id("dep-check-failed").p(10).gap(4).bg(c.failLight)
       .child(line(c, "dep-check-failed-text", `It is not using the same numbers it was trained on, so it may rank worse than its tests said. ${lastCheck(ship).text ?? ""}`.trim(), "fail"))
-      .child(div().id("dep-check-failed-open").text_size(12.5).text_color(c.blue).cursor_pointer()
+      .child(div().id("dep-check-failed-open").text_size(13).text_color(c.blue).cursor_pointer()
         .on_click((_e, cx) => { ship.more = "check"; cx.notify(); }).child("See the check"))))
     .when(Boolean(ship.stopAsk) && on, (e) => e.child(h_flex().id("ship-stop-ask").p(10).gap(10).items_center().bg(c.surface2).border_1().border_color(c.rule)
-      .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child("Stop it? The address goes away. What it answered is kept."))
+      .child(div().flex_1().min_w(0).text_size(13).text_color(c.grey900).child("Stop it? The address goes away. What it answered is kept."))
       .child(Button(c, "ship-stop-yes", "Stop it", (_e, cx) => ship.stop(cx), { small: true }))
       .child(Button(c, "ship-stop-no", "Keep it running", (_e, cx) => { ship.stopAsk = false; cx.notify(); }, { small: true }))))
     .when(on, (e) => e
       .child(h_flex().id("ship-reach").gap(8).items_center().flex_wrap()
         // A long address is cut with an ellipsis, never run off the card. Copy takes the whole of it.
-        .child(div().id("ship-address").min_w(0).max_w_full().truncate().font_family(MONO).text_size(12.5).text_color(c.navy).tooltip(address).child(address))
+        .child(div().id("ship-address").min_w(0).max_w_full().truncate().font_family(MONO).text_size(13).text_color(c.navy).tooltip(address).child(address))
         .child(Button(c, "ship-copy-address", "Copy", (_e, cx) => ship.copy(cx, address, "The address is on your clipboard."), { small: true }))
         .when(Boolean(k?.test_request), (x) => x.child(Button(c, "ship-copy-test", "Copy a test request", (_e, cx) => ship.copy(cx, k.test_request, "A test request is on your clipboard. Paste it in a terminal."), { small: true })))
         .when(Boolean(s.needs_key), (x) => x.child(Button(c, "ship-copy-key", "Copy its key", (_e, cx) => ship.copyKey(cx), { small: true })))
-        .child(div().id("ship-where").text_size(12.5).text_color(c.grey500).child(s.kind === "local" ? "Only this computer can reach it." : "Your site can call it.")))
+        .child(div().id("ship-where").text_size(13).text_color(c.grey500).child(s.kind === "local" ? "Only this computer can reach it." : "Your site can call it.")))
       // Try a search: what it returns, beside the model it is compared with.
       .child(v_flex().id("dep-try").gap(6)
-        .child(div().text_size(12.5).font_medium().text_color(c.navy).child("Try a search"))
+        .child(div().text_size(13).font_medium().text_color(c.navy).child("Try a search"))
         .child(h_flex().gap(8)
           .child(div().id("ship-try-box").flex_1().h(32).flex().items_center().px(10).bg(c.surface).border_1().border_color(c.grey300).cursor_text()
-            .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(ship.box).w_full().text_size(12.5).text_color(c.navy)))
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(ship.box).w_full().text_size(13).text_color(c.navy)))
           .child(Button(c, "ship-try-go", ship.asking ? "Searching..." : "Search", (_e, cx) => ship.ask(cx), { disabled: ship.asking })))
-        .when(Boolean(base) && !r, (x) => x.child(div().id("dep-try-ideas").text_size(12.5).text_color(c.blue).cursor_pointer()
+        .when(Boolean(base) && !r, (x) => x.child(div().id("dep-try-ideas").text_size(13).text_color(c.blue).cursor_pointer()
           .on_click((_e, cx) => { ship.more = "differ"; cx.notify(); }).child(`Not sure what to type? See where this model and ${base} disagree`)))
-        .when(Boolean(ship.askError), (x) => x.child(div().id("ship-try-error").text_size(12.5).text_color(c.fail).child(ship.askError)))
+        .when(Boolean(ship.askError), (x) => x.child(div().id("ship-try-error").text_size(13).text_color(c.fail).child(ship.askError)))
         .when(Boolean(r), (x) => x
           .child(h_flex().id("ship-try-results").flex_wrap().items_start().gap(10)
             .child(ship.side(c, r.staged, "This model", "ship-try-staged"))
             .when(Boolean(r.baseline), (y) => y.child(ship.side(c, r.baseline, `Compared with ${base ?? "the other model"}`, "ship-try-baseline"))))
-          .child(div().id("ship-try-summary").text_size(12.5).text_color(c.grey500).child(
+          .child(div().id("ship-try-summary").text_size(13).text_color(c.grey500).child(
             (r.baseline ? (r.same_order ? "Both return the same results in the same order for this search. " : `${r.moved} of the top ${r.staged.results.length} differ from ${base ?? "the model it's compared with"}. `) : "")
             + "Searches typed here are tests. They never count as shoppers.")))))
     .child(numbers(ship, c))
@@ -572,12 +571,12 @@ export function DeployedView(ship, c) {
     .when(Boolean(ship.note), (e) => e.child(note(c, { ...ship.note, text: ship.w(ship.note.text) })))
     .when(Boolean(ship.problem), (e) => e.child(line(c, "ship-problem", ship.problem, "fail")));
   const more = v_flex().id("dep-more").w_full().gap(0).bg(c.surface).border_1().border_color(c.rule)
-    .child(div().px(14).pt(10).pb(4).text_size(12.5).font_medium().text_color(c.grey500).child("More"))
+    .child(div().px(14).pt(10).pb(4).text_size(13).font_medium().text_color(c.grey500).child("More"))
     .children(items.map((it) => h_flex().id(`dep-more-${it.id}`).px(14).py(7).gap(12).items_start().cursor_pointer().border_t(1).border_color(c.rule)
       .when(open?.id === it.id, (e) => e.bg(c.blueLight)).hover((e) => e.bg(c.surface2))
       .on_click((_e, cx) => { ship.more = open?.id === it.id ? null : it.id; ship.tab = it.id; loadPlain(ship, cx); cx.notify(); })
-      .child(div().w(210).flex_none().text_size(12.5).font_medium().text_color(c.blue).child(it.label))
-      .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey900).child(it.text))));
+      .child(div().w(210).flex_none().text_size(13).font_medium().text_color(c.blue).child(it.label))
+      .child(div().flex_1().min_w(0).text_size(13).line_height("18px").text_color(c.grey900).child(it.text))));
   return v_flex().id("deployed-view").w_full().gap(12)
     .child(top)
     .child(more)

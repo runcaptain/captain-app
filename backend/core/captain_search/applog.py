@@ -28,6 +28,7 @@ import uuid
 import zipfile
 
 DIR_ENV = "CAPTAIN_LOG_DIR"
+DEFAULT_HOME = "~/.config/captain-search"   # workspace.home()'s default: the services on it are the person's own
 MAX_BYTES = 5 * 1024 * 1024
 KEEP = 5
 TAIL_LINES = 200
@@ -47,6 +48,14 @@ def log_dir() -> str:
     d = os.environ.get(DIR_ENV)
     if d:
         return d
+    # Services run on a home of their own (a test's, a second copy for trying something) keep their log there, in
+    # <CST_HOME>/logs. Only the services on the usual home write the person's own log. The render tests each start
+    # services on a temporary home, and their "started" and "exit" lines were landing in the real services.log.
+    own = os.environ.get("CST_HOME")
+    if own:
+        own = os.path.abspath(os.path.expanduser(own))
+        if own != os.path.abspath(os.path.expanduser(DEFAULT_HOME)):
+            return os.path.join(own, "logs")
     home = os.path.expanduser("~")
     if sys.platform == "darwin":
         return os.path.join(home, "Library", "Logs", "Captain")

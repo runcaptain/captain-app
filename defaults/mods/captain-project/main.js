@@ -24,7 +24,7 @@ import { ProjectBadge } from "./kit/projecticon.js";
 import { int } from "./kit/num.js";
 import { Ship } from "./ship.js";
 import { costText } from "./kit/cost.js";
-import { ProjectsList, Quiet, readListView, keepListView } from "./projects-list.js";
+import { ProjectsList, Quiet, readListView, keepListView, ago, shortOwner } from "./projects-list.js";
 
 const RUN_WORDS = { training: "Training", evaluation: "Offline evaluation", "synthetic-events": "Simulated events", snapshot: "Snapshot", judging: "Judging", staging: "Deploying", workflow: "Workflow" };
 const day = (iso) => (iso ? String(iso).slice(0, 10) : "");
@@ -422,13 +422,13 @@ export default class ProjectHome extends View {
   sourceLine(c, inp) {
     const raw = inp.source ?? (inp.pinned ? { from: "dataset", ref: inp.pinned } : null);
     const src = raw ? { ...raw, kind: raw.from ?? raw.kind, dataset: raw.ref ?? raw.dataset, events: raw.event ? [raw.event] : raw.events, engine: raw.engine ?? (this.sources?.[raw.connection]) } : null;
-    if (!src) return div().min_w(0).truncate().text_size(12.5).text_color(c.grey500)
+    if (!src) return div().min_w(0).truncate().text_size(13).text_color(c.grey500)
       .child(/^optional\b/i.test(inp.about || "") ? inp.about : `${inp.required ? "Needed before a model can train." : "Optional."} ${inp.about || ""}`.trim());
     const what = src.kind === "connection" ? (src.table ? String(src.table).split(".").pop() : src.event ? `${src.event.name} events` : src.report ? "a report" : "your query")
       : src.kind === "local" ? String(src.path ?? "").replace(/^\/Users\/[^/]+/, "~")
       : parseRef(src.dataset ?? inp.pinned).name;
     // Where it comes from, in the page's one typeface: a name is not something a person copies.
-    return div().flex_none().max_w(260).truncate().text_size(12.5).text_color(c.grey900)
+    return div().flex_none().max_w(260).truncate().text_size(13).text_color(c.grey900)
       .child(src.kind === "connection" ? `${src.connection ?? engineTitle(src.engine)}: ${what}` : what);
   }
 
@@ -459,7 +459,7 @@ export default class ProjectHome extends View {
     const openMore = this.inputMenu === inp.slot;
     const moreBtn = extra.length ? Popup.new(`${id}-more-pop`, Button(c, `${id}-more`, "More", (_e, cx) => { this.inputMenu = openMore ? null : inp.slot; cx.notify(); }, { small: true, disabled: Boolean(this.running()) })).anchor("bottom_right")
       .when(openMore, (e) => e.content(v_flex().id(`${id}-more-list`).w(220).py(4).bg(c.surface).border_1().border_color(c.grey300)
-        .children(extra.map(([eid, label, act]) => h_flex().id(eid).h(30).px(10).items_center().cursor_pointer().text_size(12.5).text_color(c.navy).hover((s) => s.bg(c.surface2))
+        .children(extra.map(([eid, label, act]) => h_flex().id(eid).h(30).px(10).items_center().cursor_pointer().text_size(13).text_color(c.navy).hover((s) => s.bg(c.surface2))
           .on_click((_e, cx) => { this.inputMenu = null; cx.notify(); act(cx); }).child(label))))) : null;
     const when = inp.last_read_at ? `last read ${day(inp.last_read_at)}` : inp.as_of ? `${live ? "chosen" : "taken"} ${day(inp.as_of)}` : live ? "read on the next run" : "";
     // One status, in words: how much is there and when it was read. "Simulated" is said only when it is true.
@@ -467,15 +467,15 @@ export default class ProjectHome extends View {
       : [inp.rows != null ? `${int(inp.rows)} rows` : null, when, inp.simulated ? "simulated" : null].filter(Boolean).join(", ");
     const info = (inp.info ?? [])[0]; // one line under the source: a newer version, or something that doesn't fit
     // Two lines, so the row holds at any width: the input's name, then where it comes from and its one status.
-    return h_flex().id(id).w_full().px(12).py(8).gap(12).items_center().border_b(1).border_color(c.rule)
-      .child(svg(icon(inp.icon)).size(15).flex_none().text_color(missing ? c.grey500 : c.navy))
+    return h_flex().id(id).w_full().min_h(44).px(12).py(6).gap(12).items_center().rounded(6).hover((x) => x.bg(c.hover))
+      .child(svg(icon(inp.icon)).size(16).flex_none().text_color(missing ? c.grey500 : c.navy))
       .child(v_flex().flex_1().min_w(0).gap(1)
-        .child(div().truncate().text_size(12.5).font_medium().child(inp.label))
+        .child(div().truncate().text_size(13).font_medium().child(inp.label))
         .child(h_flex().gap(6).min_w(0).items_center()
           .child(this.sourceLine(c, inp))
-          .when(!missing && Boolean(status), (e) => e.child(div().id(`${id}-status`).min_w(0).truncate().text_size(12.5).text_color(c.grey500)
+          .when(!missing && Boolean(status), (e) => e.child(div().id(`${id}-status`).min_w(0).truncate().text_size(13).text_color(c.grey500)
             .when(Boolean(inp.simulated), (x) => x.tooltip("Made by a generator, not by real shoppers. Results judged on it are simulated.")).child(status))))
-        .when(Boolean(info), (e) => e.child(div().id(`${id}-info-0`).min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(info.text))))
+        .when(Boolean(info), (e) => e.child(div().id(`${id}-info-0`).min_w(0).truncate().text_size(13).text_color(c.grey500).child(info.text))))
       .when(Boolean(generate), (e) => e.child(generate))
       .child(div().flex_none().child(action))
       .when(Boolean(moreBtn), (e) => e.child(moreBtn));
@@ -504,7 +504,7 @@ export default class ProjectHome extends View {
     const rows = (st.inputs ?? []).map((i) => this.slotOf(i)).sort((a, b) => Number(b.required) - Number(a.required));
     return v_flex().gap(10)
       .when(Boolean(this.assist), (e) => e.child(this.assistPanel(c)))
-      .child(v_flex().id("in-rows").w_full().bg(c.surface).border_1().border_color(c.rule).children(rows.map((i) => this.inputCard(c, i))))
+      .child(v_flex().id("in-rows").w_full().gap(2).children(rows.map((i) => this.inputCard(c, i))))
       .child(h_flex().child(this.addCard(c)));
   }
 
@@ -583,7 +583,7 @@ export default class ProjectHome extends View {
     const waiting = !prop;
     const head = h_flex().gap(8).items_center()
       .child(svg(mark).size(16).flex_none())
-      .child(div().flex_1().min_w(0).text_size(12.5).font_semibold().child(waiting ? "The agent is looking at your connections and folders in a new tab" : a.status === "accepted" ? `${name}'s proposal is in` : `${name} proposes`))
+      .child(div().flex_1().min_w(0).text_size(13).font_semibold().child(waiting ? "The agent is looking at your connections and folders in a new tab" : a.status === "accepted" ? `${name}'s proposal is in` : `${name} proposes`))
       .when(!waiting && a.status !== "accepted", (e) => e.child(Button(c, "assist-accept-all", (a.skipped ?? []).length || a.scriptSkipped ? "Accept the checked ones" : "Accept all", (_e, cx) => this.accept(cx, null), { kind: "primary", small: true, disabled: this.busy }))
         .child(Button(c, "assist-reject", "Set aside", (_e, cx) => this.reject(cx), { small: true, kind: "quiet", disabled: this.busy })))
       .child(div().id("assist-close").cursor_pointer().text_color(c.grey500).tooltip("Hide").on_click((_e, cx) => { this.assist = null; cx.notify(); }).child(svg(icon("x")).size(12)));
@@ -591,10 +591,10 @@ export default class ProjectHome extends View {
     const label = (s) => s.label ?? this.slotOf((this.stages?.inputs ?? []).find((x) => x.slot === s.slot) ?? { slot: s.slot }).label;
     return v_flex().id("assist").p(12).gap(8).bg(c.surface).border_1().border_color(c.blue)
       .child(head)
-      .when(waiting, (e) => e.child(div().text_size(12.5).text_color(c.grey900).child("When it has a proposal, it shows here. Untick what you don't want, change any source, then accept. Nothing changes until you do.")))
-      .when(Boolean(prop?.note), (e) => e.child(div().text_size(12.5).text_color(c.grey900).child(prop.note)))
+      .when(waiting, (e) => e.child(div().text_size(13).text_color(c.grey900).child("When it has a proposal, it shows here. Untick what you don't want, change any source, then accept. Nothing changes until you do.")))
+      .when(Boolean(prop?.note), (e) => e.child(div().text_size(13).text_color(c.grey900).child(prop.note)))
       // Applied from the agent's side, on the person's word: who, and the words it quoted.
-      .when(Boolean(prop?.applied_by), (e) => e.child(h_flex().id("assist-applied").gap(6).items_start().text_size(12.5).text_color(c.navy)
+      .when(Boolean(prop?.applied_by), (e) => e.child(h_flex().id("assist-applied").gap(6).items_start().text_size(13).text_color(c.navy)
         .child(svg(icon("square-check")).size(13).mt(2).flex_none().text_color(c.blue))
         .child(div().flex_1().min_w(0).child(`Applied by ${(AGENTS[String(prop.applied_by).toLowerCase()] ?? [prop.applied_by])[0]} on your instruction: "${prop.on_instruction ?? ""}"`))))
       .children(slots.map((s, i) => {
@@ -605,13 +605,13 @@ export default class ProjectHome extends View {
             .child(svg(icon(on ? "square-check" : "square")).size(15).text_color(on ? c.blue : c.grey500)))
           .child(v_flex().flex_1().min_w(0).gap(2).when(!on, (x) => x.opacity(0.55))
             .child(h_flex().gap(8).items_center().min_w(0)
-              .child(div().flex_none().text_size(12.5).font_medium().child(`${s.add ? "Add " : ""}${label(s)}`))
+              .child(div().flex_none().text_size(13).font_medium().child(`${s.add ? "Add " : ""}${label(s)}`))
               .when(Boolean(s.source), (x) => x.child(this.sourceLine(c, { ...s, about: "" })))
               .when(Boolean(s.mode), (x) => x.child(Badge(c, s.mode, s.mode === "live" ? "blue" : "neutral"))))
-            .when(Boolean(s.why), (x) => x.child(div().text_size(12.5).text_color(c.grey500).child(s.why))))
+            .when(Boolean(s.why), (x) => x.child(div().text_size(13).text_color(c.grey500).child(s.why))))
           .child(Button(c, `assist-${i}-edit`, "Change", () => pickInput(this.pid(), { slot: s.slot, label: label(s), accepts: s.accepts }), { small: true, kind: "quiet" }));
       }))
-      .when((prop?.remove_slots ?? []).length > 0, (e) => e.child(div().text_size(12.5).text_color(c.grey900)
+      .when((prop?.remove_slots ?? []).length > 0, (e) => e.child(div().text_size(13).text_color(c.grey900)
         .child(`It would also remove ${prop.remove_slots.map((x) => label({ slot: x })).join(", ")}, which this setup doesn't use.`)))
       .when(Boolean(prop?.trainer) && a.status !== "accepted", (e) => {
         const tr = prop.trainer;
@@ -620,17 +620,17 @@ export default class ProjectHome extends View {
             .child(div().id("assist-script-check").cursor_pointer().on_click((_e, cx) => { a.scriptSkipped = !a.scriptSkipped; cx.notify(); })
               .child(svg(icon(a.scriptSkipped ? "square" : "square-check")).size(15).text_color(a.scriptSkipped ? c.grey500 : c.blue)))
             .child(svg(icon("file-text")).size(14).flex_none().text_color(c.grey500))
-            .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().child(tr.script?.path ? `Training script: ${tr.script.path}` : "Training command")))
-          .when(Boolean(tr.command), (x) => x.child(div().px(8).py(4).bg(c.surface2).font_family(MONO).text_size(12.5).text_color(c.grey900).truncate().child(tr.command)))
-          .when(Boolean(tr.why), (x) => x.child(div().text_size(12.5).text_color(c.grey500).child(tr.why)))
-          .when(Boolean(a.script?.text), (x) => x.child(div().id("assist-script-text").p(8).max_h(160).overflow_y_scrollbar().bg(c.surface2).font_family(MONO).text_size(12.5).line_height("18px").text_color(c.grey900)
+            .child(div().flex_1().min_w(0).truncate().text_size(13).font_medium().child(tr.script?.path ? `Training script: ${tr.script.path}` : "Training command")))
+          .when(Boolean(tr.command), (x) => x.child(div().px(8).py(4).bg(c.surface2).font_family(MONO).text_size(13).text_color(c.grey900).truncate().child(tr.command)))
+          .when(Boolean(tr.why), (x) => x.child(div().text_size(13).text_color(c.grey500).child(tr.why)))
+          .when(Boolean(a.script?.text), (x) => x.child(div().id("assist-script-text").p(8).max_h(160).overflow_y_scrollbar().bg(c.surface2).font_family(MONO).text_size(13).line_height("18px").text_color(c.grey900)
             .child(String(a.script.text).split("\n").slice(0, 40).join("\n")))));
       })
       .children((a.toConnect ?? []).map((t, i) => h_flex().id(`assist-connect-${i}`).gap(8).items_center().py(6).border_t(1).border_color(c.rule)
         .child(svg(icon("server")).size(14).flex_none().text_color(c.blue))
         .child(v_flex().flex_1().min_w(0).gap(2)
-          .child(h_flex().gap(8).items_center().min_w(0).child(div().flex_none().text_size(12.5).font_medium().child(label(t))).child(this.sourceLine(c, { ...t, about: "" })))
-          .when(Boolean(t.why), (x) => x.child(div().text_size(12.5).text_color(c.grey500).child(t.why))))
+          .child(h_flex().gap(8).items_center().min_w(0).child(div().flex_none().text_size(13).font_medium().child(label(t))).child(this.sourceLine(c, { ...t, about: "" })))
+          .when(Boolean(t.why), (x) => x.child(div().text_size(13).text_color(c.grey500).child(t.why))))
         .child(Button(c, `assist-connect-${i}-snapshot`, "Take a snapshot now", (_e, cx) => this.connect(cx, t, "snapshot"), { small: true, kind: t.suggested_mode === "live" ? "secondary" : "primary", disabled: this.busy }))
         .child(Button(c, `assist-connect-${i}-live`, "Keep it live", (_e, cx) => this.connect(cx, t, "live"), { small: true, kind: t.suggested_mode === "live" ? "primary" : "secondary", disabled: this.busy }))));
   }
@@ -639,10 +639,10 @@ export default class ProjectHome extends View {
 
   metric(c, label, value, sub) {
     return v_flex().flex_none().gap(1)
-      .child(div().text_size(12.5).text_color(c.grey500).child(label))
+      .child(div().text_size(13).text_color(c.grey500).child(label))
       .child(h_flex().gap(6).items_center()
-        .child(div().text_size(12.5).child(value))
-        .when(Boolean(sub), (e) => e.child(div().text_size(12.5).text_color(c.grey500).child(sub))));
+        .child(div().text_size(13).child(value))
+        .when(Boolean(sub), (e) => e.child(div().text_size(13).text_color(c.grey500).child(sub))));
   }
 
   expRow(c, e, i) {
@@ -650,16 +650,17 @@ export default class ProjectHome extends View {
     const open = this.open === e.id;
     const r = parseRef(e.pipeline);
     const champ = this.exps?.champion ? inProject(parseRef(this.exps.champion).name) : null;
-    const head = h_flex().id(`exp-${i}`).px(12).py(9).gap(12).items_center().cursor_pointer().hover((s) => s.bg(c.surface2))
+    const head = h_flex().id(`exp-${i}`).min_h(44).px(12).py(6).gap(12).items_center().rounded(6).cursor_pointer().hover((s) => s.bg(c.hover))
       .on_click((_e, cx) => { this.open = open ? null : e.id; cx.notify(); })
       // Two lines, so the sentence has the row's width at any size: the model's name, then its verdict.
       .child(v_flex().flex_1().min_w(0).gap(1)
-        .child(div().truncate().text_size(12.5).font_medium().child(r.version != null ? `${inProject(r.name)}, version ${r.version}` : inProject(r.name)))
-        .child(div().id(`exp-${i}-verdict`).text_size(12.5).line_height("18px").text_color(c.grey500).child(verdictSentence(e, champ))))
+        .child(div().truncate().text_size(13).font_medium().child(r.version != null ? `${inProject(r.name)}, version ${r.version}` : inProject(r.name)))
+        .child(div().id(`exp-${i}-verdict`).text_size(12).line_height("17px").text_color(c.grey500).child(verdictSentence(e, champ))))
       // Opening the numbers in place is not going anywhere, so it is not blue: a plain word and a chevron.
-      .child(h_flex().id(`exp-${i}-details`).flex_none().gap(4).items_center().text_size(12.5).text_color(c.grey900)
+      .child(h_flex().id(`exp-${i}-details`).flex_none().gap(4).items_center().text_size(13).text_color(c.grey900)
         .child(open ? "Hide details" : "Details").child(svg(icon(open ? "chevron-down" : "chevron-right")).size(12).text_color(c.grey500)));
-    return v_flex().id(`exp-wrap-${i}`).w_full().border_b(1).border_color(c.rule)
+    // An open model's details sit on a quiet tint, so they read as belonging to the row above them.
+    return v_flex().id(`exp-wrap-${i}`).w_full().rounded(6).when(open, (x) => x.bg(c.tint))
       .child(head)
       .when(open, (x) => x.child(this.expNumbers(c, e, ev, i)).child(this.expDetail(c, e, ev, i)));
   }
@@ -696,8 +697,8 @@ export default class ProjectHome extends View {
       ev ? "Not yet confirmed online: an offline result until a result from your own testing tool agrees." : e.is_champion ? null : "Not judged against the baseline yet.",
     ].filter(Boolean);
     return v_flex().px(12).pb(12).gap(8)
-      .child(div().id(`exp-${i}-full`).text_size(12.5).text_color(c.grey500).child(`Full name: ${e.pipeline}`))
-      .children(lines.map((t, k) => div().id(`exp-${i}-line-${k}`).text_size(12.5).line_height("18px").text_color(c.grey900).child(t)))
+      .child(div().id(`exp-${i}-full`).text_size(13).text_color(c.grey500).child(`Full name: ${e.pipeline}`))
+      .children(lines.map((t, k) => div().id(`exp-${i}-line-${k}`).text_size(13).line_height("18px").text_color(c.grey900).child(t)))
       .child(h_flex().flex_wrap().gap(6)
         .when(Boolean(ev?.run), (x) => x.child(Button(c, `exp-${i}-open`, "Open the comparison", () => {
           const r = parseRef(ev.run);
@@ -734,16 +735,16 @@ export default class ProjectHome extends View {
     const steps = this.startSteps().map((st) => ({ ...st, button: !st.can ? null
       : st.id === "baseline" ? Button(c, "start-baseline", st.button, (_e, cx) => this.baselineStart(cx), { small: true, disabled: Boolean(this.running()) })
       : Button(c, "start-train", st.button, () => form("experiment", { ...this.values(), how: "starter" }), { small: true, disabled: Boolean(this.running()) }) }));
-    return v_flex().id("exp-start").w_full().border_1().border_color(c.rule).bg(c.surface)
-      .children(steps.map((st, k) => h_flex().id(`start-row-${st.id}`).p(12).gap(12).items_center().when(k > 0, (e) => e.border_t(1).border_color(c.rule))
+    return v_flex().id("exp-start").w_full().gap(2)
+      .children(steps.map((st) => h_flex().id(`start-row-${st.id}`).min_h(44).px(12).py(8).gap(12).items_center().rounded(6)
         .child(st.done
           ? div().id(`start-done-${st.id}`).size(22).flex_none().flex().items_center().justify_center().rounded_full().bg(c.goodLight).text_color(c.good).child(svg(icon("check")).size(13))
-          : div().size(22).flex_none().flex().items_center().justify_center().rounded_full().border_1().border_color(c.grey300).text_size(12.5).font_semibold().text_color(c.grey900).child(String(st.n)))
+          : div().size(22).flex_none().flex().items_center().justify_center().rounded_full().border_1().border_color(c.grey300).text_size(13).font_semibold().text_color(c.grey900).child(String(st.n)))
         .child(v_flex().flex_1().min_w(0).gap(1)
-          .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(st.title))
-          .child(div().text_size(12.5).line_height("18px").text_color(c.grey500).child(st.text)))
+          .child(div().text_size(13).font_semibold().text_color(c.navy).child(st.title))
+          .child(div().text_size(13).line_height("18px").text_color(c.grey500).child(st.text)))
         .when(Boolean(st.button), (e) => e.child(st.button))))
-      .child(div().id("start-other").px(12).py(8).border_t(1).border_color(c.rule).text_size(12.5).line_height("18px").text_color(c.grey500)
+      .child(div().id("start-other").px(12).py(8).text_size(12).line_height("18px").text_color(c.grey500)
         .child("Have training code already? New model takes your own command, or an agent can write one."));
   }
 
@@ -753,7 +754,7 @@ export default class ProjectHome extends View {
     const actions = [Button(c, "exp-new", "New model", () => form("experiment", { ...this.values() }), { small: true, disabled: Boolean(this.running()) })];
     const body = !xs.length
       ? this.guidedStart(c)
-      : v_flex().w_full().border_1().border_color(c.rule).bg(c.surface).children(xs.map((e, i) => this.expRow(c, e, i)));
+      : v_flex().id("exp-rows").w_full().gap(2).children(xs.map((e, i) => this.expRow(c, e, i)));
     const ev0 = this.stages?.evaluation;
     const evalSet = (this.stages?.inputs ?? []).find((i) => (i.role ?? i.slot) === "holdout");
     const noEval = ev0 ? !ev0.ready : !evalSet || evalSet.status === "missing" || evalSet.status === "empty";
@@ -766,8 +767,8 @@ export default class ProjectHome extends View {
     const banner = noEval ? h_flex().id("exp-no-eval").p(10).gap(10).items_center().bg(c.surface).border_1().border_color(c.rule)
       .child(svg(icon("square-check")).size(14).flex_none().text_color(c.grey500))
       .child(v_flex().flex_1().min_w(0).gap(1)
-        .when(Boolean(ev0?.label), (e) => e.child(div().text_size(12.5).font_medium().text_color(c.navy).child(`Judged by: ${ev0.label}`)))
-        .child(div().text_size(12.5).text_color(c.grey900).child(ev0?.text ?? "Models can train now, but nothing can compare them yet. Add queries kept back from training, with labels that grade them.")))
+        .when(Boolean(ev0?.label), (e) => e.child(div().text_size(13).font_medium().text_color(c.navy).child(`Judged by: ${ev0.label}`)))
+        .child(div().text_size(13).text_color(c.grey900).child(ev0?.text ?? "Models can train now, but nothing can compare them yet. Add queries kept back from training, with labels that grade them.")))
       .child(Button(c, "exp-add-eval", missingEval ? `Choose ${this.slotOf(missingEval).noun}` : "Add an evaluation set", () => (missingEval ?? evalSet
         ? pickInput(this.pid(), this.slotOf(missingEval ?? evalSet))
         : form("add-input", { project: this.pid(), label: "Evaluation set", kind: "queries", why: "Queries kept back from training, to judge candidates" })), { small: true })) : null;
@@ -780,8 +781,8 @@ export default class ProjectHome extends View {
     return v_flex().id(id).w(212).min_h(150).flex_none().p(12).gap(6).bg(c.surface).border_1().border_color(c.rule)
       .child(h_flex().gap(8).items_center()
         .child(svg(icon(ic)).size(14).flex_none().text_color(c.blue))
-        .child(div().text_size(12.5).font_semibold().child(title)))
-      .children(lines.filter(Boolean).map((t, k) => div().id(`${id}-l${k}`).text_size(12.5).line_height("18px").text_color(c.grey900).child(t)))
+        .child(div().text_size(13).font_semibold().child(title)))
+      .children(lines.filter(Boolean).map((t, k) => div().id(`${id}-l${k}`).text_size(13).line_height("18px").text_color(c.grey900).child(t)))
       .child(div().flex_1())
       .when(Boolean(action), (e) => e.child(h_flex().child(action)));
   }
@@ -832,15 +833,15 @@ export default class ProjectHome extends View {
 
   chooser(c) {
     const h = this.home, all = this.allModels;
-    if (!all) return div().px(14).py(10).text_size(12.5).text_color(c.grey500).child("Reading the registries...");
-    if (!all.length) return div().px(14).py(10).text_size(12.5).text_color(c.grey500).child("No registry models yet. Attach a registry in Data and signals, Models.");
+    if (!all) return div().px(14).py(10).text_size(13).text_color(c.grey500).child("Reading the registries...");
+    if (!all.length) return div().px(14).py(10).text_size(13).text_color(c.grey500).child("No registry models yet. Attach a registry in Data and signals, Models.");
     const mine = new Set((h.models ?? []).map((m) => m.id));
     const byBrand = new Map();
     for (const m of all) { if (!byBrand.has(m.brand)) byBrand.set(m.brand, []); byBrand.get(m.brand).push(m); }
     const brands = [...byBrand.keys()].sort();
     const p = h.project;
     return v_flex().id("ph-choose").max_h(420).overflow_y_scrollbar().border_b(1).border_color(c.rule).bg(c.surface2)
-      .child(div().px(14).py(8).text_size(12.5).text_color(c.grey900).child("Tick a brand to include all its models, and the ones trained later. Or tick models one by one."))
+      .child(div().px(14).py(8).text_size(13).text_color(c.grey900).child("Tick a brand to include all its models, and the ones trained later. Or tick models one by one."))
       .children(brands.map((b, bi) => {
         const ms = byBrand.get(b).sort((x, y) => String(x.version).localeCompare(String(y.version), undefined, { numeric: true }));
         const on = (p.brands ?? []).includes(b);
@@ -853,8 +854,8 @@ export default class ProjectHome extends View {
           .child(h_flex().id(`ph-brand-${bi}`).h(32).px(14).gap(8).items_center().cursor_pointer().hover((s) => s.bg(c.surface))
             .on_click((_e, cx) => this.change(cx, req, on ? `${b}'s models are no longer included by brand. Models you added one by one stay.` : `Every ${b} model is in ${p.name}, and new ones will be too.`))
             .child(this.box(c, on))
-            .child(div().text_size(12.5).font_semibold().child(`All ${b} models`))
-            .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.grey500).child(
+            .child(div().text_size(13).font_semibold().child(`All ${b} models`))
+            .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(
               `${ms.filter((m) => mine.has(m.id)).length} of ${ms.length} in this project${other ? `. Now in ${other}, ticking moves the brand here` : ""}`)))
           .children(ms.map((m, i) => {
             const isIn = mine.has(m.id);
@@ -862,8 +863,8 @@ export default class ProjectHome extends View {
               .on_click((_e, cx) => this.change(cx, [["/api/projects/assign", { body: { project: isIn ? null : p.id, items: [{ kind: "model", name: m.id }] } }]],
                 isIn ? `Left ${m.brand} ${m.version} out of ${p.name}.` : `Added ${m.brand} ${m.version} to ${p.name}.`))
               .child(this.box(c, isIn))
-              .child(div().w(180).flex_none().truncate().font_family(MONO).text_size(12.5).child(`${m.brand} ${m.version}`))
-              .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.grey500).child([m.architecture, m.status_kind ?? m.status].filter(Boolean).join(", ")));
+              .child(div().w(180).flex_none().truncate().font_family(MONO).text_size(13).child(`${m.brand} ${m.version}`))
+              .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child([m.architecture, m.status_kind ?? m.status].filter(Boolean).join(", ")));
           }));
       }));
   }
@@ -873,8 +874,8 @@ export default class ProjectHome extends View {
       .hover((s) => s.bg(c.surface2)).on_click(onClick)
       .child(svg(icon(ic)).size(14).flex_none().text_color(c.grey500))
       .child(v_flex().flex_1().min_w(0).gap(2)
-        .child(div().truncate().text_size(12.5).font_medium().text_color(c.navy).when(mono, (e) => e.font_family(MONO).text_size(12.5)).child(title))
-        .when(Boolean(sub), (e) => e.child(div().truncate().text_size(12.5).text_color(c.grey500).child(sub))))
+        .child(div().truncate().text_size(13).font_medium().text_color(c.navy).when(mono, (e) => e.font_family(MONO).text_size(13)).child(title))
+        .when(Boolean(sub), (e) => e.child(div().truncate().text_size(13).text_color(c.grey500).child(sub))))
       .children((chips ?? []).filter(Boolean).map((ch) => Badge(c, ch, "neutral")))
       .child(svg(icon("chevron-right")).size(12).flex_none().text_color(c.grey300));
   }
@@ -882,11 +883,11 @@ export default class ProjectHome extends View {
   section(c, key, title, items, rowOf, empty, action = null, extra = null) {
     return v_flex().id(`ph-${key}`).w_full().border_1().border_color(c.rule).bg(c.surface)
       .child(h_flex().h(34).px(14).gap(8).items_center().border_b(1).border_color(c.rule)
-        .child(div().text_size(12.5).font_semibold().text_color(c.grey500).child(title.toUpperCase()))
-        .child(div().flex_1().text_size(12.5).font_family(MONO).text_color(c.grey500).child(int(items.length)))
+        .child(div().text_size(13).font_semibold().text_color(c.grey500).child(title.toUpperCase()))
+        .child(div().flex_1().text_size(13).font_family(MONO).text_color(c.grey500).child(int(items.length)))
         .when(Boolean(action), (e) => e.child(action)))
       .when(Boolean(extra), (e) => e.child(extra))
-      .children(items.length ? items.slice(0, 12).map((x, i) => rowOf(x, i)) : [div().px(14).py(10).text_size(12.5).text_color(c.grey500).child(empty)]);
+      .children(items.length ? items.slice(0, 12).map((x, i) => rowOf(x, i)) : [div().px(14).py(10).text_size(13).text_color(c.grey500).child(empty)]);
   }
 
   everythingBody(c) {
@@ -926,8 +927,8 @@ export default class ProjectHome extends View {
     const toggle = h_flex().id("ph-everything").h(36).gap(8).items_center().cursor_pointer().text_color(c.grey900).hover((s) => s.text_color(c.blue))
       .on_click((_e, cx) => { this.everything = !this.everything; if (this.everything) this.loadHome(cx); cx.notify(); })
       .child(svg(icon(this.everything ? "chevron-down" : "chevron-right")).size(13))
-      .child(div().text_size(12.5).font_semibold().child("Everything in this project"))
-      .child(div().min_w(0).truncate().text_size(12.5).text_color(c.grey500).child("datasets, runs, model versions, models, notebooks and recent changes"));
+      .child(div().text_size(13).font_semibold().child("Everything in this project"))
+      .child(div().min_w(0).truncate().text_size(13).text_color(c.grey500).child("datasets, runs, model versions, models, notebooks and recent changes"));
     return v_flex().gap(8).child(toggle).when(this.everything, (e) => e.child(this.historyList(c) ?? div()).child(this.everythingBody(c)));
   }
 
@@ -939,8 +940,8 @@ export default class ProjectHome extends View {
     const who = (h) => (h.applied_by ? (AGENTS[String(h.applied_by).toLowerCase()] ?? [h.applied_by])[0] : h.user ?? "Someone");
     const what = (h) => { const w = String(h.what ?? "changed the project"); return w[0].toUpperCase() + w.slice(1); };
     return v_flex().id("ph-history").gap(4)
-      .child(div().text_size(12.5).font_semibold().text_color(c.grey900).child("Recent changes"))
-      .children(rows.map((h, i) => h_flex().id(`ph-history-${i}`).gap(8).items_start().py(4).border_t(1).border_color(c.rule).text_size(12.5)
+      .child(div().text_size(13).font_semibold().text_color(c.grey900).child("Recent changes"))
+      .children(rows.map((h, i) => h_flex().id(`ph-history-${i}`).gap(8).items_start().py(4).border_t(1).border_color(c.rule).text_size(13)
         .child(svg(icon(h.applied_by ? "bot" : "users")).size(13).mt(2).flex_none().text_color(h.applied_by ? c.blue : c.grey500))
         .child(v_flex().flex_1().min_w(0).gap(1)
           .child(div().text_color(c.navy).child(`${who(h)}: ${what(h)}`))
@@ -949,19 +950,64 @@ export default class ProjectHome extends View {
           // What the change cost once it ran, else what it was estimated at before it started.
           .when(Boolean(costWords(h.cost) ?? costWords(h.estimate)), (e) => e.child(div().id(`ph-history-${i}-cost`).text_color(c.grey500)
             .child(costWords(h.cost) ?? `Estimated before it started: ${costWords(h.estimate)}`))))
-        .child(div().flex_none().font_family(MONO).text_size(12.5).text_color(c.grey500).child(String(h.at ?? "").slice(0, 16).replace("T", " ")))));
+        .child(div().flex_none().font_family(MONO).text_size(13).text_color(c.grey500).child(String(h.at ?? "").slice(0, 16).replace("T", " ")))));
   }
 
   // ---- frame ----------------------------------------------------------------------------------------------------
 
+  /** One section of the project's page: a quiet heading with a hairline under it, then its rows. No box. */
   part(c, key, title, sub, actions, body) {
     return v_flex().id(`part-${key}`).w_full().gap(8)
-      .child(h_flex().gap(10).items_center()
+      .child(h_flex().min_h(32).pb(6).gap(12).items_center().border_b(1).border_color(c.rule)
         .child(v_flex().flex_1().min_w(0).gap(1)
-          .child(div().text_size(15).font_semibold().child(title))
-          .when(Boolean(sub), (e) => e.child(div().text_size(12.5).line_height("18px").text_color(c.grey500).child(sub))))
+          .child(div().text_size(13).font_semibold().text_color(c.navy).child(title))
+          .when(Boolean(sub), (e) => e.child(div().text_size(12).line_height("17px").text_color(c.grey500).child(sub))))
         .children(actions ?? []))
       .child(body);
+  }
+
+  /** The top of a project's page, as a document: its icon, its name large, and one line of what it is. */
+  titleBlock(c) {
+    const pid = this.pid(), p = this.project();
+    return h_flex().id("ph-title").gap(12).items_center()
+      .child(ProjectBadge(c, { id: pid, icon: p?.icon ?? null }, 36))
+      .child(v_flex().flex_1().min_w(0)
+        .child(div().id("ph-name").text_size(24).line_height("32px").font_semibold().truncate().child(p?.name ?? shared("captain.scope")?.label ?? pid))
+        // What it builds, as one line. Nothing else sits under the name.
+        .when(Boolean(this.recipe()), (e) => e.child(div().id("ph-building").text_size(13).text_color(c.grey500).truncate().child(this.recipe()))));
+  }
+
+  /** The project's properties as plain data: [{id, label, text, icon, on, go}]. `go` is what a click does, when a
+   *  click does something. Everything comes from what the page has already read. */
+  propertyRows() {
+    const p = this.project(), st = this.stages, xs = this.exps?.experiments ?? [];
+    const dep = this.rowDeployed(p ?? { id: this.pid() }, { stages: st });
+    const champ = xs.find((e) => e.is_champion) ?? null;
+    const inputs = st?.inputs ?? [], chosen = inputs.filter((i) => i.pinned || (i.status && !["missing", "empty"].includes(i.status))).length;
+    return [
+      { id: "deployed", label: "Deployed", text: dep.text, dot: dep.up, go: dep.up ? (cx) => this.openDeployment(cx) : null, tip: dep.up ? "Open the deployed model" : "Nothing is running. Deploy from Ship, below" },
+      { id: "baseline", label: "Baseline model", text: champ ? inProject(parseRef(champ.pipeline).name) : "None yet", icon: "layers",
+        go: champ ? (cx) => { this.open = this.open === champ.id ? null : champ.id; cx.notify(); } : null, tip: champ ? "The model the others are compared with. Click to open its details" : "No model is the one the others are compared with yet" },
+      { id: "data", label: "Data chosen", text: `${int(chosen)} of ${int(inputs.length)}`, icon: "database", go: null, tip: "How many of this project's inputs have data chosen for them" },
+      { id: "owner", label: "Made by", text: shortOwner(p?.created_by) || "Not recorded", icon: "user", go: null, tip: p?.created_by ? `Made by ${p.created_by}` : null },
+      { id: "created", label: "Made", text: p?.created_at ? `${day(p.created_at)}, ${ago(p.created_at)}` : "Not recorded", icon: "clock", go: null, tip: null },
+    ];
+  }
+
+  /** The properties, drawn. Beside the document they are a narrow column: a muted label over a value that reads
+   *  as an icon and a few words, and is a button when clicking it goes somewhere. On a page too narrow for a
+   *  column they are one wrapping row under the title. */
+  properties(c, column) {
+    const value = (r) => h_flex().id(`ph-prop-${r.id}`).h(28).px(8).gap(8).flex_none().items_center().rounded(6).text_size(13).text_color(c.navy)
+      .when(Boolean(r.tip), (e) => e.tooltip(r.tip))
+      .when(Boolean(r.go), (e) => e.cursor_pointer().hover((x) => x.bg(c.hover)).on_click((_e, cx) => r.go(cx)))
+      .child(r.icon ? svg(icon(r.icon)).size(16).flex_none().text_color(c.grey500)
+        : div().size(8).mx(4).flex_none().rounded_full().when(r.dot, (e) => e.bg(c.good)).when(!r.dot, (e) => e.border_1().border_color(c.grey500)))
+      .child(div().truncate().child(r.text));
+    const one = (r) => v_flex().gap(2).when(!column, (e) => e.flex_none()).child(div().px(8).text_size(12).text_color(c.grey500).child(r.label)).child(value(r));
+    const rows = this.propertyRows();
+    return column ? v_flex().id("ph-props").w(232).flex_none().gap(12).pl(24).border_l(1).border_color(c.rule).child(div().px(8).text_size(12).font_medium().text_color(c.grey500).child("Properties")).children(rows.map(one))
+      : h_flex().id("ph-props").flex_wrap().gap(16).children(rows.map(one));
   }
 
   /** Each project's champion, experiments and next step, for its card on Home. */
@@ -1098,12 +1144,12 @@ export default class ProjectHome extends View {
     // While something runs the banner says what, and offers no button: nothing here can start it a second time.
     if (now) return h_flex().id("ph-next").px(12).py(8).gap(10).items_center().bg(c.blueLight)
       .child(svg(icon("clock")).size(14).flex_none().text_color(c.blue))
-      .child(div().id("ph-running").flex_1().min_w(0).text_size(12.5).text_color(c.navy).child(`${now}...`));
+      .child(div().id("ph-running").flex_1().min_w(0).text_size(13).text_color(c.navy).child(`${now}...`));
     const n = this.nextStep();
     const runIt = n.run ?? (n.action ? (cx) => this.runAction(cx, n.action) : null);
     return h_flex().id("ph-next").px(12).py(8).gap(10).items_center().bg(c.blueLight)
       .child(svg(icon("chevron-right")).size(14).flex_none().text_color(c.blue))
-      .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.navy).child(`Next: ${n.text}`))
+      .child(div().flex_1().min_w(0).text_size(13).text_color(c.navy).child(`Next: ${n.text}`))
       .when(Boolean(n.label ?? n.action?.label) && Boolean(runIt), (e) => e.child(Button(c, "ph-next-go", n.label ?? n.action.label, (_e, cx) => runIt(cx), { kind: "primary", small: true })));
   }
 
@@ -1130,7 +1176,7 @@ export default class ProjectHome extends View {
   moreMenu(c) {
     const costs = this.costs?.project === this.pid() ? this.costs : null;
     const recent = (costs?.recent ?? []).filter((r) => r.text).slice(0, 3);
-    const trigger = div().id("ph-more").h(26).px(10).flex().items_center().cursor_pointer().text_size(12.5).font_medium().text_color(c.navy).bg(c.surface).border_1().border_color(c.grey300)
+    const trigger = div().id("ph-more").h(26).px(10).flex().items_center().cursor_pointer().text_size(13).font_medium().text_color(c.navy).bg(c.surface).border_1().border_color(c.grey300)
       .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => { this.menuOpen = !this.menuOpen; cx.notify(); }).child("More");
     return Popup.new("ph-more-pop", trigger).anchor("bottom_right")
       .when(Boolean(this.menuOpen), (e) => e.content(v_flex().id("ph-more-list").w(280).py(4).bg(c.surface).border_1().border_color(c.grey300)
@@ -1138,8 +1184,8 @@ export default class ProjectHome extends View {
         .when(Boolean(costs), (x) => x.child(v_flex().id("ph-cost").px(10).py(6).gap(4).border_b(1).border_color(c.rule)
           .child(h_flex().gap(8).items_start()
             .child(svg(icon("cloud")).size(13).flex_none().mt(2).text_color(c.grey500))
-            .child(div().id("ph-cost-total").flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey900).child(costs.text ?? "")))
-          .children(recent.map((r, k) => div().id(`ph-cost-run-${k}`).pl(21).text_size(12.5).line_height("18px").text_color(c.grey500)
+            .child(div().id("ph-cost-total").flex_1().min_w(0).text_size(13).line_height("18px").text_color(c.grey900).child(costs.text ?? "")))
+          .children(recent.map((r, k) => div().id(`ph-cost-run-${k}`).pl(21).text_size(13).line_height("18px").text_color(c.grey500)
             .child([r.title ?? RUN_WORDS[r.kind] ?? "A run", r.text].filter(Boolean).join(": "))))))
         .children([
           ["ph-all", "All projects", (cx) => this.allProjects(cx)],
@@ -1150,13 +1196,13 @@ export default class ProjectHome extends View {
           this.stages ? ["exp-import", "Import a model version", () => form("import-version", this.values())] : null,
           ["ph-ask", "Ask the agent about this page", (cx) => cx.spawn(async (cx) => { await askAboutScreen(cx); })],
           this.stages && (this.stages.notes ?? []).some((n) => n.code === "index-incomplete") ? ["ph-lineage", "Index older versions (in Settings)", () => run("app.settings")] : null,
-        ].filter(Boolean).map(([id, label, act]) => h_flex().id(id).h(30).px(10).items_center().cursor_pointer().text_size(12.5).text_color(c.navy).hover((s) => s.bg(c.surface2))
+        ].filter(Boolean).map(([id, label, act]) => h_flex().id(id).h(30).px(10).items_center().cursor_pointer().text_size(13).text_color(c.navy).hover((s) => s.bg(c.surface2))
           .on_click((_e, cx) => { this.menuOpen = false; cx.notify(); act(cx); }).child(label)))
         .child(div().h(1).my(4).bg(c.rule))
-        .child(h_flex().id("ph-icon").h(30).px(10).gap(8).items_center().cursor_pointer().text_size(12.5).text_color(c.navy).hover((s) => s.bg(c.surface2))
+        .child(h_flex().id("ph-icon").h(30).px(10).gap(8).items_center().cursor_pointer().text_size(13).text_color(c.navy).hover((s) => s.bg(c.surface2))
           .on_click((_e, cx) => { this.menuOpen = false; cx.notify(); const p = this.project(); openOverlay({ mod: "captain-project-icon", kind: "dialog", width: 560, height: 560, props: { project: { id: this.pid(), name: p?.name ?? this.pid(), icon: p?.icon ?? null } } }); })
           .child("Change icon"))
-        .child(h_flex().id("ph-delete").h(30).px(10).gap(8).items_center().cursor_pointer().text_size(12.5).text_color(c.fail).hover((s) => s.bg(c.surface2))
+        .child(h_flex().id("ph-delete").h(30).px(10).gap(8).items_center().cursor_pointer().text_size(13).text_color(c.fail).hover((s) => s.bg(c.surface2))
           .on_click((_e, cx) => { this.menuOpen = false; cx.notify(); const p = this.project(); form("delete-project", { project: this.pid(), name: p?.name ?? this.pid() }); })
           .child("Delete project"))));
   }
@@ -1174,14 +1220,23 @@ export default class ProjectHome extends View {
     const p = this.project();
     // The name comes first: its block never goes under 220 px, and the actions drop to a second row when the row is
     // narrow (a terminal column open) instead of squeezing the name to "S...".
-    const head = h_flex().min_h(56).py(8).flex_none().px(24).gap(10).items_center().border_b(1).border_color(c.rule)
-      .child(pid ? ProjectBadge(c, { id: pid, icon: p?.icon ?? null }, 28) : div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("folder")).size(15)))
-      .child(v_flex().flex_1().min_w(160)
-        .child(div().id("ph-name").text_size(18).font_semibold().truncate().child(p?.name ?? (pid ? shared("captain.scope")?.label ?? pid : "Projects")))
-        // What it builds, as one line. Nothing else sits under the name.
-        .when(Boolean(pid) && Boolean(this.recipe()), (e) => e.child(div().id("ph-building").text_size(12.5).text_color(c.grey500).truncate().child(this.recipe()))))
-      .when(Boolean(pid), (e) => e.child(this.moreMenu(c)))
-      .when(!pid, (e) => e.child(Button(c, "ph-new", "New project", () => form("project"), { small: true })));
+    const doc = Boolean(pid) && !this.problem && Boolean(this.stages) && Boolean(this.exps) && !this.deployOpen;
+    // The list keeps its own heading. A project's page is a document: its name is in the page, large, and the bar
+    // above holds only where this is (with the way back to the list) and what is rarely needed.
+    const head = pid
+      ? h_flex().id("ph-head").h(44).flex_none().px(24).gap(8).items_center().border_b(1).border_color(c.rule).text_size(13)
+        .child(div().id("ph-crumb-projects").flex_none().text_color(c.blue).cursor_pointer().tooltip("Back to the list of projects").on_click((_e, cx) => this.allProjects(cx)).child("Projects"))
+        .child(svg(icon("chevron-right")).size(14).flex_none().text_color(c.grey500))
+        // While the document is not on screen (still reading, a problem, the deployed model's page) this is the
+        // page's name. With the document on screen the large title under it is.
+        .child(div().id(doc ? "ph-crumb-name" : "ph-name").flex_1().min_w(0).truncate().font_medium().text_color(c.navy).child(p?.name ?? shared("captain.scope")?.label ?? pid))
+        .child(this.moreMenu(c))
+      : h_flex().min_h(56).py(8).flex_none().px(24).gap(10).items_center().border_b(1).border_color(c.rule)
+        .child(div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("folder")).size(15)))
+        .child(v_flex().flex_1().min_w(160).child(div().id("ph-name").text_size(18).font_semibold().truncate().child("Projects")))
+        .child(Button(c, "ph-new", "New project", () => form("project"), { small: true }));
+    // From about 1,000 px the properties are a column beside the document. Under it they sit under the title.
+    const column = this.width >= 1000;
     let body;
     const fill = false; // the deployed model's screen is one plain page that scrolls as a whole
     if (!pid) body = this.list(c);
@@ -1189,14 +1244,14 @@ export default class ProjectHome extends View {
     else if (!this.stages || !this.exps) body = Skeleton(c, 6);
     else if (this.deployOpen && this.shipPath.listOpen) body = v_flex().gap(14)
       // Projects / Deployments: every staged model across projects.
-      .child(h_flex().id("dep-crumbs").gap(6).items_center().text_size(12.5)
+      .child(h_flex().id("dep-crumbs").gap(6).items_center().text_size(13)
         .child(div().id("dep-crumb-projects").text_color(c.blue).cursor_pointer().on_click((_e, cx) => { this.deployOpen = false; this.shipPath.listOpen = false; this.allProjects(cx); }).child("Projects"))
         .child(div().text_color(c.grey500).child("/"))
         .child(div().text_color(c.navy).font_medium().child("Deployments")))
       .child(this.shipPath.deploymentsList(c));
     else if (this.deployOpen) body = v_flex().gap(fill ? 8 : 14).when(fill, (e) => e.flex_1().min_h(0))
       // Projects / <project> / Deployment: the middle one goes back to the project.
-      .child(h_flex().id("dep-crumbs").gap(6).items_center().text_size(12.5)
+      .child(h_flex().id("dep-crumbs").gap(6).items_center().text_size(13)
         .child(div().id("dep-crumb-projects").text_color(c.blue).cursor_pointer().on_click((_e, cx) => { this.deployOpen = false; this.allProjects(cx); }).child("Projects"))
         .child(div().text_color(c.grey500).child("/"))
         .child(div().id("dep-crumb-project").text_color(c.blue).cursor_pointer().on_click((_e, cx) => { this.deployOpen = false; cx.notify(); }).child(p?.name ?? pid))
@@ -1207,8 +1262,10 @@ export default class ProjectHome extends View {
       // An open question (the confirm) or a deploy in progress takes the banner's place: one filled button.
       .when(!this.shipPath.dconfirm && !this.shipPath.jobShown(), (e) => e.child(this.nextLine(c)))
       .child(this.shipPath.deployed(c));
-    else body = v_flex().gap(22)
-      .when(Boolean(this.note), (e) => e.child(div().id("ph-note").px(12).py(8).text_size(12.5).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)
+    else body = h_flex().id("ph-doc").gap(40).items_start().child(v_flex().flex_1().min_w(0).max_w(820).gap(24)
+      .child(this.titleBlock(c))
+      .when(!column, (e) => e.child(this.properties(c, false)))
+      .when(Boolean(this.note), (e) => e.child(div().id("ph-note").px(12).py(8).text_size(13).bg(this.note.tone === "fail" ? c.failLight : c.goodLight)
         .text_color(this.note.tone === "fail" ? c.fail : c.good).child(this.note.text)))
       // The Next banner holds the page's one filled button. A question open in Ship takes its place.
       .when(!this.shipPath.dconfirm && !this.shipPath.jobShown(), (e) => e.child(this.nextLine(c)))
@@ -1216,7 +1273,8 @@ export default class ProjectHome extends View {
       .child(this.part(c, "inputs", "Data", null, [], this.inputs(c)))
       .child(this.experiments(c))
       .when(!this.shipFirst, (e) => e.child(this.ship(c)))
-      .child(this.everythingPart(c));
+      .child(this.everythingPart(c)))
+      .when(column, (e) => e.child(this.properties(c, true)));
     return v_flex().id("project-home").size_full().bg(c.canvas).font_family(FONT).text_color(c.navy)
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1) { this.width = size.width; cx.notify(); } })
       .when(Boolean(this.handle), (e) => e.track_focus(this.handle))
