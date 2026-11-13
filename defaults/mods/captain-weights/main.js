@@ -1,0 +1,151 @@
+// CAPTAIN: Weights: a model's network, drawn, so a person can watch what an agent reads and changes in it. Layers
+// left to right, a neuron's fill for its activation on the chosen input, a weight as a blue or red line, a bias as
+// a small number on its neuron (draw.js). It opens from the palette ("Open a network's weights") on a list with
+// two starter networks, or straight on a model: props {model}.
+//
+// The numbers come through adapter.js and nowhere else (shapes.js says what they look like). The page reads once
+// when it opens, again the moment the model's or the session's topic changes on the app's change feed, and again
+// right after its own action returns. It has no timer that reads data.
+import { View, div, svg } from "gpui-kit";
+import { h_flex, v_flex } from "gpui-base";
+import { theme, props, closeOverlay } from "herdr";
+import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
+import { Button, Skeleton, plainError } from "./kit/ui.js";
+import { icon } from "./kit/icons.js";
+import { listNetworks, readNetwork } from "./adapter.js";
+import { forward, countOf } from "./net.js";
+import { PanZoom } from "./canvas.js";
+import { NetworkCanvas, layoutOf } from "./draw.js";
+
+const SIDE_W = 340; // the panel beside the drawing
+const count = (n) => Number(n).toLocaleString("en-US");
+
+/** "784 in, 10 out, 13,002 numbers": the network as a function, in one line. */
+export function factsOf(net) {
+  const n = countOf(net);
+  return `${count(net.sizes[0])} in, ${count(net.sizes.at(-1))} out, ${count(n.total)} numbers (${count(n.weights)} weights and ${count(n.biases)} biases)`;
+}
+
+export default class CaptainWeights extends View {
+  init(_props, cx) {
+    this.model = props()?.model ?? null; // the network open, or null for the list
+    this.list = null;       // the networks that can be opened
+    this.net = null;        // the open network (shapes.js Network)
+    this.problem = null;    // why it could not be read, in a sentence
+    this.inputAt = 0;       // which of the network's examples is the input
+    this.run = null;        // the network run on that input: activations and weighted sums
+    this.sel = null;        // the open neuron: {k: column, j: index}
+    this.selW = null;       // the picked weight: {k: layer, j: to, i: from}
+    this.pz = new PanZoom("wt");
+    this.width = 1200; this.height = 760;
+    if (this.model) this.open(this.model, cx); else this.loadList(cx);
+  }
+
+  loadList(cx) {
+    cx.spawn(async (cx) => { const r = await listNetworks(); this.list = r.ok ? r.data : []; cx.notify(); });
+  }
+
+  /** Open a network: read it whole, run it on its first input. */
+  open(model, cx) {
+    this.model = model; this.net = null; this.problem = null; this.sel = null; this.selW = null; this.inputAt = 0;
+    this.pz = new PanZoom("wt");
+    cx.spawn(async (cx) => {
+      const r = await readNetwork(model);
+      if (r.ok) this.take(r.data); else this.problem = plainError(r.error, "Captain couldn't read that network.");
+      cx.notify();
+    });
+    cx.notify();
+  }
+
+  /** New numbers for the open network: keep the input and the selection, and run it again. */
+  take(net) {
+    this.net = net;
+    this.layout = layoutOf(net);
+    this.inputAt = Math.min(this.inputAt, Math.max(0, net.examples.length - 1));
+    this.rerun();
+  }
+
+  rerun() {
+    const e = this.net?.examples?.[this.inputAt];
+    this.run = e ? forward(this.net, e.x) : null;
+  }
+
+  pickInput(n, cx) { this.inputAt = n; this.rerun(); cx.notify(); }
+  pickNeuron(at, cx) { this.sel = this.sel && this.sel.k === at.k && this.sel.j === at.j ? null : at; this.selW = null; cx.notify(); }
+  pickWeight(at, cx) { this.selW = at; this.sel = { k: at.k + 1, j: at.j }; cx.notify(); }
+  back(cx) { this.model = null; this.net = null; this.problem = null; if (!this.list) this.loadList(cx); cx.notify(); }
+
+  /** What the drawing needs to know. */
+  drawing() {
+    return { net: this.net, run: this.run, grad: null, sel: this.sel, selW: this.selW, mode: "values", walkedFrom: null, pulse: null };
+  }
+
+  header(c) {
+    const net = this.net;
+    return h_flex().h(56).flex_none().px(20).gap(12).items_center().border_b(1).border_color(c.rule)
+      .child(div().size(28).flex().flex_none().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("waypoints")).size(15)))
+      .child(v_flex().flex_1().min_w(0)
+        .child(div().id("wt-title").truncate().text_size(15).font_semibold().child(net ? `Weights of ${net.name}` : "Weights"))
+        .when(Boolean(net), (e) => e.child(div().id("wt-facts").truncate().text_size(12).text_color(c.grey500).child(factsOf(net)))))
+      .when(Boolean(this.model), (e) => e.child(Button(c, "wt-back", "Open another network", (_e, cx) => this.back(cx), { small: true })))
+      .child(div().id("wt-close").text_size(12.5).text_color(c.grey500).cursor_pointer().hover((s) => s.text_color(c.navy))
+        .on_click(() => closeOverlay(props()?.overlay)).child("Close"));
+  }
+
+  /** Nothing open: the two starter networks, then the ones Captain knows. */
+  chooser(c) {
+    const rows = this.list ?? [];
+    return v_flex().id("wt-chooser").flex_1().min_h(0).px(20).py(24).gap(14).items_center()
+      .child(div().text_size(15).font_semibold().child("Open a network to see inside it"))
+      .child(div().max_w(520).text_center().text_size(13).line_height("19px").text_color(c.grey500)
+        .child("Every neuron, weight and bias is drawn. Pick an input to watch the network light up, and open a neuron to see what feeds it."))
+      .when(!this.list, (e) => e.child(div().w(520).child(Skeleton(c, 2))))
+      .child(v_flex().w(520).border_1().border_color(c.rule).children(rows.map((m, n) => h_flex().id(`wt-open-${m.id}`).px(14).py(12).gap(12).items_center()
+        .when(n > 0, (e) => e.border_t(1).border_color(c.rule))
+        .child(v_flex().flex_1().min_w(0).gap(2)
+          .child(div().text_size(13).font_medium().child(m.name))
+          .when(Boolean(m.says), (e) => e.child(div().text_size(12).line_height("17px").text_color(c.grey500).child(m.says))))
+        .child(Button(c, `wt-open-btn-${m.id}`, `Open ${m.name}`, (_e, cx) => this.open(m.id, cx), { small: true })))));
+  }
+
+  /** The inputs a person can choose, as a row of picks. */
+  inputs(c) {
+    const ex = this.net.examples;
+    return h_flex().id("wt-inputs").h(44).flex_none().px(20).gap(6).items_center()
+      .child(div().flex_none().pr(4).text_size(12.5).text_color(c.grey500).child("Input"))
+      .child(h_flex().flex_1().min_w(0).gap(6).overflow_x_scrollbar().children(ex.map((e, n) => {
+        const on = n === this.inputAt;
+        return div().id(`wt-in-${n}`).h(26).px(9).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+          .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy)
+          .on_click((_e, cx) => this.pickInput(n, cx)).child(e.name);
+      })));
+  }
+
+  side(c) {
+    return v_flex().id("wt-side").w(SIDE_W).flex_none().h_full().p(16).gap(8)
+      .child(div().text_size(13).font_semibold().child(this.sel ? "This neuron" : "Open a neuron"))
+      .child(div().text_size(12.5).line_height("18px").text_color(c.grey500).child("Click a circle in the drawing to see its weights, its bias and how it got its activation."));
+  }
+
+  render() {
+    const c = palette(isDark(theme()));
+    const net = this.net;
+    const cw = Math.max(320, this.width - SIDE_W - 41), ch = Math.max(220, this.height - 56 - 44 - 20);
+    return v_flex().id("weights").size_full().bg(c.surface).rounded(RADIUS).text_color(c.navy).font_family(FONT)
+      .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1 || Math.abs(size.height - this.height) > 1) { this.width = size.width; this.height = size.height; cx.notify(); } })
+      .child(this.header(c))
+      .when(!this.model, (e) => e.child(this.chooser(c)))
+      .when(Boolean(this.model) && !net && !this.problem, (e) => e.child(div().p(20).child(Skeleton(c, 6))))
+      .when(Boolean(this.problem), (e) => e.child(v_flex().id("wt-problem").p(20).gap(10).items_start()
+        .child(div().text_size(13).line_height("19px").text_color(c.fail).child(this.problem))
+        .child(Button(c, "wt-retry", "Try again", (_e, cx) => this.open(this.model, cx), { small: true }))))
+      .when(Boolean(net), (e) => e
+        .child(this.inputs(c))
+        .child(h_flex().flex_1().min_h(0)
+          .child(div().pl(20).pb(20).child(NetworkCanvas(c, this.drawing(), { id: "wt", pz: this.pz, layout: this.layout, width: cw, height: ch,
+            onNeuron: (at, cx) => this.pickNeuron(at, cx), onWeight: (at, cx) => this.pickWeight(at, cx) })))
+          .child(div().w(20).flex_none())
+          .child(div().w(1).h_full().flex_none().bg(c.rule))
+          .child(this.side(c))));
+  }
+}

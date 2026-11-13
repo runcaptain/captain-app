@@ -138,6 +138,8 @@ export function staticEntries(sections) {
     { group: "Captain", icon: icon("users"), title: "Team collaboration", words: "company sync login shared records drafts", overlay: { mod: "captain-team", kind: "dialog", width: 960, height: 680 } },
     // The scope model, under the name people use for it; it lives in Settings (Edgar, 2026-11-09).
     { name: "app.settings", args: { section: "structure" }, group: "Captain", icon: icon("waypoints"), title: "Project Structure", words: "scope model levels brand site hierarchy terminology types explorer metadata fields settings" },
+    // A network drawn neuron by neuron, to watch what an agent reads and changes in it (captain-weights).
+    { group: "Captain", icon: icon("waypoints"), title: "Open a network's weights", words: "weights neurons neural network layers bias backpropagation gradient cost weight space programming inside model", overlay: { mod: "captain-weights", kind: "dialog", width: 0.94, height: 0.94 } },
     { group: "Captain", icon: icon("cloud"), title: "Cloud and compute", words: "aws gcp azure login profile region compute", overlay: { mod: "captain-cloud", kind: "dialog", width: 760, height: 640 } },
     { group: "Captain", icon: icon("terminal"), title: "Run a cst command...", words: "cli advanced power command", overlay: { mod: "captain-commands", kind: "dialog", width: 560, height: 560, props: { menu: "all" } } },
   ];
