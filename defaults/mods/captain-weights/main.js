@@ -64,6 +64,7 @@ export default class CaptainWeights extends View {
     this.show = shared("app.testWindow") === true ? (props()?.show ?? null) : null;
     this.model = this.show?.model ?? props()?.model ?? null; // the network open, or null for the list
     this.showLastEdit = this.show?.openEdit === "last";
+    this.showDeploy = this.show?.deploy ?? null; // press "Deploy this version" once the network is read (true, or the project to deploy into)
     this.list = null;       // the networks that can be opened
     this.net = null;        // the open network (shapes.js Network)
     this.problem = null;    // why it could not be read, in a sentence
@@ -137,6 +138,9 @@ export default class CaptainWeights extends View {
     cx.spawn(async (cx) => {
       const s = await readSession(model);
       if (mine !== this.reads || model !== this.model) return;
+      // The services are still coming up (the window has only just opened): ask again in a second, and show
+      // nothing as wrong meanwhile. This ends with their first answer.
+      if (!s.ok && s.starting && !this.net) { cx.timer.after(1000, (cx) => { if (model === this.model && !this.net) this.read(cx); }); return; }
       // No session, no numbers: say why in the services' own sentence when it is one.
       if (!s.ok && !this.net) { this.problem = plainError(s.error, "Captain couldn't read that network."); return cx.notify(); }
       // For the picture check (see `show` in init): open the last edit in the list, as a click on its line would.
@@ -159,6 +163,7 @@ export default class CaptainWeights extends View {
       }
       if (this.net && !this.stop) this.stop = watchWeights(cx, model, this.session?.id, (cx) => this.read(cx));
       if (this.net) this.readAt = Date.now();
+      if (this.showDeploy && this.net && this.session) { const into = typeof this.showDeploy === "string" ? this.showDeploy : null; this.showDeploy = null; startDeploy(this, cx, into); }
       cx.notify();
       if (!this.net) return;
       // The test set's cost. A network kept in this mod is scored through the adapter. For the services' networks

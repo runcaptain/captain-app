@@ -22,7 +22,9 @@ weightsTransport(async (path, opts) => {
   const method = opts?.method ?? (opts?.body !== undefined ? 'POST' : 'GET');
   asked.push([method, path, opts?.body]);
   const p = path.split('?')[0], net = starter(TINY);
+  if (p === '/api/projects') return { ok: true, data: state.projects };
   if (p === '/api/weights/models') return { ok: true, data: [{ id: 'tiny', name: 'tiny', sizes: [2, 3, 1], project: state.project }] };
+  if (p === '/api/weights/models/tiny/session' && state.starting > 0) { state.starting--; return { ok: false, starting: true, error: null }; }
   if (p === '/api/weights/models/tiny/session') return { ok: true, data: { id: 'ws-1', model: 'tiny', ledger: LEDGER, events: [], saved: state.deploy === 'none' ? [] : ['tiny@v2'] } };
   if (p === '/api/weights/models/tiny') return { ok: true, data: { ...net, id: 'tiny', name: 'tiny', test: [] } };
   if (p === '/api/projects/shop/deploy' && method === 'POST') {
@@ -38,7 +40,7 @@ weightsTransport(async (path, opts) => {
   return { ok: false, error: 'Not Found' };
 });
 async function page(model = 'tiny') {
-  localReset(); liveReset(); asked = []; state = { project: 'shop', deploy: 'none', refuse: null };
+  localReset(); liveReset(); asked = []; state = { project: 'shop', deploy: 'none', refuse: null, projects: [{ id: 'shop', name: 'Demo shop' }, { id: 'trail', name: 'Trail gear' }], starting: 0 };
   feed = fakeFeed(liveTransport);
   globalThis.__props = { model }; globalThis.__shared = {}; globalThis.__runs = [];
   const h = harness(Weights);
@@ -100,17 +102,49 @@ test('a refusal is the services\' own sentence, and a deploy that fails says why
   assert.equal(h.byIdPrefix('wt-deploy-open').length, 1, 'its card on Deployments has the rest');
 });
 
-test('a deployment belongs to a project: the network\'s own, else the one picked in the Explorer, else a plain ask', async () => {
+test('a deployment belongs to a project: the network\'s own, else the Explorer\'s, else the page asks which and goes on', async () => {
   let h = await page();
   state.project = null;
   await h.click('wt-deploy-go');
   await h.idle(30);
-  assert.equal(textOf(h, 'wt-deploy-text'), 'A deployment belongs to a project. Pick a project in the Explorer, then deploy again.');
-  assert.ok(!asked.some(([m]) => m === 'POST'), 'nothing was sent');
+  // No refusal: the workspace's projects, one outlined pick each.
+  assert.equal(textOf(h, 'wt-deploy-text'), 'Deploy into which project?');
+  assert.deepEqual(h.byIdPrefix('wt-deploy-into-').map((e) => e.kids.join('')), ['Demo shop', 'Trail gear']);
+  assert.ok(!asked.some(([m]) => m === 'POST'), 'nothing is sent until one is picked');
+  await h.click('wt-deploy-into-shop');
+  await h.idle(30);
+  assert.ok(asked.some(([m, p, body]) => m === 'POST' && p === '/api/projects/shop/deploy' && body.session === 'ws-1'), 'the deploy goes on with the pick');
+  assert.equal(textOf(h, 'wt-deploy-text'), 'tiny, version 2 is deploying to this computer. Now: Starting it.');
+  // The Explorer's pick is used without asking.
+  h = await page();
+  state.project = null;
   globalThis.__shared['captain.scope'] = { kind: 'project', id: 'shop', label: 'Demo shop' };
   await h.click('wt-deploy-go');
   await h.idle(30);
+  assert.equal(h.byIdPrefix('wt-deploy-into-').length, 0);
   assert.ok(asked.some(([m, p]) => m === 'POST' && p === '/api/projects/shop/deploy'), 'the project picked in the Explorer');
+  // A workspace with no project at all says what to do.
+  h = await page();
+  state.project = null; state.projects = [];
+  await h.click('wt-deploy-go');
+  await h.idle(30);
+  assert.ok(textOf(h, 'wt-deploy-text').startsWith('A deployment belongs to a project, and this workspace has none yet.'));
+});
+
+test('a window opened before the services are up asks again until they answer, and shows nothing as wrong', async () => {
+  localReset(); liveReset(); asked = []; state = { project: 'shop', deploy: 'none', refuse: null, projects: [], starting: 2 };
+  fakeFeed(liveTransport);
+  globalThis.__props = { model: 'tiny' }; globalThis.__shared = {}; globalThis.__runs = [];
+  const h = harness(Weights);
+  await h.start();
+  assert.equal(h.byIdPrefix('wt-problem').length, 0, 'not a problem: they are starting');
+  assert.equal(h.mod.net, null);
+  await h.idle(2600);
+  assert.ok(h.mod.net, 'read once they answered');
+  assert.equal(h.byIdPrefix('wt-problem').length, 0);
+  const n = asked.filter(([, p]) => p === '/api/weights/models/tiny/session').length;
+  await h.idle(1300);
+  assert.equal(asked.filter(([, p]) => p === '/api/weights/models/tiny/session').length, n, 'and it stops asking');
 });
 
 test('the tiny network the page keeps itself cannot be deployed: it lives only while the page is open', async () => {
