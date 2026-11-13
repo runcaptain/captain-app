@@ -17,7 +17,7 @@ export function idFrom(label, fallback = "item") {
 export const isId = (s) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(String(s ?? "")) && String(s).length <= MAX;
 
 // What an unnamed thing of each kind is called (naming.KINDS).
-export const FALLBACK = { cloud: "login", project: "project", compute: "place", input: "input", dataset: "dataset", folder: "folder", model: "model", test: "test", notebook: "notebook", connection: "connection" };
+export const FALLBACK = { cloud: "login", project: "project", compute: "place", input: "input", dataset: "dataset", folder: "folder", model: "model", test: "test", notebook: "notebook", connection: "connection", class: "class", rating: "rating" };
 
 const GENERIC = "That didn't work. Check what you entered and try again. If it keeps happening, tell us.";
 

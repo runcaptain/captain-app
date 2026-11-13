@@ -75,7 +75,7 @@ def test_the_name_edgar_typed_connects_and_no_raw_sentence_ever_comes_back(api):
     # a form that sends the id it was offered, with the words as the label
     r = api("post", "/api/cloud/profiles", json={"name": p["next"], "label": "GPU Cloud", "provider": "modal", "auth": "local"})
     assert r.status_code == 200 and r.json()["name"] == "gpu-cloud-2" and api.have["gpu-cloud-2"]["label"] == "GPU Cloud"
-    for kind in ("project", "compute", "connection", "notebook"):
+    for kind in ("project", "compute", "connection", "notebook", "dataset", "test", "class", "rating", "model", "input"):
         got = api("get", "/api/names/propose", params={"label": "My Thing", "kind": kind})
         assert got.status_code == 200 and got.json()["id"] == "my-thing", kind
 

@@ -3326,11 +3326,16 @@ def cloud_profiles():
             for p in cloud.profiles()]
 
 
+# The registry entity a named thing is kept as, so a form can be told its name is taken while it is typed.
+REGISTRY_KINDS = {"dataset": "dataset", "test": "backtest", "model": "pipeline"}
+
+
 @app.get("/api/names/propose", dependencies=A)
 def names_propose(label: str = "", kind: str = "cloud"):
     """What a form shows under a name field as the person types: {label, id, taken, next, text}. `id` is what
     Captain makes from the words typed (naming.make_id), `next` the next free one when that is taken. Kinds:
-    cloud, project, compute, connection. Any other kind gets an id and is never "taken"."""
+    cloud, project, compute, connection, dataset, test, class, rating, model. Any other kind gets an id and is
+    never "taken". A dataset keeps its name when it is taken: importing again makes a new version of it."""
     from . import naming as NM
 
     c = ctx()
@@ -3349,10 +3354,22 @@ def names_propose(label: str = "", kind: str = "cloud"):
 
             taken = [t["name"] for t in C.listing(c)]
         elif kind == "connection":
-            taken = list(c.registry.names("connection"))
+            taken = [x["name"] for x in connections()]
+        elif kind == "class":
+            from . import classes as CL
+
+            taken = [x["name"] for x in CL.listing(c, None)]
+        elif kind == "rating":
+            from . import grading as GR
+
+            taken = [x["name"] for x in GR.listing(c)]
+        elif kind in REGISTRY_KINDS:
+            taken = list(c.registry.names(REGISTRY_KINDS[kind]))
     except Exception:  # noqa: BLE001  what is taken can't be read just now: the id is still right, and saving checks again
         taken = []
     out = NM.propose(label, kind, taken)
+    if kind == "dataset" and out["taken"]:
+        out.update(next=out["id"], taken=False, text=f"Captain will call it {out['id']}. You have one by that name: this becomes its next version.")
     if kind == "project":
         # A project's id is made by the rule projects already use, so what the form shows is what is created.
         from . import projects as PR
