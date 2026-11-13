@@ -71,8 +71,70 @@ def since(n: int | None, topics: list[str]) -> dict:
         return {"seq": now, "changed": hit, "reset": False}
 
 
+# ---- things that change without a write -----------------------------------------------------------
+# A job's progress, and the state a cloud reports for a deployed model, change with no request to this service.
+# Each such source gives a digest of what it sees. While someone is asking about its topics the digest is taken
+# again every `every` seconds, and a different digest bumps the topics. Nobody asking: nothing is read.
+_sources: list[dict] = []
+_asked: dict[str, float] = {}  # topic -> when it was last asked about
+_thread: threading.Thread | None = None
+ASKED_FOR_S = 40.0  # a topic counts as watched this long after the last request that named it
+
+
+def source(topics: list[str], every: float, digest) -> None:
+    """Register something that changes by itself: `digest()` returns a value that differs when it has changed."""
+    _sources.append({"topics": list(topics), "every": float(every), "digest": digest, "seen": None, "at": 0.0, "primed": False})
+
+
+def _wanted(src: dict, now: float) -> bool:
+    for t in src["topics"]:
+        child = PARENT_OF.get(t)
+        for asked, when in list(_asked.items()):
+            if now - when > ASKED_FOR_S:
+                continue
+            if asked == t or (child and asked.startswith(child + ":")):
+                return True
+    return False
+
+
+PARENT_OF = {v: k for k, v in PARENT.items()}  # "deployed" -> "deployment"
+
+
+def check_sources(now: float | None = None) -> None:
+    """One pass over the sources (the thread calls it a few times a second; a test calls it directly)."""
+    now = time.monotonic() if now is None else now
+    for src in _sources:
+        if now - src["at"] < src["every"] or not _wanted(src, now):
+            continue
+        src["at"] = now
+        try:
+            seen = src["digest"]()
+        except Exception:  # noqa: BLE001  a source that can't be read says nothing; the next pass asks again
+            continue
+        if src["primed"] and seen != src["seen"]:
+            bump(*src["topics"])
+        src["seen"], src["primed"] = seen, True
+
+
+def _loop() -> None:
+    while True:
+        time.sleep(0.25)
+        check_sources()
+
+
+def _note_asked(topics: list[str]) -> None:
+    global _thread
+    now = time.monotonic()
+    for t in topics:
+        _asked[t] = now
+    if _sources and _thread is None:
+        _thread = threading.Thread(target=_loop, daemon=True, name="changes-sources")
+        _thread.start()
+
+
 def wait_for(n: int | None, topics: list[str], wait: float) -> dict:
     """since(), held until something asked for changes or `wait` seconds pass."""
+    _note_asked(topics)
     end = time.monotonic() + max(0.0, min(float(wait or 0), MAX_WAIT))
     while True:
         out = since(n, topics)

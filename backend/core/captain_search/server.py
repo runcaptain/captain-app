@@ -3143,6 +3143,27 @@ def rollback(body: dict):
 # ---- the change feed ----------------------------------------------------------------------
 
 
+def _changes_sources() -> None:
+    """What changes with no write to this service: a job's progress, and what a cloud reports for a deployed model."""
+    from . import changes as CH
+
+    def jobs():
+        return tuple((j["id"], j.get("status"), j.get("progress"), j.get("message"), len(j.get("log") or [])) for j in list(JOBS.values()))
+
+    def deployed_now():
+        from .staging import fleet as FL
+
+        rows = FL.deployed(ctx()).get("rows") or []
+        return tuple((r.get("id"), r.get("state"), r.get("link"), r.get("reason"), r.get("copies"), str(r.get("deploying"))[:400]) for r in rows)
+
+    # A job that moves on changes the rows that show it: the jobs list, a model being deployed or stopped, a run.
+    CH.source(["jobs", "deployed", "runs"], 0.5, jobs)
+    CH.source(["deployed"], 2.0, deployed_now)
+
+
+_changes_sources()
+
+
 @app.get("/api/changes", dependencies=A)
 def changes_feed(since: int | None = None, topics: str = "", wait: float = 0):
     """What changed after `since` among `topics` (comma-separated), held open for up to `wait` seconds and answered

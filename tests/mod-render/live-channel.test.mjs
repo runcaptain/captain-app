@@ -94,6 +94,26 @@ const n0 = asked.length;
 for (let i = 0; i < 20; i++) await tick(); // five seconds
 assert.ok(asked.length - n0 >= 4 && asked.length - n0 <= 6, `about once a second: ${asked.length - n0}`);
 
+// ---- a second view of the same mod drives the channel itself, and a view that went away is dropped --------------
+{
+  const timers2 = [];
+  const cx2 = { timer: { every: (_ms, f) => timers2.push(f) }, spawn: (f) => f(cx2), notify: () => {} };
+  const heard2 = [];
+  watchLive(cx2, ['notebooks'], (_cx, why) => heard2.push(why));
+  watchLive(cx2, ['settings'], () => {});
+  assert.equal(timers2.length, 1, 'its own timer, once, however many watchers it adds');
+  const before = liveState().watchers;
+  // The first view goes away: its timer stops. Only the second view ticks from here.
+  answer = (path) => ok(200 + asked.length, decodeURIComponent(path).includes('notebooks') ? ['notebooks'] : []);
+  const tick2 = async (ms = 250) => { now += ms; for (const f of timers2) f(cx2); await new Promise((r) => setImmediate(r)); };
+  for (let i = 0; i < 16; i++) await tick2();
+  assert.ok(heard2.includes('changed'), 'the second view hears changes with the first one gone');
+  assert.ok(liveState().watchers < before, 'the first view\'s watchers were dropped');
+  assert.ok(!decodeURIComponent(asked.at(-1)).includes('deployment:shop'), 'and its topics are no longer asked for');
+}
+console.log('live channel: ok');
+process.exit(0);
+
 // ---- a watcher that stops is no longer called, and its topics are no longer asked for ------------------------------
 stopList();
 const quiet = heard.list.length;

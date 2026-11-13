@@ -6,6 +6,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, props, run, shared, setShared } from "herdr";
 import { api, watchWorkspace } from "./kit/cst.js";
+import { watchLive, liveState } from "./kit/live.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Button, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -54,18 +55,24 @@ export default class CaptainDeployments extends View {
     this.takeOpen(cx);
     this.load(cx);
     watchWorkspace(cx, (cx) => { this.page = null; this.load(cx); });
-    // Live: the list is read every few seconds, always, so a deploy or a stop made here, on another screen or in
-    // a terminal shows by itself. It never pauses for an action: a person pressed Stop, the read stopped with it,
-    // and the row said "Stopping" for good while the cloud had long since removed the model.
-    cx.timer.every(5000, (cx) => this.load(cx));
-    // Work the services do as a job is followed from here, once a second, on the screen's own timer.
-    cx.timer.every(1000, (cx) => this.follow(cx));
-    // While a model is being deployed its row counts the seconds on this page's own clock, and the list is read
-    // more often, so the step changes and the finished model show as they happen.
-    cx.timer.every(1000, (cx) => { if (this.deployingNow()) cx.notify(); });
-    cx.timer.every(2000, (cx) => { if (this.deployingNow()) this.load(cx); });
-    cx.timer.every(5000, (cx) => cx.notify());  // so "Updated just now" moves on, and says so if the reads stop
-    cx.timer.every(60000, (cx) => this.page?.refresh(cx));  // an open model's page: where it runs and its numbers
+    // Live, by the one channel (kit/live.js): the list is read the moment what is deployed changes, here, on
+    // another screen, in a terminal or in the cloud itself. No timer re-reads it. A person once pressed Stop, a
+    // timer's read stopped with it, and the row said "Stopping" for two hours while the cloud had long since
+    // removed the model.
+    //   deployed, projects, logins: the list and what Captain created in each cloud.
+    //   jobs: work the services do as a job (a deploy, a stop) moved on: follow it, and read the rows it changes.
+    //   deployment:<project>: the model whose page is open.
+    watchLive(cx, ["deployed", "projects", "logins"], (cx) => this.load(cx));
+    watchLive(cx, ["jobs"], (cx, why) => { this.follow(cx); if (why !== "changed" || this.deployingNow() || Object.keys(this.following).length) this.load(cx); });
+    watchLive(cx, ["deployment:"], (cx, why, topics) => {
+      if (this.page && (why !== "changed" || topics.includes(`deployment:${this.page.row.project}`))) this.page.refresh(cx);
+    });
+    // The page's own clock, once a second: the seconds on a row that is deploying, "Updated 4 s ago", and giving
+    // up on a job nothing has been heard from for two minutes. It reads nothing.
+    cx.timer.every(1000, (cx) => { this.giveUp(cx); cx.notify(); });
+    // A model's page shows traffic and cost from the cloud's own metrics, which the cloud charges for by the read
+    // and which change with no event. Those are read once a minute, and only while a model's page is open.
+    cx.timer.every(60000, (cx) => this.page?.refresh(cx));
     // A link on another screen can't reach this screen's props: it sets the shared "open" value and selects this
     // place. Looked at a few times a second, as the other screens do, so the link lands without a wait.
     cx.timer.every(300, (cx) => this.takeOpen(cx));
@@ -143,6 +150,7 @@ export default class CaptainDeployments extends View {
     try { r = await call(); } catch (e) { r = { ok: false, error: String(e?.message ?? e) }; }
     if (r.ok && r.data?.job) {
       this.following[row.id] = { job: r.data.job, words, kind, read: this.reads, heard: Date.now(), polling: false };
+      this.follow(cx);  // at once: the action just returned, and the channel says when the job moves on
       return cx.notify();
     }
     this.finish(cx, row.id, r.ok ? (r.data?.text ?? null) : plainError(r.error, "That did not work."));
@@ -160,12 +168,17 @@ export default class CaptainDeployments extends View {
   /** Ask after each job being followed, once a second. Nothing here waits in a loop: the script engine has no
    *  timer of its own to wait on, and a loop that tried one died after its first look, leaving the row "Stopping"
    *  for ever. A job that can't be asked after for two minutes is given up on, and the list says where it stands. */
+  /** From the page's clock: a job nothing has been heard from for two minutes is given up on, in words. */
+  giveUp(cx) {
+    for (const [id, f] of Object.entries(this.following ?? {})) {
+      if (Date.now() - f.heard > 120000) this.finish(cx, id, `${f.words}: Captain could not tell how that ended. The list shows where it stands now.`);
+    }
+  }
+
+  /** Ask how each followed job stands. Called when the live channel says a job moved on, and right after an action
+   *  starts one. */
   follow(cx) {
     for (const [id, f] of Object.entries(this.following)) {
-      if (Date.now() - f.heard > 120000) {
-        this.finish(cx, id, `${f.words}: Captain could not tell how that ended. The list shows where it stands now.`);
-        continue;
-      }
       if (f.polling) continue;
       f.polling = true;
       cx.spawn(async (cx) => {
@@ -178,7 +191,8 @@ export default class CaptainDeployments extends View {
         // The job's own title is not a step ("stopping the deployed model of <id>"): the row already says what is being done.
         const step = [j.data?.message, log[log.length - 1]].find((x) => x && x !== log[0] && x !== "done" && !String(x).startsWith("done: "));
         this.busy[id] = step ? `${f.words}: ${String(step).replace(/[.]+$/, "")}` : f.words;
-        if (j.data?.status === "done") return this.finish(cx, id, j.data?.result?.text ?? `${f.words}: done.`);
+        // A job that says nothing of how it ended leaves no line: the list shows what is true now.
+        if (j.data?.status === "done") return this.finish(cx, id, j.data?.result?.text ?? null);
         if (j.data?.status === "failed") return this.finish(cx, id, plainError(j.data?.error ?? j.data?.message, "That did not work."));
         cx.notify();
       });
@@ -466,10 +480,10 @@ export default class CaptainDeployments extends View {
       // It keeps itself up to date, and says when it last was, or that a cloud could not be reached. No button to
       // press: a small refresh icon is there for someone who wants to ask now.
       .child(Updated(c, "dep-updated", { readAt: this.readAt, icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.load(cx, true),
-        // The list is read every 5 seconds. If the last good read is older than 15, the screen is not keeping up,
-        // and it says so: "Updated 3 min ago" beside a row that is no longer true reads as if all were well.
+        // The list is read the moment something changes, so an old "Updated" time with the channel live means
+        // nothing has changed since. When the channel is down the screen says so: it never looks fine while stale.
         problem: notAsked.length ? `${[...new Set(notAsked.map((a) => a.cloud_label))].join(" and ")} could not be reached. Trying again.`
-          : this.readAt && !this.demo && Date.now() - this.readAt > 15000 ? "Not updating. Refresh" : null }));
+          : !this.demo && liveState().state === "reconnecting" ? "Reconnecting" : null }));
     const none = !here.length;
     const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small });
     const n = earlier.length;

@@ -23,6 +23,7 @@ export const FALLBACK_MS = 2000; // how often every watcher re-reads while the f
 export const PUMP_MS = 250; // how often the kit looks at whether to ask again
 const QUICK_MS = 400; // an answer this fast with nothing in it means the services did not hold the request
 const IDLE_GAP_MS = 1000; // so it is asked again a second later, not at once
+const GONE_MS = 3000; // a view whose timer has not ticked for this long has gone away
 const BACKOFF_MS = [500, 1000, 2000, 4000, 8000]; // between tries while the feed is down
 
 const S = {
@@ -34,7 +35,7 @@ const S = {
   nextAsk: 0, // not before this time
   failures: 0,
   lastFallback: 0,
-  pumping: false,
+  owners: new WeakMap(), // a view's cx -> {beat}: the view that drives the channel and owns its watchers
   ask: (path, opts) => api(path, opts), // the request (a test puts its own here)
   now: () => Date.now(),
 };
@@ -45,7 +46,7 @@ export function liveTransport(ask, now) { if (ask) S.ask = ask; if (now) S.now =
 /** Forget everything (a test starting over). */
 export function liveReset() {
   S.watchers.clear();
-  Object.assign(S, { seq: null, state: "connecting", since: 0, asking: false, nextAsk: 0, failures: 0, lastFallback: 0, pumping: false });
+  Object.assign(S, { seq: null, state: "connecting", since: 0, asking: false, nextAsk: 0, failures: 0, lastFallback: 0, owners: new WeakMap() });
 }
 
 /** "live" while the feed answers; "reconnecting" while it can't be reached (the screens are then re-read every two
@@ -75,7 +76,15 @@ function setState(state) {
   S.since = S.now();
 }
 
+/** A view that went away stops ticking: its watchers are dropped, so nothing is read for a screen nobody sees and
+ *  its topics are no longer asked for. */
+function dropGone() {
+  const now = S.now();
+  for (const w of [...S.watchers]) if (now - w.owner.beat > GONE_MS) S.watchers.delete(w);
+}
+
 function tell(why, topics = null) {
+  dropGone();
   for (const w of [...S.watchers]) {
     if (!S.watchers.has(w)) continue;
     const hit = topics === null ? null : topics.filter((t) => w.topics.some((mine) => covers(mine, t)));
@@ -90,6 +99,7 @@ function topicsAsked() {
 
 /** One step, from the timer: ask the feed if it is time, and re-read on the fallback clock while it is down. */
 export function livePump(cx) {
+  dropGone();
   if (!S.watchers.size) return;
   const now = S.now();
   if (S.state === "reconnecting" && now - S.lastFallback >= FALLBACK_MS) {
@@ -139,14 +149,19 @@ export function livePump(cx) {
  *  is the two-second re-read). Returns a function that stops watching. The first watcher in a mod starts the mod's
  *  one connection; when the view goes away its timer goes with it. */
 export function watchLive(cx, topics, onChange) {
-  const w = { topics: [...new Set((Array.isArray(topics) ? topics : [topics]).filter(Boolean).map(String))], fn: onChange, cx };
+  // Each view drives the channel from its own timer, once. The mod's state is shared, so a second view of the same
+  // mod (a page opened again) must start its own: the first view's timer may be gone with it.
+  let owner = S.owners.get(cx);
+  if (!owner) {
+    owner = { beat: S.now() };
+    S.owners.set(cx, owner);
+    const mine = owner;
+    cx.timer.every(PUMP_MS, (cx) => { mine.beat = S.now(); livePump(cx); });
+  }
+  const w = { topics: [...new Set((Array.isArray(topics) ? topics : [topics]).filter(Boolean).map(String))], fn: onChange, cx, owner };
   S.watchers.add(w);
   // A new topic: the request in flight does not ask for it, so the next one goes out at once.
   S.nextAsk = 0;
-  if (!S.pumping) {
-    S.pumping = true;
-    cx.timer.every(PUMP_MS, (cx) => livePump(cx));
-  }
   return () => { S.watchers.delete(w); };
 }
 

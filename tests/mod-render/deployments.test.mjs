@@ -10,7 +10,7 @@ import { harness } from './harness.mjs';
 const here = path.dirname(new URL(import.meta.url).pathname);
 const dir = path.resolve(here, '../../defaults/mods/captain-deployments');
 globalThis.__shared = { 'captain.daemon': { state: 'ready', base: 'http://captain.test', token: 't' } };
-let world, sent;
+let world, sent, feedSeq = 0;
 const reply = (status, data) => ({ status, ok: status < 300, text: async () => JSON.stringify(data) });
 const numbers = (requests, extra = {}) => ({ range: '24h', range_text: 'the last 24 hours', bucket_seconds: 300, source: 'cloud', source_text: "From AWS's own metrics (CloudWatch). They arrive a minute or two late.", not_read: [],
   buckets: Array.from({ length: 288 }, (_, i) => ({ t: String(i), requests: requests / 288, errors: 0, p50_ms: 3, p95_ms: 9, cpu: 20, memory: 5, copies: null })),
@@ -20,6 +20,9 @@ const numbers = (requests, extra = {}) => ({ range: '24h', range_text: 'the last
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), p = u.pathname, m = opts.method ?? 'GET';
   sent.push([m, p + u.search, opts.body ? JSON.parse(opts.body) : null]);
+  // The change feed (kit/live.js). This stand-in says every asked-for topic changed each time it is asked, so each
+  // tick of the test is "something changed": the screen reads again, as it does when the services say so.
+  if (p === '/api/changes') { feedSeq += 1; return world.feedDown ? reply(500, { detail: 'no answer' }) : reply(200, { seq: feedSeq, changed: (u.searchParams.get('topics') ?? '').split(',').filter(Boolean).map((topic) => ({ topic, seq: feedSeq })), reset: false }); }
   if (p === '/api/deployed' && world.deployedFail) return reply(500, { detail: 'no answer' });
   if (p === '/api/deployed') return reply(200, world.deployed);
   // Work the services do as a job: `world.jobs[id]` is the list of answers it gives, one per ask, the last repeating.
@@ -412,11 +415,19 @@ const asks = sent.filter((x) => x[1] === '/api/deployed?fresh=true').length;
 await h.click('dep-updated-refresh');
 await h.idle(80);
 assert.equal(sent.filter((x) => x[1] === '/api/deployed?fresh=true').length, asks + 1, 'and it asks the clouds now');
-// A model deployed from another screen or a terminal shows by itself, on the next read.
+// A model deployed from another screen or a terminal shows by itself: the change feed says what is deployed
+// changed, and the list is read again. No timer of the screen's re-reads it.
+await tick(h);  // the channel learns where the feed is
 let reads = sent.filter((x) => x[1].startsWith('/api/deployed') && !x[1].includes('created')).length;
 world.deployed = { rows: [SHOP, TRAIL], asked, text: '2 models running.', read_at: '' };
 await tick(h);
-assert.ok(sent.filter((x) => x[1].startsWith('/api/deployed') && !x[1].includes('created')).length > reads, 'the list is read again on a timer');
+assert.ok(sent.filter((x) => x[1].startsWith('/api/deployed') && !x[1].includes('created')).length > reads, 'the list is read again when the feed says it changed');
+assert.ok(sent.some((x) => x[1].startsWith('/api/changes?topics=') && decodeURIComponent(x[1]).includes('deployed') && decodeURIComponent(x[1]).includes('jobs')), 'through the one live channel');
+{
+  const src = fs.readFileSync(path.join(dir, 'main.js'), 'utf8');
+  const timers = [...src.matchAll(/cx\.timer\.every\((\d+), \(cx\) => ([^\n]*)/g)].map((m) => [Number(m[1]), m[2]]);
+  assert.ok(!timers.some(([, body]) => /this\.load\(|this\.follow\(/.test(body)), `no timer re-reads the list or a job: ${JSON.stringify(timers)}`);
+}
 assert.ok(shown(h) === 'shop trail' && h.text().includes('2 models running.'), `the new model is there without a click: ${shown(h)}`);
 // The numbers are not read again that soon: a cloud charges for each read of those.
 const numberReads = () => sent.filter((x) => x[1].includes('/deployed/numbers')).length;
@@ -492,15 +503,15 @@ assert.ok(byId(h, 'dep-busy-shop:staging').length === 0 && h.text().includes('Ca
   `given up on, with one line, and the row has its buttons back: ${h.text().slice(0, 400)}`);
 world.jobsFail = false; world.stopJob = null; world.jobs = null;
 
-// "Updated" never climbs: with no good read for more than 15 seconds the screen says it is not updating.
-world.deployedFail = true;
-Date.now = () => realNow() + 16000;
-await tick(h);
-assert.ok(h.text().includes('Not updating. Refresh') && !/Updated \d+ (s|min) ago/.test(h.text()), `it says so: ${h.text().slice(0, 200)}`);
-Date.now = realNow;
-world.deployedFail = false;
+// The screen never looks fine while it is stale. With the change feed out of reach it says "Reconnecting" where
+// "Updated" was, re-reads on the two-second fallback, and goes back to a time when the feed answers again.
+world.feedDown = true;
 await tick(h); await tick(h);
-assert.ok(!h.text().includes('Not updating') && h.text().includes('Updated just now'), 'and recovers with the next good read');
+assert.ok(h.text().includes('Reconnecting') && !/Updated (just now|\d+ (s|min) ago)/.test(h.text()), `it says so: ${h.text().slice(0, 200)}`);
+world.feedDown = false;
+await h.idle(700);  // the feed is tried again after a short wait
+for (let i = 0; i < 6 && h.text().includes('Reconnecting'); i++) await tick(h);
+assert.ok(!h.text().includes('Reconnecting') && h.text().includes('Updated just now'), `and recovers when the feed answers: ${h.text().slice(0, 200)}`);
 
 // ---- requests come from the request log, and the cloud's chart is named for what it is ----
 // Proven on a real endpoint: 29 requests for results, and 178 calls counted by the cloud, most of them Captain's own checks.
