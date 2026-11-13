@@ -6,7 +6,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, props, run, shared, setShared } from "herdr";
 import { api, watchWorkspace } from "./kit/cst.js";
-import { palette, isDark, FONT } from "./kit/tokens.js";
+import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Button, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
@@ -236,8 +236,16 @@ export default class CaptainDeployments extends View {
         .when(hour.some((v) => v > 0) && !found, (e) => e.child(Spark(c, `dep-spark-${r.id}`, hour))))
       .child(div().id(`dep-state-${r.id}`).text_size(13).line_height("19px").text_color(wrong && r.in_cloud !== false ? c.fail : c.navy)
         .child(r.remembered_text ? `${r.state_text} ${r.remembered_text}` : r.state_text))
-      .child(div().text_size(12.5).line_height("18px").text_color(c.grey500)
-        .child([r.where, numbers, cost, who].filter(Boolean).join(". ") + "."))
+      // Where it lives: the address a site calls, to copy, and one line about the system it runs on.
+      .when(Boolean(r.address) && r.in_cloud !== false, (e) => e.child(h_flex().gap(8).items_center()
+        // The code font is for the one thing here a person copies, and nothing else.
+        .child(div().id(`dep-address-${r.id}`).min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(c.navy).child(String(r.address)))
+        .child(Button(c, `dep-copy-${r.id}`, this.copied === r.id ? "Copied" : "Copy", (_e, cx) => { cx.write_to_clipboard?.(String(r.address)); this.copied = r.id; cx.notify(); }, { small: true }))))
+      .child(div().id(`dep-system-${r.id}`).text_size(12.5).line_height("18px").text_color(c.grey500)
+        .child([[r.cloud_label, r.account].filter(Boolean).join(", "), r.cloud === "local" ? null : r.region, r.machine_words ?? (r.cloud === "local" ? null : r.machine),
+          r.copies_words, who].filter(Boolean).join(". ") + "."))
+      .when(Boolean(numbers || cost), (e) => e.child(div().id(`dep-numbers-${r.id}`).text_size(12.5).line_height("18px").text_color(c.grey500)
+        .child([numbers, cost].filter(Boolean).join(". ") + ".")))
       .children((r.corrected ?? []).map((x, i) => div().id(`dep-fixed-${r.id}-${i}`).text_size(12.5).line_height("18px").text_color(c.grey500).child(x)))
       .when(this.ask?.id === r.id, (e) => e.child(this.question(c)))
       .when(this.ask?.id !== r.id, (e) => e.child(h_flex().gap(8).flex_wrap().children(buttons)));

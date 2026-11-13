@@ -24,6 +24,7 @@ def _who() -> str:
     return whoami()
 
 
+_ACCOUNTS: dict = {}
 _CLIENTS: dict = {}
 _CLIENTS_LOCK = threading.Lock()
 CLIENT_TTL_S = 1800
@@ -33,6 +34,7 @@ def forget_clients() -> None:
     """Drop every kept client: after a login is changed or removed, and between tests."""
     with _CLIENTS_LOCK:
         _CLIENTS.clear()
+        _ACCOUNTS.clear()
 
 
 class _AWS(ComputeProvider):
@@ -670,6 +672,56 @@ class SageMakerProvider(_AWS):
             token = r.get("NextToken")
             if not token:
                 return out
+
+    def account_hint(self) -> str | None:
+        """The account this login is in, as a person may see it on a screen: its alias when it has one, else the
+        last four digits. Never the whole number. Kept for the process: an account does not change."""
+        key = ("account", self.profile if isinstance(self.profile, (str, type(None))) else (self.profile or {}).get("name"))
+        if key in _ACCOUNTS:
+            return _ACCOUNTS[key]
+        hint = None
+        try:
+            number = str(self._client("sts").get_caller_identity().get("Account") or "")
+            hint = f"account ending {number[-4:]}" if len(number) >= 4 else None
+            try:
+                alias = (self._client("iam").list_account_aliases().get("AccountAliases") or [None])[0]
+                hint = f"account {alias}" if alias else hint
+            except Exception:  # noqa: BLE001  a login that may not read the alias still has its last four digits
+                pass
+        except Exception:  # noqa: BLE001
+            hint = None
+        _ACCOUNTS[key] = hint
+        return hint
+
+    def where(self, rec: dict) -> dict:
+        """Where one deployed model lives, from AWS's own describe calls: {address, machine, copies_now, image,
+        image_built, model_files, role, logs, since, changed, account, endpoint, config, model, state}. Read-only.
+        A part AWS will not give is None. Raises when the endpoint is not there."""
+        sm = self._client("sagemaker")
+        name = (rec.get("endpoint") or {}).get("name")
+        d = sm.describe_endpoint(EndpointName=name)
+        out = {"endpoint": name, "state": d.get("EndpointStatus"), "since": _iso(d.get("CreationTime")), "changed": _iso(d.get("LastModifiedTime")),
+               "address": f"https://runtime.sagemaker.{self.region}.amazonaws.com/endpoints/{name}/invocations",
+               "logs": f"/aws/sagemaker/Endpoints/{name}", "account": self.account_hint(),
+               "copies_now": ((d.get("ProductionVariants") or [{}])[0]).get("CurrentInstanceCount"),
+               "config": d.get("EndpointConfigName"), "machine": None, "model": None, "image": None, "image_built": None, "model_files": None, "role": None}
+        try:
+            pv = (sm.describe_endpoint_config(EndpointConfigName=d["EndpointConfigName"]).get("ProductionVariants") or [{}])[0]
+            out["machine"], out["model"] = pv.get("InstanceType"), pv.get("ModelName")
+            m = sm.describe_model(ModelName=pv["ModelName"])
+            box = m.get("PrimaryContainer") or {}
+            out["image"], out["role"] = box.get("Image"), m.get("ExecutionRoleArn")
+            out["model_files"] = (box.get("Environment") or {}).get("CST_STAGING_BUNDLE")
+        except Exception:  # noqa: BLE001
+            pass
+        if out["image"] and ".dkr.ecr." in out["image"] and ":" in out["image"].rsplit("/", 1)[-1]:
+            try:
+                repo, tag = out["image"].split("/", 1)[1].rsplit(":", 1)
+                got = self._client("ecr").describe_images(repositoryName=repo, imageIds=[{"imageTag": tag}])
+                out["image_built"] = _iso((got.get("imageDetails") or [{}])[0].get("imagePushedAt"))
+            except Exception:  # noqa: BLE001
+                pass
+        return out
 
     def metric_names(self, endpoint: str) -> dict:
         """Which numbers CloudWatch holds for an endpoint, by where it keeps them: {"copies": [...], "requests":

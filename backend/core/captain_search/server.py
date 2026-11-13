@@ -1556,6 +1556,20 @@ def deployed_created():
     return FL.created(ctx())
 
 
+@app.get("/api/projects/{pid}/deployed/where", dependencies=A)
+def deployed_where(pid: str, env: str = "staging"):
+    """Where one deployed model lives, as a small table: {facts: [{id, label, value, copy, source, source_text}],
+    text}. Address, how to call it, cloud and account (alias or last four digits), region, machine (what it is and
+    its price), copies, image, model files, role, logs, when it stops by itself, who deployed it, version. Each
+    value is from the cloud's own describe call where there is one, else from Captain's record, and says which."""
+    from .staging import fleet as FL
+
+    try:
+        return FL.where_it_runs(ctx(), pid, env)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from None
+
+
 @app.post("/api/deployed/forget", dependencies=A)
 def deployed_forget(body: dict):
     """{project, env?, confirm}: forget a model that was stopped earlier. Captain removes its own record of the
