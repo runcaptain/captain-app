@@ -1003,6 +1003,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "captain-logs"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "regex",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
