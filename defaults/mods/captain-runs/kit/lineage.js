@@ -25,14 +25,15 @@ import { MONO } from "./tokens.js";
 import { icon } from "./icons.js";
 import { BRANDS } from "./brands.js";
 
-const NODE_W = 204;
+const NODE_W = 188;
 const NODE_H = 52;
-const GAP_X = 84; // room for an arrow to bend and for its head
+const GAP_X = 64; // room for an arrow to bend and for its head
 const GAP_Y = 16;
 const PAD = 20;
 const ARROW = 9; // the arrowhead's length, in layout units
 const DOT = 4; // the radius of the dot where a connector joins a box
 const GRID = 22; // the spacing of the canvas's dotted grid
+const GRID_DOTS = 500; // the most dots the grid draws
 const RADIUS = 8; // a box's corners
 const ALL = 99; // every step, each way: the whole chain
 
@@ -71,6 +72,20 @@ export function levels(graph, focus, up, down) {
   };
   walk(ups, -1, up);
   walk(downs, 1, down);
+  // The walk gives each box its shortest distance from the focus, which can put a box in the same column as one it
+  // reads from (judgments made from the questions, beside the evaluations that read them). Push each such box one
+  // column past what it reads, so every connector runs left to right. The passes are bounded, so a loop in the
+  // records can't spin here.
+  const edges = (graph.edges ?? []).map(ends);
+  for (let pass = 0, moved = true; moved && pass < level.size; pass++) {
+    moved = false;
+    for (const [a, b] of edges) {
+      if (!level.has(a) || !level.has(b) || a === b) continue;
+      const la = level.get(a), lb = level.get(b);
+      if (la >= 0 && lb > 0 && lb <= la) { level.set(b, la + 1); moved = true; }
+      else if (lb <= 0 && la < 0 && la >= lb) { level.set(a, lb - 1); moved = true; }
+    }
+  }
   // MLflow feeds the pipelines downstream from the side (a model version, and the run that made it): neither up nor
   // down from the focus, so place each one column before what it feeds. Other side inputs stay out, so the graph
   // doesn't fill with everything that touches a downstream node.
@@ -262,9 +277,13 @@ export class LineageGraph {
     const z = this.zoom, T = (q) => ({ x: q.x * z + this.pan.x, y: q.y * z + this.pan.y });
     a = T(a); b = T(b);
     const x1 = a.x + NODE_W * z, y1 = a.y + NODE_H * z / 2, x2 = b.x, y2 = b.y + NODE_H * z / 2;
-    const dx = Math.max(24, (x2 - x1) / 2);
     // The line stops where the arrowhead starts; the head's point touches the dot on the box's edge.
     const end = x2 - (ARROW + DOT) * z;
+    // Forward, the curve leans half the gap. A box that reads from one beside it or behind it (same column, or an
+    // earlier one) gets a wide loop out to the right and back in from the left: with a short lean it drew as a
+    // straight slash across the boxes.
+    const gap = end - x1;
+    const dx = gap >= 24 * z ? Math.max(24 * z, gap / 2) : Math.max(70 * z, Math.abs(gap) / 2 + 50 * z);
     return p.move_to(x1, y1).cubic_bezier_to(end, y2, x1 + dx, y1, end - dx, y2);
   }
 
@@ -278,12 +297,21 @@ export class LineageGraph {
   /** The canvas's dotted grid, as one filled path: it moves with the pan and spreads with the zoom, so the canvas
    *  reads as a surface the boxes sit on. Left out when zoomed so far out that the dots would touch. */
   grid(w, h) {
-    const step = GRID * this.zoom;
+    let step = GRID * this.zoom;
     if (!(w > 0 && h > 0) || step < 9) return null;
-    let p = PathBuilder.fill();
+    // Never more than GRID_DOTS dots: building thousands of them took longer than a frame is allowed, and the app
+    // then showed "This view could not be re-rendered". A big or zoomed-out canvas gets every second dot, or every
+    // fourth, which keeps the dots on the same grid.
+    while ((w / step) * (h / step) > GRID_DOTS) step *= 2;
     const x0 = ((this.pan.x % step) + step) % step, y0 = ((this.pan.y % step) + step) % step;
+    // The same canvas, zoom and offset as last time: the same path. Hovering a box redraws without rebuilding it.
+    const key = `${Math.round(w)}|${Math.round(h)}|${step.toFixed(2)}|${x0.toFixed(1)}|${y0.toFixed(1)}`;
+    if (this.gridKey === key && this.gridPath) return this.gridPath;
+    let p = PathBuilder.fill();
     for (let y = y0; y < h; y += step) for (let x = x0; x < w; x += step) p = p.add_polygon([[x, y], [x + 1.5, y], [x + 1.5, y + 1.5], [x, y + 1.5]], true);
-    return p.build();
+    this.gridKey = key;
+    this.gridPath = p.build();
+    return this.gridPath;
   }
 
   icon(name, size, color) {
