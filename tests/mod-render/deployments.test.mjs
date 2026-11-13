@@ -616,6 +616,19 @@ world.deployedFail = false;
 quietReads = listReads();
 await tick(h);
 assert.ok(listReads() > quietReads, 'the fallback reads while the channel is down');
+// An open model's page is not read again on every fallback tick: it is five reads, one of them to the cloud.
+await h.click('dep-open-shop:staging');
+await h.idle(150);
+// (The harness fires the page's own once-a-minute timer on every tick, so what is counted is a page read made
+// by the channel's call, and why it called.)
+{
+  let inHeard = null; const byWhy = {};
+  const heard = h.mod.heard.bind(h.mod), refresh = h.mod.page.refresh.bind(h.mod.page);
+  h.mod.heard = (cx, changed, reset, fallback) => { inHeard = fallback ? 'fallback' : reset ? 'reset' : 'changed'; try { return heard(cx, changed, reset, fallback); } finally { inHeard = null; } };
+  h.mod.page.refresh = (cx) => { if (inHeard) byWhy[inHeard] = (byWhy[inHeard] ?? 0) + 1; return refresh(cx); };
+  await tick(h); await tick(h); await tick(h);
+  assert.ok(!byWhy.fallback, `fallback ticks do not read the page: ${JSON.stringify(byWhy)}`);
+}
 world.stopJob = null; world.jobs = null; world.seq = 1000;
 
 // ---- requests come from the request log, and the cloud's chart is named for what it is ----
