@@ -1511,6 +1511,19 @@ def note(ctx, sid: str, text: str, by: str | None = None) -> dict:
     return _do(ctx, sid, fn)
 
 
+def done(ctx, sid: str, text: str, by: str | None = None) -> dict:
+    """The agent says it has finished, in one paragraph. A run Captain started ends when it sees this: an agent's
+    command line can stay open long after its work is over."""
+    text = " ".join(str(text or "").split())
+    if not text:
+        raise WeightsError("Say in a paragraph what you found and what you did.")
+
+    def fn(st):
+        return st.show(st.event("done", f"{_Who(st, by)} {'says it is' if _by(by, st.who) == 'agent' else 'are'} done: {text[:3000]}", by,
+                                op="done", text=text[:3000]))
+    return _do(ctx, sid, fn)
+
+
 def program_begin(ctx, sid: str, info: dict) -> dict:
     """Captain is starting an agent on this session. The record says which agent, its goal, its edit cap and whether
     the agent's own command line could be held to `cst weights` commands."""
@@ -1553,6 +1566,7 @@ def program_scores(ctx, sid: str) -> dict:
                                                            "state": e["state"], "changed": e["changed"]} for e in mine],
                 "changed": moved, "total": st.total(), "share": round(moved / st.total(), 6), "ledger": ledger(st),
                 "notes": [e["text"] for e in st.doc["events"] if e["kind"] == "note" and e["seq"] > run.get("seq", 0)],
+                "done": next((e["text"] for e in reversed(st.doc["events"]) if e["kind"] == "done" and e["seq"] > run.get("seq", 0)), None),
                 "sentences": {e["id"]: e["sentence"] for e in st.doc["events"] if e["kind"] == "edit" and e["seq"] > run.get("seq", 0)},
                 "refused": [e["sentence"] for e in st.doc["events"] if e["kind"] == "refused" and e["seq"] > run.get("seq", 0)]}
     return _do(ctx, sid, fn, watch="record")

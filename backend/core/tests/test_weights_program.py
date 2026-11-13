@@ -251,27 +251,34 @@ def test_the_time_limit_stops_an_agent_that_does_not_finish(ws):
     assert "The agent ran out of time." in P.report_text(r)
 
 
-def test_an_agent_that_gave_its_answer_and_did_not_exit_is_ended_and_judged_not_called_out_of_time(ws):
-    """Seen on the one real run: the answer was printed 31 seconds in, and the command line stayed open for 6.5 minutes."""
-    (ws.bin / "claude").write_text((FAKE % {"python": sys.executable}).replace(
-        'print("I am done. I made the edits the plan listed.")', 'print("I am done.", flush=True)\ntime.sleep(120)'))
-    ws.plan([_fix(ws)])
+def test_an_agent_that_says_it_is_done_and_does_not_exit_is_ended_and_judged_as_finished(ws):
+    """Seen on two real runs: the agent finished in about half a minute, and its command line stayed open for six more.
+    It writes its answer only as it exits, so the signal is its own last command, `cst weights done`."""
+    ws.plan([_fix(ws), ["cst", "weights", "done", "I set the output bias back. One edit, not confirmed by a run."], ["sleep", "120"]])
     plan = P.prepare(ws.ctx, "tiny@v2", GOAL, target_input=[0.9, 0.1], target_output=[1])
-    plan["quiet_s"] = 2
+    assert 'Your last command must be `cst weights done' in plan["prompt"] and "Stop, and say you are done" in plan["prompt"]
+    plan["grace_s"] = 2
     said = []
     t0 = time.time()
     r = P.run(ws.ctx, plan, say=said.append)
-    assert time.time() - t0 < 40 and r["ended_after_answer"] is True and r["timed_out"] is False and r["stopped"] is False
-    assert r["kept"] is True and r["saved"] == "tiny@v3" and r["agent_said"] == "I am done." and r["agent_exit"] == 0
-    assert any("gave its answer and did nothing more for 2 seconds" in line for line in said)
-    assert "The agent gave its answer and its command line stayed open, so Captain ended it." in P.report_text(r)
-    # An agent that is still working, with nothing printed yet, is left alone however quiet it is.
-    (ws.bin / "claude").write_text(FAKE % {"python": sys.executable})
-    ws.plan([["sleep", "5"], _fix(ws)])
-    plan = P.prepare(ws.ctx, "tiny@v2", GOAL, target_input=[0.9, 0.1], target_output=[1])
-    plan["quiet_s"] = 2
+    assert time.time() - t0 < 40 and r["ended_after_done"] is True and r["timed_out"] is False and r["stopped"] is False
+    assert r["kept"] is True and r["saved"] == "tiny@v3" and r["agent_exit"] == 0, "a finished run, judged and kept"
+    assert r["agent_said"] == "I set the output bias back. One edit, not confirmed by a run."
+    assert any("The agent says it is done: I set the output bias back." in line for line in said)
+    assert any("said it was done and its command line was still open 2 seconds later" in line for line in said)
+    assert "The agent said it was done and its command line stayed open, so Captain ended it." in P.report_text(r)
+    assert [e["kind"] for e in S.report(ws.ctx, r["session"])["events"]].count("done") == 1
+    # An agent that never says it is done runs to the time limit, and that is a stopped run: nothing is kept.
+    ws.plan([_fix(ws), ["sleep", "120"]])
+    plan = P.prepare(ws.ctx, "tiny@v2", GOAL, target_input=[0.9, 0.1], target_output=[1], time_limit_s=6)
+    plan["grace_s"] = 2
     r = P.run(ws.ctx, plan)
-    assert r["ended_after_answer"] is False and r["kept"] is True
+    assert r["ended_after_done"] is False and r["timed_out"] is True and r["kept"] is False
+    # One that says it is done and exits by itself needs no ending.
+    ws.plan([_fix(ws), ["cst", "weights", "done", "Done."]])
+    plan = P.prepare(ws.ctx, "tiny@v2", GOAL, target_input=[0.9, 0.1], target_output=[1])
+    r = P.run(ws.ctx, plan)
+    assert r["ended_after_done"] is False and r["kept"] is True and r["agent_said"] == "Done."
 
 
 def test_a_dry_run_prints_the_plan_and_the_instructions_and_starts_nothing(ws):

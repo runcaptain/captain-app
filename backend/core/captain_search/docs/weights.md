@@ -348,6 +348,7 @@ session a slice answers `{"measured": true, "scores": "hidden"}` with no costs, 
 | `cst weights evaluate` | `POST /api/weights/sessions/{s}/evaluate` | the three sets and the drift |
 | `cst weights save --as <note>` | `POST /api/weights/sessions/{s}/save` | the new version |
 | `cst weights note "<text>"` | `POST /api/weights/sessions/{s}/note` | an event: a thought put in the record. Body: `{"text": "..."}` |
+| `cst weights done "<paragraph>"` | `POST /api/weights/sessions/{s}/done` | an event: the work is finished. Body: `{"text": "..."}` |
 | `cst weights close` | `POST /api/weights/sessions/{s}/close` | the session, closed. Nothing more can be run or changed in it |
 | `cst weights report` | `GET /api/weights/sessions/{s}/report` | the whole record |
 | `cst weights events` | `GET /api/weights/sessions/{s}/events?since=` | the short event list |
@@ -394,7 +395,7 @@ said the edit would do, beside what it did. A large `gap` means the edit was not
 ```
 
 `kind` is one of `open`, `read`, `run`, `gradients`, `edit`, `undo`, `redo`, `evaluate`, `save`, `export`, `sets`,
-`close`, `note`, `program`, `refused`. `by` is `agent`, `you` or `captain`. Every event has `sentence`. Events that scored something have `cost_before` and `cost_after`.
+`close`, `note`, `done`, `program`, `refused`. `by` is `agent`, `you` or `captain`. Every event has `sentence`. Events that scored something have `cost_before` and `cost_after`.
 A run's own cost is `run_cost`.
 
 In an edit's `cost`, `before` is the network just before this edit and `after` is just after it. A set that is not
@@ -659,7 +660,7 @@ What happens:
 3. Captain starts the agent's own command line with no window: `claude -p` or `codex exec`. The agent gets the
    goal, its session, its limits and the rules in `weights/playbook.md`. The only `cst` it can reach runs these on
    its one session and refuses everything else: session, report, events, layers, read, stats, heatmap, template,
-   forward, activations, gradients, trace, slice, edit, undo, redo, diff, evaluate, note. Claude Code is also
+   forward, activations, gradients, trace, slice, edit, undo, redo, diff, evaluate, note, done. Claude Code is also
    started with only its shell tool and allowed only commands that begin `cst weights`. Codex has no such
    setting, so it runs in its own sandbox and the record says it was not held to named commands.
 4. Each thing the agent does is printed as its event lands: reads, notes ("The agent thinks: ..."), edits.
@@ -668,8 +669,10 @@ What happens:
    change was right and is now wrong, or when the held-out set lost more than 1 in 100 right answers. Otherwise
    it is kept and saved as a new version. What the agent says about its own work is printed and decides nothing.
 
-Claude Code prints its answer once, at the end. If it has printed and then nothing more happens for 60 seconds,
-Captain ends its command line and judges the result. The report then says so, and it is not called out of time.
+The agent's last command is `cst weights done "<one paragraph>"`. That is how Captain knows it has finished: an
+agent's command line can stay open for minutes after its work is over. Captain gives it 15 seconds to exit, ends
+it if it has not, and judges the result. That is a finished run, not a stopped one. An agent that never says it is
+done runs to the time limit.
 
 Ctrl-C stops the agent, and so does the time limit. A stopped run takes its edits back and saves nothing, unless
 `--keep` was given. The report says "Stopped. Nothing was kept." and the edits stay in the record as taken back.
@@ -690,7 +693,7 @@ The report, also what `--json` prints:
  "label": "from the weights alone", "weights_alone": true,
  "kept": true, "reason": "Kept. The target improved (cost 9.2 to 0.01, 0 to 1 right of 1), and the rest held.",
  "taken_back": 0, "saved": "tiny@v2", "kept_in_session": false, "deployed": null,
- "stopped": false, "timed_out": false, "ended_after_answer": false, "agent_exit": 0, "agent_said": "..."}
+ "stopped": false, "timed_out": false, "ended_after_done": false, "agent_exit": 0, "agent_said": "..."}
 ```
 
 `scores` has `target`, `keep` and `test` like an edit's `cost`. `broke` is how many answers were right before and
