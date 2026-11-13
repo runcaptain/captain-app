@@ -135,5 +135,42 @@ const same = asked.length;
 watchLive(cx, ['project:gifts'], () => {});
 await new Promise((r) => setImmediate(r));
 assert.equal(asked.length, same, 'a second watcher of the same topic asks nothing new');
+// ---- a second view of the same mod hears changes after the first view is gone ----------------------------------
+// The channel's state is shared by every view of a mod. A page opened again must drive it from its own timer:
+// the first view's timer went with the first view.
+{
+  liveReset();
+  const t1 = [], t2 = [];
+  const cx1 = { timer: { every: (_ms, f) => t1.push(f) }, spawn: (f) => f(cx1), notify: () => {} };
+  const cx2 = { timer: { every: (_ms, f) => t2.push(f) }, spawn: (f) => f(cx2), notify: () => {} };
+  watchLive(cx1, ['deployed'], () => {});
+  const heard2 = [];
+  watchLive(cx2, ['notebooks'], (_cx, why) => heard2.push(why));
+  assert.equal(t2.length, 1, 'the second view has a timer of its own');
+  let n = 0;
+  answer = () => ok(3000 + (n += 1), n > 1 ? ['notebooks'] : []);
+  // Only the second view's timer runs from here: the first view is gone.
+  for (let i = 0; i < 12; i++) { now += 250; for (const f of t2) f(cx2); await new Promise((r) => setImmediate(r)); }
+  assert.ok(heard2.includes('changed'), 'it hears changes with the first view gone');
+}
+
+// ---- a long pause (the computer asleep) loses nobody ---------------------------------------------------------------
+{
+  liveReset();
+  const t3 = [];
+  const cx3 = { timer: { every: (_ms, f) => t3.push(f) }, spawn: (f) => f(cx3), notify: () => {} };
+  const heard3 = [];
+  watchLive(cx3, ['runs'], (_cx, why) => heard3.push(why));
+  let n = 0;
+  answer = () => ok(5000 + (n += 1), n > 1 ? ['runs'] : []);
+  const tick3 = async (ms = 250) => { now += ms; for (const f of t3) f(cx3); await new Promise((r) => setImmediate(r)); };
+  await tick3(); await tick3();
+  const before = heard3.length;
+  now += 8 * 3600 * 1000; // eight hours with no timer running
+  await tick3(); await tick3();
+  assert.equal(liveState().watchers, 1, 'the view is still watched after the pause');
+  assert.ok(heard3.length > before, 'and still hears changes');
+}
+
 console.log('live channel: ok');
 process.exit(0);

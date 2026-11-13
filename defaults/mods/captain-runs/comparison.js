@@ -225,8 +225,16 @@ export class Comparison {
    *  services restarted is asked for again. */
   tick(cx) {
     this.pump(cx);
-    if ((this.n = (this.n ?? 0) + 1) % 3 === 0) this.profiler.tick(cx);
-    if (this.n % 20 === 0 && this.sel && this.run?.error && !this.runR?.status) { const s = this.sel; this.sel = null; this.open(cx, s.backtest, s.version); }
+    this.profiler.auto(cx);
+  }
+
+  /** The live channel says a job moved on: a profile this comparison started is asked about. */
+  followJobs(cx) { this.profiler.tick(cx); }
+
+  /** The channel reached the services again, or is on its fallback: a run record lost while they restarted is
+   *  asked for again. */
+  retry(cx) {
+    if (this.sel && this.run?.error && !this.runR?.status) { const s = this.sel; this.sel = null; this.open(cx, s.backtest, s.version); }
   }
 
   // ---- pieces -------------------------------------------------------------------------------------------------

@@ -49,9 +49,13 @@ export class Profiler {
   }
 
   /** Every half second from the host: follow the running profile. */
-  tick(cx) {
-    // props.autoProfile (a layout, or the real-window check): profile the open run once it has loaded.
+  /** props.autoProfile (a layout, or the real-window check): profile the open run once it has loaded. */
+  auto(cx) {
     if (this.host.autoProfile && this.host.run && !this.host.run.error && !this.cur) { this.host.autoProfile = false; this.start(cx); }
+  }
+
+  /** Ask how each profile job stands. Called when the live channel says a job moved on. */
+  tick(cx) {
     for (const [, st] of this.byRun) {
       if (!st.job || st.polling) continue;
       st.polling = true;

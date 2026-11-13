@@ -3,6 +3,7 @@ import { View, div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme } from "herdr";
 import { api } from "./kit/cst.js";
+import { watchLive } from "./kit/live.js";
 import { palette, isDark, FONT } from "./kit/tokens.js";
 import { Button, plainError } from "./kit/ui.js";
 
@@ -21,8 +22,14 @@ export default class CaptainTeam extends View {
     this.body = InputState.new({ placeholder: 'Record JSON, for example {"title":"Search review"}' });
     this.body.set_value('{}'); this.visibility = 'private'; this.kind = 'investigation';
     this.refresh(cx);
+    // Live, by the one channel: whenever a setting changes, and while the channel is on its fallback because the
+    // services are not answering yet, the team connection is read again.
+    watchLive(cx, ["settings", "team"], (cx) => { if (!this.busy) this.refresh(cx); });
+    // A sign-in in progress is asked about at the pace the sign-in service sets. It is another service's clock, not
+    // a re-read of Captain's data. Until the connection has been read once (the services may still be starting),
+    // it is asked for again here.
     cx.timer.every(1000, (cx) => {
-      if (!this.connection && !this.busy) { this.refresh(cx); return; }
+      if (!this.connectionRead && !this.busy) { this.refresh(cx); return; }
       if (!this.login || this.busy || Date.now() < this.nextPoll) return;
       if (Date.now() >= this.loginExpires) { this.login = null; this.error = 'Sign-in expired. Start again.'; cx.notify(); return; }
       this.perform(cx, async () => {
@@ -41,6 +48,7 @@ export default class CaptainTeam extends View {
     if (!c.ok) return c;
     if (!this.serverInput.value() && c.data.server) this.serverInput.set_value(c.data.server);
     if (!this.workspaceInput.value() && c.data.workspace) this.workspaceInput.set_value(c.data.workspace);
+    this.connectionRead = true; // read once: from here the live channel says when to read again
     this.connection = { ...c.data, authenticated: c.data.authenticated && !this.authRejected };
     if (!this.connection.authenticated) { this.records = []; this.drafts = []; return c; }
     return this.loadRecords();
