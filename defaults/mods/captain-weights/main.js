@@ -63,6 +63,7 @@ export default class CaptainWeights extends View {
     // test window (the app sets `app.testWindow` at each start): in a person's app a layout naming it does nothing.
     this.show = shared("app.testWindow") === true ? (props()?.show ?? null) : null;
     this.model = this.show?.model ?? props()?.model ?? null; // the network open, or null for the list
+    this.showLastEdit = this.show?.openEdit === "last";
     this.list = null;       // the networks that can be opened
     this.net = null;        // the open network (shapes.js Network)
     this.problem = null;    // why it could not be read, in a sentence
@@ -138,6 +139,8 @@ export default class CaptainWeights extends View {
       if (mine !== this.reads || model !== this.model) return;
       // No session, no numbers: say why in the services' own sentence when it is one.
       if (!s.ok && !this.net) { this.problem = plainError(s.error, "Captain couldn't read that network."); return cx.notify(); }
+      // For the picture check (see `show` in init): open the last edit in the list, as a click on its line would.
+      if (s.ok && this.showLastEdit) { const last = (s.data.events ?? []).filter((e) => e.kind === "edit").at(-1); if (last) this.openEdit = last.id; }
       if (s.ok) {
         // The services answer with the newest session on the model. When an agent opens one, the page moves to
         // it: its record replaces the old one, nothing in it pulses as new, and the page listens to its topic.
