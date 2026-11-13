@@ -336,7 +336,8 @@ class SageMakerProvider(_AWS):
     # ---- staging endpoints (staging/): created, tagged, waited for and removed by Captain -------------
 
     WAIT_S = 1500  # a new endpoint took about 2 minutes when measured; SageMaker's own limit for a container to start is far longer
-    POLL_S = 10
+    POLL_S = 5
+    WAIT_LINE_S = 10  # while waiting on SageMaker, a line at least this often
 
     def _names(self, st: dict) -> dict:
         import re
@@ -524,11 +525,20 @@ class SageMakerProvider(_AWS):
                 if step["call"] in kinds:
                     made.append({"type": kinds[step["call"]][0], "name": kinds[step["call"]][1], "region": self.region})
             deadline = time.time() + self.WAIT_S
+            # SageMaker takes about two minutes and says nothing by itself. A line every 10 seconds, with how long
+            # it has been and SageMaker's own word for where it is, in a sentence.
+            began, said_at = time.time(), time.time()
+            words = {"Creating": "SageMaker is starting the machine and loading the model", "Updating": "SageMaker is moving it to the new version",
+                     "SystemUpdating": "SageMaker is updating the machine", "RollingBack": "SageMaker is going back to the version before",
+                     "InService": "SageMaker is switching over to it"}
             while True:
                 d = sm.describe_endpoint(EndpointName=n["endpoint"])
                 s = d["EndpointStatus"]
                 if s == "InService" and d.get("EndpointConfigName") == n["config"]:
                     break
+                if time.time() - said_at >= self.WAIT_LINE_S:
+                    say(f"Still starting the endpoint: {round(time.time() - began)} s. {words.get(s, 'SageMaker says ' + str(s))}.")
+                    said_at = time.time()
                 if s in ("Failed", "OutOfService") or (s == "InService" and updating and time.time() > deadline):
                     raise ProviderError(f"SageMaker could not start the endpoint: {d.get('FailureReason') or s}")
                 if time.time() > deadline:

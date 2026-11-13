@@ -365,7 +365,9 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
     # must show at once, so the records are read every time (they are on this computer or in the workspace) and
     # only the clouds' answers are kept.
     records = _records(ctx)
-    mark = tuple(sorted((pr["id"], env, str(rec.get("id")), str(rec.get("status")), str(rec.get("model_version"))) for pr, env, rec in records))
+    going = _deploying(ctx)  # deploys under way now, by (project, env)
+    mark = tuple(sorted((pr["id"], env, str(rec.get("id")), str(rec.get("status")), str(rec.get("model_version"))) for pr, env, rec in records)) + \
+        tuple(sorted((k[0], k[1], "deploying", str(v["step"]["id"])) for k, v in going.items()))
     with _lock:
         hit = _cache.get(key)
         if hit and not fresh and time.monotonic() - hit[0] < TTL_S and hit[2] == mark:
@@ -379,6 +381,8 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
         found[(s["cloud"], s["login"], s["region"])] = (things, err)
     rows, matched = [], set()
     for pr, env, rec in records:
+        if (pr["id"], env) in going and rec.get("status") != "running":
+            continue  # being deployed now: its row below says so, in place of what Captain remembers of the last run
         cloud, login, region, target = _where_of(ctx, rec)
         if cloud == "local":
             state, reason = _local_state(rec)
@@ -415,21 +419,31 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
         for t in things or []:
             if id(t) not in matched:
                 rows.append({**NO_FACTS, **_row(None, None, None, cloud, login, t.get("region") or region, t, t["state"], t.get("reason"), "unlinked", t.get("machine"), [])})
-    order = {"failed": 0, "starting": 1, "running": 2, "asleep": 3, "unknown": 4, "gone": 5, "stopped": 6}
+    # A deploy under way is a row from the moment it is accepted: there is nothing in the cloud to find yet, and
+    # a list that says "No models running" while one is being built is wrong.
+    for (pid, env), g in going.items():
+        live = next((r for r in rows if r["project"] == pid and r["env"] == env and r["link"] != "unlinked"), None)
+        if live is not None:  # a new version going onto a model that is running: the row stays, and says so
+            live["deploying"] = g
+            continue
+        rows.append(_deploying_row(g))
+    order = {"deploying": -1, "failed": 0, "starting": 1, "running": 2, "asleep": 3, "unknown": 4, "gone": 5, "stopped": 6}
     rows.sort(key=lambda r: (order.get(r["state"], 9), -(dt.datetime.fromisoformat(r["since"]).timestamp() if _iso(r.get("since")) else 0)))
     mine = [r for r in rows if r["link"] != "unlinked"]
     up = sum(1 for r in mine if r["state"] in ("running", "asleep", "starting"))
     loose = len(rows) - len(mine)
     could_not = [a for a in asked if not a["ok"]]
     # What is in a cloud now is what is counted. A model stopped earlier is remembered, not deployed.
-    text = _summary(up, [r["state"] for r in mine if r["in_cloud"] and r["state"] not in ("running", "asleep", "starting")], loose)
+    text = _summary(up, [r["state"] for r in mine if r["in_cloud"] and r["state"] not in ("running", "asleep", "starting", "deploying")], loose,
+                    sum(1 for r in mine if r["state"] == "deploying"))
     earlier = sum(1 for r in mine if not r["in_cloud"])
     if could_not:
         text += " Could not ask " + ", ".join(sorted({a["cloud_label"] for a in could_not})) + " just now."
     out = {"rows": rows, "asked": asked, "text": text, "read_at": _now(), "ttl_s": TTL_S, "stopped_earlier": earlier,
            "stopped_text": f"Stopped earlier: {earlier} model{'s' if earlier != 1 else ''}." if earlier else None}
     # Marked with the records as they stand after any correction, so the corrected answer is the one kept.
-    after = tuple(sorted((pr["id"], env, str(rec.get("id")), str(rec.get("status")), str(rec.get("model_version"))) for pr, env, rec in _records(ctx)))
+    after = tuple(sorted((pr["id"], env, str(rec.get("id")), str(rec.get("status")), str(rec.get("model_version"))) for pr, env, rec in _records(ctx))) + \
+        tuple(sorted((k[0], k[1], "deploying", str(v["step"]["id"])) for k, v in going.items()))
     with _lock:
         _cache[key] = (time.monotonic(), out, after)
     return out
@@ -459,19 +473,90 @@ def _same(tag, value) -> bool:
     return str(tag) == str(value) or str(tag) == clean_name(str(value), 60)
 
 
-def _summary(up: int, down: list[str], loose: int) -> str:
+def _summary(up: int, down: list[str], loose: int, deploying: int = 0) -> str:
     """The line beside the screen's title: what is running now. "2 models running.", "No models running.", with a
-    word for any that is in a cloud and not answering ("1 failed"). Models stopped earlier are not in a cloud and
-    are not counted here: they have their own line."""
+    word for one being deployed ("1 deploying") and for any that is in a cloud and not answering ("1 failed").
+    Models stopped earlier are not in a cloud and are not counted here: they have their own line."""
     models = lambda k: f"{k} model{'s' if k != 1 else ''}"  # noqa: E731
     said = f"{models(up)} running" if up else "No models running"
     failed = sum(1 for s in down if s == "failed")
     other = len(down) - failed
+    if deploying:
+        said += f", {deploying} deploying"
     if failed:
         said += f", {failed} failed"
     if other:
         said += f", {other} not answering"
     return said + (f", {loose} found in your cloud with no project" if loose else "") + "."
+
+
+def span_words(seconds: float) -> str:
+    """A running time as a row says it: "48 s", "2 min 10 s"."""
+    s = max(0, int(seconds))
+    return f"{s} s" if s < 90 else f"{s // 60} min {s % 60} s" if s % 60 else f"{s // 60} min"
+
+
+def _deploying(ctx: Context) -> dict:
+    """Every deploy under way now: {(project, env): {project, project_name, env, host, label, login, model_version,
+    started_at, started_by, step: {id, title, started_at, typical_s, typical}, steps, last_line}}. Read from each
+    project's deploy record. One that has said nothing for longer than a run can be silent is not counted: its
+    process is gone."""
+    from .. import projects as PR
+    from . import deploy as DP
+
+    out = {}
+    now = dt.datetime.now(dt.timezone.utc)
+    for pr in PR.listing(ctx):
+        try:
+            doc, _ = DP._read(ctx, pr["id"], ENV)
+        except Exception:  # noqa: BLE001
+            continue
+        if not doc or doc.get("status") != "running":
+            continue
+        try:
+            if (now - dt.datetime.fromisoformat(doc["updated_at"])).total_seconds() > DP.STALE_S:
+                continue
+        except (KeyError, ValueError):
+            continue
+        steps = doc.get("steps") or []
+        cur = next((x for x in steps if x.get("status") == "running"), None) or next((x for x in steps if x.get("status") == "pending"), None) or (steps[-1] if steps else {})
+        out[(pr["id"], ENV)] = {
+            "project": pr["id"], "project_name": pr.get("name") or pr["id"], "env": ENV, "host": doc.get("host"), "label": doc.get("label") or CLOUDS.get(doc.get("host"), "the cloud"),
+            "login": doc.get("login"), "model_version": doc.get("model_version"), "started_at": doc.get("started_at"), "started_by": doc.get("started_by"),
+            "step": {"id": cur.get("id"), "title": cur.get("title"), "started_at": cur.get("started_at") or doc.get("started_at"),
+                     "typical_s": cur.get("typical_s"), "typical": cur.get("typical")},
+            "steps": [{"id": x.get("id"), "title": x.get("title"), "status": x.get("status"), "seconds": x.get("seconds"), "typical_s": x.get("typical_s"),
+                       "typical": x.get("typical"), "started_at": x.get("started_at")} for x in steps],
+            "last_line": ((cur.get("lines") or [None])[-1])}
+    return out
+
+
+def deploying_words(g: dict, now: dt.datetime | None = None) -> str:
+    """A deploy under way in one sentence: "Deploying to AWS: Building the model's image, 48 s so far (usually about
+    a minute and a half)." A page that ticks draws the same sentence from the same fields on its own clock."""
+    step = g["step"]
+    try:
+        ran = ((now or dt.datetime.now(dt.timezone.utc)) - dt.datetime.fromisoformat(str(step["started_at"]))).total_seconds()
+    except (TypeError, ValueError):
+        ran = None
+    said = f"Deploying to {g['label']}: {step.get('title') or 'working'}"
+    if ran is not None:
+        said += f", {span_words(ran)} so far"
+    return said + (f" (usually {step['typical']})." if step.get("typical") else ".")
+
+
+def _deploying_row(g: dict) -> dict:
+    cloud = g.get("host") or "local"
+    return {**NO_FACTS, "id": f"{g['project']}:{g['env']}", "project": g["project"], "project_name": g["project_name"], "env": g["env"],
+            "model_version": g.get("model_version"), "model_label": model_words(g.get("model_version"), g["project"]),
+            "cloud": cloud, "cloud_label": CLOUDS.get(cloud, cloud), "login": g.get("login"), "region": None, "machine": None, "where": g["label"],
+            "name": None, "thing": THING.get(cloud), "copies": {"now": None, "min": None, "max": None},
+            "state": "deploying", "state_label": "Deploying", "state_text": deploying_words(g), "reason": None,
+            "since": g.get("started_at"), "stopped_at": None, "by": g.get("started_by"), "by_name": short_name(g.get("started_by")),
+            "link": "linked", "record_status": None, "corrected": [], "resources": [], "in_cloud": True, "remembered_text": None,
+            "sleeps": False, "address": None, "version_n": None, "deploying": g,
+            # Nothing is offered that would act on a model still being made. A deploy can't be cancelled safely yet.
+            "can": []}
 
 
 def _iso(s) -> bool:
