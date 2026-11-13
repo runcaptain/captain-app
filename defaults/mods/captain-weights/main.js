@@ -13,9 +13,10 @@ import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
 import { Button, Skeleton, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { listNetworks, readNetwork } from "./adapter.js";
-import { forward, countOf } from "./net.js";
+import { forward, backward, countOf } from "./net.js";
 import { PanZoom } from "./canvas.js";
 import { NetworkCanvas, layoutOf } from "./draw.js";
+import { Inspector } from "./inspect.js";
 
 const SIDE_W = 340; // the panel beside the drawing
 const count = (n) => Number(n).toLocaleString("en-US");
@@ -36,6 +37,8 @@ export default class CaptainWeights extends View {
     this.run = null;        // the network run on that input: activations and weighted sums
     this.sel = null;        // the open neuron: {k: column, j: index}
     this.selW = null;       // the picked weight: {k: layer, j: to, i: from}
+    this.mode = "values";   // what the lines show: "values" (the weights) or "nudges" (what the cost wants)
+    this.grad = null;       // backpropagation for the chosen input, while nudges are showing
     this.pz = new PanZoom("wt");
     this.width = 1200; this.height = 760;
     if (this.model) this.open(this.model, cx); else this.loadList(cx);
@@ -68,7 +71,13 @@ export default class CaptainWeights extends View {
   rerun() {
     const e = this.net?.examples?.[this.inputAt];
     this.run = e ? forward(this.net, e.x) : null;
+    // Worked out here from the numbers the page already has: looking never spends an agent's allowance.
+    this.grad = e && this.wantsGrad() ? backward(this.net, e.x, e.y, this.run) : null;
   }
+
+  /** Whether anything on screen needs the gradients. */
+  wantsGrad() { return this.mode === "nudges"; }
+  setMode(mode, cx) { this.mode = mode; this.rerun(); cx.notify(); }
 
   pickInput(n, cx) { this.inputAt = n; this.rerun(); cx.notify(); }
   pickNeuron(at, cx) { this.sel = this.sel && this.sel.k === at.k && this.sel.j === at.j ? null : at; this.selW = null; cx.notify(); }
@@ -77,7 +86,7 @@ export default class CaptainWeights extends View {
 
   /** What the drawing needs to know. */
   drawing() {
-    return { net: this.net, run: this.run, grad: null, sel: this.sel, selW: this.selW, mode: "values", walkedFrom: null, pulse: null };
+    return { net: this.net, run: this.run, grad: this.grad, sel: this.sel, selW: this.selW, mode: this.mode, walkedFrom: null, pulse: null };
   }
 
   header(c) {
@@ -118,13 +127,23 @@ export default class CaptainWeights extends View {
         return div().id(`wt-in-${n}`).h(26).px(9).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
           .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy)
           .on_click((_e, cx) => this.pickInput(n, cx)).child(e.name);
-      })));
+      })))
+      .child(this.modes(c));
+  }
+
+  /** What the lines show: the weights, or the way the cost wants each one moved. */
+  modes(c) {
+    const pick = (id, text, mode, tip) => { const on = this.mode === mode; return div().id(id).h(26).px(9).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+      .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).tooltip(tip)
+      .on_click((_e, cx) => this.setMode(mode, cx)).child(text); };
+    return h_flex().id("wt-modes").flex_none().gap(6).items_center()
+      .child(div().flex_none().pr(4).text_size(12.5).text_color(c.grey500).child("Lines show"))
+      .child(pick("wt-mode-values", "The weights", "values", "Each line is a weight: blue is positive, red is negative, thicker is larger"))
+      .child(pick("wt-mode-nudges", "What the cost wants", "nudges", "Each line is the nudge the cost wants for that weight on this input (its gradient, turned around): blue is up, red is down"));
   }
 
   side(c) {
-    return v_flex().id("wt-side").w(SIDE_W).flex_none().h_full().p(16).gap(8)
-      .child(div().text_size(13).font_semibold().child(this.sel ? "This neuron" : "Open a neuron"))
-      .child(div().text_size(12.5).line_height("18px").text_color(c.grey500).child("Click a circle in the drawing to see its weights, its bias and how it got its activation."));
+    return div().id("wt-side").w(SIDE_W).flex_none().h_full().overflow_y_scroll().child(div().p(16).child(Inspector(c, this)));
   }
 
   render() {

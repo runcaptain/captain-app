@@ -3,14 +3,24 @@
 // one number at a time, never derived. Also a wide network, to check that a big column collapses to a strip.
 const sig = (z) => 1 / (1 + Math.exp(-z));
 
+const act = (net, k) => net.layers[k].activation ?? net.squish ?? 'sigmoid';
+
 export function refForward(net, x) {
   let a = x.slice();
-  for (const { W, b } of net.layers) a = W.map((row, j) => { const z = row.reduce((s, w, i) => s + w * a[i], b[j]); return net.squish === 'relu' ? Math.max(0, z) : sig(z); });
+  net.layers.forEach(({ W, b }, k) => {
+    const z = W.map((row, j) => row.reduce((s, w, i) => s + w * a[i], b[j]));
+    const kind = act(net, k);
+    if (kind === 'softmax') { const m = Math.max(...z), e = z.map((v) => Math.exp(v - m)), t = e.reduce((p, q) => p + q, 0); a = e.map((v) => v / t); }
+    else a = z.map((v) => (kind === 'relu' ? Math.max(0, v) : kind === 'tanh' ? Math.tanh(v) : kind === 'linear' ? v : sig(v)));
+  });
   return a;
 }
 
 export function refCost(net, x, y) {
-  return refForward(net, x).reduce((s, v, j) => s + (v - y[j]) ** 2, 0);
+  const out = refForward(net, x);
+  if (net.cost !== 'cross_entropy') return out.reduce((s, v, j) => s + (v - y[j]) ** 2, 0);
+  const soft = act(net, net.layers.length - 1) === 'softmax';
+  return -out.reduce((s, p, j) => s + (soft ? y[j] * Math.log(p) : y[j] * Math.log(p) + (1 - y[j]) * Math.log(1 - p)), 0);
 }
 
 /** The slope of the cost against one number, measured: nudge it up and down by `h` and divide. */

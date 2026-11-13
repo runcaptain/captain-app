@@ -54,7 +54,7 @@ function record(e, ev) {
 }
 
 const measure = (net, target, others) => ({
-  target: costOf(forward(net, target.x).a.at(-1), target.y),
+  target: costOf(net, forward(net, target.x).a.at(-1), target.y),
   keep: costOver(net, others),
   answers: others.map((o) => answerOf(forward(net, o.x).a.at(-1))),
   test: costOver(net, net.test),

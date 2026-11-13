@@ -19,7 +19,7 @@ function tiny() {
   const input = (name, x, y) => ({ name, x, y: [y] });
   const examples = [input("Both off", [0, 0], 0), input("Only the first on", [1, 0], 1), input("Only the second on", [0, 1], 1), input("Both on", [1, 1], 0)];
   return {
-    id: TINY, name: "Tiny network", sizes: [2, 3, 1], squish: "sigmoid",
+    id: TINY, name: "Tiny network", sizes: [2, 3, 1], squish: "sigmoid", cost: "squared_error",
     layers: [
       // Hidden 1 turns on when either input is on, hidden 2 was meant to turn on only when both are, hidden 3
       // does little. Hidden 2's bias should be near -9: at -12 it stays half off when both inputs are on.
