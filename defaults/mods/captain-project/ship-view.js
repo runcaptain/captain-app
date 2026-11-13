@@ -146,7 +146,7 @@ function removeCreated(ship, cx) {
     let left = null, said = null;
     // What is being removed tells the live channel as it goes: read when it does. At the latest every five
     // seconds, in case a step in the cloud says nothing.
-    const ear = hear(cx, [`deployment:${pid}`, "deployed"]);
+    const ear = hear(cx, [`deployment:${pid}`, "deployed", "job:"]);
     try { for (let i = 0; r.ok && i < 6000 && ship.pid() === pid; i++) {
       const s = await api(`/api/projects/${enc(pid)}/deploy`, { scoped: false });
       // What was removed, in the services' own sentence ("Removed from AWS: the endpoint and the 7 things ...").
@@ -169,8 +169,9 @@ async function follow(ship, cx, place, planned) {
   const pid = ship.pid();
   ship.djob = { place, steps: planned.map((x) => ({ ...x, status: "pending" })), started: Date.now() };
   cx.notify();
-  // Each step of a deploy tells the live channel: read when it does. At the latest every five seconds.
-  const ear = hear(cx, [`deployment:${pid}`, "deployed"]);
+  // Each step of a deploy tells the live channel: read when it does. Its end is told by the job that runs it,
+  // whatever it is deploying to, so every job is listened to as well. At the latest every five seconds.
+  const ear = hear(cx, [`deployment:${pid}`, "deployed", "job:"]);
   const until = Date.now() + 30 * 60000;
   try { for (let i = 0; Date.now() < until && ship.pid() === pid; i++) {
     const r = await api(`/api/projects/${enc(pid)}/deploy`, { scoped: false });
