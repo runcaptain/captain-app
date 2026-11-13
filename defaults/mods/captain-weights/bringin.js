@@ -138,10 +138,10 @@ const box = (c, id, state, w) => div().id(id).w(w).h(28).flex().flex_none().item
 const capsule = (c, id, text, tip = null) => div().id(id).h(20).px(8).flex().flex_none().items_center().rounded_full().border_1().border_color(c.rule).text_size(11.5).text_color(c.grey500)
   .when(Boolean(tip), (e) => e.tooltip(tip)).child(text);
 
-/** One version of a registry: its name bright, its description muted, a capsule for its state, and one action. */
+/** One version of a registry, in the row language of the projects list (the kit's `hover` and `tint`): its name bright, its description muted, a capsule for its state, and one action. */
 function versionRow(c, v, g, k, row) {
   const id = `wt-bring-v-${g}-${k}`;
-  return h_flex().id(id).min_h(ROW_H).px(8).gap(10).items_center().rounded(6).hover((s) => s.bg(c.surface2))
+  return h_flex().id(id).min_h(ROW_H).px(8).gap(10).items_center().rounded(6).hover((s) => s.bg(c.hover))
     .child(div().flex_none().max_w(200).truncate().text_size(12.5).font_medium().text_color(c.navy).child(row.name ?? row.id ?? pathTail(row.path)))
     .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(row.description || "No description was saved with it."))
     .when(Boolean(row.here), (e) => e.child(capsule(c, `${id}-here`, `Already here as ${row.here}`)))
@@ -172,7 +172,7 @@ function registries(c, v) {
     .child(v_flex().id("wt-bring-groups").gap(2).children(groups.flatMap((g, n) => {
       const folded = b.folded.includes(g.id), rows = shown[n];
       return [
-        h_flex().id(`wt-bring-g-${n}`).h(30).px(8).gap(8).items_center().rounded(6).bg(c.surface2).cursor_pointer()
+        h_flex().id(`wt-bring-g-${n}`).h(30).px(8).gap(8).items_center().rounded(6).bg(c.tint).cursor_pointer()
           .tooltip(folded ? `Show what ${g.name} holds` : `Fold ${g.name}`)
           .on_click((_e, cx) => { b.folded = folded ? b.folded.filter((x) => x !== g.id) : [...b.folded, g.id]; cx.notify(); })
           .child(svg(icon(folded ? "chevron-right" : "chevron-down")).size(13).flex_none().text_color(c.grey500))
@@ -207,7 +207,7 @@ export function BringIn(c, v) {
         .child(div().id("wt-bring-count").flex_1().min_w(0).text_size(12.5).text_color(c.navy).child(!b.rows ? "Listing what is kept there." : rows.length ? `${int(rows.length)} ${rows.length === 1 ? "model" : "models"} can be brought in from that place.` : b.problem ? "" : "Nothing that can be brought in was found there."))
         .child(quiet(c, "wt-bring-change", "Change that place", (_e, cx) => { v.whereInput.set_value(""); v.bring = { step: "where" }; cx.notify(); })))
       .when(!b.rows, (e) => e.child(Skeleton(c, 3)))
-      .child(v_flex().children(rows.slice(0, SHOWN).map((r, n) => h_flex().id(`wt-bring-row-${n}`).min_h(ROW_H).px(8).gap(10).items_center().rounded(6).hover((s) => s.bg(c.surface2))
+      .child(v_flex().children(rows.slice(0, SHOWN).map((r, n) => h_flex().id(`wt-bring-row-${n}`).min_h(ROW_H).px(8).gap(10).items_center().rounded(6).hover((s) => s.bg(c.hover))
         .child(div().flex_none().max_w(220).truncate().text_size(12.5).font_medium().child(pathTail(r.path)))
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(r.description || "No description was saved with it."))
         .child(Button(c, `wt-bring-choose-${n}`, "Choose this one", (_e, cx) => choose(v, r, cx), { small: true })))))

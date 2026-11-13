@@ -112,6 +112,7 @@ export default class ProjectHome extends View {
     try { this.last = localStorage.getItem("project") || null; } catch { this.last = null; }
     this.listView = readListView(); // which saved view of the projects list is picked, and which groups are folded
     this.me = null;                 // who the person is, for the "Mine" view (GET /api/workspace, read with the list)
+    this.menuOpen = Boolean((layoutProps?.() ?? {}).moreOpen); // the page's More menu (the real-window check opens it)
     this.displayOpen = Boolean((layoutProps?.() ?? {}).displayOpen); // the Display popover (the real-window check opens it)
     this.handle = cx.focus_handle?.() ?? null; // so Escape reaches the page
     this.width = 900;               // the page's width, until it says its own: narrow rows drop their last columns
@@ -457,7 +458,7 @@ export default class ProjectHome extends View {
       !inp.required ? [`${id}-remove`, "Remove from this project", (cx) => this.removeInput(cx, inp)] : null,
     ].filter(Boolean);
     const openMore = this.inputMenu === inp.slot;
-    const moreBtn = extra.length ? Popup.new(`${id}-more-pop`, Button(c, `${id}-more`, "More", (_e, cx) => { this.inputMenu = openMore ? null : inp.slot; cx.notify(); }, { small: true, disabled: Boolean(this.running()) })).anchor("bottom_right")
+    const moreBtn = extra.length ? Popup.new(`${id}-more-pop`, Button(c, `${id}-more`, "More", (_e, cx) => { this.inputMenu = openMore ? null : inp.slot; cx.notify(); }, { small: true, disabled: Boolean(this.running()) })).anchor("top_right")
       .when(openMore, (e) => e.content(v_flex().id(`${id}-more-list`).w(220).py(4).bg(c.surface).border_1().border_color(c.grey300)
         .children(extra.map(([eid, label, act]) => h_flex().id(eid).h(30).px(10).items_center().cursor_pointer().text_size(13).text_color(c.navy).hover((s) => s.bg(c.surface2))
           .on_click((_e, cx) => { this.inputMenu = null; cx.notify(); act(cx); }).child(label))))) : null;
@@ -1172,13 +1173,15 @@ export default class ProjectHome extends View {
     if (a.action === "make-champion" && e) { this.open = e.id; cx.notify(); }
   }
 
-  /** The header's menu: what's rarely needed. */
+  /** The header's menu: what's rarely needed. A popup's anchor names the popover's own corner, so "top_right"
+   *  puts its top right corner at the button and it opens below. With "bottom_right" it opened upward, over
+   *  its own button. */
   moreMenu(c) {
     const costs = this.costs?.project === this.pid() ? this.costs : null;
     const recent = (costs?.recent ?? []).filter((r) => r.text).slice(0, 3);
     const trigger = div().id("ph-more").h(26).px(10).flex().items_center().cursor_pointer().text_size(13).font_medium().text_color(c.navy).bg(c.surface).border_1().border_color(c.grey300)
       .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => { this.menuOpen = !this.menuOpen; cx.notify(); }).child("More");
-    return Popup.new("ph-more-pop", trigger).anchor("bottom_right")
+    return Popup.new("ph-more-pop", trigger).anchor("top_right")
       .when(Boolean(this.menuOpen), (e) => e.content(v_flex().id("ph-more-list").w(280).py(4).bg(c.surface).border_1().border_color(c.grey300)
         // Not a button: what this project has cost on the cloud so far, and its last few runs there.
         .when(Boolean(costs), (x) => x.child(v_flex().id("ph-cost").px(10).py(6).gap(4).border_b(1).border_color(c.rule)
