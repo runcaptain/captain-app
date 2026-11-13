@@ -11,6 +11,8 @@
 //   GET  /api/weights/sessions/{session}            -> Session
 //   POST /api/weights/sessions/{session}/edits      <- EditRequest   -> WeightEvent
 //   POST /api/weights/sessions/{session}/undo       <- {edit: id, by} -> WeightEvent
+//   GET  /api/weights/registry?from=                -> {versions: [{path, address, name, description}], count}
+//   POST /api/weights/import                        <- {folder: a registry row's address, name} -> {model, version, ref}
 //   POST /api/weights/sessions/{session}/save       <- {note, by} -> {model, version, ref, changed}
 //   POST /api/weights/sessions/{session}/program    <- {goal, max_edits, target_input, target_output} -> {job, session, agent, goal}
 //   POST /api/weights/sessions/{session}/program/stop -> {session, stopping}

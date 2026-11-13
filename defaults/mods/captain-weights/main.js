@@ -34,6 +34,7 @@ import { partsState, partsFacts, partsPin, openPart, loadPart, loadRanker, showV
 import { PartsCanvas, TreeCanvas, partsLayout } from "./partsdraw.js";
 import { AgentStrip, stripHeight } from "./program.js";
 import { SaveLine, saveShows, SAVE_H } from "./save.js";
+import { BringIn, list as listBringIn } from "./bringin.js";
 import { stagePartTyped, putBackPart, leavePart } from "./parthand.js";
 import { WalkButtons, walkWords, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
@@ -120,6 +121,9 @@ export default class CaptainWeights extends View {
     this.partInput = InputState.new({ placeholder: "a number" }); // the value typed for a trained model's picked number (parthand.js)
     this.partInput.on("change", (_e, ecx) => stagePartTyped(this, ecx ?? cx));
     this.partInput.on("submit", (_e, ecx) => stagePartTyped(this, ecx ?? cx)); // Enter only stages, as for a neuron
+    this.whereInput = InputState.new({ placeholder: "a folder or a storage address" }); // where trained models are kept, typed once (bringin.js)
+    this.nameInput = InputState.new({ placeholder: "a name" }); // the name for a model being brought in
+    this.bring = null;      // the picker for bringing in a trained model, while it is open (bringin.js)
     this.goalInput = InputState.new({ placeholder: "What should the agent fix?" }); // the goal for an agent (program.js)
     this.agentRun = null;   // an agent started from here: {state, goal, job, says} (program.js)
     this.agentNote = null;  // why the agent could not be started or stopped
@@ -133,6 +137,8 @@ export default class CaptainWeights extends View {
     this.asked = 0;         // the `at` of the last request from another screen that was handled
     this.readAt = 0;        // when the page last read
     if (this.model) this.open(this.model, cx); else this.loadList(cx);
+    // For the picture check only (see `show` above): the picker open on a place, as if it had been kept.
+    if (this.show?.bringFrom) listBringIn(this, cx, String(this.show.bringFrom));
     this.takeOpen(cx);
     // A link on another screen, the palette or `cst app open` cannot reach this page's props: it sets the shared
     // "open" value and selects this block. Looked at a few times a second, as the other screens do. Reads no data.
@@ -579,6 +585,8 @@ export default class CaptainWeights extends View {
             .when(Boolean(m.says), (x) => x.child(div().id(`wt-open-says-${m.id}`).text_size(11.5).line_height("16px").text_color(c.grey500).child(m.says))))
           .when(!isParts(m) && Boolean(m.says), (e) => e.child(div().text_size(12.5).line_height("17px").text_color(c.grey500).child(m.says))))
         .child(Button(c, `wt-open-btn-${m.id}`, `Open ${m.name}`, (_e, cx) => this.open(m.id, cx), { small: true })))))
+      // A trained model kept somewhere else is brought in from here, when the services answer.
+      .when(Boolean(this.list) && Boolean(this.fromServices), (e) => e.child(BringIn(c, this)))
       // Without the services there is only the tiny network: say where the bigger one comes from.
       .when(Boolean(this.list) && !this.fromServices, (e) => e.child(div().id("wt-needs-services").max_w(560).text_size(11.5).line_height("16px").text_color(c.grey500)
         .child("The digit reader (784 inputs, 13,002 numbers) needs Captain's services, which are not answering. It shows here when they do.")));
