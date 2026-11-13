@@ -225,10 +225,13 @@ export default class CaptainNav extends View {
       cx.timer.every(400, (cx) => { const now = placeChanged(); if (now !== seen) { seen = now; cx.spawn(async (cx) => { await this.loadPlace(); cx.notify(); }); } });
     }
     this.explorer = new Explorer();
-    this.explorer.start(cx);
+    // The sidebar is mounted twice: once as itself and once as the small brand mark in the title bar. Only the
+    // sidebar shows the Explorer and the team's views. Started in both, every read was made twice, the slow one
+    // of MLflow's models among them.
+    if (props()?.part !== "brand") this.explorer.start(cx);
     // Team views from the project's captain/views/ (teamviews.js).
     this.teamViews = new TeamViews();
-    this.teamViews.start(cx);
+    if (props()?.part !== "brand") this.teamViews.start(cx);
     this.refresh(cx);
     watchWorkspace(cx, (cx) => { this.cloud = null; setShared("captain.scope", null); this.refresh(cx); this.explorer.load(cx); });
     // Every 3 s until Captain's services answer. From then on nothing is read on a clock: the chips, the counts

@@ -11,6 +11,7 @@ what it already reads. The feed carries no data: only "this changed".
     weights, weights:<model>        weights-session:<id>
     deployed, deployment:<project>  notebooks                   logins      compute     settings     team
     pins (what a person gave their agent)                       views (the team's own screens, in the project folder)
+    mlflow (the registered models were read again and are new)
 
 A change to one thing bumps its own topic and its list's (project:shop and projects), so a list listens to the
 plural and a page to its own.
