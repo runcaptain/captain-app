@@ -24,6 +24,7 @@ import { ProjectBadge } from "./kit/projecticon.js";
 import { int } from "./kit/num.js";
 import { Ship } from "./ship.js";
 import { costText } from "./kit/cost.js";
+import { ProjectsList, Quiet, readListView, keepListView } from "./projects-list.js";
 
 const RUN_WORDS = { training: "Training", evaluation: "Offline evaluation", "synthetic-events": "Simulated events", snapshot: "Snapshot", judging: "Judging", staging: "Deploying", workflow: "Workflow" };
 const day = (iso) => (iso ? String(iso).slice(0, 10) : "");
@@ -109,6 +110,9 @@ export default class ProjectHome extends View {
     this.open = null; this.everything = false; this.note = null; this.busy = false; this.busyWhat = null;
     this.choosing = false; this.allModels = null; this.owners = {};
     try { this.last = localStorage.getItem("project") || null; } catch { this.last = null; }
+    this.listView = readListView(); // which saved view of the projects list is picked, and which groups are folded
+    this.me = null;                 // who the person is, for the "Mine" view (GET /api/workspace, read with the list)
+    this.width = 900;               // the page's width, until it says its own: narrow rows drop their last columns
     this.shipPath = new Ship(this); // Stage, Try it: made here, because a text box can't be made while drawing
     if ((layoutProps?.() ?? {}).shipFrom) this.shipPath.more = "traffic"; // the real-window check: open on "Send it real traffic"
     // The real-window check: draw the confirm, or a deploy in progress, from the plan or steps it hands over, so
@@ -968,6 +972,11 @@ export default class ProjectHome extends View {
       this.deployedBy = Object.fromEntries((r.data?.rows ?? []).filter((x) => x.project).map((x) => [x.project, x]));
       cx.notify();
     });
+    // Who the person is, for the "Mine" view. Read once: it does not change while the page is open.
+    if (!this.me) cx.spawn(async (cx) => {
+      const r = await api("/api/workspace", { scoped: false });
+      if (r.ok && typeof r.data?.user === "string") { this.me = r.data.user; cx.notify(); }
+    });
     for (const p of this.projects ?? []) {
       cx.spawn(async (cx) => {
         const [st, ex] = await Promise.all([api(`/api/projects/${enc(p.id)}/stages`, { scoped: false }), api(`/api/projects/${enc(p.id)}/experiments`, { scoped: false })]);
@@ -999,39 +1008,31 @@ export default class ProjectHome extends View {
     return { label: "New candidate", task: "experiment" };
   }
 
-  /** One project, as a card: its name, what it is, how many models, its state in one plain sentence (the sentence
-   *  the project's own page uses), and where it is deployed. The whole card opens the project. */
-  projectCard(c, p, i) {
-    const sum = this.summaries?.[p.id];
-    const ready = sum && !sum.failed;
-    const exps = ready ? sum.exps.experiments ?? [] : [];
-    const champ = ready && sum.exps.champion ? inProject(parseRef(sum.exps.champion).name) : null;
+  /** A project's state in one plain sentence: the sentence its own page uses, for its row in the list. */
+  rowState(sum) {
+    const exps = sum.exps.experiments ?? [];
+    const champ = sum.exps.champion ? inProject(parseRef(sum.exps.champion).name) : null;
     // The model worth a sentence: the newest one judged against the compared model, else the compared model itself.
     const told = [...exps].reverse().find((e) => !e.is_champion && e.evaluation) ?? exps.find((e) => e.is_champion) ?? exps.at(-1) ?? null;
-    const state = !told ? "No model yet." : `${inProject(parseRef(told.pipeline).name)}: ${verdictSentence(told, champ).replace(/^./, (x) => x.toLowerCase())}`;
-    const rec = ready ? sum.stages.ship?.staging ?? null : null;
+    return !told ? "No model yet." : `${inProject(parseRef(told.pipeline).name)}: ${verdictSentence(told, champ).replace(/^./, (x) => x.toLowerCase())}`;
+  }
+
+  /** Whether a project's model is running, and where, in words: {up, text}. */
+  rowDeployed(p, sum) {
+    const rec = sum.stages.ship?.staging ?? null;
     const place = { local: "this computer", aws: "AWS", modal: "Modal", gcp: "Google Cloud", azure: "Azure" }[rec?.host ?? (rec?.kind === "local" ? "local" : "")] ?? null;
     // The cloud's own answer first, when there is one. Else the project's record.
     const row = this.deployedBy?.[p.id] ?? null;
     const up = row ? ["running", "asleep", "starting"].includes(row.state) : rec?.status === "running";
     const where = row ? (row.cloud === "local" ? "this computer" : row.cloud_label ?? place) : place;
-    const deployed = up ? `Running on ${where ?? "your cloud"}` : "Not deployed";
-    const what = p.description || (ready ? sum.stages.recipe?.label : null) || "";
-    return v_flex().id(`ph-p-${i}`).w(300).min_h(176).flex_none().p(14).gap(8).bg(c.surface).border_1().border_color(c.rule).cursor_pointer()
-      .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => this.pickProject(cx, p))
-      .child(h_flex().gap(10).items_center()
-        .child(ProjectBadge(c, p, 28))
-        .child(v_flex().flex_1().min_w(0)
-          .child(div().id(`ph-p-${i}-name`).truncate().text_size(15).font_semibold().child(p.name))
-          .when(Boolean(what), (e) => e.child(div().id(`ph-p-${i}-what`).truncate().text_size(12.5).text_color(c.grey500).child(what)))))
-      .child(!sum ? div().text_size(12.5).text_color(c.grey500).child("Reading...")
-        : sum.failed ? div().text_size(12.5).text_color(c.grey500).child("Couldn't read this project. Open it to try again.")
-        : v_flex().gap(4)
-          .child(div().id(`ph-p-${i}-models`).text_size(12.5).text_color(c.grey900).child(`${int(exps.length)} model${exps.length === 1 ? "" : "s"}`))
-          .child(div().id(`ph-p-${i}-state`).text_size(12.5).line_height("18px").text_color(c.grey900).child(state))
-          .child(div().id(`ph-p-${i}-deployed`).text_size(12.5).text_color(c.grey900).child(deployed)))
-      .child(div().flex_1())
-      .child(h_flex().child(Button(c, `ph-p-${i}-open`, "Open", (_e, cx) => this.pickProject(cx, p), { small: true })));
+    return { up, text: up ? `Running on ${where ?? "your cloud"}` : "Not deployed" };
+  }
+
+  /** Pick a saved view of the list, or fold a group. Both are kept on this computer as the person left them. */
+  pickListView(view, cx) { this.listView = { ...this.listView, view }; keepListView(this.listView); cx.notify(); }
+  foldGroup(id, cx) {
+    const folded = this.listView.folded.includes(id) ? this.listView.folded.filter((g) => g !== id) : [...this.listView.folded, id];
+    this.listView = { ...this.listView, folded }; keepListView(this.listView); cx.notify();
   }
 
   /** 1. What you're building: the recipe that decided the inputs. */
@@ -1153,11 +1154,8 @@ export default class ProjectHome extends View {
   list(c) {
     const ps = this.projects;
     if (this.listProblem) return Problem(c, this.listProblem, (cx) => { this.listProblem = null; this.load(cx); });
-    if (ps === null) return Skeleton(c, 4);
     const newBtn = Button(c, "ph-empty-new", "New project", () => form("project"), { kind: "primary" });
-    if (!ps.length) return Empty(c, "Start with a project", "A project holds one model you're building: its data, the models you train and compare, and where it's deployed.", newBtn);
-    return v_flex().gap(10)
-      .child(h_flex().id("ph-projects").flex_wrap().items_start().gap(10).children(ps.map((p, i) => this.projectCard(c, p, i))));
+    return ProjectsList(c, this, Quiet(c, "ph-empty", "folder", "Start with a project", "A project holds one model you're building: its data, the models you train and compare, and where it's deployed.", newBtn));
   }
 
   render() {
@@ -1210,6 +1208,7 @@ export default class ProjectHome extends View {
       .when(!this.shipFirst, (e) => e.child(this.ship(c)))
       .child(this.everythingPart(c));
     return v_flex().id("project-home").size_full().bg(c.canvas).font_family(FONT).text_color(c.navy)
+      .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1) { this.width = size.width; cx.notify(); } })
       .child(head)
       // A staged model's page fills the window: its tab bar stays put and the tab's content scrolls by itself.
       .child(fill ? v_flex().id("ph-body").flex_1().min_h(0).px(24).py(12).child(body)
