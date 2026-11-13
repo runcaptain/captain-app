@@ -630,7 +630,8 @@ export default class CaptainWeights extends View {
       this.treePz ??= new PanZoom("wr");
       // On a page too narrow for both side by side, the inputs sit over the tree.
       const half = Math.round(ch * 0.46), BAR = 36;
-      const drawn = (w, h) => v_flex().w(w).child(TreeBar(c, this)).child(tree ? TreeCanvas(c, tree, { id: "wr", pz: this.treePz, width: w, height: h - BAR })
+      const drawn = (w, h) => v_flex().w(w).child(TreeBar(c, this)).child(tree ? TreeCanvas(c, tree, { id: "wr", pz: this.treePz, width: w, height: h - BAR, open: pm.treeOpen,
+        onOpen: (id, cx) => { pm.treeOpen = new Set(pm.treeOpen).add(id); cx.notify(); } })
         : div().id("wr-none").w(w).text_size(12.5).line_height("18px").text_color(c.grey500).child(waiting ? "Reading the ranker." : "No tree of this ranker was sent to draw."));
       return v_flex().flex_1().min_h(0).child(strip)
         .when(!narrow, (e) => e.child(h_flex().flex_1().min_h(0).child(div().pl(20).child(drawn(cw, ch))).child(rule).child(panel(RankerPanel(c, this, sp.rail - 30), false, sp.rail))))

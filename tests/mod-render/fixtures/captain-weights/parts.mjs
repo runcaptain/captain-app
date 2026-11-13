@@ -72,6 +72,13 @@ export function partsModel(o = {}) {
 
 const leaf = (n, value) => ({ leaf: n, value, count: 10 });
 const ask = (input, name, threshold, left, right, more = {}) => ({ input, name, threshold, gain: 5, categorical: false, missing_goes: 'left', left, right, ...more });
+/** A full tree `depth` questions deep, with made-up thresholds: 2^depth leaves. */
+function deepTree(depth, n = { at: 0 }) {
+  if (depth === 0) return leaf(n.at++, Number((0.01 * (n.at % 7) - 0.03).toFixed(2)));
+  const mine = n.at++;
+  return ask(mine % 3, ['price', 'items seen', 'days since last visit'][mine % 3], mine + 1, deepTree(depth - 1, n), deepTree(depth - 1, n));
+}
+
 /** The services' answer for one ranker (`GET /api/weights/models/demo-session/trees?ranker=`). A value at or below
  *  the threshold goes left. */
 export function rankerAnswer(ranker = 'full', o = {}) {
@@ -88,6 +95,7 @@ export function rankerAnswer(ranker = 'full', o = {}) {
       { tree: 0, leaves: 4, depth: 2, root: ask(1, 'price', 12.5, ask(0, 'items seen', 3, leaf(0, -0.05), leaf(1, 0.21)), ask(2, 'days since last visit', 7, leaf(2, 0.09), leaf(3, -0.18))) },
       { tree: 1, leaves: 3, depth: 2, root: ask(2, 'days since last visit', 2, leaf(0, -0.11), ask(1, 'price', 30, leaf(1, -0.07), leaf(2, 0.14))) },
       { tree: 2, leaves: 2, depth: 1, root: ask(0, 'shop section', 3, leaf(0, 0.02), leaf(1, -0.02), { categorical: true }) },
+      ...(o.deep ? [{ tree: 3, leaves: 32, depth: 5, root: deepTree(5) }] : []),
     ],
     rule: 'At each question, a value at or below the threshold goes left. Anything else goes right.' };
 }

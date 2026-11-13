@@ -333,6 +333,7 @@ props_of() {
     captain-weights:parts-attention) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"part": "L0.self_attn", "head": 1}' ;;
     captain-weights:parts-table) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"part": "item", "row": 2}' ;;
     captain-weights:parts-rankers) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"rankers": true}' ;;
+    captain-weights:parts-tree) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"rankers": true, "deep": true, "tree": 3}' ;;
     captain-weights:tiny-walk) echo '{"show": {"model": "starter:tiny", "input": 3, "walk": 2}}' ;;
     captain-weights:tiny-plain) echo '{"show": {"model": "starter:tiny", "input": 1}}' ;;
     captain-weights:services-tiny-neuron) echo '{"show": {"model": "tiny", "input": 1, "neuron": [1, 1], "ask": true}}' ;;

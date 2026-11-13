@@ -15,7 +15,8 @@ const { default: Weights } = await import('../../defaults/mods/captain-weights/m
 const { weightsTransport, partsFrom, isParts } = await import('../../defaults/mods/captain-weights/adapter.js');
 const { localReset } = await import('../../defaults/mods/captain-weights/local.js');
 const { liveTransport, liveReset } = await import('../../defaults/mods/captain-weights/kit/live.js');
-const { partsLayout, treeLayout, reduceGrid, splitWords, leafWords, HEAT_MAX } = await import('../../defaults/mods/captain-weights/partsdraw.js');
+const { partsLayout, treeLayout, reduceGrid, splitWords, leafWords, HEAT_MAX, READABLE } = await import('../../defaults/mods/captain-weights/partsdraw.js');
+const { PanZoom } = await import('../../defaults/mods/captain-weights/canvas.js');
 const { partSentence, partsFacts, gainWords, windowOf, largestRows, READ_ONLY, WINDOW } = await import('../../defaults/mods/captain-weights/parts.js');
 const { MAX_SHAPES } = await import('../../defaults/mods/captain-weights/draw.js');
 
@@ -178,6 +179,55 @@ test('rows read their names where the services give them, and a guess is said', 
   const plain = await page(PARTS, [1280, 800], { plain: true });
   await plain.click('wp-part-item');
   assert.ok(plain.text().includes('Largest rows') && plain.byIdPrefix('wt-part-labels-says').length === 0);
+});
+
+test('a deep tree shows three levels at a readable size, and a cut branch opens in place', async () => {
+  const h = await page(PARTS, [600, 760], { deep: true });
+  await h.click('submenu-rankers');
+  for (let n = 0; n < 3; n++) await h.click('wt-ranker-tree-next');
+  assert.equal(textOf(h, 'wt-ranker-tree-at'), 'Tree 4 of the first 4 is drawn (the ranker has 40).');
+  // 1 + 2 + 4 questions drawn, and each of the 8 branches under them is one box.
+  assert.equal(h.byIdPrefix('wr-node-').length, 7);
+  const stubs = h.byIdPrefix('wr-more-');
+  assert.equal(stubs.length, 8);
+  assert.ok(stubs.every((e) => e.kids[0].kids[0] === '3 more questions'), 'each says how many questions it holds');
+  assert.ok(h.mod.treePz.zoom >= 0.9, `readable: ${h.mod.treePz.zoom}`);
+  assert.equal(h.byIdPrefix('wr-minimap').length, 1, 'the map stays');
+  // Opening one shows it and the level under it, in place: the others stay cut.
+  const id = stubs[0].call('id')[0].replace('wr-more-', '');
+  await h.click(`wr-more-${id}`);
+  assert.equal(h.byIdPrefix('wr-more-').length, 7);
+  assert.equal(h.byIdPrefix('wr-node-').length, 7 + 3 + 4, 'its three questions and their four leaves');
+  const L = treeLayout(h.mod.pm.rankers.full.shown[3].nodes, { levels: 3, open: h.mod.pm.treeOpen });
+  for (const a of L.boxes) for (const b of L.boxes) if (a !== b && a.y === b.y) assert.ok(a.x + a.w <= b.x || b.x + b.w <= a.x, 'no two boxes overlap');
+  assert.equal(treeLayout(h.mod.pm.rankers.full.shown[3].nodes).boxes.filter((b) => b.stub).length, 0, 'with no limit the whole tree is laid out');
+  // Another tree starts cut again.
+  await h.click('wt-ranker-tree-prev');
+  await h.click('wt-ranker-tree-next');
+  assert.equal(h.byIdPrefix('wr-more-').length, 8);
+});
+
+test('the diagram opens fitted when its names stay readable, else at a readable size from its left edge, and Fit holds', async () => {
+  const pz = new PanZoom('t');
+  pz.settleReadable(400, 200, 1000, 600, READABLE);
+  assert.ok(pz.zoom > 1 && Math.abs(pz.pan.x + 200 * pz.zoom - 500) < 1e-9, 'a small drawing is fitted whole, centred');
+  const long = new PanZoom('t');
+  long.settleReadable(3000, 400, 600, 500, READABLE);
+  assert.deepEqual([long.zoom, long.pan.x], [READABLE, 24], 'too long to read fitted: readable, from the left edge');
+  assert.equal(long.pan.y, (500 - 400 * READABLE) / 2, 'and whole top to bottom when that fits');
+  const tall = new PanZoom('t');
+  tall.settleReadable(3000, 1200, 600, 400, READABLE);
+  assert.equal(tall.pan.y, 24, 'taller than the box: its top is in view, not its middle');
+  // On the page: the demo model is too long for 560 px, so it opens readable with the tables in view.
+  const h = await page(PARTS, [600, 760]);
+  assert.equal(h.mod.pz.zoom, READABLE);
+  assert.equal(h.mod.pz.pan.x, 24);
+  // Fit shows it all, and the next draw leaves it alone.
+  await h.click('wp-zoom-fit');
+  const z = h.mod.pz.zoom;
+  assert.ok(z < READABLE);
+  await h.idle(1);
+  assert.equal(h.mod.pz.zoom, z);
 });
 
 test('a long list of inputs shows about ten and scrolls by itself, and both lists open whole', async () => {

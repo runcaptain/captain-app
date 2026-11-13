@@ -11,4 +11,4 @@ for (const p of partsModel().parts) {
   else paths.push(`${s}/heatmap?tensor=${p.tensors[0]}&watch=1`);
   if (p.kind === 'embedding') paths.push(`${s}/nearest?tensor=${p.tensors[0]}&row=${Math.min(show.row ?? 0, p.shape[0] - 1)}&top=8&watch=1`);
 }
-process.stdout.write(JSON.stringify({ show: { model: PARTS, answers: Object.fromEntries(paths.map((p) => [p, partsRoutes(p)])), ...show } }));
+process.stdout.write(JSON.stringify({ show: { model: PARTS, answers: Object.fromEntries(paths.map((p) => [p, partsRoutes(p, { deep: Boolean(show.deep) })])), ...show } }));

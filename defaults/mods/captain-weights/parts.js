@@ -26,6 +26,7 @@ export function partsState(model) {
     session: null, rankerAt: 0, treeAt: 0, rankers: {}, rankerProblem: null,
     labels: {},          // what each row of a table stands for, by part: {labels, says, sure} (asked for once)
     compared: null,      // the rankers side by side: which use each input
+    treeOpen: new Set(), // the cut branches of the drawn tree that a person opened
     allInputs: false, allUnused: false, copied: false };
 }
 
@@ -128,7 +129,7 @@ export function loadRanker(v, cx) {
 
 /** Show the model or its rankers. */
 export function showView(v, view, cx) { v.pm.view = view; if (view === "rankers") loadRanker(v, cx); cx.notify(); }
-export function pickRanker(v, n, cx) { v.pm.rankerAt = n; v.pm.treeAt = 0; v.treePz = null; v.pm.rankerProblem = null; v.pm.allInputs = false; v.pm.allUnused = false; loadRanker(v, cx); cx.notify(); }
+export function pickRanker(v, n, cx) { v.pm.rankerAt = n; v.pm.treeAt = 0; v.treePz = null; v.pm.treeOpen = new Set(); v.pm.rankerProblem = null; v.pm.allInputs = false; v.pm.allUnused = false; loadRanker(v, cx); cx.notify(); }
 
 /** Open a part (or close it, on a second click with no head named). */
 export function openPart(v, id, head, cx) {
@@ -246,7 +247,7 @@ export function gainWords(i) {
 export function TreeBar(c, v) {
   const s = v.pm, r = rankerOf(v), shown = r?.shown ?? [];
   const step = (id, text, to, off) => div().id(id).h(26).px(9).flex().flex_none().items_center().text_size(12.5).border_1().bg(c.surface).border_color(c.grey300).text_color(off ? c.grey500 : c.navy)
-    .when(!off, (e) => e.cursor_pointer().hover((x) => x.border_color(c.blue).text_color(c.blue)).on_click((_e, cx) => { s.treeAt = to; v.treePz = null; cx.notify(); })).child(text);
+    .when(!off, (e) => e.cursor_pointer().hover((x) => x.border_color(c.blue).text_color(c.blue)).on_click((_e, cx) => { s.treeAt = to; v.treePz = null; s.treeOpen = new Set(); cx.notify(); })).child(text);
   return h_flex().id("wt-ranker-trees").h(36).flex_none().gap(6).items_center()
     .child(div().id("wt-ranker-tree-at").flex_1().min_w(0).truncate().text_size(12.5).text_color(c.navy)
       .child(shown.length ? `Tree ${int(s.treeAt + 1)} of the first ${int(shown.length)} is drawn${(r.trees ?? 0) > shown.length ? ` (the ranker has ${int(r.trees)})` : ""}.` : ""))
