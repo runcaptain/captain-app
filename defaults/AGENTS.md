@@ -1252,9 +1252,16 @@ runs, and the name it is saved under.
   deep, not the usual 10. Human graded."), in its warnings and in its report. Two runs at different depths are
   never compared as the same measure: `GET /api/compare-runs` lists it as `different-depth`. Say the depth
   whenever you quote such a number.
-- Two things the owner asked for are not something a run can do yet, so the form says them instead of drawing
-  a control that does nothing: which slices (a run always reports by group and by traffic), and which measures
-  to compute (all of them). `GET /api/evaluations/options` lists these under `not_yet`, with the reason.
+- **Which measures to compute is a box on each measure.** Clearing one leaves it out of the run
+  (`measures` on `POST /api/backtests`). The measure that decides the verdict is always computed, and the
+  services refuse a choice without it. A measure left out has no number anywhere: a dash, never a zero.
+- **What to report the result by is a row of chips**: any column of the questions that is a group, and traffic
+  when the questions carry weights (`slices`; `GET /api/evaluations/slices?queries=` lists the choices). For a
+  person's own table, a column picked here is kept on each question (`mapping.also`). Nothing picked means the
+  usual: by group, then by traffic.
+- A run limited to some measures, or grouped another way, says so in its verdict sentence, like depth
+  ("Only nDCG and MRR were computed.", "Sliced by device."). Each row of `GET /api/regression` and
+  `GET /api/runs/{name}` carries these sentences in `not_usual`. `not_yet` in the options is empty now.
 - From a terminal the same thing is `cst backtest plan` then `cst backtest run`.
 
 ## Captain project page (Projects)

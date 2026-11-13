@@ -159,6 +159,8 @@ def compatibility(ctx: Context, run_ref: str) -> dict:
         warnings.append({"code": "incomplete", "text": "an arm has judged@10 under 90%, so its nDCG is understated"})
     for words in M.non_default(run.depths):
         warnings.append({"code": "depth", "text": words + " Compare it only with runs measured at the same depth"})
+    for words in M.measures_words(run.measures):
+        warnings.append({"code": "measures", "text": words + " The others were not asked for, so they have no number"})
     jud = [x.judged_at_10 for x in run.arms if x.judged_at_10 is not None]
     if len(jud) > 1 and max(jud) - min(jud) > 0.1:
         warnings.append({"code": "uneven-coverage", "text": f"judged@10 differs between arms ({min(jud):.0%} to {max(jud):.0%}), so part of the delta can come from coverage, not quality"})
@@ -232,7 +234,8 @@ def regression(ctx: Context, member=None, model: str | None = None, limit: int =
                          "evidence": p.get("evidence"), "value": score.get(p.get("b")), "against_value": score.get(p.get("a")),
                          "too_few_judged": not r.complete, "own_labeler": own, "independent": r.independent,
                          # How deep the measures looked, and what about that is not the usual: it goes in the verdict.
-                         "depths": M.check_depths(r.depths), "not_usual": M.non_default(r.depths)})
+                         "depths": M.check_depths(r.depths), "not_usual": M.not_usual(r),
+                         "measures": list(r.measures), "slices": list(r.slices)})
     models = sorted({bare(r["model"]) for r in rows if r["model"]})
     if model:
         rows = [r for r in rows if bare(r["model"]) == bare(model)]

@@ -501,12 +501,14 @@ export class Comparison {
 
   segments(c) {
     const rows = this.run.segments ?? [];
-    const kinds = [["class", "By query class"], ["traffic", "By traffic: head, torso and tail"]];
+    // The usual two, then any column of the questions the evaluation asked to be sliced by.
+    const kinds = [["class", "By query class"], ["traffic", "By traffic: head, torso and tail"],
+      ...[...new Set(rows.map((r) => r.kind))].filter((k) => k !== "class" && k !== "traffic").map((k) => [k, `By ${k}`])];
     return v_flex().id("segments").flex_none().pb(10).gap(14)
       .when(!rows.length, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child("This run has no slices.")))
       .children(kinds.map(([kind, title]) => {
         const segs = [...new Set(rows.filter((r) => r.kind === kind).map((r) => r.segment))];
-        if (!segs.length) return kind === "traffic" && rows.length ? div().text_size(12).text_color(c.grey500).child("No traffic slices: the queries carry no weights.") : div();
+        if (!segs.length) return kind === "traffic" && rows.length && !(this.run.slices ?? []).length ? div().text_size(12).text_color(c.grey500).child("No traffic slices: the queries carry no weights.") : div();
         const ds = rows.filter((r) => r.kind === kind && r.delta !== null);
         const R = Math.max(0.01, ...ds.map((r) => Math.max(Math.abs(r.ci_low ?? 0), Math.abs(r.ci_high ?? 0))));
         return v_flex().border_1().border_color(c.rule)

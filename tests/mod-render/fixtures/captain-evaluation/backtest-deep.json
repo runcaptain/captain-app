@@ -55,5 +55,12 @@
  ],
  "depths": {
   "ndcg@10": 20
- }
+ },
+ "measures": [
+  "ndcg@10",
+  "mrr"
+ ],
+ "slices": [
+  "device"
+ ]
 }

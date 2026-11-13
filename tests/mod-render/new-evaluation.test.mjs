@@ -18,6 +18,7 @@ const root = path.resolve(here, '../..');
 globalThis.__fixtures = path.join(here, 'fixtures/captain-evaluation');
 globalThis.__routes = [
   [/^\/api\/evaluations\/options$/, 'options'],
+  [/^\/api\/evaluations\/slices/, 'slices'],
   [/^\/api\/pipelines$/, 'pipelines'],
   [/^\/api\/datasets$/, 'datasets'],
   [/^\/api\/dataset-classes$/, 'classes'],
@@ -100,23 +101,55 @@ await h.click('ev-map-query-0');
 await h.idle(30);
 
 // 3. What decides it: every measure the runner has, one line each, one of them picked.
-assert.equal(h.byIdPrefix('ev-measure-').length, opts.measures.length);
+assert.equal(h.byIdPrefix('ev-measure-row-').length, opts.measures.length);
 t = h.text();
 for (const m of opts.measures) assert.ok(t.includes(m.label) && t.includes(m.line), `${m.label} with its line`);
 assert.equal(h.mod.v.measure, 'ndcg@10');
-assert.ok(t.includes('Every measure below is computed and shown either way.'));
+assert.ok(t.includes('Every measure below is computed. Clear a box to leave one out.'));
 // A measure this test can't decide on is said so, with the reason, and can't be picked.
 const ctr = opts.measures.find((m) => m.id === 'ctr');
 assert.equal(measureOk(ctr, 'own'), false);
 assert.ok(t.includes('Not for this test: it comes from simulated shoppers, which only a test on logged searches has.'));
 assert.equal(h.byIdPrefix('ev-measure-ctr')[0].call('on_click'), undefined, 'not clickable');
+assert.equal(h.byIdPrefix('ev-compute-ctr').length, 0, 'and has no box: it is not computed for this test');
 await h.click('ev-measure-mrr');
 assert.equal(h.mod.v.measure, 'mrr');
 await h.click('ev-measure-ndcg@10');
-// Slices are fixed by the runner: said, never drawn as a control that does nothing.
 assert.ok(t.includes('first 10') && t.includes('first 50'), 'each measure says how deep it looks');
-assert.ok(t.includes('Each run also reports its results by group') && t.includes('by traffic'), 'the slices a run reports');
-assert.equal(h.byIdPrefix('ev-slice-').length, 0, 'no slice control');
+
+// Which measures to compute: a box on every measure this test can compute. The deciding one can't be cleared.
+const can = opts.measures.filter((m) => measureOk(m, 'own')).map((m) => m.id);
+assert.deepEqual(h.byIdPrefix('ev-compute-').map((e) => e.call('id')[0]), can.map((id) => `ev-compute-${id}`));
+assert.deepEqual(h.mod.measuresOn(), can, 'all of them to begin with');
+assert.equal(h.byIdPrefix('ev-compute-ndcg@10')[0].call('on_click'), undefined, 'the deciding measure is always computed');
+await h.click('ev-compute-p@10');
+assert.deepEqual(h.mod.measuresOn(), can.filter((id) => id !== 'p@10'));
+assert.ok(h.text().includes('1 measure is left out: the result will say so.') && h.text().includes('Left out'));
+// Picking a left-out measure to decide the verdict computes it again: the verdict's measure is never missing.
+await h.click('ev-measure-p@10');
+assert.ok(h.mod.measuresOn().includes('p@10'));
+await h.click('ev-measure-ndcg@10');
+await h.click('ev-compute-p@10');
+assert.deepEqual(h.mod.measuresOn(), can, 'ticked again');
+await h.click('ev-compute-mrr');
+
+// What to report the result by: the table's group column, and any column not used for something else.
+assert.deepEqual(h.byIdPrefix('ev-slice-').map((e) => e.call('id')[0]), ['ev-slice-class'], 'the group column; the other three columns are taken');
+assert.deepEqual(h.mod.slicesOn(), ['class'], 'the usual');
+assert.equal(h.byIdPrefix('ev-slices-note').length, 0);
+// A column freed from its role becomes a choice.
+h.mod.v.mapping = { query: 'question', product: 'wanted', slice: 'kind' };
+await h.layoutLists({});
+assert.deepEqual(h.byIdPrefix('ev-slice-').map((e) => e.call('id')[0]), ['ev-slice-class', 'ev-slice-relevance']);
+await h.click('ev-slice-relevance');
+assert.deepEqual(h.mod.slicesOn(), ['class', 'relevance']);
+assert.ok(h.text().includes('Not the usual grouping. The result will say so.'));
+// Clearing every one goes back to the usual: a run is never left with "none" that does the usual anyway.
+await h.click('ev-slice-relevance'); await h.click('ev-slice-class');
+assert.equal(h.mod.v.slices, null);
+assert.deepEqual(h.mod.slicesOn(), ['class']);
+await h.click('ev-slice-relevance');
+t = h.text();
 
 // How many results deep each measure looks: a field per measure that has a depth, starting at the usual one.
 assert.deepEqual(h.byIdPrefix('ev-depth-in-').map((e) => e.call('id')[0]), opts.depths.map((d) => `ev-depth-in-${d.id}`));
@@ -163,13 +196,15 @@ await h.click('ev-against-0');
 h.mod.inputs.mde.set_value('0.01'); h.mod.v.mde = '0.01';
 await h.click('ev-run');
 await h.idle(40);
-assert.deepEqual(posted('/api/testsets').at(-1), { name: 'shop-test', source: { file: '/tmp/Downloads/my-questions.csv' }, mapping: { query: 'question', product: 'wanted', grade: 'relevance', slice: 'kind' }, default_grade: 3 });
+assert.deepEqual(posted('/api/testsets').at(-1), { name: 'shop-test', source: { file: '/tmp/Downloads/my-questions.csv' }, mapping: { query: 'question', product: 'wanted', slice: 'kind', also: ['relevance'] }, default_grade: 3 }, 'the column picked to slice by is kept on each question');
 const plan = posted('/api/backtests').at(-1);
 assert.deepEqual(plan.arms, ['demo-bm25@v1', 'demo-tuned@v1', 'demo-ranker@v1'], 'the model compared with first, then every model to test');
 assert.deepEqual([plan.name, plan.mode, plan.queries, plan.judgments, plan.primary, plan.mde], ['shop-test', 'simulated', 'shop-test/questions@v1', 'shop-test/answers@v1', 'ndcg@10', 0.01]);
 assert.equal(plan.hypothesis, 'Nothing was written down before the run.', 'an empty expectation is said to be empty, not invented');
 assert.equal(plan.population_size, undefined, 'a limit that does not apply is not sent');
 assert.deepEqual(plan.depths, { 'ndcg@10': 20, 'p@10': 10, 'r@50': 50, mrr: 50 }, 'the depth of every measure is sent, the changed one too');
+assert.deepEqual(plan.measures, can.filter((id) => id !== 'mrr'), 'the measures to compute, without the one left out');
+assert.deepEqual(plan.slices, ['class', 'relevance'], 'and what to slice by');
 assert.equal(posted('/api/backtests/shop-test/run').length, 1, 'and it runs');
 assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections', child: 'runs' }]);
 assert.equal(globalThis.__shared['captain.open'].live, 'live-9', 'Runs opens on it, live');
@@ -180,12 +215,18 @@ await h.click('ev-on-saved');
 assert.ok(h.byIdPrefix('ev-queries-').length > 0 && h.byIdPrefix('ev-judgments-').length > 0, 'sets of questions and of answers from Data');
 await h.click('ev-queries-0');
 await h.click('ev-judgments-0');
+// A saved set of questions: its group columns, and traffic when the questions carry weights.
+await h.layoutLists({}); await h.idle(30);
+assert.deepEqual(h.byIdPrefix('ev-slice-').map((e) => e.call('id')[0]), ['ev-slice-class', 'ev-slice-device', 'ev-slice-traffic']);
+assert.deepEqual(h.mod.slicesOn(), ['class', 'traffic'], 'the usual two are on');
+assert.ok(h.text().includes('3 groups') && h.text().includes('head, torso, tail'));
 h.mod.inputs.name.set_value('saved-only'); h.mod.v.name = 'saved-only';
 await h.click('ev-model-1');
 await h.click('ev-against-0');
 await h.click('ev-save');
 await h.idle(40);
 assert.equal(posted('/api/backtests').length, 1);
+assert.deepEqual([posted('/api/backtests')[0].measures, posted('/api/backtests')[0].slices], [undefined, undefined], 'nothing chosen: nothing sent, so the run is the usual one');
 assert.equal(posted('/api/backtests/saved-only/run').length, 0, 'nothing started');
 assert.equal(posted('/api/testsets').length, 0, 'a saved test set is used as it is');
 assert.equal(globalThis.__shared['captain.open'].backtest, 'saved-only');
@@ -217,6 +258,10 @@ assert.equal(h.mod.inputs.mde.value(), String(saved.preregistration.mde));
   const withDepth = await mount({ test: 'deep-test' });
   assert.deepEqual([withDepth.mod.v.depths['ndcg@10'], withDepth.mod.depthInputs['ndcg@10'].value()], ['20', '20'], 'the saved depth fills its field');
   assert.equal(withDepth.mod.v.depths['r@50'], '50', 'the rest stay at the usual depth');
+  // And its measures and slices.
+  assert.deepEqual(withDepth.mod.measuresOn(), ['ndcg@10', 'mrr']);
+  await withDepth.layoutLists({}); await withDepth.idle(30);
+  assert.deepEqual(withDepth.mod.slicesOn(), ['device'], 'the saved slices are kept, not reset to the usual');
 }
 assert.ok(t.includes('A test with this name exists. This run joins its history'), 'and says so');
 await h.click('ev-model-1'); // the old model off

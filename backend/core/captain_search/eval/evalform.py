@@ -36,14 +36,17 @@ LIMITS = [
     {"id": "population_size", "label": "Simulated shoppers", "default": 4000, "line": "How many shoppers replay the logged searches on each model.", "only": "logs"},
 ]
 # Asked for by the owner, and not something a run can do today: said so rather than drawn as a dead control.
-NOT_YET = [
-    {"what": "Which slices", "why": "A run always reports by group and by traffic. The runner has no setting to pick among them."},
-    {"what": "Which measures to compute", "why": "A run computes every measure it has the data for. You pick the one that decides the verdict."},
-]
+# Nothing the owner asked for is left unbuilt. The key stays so an older screen that reads it finds an empty list.
+NOT_YET: list[dict] = []
+# Columns of a set of questions that are not groups of questions, so they are never offered as a slice.
+NOT_GROUPS = ["query_id", "query", "weight"]
 
 
 def options() -> dict:
     offline = set(M.NAMES) | {"ndcg@10_tw"}
     # A measure the runner doesn't know is never offered.
     measures = [m for m in MEASURES if m["id"] in offline or m["id"] in ("ctr", "conversion", "rpv")]
-    return {"measures": measures, "slices": SLICES, "limits": LIMITS, "depths": DEPTHS, "not_yet": NOT_YET, "default_measure": "ndcg@10"}
+    return {"measures": measures, "slices": SLICES, "limits": LIMITS, "depths": DEPTHS, "not_yet": NOT_YET, "default_measure": "ndcg@10",
+            # Which measures to compute is the person's choice (the deciding one always among them), and so is what
+            # to slice by: any column of the questions that is a group, plus traffic.
+            "choose_measures": True, "choose_slices": True, "not_groups": NOT_GROUPS, "usual_slices": ["class", "traffic"]}
