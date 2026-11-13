@@ -28,7 +28,7 @@ import urllib.request
 
 from ..model.entities import new_id
 from ..workspace import Context
-from . import ENV, _save, call, state
+from . import ENV, _save, ask_status, call, state
 from . import logs as L
 
 WINDOW_MINUTES = 15
@@ -36,6 +36,7 @@ MIN_REQUESTS = 20            # fewer than this in the window: the rates are not 
 DEFAULT_ERROR_RATE = 0.05    # until the person sets a target
 BAD_IN_A_ROW = 2
 PROBE_TIMEOUT_S = 5.0
+CLOUD_PROBE_EVERY_S = 300.0  # how often a model in a cloud is itself asked whether it answers
 
 
 def _now() -> dt.datetime:
@@ -146,13 +147,18 @@ def measure(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES
         return {**out, "asleep": True}
     if rec.get("how") != "image":
         try:
-            st = call(ctx, rec, "status", {}, timeout=PROBE_TIMEOUT_S)
+            # On this computer the model is asked on every check. In a cloud a check runs once a minute and every
+            # call counts as traffic there, so the model itself is asked every five minutes, and in between the
+            # last answer stands. Whether it is up at all comes from the cloud's own state, before this.
+            st = (call(ctx, rec, "status", {}, timeout=PROBE_TIMEOUT_S) if rec.get("kind") == "local"
+                  else ask_status(ctx, rec, max_age_s=CLOUD_PROBE_EVERY_S, timeout=PROBE_TIMEOUT_S))
             out["answering"] = bool(st.get("ok", True)) and not st.get("stopped")
             out["fallbacks"] = int(st.get("fallbacks") or 0)
-            try:
-                call(ctx, rec, "flush", {}, timeout=PROBE_TIMEOUT_S)  # it is awake and answering: read a current log
-            except Exception:  # noqa: BLE001
-                pass
+            if rec.get("kind") == "local":
+                try:
+                    call(ctx, rec, "flush", {}, timeout=PROBE_TIMEOUT_S)  # it is awake and answering: read a current log
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception as e:  # noqa: BLE001
             out["answering"], out["probe_error"] = False, str(e)[:200]
     since = now - dt.timedelta(minutes=window)

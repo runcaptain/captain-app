@@ -23,7 +23,7 @@ import json
 from .. import project_state as PS
 from ..model.entities import new_id
 from ..workspace import Context, whoami
-from . import ENV, _note, _save, call, key_name, read_flush, set_control, state
+from . import ENV, _note, _save, ask_status, call, key_name, read_flush, set_control, state
 from . import logs as L
 
 TIMEOUT_MS = 300  # what the snippets give the endpoint before the site falls back to its own search
@@ -258,7 +258,7 @@ def connect(ctx: Context, pid: str, env: str = ENV) -> dict:
         # load would keep a copy awake and billing.
         asleep = bool(rec.get("scale_to_zero")) and not _awake(ctx, rec)
         out["asleep"] = asleep
-        h = call(ctx, rec, "status", {}) if rec.get("how") != "image" and not asleep else {}
+        h = ask_status(ctx, rec) if rec.get("how") != "image" and not asleep else {}  # in a cloud: at most once a minute
         t = h.get("traffic") or {}
         out.update(real=int(t.get("real") or 0), unlabelled=int(t.get("unlabelled") or 0), test=int(t.get("test") or 0), simulated=int(t.get("simulated") or 0),
                    last_real_at=h.get("last_real_at"))
