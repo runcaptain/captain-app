@@ -43,6 +43,11 @@ def _last_path() -> str:
 
 
 def _sid(session: Optional[str]) -> str:
+    held = os.environ.get("CST_WEIGHTS_SESSION")   # an agent Captain started works on one session and no other
+    if held:
+        if session and session != held:
+            fail(f"This run works on session {held} and no other.")
+        return held
     if session:
         return session
     try:
@@ -559,6 +564,87 @@ def save(note: str = typer.Option("", "--as", "--note", help="a note saying what
     r = _do(WSN.save, ctx(), _sid(session), note)
     emit(r, f"saved {r['ref']}: {r['base']} plus {_n(r['changed'], 'changed number')} ({r['share'] * 100:.2f}%). Label: {r['label']}."
             + (" The scores can be read now: `cst weights evaluate`." if r["scores_shown_now"] else ""))
+
+
+@weights_app.command("note")
+def note(text: str = typer.Argument(..., help="a hypothesis before an edit, or a conclusion after"), session: Optional[str] = SESSION):
+    """Put a thought in the record. It shows on the live feed as "The agent thinks: ..."."""
+    ev = _do(WSN.note, ctx(), _sid(session), text)
+    emit(ev, f"{ev['id']}  {ev['sentence']}")
+
+
+@weights_app.command("program")
+def program(model: str = typer.Argument(..., help="a model, or one version of it: digits or digits@v2"),
+            goal: str = typer.Option(..., "--goal", help="in plain words: what should the network do differently"),
+            agent: Optional[str] = typer.Option(None, "--agent", help="claude or codex. Left out: whichever is installed, claude first"),
+            blind: bool = typer.Option(False, "--blind", help="hide every score from the agent until the end"),
+            passes: int = typer.Option(0, "--passes", help="how many times the agent may run the network (default 0)"),
+            max_edits: int = typer.Option(5, "--max-edits", help="how many edits the agent may make"),
+            target_example: Optional[int] = typer.Option(None, "--target-example", help="fix this one: one of the model's examples, counted from 1"),
+            target_input: Optional[str] = typer.Option(None, "--target-input", help="fix this one: an input as numbers with commas"),
+            target_output: Optional[str] = typer.Option(None, "--target-output", help="the wanted output for --target-input: numbers, or one class number"),
+            leave_alone: Optional[str] = typer.Option(None, "--leave-alone", help="classes that must not change: 0,1,2. Left out: every class in the model's evaluation pool"),
+            keep: Optional[bool] = typer.Option(None, "--keep/--undo-if-worse", help="keep the result whatever the scores say, or take it back if it did harm (the default)"),
+            project: Optional[str] = typer.Option(None, "--project", help="with --deploy-on: the project that deploys a kept result"),
+            deploy_on: Optional[str] = typer.Option(None, "--deploy-on", help="deploy a kept result: local"),
+            time_limit: int = typer.Option(600, "--time-limit", help="seconds before the agent is stopped (default 600)")):
+    """Captain starts an agent on the network with a goal, follows it, and gives the verdict itself.
+
+    The agent can run only `cst weights` commands on its own session. Every edit is a patch in the record and shows
+    on the Weights page as it happens. When the agent stops, Captain measures the result: one that moved "should
+    not change", made the held-out set worse or did not help the target is taken back whole. One that is kept is
+    saved as a new version. Ctrl-C stops the agent and leaves the record whole."""
+    import sys
+
+    from ..weights import program as WPG
+
+    if bool(project) != bool(deploy_on):
+        fail("--project and --deploy-on go together.")
+    if sum(x is not None for x in (target_example, target_input)) > 1:
+        fail("Give one target: --target-example, or --target-input with --target-output.")
+    c = ctx()
+    plan = _do(WPG.prepare, c, model, goal, agent=agent, blind=blind, passes=passes, max_edits=max_edits,
+               target_example=_one(target_example, "--target-example"), target_input=_nums(target_input, "--target-input"),
+               target_output=_nums(target_output, "--target-output"), should_not_change=_ints(leave_alone, "--leave-alone"),
+               time_limit_s=time_limit, dry_run=S.dry_run)
+    if S.dry_run:
+        return emit(plan, "\n".join([
+            f"Would start {plan['agent']} ({plan['agent_path']}) on {plan['model']}, in {plan['session']}.",
+            f"Goal: {plan['goal']}",
+            f"Allowed: {plan['passes']} forward passes, {plan['max_edits']} edits, {plan['time_limit_s']} seconds, scores "
+            f"{'hidden from the agent' if plan['blind'] else 'shown to the agent'}.",
+            f"Target: {plan['target']}. Should not change: {plan['should_not_change']}.",
+            "Command: " + " ".join(plan["command"]),
+            plan["restriction"], "The agent could run only: " + ", ".join(plan["allowed_commands"]) + ".",
+            "Nothing was started. The instructions the agent would get, before this run's own details:", "", plan["playbook"]]))
+    quiet = S.json
+    say = (lambda text: None) if quiet else (lambda text: typer.echo(text))
+
+    def ask() -> str:
+        if quiet or not sys.stdin.isatty():
+            return "judge"
+        try:
+            return "keep" if typer.confirm("Keep the edits made so far? No takes them all back", default=False) else "undo"
+        except (typer.Abort, EOFError, KeyboardInterrupt):
+            return "undo"
+
+    deploying = bool(project)
+    r = _do(WPG.run, c, plan, keep=keep, save=not deploying, say=say, decide_on_stop=ask)
+    if deploying and r["kept"]:
+        from .deployments import _deploy_on
+
+        try:
+            _deploy_on(project, deploy_on, None, None, False, "staging", False, False, False, r["session"], f"{r['agent']}: {r['goal']}"[:200])
+            saved = WSN.session(c, r["session"])["saved"]
+            r["saved"], r["deployed"] = (saved[-1] if saved else None), f"{project} on {deploy_on}"
+        except typer.Exit:
+            r["deployed"] = None
+            r["deploy_failed"] = True
+    if deploying:
+        _do(WSN.close, c, r["session"], "captain")
+    emit(r, ("" if quiet else "\n") + WPG.report_text(r))
+    if r["stopped"]:
+        raise typer.Exit(130)
 
 
 @weights_app.command("close")
