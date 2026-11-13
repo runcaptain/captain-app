@@ -98,7 +98,7 @@ def test_the_first_call_answers_at_once_and_a_quiet_wait_ends_with_nothing(svc):
     a = svc.get("/api/changes")
     assert time.perf_counter() - t0 < 0.5 and a["changed"] == [] and a["seq"] > 0 and a["reset"] is False and a["at"].endswith("Z")
     b = svc.get("/api/changes", since=a["seq"], topics="projects", wait=0.3)
-    assert b == {"seq": a["seq"], "changed": [], "reset": False, "at": b["at"]}, "nothing changed: the same sequence, and nothing to read"
+    assert b == {"seq": a["seq"], "changed": [], "reset": False, "at": b["at"], "partial": []}, "nothing changed: the same sequence, and nothing to read"
     assert svc.c.get("/api/changes").status_code == 401, "it needs the token, like every other address"
 
 
@@ -185,6 +185,19 @@ def test_no_listeners_is_cheap_and_a_topic_stops_counting_ten_seconds_after_its_
     assert CH.listening("runs")
     time.sleep(0.6)
     assert not CH.listening("runs")
+
+
+def test_a_topic_that_ends_in_a_colon_covers_every_one_of_its_kind(svc):
+    """The kit's watcher can list "run:" for every run, in place of each run's own topic."""
+    seq = svc.get("/api/changes")["seq"]
+    t, box = _waiter(svc, seq, "run:,notebooks")
+    svc.ctx.store.put_new("projects/demo-shop/state.yaml", b"x: 1\n")
+    time.sleep(0.2)
+    assert "answer" not in box, "a project is not a run"
+    svc.ctx.store.put_new("backtest-runs/tuned-vs-current/v1.yaml", b"x: 1\n")
+    t.join(3)
+    assert _t(box["answer"]) == ["run:tuned-vs-current"], "the run's own topic is what comes back, so the screen knows which"
+    assert CH.covered({"run:a", "runs", "job:b"}, {"run:", "jobs"}) == {"run:a"} and CH.covered({"a"}, None) == {"a"}
 
 
 def test_a_missed_sequence_gets_reset(svc):

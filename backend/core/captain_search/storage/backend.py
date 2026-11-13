@@ -78,6 +78,21 @@ class Store(ABC):
     def list(self, prefix: str = "") -> list[str]:
         """All keys under prefix, recursive, relative to the store root, sorted."""
 
+    def list_tags(self, prefix: str = "", shallow: bool = False) -> dict[str, str]:
+        """{key: tag} for what is under prefix, from one listing where the store's listing carries tags (the
+        buckets' do), so the change feed can see what another machine wrote without reading any object. `shallow`
+        lists one level only: the files there with their tags, and each folder as "name/" with an empty tag.
+        This default knows no tags: it sees keys come and go, not a key replaced in place."""
+        keys = self.list(prefix)
+        if not shallow:
+            return {k: "" for k in keys}
+        base = prefix.lstrip("/")
+        out: dict[str, str] = {}
+        for k in keys:
+            rest = k[len(base):]
+            out[k if "/" not in rest else base + rest.split("/")[0] + "/"] = ""
+        return out
+
     def get(self, key: str) -> bytes:
         return self.get_with_tag(key)[0]
 
@@ -283,6 +298,18 @@ class S3Store(Store):
             out += [o["Key"][strip:] for o in page.get("Contents", [])]
         return sorted(out)
 
+    def list_tags(self, prefix: str = "", shallow: bool = False) -> dict[str, str]:
+        out: dict[str, str] = {}
+        pfx = self._k(prefix) if prefix else (self.prefix + "/" if self.prefix else "")
+        strip = len(self.prefix) + 1 if self.prefix else 0
+        kw = {"Delimiter": "/"} if shallow else {}
+        for page in self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=pfx, **kw):
+            for o in page.get("Contents", []):
+                out[o["Key"][strip:]] = str(o.get("ETag") or "")
+            for d in page.get("CommonPrefixes", []):
+                out[d["Prefix"][strip:]] = ""
+        return out
+
 
 # ---- GCS ---------------------------------------------------------------------------------------
 # Run against a real bucket on 2026-11-10 (docs/compute-live-testing.md): create-only writes and compare-and-swap
@@ -330,6 +357,15 @@ class GCSStore(Store):
         strip = len(self.prefix) + 1 if self.prefix else 0
         pfx = self._k(prefix) if prefix else (self.prefix + "/" if self.prefix else "")
         return sorted(b.name[strip:] for b in self.b.client.list_blobs(self.b, prefix=pfx))
+
+    def list_tags(self, prefix: str = "", shallow: bool = False) -> dict[str, str]:
+        strip = len(self.prefix) + 1 if self.prefix else 0
+        pfx = self._k(prefix) if prefix else (self.prefix + "/" if self.prefix else "")
+        it = self.b.client.list_blobs(self.b, prefix=pfx, **({"delimiter": "/"} if shallow else {}))
+        out = {b.name[strip:]: str(getattr(b, "etag", None) or getattr(b, "generation", "") or "") for b in it}
+        for d in getattr(it, "prefixes", None) or []:   # filled once the listing has been read through
+            out[d[strip:]] = ""
+        return out
 
 
 # ---- Azure Blob --------------------------------------------------------------------------
@@ -393,6 +429,16 @@ class AzureStore(Store):
         strip = len(self.prefix) + 1 if self.prefix else 0
         pfx = self._k(prefix) if prefix else (self.prefix + "/" if self.prefix else "")
         return sorted(b.name[strip:] for b in self.c.list_blobs(name_starts_with=pfx))
+
+    def list_tags(self, prefix: str = "", shallow: bool = False) -> dict[str, str]:
+        strip = len(self.prefix) + 1 if self.prefix else 0
+        pfx = self._k(prefix) if prefix else (self.prefix + "/" if self.prefix else "")
+        walk = getattr(self.c, "walk_blobs", None)
+        if not shallow or not callable(walk):
+            return super().list_tags(prefix, shallow) if shallow else {
+                b.name[strip:]: str(getattr(b, "etag", "") or "") for b in self.c.list_blobs(name_starts_with=pfx)}
+        # walk_blobs gives the files of one level, and each folder as an item whose name ends in "/"
+        return {b.name[strip:]: ("" if b.name.endswith("/") else str(getattr(b, "etag", "") or "")) for b in walk(name_starts_with=pfx, delimiter="/")}
 
 
 def open_store(uri: str, profile: str | None = None) -> Store:
