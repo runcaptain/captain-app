@@ -264,7 +264,7 @@ function placeCard(ship, c, p) {
       .on_click(() => run("app.settings")).child("Change the limit in Settings")))
     .child(div().flex_1())
     .child(h_flex().pt(6).child(Button(c, `ship-deploy-${p.id}`, ship.dasking === p.id ? "Checking..." : "Deploy", (_e, cx) => deployTo(ship, cx, p),
-      { kind: "primary", disabled: !p.can_deploy || busy })));
+      { kind: "secondary", disabled: !p.can_deploy || busy })));
 }
 
 function connectCard(c, wide) {

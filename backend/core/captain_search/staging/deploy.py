@@ -718,7 +718,8 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
         line(f"It answered at {ep.get('url') or ep.get('name')}.")
         sent = _test_requests(ctx, pid, env)
         if sent:
-            line(f"Sent {sent} test request{'s' if sent != 1 else ''} through it. They are marked as test traffic, never as shoppers.")
+            line(f"Sent {sent} test request{'s' if sent != 1 else ''} through it. They are marked as test traffic, never as "
+                 + ("real requests." if (rec or {}).get("serves") == "predict" else "shoppers."))
         end("done")
         soft_failed = []
         for a in _after(ctx, pid):
@@ -765,6 +766,15 @@ def _test_requests(ctx: Context, pid: str, env: str, n: int = TEST_REQUESTS) -> 
         if not rec or rec.get("status") != "running" or rec.get("how") == "image":
             return 0
         sent = 0
+        if rec.get("serves") == "predict":
+            from . import predict as PD
+
+            for i, body in enumerate(PD.test_bodies(ctx, rec["model_version"], n)):
+                call(ctx, rec, "predict", {**body, "traffic": "test", "session_id": f"deploy-check-{i}"})
+                sent += 1
+            if sent:
+                call(ctx, rec, "flush", {})
+            return sent
         for i, q in enumerate(sample_queries(ctx, pid, n)[:n]):
             call(ctx, rec, "rank", {"query": q, "k": 10, "traffic": "test", "session_id": f"deploy-check-{i}"})
             sent += 1

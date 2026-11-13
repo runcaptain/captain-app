@@ -114,7 +114,8 @@ cst weights open tiny --agent --name claude --forward-passes 20 --no-sandbox
   "sets": {
     "target": {"defined": false},
     "should_not_change": {"defined": false},
-    "held_out": {"defined": true, "of": 300, "says": "the model's held-out set"}
+    "held_out": {"defined": true, "of": 300, "says": "the model's held-out set",
+                 "base": {"model": "tiny@v1", "cost": 0.0081, "right": 300, "of": 300}}
   },
   "edits": [],
   "events": [],
@@ -144,6 +145,10 @@ A person's session gets 50 forward passes unless told otherwise. An agent's gets
 `--forward-passes`. `events` in a session answer holds the last 100. The whole record is in `report`.
 
 Until the sets are named with `sets`, an edit is scored on the held-out set alone.
+
+`sets.held_out.base` is how the version the session was opened on does on its own held-out set, before any edit:
+its cost and how many it gets right. It is a fact about that version, not a score of the session's work, so a
+screen can show it from the start and it is there in a blind session too.
 
 ### Something refused
 

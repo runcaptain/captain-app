@@ -10,7 +10,8 @@ them through compute.py and never branches on the cloud:
   staged_status(rec)        {state: running | starting | failed | gone, reason?, copies?, ask?}. `copies` is how
                             many copies are up right now, for a host that sleeps when idle (None when the host
                             doesn't say). `ask` is True when asking the endpoint itself costs next to nothing.
-  invoke(rec, payload)      one call to the endpoint: {"op": rank | timing | flush | status | reload, "key", ...}.
+  invoke(rec, payload)      one call to the endpoint: {"op": rank | predict | describe | timing | flush | status |
+                            reload, "key", ...}.
   unstage(resources)        delete these. Returns the ones that are still there.
   tagged(project, env)      every resource here that carries Captain's labels for a project's staging.
   stage_preflight(st, uri)  what the endpoint's identity may do, asked without changing anything.
@@ -69,7 +70,7 @@ class ServingProvider:
         return d
 
 
-ROUTES = {"timing": "/timing", "flush": "/flush", "reload": "/reload"}
+ROUTES = {"timing": "/timing", "flush": "/flush", "reload": "/reload", "describe": "/describe"}
 _clients: dict = {}
 
 
@@ -119,9 +120,9 @@ class HttpServing(ServingProvider):
             if op == "status":
                 r = _client(base).get(base + "/healthz", headers=front, timeout=self.INVOKE_TIMEOUT_S)
             else:
-                path = "/rank" + (f"/{arm}" if arm else "") if op == "rank" else ROUTES.get(op)
+                path = f"/{op}" + (f"/{arm}" if arm else "") if op in ("rank", "predict") else ROUTES.get(op)
                 if path is None:
-                    raise ProviderError(f"unknown op {op!r}: rank, timing, flush, status or reload")
+                    raise ProviderError(f"unknown op {op!r}: rank, predict, describe, timing, flush, status or reload")
                 r = _client(base).post(base + path, json=body, headers={**front, "Authorization": f"Bearer {key}"}, timeout=self.INVOKE_TIMEOUT_S)
         except httpx.HTTPError as e:
             raise ProviderError(f"The deployed model did not answer: {type(e).__name__} {str(e)[:200]}") from None

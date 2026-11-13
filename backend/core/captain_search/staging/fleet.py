@@ -852,8 +852,12 @@ def where_it_runs(ctx: Context, pid: str, env: str = ENV) -> dict:
     cfg = (target or {}).get("config") or {}
     add("address", "Address", row.get("address"), cloud_value=got.get("address"), copy=True)
     try:
-        snip = TF.snippets(rec)
+        snip = TF.snippets(rec, ctx)
         call = snip.get("aws cli") or snip.get("curl")
+        if rec.get("serves") == "predict":  # a model with named inputs: one line that sends its own example, marked as a test
+            from . import predict as PD
+
+            call = PD.try_info(ctx, pid, env)["request"]
         # A test request, so it is marked as one: it never counts as a shopper.
         add("call", "How to call it", call.replace('"traffic": "real"', '"traffic": "test"') if call else None, copy=True)
     except Exception:  # noqa: BLE001

@@ -1,0 +1,2531 @@
+{
+ "_about": "Answers recorded from the weights routes of captain_search (origin/feat/weights at b74682d6) through its own test client, in an empty temp workspace. The session owner name is replaced with a demo name. Recorded 2026-11-13.",
+ "models": {
+  "status": 200,
+  "data": [
+   {
+    "id": "tiny",
+    "name": "tiny",
+    "says": "Two inputs, three hidden neurons, one output. Small enough to see every number.",
+    "sizes": [
+     2,
+     3,
+     1
+    ],
+    "parameters": 13,
+    "versions": [
+     1
+    ],
+    "latest": 1,
+    "synthetic": true,
+    "data_note": "Points drawn by code with a seed. None is closer than 0.1 to one half.",
+    "starter": true,
+    "project": null
+   },
+   {
+    "id": "digits",
+    "name": "digits",
+    "says": "Reads a 28 by 28 picture and names a digit. Trained on synthetic pictures drawn by code.",
+    "sizes": [
+     784,
+     16,
+     16,
+     10
+    ],
+    "parameters": 13002,
+    "versions": [
+     1
+    ],
+    "latest": 1,
+    "synthetic": true,
+    "data_note": "Synthetic. The pictures are drawn by code from ten stroke templates with jitter and noise. They are not handwriting and not MNIST. A score on them says nothing about real handwriting.",
+    "starter": true,
+    "project": null
+   }
+  ]
+ },
+ "session:start": {
+  "status": 200,
+  "data": {
+   "id": "ws-bdb79912",
+   "model": "tiny",
+   "version": 1,
+   "base": "tiny@v1",
+   "who": {
+    "kind": "person",
+    "name": "demo"
+   },
+   "opened_at": "2026-11-13T09:37:16Z",
+   "ledger": {
+    "raw_weights": true,
+    "weights_read": 0,
+    "sandbox": false,
+    "sandbox_used": false,
+    "forward_allowed": 50,
+    "forward_used": 0,
+    "pass_inputs": 32,
+    "gradients_computed": false,
+    "evaluations": 0,
+    "training_steps": 0,
+    "changed": 0,
+    "total": 13,
+    "share": 0.0,
+    "feedback": true,
+    "scores_shown": false,
+    "first_score": null,
+    "screen_looks": 0,
+    "screen_numbers": 0,
+    "weights_alone": true,
+    "label": "from the weights alone"
+   },
+   "sets": {
+    "target": {
+     "defined": false
+    },
+    "should_not_change": {
+     "defined": false
+    },
+    "held_out": {
+     "defined": true,
+     "of": 300,
+     "says": "the model's held-out set"
+    }
+   },
+   "edits": [],
+   "events": [
+    {
+     "id": "e1",
+     "seq": 1,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "you",
+     "kind": "open",
+     "touched": {
+      "neurons": [],
+      "weights": []
+     },
+     "allowed": {
+      "raw_weights": true,
+      "sandbox": false,
+      "forward_passes": 50,
+      "pass_inputs": 32,
+      "feedback": true
+     },
+     "sentence": "You opened tiny@v1. Allowed: raw weights yes, a sandbox no, 50 forward passes, scores shown as it goes."
+    }
+   ],
+   "event_count": 1,
+   "saved": [],
+   "closed": false
+  }
+ },
+ "whole:no-session": {
+  "status": 200,
+  "data": {
+   "id": "tiny",
+   "name": "tiny",
+   "version": 1,
+   "sizes": [
+    2,
+    3,
+    1
+   ],
+   "squish": "sigmoid",
+   "cost": "cross_entropy",
+   "layers": [
+    {
+     "activation": "sigmoid",
+     "name": "layer1",
+     "inputs": 2,
+     "outputs": 3
+    },
+    {
+     "activation": "sigmoid",
+     "name": "layer2",
+     "inputs": 3,
+     "outputs": 1
+    }
+   ],
+   "inputMeaning": "two numbers between 0 and 1",
+   "outputMeaning": "1 when exactly one input is above one half",
+   "numbers": false,
+   "examples": [
+    {
+     "name": "example 1",
+     "x": [
+      0.3774,
+      0.7438
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 2",
+     "x": [
+      0.9139,
+      0.8365
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 3",
+     "x": [
+      0.1177,
+      0.9691
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 4",
+     "x": [
+      0.3477,
+      0.7457
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 5",
+     "x": [
+      0.9893,
+      0.0898
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 6",
+     "x": [
+      0.9222,
+      0.2724
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 7",
+     "x": [
+      0.7884,
+      0.0123
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 8",
+     "x": [
+      0.3579,
+      0.2295
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 9",
+     "x": [
+      0.7561,
+      0.7419
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 10",
+     "x": [
+      0.8608,
+      0.7388
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 11",
+     "x": [
+      0.203,
+      0.7484
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 12",
+     "x": [
+      0.0221,
+      0.7002
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 13",
+     "x": [
+      0.3364,
+      0.9273
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 14",
+     "x": [
+      0.2669,
+      0.7882
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 15",
+     "x": [
+      0.9879,
+      0.9361
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 16",
+     "x": [
+      0.098,
+      0.827
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 17",
+     "x": [
+      0.3824,
+      0.9142
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 18",
+     "x": [
+      0.7477,
+      0.188
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 19",
+     "x": [
+      0.8071,
+      0.9608
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 20",
+     "x": [
+      0.2857,
+      0.7593
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 21",
+     "x": [
+      0.1848,
+      0.0369
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 22",
+     "x": [
+      0.7968,
+      0.0916
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 23",
+     "x": [
+      0.0373,
+      0.6365
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 24",
+     "x": [
+      0.0863,
+      0.2797
+     ],
+     "y": [
+      0.0
+     ]
+    }
+   ],
+   "test": [],
+   "synthetic": true,
+   "data_note": "Points drawn by code with a seed. None is closer than 0.1 to one half.",
+   "parameters": 13,
+   "base": null,
+   "inputNames": [
+    "x1",
+    "x2"
+   ],
+   "outputNames": [
+    "exactly one is high"
+   ]
+  }
+ },
+ "whole:start": {
+  "status": 200,
+  "data": {
+   "id": "tiny",
+   "name": "tiny",
+   "version": 1,
+   "sizes": [
+    2,
+    3,
+    1
+   ],
+   "squish": "sigmoid",
+   "cost": "cross_entropy",
+   "layers": [
+    {
+     "W": [
+      [
+       -5.615328311920166,
+       -10.62951946258545
+      ],
+      [
+       9.830345153808594,
+       -10.288958549499512
+      ],
+      [
+       -13.241960525512695,
+       -7.994318962097168
+      ]
+     ],
+     "b": [
+      10.183963775634766,
+      3.848785400390625,
+      7.808344841003418
+     ],
+     "activation": "sigmoid",
+     "name": "layer1",
+     "inputs": 2,
+     "outputs": 3
+    },
+    {
+     "W": [
+      [
+       18.495521545410156,
+       -13.43355941772461,
+       -16.328330993652344
+      ]
+     ],
+     "b": [
+      2.178818941116333
+     ],
+     "activation": "sigmoid",
+     "name": "layer2",
+     "inputs": 3,
+     "outputs": 1
+    }
+   ],
+   "inputMeaning": "two numbers between 0 and 1",
+   "outputMeaning": "1 when exactly one input is above one half",
+   "numbers": true,
+   "examples": [
+    {
+     "name": "example 1",
+     "x": [
+      0.3774,
+      0.7438
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 2",
+     "x": [
+      0.9139,
+      0.8365
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 3",
+     "x": [
+      0.1177,
+      0.9691
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 4",
+     "x": [
+      0.3477,
+      0.7457
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 5",
+     "x": [
+      0.9893,
+      0.0898
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 6",
+     "x": [
+      0.9222,
+      0.2724
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 7",
+     "x": [
+      0.7884,
+      0.0123
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 8",
+     "x": [
+      0.3579,
+      0.2295
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 9",
+     "x": [
+      0.7561,
+      0.7419
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 10",
+     "x": [
+      0.8608,
+      0.7388
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 11",
+     "x": [
+      0.203,
+      0.7484
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 12",
+     "x": [
+      0.0221,
+      0.7002
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 13",
+     "x": [
+      0.3364,
+      0.9273
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 14",
+     "x": [
+      0.2669,
+      0.7882
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 15",
+     "x": [
+      0.9879,
+      0.9361
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 16",
+     "x": [
+      0.098,
+      0.827
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 17",
+     "x": [
+      0.3824,
+      0.9142
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 18",
+     "x": [
+      0.7477,
+      0.188
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 19",
+     "x": [
+      0.8071,
+      0.9608
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 20",
+     "x": [
+      0.2857,
+      0.7593
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 21",
+     "x": [
+      0.1848,
+      0.0369
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 22",
+     "x": [
+      0.7968,
+      0.0916
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 23",
+     "x": [
+      0.0373,
+      0.6365
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 24",
+     "x": [
+      0.0863,
+      0.2797
+     ],
+     "y": [
+      0.0
+     ]
+    }
+   ],
+   "test": [],
+   "synthetic": true,
+   "data_note": "Points drawn by code with a seed. None is closer than 0.1 to one half.",
+   "parameters": 13,
+   "base": null,
+   "inputNames": [
+    "x1",
+    "x2"
+   ],
+   "outputNames": [
+    "exactly one is high"
+   ],
+   "session": "ws-bdb79912",
+   "edits": 0
+  }
+ },
+ "open:agent": {
+  "status": 200,
+  "data": {
+   "id": "ws-44b1066e",
+   "model": "tiny",
+   "version": 1,
+   "base": "tiny@v1",
+   "who": {
+    "kind": "agent",
+    "name": "demo"
+   },
+   "opened_at": "2026-11-13T09:37:16Z",
+   "ledger": {
+    "raw_weights": true,
+    "weights_read": 0,
+    "sandbox": false,
+    "sandbox_used": false,
+    "forward_allowed": 20,
+    "forward_used": 0,
+    "pass_inputs": 32,
+    "gradients_computed": false,
+    "evaluations": 0,
+    "training_steps": 0,
+    "changed": 0,
+    "total": 13,
+    "share": 0.0,
+    "feedback": false,
+    "scores_shown": false,
+    "first_score": null,
+    "screen_looks": 0,
+    "screen_numbers": 0,
+    "weights_alone": true,
+    "label": "from the weights alone"
+   },
+   "sets": {
+    "target": {
+     "defined": false
+    },
+    "should_not_change": {
+     "defined": false
+    },
+    "held_out": {
+     "defined": true,
+     "of": 300,
+     "says": "the model's held-out set"
+    }
+   },
+   "edits": [],
+   "events": [
+    {
+     "id": "e1",
+     "seq": 1,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "agent",
+     "kind": "open",
+     "touched": {
+      "neurons": [],
+      "weights": []
+     },
+     "allowed": {
+      "raw_weights": true,
+      "sandbox": false,
+      "forward_passes": 20,
+      "pass_inputs": 32,
+      "feedback": false
+     },
+     "sentence": "The agent opened tiny@v1. Allowed: raw weights yes, a sandbox no, 20 forward passes, scores hidden until it is saved or closed."
+    }
+   ],
+   "event_count": 1,
+   "saved": [],
+   "closed": false
+  }
+ },
+ "read": {
+  "status": 200,
+  "data": {
+   "tensor": "layer1.weight",
+   "shape": [
+    3,
+    2
+   ],
+   "rows": [
+    0,
+    3
+   ],
+   "cols": [
+    0,
+    2
+   ],
+   "values": [
+    [
+     -5.615328311920166,
+     -10.62951946258545
+    ],
+    [
+     9.830345153808594,
+     -10.288958549499512
+    ],
+    [
+     -13.241960525512695,
+     -7.994318962097168
+    ]
+   ],
+   "count": 6
+  }
+ },
+ "edit:scale": {
+  "status": 200,
+  "data": {
+   "id": "e3",
+   "seq": 3,
+   "at": "2026-11-13T09:37:16Z",
+   "by": "agent",
+   "kind": "edit",
+   "touched": {
+    "neurons": [
+     [
+      1,
+      1
+     ]
+    ],
+    "weights": [
+     [
+      0,
+      1,
+      0
+     ],
+     [
+      0,
+      1,
+      1
+     ]
+    ]
+   },
+   "op": "scale",
+   "tensor": "layer1.weight",
+   "tensors": [
+    "layer1.weight"
+   ],
+   "layer": 1,
+   "neuron": 1,
+   "factor": 0.5,
+   "why": "this unit shouts",
+   "args": {
+    "op": "scale",
+    "layer": 1,
+    "neuron": 1,
+    "factor": 0.5
+   },
+   "target_named": {
+    "of": 1
+   },
+   "changes": [
+    {
+     "tensor": "layer1.weight",
+     "k": 0,
+     "j": 1,
+     "i": 0,
+     "old": 9.830345153808594,
+     "new": 4.915172576904297
+    },
+    {
+     "tensor": "layer1.weight",
+     "k": 0,
+     "j": 1,
+     "i": 1,
+     "old": -10.288958549499512,
+     "new": -5.144479274749756
+    }
+   ],
+   "changed": 2,
+   "share": 0.153846,
+   "undone": false,
+   "sentence": "The agent scaled 2 numbers in layer1.weight (layer 1, neuron 2).",
+   "ledger": {
+    "changed": 2,
+    "total": 13
+   },
+   "scores": "hidden"
+  }
+ },
+ "session:after-edit": {
+  "status": 200,
+  "data": {
+   "id": "ws-44b1066e",
+   "model": "tiny",
+   "version": 1,
+   "base": "tiny@v1",
+   "who": {
+    "kind": "agent",
+    "name": "demo"
+   },
+   "opened_at": "2026-11-13T09:37:16Z",
+   "ledger": {
+    "raw_weights": true,
+    "weights_read": 6,
+    "sandbox": false,
+    "sandbox_used": false,
+    "forward_allowed": 20,
+    "forward_used": 0,
+    "pass_inputs": 32,
+    "gradients_computed": false,
+    "evaluations": 0,
+    "training_steps": 0,
+    "changed": 2,
+    "total": 13,
+    "share": 0.153846,
+    "feedback": false,
+    "scores_shown": false,
+    "first_score": null,
+    "screen_looks": 0,
+    "screen_numbers": 0,
+    "weights_alone": true,
+    "label": "from the weights alone"
+   },
+   "sets": {
+    "target": {
+     "defined": true,
+     "of": 1,
+     "says": "1 input given when the set was named"
+    },
+    "should_not_change": {
+     "defined": false
+    },
+    "held_out": {
+     "defined": true,
+     "of": 300,
+     "says": "the model's held-out set"
+    }
+   },
+   "edits": [
+    {
+     "id": "e3",
+     "n": 1,
+     "op": "scale",
+     "tensors": [
+      "layer1.weight"
+     ],
+     "why": "this unit shouts",
+     "state": "applied",
+     "changed": 2,
+     "by": "agent"
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "seq": 1,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "agent",
+     "kind": "open",
+     "touched": {
+      "neurons": [],
+      "weights": []
+     },
+     "allowed": {
+      "raw_weights": true,
+      "sandbox": false,
+      "forward_passes": 20,
+      "pass_inputs": 32,
+      "feedback": false
+     },
+     "sentence": "The agent opened tiny@v1. Allowed: raw weights yes, a sandbox no, 20 forward passes, scores hidden until it is saved or closed."
+    },
+    {
+     "id": "e2",
+     "seq": 2,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "agent",
+     "kind": "read",
+     "touched": {
+      "neurons": [
+       [
+        1,
+        0
+       ],
+       [
+        1,
+        1
+       ],
+       [
+        1,
+        2
+       ]
+      ],
+      "weights": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        0,
+        0,
+        1
+       ],
+       [
+        0,
+        1,
+        0
+       ],
+       [
+        0,
+        1,
+        1
+       ],
+       [
+        0,
+        2,
+        0
+       ],
+       [
+        0,
+        2,
+        1
+       ]
+      ]
+     },
+     "op": "read",
+     "tensor": "layer1.weight",
+     "layer": 1,
+     "args": {
+      "rows": [
+       0,
+       3
+      ],
+      "cols": [
+       0,
+       2
+      ]
+     },
+     "count": 6,
+     "sentence": "The agent read 6 numbers of layer1.weight."
+    },
+    {
+     "id": "e3",
+     "seq": 3,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "agent",
+     "kind": "edit",
+     "touched": {
+      "neurons": [
+       [
+        1,
+        1
+       ]
+      ],
+      "weights": [
+       [
+        0,
+        1,
+        0
+       ],
+       [
+        0,
+        1,
+        1
+       ]
+      ]
+     },
+     "op": "scale",
+     "tensor": "layer1.weight",
+     "tensors": [
+      "layer1.weight"
+     ],
+     "layer": 1,
+     "neuron": 1,
+     "factor": 0.5,
+     "why": "this unit shouts",
+     "args": {
+      "op": "scale",
+      "layer": 1,
+      "neuron": 1,
+      "factor": 0.5
+     },
+     "target_named": {
+      "of": 1
+     },
+     "changes": [
+      {
+       "tensor": "layer1.weight",
+       "k": 0,
+       "j": 1,
+       "i": 0,
+       "old": 9.830345153808594,
+       "new": 4.915172576904297
+      },
+      {
+       "tensor": "layer1.weight",
+       "k": 0,
+       "j": 1,
+       "i": 1,
+       "old": -10.288958549499512,
+       "new": -5.144479274749756
+      }
+     ],
+     "changed": 2,
+     "share": 0.153846,
+     "undone": false,
+     "sentence": "The agent scaled 2 numbers in layer1.weight (layer 1, neuron 2).",
+     "ledger": {
+      "changed": 2,
+      "total": 13
+     },
+     "scores": "hidden"
+    }
+   ],
+   "event_count": 3,
+   "saved": [],
+   "closed": false
+  }
+ },
+ "whole:after-edit": {
+  "status": 200,
+  "data": {
+   "id": "tiny",
+   "name": "tiny",
+   "version": 1,
+   "sizes": [
+    2,
+    3,
+    1
+   ],
+   "squish": "sigmoid",
+   "cost": "cross_entropy",
+   "layers": [
+    {
+     "W": [
+      [
+       -5.615328311920166,
+       -10.62951946258545
+      ],
+      [
+       4.915172576904297,
+       -5.144479274749756
+      ],
+      [
+       -13.241960525512695,
+       -7.994318962097168
+      ]
+     ],
+     "b": [
+      10.183963775634766,
+      3.848785400390625,
+      7.808344841003418
+     ],
+     "activation": "sigmoid",
+     "name": "layer1",
+     "inputs": 2,
+     "outputs": 3
+    },
+    {
+     "W": [
+      [
+       18.495521545410156,
+       -13.43355941772461,
+       -16.328330993652344
+      ]
+     ],
+     "b": [
+      2.178818941116333
+     ],
+     "activation": "sigmoid",
+     "name": "layer2",
+     "inputs": 3,
+     "outputs": 1
+    }
+   ],
+   "inputMeaning": "two numbers between 0 and 1",
+   "outputMeaning": "1 when exactly one input is above one half",
+   "numbers": true,
+   "examples": [
+    {
+     "name": "example 1",
+     "x": [
+      0.3774,
+      0.7438
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 2",
+     "x": [
+      0.9139,
+      0.8365
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 3",
+     "x": [
+      0.1177,
+      0.9691
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 4",
+     "x": [
+      0.3477,
+      0.7457
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 5",
+     "x": [
+      0.9893,
+      0.0898
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 6",
+     "x": [
+      0.9222,
+      0.2724
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 7",
+     "x": [
+      0.7884,
+      0.0123
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 8",
+     "x": [
+      0.3579,
+      0.2295
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 9",
+     "x": [
+      0.7561,
+      0.7419
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 10",
+     "x": [
+      0.8608,
+      0.7388
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 11",
+     "x": [
+      0.203,
+      0.7484
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 12",
+     "x": [
+      0.0221,
+      0.7002
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 13",
+     "x": [
+      0.3364,
+      0.9273
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 14",
+     "x": [
+      0.2669,
+      0.7882
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 15",
+     "x": [
+      0.9879,
+      0.9361
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 16",
+     "x": [
+      0.098,
+      0.827
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 17",
+     "x": [
+      0.3824,
+      0.9142
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 18",
+     "x": [
+      0.7477,
+      0.188
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 19",
+     "x": [
+      0.8071,
+      0.9608
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 20",
+     "x": [
+      0.2857,
+      0.7593
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 21",
+     "x": [
+      0.1848,
+      0.0369
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 22",
+     "x": [
+      0.7968,
+      0.0916
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 23",
+     "x": [
+      0.0373,
+      0.6365
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 24",
+     "x": [
+      0.0863,
+      0.2797
+     ],
+     "y": [
+      0.0
+     ]
+    }
+   ],
+   "test": [],
+   "synthetic": true,
+   "data_note": "Points drawn by code with a seed. None is closer than 0.1 to one half.",
+   "parameters": 13,
+   "base": null,
+   "inputNames": [
+    "x1",
+    "x2"
+   ],
+   "outputNames": [
+    "exactly one is high"
+   ],
+   "session": "ws-44b1066e",
+   "edits": 1
+  }
+ },
+ "edit:set-by-you": {
+  "status": 200,
+  "data": {
+   "id": "e4",
+   "seq": 4,
+   "at": "2026-11-13T09:37:16Z",
+   "by": "you",
+   "kind": "edit",
+   "touched": {
+    "neurons": [
+     [
+      1,
+      1
+     ]
+    ],
+    "weights": []
+   },
+   "op": "set",
+   "tensor": "layer1.bias",
+   "tensors": [
+    "layer1.bias"
+   ],
+   "layer": 1,
+   "neuron": 1,
+   "factor": null,
+   "why": "",
+   "args": {
+    "op": "set",
+    "layer": 1,
+    "neuron": 1,
+    "from": null,
+    "value": 0.25
+   },
+   "changes": [
+    {
+     "tensor": "layer1.bias",
+     "k": 0,
+     "j": 1,
+     "i": null,
+     "old": 3.848785400390625,
+     "new": 0.25
+    }
+   ],
+   "changed": 1,
+   "share": 0.076923,
+   "undone": false,
+   "sentence": "You set 1 number in layer1.bias (layer 1, neuron 2).",
+   "ledger": {
+    "changed": 3,
+    "total": 13
+   },
+   "scores": "hidden"
+  }
+ },
+ "edit:nothing": {
+  "status": 400,
+  "data": {
+   "error": "This edit changes nothing: every number it names already has that value."
+  }
+ },
+ "undo": {
+  "status": 200,
+  "data": {
+   "id": "e5",
+   "seq": 5,
+   "at": "2026-11-13T09:37:16Z",
+   "by": "you",
+   "kind": "undo",
+   "touched": {
+    "neurons": [
+     [
+      1,
+      1
+     ]
+    ],
+    "weights": [
+     [
+      0,
+      1,
+      0
+     ],
+     [
+      0,
+      1,
+      1
+     ]
+    ]
+   },
+   "op": "scale",
+   "undoes": "e3",
+   "tensor": "layer1.weight",
+   "tensors": [
+    "layer1.weight"
+   ],
+   "layer": 1,
+   "neuron": 1,
+   "changes": [
+    {
+     "tensor": "layer1.weight",
+     "k": 0,
+     "j": 1,
+     "i": 0,
+     "old": 4.915172576904297,
+     "new": 9.830345153808594
+    },
+    {
+     "tensor": "layer1.weight",
+     "k": 0,
+     "j": 1,
+     "i": 1,
+     "old": -5.144479274749756,
+     "new": -10.288958549499512
+    }
+   ],
+   "changed": 2,
+   "sentence": "You took back edit e3: 2 numbers in layer1.weight (layer 1, neuron 2).",
+   "ledger": {
+    "changed": 1,
+    "total": 13
+   },
+   "scores": "hidden"
+  }
+ },
+ "forward": {
+  "status": 200,
+  "data": {
+   "outputs": [
+    [
+     0.999986
+    ]
+   ],
+   "predicted": [
+    1
+   ],
+   "cost": 1.4344111205274866e-05,
+   "forward_used": 1,
+   "forward_left": 19
+  }
+ },
+ "session:end": {
+  "status": 200,
+  "data": {
+   "id": "ws-44b1066e",
+   "model": "tiny",
+   "version": 1,
+   "base": "tiny@v1",
+   "who": {
+    "kind": "agent",
+    "name": "demo"
+   },
+   "opened_at": "2026-11-13T09:37:16Z",
+   "ledger": {
+    "raw_weights": true,
+    "weights_read": 6,
+    "sandbox": false,
+    "sandbox_used": false,
+    "forward_allowed": 20,
+    "forward_used": 1,
+    "pass_inputs": 32,
+    "gradients_computed": false,
+    "evaluations": 0,
+    "training_steps": 0,
+    "changed": 1,
+    "total": 13,
+    "share": 0.076923,
+    "feedback": false,
+    "scores_shown": false,
+    "first_score": null,
+    "screen_looks": 1,
+    "screen_numbers": 13,
+    "weights_alone": false,
+    "label": "with 1 of 20 forward passes"
+   },
+   "sets": {
+    "target": {
+     "defined": true,
+     "of": 1,
+     "says": "1 input given when the set was named"
+    },
+    "should_not_change": {
+     "defined": false
+    },
+    "held_out": {
+     "defined": true,
+     "of": 300,
+     "says": "the model's held-out set"
+    }
+   },
+   "edits": [
+    {
+     "id": "e3",
+     "n": 1,
+     "op": "scale",
+     "tensors": [
+      "layer1.weight"
+     ],
+     "why": "this unit shouts",
+     "state": "undone",
+     "changed": 2,
+     "by": "agent"
+    },
+    {
+     "id": "e4",
+     "n": 2,
+     "op": "set",
+     "tensors": [
+      "layer1.bias"
+     ],
+     "why": "",
+     "state": "applied",
+     "changed": 1,
+     "by": "you"
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "seq": 1,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "agent",
+     "kind": "open",
+     "touched": {
+      "neurons": [],
+      "weights": []
+     },
+     "allowed": {
+      "raw_weights": true,
+      "sandbox": false,
+      "forward_passes": 20,
+      "pass_inputs": 32,
+      "feedback": false
+     },
+     "sentence": "The agent opened tiny@v1. Allowed: raw weights yes, a sandbox no, 20 forward passes, scores hidden until it is saved or closed."
+    },
+    {
+     "id": "e2",
+     "seq": 2,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "agent",
+     "kind": "read",
+     "touched": {
+      "neurons": [
+       [
+        1,
+        0
+       ],
+       [
+        1,
+        1
+       ],
+       [
+        1,
+        2
+       ]
+      ],
+      "weights": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        0,
+        0,
+        1
+       ],
+       [
+        0,
+        1,
+        0
+       ],
+       [
+        0,
+        1,
+        1
+       ],
+       [
+        0,
+        2,
+        0
+       ],
+       [
+        0,
+        2,
+        1
+       ]
+      ]
+     },
+     "op": "read",
+     "tensor": "layer1.weight",
+     "layer": 1,
+     "args": {
+      "rows": [
+       0,
+       3
+      ],
+      "cols": [
+       0,
+       2
+      ]
+     },
+     "count": 6,
+     "sentence": "The agent read 6 numbers of layer1.weight."
+    },
+    {
+     "id": "e3",
+     "seq": 3,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "agent",
+     "kind": "edit",
+     "touched": {
+      "neurons": [
+       [
+        1,
+        1
+       ]
+      ],
+      "weights": [
+       [
+        0,
+        1,
+        0
+       ],
+       [
+        0,
+        1,
+        1
+       ]
+      ]
+     },
+     "op": "scale",
+     "tensor": "layer1.weight",
+     "tensors": [
+      "layer1.weight"
+     ],
+     "layer": 1,
+     "neuron": 1,
+     "factor": 0.5,
+     "why": "this unit shouts",
+     "args": {
+      "op": "scale",
+      "layer": 1,
+      "neuron": 1,
+      "factor": 0.5
+     },
+     "target_named": {
+      "of": 1
+     },
+     "changes": [
+      {
+       "tensor": "layer1.weight",
+       "k": 0,
+       "j": 1,
+       "i": 0,
+       "old": 9.830345153808594,
+       "new": 4.915172576904297
+      },
+      {
+       "tensor": "layer1.weight",
+       "k": 0,
+       "j": 1,
+       "i": 1,
+       "old": -10.288958549499512,
+       "new": -5.144479274749756
+      }
+     ],
+     "changed": 2,
+     "share": 0.153846,
+     "undone": true,
+     "sentence": "The agent scaled 2 numbers in layer1.weight (layer 1, neuron 2).",
+     "ledger": {
+      "changed": 2,
+      "total": 13
+     },
+     "scores": "hidden"
+    },
+    {
+     "id": "e4",
+     "seq": 4,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "you",
+     "kind": "edit",
+     "touched": {
+      "neurons": [
+       [
+        1,
+        1
+       ]
+      ],
+      "weights": []
+     },
+     "op": "set",
+     "tensor": "layer1.bias",
+     "tensors": [
+      "layer1.bias"
+     ],
+     "layer": 1,
+     "neuron": 1,
+     "factor": null,
+     "why": "",
+     "args": {
+      "op": "set",
+      "layer": 1,
+      "neuron": 1,
+      "from": null,
+      "value": 0.25
+     },
+     "changes": [
+      {
+       "tensor": "layer1.bias",
+       "k": 0,
+       "j": 1,
+       "i": null,
+       "old": 3.848785400390625,
+       "new": 0.25
+      }
+     ],
+     "changed": 1,
+     "share": 0.076923,
+     "undone": false,
+     "sentence": "You set 1 number in layer1.bias (layer 1, neuron 2).",
+     "ledger": {
+      "changed": 3,
+      "total": 13
+     },
+     "scores": "hidden"
+    },
+    {
+     "id": "e5",
+     "seq": 5,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "you",
+     "kind": "undo",
+     "touched": {
+      "neurons": [
+       [
+        1,
+        1
+       ]
+      ],
+      "weights": [
+       [
+        0,
+        1,
+        0
+       ],
+       [
+        0,
+        1,
+        1
+       ]
+      ]
+     },
+     "op": "scale",
+     "undoes": "e3",
+     "tensor": "layer1.weight",
+     "tensors": [
+      "layer1.weight"
+     ],
+     "layer": 1,
+     "neuron": 1,
+     "changes": [
+      {
+       "tensor": "layer1.weight",
+       "k": 0,
+       "j": 1,
+       "i": 0,
+       "old": 4.915172576904297,
+       "new": 9.830345153808594
+      },
+      {
+       "tensor": "layer1.weight",
+       "k": 0,
+       "j": 1,
+       "i": 1,
+       "old": -5.144479274749756,
+       "new": -10.288958549499512
+      }
+     ],
+     "changed": 2,
+     "sentence": "You took back edit e3: 2 numbers in layer1.weight (layer 1, neuron 2).",
+     "ledger": {
+      "changed": 1,
+      "total": 13
+     },
+     "scores": "hidden"
+    },
+    {
+     "id": "e6",
+     "seq": 6,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "agent",
+     "kind": "run",
+     "touched": {
+      "neurons": [],
+      "weights": []
+     },
+     "op": "forward",
+     "input": "example 1",
+     "inputs": 1,
+     "run_cost": 1.4344111205274866e-05,
+     "sentence": "The agent ran the network on example 1. That is forward pass 1 of 20."
+    }
+   ],
+   "event_count": 6,
+   "saved": [],
+   "closed": false
+  }
+ },
+ "whole:end": {
+  "status": 200,
+  "data": {
+   "id": "tiny",
+   "name": "tiny",
+   "version": 1,
+   "sizes": [
+    2,
+    3,
+    1
+   ],
+   "squish": "sigmoid",
+   "cost": "cross_entropy",
+   "layers": [
+    {
+     "W": [
+      [
+       -5.615328311920166,
+       -10.62951946258545
+      ],
+      [
+       9.830345153808594,
+       -10.288958549499512
+      ],
+      [
+       -13.241960525512695,
+       -7.994318962097168
+      ]
+     ],
+     "b": [
+      10.183963775634766,
+      0.25,
+      7.808344841003418
+     ],
+     "activation": "sigmoid",
+     "name": "layer1",
+     "inputs": 2,
+     "outputs": 3
+    },
+    {
+     "W": [
+      [
+       18.495521545410156,
+       -13.43355941772461,
+       -16.328330993652344
+      ]
+     ],
+     "b": [
+      2.178818941116333
+     ],
+     "activation": "sigmoid",
+     "name": "layer2",
+     "inputs": 3,
+     "outputs": 1
+    }
+   ],
+   "inputMeaning": "two numbers between 0 and 1",
+   "outputMeaning": "1 when exactly one input is above one half",
+   "numbers": true,
+   "examples": [
+    {
+     "name": "example 1",
+     "x": [
+      0.3774,
+      0.7438
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 2",
+     "x": [
+      0.9139,
+      0.8365
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 3",
+     "x": [
+      0.1177,
+      0.9691
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 4",
+     "x": [
+      0.3477,
+      0.7457
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 5",
+     "x": [
+      0.9893,
+      0.0898
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 6",
+     "x": [
+      0.9222,
+      0.2724
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 7",
+     "x": [
+      0.7884,
+      0.0123
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 8",
+     "x": [
+      0.3579,
+      0.2295
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 9",
+     "x": [
+      0.7561,
+      0.7419
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 10",
+     "x": [
+      0.8608,
+      0.7388
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 11",
+     "x": [
+      0.203,
+      0.7484
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 12",
+     "x": [
+      0.0221,
+      0.7002
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 13",
+     "x": [
+      0.3364,
+      0.9273
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 14",
+     "x": [
+      0.2669,
+      0.7882
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 15",
+     "x": [
+      0.9879,
+      0.9361
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 16",
+     "x": [
+      0.098,
+      0.827
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 17",
+     "x": [
+      0.3824,
+      0.9142
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 18",
+     "x": [
+      0.7477,
+      0.188
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 19",
+     "x": [
+      0.8071,
+      0.9608
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 20",
+     "x": [
+      0.2857,
+      0.7593
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 21",
+     "x": [
+      0.1848,
+      0.0369
+     ],
+     "y": [
+      0.0
+     ]
+    },
+    {
+     "name": "example 22",
+     "x": [
+      0.7968,
+      0.0916
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 23",
+     "x": [
+      0.0373,
+      0.6365
+     ],
+     "y": [
+      1.0
+     ]
+    },
+    {
+     "name": "example 24",
+     "x": [
+      0.0863,
+      0.2797
+     ],
+     "y": [
+      0.0
+     ]
+    }
+   ],
+   "test": [],
+   "synthetic": true,
+   "data_note": "Points drawn by code with a seed. None is closer than 0.1 to one half.",
+   "parameters": 13,
+   "base": null,
+   "inputNames": [
+    "x1",
+    "x2"
+   ],
+   "outputNames": [
+    "exactly one is high"
+   ],
+   "session": "ws-44b1066e",
+   "edits": 3
+  }
+ },
+ "missing": {
+  "status": 404,
+  "data": {
+   "error": "There is no weights model named nope. See the list with `cst weights models`."
+  }
+ },
+ "person:edit": {
+  "status": 200,
+  "data": {
+   "id": "e2",
+   "seq": 2,
+   "at": "2026-11-13T09:37:16Z",
+   "by": "you",
+   "kind": "edit",
+   "touched": {
+    "neurons": [
+     [
+      1,
+      0
+     ]
+    ],
+    "weights": []
+   },
+   "op": "set",
+   "tensor": "layer1.bias",
+   "tensors": [
+    "layer1.bias"
+   ],
+   "layer": 1,
+   "neuron": 0,
+   "factor": null,
+   "why": "",
+   "args": {
+    "op": "set",
+    "layer": 1,
+    "neuron": 0,
+    "from": null,
+    "value": 9.0
+   },
+   "target_named": {
+    "of": 1
+   },
+   "changes": [
+    {
+     "tensor": "layer1.bias",
+     "k": 0,
+     "j": 0,
+     "i": null,
+     "old": 10.183963775634766,
+     "new": 9.0
+    }
+   ],
+   "changed": 1,
+   "share": 0.076923,
+   "cost": {
+    "target": {
+     "name": "target",
+     "of": 1,
+     "before": 0.006220791522215079,
+     "after": 0.7033035418070553,
+     "right_before": 1,
+     "right_after": 0,
+     "answers_changed": 1
+    },
+    "test": {
+     "name": "held out",
+     "of": 300,
+     "before": 0.00809084199125526,
+     "after": 0.10083447880236868,
+     "right_before": 300,
+     "right_after": 291,
+     "answers_changed": 9
+    }
+   },
+   "cost_before": 0.006220791522215079,
+   "cost_after": 0.7033035418070553,
+   "undone": false,
+   "sentence": "You set 1 number in layer1.bias (layer 1, neuron 1). Cost on the target went from 0.006221 to 0.7033.",
+   "ledger": {
+    "changed": 1,
+    "total": 13
+   }
+  }
+ },
+ "person:session-after-edit": {
+  "status": 200,
+  "data": {
+   "id": "ws-bdb79912",
+   "model": "tiny",
+   "version": 1,
+   "base": "tiny@v1",
+   "who": {
+    "kind": "person",
+    "name": "demo"
+   },
+   "opened_at": "2026-11-13T09:37:16Z",
+   "ledger": {
+    "raw_weights": true,
+    "weights_read": 0,
+    "sandbox": false,
+    "sandbox_used": false,
+    "forward_allowed": 50,
+    "forward_used": 0,
+    "pass_inputs": 32,
+    "gradients_computed": false,
+    "evaluations": 0,
+    "training_steps": 0,
+    "changed": 1,
+    "total": 13,
+    "share": 0.076923,
+    "feedback": true,
+    "scores_shown": true,
+    "first_score": {
+     "event": "e2",
+     "op": "edit"
+    },
+    "screen_looks": 1,
+    "screen_numbers": 13,
+    "weights_alone": false,
+    "label": "from the weights, with scores shown along the way"
+   },
+   "sets": {
+    "target": {
+     "defined": true,
+     "of": 1,
+     "says": "1 input given when the set was named"
+    },
+    "should_not_change": {
+     "defined": false
+    },
+    "held_out": {
+     "defined": true,
+     "of": 300,
+     "says": "the model's held-out set"
+    }
+   },
+   "edits": [
+    {
+     "id": "e2",
+     "n": 1,
+     "op": "set",
+     "tensors": [
+      "layer1.bias"
+     ],
+     "why": "",
+     "state": "applied",
+     "changed": 1,
+     "by": "you"
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "seq": 1,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "you",
+     "kind": "open",
+     "touched": {
+      "neurons": [],
+      "weights": []
+     },
+     "allowed": {
+      "raw_weights": true,
+      "sandbox": false,
+      "forward_passes": 50,
+      "pass_inputs": 32,
+      "feedback": true
+     },
+     "sentence": "You opened tiny@v1. Allowed: raw weights yes, a sandbox no, 50 forward passes, scores shown as it goes."
+    },
+    {
+     "id": "e2",
+     "seq": 2,
+     "at": "2026-11-13T09:37:16Z",
+     "by": "you",
+     "kind": "edit",
+     "touched": {
+      "neurons": [
+       [
+        1,
+        0
+       ]
+      ],
+      "weights": []
+     },
+     "op": "set",
+     "tensor": "layer1.bias",
+     "tensors": [
+      "layer1.bias"
+     ],
+     "layer": 1,
+     "neuron": 0,
+     "factor": null,
+     "why": "",
+     "args": {
+      "op": "set",
+      "layer": 1,
+      "neuron": 0,
+      "from": null,
+      "value": 9.0
+     },
+     "target_named": {
+      "of": 1
+     },
+     "changes": [
+      {
+       "tensor": "layer1.bias",
+       "k": 0,
+       "j": 0,
+       "i": null,
+       "old": 10.183963775634766,
+       "new": 9.0
+      }
+     ],
+     "changed": 1,
+     "share": 0.076923,
+     "cost": {
+      "target": {
+       "name": "target",
+       "of": 1,
+       "before": 0.006220791522215079,
+       "after": 0.7033035418070553,
+       "right_before": 1,
+       "right_after": 0,
+       "answers_changed": 1
+      },
+      "test": {
+       "name": "held out",
+       "of": 300,
+       "before": 0.00809084199125526,
+       "after": 0.10083447880236868,
+       "right_before": 300,
+       "right_after": 291,
+       "answers_changed": 9
+      }
+     },
+     "cost_before": 0.006220791522215079,
+     "cost_after": 0.7033035418070553,
+     "undone": false,
+     "sentence": "You set 1 number in layer1.bias (layer 1, neuron 1). Cost on the target went from 0.006221 to 0.7033.",
+     "ledger": {
+      "changed": 1,
+      "total": 13
+     }
+    }
+   ],
+   "event_count": 2,
+   "saved": [],
+   "closed": false
+  }
+ }
+}

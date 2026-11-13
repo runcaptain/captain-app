@@ -888,7 +888,9 @@ export default class ProjectHome extends View {
     if (h.problem) return Problem(c, h.problem, (cx) => this.loadHome(cx));
     const id = h.project?.id ?? "";
     const joins = `Assign it to the project, or name it starting with ${id}.`;
-    const models = [...(h.models ?? []).map((m) => ({ ...m, from: "registry" })), ...(h.mlflow_models ?? []).map((m) => ({ ...m, from: "MLflow" }))];
+    // A weights model the project holds is listed here too (h.networks): each version of it can be deployed.
+    const models = [...(h.models ?? []).map((m) => ({ ...m, from: "registry" })), ...(h.mlflow_models ?? []).map((m) => ({ ...m, from: "MLflow" })),
+      ...(h.networks ?? []).map((m) => ({ ...m, from: "Weights" }))];
     return v_flex().gap(14)
       .child(this.section(c, "datasets", "Datasets", h.datasets ?? [],
         (d, i) => this.row(c, `ph-ds-${i}`, d.name, d.description || `${int(d.rows)} rows, by ${d.created_by ?? "?"} ${day(d.created_at)}`, [d.version != null ? `v${d.version}` : null], "database", () => go("data", { dataset: d.name })),

@@ -108,6 +108,13 @@
           "content": {
             "mod": "captain-team"
           }
+        },
+        {
+          "id": "weights",
+          "type": "block",
+          "content": {
+            "mod": "captain-weights"
+          }
         }
       ]
     },
