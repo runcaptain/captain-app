@@ -235,6 +235,7 @@ def check(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES, 
          "bad_in_a_row": bad, "fallbacks": m.get("fallbacks", 0), "judged": m["requests"] >= MIN_REQUESTS,
          # A model in a cloud that the schedule did not call: it is running by the cloud's own state.
          "running_by_cloud": bool(m.get("cloud")) and m.get("answering") is None and status in ("healthy", "unknown") and not m.get("deploying")}
+    h["sources"] = sources(rec, m, window)
     h["text"] = words(rec, h)
     _save(ctx, pid, env, health=h)
     try:
@@ -258,6 +259,22 @@ def check(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES, 
     return {**get(ctx, pid, env), "changed": changed, "was": was, "alert": alert}
 
 
+def sources(rec: dict, m: dict, window: int) -> list[dict]:
+    """Where each fact in a health came from, for the health panel: [{fact, from}]. A person should be able to
+    tell what Captain looked at, and that it did not call a model in a cloud unless they asked."""
+    cloud = rec.get("kind") != "local"
+    place = {"aws": "AWS", "modal": "Modal", "gcp": "Google Cloud", "azure": "Azure"}.get(rec.get("host") or "", "the cloud")
+    if m.get("stopped") or m.get("asleep"):
+        return [{"fact": "Whether it is up", "from": f"{place}'s own state. The model was not called." if cloud else "This computer: is its process running."}]
+    asked = m.get("answering") is not None
+    up = ("Captain asked the model itself, just now." if not cloud else
+          "Captain asked the model itself, because you pressed Check now." if asked else
+          f"{place}'s own state. The model was not called.")
+    return [{"fact": "Whether it is up", "from": up},
+            {"fact": "How many requests failed, and how fast they were",
+             "from": f"The request log: the requests it answered in the last {window} minutes."}]
+
+
 def words(rec: dict, h: dict) -> str:
     """The health in one or two sentences, as the deployed screen and the project page say it."""
     s = h["status"]
@@ -269,8 +286,8 @@ def words(rec: dict, h: dict) -> str:
         return "Unhealthy. " + " ".join(h["reasons"])
     if s == "unknown" and h.get("running_by_cloud") and not h["reasons"]:
         n = h.get("requests") or 0
-        return ("Running, no requests to judge by." if not n else
-                f"Running. Only {n:,} request{'s' if n != 1 else ''} in the last {h['window_minutes']} minutes, too few to judge by.")
+        return ("Running. No requests to judge by yet." if not n else
+                f"Running. Only {n:,} request{'s' if n != 1 else ''} in the last {h['window_minutes']} minutes, too few to judge by yet.")
     if s == "unknown":
         return ("Not confirmed healthy yet. " + " ".join(h["reasons"])) if h["reasons"] else "Not checked yet."
     if not h.get("judged"):
@@ -366,6 +383,16 @@ def watch_once(ctx: Context, notify: bool = True, system: bool = False) -> list[
         for env, rec in envs.items():
             if rec and rec.get("status") == "running":
                 try:
+                    if rec.get("kind") != "local":
+                        # With no page open, the record may be hours old: a model that stopped by itself would
+                        # read as running. The cloud is asked for its state first, which is free and is not a
+                        # call to the model. If it can't be asked the record stands as it is.
+                        try:
+                            from . import fleet as FL
+
+                            FL.one(ctx, pr["id"], env)
+                        except Exception:  # noqa: BLE001
+                            pass
                     r = check(ctx, pr["id"], env, notify=notify)
                     if system and r.get("alert"):
                         r["alert"]["system"] = system_notification(r["alert"])

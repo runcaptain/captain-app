@@ -11,9 +11,9 @@ const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
-// The checks are one file: the kit's copy is the forms' own, plus two lines saying so.
-const strip = (t) => t.split('\n').filter((l) => !l.startsWith('// The same file as') && !l.startsWith('// (tests/mod-render/form-rule')).join('\n');
-assert.equal(strip(read('defaults/captain/kit/checks.js')), read('defaults/mods/captain-forms/checks.js'), 'kit/checks.js and captain-forms/checks.js are the same rule');
+// The checks are one file, in the kit. captain-forms reads the kit's copy like every other mod, and has none of its own.
+assert.ok(!fs.existsSync(path.join(root, 'defaults/mods/captain-forms/checks.js')), 'captain-forms keeps no copy of its own');
+assert.ok(read('defaults/mods/captain-forms/main.js').includes('from "./kit/checks.js"'), 'it reads the kit\'s');
 const { idFrom, sayError, looksRaw } = await import('../../defaults/captain/kit/checks.js');
 
 // ---- a new notebook's name ---------------------------------------------------------------------------------------

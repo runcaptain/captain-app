@@ -10,7 +10,7 @@ import { Button, Badge, ServiceError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { TASKS } from "./tasks.js";
-import { idFrom, isId, sayError, FALLBACK } from "./checks.js";
+import { idFrom, isId, sayError, FALLBACK } from "./kit/checks.js";
 import { api } from "./kit/cst.js";
 import { recordsChanged } from "./kit/cst.js";
 import { watchView, publishView, safeFields } from "./kit/view.js";

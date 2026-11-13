@@ -20,6 +20,7 @@ import { Badge, Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { costState, costSlice } from "./kit/cost.js";
 import { ShipSection, DeployedView, loadPlaces as loadDeployPlaces, loadPlain, loadLive } from "./ship-view.js";
+import { RefreshMark } from "./deploy-tabs.js";
 import { DeploymentsList } from "./deploy-tabs.js";
 
 const enc = encodeURIComponent;
@@ -554,7 +555,7 @@ export class Ship {
     const list = v_flex().id("dep-requests").flex_1().min_w(360)
       .child(h_flex().gap(8).items_center().pb(6)
         .child(div().id("dep-requests-text").flex_1().min_w(0).text_size(12.5).text_color(c.grey500).child(d ? d.text : "Reading the request log..."))
-        .when(this.running(), (e) => e.child(Button(c, "dep-requests-refresh", this.refreshing === "requests" ? "Refreshing..." : "Refresh", (_e, cx) => this.refreshNow(cx, "requests"), { small: true, disabled: Boolean(this.refreshing) }))))
+        .when(this.running(), (e) => e.child(RefreshMark(c, "dep-requests-refresh", this.refreshing === "requests", (_e, cx) => this.refreshNow(cx, "requests")))))
       .when(Boolean(d?.rows?.length), (e) => e
         .child(h_flex().gap(8).py(4).text_color(c.grey500).border_b(1).border_color(c.rule)
           .child(cell(92, "Time")).child(div().flex_1().min_w(80).text_size(12.5).child("Query")).child(cell(80, "Answered by")).child(cell(64, "Took")).child(cell(74, "Traffic")).child(cell(70, "Status")))
