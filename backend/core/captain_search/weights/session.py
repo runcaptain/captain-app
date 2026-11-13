@@ -596,8 +596,8 @@ def forward(ctx, sid: str, inputs=None, targets=None, example=None, by: str | No
         if y is not None:
             res["cost"] = N.cost(net, xb, y)
         if not st.watch:
-            st.event("run", f"{_Who(st, by)} ran the network on {name}. {st.doc['used']['forward_used']} of "
-                            f"{st.doc['allowed']['forward_passes']} forward passes are used.", by, op="forward", input=name,
+            st.event("run", f"{_Who(st, by)} ran the network on {name}. That is forward pass {st.doc['used']['forward_used']} of "
+                            f"{st.doc['allowed']['forward_passes']}.", by, op="forward", input=name,
                      inputs=len(xb), cost_after=res.get("cost"))
         return {**res, **_left(st)}
     return _do(ctx, sid, fn, watch)
@@ -622,8 +622,8 @@ def activations(ctx, sid: str, inputs=None, targets=None, example=None, by: str 
             res["wanted"] = yb[0].tolist()
             res["cost"] = float(N.cost_each(net, acts[-1], yb)[0])
         if not st.watch:
-            st.event("run", f"{_Who(st, by)} looked at every neuron's activation on {name}. {st.doc['used']['forward_used']} of "
-                            f"{st.doc['allowed']['forward_passes']} forward passes are used.", by, op="activations", input=name,
+            st.event("run", f"{_Who(st, by)} looked at every neuron's activation on {name}. That is forward pass {st.doc['used']['forward_used']} of "
+                            f"{st.doc['allowed']['forward_passes']}.", by, op="activations", input=name,
                      inputs=1, cost_after=res.get("cost"))
         return {**res, **_left(st)}
     return _do(ctx, sid, fn, watch)
@@ -1247,8 +1247,7 @@ def diff(ctx, sid: str, by: str | None = None, watch: bool = False) -> dict:
     def fn(st):
         out = _diff(st)
         if not st.watch:
-            st.event("read", f"{_Who(st, by)} compared the network with its base: {_plural(out['changed'], 'number')} of "
-                             f"{out['total']:,} differ.", by, op="diff")
+            st.event("read", f"{_Who(st, by)} compared the network with its base: {out['changed']:,} of {out['total']:,} numbers differ.", by, op="diff")
         return out
     return _do(ctx, sid, fn, watch)
 

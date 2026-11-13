@@ -95,18 +95,43 @@ cst weights open tiny --agent --name claude --forward-passes 20 --no-sandbox
     "label": "from the weights alone"
   },
   "sets": {
-    "target": {"defined": false},
-    "should_not_change": {"defined": false},
-    "held_out": {"defined": true, "of": 200, "says": "the model's held-out set"}
+    "target": {"defined": true, "of": 1, "says": "practice example 0, by default. Name the real one with `cst weights sets`"},
+    "should_not_change": {"defined": true, "of": 23, "says": "every practice example but 0, by default. Name the real one with `cst weights sets`"},
+    "held_out": {"defined": true, "of": 300, "says": "the model's held-out set"}
   },
   "edits": [],
-  "events": []
+  "events": [],
+  "event_count": 1,
+  "saved": []
 }
 ```
 
 `weights_alone` is true only when no sandbox was allowed and no forward pass was used. It is worked out from the
 record each time. The label is one of "from the weights alone", "from the weights, with code, network not run" or
-"with 3 of 20 forward passes".
+"with 3 of 20 forward passes". A training step adds ", and 1 training step".
+
+A person's session gets 50 forward passes unless told otherwise. An agent's gets none: say how many with
+`--forward-passes`. `events` in a session answer holds the last 100. The whole record is in `report`.
+
+Until the sets are named, the target is practice example 0 and "should not change" is the other practice
+examples. A model with no practice examples has no target until one is named.
+
+### Something refused
+
+A run past the allowance, raw weights the session may not see, or an export without a sandbox answers with status
+403 and is written into the record:
+
+```json
+{"error": "All 20 forward passes of this session are used. The network cannot be run again in it.", "refused": true}
+```
+
+`cst weights` prints the sentence and exits with code 3. Anything else that cannot be done (no such neuron, an
+edit that changes nothing) is status 400 with `{"error": "..."}` and exit code 1. A missing model or session is 404.
+
+### A screen looking
+
+Add `watch=1` to a read or a run (or `"watch": true` in a body) when a screen draws a session for a person who is
+looking on. Nothing is recorded, counted or refused, and the feed is not told. `cst weights` has no such switch.
 
 `cst weights` commands act on the session opened last. Name another with `--session ws-...`.
 
@@ -122,6 +147,9 @@ Each line: the command, the route, and what comes back. `{s}` is the session id.
 | `cst weights show <model>` | `GET /api/weights/models/{model}` | the whole network, see below |
 | `cst weights open <model>` | `POST /api/weights/sessions` | a session |
 | | `GET /api/weights/models/{model}/session` | the newest session on the model, made if there is none |
+| `cst weights sessions <model>` | `GET /api/weights/models/{model}/sessions` | `[{id, model, version, who, opened_at, events, edits}]`, newest first |
+| `cst weights assign <model> <project>` | `POST /api/weights/models/{model}/project` | `{model, project}`. Body: `{"project": "shop"}` |
+| `cst weights import <folder> [--name]` | `POST /api/weights/import` | `{model, version, ref, parameters, sizes}`. Body: `{"folder": "...", "name": "..."}` |
 | `cst weights session` | `GET /api/weights/sessions/{s}` | a session |
 | `cst weights layers` | `GET /api/weights/sessions/{s}/layers` | `{sizes, cost, parameters, layers: [...]}` |
 | `cst weights read <tensor> [--rows 0:2] [--cols 0:4]` | `GET /api/weights/sessions/{s}/read?tensor=&rows=&cols=` | `{tensor, shape, rows, cols, values, count}` |
@@ -263,6 +291,8 @@ Here `layer` is the neuron's column, so 1 is the first layer after the input. `f
 `add_direction` adds `scale * direction` to the incoming weights of each named neuron (all of them when none is
 named). With `"along": "outputs"` the direction has one number per neuron of the layer and is added to the weights
 leaving each named input. An agent must give `why`.
+`{"op": "step", "example": [0, 1, 2], "rate": 0.5}` takes one gradient step on practice examples. It is an edit like
+any other, costs a forward pass, and puts "training step" in the session's label.
 
 The event that comes back, also what `events` lists:
 
@@ -279,7 +309,11 @@ The event that comes back, also what `events` lists:
 ```
 
 `kind` is one of `open`, `read`, `run`, `gradients`, `edit`, `undo`, `redo`, `evaluate`, `save`, `export`, `sets`,
-`step`. `touched.neurons` are `[column, index]`. `touched.weights` are `[layer, to, from]`. `changes` and
+`refused`. Every event has `sentence`. Events that measured something have `cost_before` and `cost_after`.
+
+In an edit's `cost`, `before` is the network just before this edit and `after` is just after it. A set that is not
+defined is left out of `cost`. Send `"target": 3` with an edit to measure that one edit against practice example 3
+and the other practice examples. `touched.neurons` are `[column, index]`. `touched.weights` are `[layer, to, from]`. `changes` and
 `touched.weights` list at most 200 entries. `changed` is the true count. An undone edit stays in the list with
 `"undone": true`, and the undo is an event of its own with `"undoes": "e4"`.
 
