@@ -90,7 +90,8 @@ export function partsFrom(d) {
   // Where it came from is a folder or a storage address. The page never shows it raw: it says which of the two
   // it is, and keeps the address for a person to copy.
   const address = typeof d.source === "string" ? "" : String(d.source?.from ?? "");
-  const from = typeof d.source === "string" ? d.source : !address ? "" : /^[a-z][a-z0-9+.-]*:\/\//i.test(address) ? "Brought in from your model storage" : "Brought in from a folder on this computer";
+  // The services' own sentence about where it came from, when they send one: it names no folder or address.
+  const from = typeof d.source_says === "string" && d.source_says ? d.source_says : typeof d.source === "string" ? d.source : !address ? "" : /^[a-z][a-z0-9+.-]*:\/\//i.test(address) ? "Brought in from your model storage" : "Brought in from a folder on this computer";
   return { id: d.id, name: d.name ?? d.id, kind: "parts", kind_words: cap(d.kind_says ?? d.kind_words ?? "trained model"), parameters: d.parameters, width: d.width ?? null,
     source: from, source_address: address, read_only: d.can?.says ?? null, can_edit: d.can?.edit === true, edits_say: d.can?.edits_say ?? "", wiring: d.wiring_says ?? "", heads_words: d.heads ? "" : d.heads_says ?? "",
     parts, rankers: (d.rankers ?? []).map((r) => ({ id: r.name, name: r.name, trees: r.trees ?? null, inputs_count: r.inputs ?? null })) };
@@ -144,11 +145,17 @@ export async function sendPartEdit(sessionId, t, staged) {
 
 /** What each row of a table stands for, when the services know: {labels: [one per row] or null, says, sure}.
  *  `says` is the services' sentence about where the names came from, and `sure` false means a row's place is a
- *  guess. A route that is not there yet answers as no names. */
-export async function readPartLabels(sessionId, t) {
-  const r = await api(`/api/weights/sessions/${enc(sessionId)}/labels?${query({ tensor: t.how.tensor })}`, { timeout: 20 });
+ *  guess. `rows` is [first, end) for a table too tall to name whole: only the rows on screen are asked for. A
+ *  route that is not there yet answers as no names. */
+export async function readPartLabels(sessionId, t, rows = null) {
+  const r = await api(`/api/weights/sessions/${enc(sessionId)}/labels?${query({ tensor: t.how.tensor, rows: rows ? `${rows[0]}:${rows[1]}` : null })}`, { timeout: 20 });
   const d = r?.ok ? r.data ?? {} : {};
-  return { ok: true, data: { labels: Array.isArray(d.labels) ? d.labels : null, says: d.labels_says ?? "", sure: d.sure ?? null } };
+  // With `rows` only those rows' names come back. They are put at their own places, so a name is always found
+  // by its row in the whole table. Services that send the whole list anyway say so by `rows_shown`.
+  const first = Array.isArray(d.rows_shown) ? d.rows_shown[0] : 0;
+  let labels = null;
+  if (Array.isArray(d.labels)) { labels = []; d.labels.forEach((name, n) => { labels[first + n] = name; }); }
+  return { ok: true, data: { labels, says: d.labels_says ?? "", sure: d.sure ?? null, whole: !rows } };
 }
 
 /** A model's rankers side by side: {says, by: {input name: {used_by: [rankers], unused_by: [rankers]}}}. A

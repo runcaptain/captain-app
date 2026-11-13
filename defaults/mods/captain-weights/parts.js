@@ -109,7 +109,8 @@ export function loadPart(v, cx) {
     const [heat, near, names] = await Promise.all([
       readPartHeatmap(s.session, t, { head: s.head, rows }),
       table && s.row != null ? readPartNearest(s.session, t, s.row) : Promise.resolve(null),
-      table && !s.labels[p.id] ? readPartLabels(s.session, t) : Promise.resolve(null),
+      // Names for the rows on screen: the whole list once for a short table, the window's rows for a tall one.
+      table && !s.labels[p.id]?.whole ? readPartLabels(s.session, t, rows) : Promise.resolve(null),
     ]);
     if (v.pm !== s) return;
     if (names?.ok) s.labels[p.id] = names.data;

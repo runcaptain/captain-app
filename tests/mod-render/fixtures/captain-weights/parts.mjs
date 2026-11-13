@@ -73,6 +73,7 @@ export function partsModel(o = {}) {
       : { read: true, edit: false, run: false, deploy: false, says: 'This model can be read here, not changed or run yet.' } };
 }
 
+export const SOURCE_SAYS = 'Brought in from a training folder on this computer on 2026-11-13, 12 files kept unchanged.';
 export const NOT_MEASURED = 'Not measured: this model cannot be run here yet.';
 // What a test has changed in the made-up model: the numbers set, and the session's record. `partsReset()` clears it.
 const CHANGED = { numbers: new Map(), events: [], refuse: null };
@@ -151,7 +152,8 @@ export function partsRoutes(path, o = {}, opts = {}) {
   const [p, q = ''] = path.split('?');
   const arg = Object.fromEntries(q.split('&').filter(Boolean).map((kv) => kv.split('=').map(decodeURIComponent)));
   const m = partsModel(o), sh = tensorShapes(o);
-  if (p === '/api/weights/models') return { ok: true, data: [{ id: m.id, name: m.name, says: m.says, sizes: [], parameters: m.parameters, versions: [1], kind: m.kind, kind_says: m.kind_says }] };
+  if (p === '/api/weights/models') return { ok: true, data: [{ id: m.id, name: m.name, says: m.says, sizes: [], parameters: m.parameters, versions: [1], kind: m.kind, kind_says: m.kind_says, ...(o.sourced ? { source_says: SOURCE_SAYS } : {}) }] };
+  if (p === `/api/weights/models/${PARTS}` && o.sourced) return { ok: true, data: { ...m, source_says: SOURCE_SAYS } };
   if (p === `/api/weights/models/${PARTS}`) return { ok: true, data: m };
   if (p === `/api/weights/models/${PARTS}/session`) return { ok: true, data: { id: SESSION, model: PARTS, ledger: { raw_weights: true, weights_read: 0, changed: changedNow(), total: m.parameters }, events: CHANGED.events.map((e) => ({ ...e })) } };
   if (p === `/api/weights/sessions/${SESSION}/edits`) return o.edits ? editAnswer(sh, opts.body ?? {}) : { ok: false, error: 'This model can be read here, not changed or run yet.' };
@@ -169,6 +171,9 @@ export function partsRoutes(path, o = {}, opts = {}) {
       { name: 'items seen', group: 'items', by: {}, used_by: ['full'], unused_by: [] }],
     unused_by_all: ['hour of day'], unused_by_all_says: '1 input is used by no ranker: hour of day.', same_inputs: false } };
   // What each row stands for. The services name the item table's rows, with one row past the saved list.
+  // A tall table's names, for the rows asked for only.
+  if (p === `/api/weights/sessions/${SESSION}/labels` && arg.tensor === 'item.weight' && o.tall && o.named) { const [a, b] = span(arg.rows, 1000);
+    return { ok: true, data: { tensor: arg.tensor, rows: 1000, rows_shown: [a, b], labels: Array.from({ length: b - a }, (_x, i) => `thing ${a + i + 1}`), labels_says: '', sure: true } }; }
   if (p === `/api/weights/sessions/${SESSION}/labels` && arg.tensor === 'cn') return { ok: true, data: { tensor: 'cn', rows: 40, labels: Array.from({ length: 40 }, (_x, i) => `item ${i + 1}, price bucket ${(i % 4) + 1}`), labels_says: '', sure: true } };
   if (p === `/api/weights/sessions/${SESSION}/labels`) return o.plain || arg.tensor !== 'item.weight' || o.tall ? { ok: true, data: { tensor: arg.tensor, labels: null, labels_says: '', sure: null } }
     : { ok: true, data: { tensor: arg.tensor, rows: ITEMS.length, labels: [...ITEMS.slice(0, -1), 'none or unknown'], labels_from: 'a saved list', extra_row: ITEMS.length - 1, sure: false,

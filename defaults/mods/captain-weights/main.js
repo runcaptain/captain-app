@@ -583,7 +583,9 @@ export default class CaptainWeights extends View {
           .child(div().text_size(12.5).font_medium().child(m.name))
           // A trained model says its kind in words and how many numbers it has, then where it came from.
           .when(isParts(m), (e) => e.child(div().id(`wt-open-kind-${m.id}`).text_size(12.5).line_height("17px").text_color(c.grey500).child(partsFacts(m)))
-            .when(Boolean(m.says), (x) => x.child(div().id(`wt-open-says-${m.id}`).text_size(11.5).line_height("16px").text_color(c.grey500).child(m.says))))
+            .when(Boolean(m.says), (x) => x.child(div().id(`wt-open-says-${m.id}`).text_size(11.5).line_height("16px").text_color(c.grey500).child(m.says)))
+            // Where it came from, in the services' own sentence: it names no folder or address.
+            .when(Boolean(m.source_says), (x) => x.child(div().id(`wt-open-source-${m.id}`).text_size(11.5).line_height("16px").text_color(c.grey500).child(m.source_says))))
           .when(!isParts(m) && Boolean(m.says), (e) => e.child(div().text_size(12.5).line_height("17px").text_color(c.grey500).child(m.says))))
         .child(Button(c, `wt-open-btn-${m.id}`, `Open ${m.name}`, (_e, cx) => this.open(m.id, cx), { small: true })))))
       // A trained model kept somewhere else is brought in from here, when the services answer.
