@@ -39,6 +39,10 @@ export function readListView() {
 }
 export function keepListView(lv) { try { localStorage.setItem(KEY, JSON.stringify({ ...lv })); } catch { /* it lasts while the page is open */ } }
 
+/** Who made something, short: a sign-in name that is an address is cut at its "@", so a row shows a name and
+ *  never a whole address. The whole value stays in the tooltip. */
+export const shortOwner = (who) => String(who ?? "").split("@")[0];
+
 /** How long ago, in a few letters: "today", "yesterday", "5 days ago", "3 months ago". */
 export function ago(iso, now = Date.now()) {
   const t = Date.parse(String(iso ?? ""));
@@ -75,7 +79,7 @@ export function groupsOf(v, lv = v.listView ?? DEFAULTS) {
   if (lv.group === "none") return rows.length ? [{ id: "all", label: "All", plain: true, rows }] : [];
   if (lv.group === "owner") {
     const owners = [...new Set(rows.map((r) => r.f.owner || ""))].sort();
-    return owners.map((o) => ({ id: `by-${o || "nobody"}`, label: o ? `Made by ${o}` : "Maker not recorded", icon: "user", tone: "grey500", rows: rows.filter((r) => (r.f.owner || "") === o) }));
+    return owners.map((o) => ({ id: `by-${o || "nobody"}`, label: o ? `Made by ${shortOwner(o)}` : "Maker not recorded", icon: "user", tone: "grey500", rows: rows.filter((r) => (r.f.owner || "") === o) }));
   }
   return GROUPS.map((g) => ({ ...g, rows: rows.filter((r) => r.f.group === g.id) })).filter((g) => g.rows.length);
 }
@@ -106,7 +110,7 @@ function row(c, v, { p, i, f }, wide) {
         .when(show.models, (x) => x.child(capsule(c, `ph-p-${i}-models`, `${int(f.models)} model${f.models === 1 ? "" : "s"}`)))
         .when(show.deployed, (x) => x.child(capsule(c, `ph-p-${i}-deployed`, f.deployed, dot(c, f.up)))))
       // Who made it and when: the first things to go when the page is narrow.
-      .when(wide && show.owner && Boolean(f.owner), (e) => e.child(div().id(`ph-p-${i}-owner`).w(72).flex_none().truncate().text_size(12).text_color(c.grey500).tooltip(`Made by ${f.owner}`).child(f.owner)))
+      .when(wide && show.owner && Boolean(f.owner), (e) => e.child(div().id(`ph-p-${i}-owner`).w(72).flex_none().truncate().text_size(12).text_color(c.grey500).tooltip(`Made by ${f.owner}`).child(shortOwner(f.owner))))
       .when(wide && show.when && Boolean(f.when), (e) => e.child(div().id(`ph-p-${i}-when`).w(84).flex_none().text_right().text_size(12).text_color(c.grey500).tooltip(`Made ${f.when}`).child(f.when)))
       .child(div().id(`ph-p-${i}-open`).h(24).px(8).flex().flex_none().items_center().rounded(6).text_size(12).font_medium().text_color(c.blue)
         .hover((s) => s.bg(c.blueLight)).on_click((e, cx) => { cx.stop_propagation?.(); open(e, cx); }).child("Open")));
