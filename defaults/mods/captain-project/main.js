@@ -112,6 +112,8 @@ export default class ProjectHome extends View {
     try { this.last = localStorage.getItem("project") || null; } catch { this.last = null; }
     this.listView = readListView(); // which saved view of the projects list is picked, and which groups are folded
     this.me = null;                 // who the person is, for the "Mine" view (GET /api/workspace, read with the list)
+    this.displayOpen = Boolean((layoutProps?.() ?? {}).displayOpen); // the Display popover (the real-window check opens it)
+    this.handle = cx.focus_handle?.() ?? null; // so Escape reaches the page
     this.width = 900;               // the page's width, until it says its own: narrow rows drop their last columns
     this.shipPath = new Ship(this); // Stage, Try it: made here, because a text box can't be made while drawing
     if ((layoutProps?.() ?? {}).shipFrom) this.shipPath.more = "traffic"; // the real-window check: open on "Send it real traffic"
@@ -221,6 +223,7 @@ export default class ProjectHome extends View {
   }
 
   pickProject(cx, p) {
+    this.displayOpen = false;
     this.last = p.id;
     try { localStorage.setItem("project", p.id); } catch {}
     setShared("captain.scope", { kind: "project", id: p.id, label: p.name });
@@ -1029,7 +1032,14 @@ export default class ProjectHome extends View {
   }
 
   /** Pick a saved view of the list, or fold a group. Both are kept on this computer as the person left them. */
-  pickListView(view, cx) { this.listView = { ...this.listView, view }; keepListView(this.listView); cx.notify(); }
+  pickListView(view, cx) { this.displayOpen = false; this.listView = { ...this.listView, view }; keepListView(this.listView); cx.notify(); }
+  /** Change how the list is displayed (grouping, ordering, what a row shows). Kept like the rest of the view. */
+  setListView(change, cx) { this.listView = { ...this.listView, ...change }; keepListView(this.listView); cx.notify(); }
+  /** Open or close the Display popover. Either way the keyboard is the page's, so Escape reaches it and focus
+   *  is back on the page when it closes. */
+  toggleDisplay(cx, open = !this.displayOpen) { this.displayOpen = open; this.handle?.focus?.(); cx.notify(); }
+  /** Escape closes the Display popover. */
+  key(e, cx) { if ((e?.key ?? e?.keystroke) === "escape" && this.displayOpen) { this.toggleDisplay(cx, false); cx.stop_propagation?.(); } }
   foldGroup(id, cx) {
     const folded = this.listView.folded.includes(id) ? this.listView.folded.filter((g) => g !== id) : [...this.listView.folded, id];
     this.listView = { ...this.listView, folded }; keepListView(this.listView); cx.notify();
@@ -1209,6 +1219,8 @@ export default class ProjectHome extends View {
       .child(this.everythingPart(c));
     return v_flex().id("project-home").size_full().bg(c.canvas).font_family(FONT).text_color(c.navy)
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1) { this.width = size.width; cx.notify(); } })
+      .when(Boolean(this.handle), (e) => e.track_focus(this.handle))
+      .on_key_down((e, cx) => this.key(e, cx))
       .child(head)
       // A staged model's page fills the window: its tab bar stays put and the tab's content scrolls by itself.
       .child(fill ? v_flex().id("ph-body").flex_1().min_h(0).px(24).py(12).child(body)

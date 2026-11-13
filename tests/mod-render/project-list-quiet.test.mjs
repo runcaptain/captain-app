@@ -137,3 +137,51 @@ test('a view with nothing in it, a project that cannot be read, and a narrow pag
   assert.ok(textIn(one(empty, 'ph-empty')[0]).startsWith('Start with a project'));
   assert.equal(empty.byIdPrefix('ph-toolbar').length, 0);
 });
+
+test('the Display popover: grouping, ordering and which properties show, kept, with Escape to close', async () => {
+  delete store['projects-view'];
+  const h = await page();
+  assert.equal(one(h, 'ph-display-panel').length, 0, 'closed until asked for');
+  await h.click('ph-display');
+  assert.equal(one(h, 'ph-display-panel').length, 1);
+  assert.equal(one(h, 'ph-display-panel')[0].call('w')[0], 320);
+  const panel = textIn(one(h, 'ph-display-panel')[0]);
+  for (const words of ['Grouping', 'State', 'Who made it', 'No groups', 'Ordering', 'Name', 'Newest first', 'Most models', 'Show on each row', 'State sentence', 'Put back the usual display']) assert.ok(panel.includes(words), words);
+  // Grouping by who made it: a strip per person, with their projects under it.
+  await h.click('ph-display-group-owner');
+  assert.deepEqual(groupsOf(h.mod).map((g) => [g.label, g.rows.map((r) => r.p.name)]), [['Made by alex', ['Trail gear']], ['Made by sam', ['Demo shop', 'Garden centre']]]);
+  assert.equal(textIn(one(h, 'ph-group-by-sam')[0]), 'Made by sam 2');
+  assert.equal(one(h, 'ph-display-panel').length, 1, 'the popover stays open while choices are made');
+  // No groups: no strip at all, every row in one list.
+  await h.click('ph-display-group-none');
+  assert.equal(h.byIdPrefix('ph-group-').length, 0);
+  assert.equal(rowsShown(h).length, 3);
+  // Ordering.
+  await h.click('ph-display-order-newest');
+  assert.deepEqual(groupsOf(h.mod)[0].rows.map((r) => r.p.name), ['Garden centre', 'Trail gear', 'Demo shop']);
+  await h.click('ph-display-order-models');
+  assert.deepEqual(groupsOf(h.mod)[0].rows.map((r) => r.p.name), ['Demo shop', 'Trail gear', 'Garden centre']);
+  // Properties: each chip hides or shows one thing on every row.
+  const i = h.mod.projects.findIndex((p) => p.id === 'shop');
+  for (const [chip, id] of [['state', `ph-p-${i}-state`], ['models', `ph-p-${i}-models`], ['deployed', `ph-p-${i}-deployed`], ['owner', `ph-p-${i}-owner`], ['when', `ph-p-${i}-when`], ['what', `ph-p-${i}-what`]]) {
+    assert.equal(one(h, id).length, 1, `${id} shows`);
+    await h.click(`ph-display-show-${chip}`);
+    assert.equal(one(h, id).length, 0, `${id} is hidden`);
+  }
+  assert.equal(one(h, `ph-p-${i}-name`).length + one(h, `ph-p-${i}-open`).length, 2, 'the name and Open always show');
+  // Kept as the person left it.
+  assert.deepEqual([JSON.parse(store['projects-view']).group, JSON.parse(store['projects-view']).order, JSON.parse(store['projects-view']).show.state], ['none', 'models', false]);
+  // Escape closes it, and only it.
+  await h.key('project-home', 'escape');
+  assert.equal(one(h, 'ph-display-panel').length, 0);
+  const again = await page();
+  assert.deepEqual([again.mod.listView.group, again.mod.listView.order, again.mod.listView.show.models], ['none', 'models', false]);
+  // The usual display comes back in one click, and the saved view (the pill) is left as it was.
+  await again.click('ph-view-mine');
+  await again.click('ph-display');
+  await again.click('ph-display-reset');
+  assert.deepEqual([again.mod.listView.group, again.mod.listView.order, again.mod.listView.show.models, again.mod.listView.view], ['state', 'name', true, 'mine']);
+  // Picking a view or opening a project closes it.
+  await again.click('ph-view-all');
+  assert.equal(one(again, 'ph-display-panel').length, 0);
+});

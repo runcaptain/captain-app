@@ -361,6 +361,7 @@ props_of() {
     captain-project:choose) echo '{"chooseModels": true}' ;;
     captain-project:home) echo '{"openExperiment": true}' ;;
     captain-project:list) echo '{"allProjects": true}' ;;
+    captain-project:display) echo '{"allProjects": true, "displayOpen": true}' ;;  # the list with its Display popover open
     # The project's own page with its Ship section: the model's card when something is deployed (SHOT_STAGED=1),
     # the places to deploy when nothing is. The project is named, because the Explorer's pick is not kept.
     captain-project:ship-section) echo "{\"project\": \"${PID:-}\"}" ;;
