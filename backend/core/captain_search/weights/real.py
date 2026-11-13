@@ -43,8 +43,10 @@ NOT_MEASURED = "Not measured: this model cannot be run here yet."
 TREES_CANNOT = "A tree ranker can be read here, not changed or run."
 FILES = "files"
 SESSION_FILE = "sess.npz"
+SESSION_FILES = (SESSION_FILE, "enc.npz")    # the session model's file. Older designs call it enc.npz, with the same array names
+ITEMS = "cn"                                 # the item vectors worked out ahead of time, one row per catalog item
 READ_CAP = 200_000       # the most numbers one read or one heatmap sends
-FACT_CAP = 5000          # a fact longer than this keeps its shape and not its values
+FACT_CAP = 20_000         # a fact longer than this keeps its shape and not its values
 ROWS_CAP = 4096
 CANNOT = ("template", "forward", "activations", "gradients", "trace", "cost_slice", "set_sets", "evaluate", "export")
 EDIT_OPS = ("set", "scale", "zero", "add")
@@ -78,11 +80,15 @@ def _wanted(name: str) -> bool:
     return "/" not in name and name.lower().endswith((".npz", ".txt", ".json", ".safetensors"))
 
 
+def _session_in(folder: str) -> bool:
+    return any(os.path.isfile(os.path.join(folder, n)) for n in SESSION_FILES)
+
+
 class _Folder:
     def __init__(self, where: str):
         self.where = os.path.abspath(where)
         inner = os.path.join(self.where, "weights")
-        self.dir = inner if os.path.isfile(os.path.join(inner, SESSION_FILE)) else self.where
+        self.dir = inner if _session_in(inner) else self.where
         self.yaml = os.path.join(self.where, "MANIFEST.yaml") if self.dir == inner else (
             os.path.join(os.path.dirname(self.where), "MANIFEST.yaml") if os.path.basename(self.where) == "weights" else "")
 
@@ -176,7 +182,7 @@ def looks_real(where) -> bool:
         return True
     if not isinstance(where, str) or os.path.isfile(os.path.join(where, F.MANIFEST)):
         return False
-    return any(os.path.isfile(os.path.join(where, *p)) for p in ((SESSION_FILE,), ("weights", SESSION_FILE)))
+    return _session_in(where) or _session_in(os.path.join(where, "weights"))
 
 
 # ---- reading the arrays ---------------------------------------------------------------------------------------------------------
@@ -199,7 +205,7 @@ def _arrays(data: bytes, fname: str) -> tuple[dict[str, np.ndarray], list[str]]:
 
 
 def _is_tensor(name: str, a: np.ndarray) -> bool:
-    return a.dtype.kind == "f" and (name.endswith((".weight", ".bias", "in_proj_weight", "in_proj_bias")) or name == "logit_scale")
+    return a.dtype.kind == "f" and (name.endswith((".weight", ".bias", "in_proj_weight", "in_proj_bias")) or name == "logit_scale" or a.ndim == 2)
 
 
 def _fact(a: np.ndarray) -> dict:
@@ -237,9 +243,9 @@ def import_from(ctx, where: str, name: str | None) -> dict:
     name = WS.check_name(name)
     src = _S3(where) if is_address(where) else _Folder(where)
     names = src.names()
-    sess_name = SESSION_FILE if SESSION_FILE in names else None
+    sess_name = next((n for n in SESSION_FILES if n in names), None)
     if sess_name is None:
-        raise WeightsError(f"There is no {SESSION_FILE} at {where}, or in a weights folder inside it. That file holds the session model.")
+        raise WeightsError(f"There is no {' or '.join(SESSION_FILES)} at {where}, or in a weights folder inside it. That file holds the session model.")
     blobs = {n: src.get(n) for n in names}
     arrays, skipped = _arrays(blobs[sess_name], sess_name)
     tensors = {k: a for k, a in arrays.items() if _is_tensor(k, a)}
@@ -367,6 +373,13 @@ def load(ctx, m: dict) -> tuple[dict, dict[str, np.ndarray]]:
 
 # ---- what the model is, from its shapes -------------------------------------------------------------------------------------------
 
+def _stated(m: dict, name: str) -> int | None:
+    """A whole number the file states about itself, saved as an array of one number: `heads`, `layers`."""
+    f = (m.get("facts") or {}).get(name) or {}
+    v = f.get("value")
+    return v if f.get("kind") == "numbers" and isinstance(v, int) and not isinstance(v, bool) and v > 0 else None
+
+
 def _declared_heads(m: dict, width: int | None) -> tuple[int | None, str]:
     def from_obj(obj) -> int | None:
         if isinstance(obj, dict):
@@ -383,6 +396,9 @@ def _declared_heads(m: dict, width: int | None) -> tuple[int | None, str]:
                 return int(hit.group(1))
         return None
 
+    n = _stated(m, "heads")
+    if n and width and width % n == 0:
+        return n, "the file"
     for src, obj in (("model.json", m.get("model_json")), ("the cfg note saved with the arrays", ((m.get("facts") or {}).get("cfg") or {}).get("value"))):
         if isinstance(obj, str):
             try:
@@ -396,6 +412,8 @@ def _declared_heads(m: dict, width: int | None) -> tuple[int | None, str]:
 
 
 def _declared_layers(m: dict) -> int | None:
+    if _stated(m, "layers"):
+        return _stated(m, "layers")
     for v in (m.get("model_json") or {}).values() if isinstance(m.get("model_json"), dict) else ():
         if isinstance(v, str):
             hit = re.search(r"(\d+)\s*layers?\b", v)
@@ -433,7 +451,8 @@ def describe(m: dict) -> dict:
     def part(pid: str, kind: str, name: str, says: str, tensors: list[str], feeds: list[str], **more) -> dict:
         used.update(tensors)
         p = {"id": pid, "kind": kind, "name": name, "says": says, "technical": pid, "tensors": tensors,
-             "shape": list(sh[tensors[0]]) if tensors else [], "parameters": count(*tensors), "feeds_from": feeds, **more}
+             "shape": list(sh[tensors[0]]) if tensors else [], "parameters": count(*tensors), "feeds_from": feeds,
+             "editable": all(m["tensors"][t].get("dtype") == "float32" for t in tensors), **more}
         parts.append(p)
         return p
 
@@ -516,6 +535,10 @@ def describe(m: dict) -> dict:
         part(stem, "head", short, f"small head at the end: {w[1]} numbers in, {w[0]} out. {what[0].upper() + what[1:]}" + ("" if what.endswith(".") else "."),
              have(stem + ".weight", stem + ".bias"), last if side == "session" else list(inputs["candidate"]), side=side,
              inputs=w[1], outputs=w[0], meaning_from="name" if known else None, meaning_says=FROM_NAME if known else what)
+    if ITEMS in sh and len(sh[ITEMS]) == 2:
+        part(ITEMS, "items", "item vectors", f"item vectors, worked out ahead of time: one row of {sh[ITEMS][1]} numbers per item, "
+             f"{sh[ITEMS][0]:,} items. They are what a session's vector is compared with. They are not a learned table of the session side.",
+             [ITEMS], [], side="candidate", rows=sh[ITEMS][0], width=sh[ITEMS][1])
     if "logit_scale" in sh:
         part("logit_scale", "scale", "score sharpness", "one number: how sharply the scores of candidates are told apart.", ["logit_scale"],
              [], side=None)
@@ -533,8 +556,11 @@ def describe(m: dict) -> dict:
                            else "Unknown. The shapes do not tell how many heads there are, and no file beside them says."),
             "head_width": (width // heads) if heads and width else None, "feed_forward": hidden, "parameters": int(m.get("parameters") or 0),
             "declared": {"session_model": mj.get("session_model"), "layers": declared_layers,
+                         "layers_from": None if declared_layers is None else ("the file" if _stated(m, "layers") else "model.json"),
                          "layers_agree": None if declared_layers is None else declared_layers == len(ids)},
-            "parts": parts, "wiring_says": WIRING, "facts": facts,
+            "parts": parts, "wiring_says": WIRING, "facts": facts, "session_file": next(iter(m["tensors"].values()))["file"].split("/")[-1],
+            "other_files": [{"name": n, "bytes": (((m.get("source") or {}).get("files") or {}).get(n) or {}).get("bytes"),
+                             "says": "Kept unchanged. Not read."} for n in m.get("other_files") or []],
             "rankers": [{**r, "says": T.SAYS} for r in m.get("rankers") or []], "tables": m.get("tables") or [],
             "can": {"read": True, "edit": True, "run": False, "deploy": False, "says": NOT_YET, "edits_say": NOT_MEASURED}}
 
@@ -667,7 +693,7 @@ def stats(ctx, sid: str, tensor: str | None = None, neurons: bool = False, by: s
                 raise WeightsError("Name one tensor to get a line per row.")
             t = _matrix(st, tensor).astype(float)
             norm = np.linalg.norm(t, axis=1)
-            got = _labels(st.manifest, tensor, t)
+            got = _labels(st.manifest, tensor, t, st.cur)
             out["labels_says"] = got["says"]
             out["rows"] = [{"row": j, "label": got["names"][j] if got["names"] else None, "norm": float(norm[j]), "mean": float(t[j].mean()), "min": float(t[j].min()), "max": float(t[j].max()),
                             "zero_share": float((t[j] == 0).mean()), "dead": bool((t[j] == 0).all())} for j in range(min(t.shape[0], ROWS_CAP))]
@@ -727,12 +753,44 @@ def _ranges(edges: list[float]) -> list[str]:
     return [f"below {e[0]}"] + [f"{a} to {b}" for a, b in zip(e, e[1:])] + [f"{e[-1]} and up"]
 
 
-def _labels(m: dict, tensor: str, t: np.ndarray) -> dict:
+def _item_labels(m: dict, t: np.ndarray, cur: dict | None) -> dict:
+    """Names for the rows of the item vectors: the item's place, with its price bucket and category when the file
+    holds one of each per item (`priceb`, `catid`)."""
+    rows = int(t.shape[0])
+    facts = m.get("facts") or {}
+    per = {}
+    for key in ("priceb", "catid"):
+        f = facts.get(key) or {}
+        if f.get("kind") == "numbers" and isinstance(f.get("value"), list) and len(f["value"]) == rows:
+            per[key] = f["value"]
+    cats, cat_from = None, ""
+    if "catid" in per and cur:
+        table = next((k for k in cur if re.fullmatch(r"cat(\..+)?\.weight", k)), None)
+        got = _labels(m, table, cur[table]) if table else None
+        if got and got["names"] and got["sure"] and all(isinstance(c, int) and 0 <= c < len(got["names"]) for c in per["catid"]):
+            cats, cat_from = got["names"], f" Categories are named from the rows of {table}."
+    names = []
+    for i in range(rows):
+        bits = [f"item {i}"]
+        if "priceb" in per:
+            bits.append(f"price bucket {per['priceb'][i]}")
+        if "catid" in per:
+            bits.append(f"category {cats[per['catid'][i]] if cats else per['catid'][i]}")
+        names.append(", ".join(bits))
+    said = " and ".join({"priceb": "its price bucket from priceb", "catid": "its category from catid"}[k] for k in per)
+    return {"names": names, "source": ", ".join(per) or None, "extra_row": None, "sure": True,
+            "says": "Rows are items, in the order the file holds them" + (f", each with {said}, saved beside the arrays." if per else ".")
+                    + cat_from + ("" if cats or "catid" not in per else " Categories are numbered: their names could not be matched for sure.")}
+
+
+def _labels(m: dict, tensor: str, t: np.ndarray, cur: dict | None = None) -> dict:
     """Names for a table's rows, from a list saved beside the arrays: {names, says, source, extra_row, sure}.
 
     A list with one name per row names them. A list one short of the rows names them too, with the row left over
     called "none or unknown": at the end whose row is near zero, or at row 0 as a guess when neither is. A price
     table is named from `edges`, the cut points between its ranges."""
+    if tensor == ITEMS:
+        return _item_labels(m, t, cur)
     rows = int(t.shape[0])
     none = {"names": None, "says": "", "source": None, "extra_row": None, "sure": None}
     stem = tensor.rsplit(".", 1)[0]
@@ -768,7 +826,7 @@ def labels(ctx, sid: str, tensor: str, by: str | None = None, watch: bool = Fals
     """What each row of a table stands for, when a list saved beside the arrays says. Not an event: it shows no number."""
     def fn(st):
         t = _matrix(st, tensor)
-        got = _labels(st.manifest, tensor, t)
+        got = _labels(st.manifest, tensor, t, st.cur)
         return {"tensor": tensor, "rows": int(t.shape[0]), "labels": got["names"], "labels_from": got["source"], "labels_says": got["says"],
                 "extra_row": got["extra_row"], "sure": got["sure"]}
     return S._do(ctx, sid, fn, watch="record")
@@ -789,7 +847,7 @@ def nearest(ctx, sid: str, tensor: str, row=0, top: int = 10, by: str | None = N
         cos = (t @ t[j]) / (safe * (size[j] or 1.0))
         cos[size == 0] = 0.0
         order = [int(i) for i in np.argsort(-cos, kind="stable") if int(i) != j]
-        got = _labels(st.manifest, tensor, t)
+        got = _labels(st.manifest, tensor, t, st.cur)
         names, says = got["names"], got["says"]
         one = lambda i: {"row": i, "label": names[i] if names else None, "cosine": float(cos[i]), "norm": float(size[i])}  # noqa: E731
         if not st.watch:
@@ -813,7 +871,7 @@ def directions(ctx, sid: str, tensor: str, top: int = 5, by: str | None = None, 
         power = s ** 2
         total = float(power.sum()) or 1.0
         share = power / total
-        got = _labels(st.manifest, tensor, t)
+        got = _labels(st.manifest, tensor, t, st.cur)
         names, says = got["names"], got["says"]
         out = []
         for i in range(min(n, len(s))):
@@ -1201,7 +1259,7 @@ def rankers(ctx, model: str) -> dict:
 
 VERSIONS_MOST = 500
 DESCRIBED_MOST = 200
-END = "weights/" + SESSION_FILE
+ENDS = tuple("weights/" + n for n in SESSION_FILES)
 
 
 def _one_line(raw: bytes | None) -> str | None:
@@ -1238,7 +1296,7 @@ def registry(where: str) -> dict:
         store = _cloud(lambda: S3Store(u.netloc, u.path.strip("/")))
         keys = _cloud(lambda: store.list(""))
         root = where.rstrip("/")
-        paths = sorted({k[:-len(END)].rstrip("/") for k in keys if k == END or k.endswith("/" + END)})
+        paths = sorted({k[:-len(e)].rstrip("/") for k in keys for e in ENDS if k == e or k.endswith("/" + e)})
         have = set(keys)
         count = lambda p: sum(1 for k in keys if k.startswith((p + "/" if p else "") + "weights/"))  # noqa: E731
         read = lambda p: _cloud(lambda: store.get((p + "/" if p else "") + "MANIFEST.yaml")) if (p + "/" if p else "") + "MANIFEST.yaml" in have else None  # noqa: E731
@@ -1252,7 +1310,7 @@ def registry(where: str) -> dict:
             rel = os.path.relpath(d, root)
             if rel.count(os.sep) >= 6:
                 subs[:] = []
-            if os.path.isfile(os.path.join(d, "weights", SESSION_FILE)):
+            if _session_in(os.path.join(d, "weights")):
                 paths.append("" if rel == "." else rel.replace(os.sep, "/"))
                 subs[:] = []
         count = lambda p: len([f for f in os.listdir(os.path.join(root, p, "weights")) if _wanted(f)])  # noqa: E731
@@ -1270,7 +1328,7 @@ def registry(where: str) -> dict:
                      "description": _one_line(raw), "has_manifest": raw is not None, "files": count(p)})
     return {"from": root, "versions": rows, "count": len(paths), "listed": len(rows), "read_only": True,
             "says": (f"{S._plural(len(paths), 'version')} can be brought in from here." if paths
-                     else "No version was found here. A version is a folder that holds weights/sess.npz.")
+                     else "No version was found here. A version is a folder that holds weights/sess.npz or weights/enc.npz.")
                     + " Nothing was written there. Bring one in with `cst weights import <address> --as <name>`."}
 
 

@@ -44,6 +44,8 @@ def parts_text(d: dict) -> str:
                      f"See it with `cst weights trees <model> --ranker {r['name']}`.")
     for t in d.get("tables") or []:
         lines.append(f"lookup table {t['name']}: {_n(len(t['arrays']), 'array')}. {t['says']}")
+    if d.get("other_files"):
+        lines.append("other files, kept unchanged and not read: " + ", ".join(f["name"] for f in d["other_files"]))
     lines.append(d["can"]["says"])
     return "\n".join(lines)
 

@@ -483,8 +483,18 @@ version folder (with `weights/` and `MANIFEST.yaml` inside) or the `weights` fol
 this computer's default cloud login. Only the `weights/` files and `MANIFEST.yaml` are fetched, and nothing is ever
 written to the address.
 
+**An older layout.** The session model's file may be named `enc.npz` in place of `sess.npz`, with the same array names.
+Such a file can also hold: `heads` and `layers` as single whole numbers (they are then used, and `heads_from` is "the
+file"), `cn`, the item vectors worked out ahead of time with one row per catalog item, and `priceb` and `catid`, one
+whole number per item. `cn` is its own part of kind `items` ("item vectors"), read like any table: `nearest` on it
+finds the items most alike. Its rows are labelled "item 12, price bucket 3, category 7", with the category's name when
+the category table's rows are named for sure. It may have no candidate-side tensors at all. Every `rank_*.txt` is a
+ranker, named by what follows `rank_`. Any other file beside them (`blend.json` and the like) is kept unchanged, listed
+under `other_files` and not read. A tensor that is not float32 (a `logit_scale` saved as float64) is read only: its
+part has `"editable": false` and an edit to it is refused in a sentence.
+
 **What can be brought in.** `cst weights registry <folder or s3://...>` and `GET /api/weights/registry?from=` list the
-version folders under a folder or an address: every folder that holds `weights/sess.npz`, with the one-line description
+version folders under a folder or an address: every folder that holds `weights/sess.npz` or `weights/enc.npz`, with the one-line description
 from its `MANIFEST.yaml`. It only lists and reads. Nothing is written there. Each row's `address` is what `import` takes.
 
 ```json
