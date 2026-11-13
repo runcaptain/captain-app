@@ -160,6 +160,10 @@ def apply_patches(tensors: dict[str, np.ndarray], patches: list[dict]) -> None:
 def load(ctx, name: str, version: int | None = None) -> tuple[dict, dict[str, np.ndarray]]:
     """Open a version: its manifest and its tensors as float32, with a patched version's edits applied."""
     m = manifest(ctx, name, version)
+    if m.get("kind") not in (None, "dense"):
+        from . import real as R    # a trained session model with rankers: its own files, its own number types
+
+        return R.load(ctx, m)
     if m.get("base"):
         bname, bver = split_ref(m["base"])
         bm, tensors = load(ctx, bname, bver)
@@ -216,7 +220,8 @@ def summary(ctx, name: str, project_of=None) -> dict:
     m = manifest(ctx, name, have[-1])
     out = {"id": name, "name": name, "says": m.get("says") or "", "sizes": m.get("sizes"), "parameters": m.get("parameters"),
            "versions": have, "latest": have[-1], "synthetic": bool((m.get("data") or {}).get("synthetic")),
-           "data_note": (m.get("data") or {}).get("note") or "", "starter": bool(m.get("starter"))}
+           "data_note": (m.get("data") or {}).get("note") or "", "starter": bool(m.get("starter")),
+           "kind": m.get("kind") or "dense", "kind_says": m.get("kind_says") or "fully connected network"}
     if project_of:
         out["project"] = project_of(name)
     return out
