@@ -489,7 +489,14 @@ pub fn apply_param(
         "text_color" => refinement.text_color(color!()),
         "text_bg" => refinement.text_bg(color!()),
         "text_size" => refinement.text_size(absolute!()),
-        "font_family" => refinement.font_family(arg(args, 0, name)?.as_str()?.to_owned()),
+        "font_family" => {
+            // CAPTAIN: a code font is set without its ligatures. With them, two hyphens draw joined as one long
+            // dash, so `--region` and a name like `demo--captain` read wrong on screen (they copy correctly).
+            let family = arg(args, 0, name)?.as_str()?.to_owned();
+            let code = is_code_font(&family);
+            let refinement = refinement.font_family(family);
+            if code { refinement.font_features(no_ligatures()) } else { refinement }
+        }
         "font_weight" => refinement.font_weight(font_weight(number!(), name)?),
         // Line height is the one length whose bare number is a multiplier, not
         // pixels: `line_height(1.45)` means 1.45x the font size everywhere else
@@ -635,6 +642,17 @@ fn line_height(value: &Bridged, method: &str) -> ShellResult<DefiniteLength> {
     }
 }
 
+/// CAPTAIN: is this family a fixed-width code font? Every one the app and its mods name says so in its name.
+fn is_code_font(family: &str) -> bool {
+    let f = family.to_ascii_lowercase();
+    f.contains("mono") || f.contains("code") || f.contains("menlo") || f.contains("courier") || f.contains("consolas")
+}
+
+/// CAPTAIN: contextual alternates and ligatures off, so every character draws as itself.
+fn no_ligatures() -> gpui::FontFeatures {
+    gpui::FontFeatures(std::sync::Arc::new(vec![("calt".into(), 0), ("liga".into(), 0), ("dlig".into(), 0)]))
+}
+
 fn font_weight(value: f32, method: &str) -> ShellResult<FontWeight> {
     if value.is_finite() && (100. ..=900.).contains(&value) {
         Ok(FontWeight(value))
@@ -731,6 +749,19 @@ mod tests {
 
         let expected: Fill = Hsla::from(gpui::rgba(0xff0000ff)).into();
         assert_eq!(styled.background, Some(expected));
+    }
+
+    #[test]
+    fn a_code_font_is_set_without_ligatures_and_a_text_font_keeps_them() {
+        for family in ["Geist Mono", "JetBrains Mono", "Fira Code", "Menlo"] {
+            let styled = apply_param("font_family", &[Bridged::String(family.into())], StyleRefinement::default()).unwrap();
+            let expected = StyleRefinement::default().font_family(family).font_features(no_ligatures());
+            assert_eq!(styled, expected, "{family}: two hyphens must draw as two hyphens");
+        }
+        let features = no_ligatures();
+        assert!(features.0.iter().any(|(k, v)| k == "liga" && *v == 0) && features.0.iter().any(|(k, v)| k == "calt" && *v == 0));
+        let text = apply_param("font_family", &[Bridged::String("Inter".into())], StyleRefinement::default()).unwrap();
+        assert_eq!(text, StyleRefinement::default().font_family("Inter"), "a text font is left as it is");
     }
 
     #[test]
