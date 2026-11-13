@@ -16,7 +16,7 @@ const { starter, TINY } = await import('../../defaults/mods/captain-weights/star
 const { liveTransport, liveReset, liveState } = await import('../../defaults/mods/captain-weights/kit/live.js');
 
 let feed, served = {}, asked = [];
-weightsTransport(async (path, opts) => { asked.push([path, opts?.method ?? 'GET']); return served[path.split('?')[0]] ?? { ok: false, error: 'Not Found' }; });
+weightsTransport(async (path, opts) => { asked.push([path, opts?.method ?? 'GET', opts?.body]); return served[path.split('?')[0]] ?? { ok: false, error: 'Not Found' }; });
 async function page(model) {
   localReset(); liveReset(); asked = [];
   feed = fakeFeed(liveTransport);
@@ -131,6 +131,15 @@ test('"From the weights alone" shows only when the ledger says no sandbox and no
   assert.ok(h.text().includes('Test set (200 inputs)') && h.text().includes('179 of 200 right'));
   assert.ok(textOf(h, 'wt-cost-says').includes('cross-entropy'));
   assert.ok(asked.some(([p]) => p === '/api/weights/models/tiny?session=ws-1'), 'the numbers are asked for as the session has edited them');
+  assert.equal(asked.filter(([p]) => p.endsWith('/evaluate')).length, 1, 'the test set is scored once');
+  // A record that already holds a score for these numbers is not scored again.
+  serve(LEDGER, [{ id: 'e1', seq: 1, by: 'you', kind: 'evaluate', touched: { neurons: [], weights: [] }, cost: { test: { name: 'held out', of: 200, before: 0.19, after: 0.17, right_before: 179, right_after: 181 } } }]);
+  h = await page('tiny');
+  assert.equal(textOf(h, 'wt-cost-test'), '0.170');
+  assert.equal(asked.filter(([p]) => p.endsWith('/evaluate')).length, 0, 'the last score in the record is used');
+  assert.ok(h.text().includes('You scored the network on the test set.'));
+  serve(LEDGER);
+  h = await page('tiny');
   const no = [
     ['one forward pass was used', { ...LEDGER, forward_used: 1 }],
     ['a sandbox was allowed', { ...LEDGER, sandbox: true }],
@@ -159,4 +168,24 @@ test('a network that cannot be read says so in plain words, with a way to try ag
   assert.ok(text.includes("Captain couldn't read that network."), text);
   assert.ok(!/HTTP|500|Not Found/.test(text), 'never the raw error');
   assert.equal(h.byIdPrefix('wt-retry').length, 1);
+});
+
+test('a network with many inputs shows ten at a time', async () => {
+  const net = starter(TINY);
+  const examples = Array.from({ length: 23 }, (_v, n) => ({ name: `practice ${n}`, x: [n % 2, (n >> 1) % 2], y: [(n % 2) ^ ((n >> 1) % 2)] }));
+  served = {
+    '/api/weights/models/tiny': { ok: true, data: { ...net, id: 'tiny', name: 'tiny', examples, test: [], synthetic: true } },
+    '/api/weights/models/tiny/session': { ok: true, data: { id: 'ws-1', model: 'tiny', ledger: LEDGER, events: [] } },
+  };
+  const h = await page('tiny');
+  assert.equal(h.byIdPrefix('wt-in-').filter((e) => /^wt-in-\d+$/.test(e.call('id')[0])).length, 10);
+  assert.ok(h.text().includes('Input 1 of 23') && h.text().includes('Later inputs') && !h.text().includes('Earlier inputs'));
+  assert.ok(h.text().includes('Made-up data'), 'a network that says its data is made up is labelled so');
+  await h.click('wt-in-later');
+  assert.ok(h.text().includes('Input 11 of 23') && h.text().includes('practice 10') && h.text().includes('Earlier inputs'));
+  await h.click('wt-in-later');
+  assert.equal(h.byIdPrefix('wt-in-').filter((e) => /^wt-in-\d+$/.test(e.call('id')[0])).length, 3, 'the last three');
+  await h.click('wt-in-earlier');
+  assert.ok(h.text().includes('Input 20 of 23'));
+  served = {};
 });

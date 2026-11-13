@@ -96,7 +96,7 @@ export function unpack(packed, scale, sizes) {
 function digits() {
   return {
     id: DIGITS, name: "Digit reader", sizes: SIZES.slice(), squish: "sigmoid", cost: "squared_error", layers: unpack(PACKED, SCALE, SIZES),
-    inputShape: [28, 28],
+    inputShape: [28, 28], synthetic: true,
     outputNames: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
     examples: digitSet(11, 1),
     test: digitSet(23, 5),

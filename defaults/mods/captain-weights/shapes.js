@@ -2,7 +2,8 @@
 // through adapter.js. Until Captain's services answer for weights, local.js stands in for them with the same
 // shapes over the two starter networks. When the services land, adapter.js is the one file that changes.
 //
-// The routes adapter.js asks for (all JSON). They are this page's proposal, written before the services existed:
+// The routes adapter.js asks for (all JSON). They are the ones Captain's services serve under /api/weights
+// (captain_search/weights/routes.py and docs/weights.md there):
 //
 //   GET  /api/weights/models                        -> [NetworkSummary]
 //   GET  /api/weights/models/{model}                -> Network
@@ -36,7 +37,8 @@
  * @property {string[]} [outputNames]
  * @property {Example[]} examples   the inputs a person can choose
  * @property {Example[]} test       the test set the cost is averaged over
- * @property {number} [version]     rises with every change to the numbers
+ * @property {number} [version]     the model's version
+ * @property {boolean} [synthetic]  its data was made up by code
  */
 
 /**
@@ -114,7 +116,8 @@
  * @property {number|null} [from]         for set: which incoming weight, or null for the bias
  * @property {number} [value]             for set
  * @property {number} [factor]            for scale
- * @property {number} [target]            which of the network's examples the edit is meant to fix
+ * @property {number} [target]            which of the network's examples the edit is meant to fix: the services then
+ *                                        measure "should not change" on the other examples
  * @property {string} [why]
  * @property {"agent"|"you"} by
  */

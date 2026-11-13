@@ -35,13 +35,15 @@ export function editInFocus(session, openId) {
 }
 
 /** An edit's three numbers as rows: [{id, name, before, after, says}]. */
-export function threeNumbers(ev) {
+export function threeNumbers(ev, net = null) {
   const c = ev?.cost;
+  // An edit made for one of the network's inputs says which, by number: the row names that input.
+  const aimed = Number.isInteger(ev?.args?.target) ? net?.examples?.[ev.args.target]?.name : null;
   if (!c) return [];
   const row = (id, name, part, says) => (part && Number.isFinite(part.before) && Number.isFinite(part.after) ? [{ id, name, before: part.before, after: part.after, says }] : []);
   const t = c.target, k = c.keep, s = c.test;
   return [
-    ...row("target", t?.of > 1 ? `Target (${count(t.of)} inputs)` : `Target${t?.name && t.name !== "target" ? `: ${t.name}` : ""}`, t, "what the edit was meant to fix"),
+    ...row("target", t?.of > 1 ? `Target (${count(t.of)} inputs)` : `Target${aimed ? `: ${aimed}` : t?.name && t.name !== "target" ? `: ${t.name}` : ""}`, t, "what the edit was meant to fix"),
     ...row("keep", `Should not change${k?.of ? ` (${count(k.of)} inputs)` : ""}`, k, k?.answers_changed != null ? `${count(k.answers_changed)} ${k.answers_changed === 1 ? "answer" : "answers"} changed` : "the other inputs"),
     ...row("test", `Test set${s?.of ? ` (${count(s.of)} inputs)` : ""}`, s, s?.right_after != null && s?.of ? `${count(s.right_after)} of ${count(s.of)} right` : "inputs kept apart"),
   ];
@@ -78,7 +80,7 @@ export function CostPanel(c, v, { width, height }) {
   const t = v.test;
   const steps = costSteps(v.session, t);
   const focus = editInFocus(v.session, v.openEdit);
-  const rows = threeNumbers(focus);
+  const rows = threeNumbers(focus, net);
   const number = (id, label, value, under) => v_flex().gap(1).flex_none()
     .child(div().text_size(11.5).text_color(c.grey500).child(label))
     .child(div().id(id).text_size(15).font_semibold().child(value))

@@ -120,7 +120,8 @@ test('a change the services refuse is put back, and said in plain words', async 
   h.mod.handInput.set_value('-9');
   await h.click('wt-hand-set');
   const sent = asked.find(([p]) => p === '/api/weights/sessions/ws-1/edits');
-  assert.deepEqual(sent[1].body, { op: 'set', layer: 1, neuron: 1, from: null, value: -9, by: 'you' }, 'the edit in the services\' shape');
+  // `target` is the input that was open, by number: the services measure the edit on it, and "should not change" on the others.
+  assert.deepEqual(sent[1].body, { op: 'set', layer: 1, neuron: 1, from: null, value: -9, target: 0, by: 'you' }, 'the edit in the services\' shape');
   assert.equal(textOf(h, 'wt-hand-note'), "Captain couldn't make that change.");
   assert.ok(!/HTTP|500/.test(h.text()));
   // A drag that is refused goes back to where it was.

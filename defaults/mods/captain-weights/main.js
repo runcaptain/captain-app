@@ -32,7 +32,8 @@ const count = (n) => int(n);
 /** "784 in, 10 out, 13,002 numbers": the network as a function, in one line. */
 export function factsOf(net) {
   const n = countOf(net);
-  return `${count(net.sizes[0])} in, ${count(net.sizes.at(-1))} out, ${count(n.total)} numbers (${count(n.weights)} weights and ${count(n.biases)} biases)`;
+  // "Made-up data" is said only when the network says so of itself.
+  return `${count(net.sizes[0])} in, ${count(net.sizes.at(-1))} out, ${count(n.total)} numbers (${count(n.weights)} weights and ${count(n.biases)} biases)${net.synthetic ? ". Made-up data" : ""}`;
 }
 
 export default class CaptainWeights extends View {
@@ -97,7 +98,13 @@ export default class CaptainWeights extends View {
     cx.spawn(async (cx) => {
       const s = await readSession(model);
       if (mine !== this.reads || model !== this.model) return;
-      if (s.ok) { this.session = s.data; this.noticeEvents(); }
+      if (s.ok) {
+        // The services answer with the newest session on the model. When an agent opens one, the page moves to
+        // it: its record replaces the old one, nothing in it pulses as new, and the page listens to its topic.
+        if (this.session && this.session.id !== s.data.id) { this.seen = null; this.readFor = null; this.openEdit = null; this.test = null; this.stop?.(); this.stop = null; }
+        this.session = s.data;
+        this.noticeEvents();
+      }
       // The numbers are read again only when an edit or an undo has been recorded since they were last read.
       const changes = (this.session?.events ?? []).filter((e) => e.kind === "edit" || e.kind === "undo" || e.kind === "redo");
       const mark = changes.at(-1)?.id ?? "";
@@ -113,7 +120,9 @@ export default class CaptainWeights extends View {
       // The test set's cost. A network that carries its test set is scored through the adapter each time. One that
       // does not (the services keep the test set to themselves) takes the number from its last edit, and asks
       // once when there is none.
-      const last = changes.at(-1)?.cost?.test;
+      // An evaluation measures the numbers as they are, so its number counts too: the page asks for one only
+      // when the record holds none since the last change.
+      const last = (this.session?.events ?? []).filter((e) => ["edit", "undo", "redo", "evaluate"].includes(e.kind)).at(-1)?.cost?.test;
       if (!this.net.test?.length && last && Number.isFinite(last.after)) this.test = { cost: last.after, right: last.right_after ?? null, of: last.of ?? null };
       else if (this.net.test?.length || !this.test) {
         const t = await readTestCost(model, this.session?.id);
@@ -295,17 +304,24 @@ export default class CaptainWeights extends View {
         .child(Button(c, `wt-open-btn-${m.id}`, `Open ${m.name}`, (_e, cx) => this.open(m.id, cx), { small: true })))));
   }
 
-  /** The inputs a person can choose, as a row of picks. */
+  /** The inputs a person can choose, as a row of picks: ten at a time, with a step to the ones before and after. */
   inputs(c) {
-    const ex = this.net.examples;
+    const ex = this.net.examples, PAGE = 10;
+    const start = Math.floor(this.inputAt / PAGE) * PAGE, shown = ex.slice(start, start + PAGE);
+    const step = (id, text, to) => div().id(id).h(26).px(9).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+      .border_color(c.grey300).bg(c.surface).text_color(c.navy).hover((s) => s.border_color(c.blue).text_color(c.blue))
+      .on_click((_e, cx) => this.pickInput(to, cx)).child(text);
     return h_flex().id("wt-inputs").h(44).flex_none().px(20).gap(6).items_center()
-      .child(div().flex_none().pr(4).text_size(12.5).text_color(c.grey500).child("Input"))
-      .child(h_flex().flex_1().min_w(0).gap(6).overflow_x_scrollbar().children(ex.map((e, n) => {
-        const on = n === this.inputAt;
-        return div().id(`wt-in-${n}`).h(26).px(9).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
-          .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy)
-          .on_click((_e, cx) => this.pickInput(n, cx)).child(e.name);
-      })))
+      .child(div().flex_none().pr(4).text_size(12.5).text_color(c.grey500).child(ex.length > PAGE ? `Input ${int(this.inputAt + 1)} of ${int(ex.length)}` : "Input"))
+      .child(h_flex().flex_1().min_w(0).gap(6).overflow_x_scrollbar()
+        .when(start > 0, (e) => e.child(step("wt-in-earlier", "Earlier inputs", start - 1)))
+        .children(shown.map((e, m) => {
+          const n = start + m, on = n === this.inputAt;
+          return div().id(`wt-in-${n}`).h(26).px(9).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+            .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy)
+            .on_click((_e, cx) => this.pickInput(n, cx)).child(e.name);
+        }))
+        .when(start + PAGE < ex.length, (e) => e.child(step("wt-in-later", "Later inputs", start + PAGE))))
       .child(this.modes(c));
   }
 

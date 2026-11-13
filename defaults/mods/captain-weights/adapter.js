@@ -1,6 +1,7 @@
 // CAPTAIN: every question the Weights page asks about a network goes through here, and nowhere else. A starter
 // network ("starter:...") is answered by local.js, in memory. Anything else is asked of Captain's services at the
-// routes in shapes.js. When the services' real routes are known, this is the one file to change.
+// routes in shapes.js, which are the ones the services serve (captain_search/weights/routes.py). If those change,
+// this is the one file to change.
 //
 // Every function resolves to {ok: true, data} or {ok: false, error}: the page never sees a thrown error.
 import { api } from "./kit/cst.js";
@@ -38,7 +39,8 @@ export async function readNetwork(model, sessionId) {
  *  set itself: they score it and send the numbers. */
 export async function readTestCost(model, sessionId) {
   if (isStarter(model)) { const net = localNetwork(model); return net ? { ok: true, data: costOver(net, net.test) } : ok(null); }
-  const r = await ask(`/api/weights/sessions/${enc(sessionId)}/evaluate`, { method: "POST", body: {}, timeout: 60 });
+  // Recorded as the person's: someone looking at the page asked for the score, not the agent.
+  const r = await ask(`/api/weights/sessions/${enc(sessionId)}/evaluate`, { method: "POST", body: { by: "you" }, timeout: 60 });
   const h = r?.ok ? r.data?.sets?.held_out : null;
   if (!h || !Number.isFinite(h.after)) return { ok: false, error: r?.error };
   return { ok: true, data: { cost: h.after, right: h.right_after ?? null, of: h.of ?? null } };
@@ -58,9 +60,6 @@ export async function readSessionById(id) {
 /** Change numbers: one EditRequest (shapes.js). Resolves to the event that records it. */
 export async function sendEdit(sessionId, req) {
   if (isLocalSession(sessionId)) return ok(localEdit(sessionId, req));
-  // The services name an edit's target with their own sets, not with one of the page's inputs.
-  const { target: _target, ...body } = req;
-  req = body;
   return ask(`/api/weights/sessions/${enc(sessionId)}/edits`, { method: "POST", body: req, timeout: 30 });
 }
 

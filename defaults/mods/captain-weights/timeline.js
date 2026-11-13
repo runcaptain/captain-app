@@ -33,6 +33,7 @@ export function eventWords(ev) {
   let said;
   if (ev.kind === "edit") {
     if (ev.op === "scale") said = `${who} scaled ${plural(total, "weight", "weights")} into ${where}, by ${trim(ev.factor)}.`;
+    else if (ev.op === "step") said = `${who} took one training step, which moved ${plural(total, "number", "numbers")}.`;
     else if (ev.op === "zero") said = `${who} set ${plural(weights.length, "weight", "weights")}${biases.length ? " and the bias" : ""} of ${where} to zero.`;
     else if (ev.op === "set" && total === 1 && changes.length === 1) said = `${who} set ${biases.length ? "the bias" : "one weight"} of ${where} from ${signed(changes[0].old)} to ${signed(changes[0].new)}.`;
     else said = `${who} changed ${plural(total, "number", "numbers")} in ${where}.`;
@@ -42,6 +43,8 @@ export function eventWords(ev) {
   else if (ev.kind === "run") said = ev.input ? `${who} ran the network on "${ev.input}".` : `${who} ran the network.`;
   else if (ev.kind === "gradients") said = `${who} worked out the gradients: how the cost changes with each weight.`;
   else if (ev.kind === "evaluate") said = `${who} scored the network on the test set.`;
+  else if (ev.kind === "sets") said = `${who} named what an edit should fix and what it should leave alone.`;
+  else if (ev.kind === "export") said = `${who} wrote the network's numbers to a file.`;
   else if (ev.kind === "open") said = `${who} opened a session on this network.`;
   else if (ev.kind === "save") said = `${who} saved the edited network as a new version.`;
   // A kind this page has no words for: the services' own sentence, when it has none of their names in it.
