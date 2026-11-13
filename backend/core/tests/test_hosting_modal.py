@@ -243,6 +243,8 @@ def test_stage_query_and_unstage_leave_nothing_behind(ws, modal):  # noqa: F811
     assert modal.store().list("staging/shop/bundles/") and not ws.store.list("staging/shop/bundles/")
     q = SG.query(ws, "shop", "jacket")
     assert q["staged"]["results"] and q["baseline"]["results"]
+    assert SG.status(ws, "shop")["health"] is None, "a read a page repeats never calls the model"
+    SG.ask_status(ws, SG.state(ws, "shop"))  # what a health check or "Check now" asks: a read a page repeats never calls the model
     assert SG.status(ws, "shop")["health"]["stops_in_s"] is None  # the host puts it to sleep, the runtime never stops itself
     out = SG.unstage(ws, "shop")
     assert out["status"] == "stopped" and not out["resources"]
@@ -261,6 +263,9 @@ def test_an_asleep_endpoint_is_not_woken_to_ask_how_it_is(ws, modal):  # noqa: F
     assert s["asleep"] and "Asleep" in s["text"] and "wakes on the next request" in s["text"]
     assert modal.calls == []  # nothing was sent to the endpoint
     modal.copies = 1
+    assert SG.status(ws, "shop")["status"] == "running" and modal.calls == [], "up, said from the host's own state, with no call"
+    SG.forget_asked()
+    SG.ask_status(ws, SG.state(ws, "shop"))  # what a health check or "Check now" asks: a read a page repeats never calls the model
     assert SG.status(ws, "shop")["health"]["requests"] == 0 and modal.calls
 
 
@@ -485,6 +490,8 @@ def test_the_deployment_tabs_say_asleep_and_never_wake_it(ws, modal):  # noqa: F
     _setup(ws)
     SG.stage(ws, "shop", target="modal-serving", confirm=True)
     SG.query(ws, "shop", "jacket")
+    SG.forget_asked()
+    SG.ask_status(ws, SG.state(ws, "shop"))  # what a health check or "Check now" asks: a read a page repeats never calls the model
     up = OB.live(ws, "shop")
     assert up["state"] in ("handling", "idle") and up["copies"] == 1
     st = OB.settings(ws, "shop")

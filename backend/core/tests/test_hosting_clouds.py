@@ -299,7 +299,9 @@ def test_google_stage_query_and_unstage_leave_nothing_behind(ws, google):  # noq
     assert svc["template"]["serviceAccount"].startswith("captain-search-test-ab12cd-run@")
     assert env["CST_STORAGE"].startswith("gs://") and SG._key(SG.state(ws, "shop")) not in str(svc)
     assert SG.query(ws, "shop", "jacket")["staged"]["results"]
-    s = SG.status(ws, "shop")  # Cloud Run doesn't say how many copies are up, and asking costs milliseconds: it asks
+    SG.forget_asked()
+    SG.ask_status(ws, SG.state(ws, "shop"))  # what a health check or "Check now" asks: a read a page repeats never calls the model
+    s = SG.status(ws, "shop")  # Cloud Run doesn't say how many copies are up: the model's own numbers are what it was last asked
     assert s["health"]["requests"] == 2 and s["health"]["stops_in_s"] is None
     assert C.tagged(ws, C.get(ws, "gcp-serving"), "shop", "staging") == [r["resources"][0]]
     assert SG.unstage(ws, "shop")["status"] == "stopped" and not google.services
@@ -527,6 +529,8 @@ def test_azure_stage_query_sleep_and_unstage_leave_nothing_behind(ws, azure):  #
     s = SG.status(ws, "shop")
     assert s["asleep"] and "Asleep" in s["text"] and azure.eps.calls == []  # not woken to be asked
     azure.copies = 1
+    SG.forget_asked()
+    SG.ask_status(ws, SG.state(ws, "shop"))  # what a health check or "Check now" asks: a read a page repeats never calls the model
     assert SG.status(ws, "shop")["health"]["requests"] == 2
     assert C.tagged(ws, C.get(ws, "azure-serving"), "shop", "staging") == [r["resources"][0]]
     assert SG.unstage(ws, "shop")["status"] == "stopped" and not [p for p in azure.res if "/containerApps/" in p]

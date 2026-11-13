@@ -473,6 +473,21 @@ export class Ship {
     });
   }
 
+  /** A person asking for the newest requests or log lines now. Only this asks a model in a cloud to write its log:
+   *  the page's own reads never call it. */
+  refreshNow(cx, which) {
+    if (this.refreshing) return;
+    this.refreshing = which;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const q = which === "logs" && this.logBox.value().trim() ? `&q=${enc(this.logBox.value().trim())}` : "";
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/${which}?refresh=true&limit=${which === "logs" ? 300 : 50}${q}`, { scoped: false, timeout: 60 });
+      this.refreshing = null;
+      if (r.ok) { if (which === "logs") this.logsD = r.data; else this.reqs = r.data; }
+      cx.notify();
+    });
+  }
+
   /** What a tab needs, asked when it is opened and again while it stays open. */
   loadTab(cx) {
     const pid = this.pid();
@@ -537,7 +552,9 @@ export class Ship {
     const d = this.reqs, open = this.reqOpen;
     const cell = (w, t, mono) => div().w(w).flex_none().truncate().text_size(12.5).child(String(t ?? ""));
     const list = v_flex().id("dep-requests").flex_1().min_w(360)
-      .child(div().id("dep-requests-text").pb(6).text_size(12.5).text_color(c.grey500).child(d ? d.text : "Reading the request log..."))
+      .child(h_flex().gap(8).items_center().pb(6)
+        .child(div().id("dep-requests-text").flex_1().min_w(0).text_size(12.5).text_color(c.grey500).child(d ? d.text : "Reading the request log..."))
+        .when(this.running(), (e) => e.child(Button(c, "dep-requests-refresh", this.refreshing === "requests" ? "Refreshing..." : "Refresh", (_e, cx) => this.refreshNow(cx, "requests"), { small: true, disabled: Boolean(this.refreshing) }))))
       .when(Boolean(d?.rows?.length), (e) => e
         .child(h_flex().gap(8).py(4).text_color(c.grey500).border_b(1).border_color(c.rule)
           .child(cell(92, "Time")).child(div().flex_1().min_w(80).text_size(12.5).child("Query")).child(cell(80, "Answered by")).child(cell(64, "Took")).child(cell(74, "Traffic")).child(cell(70, "Status")))
