@@ -64,13 +64,17 @@ blind session these say the scores are hidden. Then you work from the weights, a
 
 An edit you took back stays in the record. That is intended.
 
-## 6. Stop, and say what happened
+## 6. Stop, and say you are done
 
-You have a fixed number of edits. A further one is refused. When you are done, write one last
-`cst weights note "..."` with your conclusion, then answer with one short paragraph:
+You have a fixed number of edits. A further one is refused. When you have finished, your last command is:
 
-what you found, the one edit you kept (or that you kept none), what the scores did if you saw them, what you tried
-that failed, and what you did not check.
+`cst weights done "<one short paragraph>"`
+
+The paragraph says what you found, the one edit you kept (or that you kept none), what the scores did if you saw
+them, what you tried that failed, and what you did not check.
+
+This command is how Captain knows you have finished. Without it the run waits until its time limit, and a run that
+reaches the time limit has every edit taken back, however good. Run nothing after it.
 
 Do not say "from the weights alone", "without running the network" or "fixed" unless the record says so. Captain
 prints the label from the record and the verdict from its own measurement.
