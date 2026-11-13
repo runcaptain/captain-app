@@ -40,9 +40,9 @@ def _check(ctx, rest: str):
             raise WeightsError(f"{model} has {len(man['layers'])} layers, so `layer` goes from 1 to {len(man['layers'])}.")
         n_out, n_in = man["sizes"][layer], man["sizes"][layer - 1]
         if not 0 <= neuron < n_out:
-            raise WeightsError(f"Layer {layer} of {model} has {n_out} neurons, so `neuron` goes from 0 to {n_out - 1}.")
+            raise WeightsError(f"Layer {layer} of {model} has {n_out} neurons. The neuron asked for is not one of them.")
         if frm is not None and not 0 <= frm < n_in:
-            raise WeightsError(f"A neuron in layer {layer} of {model} has {n_in} incoming weights, so `from` goes from 0 to {n_in - 1}.")
+            raise WeightsError(f"A neuron in layer {layer} of {model} has {n_in} incoming weights. The one asked for is not one of them.")
     return model, version, layer, neuron, frm, man
 
 
@@ -62,13 +62,13 @@ def expand(ctx, rest: str) -> dict:
     man, tensors = WS.load(ctx, model, version)
     data = man.get("data") or {}
     out = {"model": WS.ref_of(model, man["version"]), "sizes": man["sizes"], "numbers": man.get("parameters"),
-           "counting": "Layers and neurons here count from 1. The cst weights flags count neurons from 0."}
+           "counting": "Layers and neurons here count from 1, and so do --layer, --neuron and --from in cst weights."}
     if data.get("synthetic"):
         out["data"] = data.get("note") or "synthetic"
     opens = f"cst weights open {model}" + (f"@v{version}" if version else "") + " --agent --name <you>"
     if layer is None:
         out["layers"] = [f"layer {k + 1}: {ly['inputs']} in, {ly['outputs']} out, {ly['activation']}" for k, ly in enumerate(man["layers"])]
-        out["read_more"] = [opens, "cst weights layers", "cst weights stats --neurons", "cst weights heatmap --layer 0"]
+        out["read_more"] = [opens, "cst weights layers", "cst weights stats --neurons", "cst weights heatmap --layer 1"]
         return out
     ly = man["layers"][layer - 1]
     w = np.asarray(tensors[ly["weight"]], dtype=float)[neuron]
@@ -82,7 +82,7 @@ def expand(ctx, rest: str) -> dict:
         out["largest_outgoing"] = [{"to_neuron": int(j) + 1, "weight": round(float(nxt[j]), 6)} for j in np.argsort(np.abs(nxt))[::-1][:TOP]]
     if frm is not None:
         out["weight"] = {"from_neuron": frm + 1, "value": round(float(w[frm]), 6)}
-    out["read_more"] = [opens, f"cst weights heatmap --layer {layer - 1} --neuron {neuron}",
-                        f"cst weights read {ly['weight']} --rows {neuron}", f"cst weights read {ly['bias']} --rows {neuron}",
-                        "cst weights stats --neurons"]
+    out["read_more"] = [opens, f"cst weights heatmap --layer {layer} --neuron {neuron + 1}",
+                        f"cst weights read --layer {layer} --neuron {neuron + 1}", f"cst weights read --layer {layer} --neuron {neuron + 1} --bias",
+                        f"cst weights stats --layer {layer} --neuron {neuron + 1}"]
     return out

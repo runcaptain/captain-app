@@ -24,10 +24,19 @@ Only fully connected networks are supported. The code is numpy alone.
 | examples | A couple of dozen labelled inputs that come with a model, for a person to pick and look at. They are never part of a score. |
 | `dcost_dz`, `da_dz`, `a_before` | The other chain-rule numbers. A weight's gradient is `a_before * da_dz * dcost_da`. |
 
-**Counting.** In every field, here and in `--json`, layers, neurons, outputs and examples count from 0. The one
-exception is `layer` when it names a neuron's place (in an edit, an event and `touched.neurons`): there it is the
-column, so 1 is the first layer after the input. In every sentence a person reads (an event's `sentence`, what
-`cst weights` prints without `--json`, a refusal) layers and neurons count from 1: "layer 2, neuron 7".
+**Counting.** Two rules, and they differ on purpose.
+
+- What a person types and reads counts from 1. That is every sentence (an event's `sentence`, what `cst weights`
+  prints, a refusal) and every `cst weights` option that names a place: `--layer`, `--neuron`, `--from`,
+  `--neurons`, `--path`, `--example`, and the output given to `template`. "Layer 2, neuron 7" on the page is
+  `--layer 2 --neuron 7`.
+- Fields count from 0. That is everything in a route's body and answer and in `--json` output: `neuron`, `from`,
+  `j`, `i`, `k`, `example`, `output`, `path`, `indices`, and `layer` where it means the layer's own number (in
+  `layers`, `heatmap`, `gradients`, `trace`). `--index`, `--rows` and `--cols` count from 0 too, because they are
+  positions inside a tensor.
+- One field is the exception: `layer` where it names a neuron's place (in an edit's body, in an event, and the
+  first number of each pair in `touched.neurons`) is the column, so 1 is the first layer after the input. It is
+  the same number a person says.
 
 ## The two starter networks
 
@@ -169,7 +178,7 @@ Each line: the command, the route, and what comes back. `{s}` is the session id.
 | Command | Route | Returns |
 |---|---|---|
 | `cst weights models` | `GET /api/weights/models` | `[{id, name, says, sizes, parameters, versions, synthetic}]` |
-| `cst weights show <model>` | `GET /api/weights/models/{model}` | the whole network, see below |
+| `cst weights show <model>` | `GET /api/weights/models/{model}` | the network's description, see below. No numbers |
 | `cst weights open <model>` | `POST /api/weights/sessions` | a session |
 | | `GET /api/weights/models/{model}/session` | the newest session on the model, made if there is none |
 | `cst weights sessions <model>` | `GET /api/weights/models/{model}/sessions` | `[{id, model, version, who, opened_at, events, edits}]`, newest first |
@@ -177,24 +186,30 @@ Each line: the command, the route, and what comes back. `{s}` is the session id.
 | `cst weights import <folder> [--name]` | `POST /api/weights/import` | `{model, version, ref, parameters, sizes, cost_points}`. Body: `{"folder": "...", "name": "..."}` |
 | `cst weights session` | `GET /api/weights/sessions/{s}` | a session |
 | `cst weights layers` | `GET /api/weights/sessions/{s}/layers` | `{sizes, cost, parameters, layers: [...]}` |
-| `cst weights read <tensor> [--rows 0:2] [--cols 0:4]` | `GET /api/weights/sessions/{s}/read?tensor=&rows=&cols=` | `{tensor, shape, rows, cols, values, count}` |
-| `cst weights stats [<tensor>] [--neurons]` | `GET /api/weights/sessions/{s}/stats?tensor=&neurons=1` | per tensor and per neuron numbers |
-| `cst weights heatmap [--layer 0] [--neuron 3]` | `GET /api/weights/sessions/{s}/heatmap?layer=&neuron=` | one grid per neuron |
+| `cst weights read <tensor> [--rows 0:2] [--cols 0:4]`, or `cst weights read --layer 1 --neuron 3 [--bias]` | `GET /api/weights/sessions/{s}/read?tensor=&rows=&cols=` | `{tensor, shape, rows, cols, values, count}` |
+| `cst weights stats [<tensor>] [--neurons]`, or `--layer 1 [--neuron 3]` | `GET /api/weights/sessions/{s}/stats?tensor=&neurons=1` | per tensor and per neuron numbers |
+| `cst weights heatmap [--layer 1] [--neuron 3]` | `GET /api/weights/sessions/{s}/heatmap?layer=&neuron=` | one grid per neuron |
 | `cst weights template <output>` | `GET /api/weights/sessions/{s}/template?output=` | an output's incoming weights |
 
-The whole network, for a screen (`GET /api/weights/models/{model}`, at most 200,000 numbers):
+A network for a screen. `GET /api/weights/models/{model}` gives the description only: sizes, each layer's
+activation, what inputs and outputs mean, and the examples. It holds no weights and no biases, and `numbers` is
+false. `cst weights show` prints the same.
 
 ```json
 {"id": "tiny", "name": "tiny", "version": 1, "sizes": [2, 3, 1], "squish": "sigmoid", "cost": "cross_entropy",
- "layers": [{"W": [[5.1, -4.9], [4.8, 5.0], [-3.2, 3.1]], "b": [0.2, -7.1, 0.4], "activation": "sigmoid"}],
+ "numbers": false,
+ "layers": [{"name": "layer1", "activation": "sigmoid", "inputs": 2, "outputs": 3}],
  "inputNames": ["x1", "x2"], "outputNames": ["exactly one is high"],
  "examples": [{"name": "example 1: 1", "x": [0.9, 0.1], "y": [1.0]}],
  "test": [], "synthetic": true}
 ```
 
+The numbers come only through a session, where they are counted. Add `?session={s}&watch=1`: each layer then
+also has `"W": [[5.1, -4.9], ...]` and `"b": [0.2, ...]` as the session has edited them, `numbers` is true, and
+the look is added to `ledger.screen_looks` and `ledger.screen_numbers`. At most 200,000 numbers are sent this way.
+
 `examples` are the model's couple of dozen labelled inputs for a person to pick and look at (24 for `tiny`, 40
-for `digits`). They are never part of a score. `test` is always empty: the held-out examples are never sent.
-Scores on them come from `evaluate`. Add `?session={s}` to get the numbers as the session has edited them.
+for `digits`). `test` is always empty: the held-out examples are never sent. Scores on them come from `evaluate`.
 
 `layers`:
 
@@ -239,11 +254,11 @@ they are refused. One pass may hold up to `pass_inputs` inputs.
 
 | Command | Route | Returns |
 |---|---|---|
-| `cst weights forward --input 0.9,0.1` or `--example 3` | `POST /api/weights/sessions/{s}/forward` | outputs and the passes left |
-| `cst weights activations --example 3` | `POST /api/weights/sessions/{s}/activations` | `z` and `a` for every neuron |
-| `cst weights gradients --example 3` | `POST /api/weights/sessions/{s}/gradients` | the cost and every gradient |
-| `cst weights trace --example 3 [--path 0,2,0]` | `POST /api/weights/sessions/{s}/trace` | the chain rule along one path |
-| `cst weights slice <tensor> <index> --example 3` | `POST /api/weights/sessions/{s}/slice` | the cost as one number moves |
+| `cst weights forward --input 0.9,0.1` or `--example 4` | `POST /api/weights/sessions/{s}/forward` | outputs and the passes left |
+| `cst weights activations --example 4 [--layer 1 --neuron 3]` | `POST /api/weights/sessions/{s}/activations` | `z` and `a` for every neuron |
+| `cst weights gradients --example 4 [--layer 2 --neuron 1]` | `POST /api/weights/sessions/{s}/gradients` | the cost and every gradient |
+| `cst weights trace --example 4 [--path 1,3,1]` | `POST /api/weights/sessions/{s}/trace` | the chain rule along one path |
+| `cst weights slice --layer 1 --neuron 3 --from 1 --example 4`, or `slice <tensor> <index>` | `POST /api/weights/sessions/{s}/slice` | the cost as one number moves |
 
 Bodies take `{"inputs": [[0.9, 0.1]], "targets": [[1]]}` or `{"example": 3}` (one of the model's examples, by
 number from 0).
@@ -319,7 +334,7 @@ session a slice answers `{"measured": true, "scores": "hidden"}` with no costs, 
 
 | Command | Route | Returns |
 |---|---|---|
-| `cst weights sets --target 9 --keep 0,1,2` | `POST /api/weights/sessions/{s}/sets` | the three sets |
+| `cst weights sets --target 9 --keep 0,1,2`, or `--target-example 4`, or `--target-input 0.9,0.1 --target-output 1` | `POST /api/weights/sessions/{s}/sets` | the three sets |
 | `cst weights edit <op> ... --why "..."` | `POST /api/weights/sessions/{s}/edits` | an event |
 | `cst weights diff` | `GET /api/weights/sessions/{s}/diff` | what differs from the base |
 | `cst weights undo [<edit>]` | `POST /api/weights/sessions/{s}/undo` | an event |
@@ -404,8 +419,20 @@ session never sees:
 ```
 
 `target` is what the edit should fix. `should_not_change` holds the neighbours it must leave alone. The held-out
-set is the model's own and cannot be changed. A set may also be given whole as `{"inputs": [...], "targets":
-[...]}`. The model's examples cannot be made into a scored set.
+set is the model's own and cannot be changed. `--target` and `--keep` take the classes' own numbers.
+
+**Fix this one.** A person looking at one wrong answer can make it the target. Give its inputs and its wanted
+output, either to `sets` or with the edit itself:
+
+```json
+{"op": "set", "layer": 3, "neuron": 9, "from": null, "value": -1.5,
+ "target": {"inputs": [[0.0, 0.1, 0.9]], "targets": [7]}}
+```
+
+`targets` is one class number per input, or one row of wanted outputs per input. That is a named target set of
+one, scored like any target, and it stays the session's target until another is named. `{"target": {"example":
+3}}` on `sets` copies one of the model's examples in the same way. Only the target can come from an example.
+"Should not change" and held out never can.
 
 `evaluate`:
 

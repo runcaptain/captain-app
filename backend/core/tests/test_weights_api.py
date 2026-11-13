@@ -64,9 +64,9 @@ def test_the_routes_answer_in_the_documented_shapes(svc):
     rows = svc.get("/api/weights/models")
     has(rows[0], "id", "name", "says", "sizes", "parameters", "versions", "synthetic")
     net = svc.get("/api/weights/models/tiny")
-    has(net, "id", "name", "version", "sizes", "squish", "cost", "layers", "examples", "test", "inputNames", "outputNames", "synthetic")
-    has(net["layers"][0], "W", "b", "activation")
-    assert net["test"] == []
+    has(net, "id", "name", "version", "sizes", "squish", "cost", "layers", "examples", "test", "inputNames", "outputNames", "synthetic", "numbers")
+    has(net["layers"][0], "activation", "inputs", "outputs")
+    assert net["test"] == [] and net["numbers"] is False and "W" not in net["layers"][0], "no numbers without a session"
 
     s = svc.post("/api/weights/sessions", {"model": "tiny", "by": "agent", "name": "claude", "forward_passes": 8})
     sid = s["id"]
@@ -139,7 +139,10 @@ def test_the_routes_answer_in_the_documented_shapes(svc):
     assert hidden["scores"] == "hidden" and hidden["measured"] is True and "sets" not in hidden
     closed = svc.post(f"/api/weights/sessions/{blind}/close")
     assert closed["closed"] is True and closed["ledger"]["weights_alone"] is True and "cost" in closed["events"][1]
-    assert svc.get("/api/weights/models/tiny", session=sid)["layers"][0]["b"][2] == -1.5
+    full = svc.get("/api/weights/models/tiny", session=sid, watch=1)
+    has(full["layers"][0], "W", "b", "activation")
+    assert full["layers"][0]["b"][2] == -1.5 and full["numbers"] is True
+    assert svc.get(f"/api/weights/sessions/{sid}")["ledger"]["screen_numbers"] >= 13
 
 
 def test_a_refusal_is_a_plain_sentence_with_its_own_status(svc):
@@ -239,7 +242,7 @@ def test_an_edit_made_by_cst_in_a_second_process_tells_a_listening_screen(svc, t
     t, box = _waiter(svc, seq, f"weights:tiny,weights-session:{sid}")
     time.sleep(1.2)   # the folder watch has taken its first look
     assert "answer" not in box
-    r = run("weights", "edit", "set", "--session", sid, "--layer", "1", "--neuron", "2", "--value", "-1.5", "--why", "made in a terminal")
+    r = run("weights", "edit", "set", "--session", sid, "--layer", "1", "--neuron", "3", "--value", "-1.5", "--why", "made in a terminal")
     done = time.perf_counter()
     assert r.returncode == 0, r.stdout + r.stderr
     ev = json.loads(r.stdout)
@@ -275,17 +278,17 @@ def test_the_commands_print_the_same_shapes_and_follow_the_session_opened_last(t
     assert cst("weights", "layers")["sizes"] == [2, 3, 1]
     assert cst("weights", "read", "layer1.weight", "--rows", "0", "--cols", "0:2")["count"] == 2
     assert len(cst("weights", "stats", "--neurons")["neurons"]) == 4
-    assert cst("weights", "heatmap", "--neuron", "0,2")["grids"][1]["neuron"] == 2
-    assert cst("weights", "template", "0")["output"] == 0
+    assert cst("weights", "heatmap", "--neuron", "1,3")["grids"][1]["neuron"] == 2
+    assert cst("weights", "template", "1")["output"] == 0
     assert cst("weights", "forward", "-i", "0.9,0.1", "-t", "1")["predicted"] == [1]
-    assert cst("weights", "trace", "-e", "0", "--path", "0,1,0")["path"] == [0, 1, 0]
-    refused = cst("weights", "gradients", "-e", "0", code=3)
+    assert cst("weights", "trace", "-e", "1", "--path", "1,2,1")["path"] == [0, 1, 0]
+    refused = cst("weights", "gradients", "-e", "1", code=3)
     assert refused["error"].startswith("Refused. All 2 forward passes")
-    assert "needs `why`" in cst("weights", "edit", "zero", "--layer", "1", "--neuron", "0", code=1)["error"]
+    assert "needs `why`" in cst("weights", "edit", "zero", "--layer", "1", "--neuron", "1", code=1)["error"]
     assert cst("weights", "sets", "--target", "1", "--keep", "0")["target"]["defined"]
     ev = cst("weights", "edit", "add", "--tensor", "layer1.weight", "--index", "0,0", "--index", "0,1", "--values", "0.5,-0.5", "--why", "tilt it")
     assert ev["changed"] == 2 and ev["touched"]["weights"] == [[0, 0, 0], [0, 0, 1]]
-    ev2 = cst("weights", "edit", "add-direction", "--tensor", "layer1.weight", "--direction", "1,-1", "--scale", "0.1", "--neurons", "1", "--why", "x")
+    ev2 = cst("weights", "edit", "add-direction", "--tensor", "layer1.weight", "--direction", "1,-1", "--scale", "0.1", "--neurons", "2", "--why", "x")
     assert ev2["changed"] == 2 and ev2["op"] == "add-direction"
     assert cst("weights", "diff")["changed"] == 4
     assert cst("weights", "undo")["undoes"] == ev2["id"] and cst("weights", "redo")["redoes"] == ev2["id"]
@@ -303,7 +306,7 @@ def test_the_commands_print_the_same_shapes_and_follow_the_session_opened_last(t
     assert cst("weights", "session", "--session", s["id"])["id"] == s["id"]
     b = cst("weights", "open", "tiny", "--agent", "--blind")
     assert b["ledger"]["feedback"] is False
-    assert cst("weights", "edit", "zero", "--layer", "1", "--neuron", "0", "--why", "blind")["scores"] == "hidden"
+    assert cst("weights", "edit", "zero", "--layer", "1", "--neuron", "1", "--why", "blind")["scores"] == "hidden"
     assert cst("weights", "evaluate")["scores"] == "hidden"
     assert cst("weights", "close")["ledger"]["label"] == "from the weights alone"
     assert "closed" in cst("weights", "undo", code=1)["error"]
@@ -316,7 +319,7 @@ def test_the_plain_output_is_sentences_and_the_guide_is_shipped(tmp_path):
     out = R.invoke(cli, ["weights", "open", "digits"]).output
     assert "label: from the weights alone" in out and "forward passes: 0 of 50 used" in out
     out = R.invoke(cli, ["weights", "edit", "scale", "--layer", "2", "--neuron", "3", "--factor", "0.5"]).output
-    assert re.search(r"e\d+  You scaled 16 numbers in layer2\.weight \(layer 2, neuron 4\)\. Cost on the held-out set went from", out), out
+    assert re.search(r"e\d+  You scaled 16 numbers in layer2\.weight \(layer 2, neuron 3\)\. Cost on the held-out set went from", out), out
     assert "held out: cost" in out
     out = R.invoke(cli, ["weights", "--json", "diff"]).output
     assert json.loads(out)["changed"] == 16
@@ -325,3 +328,56 @@ def test_the_plain_output_is_sentences_and_the_guide_is_shipped(tmp_path):
     assert r.exit_code == 1 and "no weights session" in r.output
     docs = R.invoke(cli, ["docs", "weights"]).output
     assert docs.startswith("# Weights") and "synthetic" in docs
+
+
+def test_the_neuron_a_person_types_is_the_neuron_the_sentence_names_and_the_one_that_changes(tmp_path):
+    """`--layer`, `--neuron` and `--from` count from 1, as the page and every sentence do."""
+    R.invoke(cli, ["init", "demo", "--storage", str(tmp_path / "bucket")])
+    CLI_STATE.json = False
+    R.invoke(cli, ["weights", "open", "tiny", "--forward-passes", "60"])
+    before = cst("weights", "read", "layer1.bias")["values"]
+    for layer, neuron in ((1, 1), (1, 2), (1, 3), (2, 1)):
+        CLI_STATE.json = False
+        out = R.invoke(cli, ["weights", "edit", "set", "--layer", str(layer), "--neuron", str(neuron), "--value", "-9"]).output
+        assert f"(layer {layer}, neuron {neuron})" in out, out
+    after = cst("weights", "read", "layer1.bias")["values"]
+    assert after == [-9.0, -9.0, -9.0] and before != after
+    ev = cst("weights", "edit", "set", "--layer", "1", "--neuron", "2", "--from", "1", "--value", "0.5")
+    assert (ev["changes"][0]["k"], ev["changes"][0]["j"], ev["changes"][0]["i"], ev["changes"][0]["new"]) == (0, 1, 0, 0.5), "typed from 1, stored from 0"
+    # Every command that names a layer or a neuron reads it the same way.
+    assert cst("weights", "read", "--layer", "1", "--neuron", "2")["values"][0][0] == 0.5
+    assert cst("weights", "read", "--layer", "1", "--bias", "--neuron", "3")["values"] == [-9.0]
+    assert cst("weights", "heatmap", "--layer", "1", "--neuron", "2")["grids"][0]["grid"][0][0] == 0.5
+    assert [n["neuron"] for n in cst("weights", "stats", "--layer", "1", "--neuron", "2")["neurons"]] == [1]
+    assert cst("weights", "gradients", "-e", "1", "--layer", "1", "--neuron", "2")["row"]["neuron"] == 1
+    assert len(cst("weights", "activations", "-e", "1", "--layer", "1")["columns"]) == 1
+    sl = cst("weights", "slice", "--layer", "1", "--neuron", "2", "--from", "1", "-e", "1", "--points", "3")
+    assert sl["tensor"] == "layer1.weight" and sl["index"] == [1, 0] and sl["value"] == 0.5
+    CLI_STATE.json = False
+    for args, words in ((["trace", "-e", "1", "--path", "1,2,1"], "path through neurons 1, 2, 1"),
+                        (["template", "1"], "output 1 ("),
+                        (["activations", "-e", "1", "--layer", "1", "--neuron", "2"], "layer 1, neuron 2: weighted sum"),
+                        (["slice", "--layer", "1", "--neuron", "2", "--from", "1", "-e", "1", "--points", "3"], "The weight into layer 1, neuron 2 from neuron 1 is 0.5"),
+                        (["read", "--layer", "1", "--neuron", "2"], "layer 1, neuron 2, incoming weights"),
+                        (["forward", "-e", "3"], "answer")):
+        out = R.invoke(cli, ["weights", *args]).output
+        assert words in out, out
+    assert "ran the network on example 3." in R.invoke(cli, ["weights", "events"]).output
+    assert "counts from 1" in R.invoke(cli, ["weights", "edit", "zero", "--layer", "1", "--neuron", "0"]).output
+    assert "counts from 1" in R.invoke(cli, ["weights", "heatmap", "--layer", "0"]).output
+    assert "Layer 1 has 3 neurons. The neuron asked for is not one of them." in R.invoke(cli, ["weights", "edit", "zero", "--layer", "1", "--neuron", "4"]).output
+    help_text = " ".join(R.invoke(cli, ["weights", "edit", "--help"]).output.split())
+    assert help_text.count("counted from 1") >= 3 and "counted from 0" in help_text
+
+
+def test_show_gives_a_description_and_a_single_wrong_answer_can_be_named_as_the_target(tmp_path):
+    cst("init", "demo", "--storage", str(tmp_path / "bucket"))
+    w = cst("weights", "show", "digits")
+    assert w["numbers"] is False and "W" not in w["layers"][0] and len(w["examples"]) == 40 and w["inputShape"] == [28, 28]
+    cst("weights", "open", "tiny")
+    assert cst("weights", "sets", "--target-example", "3")["target"]["of"] == 1
+    t = cst("weights", "sets", "--target-input", "0.9,0.1", "--target-output", "1")["target"]
+    assert t == {"defined": True, "of": 1, "says": "1 input given when the set was named"}
+    ev = cst("weights", "edit", "add", "--layer", "2", "--neuron", "1", "--value", "0.2")
+    assert ev["cost"]["target"]["of"] == 1 and ev["cost"]["target"]["after"] < ev["cost"]["target"]["before"]
+    assert "needs --target-output" in cst("weights", "sets", "--target-input", "0.9,0.1", code=1)["error"]

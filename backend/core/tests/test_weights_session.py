@@ -78,6 +78,9 @@ def test_raw_weights_are_refused_when_not_allowed_and_a_watching_screen_is_not_c
     before = len(S._load(ctx, sid).doc["events"])
     assert len(S.heatmap(ctx, sid, watch=True)["grids"]) == 3
     assert S.whole(ctx, "tiny", sid)["layers"][0]["W"]
+    bare = S.whole(ctx, "tiny")
+    assert bare["numbers"] is False and "W" not in bare["layers"][0] and "b" not in bare["layers"][0] and len(bare["examples"]) == 24
+    assert bare["layers"][0]["inputs"] == 2 and bare["sizes"] == [2, 3, 1], "with no session there is a description and no numbers"
     doc = S._load(ctx, sid).doc
     assert len(doc["events"]) == before and doc["used"]["weights_read"] == 0 and doc["used"]["forward_used"] == 0
     # A look by the screen is no event, and it is not traceless either: it is counted beside the record.
@@ -138,9 +141,9 @@ def test_every_kind_of_edit_is_a_patch_with_old_and_new_numbers_and_the_share_co
 
 @pytest.mark.parametrize("req,words", [
     ({"op": "melt", "layer": 1, "neuron": 0}, "An edit is one of"),
-    ({"op": "set", "layer": 1, "neuron": 7, "value": 1}, "`neuron` goes from 0 to 2"),
+    ({"op": "set", "layer": 1, "neuron": 7, "value": 1}, "Layer 1 has 3 neurons. The neuron asked for is not one of them"),
     ({"op": "set", "layer": 0, "neuron": 0, "value": 1}, "in layer 1 to 2, and `layer` was 0"),
-    ({"op": "set", "layer": 1, "neuron": 0, "from": 5, "value": 1}, "`from` goes from 0 to 1"),
+    ({"op": "set", "layer": 1, "neuron": 0, "from": 5, "value": 1}, "has 2 incoming weights. The one asked for is not one of them"),
     ({"op": "set", "layer": 1, "neuron": 0}, "needs `value`"),
     ({"op": "set", "layer": 1, "neuron": 0, "value": float("nan")}, "finite"),
     ({"op": "set", "tensor": "nope", "indices": [[0]], "values": [1]}, "no tensor named"),
@@ -474,11 +477,30 @@ def test_a_pinned_neuron_is_summarised_for_an_agent_counted_from_one(ctx):
     top = out["largest_incoming"][0]
     assert top["from_neuron"] == int(np.abs(row).argmax()) + 1 and top["weight"] == pytest.approx(float(row[np.abs(row).argmax()]), abs=1e-6)
     assert len(out["largest_incoming"]) == 5 and len(out["largest_outgoing"]) == 5 and "not handwriting" in out["data"]
-    assert "cst weights heatmap --layer 1 --neuron 6" in out["read_more"] and out["read_more"][0].startswith("cst weights open digits --agent")
+    assert "cst weights heatmap --layer 2 --neuron 7" in out["read_more"] and "cst weights read --layer 2 --neuron 7 --bias" in out["read_more"] and out["read_more"][0].startswith("cst weights open digits --agent")
     one = AC.expand(ctx, AC.resolve(ctx, "weights:tiny@layer=1,neuron=2,from=0"))
     assert one["weight"]["from_neuron"] == 1 and "largest_outgoing" in one
     whole = AC.expand(ctx, AC.resolve(ctx, "weights:tiny"))
     assert whole["layers"][0] == "layer 1: 2 in, 3 out, sigmoid" and "problem" not in whole
     assert "problem" in AC.expand(ctx, {"ref": "weights:tiny@layer=9,neuron=0"}) and "unknown kind" not in str(AC.expand(ctx, {"ref": "weights:tiny@layer=9,neuron=0"}))
-    with pytest.raises(N.WeightsError, match="`neuron` goes from 0 to 2"):
+    with pytest.raises(N.WeightsError, match="has 3 neurons. The neuron asked for is not one of them"):
         P.resolve(ctx, "tiny@layer=1,neuron=5")
+
+
+def test_fix_this_one_a_single_input_and_its_wanted_output_can_be_the_target(ctx):
+    sid = S.open_session(ctx, "digits")["id"]
+    w = S.whole(ctx, "digits")
+    ex = w["examples"][4]
+    # As the page sends it: the inputs and the wanted output of the example on screen, with the edit.
+    ev = S.edit(ctx, sid, {"op": "scale", "layer": 3, "neuron": 2, "factor": 1.5, "target": {"inputs": [ex["x"]], "targets": [ex["y"]]}})
+    assert ev["cost"]["target"]["of"] == 1 and ev["cost"]["target"]["name"] == "target" and ev["target_named"] == {"of": 1}
+    assert set(ev["cost"]) == {"target", "test"}
+    assert S.session(ctx, sid)["sets"]["target"] == {"defined": True, "of": 1, "says": "1 input given when the set was named"}
+    # Or by naming the example, which copies its inputs in.
+    sets = S.set_sets(ctx, sid, target={"example": 7})
+    assert sets["target"]["of"] == 1
+    assert S._load(ctx, sid).doc["sets"]["target"]["inputs"][0] == pytest.approx(w["examples"][7]["x"], abs=1e-4)
+    with pytest.raises(N.WeightsError, match="Only the target can be one of the model's examples"):
+        S.set_sets(ctx, sid, should_not_change={"example": 7})
+    with pytest.raises(N.WeightsError, match="its inputs and its wanted output"):
+        S.edit(ctx, sid, {"op": "zero", "layer": 3, "neuron": 0, "target": {"classes": [3]}})

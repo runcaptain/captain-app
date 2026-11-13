@@ -244,18 +244,21 @@ def assign(ctx, name: str, project: str) -> dict:
     return {"model": name, "project": project}
 
 
-def whole(m: dict, tensors: dict[str, np.ndarray], ctx=None) -> dict:
-    """A network whole, in the shape a screen draws from. Practice examples come along. Held-out ones never do."""
-    if int(m.get("parameters") or 0) > WHOLE_LIMIT:
+def whole(m: dict, tensors: dict[str, np.ndarray], ctx=None, numbers: bool = True) -> dict:
+    """A network in the shape a screen draws from. Its examples come along. Held-out ones never do.
+    `numbers=False` leaves every weight and bias out: the description only."""
+    if numbers and int(m.get("parameters") or 0) > WHOLE_LIMIT:
         raise WeightsError(f"This network has {m['parameters']:,} numbers. Only networks up to {WHOLE_LIMIT:,} are sent whole. "
                            "Read it a layer at a time.")
-    layers = [{"W": np.asarray(tensors[ly["weight"]], dtype=float).tolist(), "b": np.asarray(tensors[ly["bias"]], dtype=float).tolist(),
-               "activation": ly["activation"], "name": ly["name"]} for ly in m["layers"]]
+    layers = [{**({"W": np.asarray(tensors[ly["weight"]], dtype=float).tolist(), "b": np.asarray(tensors[ly["bias"]], dtype=float).tolist()}
+                  if numbers else {}),
+               "activation": ly["activation"], "name": ly["name"], "inputs": int(tensors[ly["weight"]].shape[1]),
+               "outputs": int(tensors[ly["weight"]].shape[0])} for ly in m["layers"]]
     ins, outs = m.get("inputs") or {}, m.get("outputs") or {}
     out = {"id": m["name"], "name": m["name"], "version": m.get("version"), "sizes": m["sizes"],
            "squish": m["layers"][0]["activation"], "cost": m.get("cost"), "layers": layers,
            "inputMeaning": ins.get("meaning"), "outputMeaning": outs.get("meaning"),
-           "examples": [], "test": [], "synthetic": bool((m.get("data") or {}).get("synthetic")),
+           "numbers": numbers, "examples": [], "test": [], "synthetic": bool((m.get("data") or {}).get("synthetic")),
            "data_note": (m.get("data") or {}).get("note") or "", "parameters": m.get("parameters"), "base": m.get("base")}
     if ins.get("shape"):
         out["inputShape"] = ins["shape"]

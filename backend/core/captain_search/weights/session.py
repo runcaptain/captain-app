@@ -127,10 +127,10 @@ class State:
         try:
             k = int(k)
         except (TypeError, ValueError):
-            raise WeightsError(f"A layer is a number from 0. {k!r} is not one.") from None
+            raise WeightsError(f"A layer is a whole number. {k!r} is not one.") from None
         layers = self.manifest["layers"]
         if not 0 <= k < len(layers):
-            raise WeightsError(f"This network has {len(layers)} layers, so `layer` goes from 0 to {len(layers) - 1}.")
+            raise WeightsError(f"This network has {len(layers)} layers. The layer asked for is not one of them.")
         return layers[k]
 
     def where(self, tensor: str) -> tuple[int, str]:
@@ -463,6 +463,14 @@ def layers(ctx, sid: str, by: str | None = None, watch: bool = False) -> dict:
     return _do(ctx, sid, fn, watch)
 
 
+def session_layers(ctx, sid: str) -> list[dict]:
+    """The session's layers and their tensor names, for turning "layer 2" into a tensor. Shapes only: no numbers,
+    so it is not an event."""
+    def fn(st):
+        return [{"layer": k, "weight": {"tensor": ly["weight"]}, "bias": {"tensor": ly["bias"]}} for k, ly in enumerate(st.manifest["layers"])]
+    return _do(ctx, sid, fn, watch="record")
+
+
 def _span(text, size: int, what: str) -> tuple[int, int]:
     """'2', '0:4' or nothing (the whole range) as a start and an end."""
     if text in (None, ""):
@@ -581,7 +589,7 @@ def heatmap(ctx, sid: str, layer=0, neuron=None, by: str | None = None, watch: b
             js = [int(x) for x in (neuron if isinstance(neuron, (list, tuple)) else str(neuron).split(","))]
             for j in js:
                 if not 0 <= j < w.shape[0]:
-                    raise WeightsError(f"Layer {k + 1} has {w.shape[0]} neurons, so `neuron` goes from 0 to {w.shape[0] - 1}.")
+                    raise WeightsError(f"Layer {k + 1} has {w.shape[0]} neurons. The neuron asked for is not one of them.")
         shape = _grid_shape(st, k, w.shape[1])
         grids = [{"neuron": j, "bias": float(b[j]), "min": float(w[j].min()), "max": float(w[j].max()),
                   "grid": w[j].astype(float).reshape(shape).tolist()} for j in js]
@@ -608,9 +616,9 @@ def template(ctx, sid: str, output=0, by: str | None = None, watch: bool = False
         try:
             j = int(output)
         except (TypeError, ValueError):
-            raise WeightsError(f"An output is a number from 0. {output!r} is not one.") from None
+            raise WeightsError(f"An output is a whole number. {output!r} is not one.") from None
         if not 0 <= j < w.shape[0]:
-            raise WeightsError(f"This network has {w.shape[0]} outputs, so `output` goes from 0 to {w.shape[0] - 1}.")
+            raise WeightsError(f"This network has {w.shape[0]} outputs. The output asked for is not one of them.")
         shape = _grid_shape(st, k, w.shape[1])
         names = (st.manifest.get("outputs") or {}).get("names") or []
         st.looked = int(w.shape[1] + 1)
@@ -642,7 +650,7 @@ def _inputs(st: State, inputs=None, targets=None, example=None):
         x, y = _examples(st)
         for i in idx:
             if not 0 <= i < len(x):
-                raise WeightsError(f"There are {len(x)} examples, so `example` goes from 0 to {len(x) - 1}.")
+                raise WeightsError(f"There are {len(x)} examples. The example asked for is not one of them.")
         return x[idx], np.asarray(y)[idx], "example" + ("s " if len(idx) != 1 else " ") + ", ".join(str(i + 1) for i in idx)
     if inputs is None:
         raise WeightsError("Give the inputs to run, or a practice example by number.")
@@ -771,7 +779,7 @@ def gradients(ctx, sid: str, inputs=None, targets=None, example=None, layer=None
             ly = st.layer(layer)
             gw = g["layers"][int(layer)]["weight"]
             if not 0 <= int(neuron) < gw.shape[0]:
-                raise WeightsError(f"Layer {int(layer) + 1} has {gw.shape[0]} neurons, so `neuron` goes from 0 to {gw.shape[0] - 1}.")
+                raise WeightsError(f"Layer {int(layer) + 1} has {gw.shape[0]} neurons. The neuron asked for is not one of them.")
             res["row"] = {"layer": int(layer), "neuron": int(neuron), "tensor": ly["weight"], "gradient": gw[int(neuron)].tolist(),
                           "bias_gradient": float(g["layers"][int(layer)]["bias"][int(neuron)])}
         if layer not in (None, "") and int(layer) >= 1:
@@ -901,7 +909,8 @@ def _resolve(st: State, which: str):
     if not spec:
         return None
     if "inputs" in spec:
-        return np.asarray(spec["inputs"], dtype=float), np.asarray(spec["targets"]), "examples given when the set was named"
+        n = len(spec["inputs"])
+        return np.asarray(spec["inputs"], dtype=float), np.asarray(spec["targets"]), f"{_plural(n, 'input')} given when the set was named"
     if "classes" in spec:
         got = WS.sets(st.ctx, st.manifest, "evaluation")
         if got is None:
@@ -932,6 +941,17 @@ def _check_spec(st: State, spec, which: str):
         if not cs or any(not 0 <= c < top for c in cs):
             raise WeightsError(f"Classes are numbers from 0 to {top - 1}.")
         return {"classes": cs}
+    if "example" in spec:
+        # "Fix this one": one of the model's examples, copied in as its inputs and wanted output. Only a target can
+        # be named this way: the examples are for looking at and are no measure of what must not change.
+        if which != "target":
+            raise WeightsError("Only the target can be one of the model's examples. The examples are never a measure of what must not change.")
+        x, y = _examples(st)
+        i = int(spec["example"])
+        if not 0 <= i < len(x):
+            raise WeightsError(f"There are {len(x)} examples. The example asked for is not one of them.")
+        yi = np.asarray(y[i])
+        spec = {"inputs": [x[i].tolist()], "targets": [int(yi)] if yi.ndim == 0 else [yi.tolist()]}
     if "inputs" in spec and "targets" in spec:
         x = np.asarray(spec["inputs"], dtype=float)
         net = st.net()
@@ -1060,7 +1080,7 @@ def _rows(spec, size: int, what: str) -> list[int]:
     js = [int(v) for v in (spec if isinstance(spec, (list, tuple)) else str(spec).split(","))]
     for j in js:
         if not 0 <= j < size:
-            raise WeightsError(f"There are {size} {what}, so each is a number from 0 to {size - 1}.")
+            raise WeightsError(f"There are {size} {what}. One that was asked for is not among them.")
     return js
 
 
@@ -1106,12 +1126,12 @@ def _plan(st: State, req: dict) -> list[tuple[str, np.ndarray, np.ndarray]]:
         w, b = st.cur[ly["weight"]], st.cur[ly["bias"]]
         j = int(req["neuron"])
         if not 0 <= j < w.shape[0]:
-            raise WeightsError(f"Layer {col} has {w.shape[0]} neurons, so `neuron` goes from 0 to {w.shape[0] - 1}.")
+            raise WeightsError(f"Layer {col} has {w.shape[0]} neurons. The neuron asked for is not one of them.")
         n_in = w.shape[1]
         row = j * n_in + np.arange(n_in)
         frm = req.get("from")
         if frm not in (None, "") and not 0 <= int(frm) < n_in:
-            raise WeightsError(f"A neuron in layer {col} has {n_in} incoming weights, so `from` goes from 0 to {n_in - 1}.")
+            raise WeightsError(f"A neuron in layer {col} has {n_in} incoming weights. The one asked for is not one of them.")
         if op in ("set", "add"):
             v = num("value")
             if frm in (None, ""):
@@ -1275,7 +1295,15 @@ def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
         if who == "agent" and not why:
             raise WeightsError("An agent's edit needs `why`: one sentence saying what it expects the edit to do, given before the edit.")
         op = str(req.get("op") or "").replace("-", "_")
+        named = None
+        if isinstance(req.get("target"), dict):
+            # "Fix this one": the inputs and the wanted output, given whole. It becomes the session's target set.
+            named = _check_spec(st, req["target"], "target")
+            if "inputs" not in named:
+                raise WeightsError("A target given with an edit is its inputs and its wanted output: {\"inputs\": [...], \"targets\": [...]}.")
         plan = _plan(st, req)
+        if named is not None:
+            st.doc["sets"]["target"] = named
         parts = []
         for tensor, flat, new in plan:
             cur = st.cur[tensor].reshape(-1)
@@ -1309,7 +1337,8 @@ def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
                       layer=touched["neurons"][0][0] if touched["neurons"] else None,
                       neuron=touched["neurons"][0][1] if len(touched["neurons"]) == 1 else None,
                       factor=float(req["factor"]) if op == "scale" else None, why=why,
-                      args={k: v for k, v in req.items() if k not in ("why", "hypothesis", "by", "direction", "values", "inputs", "targets")},
+                      args={k: v for k, v in req.items() if k not in ("why", "hypothesis", "by", "direction", "values", "inputs", "targets", "target")},
+                      **({"target_named": {"of": len(named["inputs"])}} if named is not None else {}),
                       changes=changes, changed=changed, share=round(changed / st.total(), 6), touched=touched, cost=cost,
                       cost_before=_first_cost(cost, "before"), cost_after=_first_cost(cost, "after"), undone=False,
                       **({"predicted": predicted} if predicted else {}))
@@ -1526,7 +1555,9 @@ def export(ctx, sid: str, folder: str, file: str = "tensors.safetensors", by: st
 
 
 def whole(ctx, model: str, sid: str | None = None) -> dict:
-    """A network whole, for a screen. With a session: the numbers as that session has edited them."""
+    """A network for a screen. With no session: its description only (sizes, what inputs and outputs mean, its
+    examples) and no numbers. With a session: every number as that session has edited them, counted in the
+    session's record as a look by the screen."""
     if sid:
         def fn(st):
             out = WS.whole(st.manifest, st.cur, ctx)
@@ -1537,4 +1568,4 @@ def whole(ctx, model: str, sid: str | None = None) -> dict:
         return _do(ctx, sid, fn, watch=True)
     name, version = WS.split_ref(model)
     m, tensors = WS.load(ctx, name, version)
-    return WS.whole(m, tensors, ctx)
+    return WS.whole(m, tensors, ctx, numbers=False)
