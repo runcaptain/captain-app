@@ -120,6 +120,9 @@ export class ModelPage {
         .when(has("copies"), (e) => e.child(chart("model-chart-copies", "Copies running", s.copies_now ? `${s.copies_now} now, ${s.copies_peak} at the most` : "", b.map((x) => x.copies))))
         .when(has("cpu"), (e) => e.child(chart("model-chart-cpu", "Processor in use", `${s.cpu}% of one core on average, ${s.cpu_peak}% at the most`, b.map((x) => x.cpu))))
         .when(has("memory"), (e) => e.child(chart("model-chart-memory", "Memory in use", `${s.memory}% on average, ${s.memory_peak}% at the most`, b.map((x) => x.memory)))))
+      // How many copies, in words: the cloud's count now and what it may run. There is no chart of it, because no
+      // cloud keeps a history of it that can be relied on.
+      .when(Boolean(s.copies_text), (e) => e.child(div().id("model-copies-line").text_size(13).line_height("19px").text_color(c.navy).child(s.copies_text)))
       .child(div().id("model-source").text_size(12.5).line_height("18px").text_color(c.grey500).child([n.source_text, ...(n.not_read ?? [])].join(" ")));
   }
 

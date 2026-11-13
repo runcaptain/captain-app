@@ -29,7 +29,7 @@ def numbers(span, per_minute, cloud=True, errors=0.0):
         wave = 0.55 + 0.45 * math.sin(i / max(1, n) * 6.28 * 2 + 1) + (0.25 if i % 17 == 0 else 0)
         req = round(per_minute * minutes * max(0.05, wave))
         b.append({"t": str(i), "requests": req, "errors": round(req * errors) if i % 9 == 0 else 0, "p50_ms": round(2.6 + wave, 2), "p95_ms": round(8 + 6 * wave, 2),
-                  "cpu": round(14 + 22 * wave, 1) if cloud else None, "memory": round(5 + wave, 1) if cloud else None, "copies": (2 if wave > 0.95 else 1) if cloud else None})
+                  "cpu": round(14 + 22 * wave, 1) if cloud else None, "memory": round(5 + wave, 1) if cloud else None, "copies": None})
     total = sum(x["requests"] for x in b)
     errs = sum(x["errors"] for x in b)
     words = {"15m": "the last 15 minutes", "1h": "the last hour", "24h": "the last 24 hours", "7d": "the last 7 days"}[span]
@@ -39,10 +39,11 @@ def numbers(span, per_minute, cloud=True, errors=0.0):
             "not_read": [] if cloud else ["Modal keeps no history of an app's requests that Captain can read. CPU, memory and the cost so far are not read yet."],
             "summary": {"requests": total, "errors": errs, "per_minute": round(total / (seconds / 60), 1), "per_minute_peak": round(max(x["requests"] for x in b) / minutes, 1),
                         "p50_ms": 3.1, "p95_ms": 13.6, "cpu": 24.0 if cloud else None, "cpu_peak": 61.0 if cloud else None, "memory": 5.4 if cloud else None,
-                        "memory_peak": 6.2 if cloud else None, "copies_now": 1 if cloud else None, "copies_peak": 2 if cloud else None},
+                        "memory_peak": 6.2 if cloud else None, "copies_now": 1 if cloud else None, "copies_min": 1 if cloud else None, "copies_max": 3 if cloud else None,
+                        "copies_text": "1 copy up now. It may run 1 to 3." if cloud else None},
             "cost": {"hourly_usd": 0.066 if cloud else 0.063, "rate_usd": 0.066 if cloud else 0.063, "today_usd": 0.92 if cloud else 0.11, "month_usd": 14.3 if cloud else 1.86,
-                     "text": ("About $0.07 an hour for each copy while it is up. Today: $0.92. This month: $14.30. Worked out from the 216.7 hours AWS saw a copy up this "
-                              "month, at the list price for ml.t2.medium. Your AWS bill is the final word.") if cloud else
+                     "text": ("About $0.07 an hour for each copy while it is up. Today: about $0.92. This month: about $14.30. Worked out from Captain's own record of "
+                              "when it was up, at the list price for ml.t2.medium. Your AWS bill is the final word.") if cloud else
                              "About $0.06 an hour while a copy is awake, and nothing while it sleeps. Worked out from Captain's own record of when it was up, not from the cloud."},
             "text": f"{total:,} requests in {words}, " + (f"{errs:,} errors" if errs else "no errors") + ". Median 3.1 ms, 95th percentile 13.6 ms at the endpoint."}
 

@@ -645,9 +645,11 @@ class SageMakerProvider(_AWS):
         ("cpu_max", "/aws/sagemaker/Endpoints", "CPUUtilization", "Maximum"),
         ("memory", "/aws/sagemaker/Endpoints", "MemoryUtilization", "Average"),
         ("memory_max", "/aws/sagemaker/Endpoints", "MemoryUtilization", "Maximum"),
-        # Each copy reports its CPU once a minute, so the count of reports in a minute is the copies that were up.
-        ("reports", "/aws/sagemaker/Endpoints", "CPUUtilization", "SampleCount"),
     )
+    # The request numbers (AWS/SageMaker, by EndpointName and VariantName) are always there for an endpoint that took
+    # requests. The processor and memory numbers (/aws/sagemaker/Endpoints) are not: on 2026-11-12 a real endpoint
+    # that ran for an hour on ml.t2.medium had none at all. So nothing is counted from them. They are shown when AWS
+    # has them, and said to be missing when it does not.
 
     def metrics(self, endpoint: str, start, end, period: int, only: tuple[str, ...] | None = None) -> dict:
         """CloudWatch's own numbers for one endpoint between two times, in buckets of `period` seconds: {id: {time:

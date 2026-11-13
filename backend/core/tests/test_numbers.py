@@ -1,5 +1,8 @@
-"""Traffic and numbers for a deployment, from the cloud's own metrics, with the request log as the second source.
-Against the stand-ins. Nothing here calls a real cloud."""
+"""Traffic and numbers for a deployment. On AWS: requests, errors and response time from CloudWatch, processor and
+memory when AWS has published them, and hours and cost from Captain's own record of when the model was up. Against
+the stand-ins. Nothing here calls a real cloud."""
+import datetime as dt
+
 import pytest
 
 from captain_search import staging as SG
@@ -11,6 +14,9 @@ from test_deploy_one_call import LOGINS, logins  # noqa: F401  (fixtures)
 from test_hosting_modal import modal  # noqa: F401  (fixtures)
 from test_staging import keychain, ws  # noqa: F401  (fixtures)
 from test_staging_cloud import aws  # noqa: F401  (fixture)
+
+REQUESTS = {("Invocations", "Sum"), ("Invocation4XXErrors", "Sum"), ("Invocation5XXErrors", "Sum"), ("ModelLatency", "p50"), ("ModelLatency", "p95"),
+            ("OverheadLatency", "p50")}
 
 
 @pytest.fixture(autouse=True)
@@ -24,17 +30,26 @@ def _reads(aws):  # noqa: F811
     return [c for c, _ in aws.calls].count("get_metric_data")
 
 
-def test_aws_numbers_come_from_cloudwatch_and_never_from_the_model(ws, aws):  # noqa: F811
+def _as_the_real_account(aws):  # noqa: F811
+    """What AWS held on 2026-11-12 for a real endpoint that ran for an hour on ml.t2.medium: every request number,
+    by EndpointName and VariantName, and nothing at all under /aws/sagemaker/Endpoints. Processor and memory were
+    never published for it."""
+    full = aws.metric
+    aws.metric = lambda name, stat, t, period: full(name, stat, t, period) if (name, stat) in REQUESTS else None
+
+
+def test_requests_errors_and_response_time_come_from_cloudwatch_and_never_from_the_model(ws, aws):  # noqa: F811
     SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
     asked = [c for c, _ in aws.calls].count("invoke_endpoint")
     n = NB.numbers(ws, "shop", span="1h")
     assert n["source"] == "cloud" and "AWS's own metrics" in n["source_text"] and n["not_read"] == []
     assert len(n["buckets"]) == 60 and n["bucket_seconds"] == 60 and n["ranges"] == ["15m", "1h", "24h", "7d"]
     b = n["buckets"][0]
-    assert (b["requests"], b["errors"], b["p50_ms"], b["p95_ms"], b["cpu"], b["memory"], b["copies"]) == (120, 0, 3.0, 9.0, 20.0, 5.0, 1)
+    # ModelLatency arrives in microseconds: 3000 and 9000 are 3 ms and 9 ms.
+    assert (b["requests"], b["errors"], b["p50_ms"], b["p95_ms"], b["cpu"], b["memory"]) == (120, 0, 3.0, 9.0, 20.0, 5.0)
     s = n["summary"]
-    assert (s["requests"], s["errors"], s["per_minute"], s["per_minute_peak"], s["p50_ms"], s["p95_ms"]) == (7200, 0, 120.0, 120.0, 3.0, 9.0)
-    assert (s["cpu"], s["cpu_peak"], s["memory"], s["memory_peak"], s["copies_now"], s["copies_peak"]) == (20.0, 35.0, 5.0, 6.0, 1, 1)
+    assert (s["requests"], s["errors"], s["per_minute"], s["per_minute_peak"], s["p50_ms"], s["p95_ms"], s["overhead_ms"]) == (7200, 0, 120.0, 120.0, 3.0, 9.0, 0.8)
+    assert (s["cpu"], s["cpu_peak"], s["memory"], s["memory_peak"]) == (20.0, 35.0, 5.0, 6.0)
     assert n["text"] == "7,200 requests in the last hour, no errors. Median 3.0 ms, 95th percentile 9.0 ms at the endpoint."
     assert [c for c, _ in aws.calls].count("invoke_endpoint") == asked  # reading the numbers sent the model nothing
     day = NB.numbers(ws, "shop", span="24h")
@@ -43,34 +58,74 @@ def test_aws_numbers_come_from_cloudwatch_and_never_from_the_model(ws, aws):  # 
         NB.numbers(ws, "shop", span="2h")
 
 
-def test_errors_slow_minutes_and_more_copies_show(ws, aws):  # noqa: F811
+def test_an_endpoint_aws_published_no_processor_or_memory_numbers_for_says_so(ws, aws):  # noqa: F811
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    _as_the_real_account(aws)
+    n = NB.numbers(ws, "shop", span="1h")
+    s = n["summary"]
+    # The request numbers are all there and are used.
+    assert n["source"] == "cloud" and (s["requests"], s["errors"], s["p50_ms"], s["p95_ms"]) == (7200, 0, 3.0, 9.0)
+    # Processor and memory are not, and that is said in a sentence, never drawn as an empty chart or a zero.
+    assert s["cpu"] is None and s["memory"] is None and all(b["cpu"] is None and b["memory"] is None for b in n["buckets"])
+    assert n["not_read"] == ["AWS has not published processor and memory numbers for this endpoint."]
+    # And nothing is counted from them: the cost is there all the same.
+    assert n["cost"]["source"] in ("record", "times") and n["cost"]["month_usd"] is not None
+
+
+def test_copies_are_the_clouds_count_now_and_its_scaling_settings(ws, aws):  # noqa: F811
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    _as_the_real_account(aws)
+    s = NB.numbers(ws, "shop")["summary"]
+    assert (s["copies_now"], s["copies_min"], s["copies_max"]) == (1, 1, 1) and s["copies_text"] == "1 copy up now. It always runs 1."
+    assert all(b["copies"] is None for b in NB.numbers(ws, "shop")["buckets"])  # no history of copies is made up
+    SG.scale(ws, "shop", min_copies=1, max_copies=3)
+    NB.forget()
+    assert NB.numbers(ws, "shop")["summary"]["copies_text"] == "1 copy up now. It may run 1 to 3."
+
+
+def test_errors_and_a_slow_minute_show(ws, aws):  # noqa: F811
     SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
     quiet = aws.metric
 
     def busy(name, stat, t, period):
-        late = t.minute % 10 == 0  # one minute in ten: errors, a slow tail, and a second copy
+        late = t.minute % 10 == 0  # one minute in ten: errors and a slow tail
         if (name, stat) == ("Invocation5XXErrors", "Sum"):
             return 6.0 if late else 0.0
         if (name, stat) == ("ModelLatency", "p95"):
             return 250000.0 if late else 9000.0
-        if (name, stat) == ("CPUUtilization", "SampleCount"):
-            return 2.0 * period / 60 if late else period / 60.0
         return quiet(name, stat, t, period)
 
     aws.metric = busy
     s = NB.numbers(ws, "shop", span="1h")["summary"]
-    assert s["errors"] == 36 and round(s["error_rate"], 4) == 0.005 and s["p50_ms"] == 3.0 and s["p95_ms"] == 250.0 and s["copies_peak"] == 2
+    assert s["errors"] == 36 and round(s["error_rate"], 4) == 0.005 and s["p50_ms"] == 3.0 and s["p95_ms"] == 250.0
 
 
-def test_aws_cost_is_the_hours_a_copy_was_up_at_the_list_price(ws, aws):  # noqa: F811
+def test_hours_and_cost_come_from_captains_own_record_at_the_list_price(ws, aws):  # noqa: F811
+    """A real endpoint that ran for an hour sent AWS no processor reports, and the hours were counted from those: an
+    hour of running came out as nothing. Captain knows when it started and stopped a model. That is the count."""
     SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
-    c = NB.numbers(ws, "shop")["cost"]
+    _as_the_real_account(aws)
     hourly = next(s for s in SZ.sizes("aws", "us-west-1") if s["name"] == "ml.t2.medium")["hourly_usd"]
-    assert c["source"] == "cloud" and c["machine"] == "ml.t2.medium" and c["hourly_usd"] == round(hourly, 4)
-    # The stand-in reports one copy up for every hour of the month so far.
-    assert c["copy_hours_month"] >= c["copy_hours_today"] > 0 and c["month_usd"] == pytest.approx(c["copy_hours_month"] * hourly, abs=1e-3)
-    assert c["today_usd"] == pytest.approx(c["copy_hours_today"] * hourly, abs=1e-3) and c["copy_hours_today"] <= 25
-    assert "Your AWS bill is the final word." in c["text"] and "at the list price for ml.t2.medium" in c["text"]
+    now = dt.datetime.now(dt.timezone.utc)
+    start = max(now - dt.timedelta(hours=1, minutes=20), now.replace(hour=0, minute=0, second=0, microsecond=0))
+    ran = (min(now - dt.timedelta(minutes=20), now) - start).total_seconds() / 3600 if now - start > dt.timedelta(minutes=20) else 0
+    SG._save(ws, "shop", "staging", status="stopped", started_at=(now - dt.timedelta(hours=1, minutes=20)).isoformat(timespec="seconds"),
+             stopped_at=(now - dt.timedelta(minutes=20)).isoformat(timespec="seconds"), stop_reason="stopped by dana@example.com")
+    NB.forget()
+    before = _reads(aws)
+    c = NB.cost(ws, "shop")
+    assert _reads(aws) == before  # the cost asks AWS nothing
+    assert c["source"] == "times" and c["hourly_usd"] == 0.0 and c["rate_usd"] == pytest.approx(hourly, abs=1e-4) and c["machine"] == "ml.t2.medium"
+    assert c["month_usd"] == pytest.approx(hourly, abs=2e-3) and c["month_usd"] > 0  # an hour at the list price, not nothing
+    assert c["today_usd"] == pytest.approx(ran * hourly, abs=2e-3) or c["today_usd"] <= c["month_usd"]
+    assert c["text"].startswith("Stopped, so it costs nothing now.") and "This month: about $0.07." in c["text"]
+    assert "from when Captain started and stopped it, at the list price for ml.t2.medium" in c["text"] and c["text"].endswith("Your AWS bill is the final word.")
+    # While it runs: the rate, and the hours so far.
+    SG._save(ws, "shop", "staging", status="running", started_at=(now - dt.timedelta(minutes=30)).isoformat(timespec="seconds"), stopped_at=None)
+    NB.forget()
+    c = NB.cost(ws, "shop")
+    assert c["hourly_usd"] == pytest.approx(hourly, abs=1e-3) and c["text"].startswith("About $0.07 an hour for each copy while it is up.")
+    assert 0 < c["month_usd"] <= hourly
 
 
 def test_the_numbers_are_kept_for_a_minute_because_each_read_costs(ws, aws):  # noqa: F811
@@ -79,9 +134,9 @@ def test_the_numbers_are_kept_for_a_minute_because_each_read_costs(ws, aws):  # 
     first = _reads(aws)
     NB.numbers(ws, "shop")
     NB.numbers(ws, "shop")
-    assert _reads(aws) == first == 2  # one read for the range, one for the month's cost
+    assert _reads(aws) == first == 1  # one read for the range, and none for the cost
     NB.numbers(ws, "shop", span="15m")
-    assert _reads(aws) == 3 and 30 <= NB.KEEP_S <= 120  # another range is another read, and the cost is still kept
+    assert _reads(aws) == 2 and 30 <= NB.KEEP_S <= 120  # another range is another read
 
 
 def test_when_cloudwatch_cannot_be_read_the_request_log_answers_and_says_so(ws, aws):  # noqa: F811
@@ -93,7 +148,7 @@ def test_when_cloudwatch_cannot_be_read_the_request_log_answers_and_says_so(ws, 
     n = NB.numbers(ws, "shop")
     assert n["source"] == "log" and n["summary"]["requests"] == 3 and n["summary"]["cpu"] is None
     assert "Captain couldn't read AWS's own metrics just now" in n["not_read"][0] and "from the request log" in n["not_read"][0]
-    assert n["cost"]["source"] in ("record", "times") and "couldn't read AWS's own numbers" in n["cost"]["note"]
+    assert n["cost"]["source"] in ("record", "times")  # the cost never needed AWS
     aws.fail_on = None
 
 
@@ -115,49 +170,3 @@ def test_nothing_deployed_and_this_computer(ws):  # noqa: F811
     n = NB.numbers(ws, "shop")
     assert n["source"] == "log" and n["summary"]["requests"] == 1 and n["not_read"] == []
     SG.unstage(ws, "shop")
-
-
-def test_a_model_that_ran_for_an_hour_and_stopped_did_not_cost_nothing(ws, aws):  # noqa: F811
-    """On a real account on 2026-11-12 a stopped model that had run for an hour at about 7 cents showed "Costs nothing
-    now, $0.00 this month". Whether AWS counts the hours or not, the month's cost is not zero."""
-    import datetime as dt
-
-    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
-    hourly = next(s for s in SZ.sizes("aws", "us-west-1") if s["name"] == "ml.t2.medium")["hourly_usd"]
-    now = dt.datetime.now(dt.timezone.utc)
-    SG._save(ws, "shop", "staging", status="stopped", started_at=(now - dt.timedelta(hours=1, minutes=20)).isoformat(timespec="seconds"),
-             stopped_at=(now - dt.timedelta(minutes=20)).isoformat(timespec="seconds"), stop_reason="stopped by dana@example.com")
-    # AWS has the hour: one copy reported for 60 minutes of this month, and nothing else.
-    aws.metric = lambda name, stat, t, period: (60.0 if (name, stat) == ("CPUUtilization", "SampleCount") and t.hour == (now - dt.timedelta(hours=1)).hour
-                                               and t.date() == (now - dt.timedelta(hours=1)).date() else None)
-    NB.forget()
-    c = NB.cost(ws, "shop")
-    assert c["source"] == "cloud" and c["hourly_usd"] == 0.0 and c["month_usd"] == pytest.approx(hourly, abs=1e-3) and c["copy_hours_month"] == 1.0
-    assert c["text"].startswith("Stopped, so it costs nothing now.") and "This month: about $0.07." in c["text"]
-    # AWS answers and has no hours for it: the record's own times are used, and it says so. Still not zero.
-    aws.metric = lambda name, stat, t, period: None
-    NB.forget()
-    c = NB.cost(ws, "shop")
-    assert c["source"] == "times" and c["month_usd"] == pytest.approx(hourly, abs=1e-3) and c["hourly_usd"] == 0.0
-    assert "This month: about $0.07." in c["text"] and "from when Captain started and stopped it" in c["text"]
-    name = SG.state(ws, "shop")["endpoint"]["name"]
-    assert c["note"] == f"AWS reported no hours for it this month. AWS holds no numbers at all under the name {name}"
-    assert c["not_from_cloud"].startswith("AWS reported no hours")
-    # The answer says what AWS does hold, so the reason is read and not guessed: request numbers and no per-copy ones,
-    aws.metric_list = [{"Namespace": "AWS/SageMaker", "MetricName": "Invocations", "Dimensions": [{"Name": "EndpointName", "Value": name}, {"Name": "VariantName", "Value": "main"}]}]
-    NB.forget()
-    assert "holds its request numbers (Invocations) and none of the numbers each copy reports" in NB.cost(ws, "shop")["note"]
-    # or per-copy numbers kept under a dimension Captain did not ask with.
-    aws.metric_list = [{"Namespace": "/aws/sagemaker/Endpoints", "MetricName": "CPUUtilization",
-                        "Dimensions": [{"Name": "EndpointName", "Value": name}, {"Name": "VariantName", "Value": "AllTraffic"}]}]
-    NB.forget()
-    assert "AWS holds CPUUtilization for it under VariantName=AllTraffic, which is not how Captain asked for them" in NB.cost(ws, "shop")["note"]
-    aws.metric_list = []
-    NB.forget()
-    c = NB.cost(ws, "shop")
-    # AWS can't be read at all: the same estimate, with the reason.
-    aws.fail_on = "get_metric_data"
-    NB.forget()
-    c = NB.cost(ws, "shop")
-    assert c["source"] == "times" and c["month_usd"] > 0 and "couldn't read AWS's own numbers" in c["note"]
-    aws.fail_on = None
