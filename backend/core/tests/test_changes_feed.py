@@ -200,6 +200,35 @@ def test_a_topic_that_ends_in_a_colon_covers_every_one_of_its_kind(svc):
     assert CH.covered({"run:a", "runs", "job:b"}, {"run:", "jobs"}) == {"run:a"} and CH.covered({"a"}, None) == {"a"}
 
 
+def test_a_client_that_asks_again_lets_its_older_request_go(svc):
+    """A page that opens another project must listen to it at once. It cannot end the request it has open, so
+    it asks again under the same name, and the older request answers with nothing."""
+    seq = svc.get("/api/changes")["seq"]
+    box: dict = {}
+
+    def old():
+        box["answer"] = svc.get("/api/changes", since=seq, topics="project:shop", client="m1")
+        box["at"] = time.perf_counter()
+
+    t = threading.Thread(target=old, daemon=True)
+    t.start()
+    time.sleep(0.15)
+    other, other_box = _waiter(svc, seq, "project:shop")       # another client, with no name: left alone
+    asked = time.perf_counter()
+    t2, new = threading.Thread(target=lambda: new_box.update(a=svc.get("/api/changes", since=seq, topics="project:gifts", client="m1")), daemon=True), None
+    new_box: dict = {}
+    t2.start()
+    t.join(2)
+    assert box["answer"]["changed"] == [] and box["at"] - asked < 0.3, "the older request of the same client answered at once, with nothing"
+    assert "answer" not in other_box and "a" not in new_box, "nobody else was let go, and the new request is held"
+    svc.ctx.store.put_new("projects/gifts/state.yaml", b"x: 1\n")
+    t2.join(2)
+    assert _t(new_box["a"]) == ["project:gifts"]
+    svc.ctx.store.put_new("projects/shop/state.yaml", b"x: 1\n")
+    other.join(2)
+    assert _t(other_box["answer"]) == ["project:shop"]
+
+
 def test_a_missed_sequence_gets_reset(svc):
     seq = svc.get("/api/changes")["seq"]
     assert svc.get("/api/changes", since=seq - 10 ** 9, topics="projects")["reset"] is True, "from before this service started"

@@ -163,7 +163,7 @@ export default class ProjectHome extends View {
     watchLive(cx, ["projects", "deployed", "project:", "deployment:", "runs"], (cx, why, topics) => this.changed(cx, why, topics));
     // One clock stays: once a minute while a model is deployed, for the words that depend on the time (how long
     // until it stops by itself), which come from the services and move with no change to tell.
-    cx.timer.every(60000, (cx) => { if (this.pid() && this.shipPath.staged()) this.shipPath.tick(cx); });
+    cx.timer.every(60000, (cx) => { this.shipPath.jobWake?.(); if (this.pid() && this.shipPath.staged()) this.shipPath.tick(cx); });
     // Until the first answer (the services may still be starting), ask again every 3 s.
     cx.timer.every(3000, (cx) => {
       const pid = this.pid();
