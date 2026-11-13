@@ -64,7 +64,24 @@ export class Notebooks {
 
   // ---- data ------------------------------------------------------------------------------------------------------
 
+  /** Ask again for the list only, quietly. The open notebook, its text and its connection are left alone, and a
+   *  notebook that exists only here so far (made a moment ago, not yet saved) stays listed. */
+  refreshList(cx) {
+    if (this.list === null) return;
+    cx.spawn(async (cx) => {
+      const r = await api("/api/notebooks");
+      if (!r.ok || !Array.isArray(r.data)) return;
+      const mine = this.list.filter((n) => n.latest == null && !r.data.some((x) => x.name === n.name) && n.name === this.open?.name);
+      const next = [...mine, ...r.data];
+      if (JSON.stringify(next) === JSON.stringify(this.list)) return;
+      this.list = next;
+      this.listError = null;
+      cx.notify();
+    });
+  }
+
   load(cx) {
+    const first = this.list === null;
     cx.spawn(async (cx) => {
       const seq = (this.connSeq = (this.connSeq ?? 0) + 1);
       const [nb, cs, fs] = await Promise.all([api("/api/notebooks"), api("/api/connections"), api("/api/notebook-formats")]);
@@ -74,7 +91,9 @@ export class Notebooks {
       this.listError = nb.ok ? null : "Couldn't load notebooks.";
       if (seq === this.connSeq) this.setConns(cs);
       this.formats = fs.ok && Array.isArray(fs.data) ? fs.data.filter((f) => f.export) : [];
-      const want = this.want && this.list.some((n) => n.name === this.want) ? this.want : this.list[0]?.name;
+      // The first notebook opens by itself only the first time: after the sidebar sent the screen home, a reload
+      // leaves the list as it is.
+      const want = this.want && this.list.some((n) => n.name === this.want) ? this.want : first ? this.list[0]?.name : null;
       this.want = null;
       if (!this.open && want) this.openNotebook(cx, want);
       cx.notify();
@@ -96,6 +115,15 @@ export class Notebooks {
       if (r.starting) cx.timer.after(1000, (cx) => { if (seq === this.connSeq) this.loadConns(cx); });
       cx.notify();
     });
+  }
+
+  /** The list, with no notebook open: where the sidebar's entry lands. An unsaved draft is saved first. */
+  home(cx) {
+    if (this.dirty) this.flushDraft(cx);
+    this.open = null;
+    this.want = null;
+    this.exporting = false;
+    cx.notify();
   }
 
   openNotebook(cx, name) {

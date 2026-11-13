@@ -21,7 +21,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { theme, props, run, setShared, closeOverlay, openOverlay, home } from "herdr";
-import { api } from "./kit/cst.js";
+import { api, recordsChanged } from "./kit/cst.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Button, Skeleton } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
@@ -298,6 +298,7 @@ export default class NewEvaluation extends View {
         ...(v.slices && this.slicesOn().length ? { slices: this.slicesOn() } : {}),
       }, timeout: 120 });
       if (!plan.ok) return fail(plan, "Couldn't save the test.");
+      recordsChanged("backtest"); // Runs and Data list it now, not at their next timer
       let live = null;
       if (runIt) {
         const started = await api(`/api/backtests/${enc(name)}/run`, { body: where ? { compute: where } : {} });

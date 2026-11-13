@@ -7,7 +7,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, shared, props as layoutProps } from "herdr";
-import { watchWorkspace, watchConnections } from "./kit/cst.js";
+import { watchWorkspace, watchConnections, keepFresh } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
 import { palette, isDark, FONT } from "./kit/tokens.js";
 import { icon } from "./kit/icons.js";
@@ -27,6 +27,8 @@ export default class CaptainNotebooks extends View {
     cx.timer.every(500, (cx) => this.nb.tick(cx));
     // Until the list loads (the services are still starting), ask again.
     cx.timer.every(3000, (cx) => { if (this.nb.list === null) this.nb.load(cx); });
+    // The list stays current by itself. The open notebook is not reloaded: its text is the person's.
+    keepFresh(cx, "notebooks", (cx) => this.nb.refreshList(cx));
     // Shared values outlive the app: an open from before this screen started is done.
     const stale = shared("captain.open");
     if (stale?.at && Date.now() - stale.at > 10000) this.opened = stale.at;
@@ -35,6 +37,8 @@ export default class CaptainNotebooks extends View {
       if (o?.section !== "notebooks" || o.at === this.opened) return;
       this.opened = o.at;
       const nb = this.nb;
+      // The sidebar's entry: Notebooks' home, the list. An open notebook's draft is saved first.
+      if (o.home) { nb.home(cx); return; }
       if (o.seedSql) {
         nb.seedSql = { conn: o.seedSql.conn, sql: o.seedSql.sql };
         nb.newName.set_value(String(o.seedSql.name ?? "query"));

@@ -18,7 +18,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, layout, props, notify, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
-import { api, retry, workspace, watchWorkspace } from "./kit/cst.js";
+import { api, retry, workspace, watchWorkspace, watchRecords, watchConnections } from "./kit/cst.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { isDark, palette } from "./kit/tokens.js";
@@ -46,6 +46,16 @@ export const ITEMS = [
   { id: "team", label: "Team", icon: icon("users") },
 ];
 /** Screens that left the app, for something that still asks for one (`cst app open`, an old link): where it goes now. */
+/** A click on a sidebar entry. The sidebar's rule: an entry always opens its view's home (every project, the
+ *  tables' groups, the list of runs, of deployments, of notebooks), never the page last looked at there, and a
+ *  second click on the entry already shown goes home too. Every view honours `home: true` on shared
+ *  "captain.open". A detail page opens only from a row or a link, which send the same value without `home`. */
+export function openEntry(it, stack = "sections") {
+  if (it.run) return run(it.run, it.args ?? {});
+  setShared("captain.open", { section: it.id, home: true, ...(it.open ?? {}), at: Date.now() });
+  return run("layout.select", { stack, child: it.id });
+}
+
 export const MOVED = { comparisons: "runs", investigations: null, handoff: null };
 const WIDE = 216, RAIL = 52;
 const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
@@ -211,9 +221,12 @@ export default class CaptainNav extends View {
     this.teamViews.start(cx);
     this.refresh(cx);
     watchWorkspace(cx, (cx) => { this.cloud = null; setShared("captain.scope", null); this.refresh(cx); this.explorer.load(cx); });
-    // Every 3 s until Captain's services answer, then every 15 s.
+    // Every 3 s until Captain's services answer, then every 6 s: the chips and counts are never far behind.
     this.tick = 0;
-    cx.timer.every(3000, (cx) => { this.tick++; if (this.state !== "ready" || this.tick % 5 === 0) this.refresh(cx); });
+    cx.timer.every(3000, (cx) => { this.tick++; if (this.state !== "ready" || this.tick % 2 === 0) this.refresh(cx); });
+    // And at once when a form changes something, or a cloud or database is connected or removed.
+    watchRecords(cx, (cx) => { this.refresh(cx); this.explorer.load(cx); });
+    watchConnections(cx, (cx) => this.refresh(cx));
   }
 
   items() {
@@ -563,12 +576,7 @@ export default class CaptainNav extends View {
     const stack = props()?.stack ?? "sections";
     const node = find(layout(), stack);
     const active = node?.active ?? node?.children?.[0]?.id;
-    // An item with `open` says what its screen shows when picked (Projects: every project).
-    const go = (it) => () => {
-      if (it.run) return run(it.run, it.args ?? {});
-      if (it.open) setShared("captain.open", { section: it.id, ...it.open, at: Date.now() });
-      return run("layout.select", { stack, child: it.id });
-    };
+    const go = (it) => () => openEntry(it, stack);
     return v_flex().size_full().bg(c.surface).font_family("Inter").border_r(1).border_color(c.rule)
       .when(!rail, (e) => e.child(this.spaceSwitcher(c)))
       .when(rail, (e) => e.child(h_flex().id("nav-expand").h(40).flex_none().justify_center().items_center().cursor_pointer()

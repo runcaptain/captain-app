@@ -1159,6 +1159,28 @@ comparison shows in Runs. `cst app open compare` and `comparison:<evaluation>` o
 experiments` and `launch-review` say the screen is gone and name the command. Don't send a person to
 Experiments, Compare or Launch review: say what to do in Runs, or run the command for them.
 
+### The sidebar always opens a view's home
+
+The owner: "If I keep on going back to the deployments menu, I want to default to the home deployments menu, not
+the deployment I was already looking at." A sidebar entry always opens its view's home: every project, the
+tables' groups as they were left, the list of runs, of deployments, of notebooks. A second click on the entry
+already shown goes home too. A detail page opens only from a row or a link.
+
+One mechanism (`openEntry` in captain-nav): the entry sets shared `captain.open` to
+`{section, home: true, at}` and selects the view. Every view handles `home` by dropping its open page. A link
+sets the same value without `home` and names what to open. A new view must honour `home`, and
+`tests/mod-render/sidebar-home.test.mjs` has a block per view.
+
+### Lists refresh by themselves
+
+The owner: "I think everything needs to refresh live." A list is never older than the person's last action.
+`keepFresh(cx, section, fn)` in the kit calls `fn` every 5 seconds while the view is shown, at once when the view
+comes back into view, and at once when a form changes records (`recordsChanged`) or a connection changes. The
+reload must be quiet: nothing drawn goes blank, open groups stay open, the page of a list stays, a search being
+typed is not interrupted, and an open page or notebook is not reloaded under the person. The services have no
+change stream for lists, so the timer is what catches a change made with `cst` in a terminal. A form that
+makes or changes something calls `recordsChanged` after its submit succeeds.
+
 ### Data: tables, grouped by where they live
 
 A dataset is a table Captain keeps versions of. A database's table is one Captain reads where it lives. Tables

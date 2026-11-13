@@ -10,7 +10,7 @@ import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Button, Problem, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
-import { ago, money, ms, count, Spark } from "./words.js";
+import { ago, money, ms, count, Spark, Updated } from "./words.js";
 import { ModelPage } from "./model.js";
 
 const UP = ["running", "asleep", "starting", "unknown"];
@@ -44,10 +44,18 @@ export default class CaptainDeployments extends View {
       return;
     }
     this.asked = 0;           // the `at` of the last request from another screen that was handled
+    this.reads = 0;           // how many times the list has been asked for
+    this.floor = 0;           // answers to asks numbered below this are older than the person's last action
+    this.readAt = 0;          // when the list on screen was read
+    this.numsAt = 0;          // when the numbers were last read
     this.takeOpen(cx);
     this.load(cx);
     watchWorkspace(cx, (cx) => { this.page = null; this.load(cx); });
-    cx.timer.every(15000, (cx) => this.load(cx));
+    // Live: the list is read every few seconds, so a deploy or a stop made on another screen or in a terminal
+    // shows by itself. A read is skipped while an action here is running: its own result comes next.
+    cx.timer.every(5000, (cx) => { if (!Object.keys(this.busy).length) this.load(cx); });
+    cx.timer.every(20000, (cx) => cx.notify());  // so "Updated just now" turns into "a minute ago" without a read
+    cx.timer.every(60000, (cx) => this.page?.refresh(cx));  // an open model's page: where it runs and its numbers
     // A link on another screen can't reach this screen's props: it sets the shared "open" value and selects this
     // place. Looked at a few times a second, as the other screens do, so the link lands without a wait.
     cx.timer.every(300, (cx) => this.takeOpen(cx));
@@ -65,21 +73,35 @@ export default class CaptainDeployments extends View {
     else { this.wanted = o.open; this.load(cx, true); }  // not read yet, or made a moment ago: ask, then open it
   }
 
+  /** Read what is deployed, and the numbers beside it. The list is read every few seconds: Captain's records and
+   *  the clouds' own listings cost nothing to ask. The numbers are read once a minute, because a cloud charges for
+   *  each read of those. An answer that set out before the person's last action is dropped: the screen never
+   *  shows a state older than the last thing they did. */
   load(cx, fresh = false) {
     if (this.demo) return;
+    const mine = ++this.reads;
     cx.spawn(async (cx) => {
       const r = await api(`/api/deployed${fresh ? "?fresh=true" : ""}`, { timeout: 60 });
-      if (r.ok) { this.d = r.data; this.problem = null; } else if (!this.d) this.problem = r;
+      if (mine < this.floor) return;  // asked before the last action finished: older than what the person did
+      if (r.ok) { this.d = r.data; this.problem = null; this.readAt = Date.now(); } else if (!this.d) this.problem = r;
       if (r.ok && this.wanted) {  // asked for by another screen ("Open in Deployments" on a project's page)
         const row = r.data.rows.find((x) => x.id === this.wanted);
         this.wanted = null;
         if (row) this.openRow(row, cx);
       }
+      // A model's page open on a row keeps to the row as it is now, or closes when the row is gone.
+      if (r.ok && this.page) {
+        const now = r.data.rows.find((x) => x.id === this.page.row.id);
+        if (now) this.page.row = now; else this.page = null;
+      }
       cx.notify();
       if (!r.ok) return;
       const made = await api("/api/deployed/created");
-      if (made.ok) this.created = made.data;
-      // Traffic and cost for each row that belongs to a project. The services keep each answer for a minute.
+      if (made.ok && mine >= this.floor) this.created = made.data;
+      cx.notify();
+      if (!fresh && Date.now() - this.numsAt < 60000) return;
+      this.numsAt = Date.now();
+      // Traffic and cost for each row that belongs to a project.
       for (const row of r.data.rows.filter((x) => x.link !== "unlinked" && x.project)) {
         const n = await api(`/api/projects/${encodeURIComponent(row.project)}/deployed/numbers?range=24h&env=${encodeURIComponent(row.env ?? "staging")}`, { timeout: 60 });
         if (n.ok) this.nums[row.id] = n.data;
@@ -90,15 +112,31 @@ export default class CaptainDeployments extends View {
 
   // ---- doing things to a deployment -----------------------------------------------------------------
 
+  /** Do something to a deployment and show it happening. While it runs the row says what is being done, with the
+   *  step it is on, and offers no button that would do it again. Work the services do as a job (stopping,
+   *  starting, removing) is followed to its end. When it ends, what it said is shown and the list is read at once. */
   async act(cx, row, words, call) {
     this.ask = null;
     if (this.demo) return cx.notify();
     this.busy[row.id] = words;
     this.note = null;
     cx.notify();
-    const r = await call();
+    let r = await call();
+    let said = r.ok ? (r.data?.text ?? null) : plainError(r.error, "That did not work.");
+    const job = r.ok ? r.data?.job : null;
+    for (let i = 0; job && i < 1800; i++) {  // half an hour at the most: a first deploy to a cloud takes minutes
+      const j = await api(`/api/jobs/${encodeURIComponent(job)}`, { timeout: 30 });
+      if (!j.ok) { said = plainError(j.error, "Captain lost track of that work. Look at the list for where it stands."); break; }
+      const step = j.data?.message || (j.data?.log ?? []).slice(-1)[0];
+      this.busy[row.id] = step ? `${words}: ${String(step).replace(/[.]+$/, "")}` : words;
+      cx.notify();
+      if (j.data?.status === "done") { said = j.data?.result?.text ?? said ?? `${words}: done.`; break; }
+      if (j.data?.status === "failed") { said = plainError(j.data?.error ?? j.data?.message, "That did not work."); break; }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
     delete this.busy[row.id];
-    this.note = r.ok ? (r.data?.text ?? null) : plainError(r.error, "That did not work.");
+    this.note = said;
+    this.floor = this.reads + 1;  // anything read before now is older than this action
     this.load(cx, true);
   }
 
@@ -342,23 +380,31 @@ export default class CaptainDeployments extends View {
       .child(div().text_size(18).font_semibold().text_color(c.navy).child("Deployments"))
       // With nothing deployed the page itself says so: the line beside the title would only repeat it.
       .child(div().id("dep-summary").flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(d.text))
-      .child(Button(c, "dep-refresh", "Ask the clouds again", (_e, cx) => this.load(cx, true), { small: true }));
+      // It keeps itself up to date, and says when it last was, or that a cloud could not be reached. No button to
+      // press: a small refresh icon is there for someone who wants to ask now.
+      .child(Updated(c, "dep-updated", { readAt: this.readAt, icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.load(cx, true),
+        problem: notAsked.length ? `${[...new Set(notAsked.map((a) => a.cloud_label))].join(" and ")} could not be reached. Trying again.` : null }));
     const none = !here.length;
     const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small });
     const n = earlier.length;
     const body = v_flex().gap(18)
       .when(Boolean(this.note), (e) => e.child(div().id("dep-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)))
-      .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(13).line_height("19px").text_color(c.fail)
-        .child(`Captain could not ask ${a.cloud_label}${a.login ? ` (${a.login})` : ""} just now: ${plainError(a.error, "no reason given")}. What is shown for it is Captain's own record.`)))
+      // Why a cloud could not be reached, once, in words a person can act on. What is shown for it is Captain's record.
+      .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(12.5).line_height("18px").text_color(c.grey500)
+        .child(`${a.cloud_label}${a.login && a.login.toLowerCase() !== a.cloud ? ` (${a.login})` : ""}: ${plainError(a.error, "no reason given")}. What is shown for it is Captain's own record.`)))
       // The list of models is what this screen is: it is always here, under its own heading, even with nothing in it.
       .child(v_flex().id("dep-models").gap(10)
         .child(h_flex().gap(12).items_center()
           .child(div().text_size(15).font_semibold().text_color(c.navy).child("Models"))
           .child(div().id("dep-models-line").flex_1().text_size(13).text_color(c.grey500)
-            .child(none ? "No models are running. Deploy one from a project's page, and it shows here with where it runs, its traffic and what it costs." : ""))
+            .child(none ? "No models are running." : ""))
           // The next step, when nothing is answering. An open question takes the filled button in its place.
           .when(none && !this.ask, (e) => e.child(deploy(true))))
         .when(this.ask?.id === "deploy", (e) => e.child(this.question(c)))
+        // With nothing at all (no model, none stopped earlier, nothing set up in any account), one line says what
+        // this screen is for. With anything else on the page, the page says it.
+        .when(none && !n && !places.length, (e) => e.child(div().id("dep-what-for").text_size(13).line_height("19px").text_color(c.grey500)
+          .child("A model you deploy from a project's page shows here: where it runs, the address to call, its traffic and what it costs. You can stop it, start it again or remove it from here.")))
         .child(none ? div() : this.filters(c, here))
         .child(v_flex().id("dep-list")
           .children(rows.map((r) => this.row(c, r)))

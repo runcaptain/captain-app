@@ -741,18 +741,23 @@ def where_it_runs(ctx: Context, pid: str, env: str = ENV) -> dict:
         pass
     add("cloud", "Cloud and account", ", ".join(x for x in (label, row.get("account")) if x), cloud_value=(f"{label}, {got['account']}" if got.get("account") else None))
     add("region", "Region", region)
-    m = SZ.machine_facts(cloud, cfg, region, name=got.get("machine") or (row.get("machine") if cloud == "aws" else None))
+    # The machine as the cloud describes it: a named size on AWS, a CPU and memory size elsewhere. Else the target's.
+    sized = {"cpu": got["cpu"], "memory_mb": got["memory_mb"]} if got.get("cpu") and got.get("memory_mb") else None
+    m = SZ.machine_facts(cloud, sized or cfg, region, name=got.get("machine") or (row.get("machine") if cloud == "aws" else None))
     words = (m["words"] or row.get("machine")) if cloud != "local" else "This computer"
     price = f", about ${m['hourly_usd']:.2f} an hour for each copy" if m.get("hourly_usd") else ""
-    add("machine", "Machine", (words + price) if words else None, cloud_value=((words + price) if got.get("machine") and words else None))
+    add("machine", "Machine", (words + price) if words else None, cloud_value=((words + price) if (got.get("machine") or sized) and words else None))
     try:
         sc = prov.scale(rec) if prov is not None and callable(getattr(prov, "scale", None)) else {}
     except Exception:  # noqa: BLE001
         sc = {}
     now = got.get("copies_now", sc.get("copies_now"))
-    if sc.get("min_copies") is not None:
-        add("copies", "Copies", f"Fewest {sc['min_copies']}, most {sc['max_copies']}",
-            cloud_value=(f"{now} up now. Fewest {sc['min_copies']}, most {sc['max_copies']}" if now is not None else None))
+    lo = got.get("copies_min") if got.get("copies_min") is not None else sc.get("min_copies")
+    hi = got.get("copies_max") if got.get("copies_max") is not None else sc.get("max_copies")
+    if lo is not None and hi is not None:
+        from_cloud = now is not None or got.get("copies_max") is not None
+        add("copies", "Copies", f"Fewest {lo}, most {hi}",
+            cloud_value=((f"{now} up now. " if now is not None else "") + f"Fewest {lo}, most {hi}") if from_cloud else None)
     built = ago_words(got.get("image_built"))
     add("image", "Image", rec.get("image") or cfg.get("image"), cloud_value=(got["image"] + (f", built {built}" if built else "")) if got.get("image") else None)
     files = None
