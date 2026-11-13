@@ -388,7 +388,7 @@ export default class CaptainDeployments extends View {
 
   openRow(r, cx, part = null) {
     this.page = new ModelPage(r, part, () => { this.page = null; }, this.demo?.model ?? null);
-    this.page.isLive = () => !this.demo && this.live.up();  // its title says "Live" while the channel is up
+    this.page.isLive = () => this.live.up();  // its title says "Live" while the channel is up, as the list's does
     this.page.load(cx);
     this.live.kick(cx);  // listen to this model from now
     cx.notify();
