@@ -88,7 +88,10 @@ export function loadHealth(ship, cx) {
 
 /** Run a check now, or set what healthy means. */
 export function healthDo(ship, cx, body) {
-  if (ship.healthBusy) return;
+  // One at a time. A target picked while a check or another save is under way is not dropped: it is kept and
+  // saved the moment that one is done. (It was silently ignored, so a person's click did nothing. A second
+  // "Check now" while one runs is still just the one check.)
+  if (ship.healthBusy) { if (body) ship.healthNext = body; return; }
   ship.healthBusy = true; ship.healthNote = null;
   cx.notify();
   cx.spawn(async (cx) => {
@@ -98,6 +101,9 @@ export function healthDo(ship, cx, body) {
     if (r.ok) { ship.healthD = r.data; ship.healthNote = body ? "Saved. The next check uses it." : null; }
     else ship.healthNote = plainError(r.error, body ? "That target couldn't be saved." : "The check couldn't run.");
     cx.notify();
+    const next = ship.healthNext;
+    ship.healthNext = null;
+    if (next) healthDo(ship, cx, next);
   });
 }
 

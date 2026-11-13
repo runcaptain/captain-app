@@ -141,8 +141,10 @@ await more(h, 'health', (x) => Boolean(x.healthD));
 await h.click('dep-health-check');
 await until(h, () => h.mod.shipPath.healthD?.status === 'healthy' && Boolean(h.mod.shipPath.healthD?.checked_at), 'a check runs and is recorded');
 assert.ok(/Healthy: it is answering\. Only \d+ requests? in the last 15 minutes, too few to judge/.test(h.text()), `it says what it could judge: ${h.text().slice(-700)}`);
+// Pressed at once, while the check's own answer may still be on its way (the health on screen can come from the
+// live channel first): the click is kept and saved when the check is done, never dropped.
 await h.click('dep-health-p95-200');
-await until(h, () => h.mod.shipPath.healthD?.target?.p95_ms === 200, 'the target is saved');
+await until(h, () => h.mod.shipPath.healthD?.target?.p95_ms === 200 && !h.mod.shipPath.healthBusy, 'the target is saved');
 assert.equal((await get('/api/projects/outdoor/staging/health')).target.set, true);
 await h.click('dep-open-close');
 
