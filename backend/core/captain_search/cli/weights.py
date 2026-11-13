@@ -317,6 +317,21 @@ def trace(input: list[str] = INPUT, input_file: Optional[str] = INPUT_FILE, targ
     emit(r, "\n".join(lines + [_passes(r)]))
 
 
+@weights_app.command("slice")
+def slice_(tensor: str, index: str = typer.Argument(..., help="the number's position: 2,0 for a weight, 2 for a bias"),
+           input: list[str] = INPUT, input_file: Optional[str] = INPUT_FILE, target: Optional[str] = TARGET, example: Optional[str] = EXAMPLE,
+           span: Optional[float] = typer.Option(None, "--span", help="how wide a range to cover, centred on the number's value"),
+           points: int = typer.Option(21, "--points", help="how many values to try. Each one costs a forward pass"),
+           session: Optional[str] = SESSION):
+    """The cost as one number moves and the rest stay put. Costs one forward pass per point. Changes nothing."""
+    r = _do(WSN.cost_slice, ctx(), _sid(session), tensor, _ints(index, "the position"), span=span, points=points,
+            **_run_args(input, input_file, target, example))
+    low = min(range(len(r["costs"])), key=lambda i: r["costs"][i])
+    emit(r, f"{r['tensor']}{r['index']} is {_f(r['value'])}, where the cost is {_f(r['cost'])} and its slope is {_f(r['slope'])}.\n"
+            f"Over {_f(r['values'][0])} to {_f(r['values'][-1])} the cost is lowest at {_f(r['values'][low])}: {_f(r['costs'][low])}.\n"
+            f"This is a slice through 1 of {r['dimensions']:,} dimensions.\n" + _passes(r))
+
+
 # ---- change ----------------------------------------------------------------------------------------------------------------
 
 @weights_app.command("sets")

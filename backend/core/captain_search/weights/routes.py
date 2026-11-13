@@ -157,6 +157,16 @@ def trace(sid: str, body: dict, watch: bool = False):
     return _run(S.trace, sid, body, watch, path=None)
 
 
+@router.post("/sessions/{sid}/slice")
+def cost_slice(sid: str, body: dict, watch: bool = False):
+    b = _body(body)
+    if not b.get("tensor") or b.get("index") is None:
+        raise S.WeightsError("A slice names one number: `tensor` and `index`.")
+    return S.cost_slice(_ctx(), sid, str(b["tensor"]), b["index"], inputs=b.get("inputs"), targets=b.get("targets"),
+                        example=b.get("example"), span=b.get("span"), points=int(b.get("points") or 21), by=b.get("by"),
+                        watch=bool(watch or b.get("watch")))
+
+
 @router.post("/sessions/{sid}/sets")
 def sets(sid: str, body: dict):
     b = _body(body)

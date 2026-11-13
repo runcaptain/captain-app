@@ -217,6 +217,7 @@ they are refused. One pass may hold up to `pass_inputs` inputs.
 | `cst weights activations --example 3` | `POST /api/weights/sessions/{s}/activations` | `z` and `a` for every neuron |
 | `cst weights gradients --example 3` | `POST /api/weights/sessions/{s}/gradients` | the cost and every gradient |
 | `cst weights trace --example 3 [--path 0,2,0]` | `POST /api/weights/sessions/{s}/trace` | the chain rule along one path |
+| `cst weights slice <tensor> <index> --example 3` | `POST /api/weights/sessions/{s}/slice` | the cost as one number moves |
 
 Bodies take `{"inputs": [[0.9, 0.1]], "targets": [[1]]}` or `{"example": 3}` (a practice example by number).
 
@@ -231,6 +232,9 @@ Bodies take `{"inputs": [[0.9, 0.1]], "targets": [[1]]}` or `{"example": 3}` (a 
  "output": [0.97], "predicted": 0, "wanted": [1.0], "cost": 0.03, "forward_used": 2, "forward_left": 18}
 ```
 
+`cost_terms` says what each output adds to this example's cost: `[{"output": 0, "a": 0.97, "wanted": 1.0, "term":
+0.03}]`. The terms add up to `cost`.
+
 `gradients` marks the session "gradients computed":
 
 ```json
@@ -243,7 +247,19 @@ Bodies take `{"inputs": [[0.9, 0.1]], "targets": [[1]]}` or `{"example": 3}` (a 
 ```
 
 A weight table with more than 4,096 numbers is left out of `layers[].weight` (it is `null`) and its largest
-entries are in `top`. Ask for one neuron's row with `"layer": 0, "neuron": 3` to get `row`.
+entries are in `top`. Ask for one neuron's row with `"layer": 0, "neuron": 3` to get `row`: `{layer, neuron,
+tensor, gradient, bias_gradient}`.
+
+With `"layer": 1` or higher the answer also has `desires`: how the neurons of the column before that layer come
+to want what they want. Each neuron of the layer asks, through its weight, and the asks add up.
+
+```json
+{"desires": {"layer": 1, "of_column": 1, "asked_by_column": 2, "cells": [[-0.02], [0.01], [0.03]],
+             "sums": [-0.02, 0.01, 0.03], "exact": true}}
+```
+
+`cells[i][j]` is what neuron `j` of column 2 asks of neuron `i` of column 1. `sums[i]` is that neuron's
+`dcost_da`. `exact` is false when several examples were averaged.
 
 `trace`:
 
@@ -259,6 +275,17 @@ entries are in `top`. Ask for one neuron's row with `"layer": 0, "neuron": 3` to
 
 For softmax `product_is_exact` is false, because softmax ties its outputs together. The gradient is then
 `a_before * dcost_dz`.
+
+`slice` moves one number over a range, holds the rest still, and gives the cost at each value. Body: `{"tensor":
+"layer1.weight", "index": [2, 0], "example": [0, 1, 2], "span": 4, "points": 21}`. It runs the network once per
+point, so it costs `points` forward passes, and it is refused whole when fewer are left. Nothing is changed.
+
+```json
+{"tensor": "layer1.weight", "index": [2, 0], "value": -3.2, "cost": 0.03, "slope": 0.004,
+ "values": [-5.2, -5.0], "costs": [0.09, 0.08], "examples": 3, "dimensions": 13, "forward_used": 24, "forward_left": 26}
+```
+
+`dimensions` is how many numbers the network has. The picture is a slice through one of them.
 
 ### Change
 
@@ -306,6 +333,13 @@ The event that comes back, also what `events` lists:
           "keep": {"name": "should not change", "of": 160, "before": 0.08, "after": 0.09, "right_before": 158, "right_after": 158, "answers_changed": 0},
           "test": {"name": "held out", "of": 200, "before": 0.19, "after": 0.12, "right_before": 179, "right_after": 195, "answers_changed": 16}},
  "sentence": "The agent set 1 number in layer1.bias (neuron 2 of column 1). Cost on the target went from 0.61 to 0.22."}
+```
+
+Once a session has computed gradients, an edit's event also has `predicted`: what the gradient on the target set
+said the edit would do, beside what it did. A large `gap` means the edit was not small.
+
+```json
+{"predicted": {"on": "target", "change": -0.12, "after": 0.49, "actual_change": -0.39, "gap": -0.27}}
 ```
 
 `kind` is one of `open`, `read`, `run`, `gradients`, `edit`, `undo`, `redo`, `evaluate`, `save`, `export`, `sets`,
