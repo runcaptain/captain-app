@@ -32,6 +32,7 @@ import { askAgent } from "./kit/agent.js";
 import { DeployLine, startDeploy } from "./deploy.js";
 import { partsState, partsFacts, partsPin, openPart, loadPart, loadRanker, showView, PartPanel, RankerPanel, TreeBar, rankerOf, READ_ONLY } from "./parts.js";
 import { PartsCanvas, TreeCanvas, partsLayout } from "./partsdraw.js";
+import { AgentStrip, stripHeight } from "./program.js";
 import { WalkButtons, walkWords, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
 const TIGHT = 640; // under this width nothing fits side by side: an open neuron takes the drawing's place, and the cost is one line
@@ -102,6 +103,9 @@ export default class CaptainWeights extends View {
     this.handInput.on("change", (_e, ecx) => this.stageTyped(ecx ?? cx));
     this.handInput.on("submit", (_e, ecx) => this.stageTyped(ecx ?? cx));
     this.handle = cx.focus_handle?.() ?? null; // so Escape reaches the page
+    this.goalInput = InputState.new({ placeholder: "What should the agent fix?" }); // the goal for an agent (program.js)
+    this.agentRun = null;   // an agent started from here: {state, goal, job, says} (program.js)
+    this.agentNote = null;  // why the agent could not be started or stopped
     this.reads = 0;         // how many times the network has been asked for: an older answer never replaces a newer
     this.stop = null;       // stops listening to the change feed
     this.pz = new PanZoom("wt");
@@ -138,7 +142,7 @@ export default class CaptainWeights extends View {
   /** Open a network: read its session and its numbers, run it on its first input, and listen for changes. */
   open(model, cx) {
     this.leave();
-    this.kind = null; this.pm = null; this.treePz = null;
+    this.kind = null; this.pm = null; this.treePz = null; this.agentRun = null; this.agentNote = null;
     this.model = model; this.net = null; this.problem = null; this.sel = null; this.selW = null; this.inputAt = 0;
     this.session = null; this.test = null; this.openEdit = null; this.readFor = null; this.seen = null; this.pulse = null; this.note = null; this.undoNote = null; this.drag = null;
     this.walk = { step: 0, playing: false }; this.mode = "values";
@@ -622,6 +626,7 @@ export default class CaptainWeights extends View {
     const c = palette(isDark(theme()));
     const net = this.net, W = this.width, H = this.height;
     const narrow = W < WIDE, tight = W < TIGHT;
+    const served = Boolean(this.session) && !String(this.model ?? "").startsWith("starter:");
     // The neuron panel: always beside the drawing on a wide page; beside it only while a neuron is open on a
     // narrow one; and in the drawing's place on a page too tight for both.
     const rail = tight ? (this.sel ? W - 40 : 0) : narrow ? (this.sel ? Math.min(296, Math.round(W * 0.4)) : 0) : 340;
@@ -631,7 +636,7 @@ export default class CaptainWeights extends View {
     // the drawing, where it hid the network's last column.
     const walking = Boolean(net) && this.walk.step > 0 && Boolean(this.grad);
     const saysH = walking ? (W < 560 ? 76 : 58) : 0;
-    const ch = Math.max(180, H - headH - 44 - (tight ? 72 : 38) - (this.askOpen ? 42 : 0) - (this.deploy ? 34 : 0) - BAND_H - 14 - saysH);
+    const ch = Math.max(180, H - headH - 44 - (tight ? 72 : 38) - (this.askOpen ? (served ? stripHeight(W) : 42) : 0) - (this.deploy ? 34 : 0) - BAND_H - 14 - saysH);
     const costW = Math.min(520, Math.max(300, Math.round((W - 40) * 0.45)));
     return v_flex().id("weights").size_full().bg(c.canvas).text_color(c.navy).font_family(FONT)
       .when(Boolean(this.handle), (e) => e.track_focus(this.handle))
@@ -646,7 +651,8 @@ export default class CaptainWeights extends View {
         .child(Button(c, "wt-retry", "Try again", (_e, cx) => this.open(this.model, cx), { small: true }))))
       .when(Boolean(net), (e) => e
         .when(Boolean(this.deploy), (x) => x.child(DeployLine(c, this)))
-        .when(this.askOpen, (x) => x.child(this.askStrip(c)))
+        // A network the services hold: a goal for an agent they start. The one kept in this page: prompts to hand over.
+        .when(this.askOpen, (x) => x.child(served ? AgentStrip(c, this) : this.askStrip(c)))
         .child(this.inputs(c))
         .child(this.controls(c))
         .child(h_flex().flex_1().min_h(0)
