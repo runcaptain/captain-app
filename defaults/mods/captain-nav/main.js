@@ -18,7 +18,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, layout, props, notify, agents, spaces, machines, exec, nextCommand, shared, setShared, openOverlay, window as win } from "herdr";
-import { api, retry, workspace, watchWorkspace } from "./kit/cst.js";
+import { api, retry, workspace, watchWorkspace, watchRecords, watchConnections } from "./kit/cst.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
 import { isDark, palette } from "./kit/tokens.js";
@@ -221,9 +221,12 @@ export default class CaptainNav extends View {
     this.teamViews.start(cx);
     this.refresh(cx);
     watchWorkspace(cx, (cx) => { this.cloud = null; setShared("captain.scope", null); this.refresh(cx); this.explorer.load(cx); });
-    // Every 3 s until Captain's services answer, then every 15 s.
+    // Every 3 s until Captain's services answer, then every 6 s: the chips and counts are never far behind.
     this.tick = 0;
-    cx.timer.every(3000, (cx) => { this.tick++; if (this.state !== "ready" || this.tick % 5 === 0) this.refresh(cx); });
+    cx.timer.every(3000, (cx) => { this.tick++; if (this.state !== "ready" || this.tick % 2 === 0) this.refresh(cx); });
+    // And at once when a form changes something, or a cloud or database is connected or removed.
+    watchRecords(cx, (cx) => { this.refresh(cx); this.explorer.load(cx); });
+    watchConnections(cx, (cx) => this.refresh(cx));
   }
 
   items() {

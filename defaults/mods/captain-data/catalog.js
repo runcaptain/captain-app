@@ -120,7 +120,14 @@ export class Catalog {
     setShared("captain.data.groups", { ...(shared("captain.data.groups") ?? {}), [workspace() ?? ""]: [...this.open] });
   }
 
-  load(cx) {
+  /** Ask again for what is listed, without moving anything: the same search, the same groups open, the same page of
+   *  each. Skipped while the person is typing a search. */
+  refresh(cx) {
+    if (this.typed || this.find.value().trim() !== (this.asked ?? "")) return;
+    this.load(cx, true);
+  }
+
+  load(cx, quiet = false) {
     const seq = (this.seq = (this.seq ?? 0) + 1);
     const q = this.find.value().trim();
     this.asked = q;
@@ -141,8 +148,11 @@ export class Catalog {
           }
         }
         // A search across everything opens the groups that have a match.
-        this.matched = q ? new Set(this.groups.flatMap(withParts).map((x) => x.id)) : null;
-        if (q) this.page = new Map();
+        // A quiet refresh of the same search keeps the groups the person closed, and each group's page.
+        if (!(quiet && this.matched && q)) {
+          this.matched = q ? new Set(this.groups.flatMap(withParts).map((x) => x.id)) : null;
+          if (q) this.page = new Map();
+        }
       } else if (!r.starting) this.error = r;
       this.starting = !r.ok && !!r.starting;
       cx.notify();

@@ -10,7 +10,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { theme, run, shared, openOverlay, props as layoutProps } from "herdr";
 import { Curve } from "./kit/chart.js";
-import { api, retry, details, watchWorkspace, watchScope } from "./kit/cst.js";
+import { api, retry, details, watchWorkspace, watchScope, keepFresh } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
 import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
@@ -210,6 +210,13 @@ export default class CaptainRuns extends View {
       } else if (o.tab === "compare") this.showTab(cx, "compare");
       else if (EARLIER_TAB[o.tab]) this.showKind(cx, o.tab);
       cx.notify();
+    });
+    // The lists stay current by themselves: every few seconds while Runs is shown, at once when it comes back into
+    // view, and at once when a form changes something (a new evaluation, a new workflow). What is open stays open.
+    keepFresh(cx, "runs", (cx) => {
+      if (this.starting) return;
+      for (const k of ["backtests", "workflows", "grading", "replays"]) this.load(cx, k);
+      if (this.tab === "compare") this.reg.load(cx);
     });
     // The Explorer's pick filters the lists: load them again.
     watchScope(cx, (cx) => { this.data = {}; this.loadAll(cx); if (this.tab === "compare") this.reg.load(cx); cx.notify(); });
