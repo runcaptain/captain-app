@@ -200,10 +200,11 @@ class Feed:
                 self._left[t] = now
             self.last_listener = now
 
-    def listening(self, prefix: str | None = None, linger: float = LINGER_S) -> bool:
+    def listening(self, prefix: str | None = None, linger: float | None = None) -> bool:
         """Is anyone listening (to a topic that is `prefix` or starts with it, or to anything)? A long poll leaves
         and comes straight back, so a listener that left a moment ago still counts."""
         now = time.monotonic()
+        linger = LINGER_S if linger is None else linger
         with self.cond:
             self._left = {t: at for t, at in self._left.items() if now - at < linger}
             names = set(self._listening) | set(self._left)

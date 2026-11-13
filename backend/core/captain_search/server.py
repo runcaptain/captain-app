@@ -3228,6 +3228,19 @@ def kernel_start(body: dict):
 # ---- the change feed: what changed, the moment it changes (changes.py) -----------------------------------------
 
 _CHANGES_POOL = None
+_CLOUD_WATCH = False
+
+
+def _cloud_watch() -> None:
+    """What only a cloud knows (a model that stopped by itself) is asked for while someone listens to what is
+    deployed, and never otherwise (staging/cloud_watch.py). Attached on the first listener."""
+    global _CLOUD_WATCH
+    if _CLOUD_WATCH:
+        return
+    _CLOUD_WATCH = True
+    from .staging import cloud_watch as CW
+
+    CW.attach(lambda: ctx())
 
 
 def _topics(text: str | None) -> list[str] | None:
@@ -3245,6 +3258,7 @@ async def changes_wait(since: int | None = None, topics: str | None = None, hold
     job:<id>, deployed, deployment:<project>, notebooks, logins, compute, settings, team."""
     global _CHANGES_POOL
     ctx()  # the workspace this client is looking at is watched for writes made outside this process
+    _cloud_watch()
     if not since:
         return CH.FEED.answer(since, _topics(topics))
     if _CHANGES_POOL is None:
@@ -3264,6 +3278,7 @@ async def changes_ws(ws: WebSocket):
         await ws.close(code=4401)
         return
     await ws.accept()
+    _cloud_watch()
     loop = asyncio.get_running_loop()
     box: asyncio.Queue = asyncio.Queue()
     want: set[str] = set()
