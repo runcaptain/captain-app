@@ -345,7 +345,7 @@ export function ShipSection(ship, c) {
     return wrap.child(v_flex().id("ship-deployed").w_full().gap(8)
       .child(ModelCard(c, r, {
         numbers: ship.depNums ?? null, busy: ship.busy ? String(ship.busy).replace(/ it$/, "") : null,
-        action: { id: "ship-stop", label: "Stop", go: (_e, cx) => ship.stop(cx) },
+        action: { id: "ship-stop", label: "Stop", kind: "secondary", go: (_e, cx) => ship.stop(cx) },
         more: [{ id: "ship-open-in-deployments", label: "Details", go: openInDeployments }],
         copied: ship.copiedAddress ? "address" : null,
         onCopy: (what, _e, cx) => { if (what === "address") { ship.copy(cx, r.address, "The address is on your clipboard."); ship.copiedAddress = true; cx.notify(); } else openInDeployments(); },

@@ -9,7 +9,7 @@ import * as UI from "./kit/ui.js";
 import { Button, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
-import { ago, money, ms, count, BarChart, Updated } from "./words.js";
+import { ago, money, ms, count, BarChart, Updated, middle } from "./words.js";
 
 const RANGES = [["15m", "15 minutes"], ["1h", "1 hour"], ["24h", "24 hours"], ["7d", "7 days"]];
 // Two submenus, never more: the numbers, and everything else about this model on one scrolling page.
@@ -226,7 +226,8 @@ export class ModelPage {
       .child(h_flex().h(34).pl(12).pr(4).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
         // A request of several lines shows its first, and Copy takes it all.
         .child(div().id(`model-where-${f.id}-value`).flex_1().min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(c.navy)
-          .child(String(f.value).split("\n").find((x) => x.trim() && !x.trim().startsWith("#")) ?? String(f.value)))
+          // Never wrapped: a long one is cut in its middle, so its start and the part that names the thing show.
+          .child(middle(String(f.value).split("\n").find((x) => x.trim() && !x.trim().startsWith("#")) ?? String(f.value), 76)))
         .child(div().id(`model-where-${f.id}-copy`).size(26).flex().flex_none().items_center().justify_center().cursor_pointer()
           .text_color(this.copiedFact === f.id ? c.good : c.grey500).hover((x) => x.text_color(c.navy))
           .accessibility_label(`Copy ${String(f.label).toLowerCase()}`).tooltip(this.copiedFact === f.id ? "Copied" : "Copy")

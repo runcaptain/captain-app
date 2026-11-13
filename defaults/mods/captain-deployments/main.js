@@ -345,7 +345,7 @@ export default class CaptainDeployments extends View {
   card(c, r, page = false) {
     const up = UP.includes(r.state), found = r.link === "unlinked", inCloud = r.in_cloud !== false;
     const deploying = r.state === "deploying" && r.deploying;
-    const a = (id, label, go) => ({ id: `dep-${id}-${r.id}`, label, go });
+    const a = (id, label, go, kind) => ({ id: `dep-${id}-${r.id}`, label, go, kind });
     const details = a("open", "Details", (_e, cx) => this.openRow(r, cx));
     const remove = a("remove", "Remove from the cloud", (_e, cx) => this.remove(r, cx));
     const start = (label) => (r.model_version ? a("start", label, (_e, cx) => this.start(r, cx)) : null);
@@ -353,7 +353,7 @@ export default class CaptainDeployments extends View {
     if (deploying) { /* nothing can be done to a model still being made */ }
     else if (found) { action = a("link", "Link to a project", (_e, cx) => this.linkTo(r, cx)); more = [remove]; }
     else if (r.link === "unknown") more = [details];
-    else if (up) { action = a("stop", "Stop", (_e, cx) => this.stop(r, cx)); more = [details]; }
+    else if (up) { action = a("stop", "Stop", (_e, cx) => this.stop(r, cx), "secondary"); more = [details]; }
     // In a cloud and not answering: the one thing to do is deploy it again. It can also be removed.
     // Removing it is behind Details, on its own page.
     else if (inCloud) { action = start("Deploy again"); more = page ? [remove] : [details]; }
@@ -364,7 +364,9 @@ export default class CaptainDeployments extends View {
     return ModelCard(c, r, {
       numbers: this.nums[r.id] ?? null, busy: this.busy[r.id] ?? null, action, more, copied,
       question: this.ask?.id === r.id ? this.question(c) : null,
-      notes: [...(r.corrected ?? []), ...(r.deploying && !deploying ? [`A new version is on its way. ${deployingWords(r.deploying)}`] : [])],
+      // What Captain corrected in its own record is bookkeeping: on the model's page, not on its card in the list.
+      notes: [...(page ? (r.corrected ?? []) : []), ...(r.deploying && !deploying ? [`A new version is on its way. ${deployingWords(r.deploying)}`] : [])],
+      raw: page,
       onCopy: (what, _e, cx) => this.copy(r, what, cx),
     });
   }
@@ -436,15 +438,16 @@ export default class CaptainDeployments extends View {
       .child(div().child(this[key] ? (list.find(([id]) => id === this[key])?.[1] ?? every) : every))
       .child(svg(icon(this.menu === key ? "chevron-up" : "chevron-down")).size(12).text_color(c.grey500));
     const open = this.menu === "cloud" ? ["cloud", "Every cloud", clouds] : this.menu === "project" ? ["project", "Every project", projects] : null;
-    if (clouds.length < 2 && projects.length < 2) return div();
-    return v_flex().id("dep-filters").gap(6)
-      .child(h_flex().gap(6).items_center()
-        .child(div().flex_1())
+    // The pickers sit on the title's line. An open one lists its choices on a line under the title.
+    if (clouds.length < 2 && projects.length < 2) return { pickers: null, list: null };
+    return {
+      pickers: h_flex().id("dep-filters").flex_none().gap(6).items_center()
         .when(clouds.length > 1, (e) => e.child(picker("cloud", "Every cloud", clouds)))
-        .when(projects.length > 1, (e) => e.child(picker("project", "Every project", projects))))
-      .when(Boolean(open), (e) => e.child(h_flex().id("dep-pick-list").gap(6).flex_wrap().justify_end()
+        .when(projects.length > 1, (e) => e.child(picker("project", "Every project", projects))),
+      list: open ? h_flex().id("dep-pick-list").gap(6).flex_wrap().justify_end()
         .child(chip(`dep-${open[0]}-all`, open[1], this[open[0]] === null, set(open[0], null)))
-        .children(open[2].map(([id, name]) => chip(`dep-${open[0]}-${id}`, name, this[open[0]] === id, set(open[0], id))))));
+        .children(open[2].map(([id, name]) => chip(`dep-${open[0]}-${id}`, name, this[open[0]] === id, set(open[0], id)))) : null,
+    };
   }
 
   render(cx) {
@@ -460,10 +463,18 @@ export default class CaptainDeployments extends View {
     const rows = here.filter(picked);
     const notAsked = d.asked.filter((a) => !a.ok);
     const places = this.created?.places ?? [];
+    const none = !here.length;
+    // Nothing at all: no model, none stopped earlier, nothing set up in any account. The page is one quiet card
+    // that says what this screen is for and offers the one thing to do.
+    const bare = none && !earlier.length && !places.length;
+    const filters = none ? { pickers: null, list: null } : this.filters(c, here);
     const head = h_flex().h(56).flex_none().px(24).gap(12).items_center().border_b(1).border_color(c.rule)
       .child(div().text_size(18).font_semibold().text_color(c.navy).child("Deployments"))
       // With nothing deployed the page itself says so: the line beside the title would only repeat it.
       .child(div().id("dep-summary").flex_1().min_w(0).truncate().text_size(13).text_color(c.grey500).child(d.text))
+      // The cloud and the project to show, at the right of the title's line. Each only when there is a choice.
+      .when(Boolean(filters.pickers), (e) => e.child(filters.pickers))
+      .when(!here.length && !bare && !this.ask, (e) => e.child(Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small: true })))
       // It keeps itself up to date, and says when it last was, or that a cloud could not be reached. No button to
       // press: a small refresh icon is there for someone who wants to ask now.
       .child(Updated(c, "dep-updated", { readAt: this.readAt, icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.load(cx, true),
@@ -472,25 +483,16 @@ export default class CaptainDeployments extends View {
         problem: notAsked.length ? `${[...new Set(notAsked.map((a) => a.cloud_label))].join(" and ")} could not be reached. Trying again.`
           : this.readAt && !this.demo && !this.live.up() && Date.now() - this.readAt > 15000 ? "Not updating. Refresh" : null,
         live: this.live.up() }));
-    const none = !here.length;
-    // Nothing at all: no model, none stopped earlier, nothing set up in any account. The page is one quiet card
-    // that says what this screen is for and offers the one thing to do.
-    const bare = none && !earlier.length && !places.length;
     const deploy = (small) => Button(c, "dep-go-projects", "Deploy a model", (_e, cx) => this.deployFrom(cx), { kind: "primary", small });
     const n = earlier.length;
     const body = v_flex().gap(18)
+      .when(Boolean(filters.list), (e) => e.child(filters.list))
       .when(Boolean(this.note), (e) => e.child(div().id("dep-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)))
       // Why a cloud could not be reached, once, in words a person can act on. What is shown for it is Captain's record.
       .children(notAsked.map((a, i) => div().id(`dep-not-asked-${i}`).text_size(12.5).line_height("18px").text_color(c.grey500)
         .child(`${a.cloud_label}${a.login && a.login.toLowerCase() !== a.cloud ? ` (${a.login})` : ""}: ${plainError(a.error, "no reason given")}. What is shown for it is Captain's own record.`)))
       // The list of models is what this screen is: it is always here, under its own heading, even with nothing in it.
       .child(v_flex().id("dep-models").gap(10)
-        .child(h_flex().gap(12).items_center()
-          .child(div().text_size(15).font_semibold().text_color(c.navy).child("Models"))
-          // The title already says "No models running.": saying it again here read as an echo.
-          .child(div().id("dep-models-line").flex_1())
-          // The next step, when nothing is answering. An open question takes the filled button in its place.
-          .when(none && !this.ask && !bare, (e) => e.child(deploy(true))))
         .when(this.ask?.id === "deploy", (e) => e.child(this.question(c)))
         // With nothing at all (no model, none stopped earlier, nothing set up in any account), one line says what
         // this screen is for. With anything else on the page, the page says it.
@@ -500,7 +502,6 @@ export default class CaptainDeployments extends View {
           .child(div().id("dep-what-for").max_w(520).text_center().text_size(12.5).line_height("19px").text_color(c.grey500)
             .child("A model you deploy from a project's page shows here: where it runs, the address to call, its traffic and what it costs. You can stop it, start it again or remove it from here."))
           .when(!this.ask, (x) => x.child(div().pt(6).child(deploy(false))))))
-        .child(none ? div() : this.filters(c, here))
         .child(v_flex().id("dep-list").gap(14)
           .children(rows.map((r) => this.row(c, r)))
           .when(!none && !rows.length, (e) => e.child(div().id("dep-none-shown").py(16).text_size(13).text_color(c.grey500).child("No model matches. Change the cloud or the project above.")))))

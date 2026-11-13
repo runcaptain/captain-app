@@ -507,7 +507,7 @@ assert.ok(t.includes('Where should starter-ranker@v2 run?') && byId(h, 'ship-dep
   const tc = hc.text();
   for (const id of ['ship-deployed', `dep-row-${CARD.id}`, `dep-dot-${CARD.id}`, `dep-traffic-${CARD.id}`, `dep-cost-${CARD.id}`, 'ship-stop', 'ship-open-in-deployments'])
     assert.equal(byId(hc, id).length, 1, `the model's card on the project page has ${id}`);
-  for (const part of ['starter-ranker, version 2', 'Running on 1 copy.', 'Traffic', '120', 'Speed', '3.1 ms', 'Cost', '$0.07', 'Details', 'Stop', 'Deployed by dana'])
+  for (const part of ['starter-ranker, version 2', 'Running on 1 copy.', 'Traffic', '120', 'Speed', '3.1 ms', 'Cost', '$0.07', 'Details', 'Stop', 'dana, '])
     assert.ok(tc.includes(part), `the card says ${part}: ${tc.slice(0, 600)}`);
   assert.ok(byId(hc, 'ship-places').length === 0 && !tc.includes('Where should'), 'and nothing else: no places to deploy while it is deployed');
   await hc.click('ship-stop');

@@ -27,8 +27,13 @@ export function updatedWords(readAt) {
  *  and a refresh icon. The screen keeps itself current, so this is quiet. The icon says what it is to a screen
  *  reader and on hover. */
 export function Updated(c, id, { readAt, problem, onRefresh, icon: mark, live = false }) {
+  // Live: a green dot and the word, and nothing to press. The screen keeps itself current, so a refresh control
+  // beside "Live" only suggests it might not. The control is there when the screen is not live.
+  if (live && !problem) return h_flex().id(id).flex_none().gap(6).items_center()
+    .child(div().size(8).rounded_full().bg(c.good))
+    .child(div().id(`${id}-text`).text_size(12).text_color(c.grey500).child("Live"));
   return h_flex().id(id).flex_none().gap(8).items_center()
-    .child(div().id(`${id}-text`).text_size(12).text_color(problem ? c.fail : c.grey500).child(problem ?? (live ? "Live" : updatedWords(readAt))))
+    .child(div().id(`${id}-text`).text_size(12).text_color(problem ? c.fail : c.grey500).child(problem ?? updatedWords(readAt)))
     .child(div().id(`${id}-refresh`).size(24).flex().flex_none().items_center().justify_center().cursor_pointer().text_color(c.grey500)
       .hover((x) => x.text_color(c.navy)).accessibility_label("Refresh").tooltip("Refresh").on_click(onRefresh).child(mark));
 }
@@ -90,4 +95,21 @@ export function BarChart(c, id, values, { height = 44, color, format = (v) => St
   // The highest value is said in the chart's own line of words, so the chart takes the full width it is given.
   return h_flex().id(id).w_full().h(height).gap(1).items_end().border_b(1).border_color(c.rule)
     .children(bars.map((v) => div().flex_1().h(v == null ? 0 : Math.max(1, Math.round((v / top) * (height - 2)))).bg(color ?? c.blue)));
+}
+
+
+/** A long address with its middle cut out, so its start and its end (the part that names the thing) both show:
+ *  "https://runtime.sagemaker.us-west-1.ama...captain-shop/invocations". Copy takes the whole of it. */
+export function middle(text, most = 56) {
+  const t = String(text ?? "");
+  if (t.length <= most) return t;
+  const tail = Math.floor((most - 1) * 0.45), head = most - 1 - tail;
+  return `${t.slice(0, head)}…${t.slice(-tail)}`;
+}
+
+/** A machine in a few words, for a one-line footer: "ml.t2.medium: 2 virtual CPUs, 4 GB memory" as "2 CPUs, 4 GB". */
+export function machineShort(words) {
+  const t = String(words ?? "");
+  if (!t) return null;
+  return (t.includes(": ") ? t.slice(t.indexOf(": ") + 2) : t).replace(/ virtual CPU/g, " CPU").replace(/ memory/g, "").replace(/, about .*$/, "");
 }

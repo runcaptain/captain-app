@@ -14,7 +14,7 @@ import { MONO } from "./tokens.js";
 import { Button } from "./ui.js";
 import { icon } from "./icons.js";
 import { Brand } from "./brands.js";
-import { ago, money, ms, count, Spark, deployingWords, spanWords } from "./modelwords.js";
+import { ago, money, ms, count, Spark, deployingWords, spanWords, middle, machineShort } from "./modelwords.js";
 
 const SMALL = 12.5, NAME = 17, FIGURE = 22;
 
@@ -82,22 +82,31 @@ export function ModelCard(c, r, o = {}) {
   const name = found ? r.name : (r.model_label ?? r.model_version ?? "Model version not known");
   // Something found in a cloud has no project: the line under its name says what it is, once.
   const small = found ? (r.state_text ?? `Found in your ${r.cloud_label} account.`) : (r.project_name ?? r.project ?? "");
-  const state = deploying ? deployingWords(r.deploying) : r.remembered_text ? `${r.state_text} ${r.remembered_text}` : r.state_text;
+  // A failure in plain words, with the one thing to do. What the cloud itself said is on the model's page
+  // (`o.raw`), not on the card.
+  const failedWords = /health|ping|did not pass|never answered/i.test(String(r.reason ?? r.state_text ?? ""))
+    ? "It started but never answered. Deploy again, or open Details to see its log."
+    : r.state === "gone" ? "It is no longer in the cloud. Deploy again to bring it back."
+      : "It is not answering. Deploy again, or open Details to see what the cloud said.";
+  const state = deploying ? deployingWords(r.deploying) : wrong && !o.raw ? failedWords
+    : r.remembered_text ? `${r.state_text} ${r.remembered_text}` : r.state_text;
   // A short, ordinary state ("Running on 1 copy.") sits beside the project, under the name. Anything that needs
   // reading (it failed, it is being deployed, it was stopped and why) gets a line of its own.
   const plain = !wrong && !deploying && inCloud && !found && !o.busy && String(state ?? "").length <= 80;
+  // The footer is one line that never wraps: where it runs at the left, who and when at the right. The account,
+  // the machine's own name and how many copies it may run are on the model's page.
   const when = ago(r.since);
-  const who = r.by ? [`${deploying ? "Started" : "Deployed"} by ${r.by_name ?? r.by}`, when].filter(Boolean).join(", ") : when ? `Made ${when}` : null;
-  const where = [[r.cloud_label, r.account].filter(Boolean).join(", "), r.cloud === "local" ? null : r.region,
-    r.machine_words ?? (r.cloud === "local" ? null : r.machine), r.copies_words,
-    r.version_n ? `version ${r.version_n} of this deployment` : null, who].filter(Boolean).join(" · ");
+  const who = [r.by ? (r.by_name ?? r.by) : null, when].filter(Boolean).join(", ");
+  const where = [r.cloud_label, r.cloud === "local" ? null : r.region, machineShort(r.machine_words ?? (r.cloud === "local" ? null : r.machine))].filter(Boolean).join(" · ");
   // While something is being done to it, no action is offered: what is being done is said on its own line.
   const actions = o.busy ? []
     : [...(o.more ?? []).map((a) => Button(c, a.id, a.label, a.go, { kind: "quiet" })),
-      ...(o.action ? [Button(c, o.action.id, o.action.label, o.action.go, { kind: "primary" })] : [])];
+      // Filled is only for an action that brings a model up. Stopping one is outlined: on a screen of running
+      // models nothing is filled, because nothing needs doing.
+      ...(o.action ? [Button(c, o.action.id, o.action.label, o.action.go, { kind: o.action.kind ?? "primary" })] : [])];
   // Figures are for a model that is answering. One that failed says what happened and what to do, and no more.
   const showNumbers = !found && !deploying && inCloud && !wrong && Boolean(n);
-  return v_flex().id(`dep-row-${r.id}`).w_full().bg(c.surface).border_1().border_color(wrong ? c.fail : c.rule).p(20).gap(14)
+  return v_flex().id(`dep-row-${r.id}`).w_full().bg(c.surface).border_1().border_color(wrong ? c.fail : c.rule).px(20).py(14).gap(10)
     // Its state, its name, and the one action.
     .child(h_flex().gap(12).items_center()
       .child(div().id(`dep-dot-${r.id}`).size(10).flex_none().rounded_full().bg(o.busy ? c.warn : dotColor(c, r)))
@@ -115,7 +124,7 @@ export function ModelCard(c, r, o = {}) {
     // The address a site calls: one field, with Copy. The code font is for what a person copies, and nothing else.
     .when(Boolean(r.address) && inCloud && !deploying && !wrong, (e) => e.child(h_flex().gap(12).items_center()
       .child(h_flex().id(`dep-address-field-${r.id}`).flex_1().min_w(0).h(34).pl(12).pr(4).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
-        .child(div().id(`dep-address-${r.id}`).flex_1().min_w(0).truncate().text_size(SMALL).font_family(MONO).text_color(c.navy).child(String(r.address)))
+        .child(div().id(`dep-address-${r.id}`).flex_1().min_w(0).truncate().text_size(SMALL).font_family(MONO).text_color(c.navy).child(middle(r.address, o.addressChars ?? 58)))
         .child(div().id(`dep-copy-${r.id}`).size(26).flex().flex_none().items_center().justify_center().cursor_pointer().text_color(o.copied === "address" ? c.good : c.grey500)
           .hover((x) => x.text_color(c.navy)).accessibility_label("Copy the address").tooltip(o.copied === "address" ? "Copied" : "Copy the address")
           .on_click((ev, cx) => o.onCopy?.("address", ev, cx)).child(svg(icon(o.copied === "address" ? "check" : "copy")).size(14))))
@@ -128,13 +137,15 @@ export function ModelCard(c, r, o = {}) {
         hour.some((v) => v > 0) ? Spark(c, `dep-spark-${r.id}`, hour, { height: 24, width: 84 }) : null))
       .child(Figure(c, `dep-speed-${r.id}`, "Speed", s.p50_ms != null ? ms(s.p50_ms) : null,
         s.p50_ms != null ? "typical response time" : "no requests to time yet"))
-      .child(Figure(c, `dep-cost-${r.id}`, "Cost", n.cost?.hourly_usd ? money(n.cost.hourly_usd) : n.cost ? "$0" : null,
-        !n.cost ? "not known" : [n.cost.hourly_usd ? "an hour" : "costs nothing now",
+      // A sleeping model has no copy awake and bills nothing, whatever its rate is when it wakes.
+      .child(Figure(c, `dep-cost-${r.id}`, "Cost", !n.cost ? null : r.state === "asleep" ? "$0.00" : n.cost.hourly_usd ? money(n.cost.hourly_usd) : "$0.00",
+        !n.cost ? "not known" : [r.state === "asleep" ? "while asleep" : n.cost.hourly_usd ? "an hour" : "costs nothing now",
           // Said only when there is something to say: a month's cost that is not known is not "$0.00".
           n.cost.month_usd > 0 ? `${money(n.cost.month_usd)} this month` : null].filter(Boolean).join(" · ")))))
     .children((o.notes ?? []).map((x, i) => div().id(`dep-fixed-${r.id}-${i}`).text_size(SMALL).line_height("18px").text_color(c.grey500).child(x)))
-    // Where it runs, quietly.
-    .child(h_flex().id(`dep-system-${r.id}`).gap(8).items_center().pt(12).border_t(1).border_color(c.rule)
-      .child(r.cloud === "local" ? svg(icon("monitor")).size(14).text_color(c.grey500) : Brand(c, r.cloud, 14))
-      .child(div().flex_1().min_w(0).text_size(SMALL).line_height("18px").text_color(c.grey500).child(where)));
+    // Where it runs, quietly, on one line.
+    .child(h_flex().id(`dep-system-${r.id}`).gap(8).items_center().pt(10).border_t(1).border_color(c.rule)
+      .child(r.cloud === "local" ? svg(icon("monitor")).size(14).flex_none().text_color(c.grey500) : Brand(c, r.cloud, 14))
+      .child(div().id(`dep-where-${r.id}`).flex_1().min_w(0).truncate().text_size(SMALL).text_color(c.grey500).child(where))
+      .child(div().id(`dep-who-${r.id}`).flex_none().text_size(SMALL).text_color(c.grey500).child(who)));
 }

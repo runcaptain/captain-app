@@ -100,7 +100,7 @@ const filled = (h) => h.byIdPrefix('').filter((e) => e.calls?.some?.((x) => x[0]
 // ---- nothing deployed ----
 let h = await open({ deployed: { rows: [], asked: [], text: 'Nothing is deployed. Deploy a model from a project\'s page to see it here.', read_at: '' } });
 let t = h.text();
-assert.ok(t.includes('Deployments') && t.includes('Models') && !t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 1 && t.includes('Deploy a model'), `empty: ${t}`);
+assert.ok(t.includes('Deployments') && !t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 1 && t.includes('Deploy a model'), `empty: ${t}`);
 assert.equal(byId(h, 'dep-filters').length, 0, 'no filters over an empty list');
 // Nothing at all: one muted line says what the screen is for, so the page is not bare.
 assert.ok(byId(h, 'dep-what-for').length === 1 && t.includes("A model you deploy from a project's page shows here"), `what it is for: ${t}`);
@@ -142,7 +142,7 @@ h = await open({ deployed: { rows: [OLD], asked, text: 'No models running.', sto
     { kind: 's3-object', kind_label: 'Build package', name: 's3://captain-serving-000000000000-us-west-1/build/serving.zip', short: 'serving.zip', what_for: "The files the model's image is built from. Kept so the image can be built again without sending them." },
     { kind: 'log-group', kind_label: 'Build log', name: '/aws/codebuild/captain-serving-build', short: 'captain-serving-build', what_for: 'What the image build printed while it ran. Kept so a build that failed can be read.' }] }] } });
 t = h.text();
-assert.ok(t.includes('No models running.') && t.includes('Models') && !t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 1, `nothing running: says so, and offers to deploy: ${t}`);
+assert.ok(t.includes('No models running.') && !t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 1, `nothing running: says so, and offers to deploy: ${t}`);
 assert.equal(shown(h), '', 'a stopped model is not in the list of what is deployed');
 assert.ok(t.includes('Stopped earlier: 1 model.') && byId(h, 'dep-earlier-show').length === 1, `it has its own closed line: ${t}`);
 assert.ok(t.indexOf('Stopped earlier') < t.indexOf('Set up in your AWS account') && t.indexOf('Models') < t.indexOf('Stopped earlier'), 'models, then stopped earlier, then the account');
@@ -207,11 +207,14 @@ assert.ok(t.includes('us-west-1') && !/us-west-1, aws\b/.test(t), 'a login named
 h = await open({ deployed: { rows: [SHOP], asked, text: '1 deployed.', read_at: '' }, numbers: { shop: numbers(8640) } });
 t = h.text();
 assert.ok(t.includes('Demo shop') && t.includes('starter-ranker, version 2') && !t.includes('shop/starter-ranker@v2') && t.includes('Running on 1 copy.'), `the model without its project said twice, and its state in words: ${t}`);
-assert.ok(t.includes('Deployed by dana, 2 h ago') && !t.includes('@example.com'), 'a person by the name before the @');
+assert.ok(t.includes('dana, 2 h ago') && !t.includes('@example.com'), 'a person by the name before the @');
 // Where it lives, on the row: the address a site calls, to copy, and one line about the system it runs on.
 assert.equal(byId(h, 'dep-address-shop:staging').length, 1);
-assert.ok(t.includes('https://runtime.sagemaker.us-west-1.amazonaws.com/endpoints/captain-shop/invocations') && byId(h, 'dep-copy-shop:staging').length === 1, `the address, with Copy: ${t}`);
-assert.ok(t.includes('AWS, account ending 1234 · us-west-1 · ml.t2.medium: 2 virtual CPUs, 4 GB memory · 1 copy up now, may run 1 to 3 · Deployed by dana, 2 h ago'), `the system in one quiet line: ${t}`);
+// A long address is cut in its middle, so its start and the part that names the model both show. Copy takes it whole.
+assert.ok(t.includes('https://runtime.sagemaker.us-wes…/captain-shop/invocations') && byId(h, 'dep-copy-shop:staging').length === 1, `the address, with Copy: ${t}`);
+// The footer is one line: where it runs at the left, who and when at the right. The account, the machine's own
+// name and how many copies it may run are on the model's page, not here.
+assert.ok(t.includes('AWS · us-west-1 · 2 CPUs, 4 GB') && t.includes('dana, 2 h ago') && !t.includes('account ending 1234') && !t.includes('may run 1 to 3'), `the footer: ${t}`);
 // Traffic, Speed and Cost: one large figure each, with a small caption.
 for (const part of ['Traffic', '360', 'requests in the last hour, none failed', 'Speed', '3.1 ms', 'typical response time', 'Cost', '$0.07', 'an hour · $14.30 this month'])
   assert.ok(t.includes(part), `the card says ${part}: ${t}`);
@@ -240,8 +243,12 @@ t = h.text();
 assert.ok(t.includes('2 models running, 1 failed, 1 found in your cloud with no project.'), 'the title line from the services');
 // The list is what is in a cloud now: running, asleep and failed. The one stopped earlier is under its own line.
 assert.equal(shown(h), 'shop trail gifts', 'what is in a cloud');
-assert.ok(t.includes('Asleep. It wakes on the next request and bills nothing until then.') && t.includes('Failed: The primary container did not pass the ping health check.'), `asleep and failed are states of something that exists: ${shown(h)}`);
-assert.ok(t.includes("Captain's record said it was running. The cloud says it failed, so the record now says failed."), 'what was corrected is said on the row');
+// A failure is said in plain words with the one thing to do. What the cloud itself said, and what Captain
+// corrected in its own record, are on the model's page, not on its card.
+assert.ok(t.includes('Asleep. It wakes on the next request and bills nothing until then.') && t.includes('It started but never answered. Deploy again, or open Details to see its log.'), `asleep and failed are states of something that exists: ${t}`);
+assert.ok(!t.includes('did not pass the ping health check') && !t.includes("Captain's record said it was running"), 'no raw cloud error and no bookkeeping on the card');
+// A sleeping model bills nothing, whatever its rate when awake.
+assert.ok(byId(h, 'dep-cost-trail:staging')[0] && t.includes('while asleep'), `asleep costs nothing now: ${t}`);
 assert.ok(t.includes('captain-old-experiment-staging') && t.includes('Found in your AWS account, not linked to a project.'), 'something no project knows is listed');
 assert.ok(t.includes('Link to a project') && byId(h, `dep-remove-${FOUND.id}`).length === 1, 'and can be linked or removed');
 assert.ok(t.includes('Stopped earlier: 1 model.') && byId(h, `dep-start-${OLD.id}`).length === 0, 'the stopped one is behind its line');
@@ -324,7 +331,7 @@ assert.ok(t.includes('Address · from AWS') && t.includes("Region · from Captai
 // What a person copies has Copy: the address, a test request, the log's name. A request of several lines shows its first.
 for (const id of ['address', 'call', 'logs']) assert.equal(byId(h, `model-where-${id}-copy`).length, 1, `${id} can be copied`);
 assert.equal(byId(h, 'model-where-region-copy').length, 0, 'a region is read, not copied');
-assert.ok(t.includes('aws sagemaker-runtime invoke-endpoint --region us-west-1 --endpoint-name captain-shop') && !t.includes('# Get a ranking.'), 'the request by its first real line');
+assert.ok(t.includes('aws sagemaker-runtime invoke-endpoint --region') && !t.includes('# Get a ranking.'), 'the request by its first real line, cut in its middle when long');
 await h.click('model-where-call-copy');
 assert.equal(h.mod.page.copiedFact, 'call', 'Copy marks it copied (the icon turns to a tick)');
 for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time', 'Processor in use', 'Memory in use'])
@@ -691,7 +698,7 @@ assert.ok(/Deploying to AWS: Building the model's image, (4[89]|5\d) s so far \(
 for (const part of ['Checking your account', '1 s', "Building the model's image", 'Starting the model', 'usually about 2 minutes', 'Checking it answers'])
   assert.ok(t.includes(part), `the steps say ${part}`);
 assert.ok(byId(h, 'dep-steps-gifts:staging').length === 1 && byId(h, 'dep-dot-gifts:staging').length === 1 && byId(h, 'dep-traffic-gifts:staging').length === 0, 'the same card, with its steps in place of its numbers');
-assert.ok(t.includes('Still building the image: 40 s. Building.') && t.includes('Started by dana'), 'the last thing the job said, and who started it');
+assert.ok(t.includes('Still building the image: 40 s. Building.') && t.includes('dana, '), 'the last thing the job said, and who started it');
 // Nothing is offered that would act on a model still being made.
 for (const id of ['dep-open-gifts:staging', 'dep-stop-gifts:staging', 'dep-remove-gifts:staging', 'dep-start-gifts:staging', 'dep-forget-gifts:staging']) assert.equal(byId(h, id).length, 0, `no ${id} while it deploys`);
 // The seconds tick on the page's own clock, with no read from the services.
@@ -724,7 +731,11 @@ assert.equal((main.match(/font_family\(MONO\)/g) ?? []).length, 0, 'no code font
 assert.equal((cardSrc.match(/font_family\(MONO\)/g) ?? []).length, 1, 'on the card: the address only');
 assert.equal((model.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font on the page only for what a person copies');
 assert.ok(!/model-part-/.test(model) && /Submenus\(c, PARTS/.test(model) && (model.match(/\{ id: "[a-z]+", label:/g) ?? []).length === 2, 'the model page declares two submenus');
-assert.equal((main.match(/kind: "primary"/g) ?? []).length, 2, 'two filled buttons in the source, never both on screen: Deploy a model when nothing is answering, and an open question, which hides it');
+// Filled is only for what brings a model up, or answers an open question. In the list's own source: Deploy a model
+// (on the empty card, or on the title's line when something else is on the page: never both), and a question's yes.
+// On a card, the kit fills Start again and Deploy again. Stop is outlined.
+assert.equal((main.match(/kind: "primary"/g) ?? []).length, 3, 'three filled buttons in the source, at most one of the two Deploy a model on screen');
+assert.ok(/a\("stop", "Stop", [^;]*"secondary"\)/.test(main), 'Stop is outlined, not filled');
 assert.equal((model.match(/kind: "primary"/g) ?? []).length, 0, 'the model page has no filled button');
 // A name in the cloud and a path in storage are shown as they are ("captain-shop-staging", ".../staging/shop/...").
 // Captain's own words never say these.
