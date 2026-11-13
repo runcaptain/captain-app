@@ -114,6 +114,10 @@ test('an edit opens to its old and new values, and can be taken back', async () 
   assert.ok(text.includes('The weight from hidden neuron 3') && text.includes('+0.40 to +0.20'));
   assert.ok(text.includes('The edit that is open'), 'its three numbers show under the cost');
   assert.equal(localNetwork(TINY).layers[1].W[0][1], -4);
+  // "Take this edit back" is on the edit's first line, beside its sentence, not under its values.
+  { const all = []; (function w(e) { if (!e || typeof e !== 'object') return; all.push(e); for (const k of e.kids ?? []) w(k); })(h.mod.render(h.cx));
+    const first = all.find((e) => (e.kids ?? []).some((k) => k?.call?.('id')?.[0] === `wt-ev-line-${ev.id}`));
+    assert.ok(first.kids.some((k) => k?.call?.('id')?.[0] === `wt-ev-undo-${ev.id}`), 'in the same row as the sentence'); }
   await h.click(`wt-ev-undo-${ev.id}`);
   assert.equal(localNetwork(TINY).layers[1].W[0][1], -8, 'the old number is back');
   const after = h.text();

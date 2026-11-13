@@ -10,7 +10,7 @@ import { wideNet } from './fixtures/captain-weights/reference.mjs';
 const { default: Weights, factsOf } = await import('../../defaults/mods/captain-weights/main.js');
 const { weightsTransport } = await import('../../defaults/mods/captain-weights/adapter.js');
 const { localReset } = await import('../../defaults/mods/captain-weights/local.js');
-const { layoutOf, shapesFor, lineQuad, tint, MIN_LINE_PX, MAX_SHAPES, DOTS_MAX } = await import('../../defaults/mods/captain-weights/draw.js');
+const { layoutOf, shapesFor, lineQuad, tint, placeNumbers, MIN_LINE_PX, MAX_SHAPES, DOTS_MAX } = await import('../../defaults/mods/captain-weights/draw.js');
 const { forward, backward, seededNet } = await import('../../defaults/mods/captain-weights/net.js');
 const { starter: tinyStarter, TINY } = await import('../../defaults/mods/captain-weights/starters.js');
 const { DIGITS, digitsNet, digitsRoutes } = await import('./fixtures/captain-weights/digits.mjs');
@@ -279,4 +279,23 @@ test('an input\'s name is in words, counting from 1', async () => {
   assert.equal(inputName(plain, { name: 'practice 11' }, 11), 'Input 12');
   assert.equal(inputName(plain, { name: 'Both on' }, 3), 'Both on', 'a name already in words is kept');
   assert.equal(inputName(plain, {}, 0), 'Input 1');
+});
+
+test('no two numbers on the tiny network\'s lines share a spot', async () => {
+  const boxesTouch = (p, q) => Math.abs(p.x - q.x) < 36 && Math.abs(p.y - q.y) < 15;
+  for (const net of [starter(TINY), { ...starter(TINY), layers: [{ W: [[-5.62, -10.63], [4.92, -5.14], [-13.24, -7.99]], b: [10.18, 3.85, 7.81] }, { W: [[18.5, -13.43, -16.33]], b: [2.18] }] }]) {
+    const L = layoutOf(net), all = [];
+    net.layers.forEach((l, k) => l.W.forEach((row, j) => row.forEach((v, i) => all.push({ k, j, i, v }))));
+    all.sort((p, q) => Math.abs(q.v) - Math.abs(p.v));
+    const placed = placeNumbers(L, all), shown = placed.filter((p) => !p.hidden);
+    assert.equal(placed.length, 9);
+    for (let a = 0; a < shown.length; a++) for (let b = a + 1; b < shown.length; b++) assert.ok(!boxesTouch(shown[a], shown[b]), `${shown[a].v} and ${shown[b].v} overlap`);
+    assert.ok(shown.length >= 7, `${shown.length} of 9 numbers are shown without a hover`);
+    // The strongest weight keeps its place a third of the way along: it is the fainter one that moves.
+    const a = L.centre(placed[0].k, placed[0].i), b = L.centre(placed[0].k + 1, placed[0].j);
+    assert.ok(Math.abs(placed[0].y - (a.y + (b.y - a.y) / 3)) < 1e-9);
+  }
+  // On the page every weight still has its number to pick, shown or waiting for the pointer.
+  const h = await page(TINY);
+  assert.equal(h.byIdPrefix('wt-w-').length, 9);
 });
