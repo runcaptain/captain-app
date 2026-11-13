@@ -1,6 +1,6 @@
 """Sample rows for the Deployments screen's pictures: props for `captain-deployments:<view>`, as JSON on stdout.
 Nothing is deployed and no cloud is asked: the screen draws what it is handed, and its buttons reach no service.
-Views: empty, leftover, stopped, stopped-open, one, several, failed, found, model. Demo names only."""
+Views: empty, leftover, stopped, stopped-open, one, several, failed, found, busy, model, model-details. Demo names only."""
 import datetime as dt
 import json
 import math
@@ -103,13 +103,20 @@ sets = {
     "failed": ([GIFTS, SHOP, KIDS], "1 model running, 1 failed.", None, False),
     "found": ([SHOP, FOUND], "1 model running, 1 found in your cloud with no project.", None, False),
     "model": ([SHOP], "1 model running.", None, False),
+    # The model's page on its second submenu: earlier versions, requests, log, copies and machine.
+    "model-details": ([SHOP], "1 model running.", None, False),
+    # An action in progress: the row says what is being done, with the step it is on, and offers no button.
+    "busy": ([SHOP, GARDEN, TRAIL], "3 models running.", None, False),
 }
 rows, text, created, earlier = sets[view]
 demo = {"deployed": {"rows": rows, "asked": ASKED if rows else [], "text": text, "stopped_earlier": sum(1 for r in rows if not r["in_cloud"]), "read_at": now.isoformat(timespec="seconds")}, "created": created, "earlier": earlier,
         "numbers": {"shop:staging": numbers("24h", 6.0), "garden:staging": numbers("24h", 1.4, cloud=False), "trail:staging": numbers("24h", 0.3, cloud=False),
                     "gifts:staging": numbers("24h", 2.0, errors=0.4)}}
-if view == "model":
+if view == "busy":
+    demo["busy"] = {"shop:staging": "Removing from AWS: Removing the endpoint", "garden:staging": "Stopping"}
+if view in ("model", "model-details"):
     demo["open"] = "shop:staging"
+    demo["part"] = "details" if view == "model-details" else None
     demo["model"] = {"numbers": {k: numbers(k, 6.0) for k in ("15m", "1h", "24h", "7d")},
                      "where": {"from_cloud": True, "text": "Read from AWS just now.", "facts": [
                          {"id": i, "label": la, "value": v, "copy": cp, "source": src, "source_text": "From AWS" if src == "cloud" else "From Captain's record"}
