@@ -212,6 +212,12 @@ def note(sid: str, body: dict):
     return S.note(_ctx(), sid, str(b.get("text") or ""), b.get("by"))
 
 
+@router.post("/sessions/{sid}/done")
+def done(sid: str, body: dict):
+    b = _body(body)
+    return S.done(_ctx(), sid, str(b.get("text") or ""), b.get("by"))
+
+
 @router.post("/sessions/{sid}/program")
 def program(sid: str, body: dict):
     """Start an agent on this session with a goal. Returns a job: {job, session, agent}. The job's result is the

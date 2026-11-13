@@ -587,6 +587,13 @@ def note(text: str = typer.Argument(..., help="a hypothesis before an edit, or a
     emit(ev, f"{ev['id']}  {ev['sentence']}")
 
 
+@weights_app.command("done")
+def done(text: str = typer.Argument(..., help="one short paragraph: what you found and what you did"), session: Optional[str] = SESSION):
+    """Say the work is finished. A run started by `cst weights program` ends when it sees this."""
+    ev = _do(WSN.done, ctx(), _sid(session), text)
+    emit(ev, f"{ev['id']}  {ev['sentence']}")
+
+
 @weights_app.command("program")
 def program(model: str = typer.Argument(..., help="a model, or one version of it: digits or digits@v2"),
             goal: str = typer.Option(..., "--goal", help="in plain words: what should the network do differently"),
