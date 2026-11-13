@@ -118,14 +118,42 @@ def save_revision(ctx: Context, name: str, nb: dict, message: str = "") -> Noteb
     return m
 
 
-def load(ctx: Context, name: str) -> tuple[int | None, dict, bool]:
-    """Returns (latest revision or None, notebook, from_draft)."""
+def stamp(ctx: Context, name: str, latest: int | None = ...) -> str:
+    """What this notebook is right now, as one short text that changes whenever it does: its draft's own time when
+    it has one, else its saved version. A screen that has a notebook open keeps the stamp it read, and knows the
+    notebook changed elsewhere when the list shows another."""
+    p = _draft_path(ctx, name)
+    try:
+        return f"draft:{os.stat(p).st_mtime_ns}"
+    except OSError:
+        pass
+    if latest is ...:
+        try:
+            latest = ctx.registry.versions("notebook", name)[-1]
+        except IndexError:
+            latest = None
+    return f"v{latest}" if latest is not None else "new"
+
+
+def discard_draft(ctx: Context, name: str) -> bool:
+    """Throw the draft away, so the notebook is its saved version again. True when there was one."""
+    try:
+        os.unlink(_draft_path(ctx, name))
+    except FileNotFoundError:
+        return False
+    _told()
+    return True
+
+
+def load(ctx: Context, name: str, saved: bool = False) -> tuple[int | None, dict, bool]:
+    """Returns (latest revision or None, notebook, from_draft). `saved` reads the saved version even when there
+    is a draft."""
     p = _draft_path(ctx, name)
     try:
         latest = ctx.registry.versions("notebook", name)[-1]
     except IndexError:
         latest = None
-    if os.path.exists(p):
+    if os.path.exists(p) and not (saved and latest is not None):
         with open(p) as fh:
             return latest, json.load(fh), True
     if latest is None:
@@ -189,7 +217,8 @@ def listing(ctx: Context) -> list[dict]:
     out = []
     for n in sorted(names | drafts):
         vs = ctx.registry.versions("notebook", n) if n in names else []
-        out.append({"name": n, "label": label_of(n, labels), "latest": vs[-1] if vs else None, "has_draft": n in drafts})
+        out.append({"name": n, "label": label_of(n, labels), "latest": vs[-1] if vs else None, "has_draft": n in drafts,
+                    "stamp": stamp(ctx, n, vs[-1] if vs else None)})
     return out
 
 

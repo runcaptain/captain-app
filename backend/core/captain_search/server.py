@@ -3294,24 +3294,34 @@ def notebook_export(name: str, format: str = "ipynb"):
 
 
 @app.get("/api/notebooks/{name:path}", dependencies=A)
-def notebook(name: str):
+def notebook(name: str, saved: bool = False):
+    """The notebook: its draft when it has one, else its saved version. `saved=true` reads the saved version
+    even when there is a draft. `stamp` changes whenever the notebook does (notebook.stamp): a screen that has it
+    open compares it with the list's to know it changed elsewhere."""
     try:
-        v, nb, draft = NB.load(ctx(), name)
+        v, nb, draft = NB.load(ctx(), name, saved=saved)
     except NotFound:
         v, nb, draft = None, NB.new_notebook(), True
-    return {"name": name, "label": NB.label_of(name, NB._labels(ctx())[0]), "version": v, "notebook": nb, "draft": draft}
+    return {"name": name, "label": NB.label_of(name, NB._labels(ctx())[0]), "version": v, "notebook": nb, "draft": draft,
+            "stamp": NB.stamp(ctx(), name, v)}
 
 
 @app.put("/api/notebooks/{name:path}/draft", dependencies=A)
 def notebook_draft(name: str, body: dict):
     NB.save_draft(ctx(), name, body["notebook"])
-    return {"ok": True}
+    return {"ok": True, "stamp": NB.stamp(ctx(), name)}
+
+
+@app.delete("/api/notebooks/{name:path}/draft", dependencies=A)
+def notebook_draft_discard(name: str):
+    """Throw the draft away: the notebook is its saved version again. For "Reload" when it changed elsewhere."""
+    return {"ok": True, "discarded": NB.discard_draft(ctx(), name), "stamp": NB.stamp(ctx(), name)}
 
 
 @app.post("/api/notebooks/{name:path}/save", dependencies=A)
 def notebook_save(name: str, body: dict):
     m = NB.save_revision(ctx(), name, body["notebook"], body.get("message", ""))
-    return {"version": m.version}
+    return {"version": m.version, "stamp": NB.stamp(ctx(), name, m.version)}
 
 
 @app.post("/api/notebooks/{name:path}/rename", dependencies=A)

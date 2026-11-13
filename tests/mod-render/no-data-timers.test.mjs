@@ -49,6 +49,8 @@ const LEDGER = [
   ['captain-nav/explorer.js', 'captain.scope', "the Explorer's own pick changed", 'signal'],
   ['captain-nav/teamviews.js', 'this.project === undefined', "until the services say where the project folder is. A changed view arrives on the live channel (\"views\")", 'starting'],
   ['captain-team/main.js', 'this.connectionRead', 'a sign-in in progress, asked about at the pace the sign-in service sets; and the connection until it has been read once', 'outside'],
+  ['captain-weights/main.js', 'this.takeOpen(cx)', 'a link from another screen to open a network', 'signal'],
+  ['captain-weights/main.js', 'this.walk.playing', 'the walk through a pass, stepping on by itself while it plays: an animation, it reads nothing', 'clock'],
   ['captain-engine/main.js', 'this.asking', 'the price of a training run while its form is open', 'typing'],
   ['captain-engine/main.js', 'captain.explorer.rev', 'a form said the Explorer changed', 'signal'],
   ['captain-evaluation/main.js', 'this.previewDue', 'a table previewed a moment after its path is typed, and the price of the run', 'typing'],
