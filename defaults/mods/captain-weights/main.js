@@ -64,9 +64,11 @@ export default class CaptainWeights extends View {
     this.show = shared("app.testWindow") === true ? (props()?.show ?? null) : null;
     this.model = this.show?.model ?? props()?.model ?? null; // the network open, or null for the list
     this.showLastEdit = this.show?.openEdit === "last";
+    this.showDeploy = this.show?.deploy === true; // press "Deploy this version" once the network is read
     this.list = null;       // the networks that can be opened
     this.net = null;        // the open network (shapes.js Network)
     this.problem = null;    // why it could not be read, in a sentence
+    this.servicesAnswered = false; // true once Captain's services have answered this page: until then it asks again
     this.inputAt = 0;       // which of the network's examples is the input
     this.run = null;        // the network run on that input: activations and weighted sums
     this.sel = null;        // the open neuron: {k: column, j: index}
@@ -99,13 +101,15 @@ export default class CaptainWeights extends View {
     // A link on another screen, the palette or `cst app open` cannot reach this page's props: it sets the shared
     // "open" value and selects this block. Looked at a few times a second, as the other screens do. Reads no data.
     cx.timer.every(300, (cx) => this.takeOpen(cx));
+    // Until Captain's services first answer (they may still be starting when the page opens), ask again by itself.
+    cx.timer.every(3000, (cx) => { if (!this.servicesAnswered) { if (this.model) this.read(cx); else this.loadList(cx); } });
     // The walk's clock: one step a beat while it plays. It moves the picture only, and reads nothing.
     cx.timer.every(1200, (cx) => { if (this.walk.playing) this.stepWalk(1, cx); });
     this.cx = cx;
   }
 
   loadList(cx) {
-    cx.spawn(async (cx) => { const r = await listNetworks(); this.list = r.data.networks; this.fromServices = r.data.fromServices; cx.notify(); });
+    cx.spawn(async (cx) => { const r = await listNetworks(); this.list = r.data.networks; this.fromServices = r.data.fromServices; if (r.data.fromServices) this.servicesAnswered = true; cx.notify(); });
   }
 
   /** What another screen asked this page to show: one network, or the list. Each request is handled once. */
@@ -142,6 +146,7 @@ export default class CaptainWeights extends View {
       // For the picture check (see `show` in init): open the last edit in the list, as a click on its line would.
       if (s.ok && this.showLastEdit) { const last = (s.data.events ?? []).filter((e) => e.kind === "edit").at(-1); if (last) this.openEdit = last.id; }
       if (s.ok) {
+        this.servicesAnswered = true; this.problem = null;
         // The services answer with the newest session on the model. When an agent opens one, the page moves to
         // it: its record replaces the old one, nothing in it pulses as new, and the page listens to its topic.
         if (this.session && this.session.id !== s.data.id) { this.seen = null; this.readFor = null; this.openEdit = null; this.test = null; this.stop?.(); this.stop = null; }
@@ -159,6 +164,7 @@ export default class CaptainWeights extends View {
       }
       if (this.net && !this.stop) this.stop = watchWeights(cx, model, this.session?.id, (cx) => this.read(cx));
       if (this.net) this.readAt = Date.now();
+      if (this.showDeploy && this.net && this.session) { this.showDeploy = false; startDeploy(this, cx, this.show?.into ?? null); }
       cx.notify();
       if (!this.net) return;
       // The test set's cost. A network kept in this mod is scored through the adapter. For the services' networks

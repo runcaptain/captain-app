@@ -310,6 +310,7 @@ props_of() {
     # The live views show what is really deployed in the scratch workspace (SHOT_PROJECT=1 SHOT_STAGED=1 stages a
     # model on this computer), with no sample: the screen listens to the change feed. `live` is changed from a
     # second process. `live-stop` and `live-remove` do the screen's own action, as a real job.
+    captain-deployments:weights-card) echo "{\"open\": \"${PID:-none}:staging\"}" ;;
     captain-deployments:live) echo '{}' ;;
     captain-deployments:live-stop) echo '{"press": "stop"}' ;;
     captain-deployments:live-remove) echo '{"press": "remove"}' ;;
@@ -327,6 +328,10 @@ props_of() {
     # edit-open: the same network afterwards, with that edit's line opened to its old and new values.
     captain-weights:agent-edit) echo '{"show": {"model": "tiny", "input": 1}}' ;;
     captain-weights:edit-open) echo '{"show": {"model": "tiny", "input": 1, "openEdit": "last"}}' ;;
+    # deploy (needs SHOT_PROJECT=1, which picks a project in the Explorer): the page presses "Deploy this version"
+    # on the services' digit reader, for real, to this computer. Pictures follow it to its address. The deployment
+    # is stopped when the check ends. captain-deployments:weights-card is the card it lands on.
+    captain-weights:deploy) echo '{"show": {"model": "digits", "input": 2, "deploy": true, "into": "shot-project"}}' ;;
     captain-weights:digits-plain) echo '{"show": {"model": "digits", "input": 2}}' ;;
     captain-weights:digits-neuron) echo '{"show": {"model": "digits", "input": 2, "neuron": [1, 4]}}' ;;
     captain-weights:digits-walk) echo '{"show": {"model": "digits", "input": 2, "walk": 3}}' ;;
@@ -462,6 +467,13 @@ EOF
     echo "$view: deployed again from a terminal at $(date +%T)"
     sleep 2; app shot "$OUT/captain-deployments-live-2s-after-deploy.png" >/dev/null || true
   fi
+  # A real deploy started by the page itself: a picture every few seconds until its line gives an address.
+  if [[ "$view" == captain-weights:deploy ]]; then
+    STAGED_PID=${PID:-}
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do sleep 4; app shot "$OUT/captain-weights-deploy-$i.png" >/dev/null || true; done
+    env -u CLAUDECODE CST_HOME=$CSTH "$CSTCMD" --json projects staging "$STAGED_PID" > "$OUT/captain-weights-deploy-staging.json" 2>&1 || true
+    echo "$view: 12 pictures, 4 s apart, after the page pressed Deploy"
+  fi
   # An agent's edit made by a second process (cst in a terminal) while the Weights page is open: its line and
   # the pulse on what it touched must show with nothing pressed and nothing asked of the window but the picture.
   if [[ "$view" == captain-weights:agent-edit ]]; then
@@ -482,7 +494,14 @@ EOF
   [[ "$view" == captain-project:hostsheet-* ]] && sleep 12
   if [[ "$view" == captain-project:ship || "$view" == captain-project:connect || "$view" == captain-project:ab || "$view" == captain-project:dep-* || "$view" == captain-project:host* ]]; then
     for _ in 1 2 3; do sleep 2; app do layout.select "{\"stack\":\"sections\",\"child\":\"$block\"}" >/dev/null || true; sleep 0.5; app shot "$OUT/${view/:/-}.png" >/dev/null; done
-    # An agent's edit made by a second process (cst in a terminal) while the Weights page is open: its line and
+    # A real deploy started by the page itself: a picture every few seconds until its line gives an address.
+  if [[ "$view" == captain-weights:deploy ]]; then
+    STAGED_PID=${PID:-}
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do sleep 4; app shot "$OUT/captain-weights-deploy-$i.png" >/dev/null || true; done
+    env -u CLAUDECODE CST_HOME=$CSTH "$CSTCMD" --json projects staging "$STAGED_PID" > "$OUT/captain-weights-deploy-staging.json" 2>&1 || true
+    echo "$view: 12 pictures, 4 s apart, after the page pressed Deploy"
+  fi
+  # An agent's edit made by a second process (cst in a terminal) while the Weights page is open: its line and
   # the pulse on what it touched must show with nothing pressed and nothing asked of the window but the picture.
   if [[ "$view" == captain-weights:agent-edit ]]; then
     env -u CLAUDECODE CST_HOME=$CSTH "$CSTCMD" weights open tiny --agent --name demo >/dev/null 2>&1 || echo "$view: cst weights open failed"
