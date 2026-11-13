@@ -116,6 +116,9 @@ def _ask(ctx: Context, src: dict) -> tuple[list[dict], str | None]:
         return [], str(e)[:300]
 
 
+ask = _ask  # the public name: ask this one place now, with nothing kept (the cloud watcher's call)
+
+
 # ---- the merge -----------------------------------------------------------------------------------
 
 
