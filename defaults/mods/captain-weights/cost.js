@@ -101,7 +101,7 @@ export function CostPanel(c, v, { width, height, compact = false }) {
       .child(div().text_size(12.5).font_semibold().child("Cost"))
       .child(div().id("wt-cost-says").flex_1().min_w(0).truncate().text_size(11.5).text_color(c.grey500).child(COST_WORDS[net.cost ?? "squared_error"] ?? COST_WORDS.squared_error)))
     .child(h_flex().gap(22).items_start()
-      .child(number("wt-cost-input", "This input", here == null ? "not run" : cost3(here), e?.name ?? ""))
+      .child(number("wt-cost-input", "This input", here == null ? "not run" : cost3(here), e ? v.inputName(e, v.inputAt) : ""))
       .child(number("wt-cost-test", t?.of ? `Test set (${count(t.of)} inputs)` : "Test set", !t ? "reading" : t.hidden ? "hidden" : t.unknown ? "not scored" : cost3(t.cost),
         !t ? "" : t.hidden ? "until the session is saved or closed" : t.unknown ? "an edit scores it" : t.of ? `${count(t.right)} of ${count(t.of)} right` : ""))
       .child(Curve(c, v, steps, curveW, 62)))

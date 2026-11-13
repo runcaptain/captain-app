@@ -121,7 +121,7 @@ def app_status():
 SOCKET = "captain-app.sock"
 HIDDEN = "(hidden)"
 # Section ids, in the words the screens use (defaults/AGENTS.md, "Words"; kit/view.js SCREENS).
-SCREENS = {"project": "Projects", "data": "Data", "notebooks": "Notebooks", "runs": "Runs", "deployments": "Deployments",
+SCREENS = {"project": "Projects", "data": "Data", "notebooks": "Notebooks", "runs": "Runs", "weights": "Weights", "deployments": "Deployments",
            "team": "Team"}
 # A session id in a row of search events names a shopper's visit, not a login, so it is not on this list.
 SECRET_KEY = re.compile(r"pass(word|phrase)?|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|"

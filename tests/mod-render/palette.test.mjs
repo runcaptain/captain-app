@@ -48,7 +48,8 @@ test('typing an earlier word finds the entry under its new name', () => {
 // sidebar, the palette and the New menu. `cst` still does their work from a terminal.
 test('the sidebar has only the agreed views, and the removed screens are nowhere in the palette', async () => {
   const labels = ITEMS.map((i) => i.label);
-  const AGREED = ['Projects', 'Data', 'Notebooks', 'Runs', 'Deployments', 'Team'];
+  // Weights joined on 2026-11-13, between Runs and Deployments, so a person finds it without the palette.
+  const AGREED = ['Projects', 'Data', 'Notebooks', 'Runs', 'Weights', 'Deployments', 'Team'];
   assert.deepEqual(labels, AGREED.filter((l) => labels.includes(l)), `views in the agreed order: ${labels}`);
   for (const must of ['Projects', 'Data', 'Notebooks', 'Runs', 'Team']) assert.ok(labels.includes(must), `${must} is a view`);
   assert.equal(labels[0], 'Projects', 'Projects is first: it is home');

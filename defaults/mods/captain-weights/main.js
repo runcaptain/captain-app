@@ -3,8 +3,8 @@
 // a small number on its neuron (draw.js).
 //
 // It is a page in the window's main slot (the layout's "weights" block), beside the terminal where the agent
-// runs: the whole point is watching the network while the agent edits it. It is not one of the sidebar's views.
-// It opens from the palette ("Open a network's weights"), from `cst app open weights[:<model>]`, or from any
+// runs: the whole point is watching the network while the agent edits it. It is the sidebar's Weights view.
+// It opens from the sidebar, the palette ("Open a network's weights"), from `cst app open weights[:<model>]`, or from any
 // screen that sets shared "captain.open" to {section: "weights", model?} and selects the block. With no model it
 // shows the list of networks.
 //
@@ -29,13 +29,25 @@ import { CostPanel } from "./cost.js";
 import { Timeline, ledgerFacts } from "./timeline.js";
 import { HandBlock, handTarget, dragSpan, TRACK_W, selectionPin, starters } from "./hand.js";
 import { askAgent } from "./kit/agent.js";
-import { WalkButtons, WalkSays, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
+import { DeployLine, startDeploy } from "./deploy.js";
+import { WalkButtons, walkWords, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
 const TIGHT = 640; // under this width nothing fits side by side: an open neuron takes the drawing's place, and the cost is one line
 const WIDE = 1100; // from this width the neuron panel is always beside the drawing; below it, only while a neuron is open
 const PULSE_BEAT_MS = 120, PULSE_BEATS = 22; // touched neurons and weights pulse for about 2.6 seconds after an event
 const BAND_H = 190; // the cost and the timeline, under the drawing
 const count = (n) => int(n);
+
+/** What to call an input a person can pick. A name the network gives in words is kept ("Both on"). A numbered
+ *  one from the services ("practice 0: 9", "example 1: 7") reads like code, so it is said plainly, counting from
+ *  1: "Picture 1: a 9" for a picture network, "Input 1" otherwise. `n` is its place in the list, from 0. */
+export function inputName(net, e, n) {
+  const m = /^(?:practice|example)\s+\d+(?::\s*(.+))?$/i.exec(String(e?.name ?? ""));
+  if (e?.name && !m) return e.name;
+  const what = net.inputShape ? "Picture" : "Input";
+  const label = m?.[1];
+  return label ? `${what} ${n + 1}: ${/^(8|11|18)/.test(label) ? "an" : "a"} ${label}` : `${what} ${n + 1}`;
+}
 
 /** "784 in, 10 out, 13,002 numbers": the network as a function, in one line. */
 export function factsOf(net) {
@@ -51,6 +63,7 @@ export default class CaptainWeights extends View {
     // test window (the app sets `app.testWindow` at each start): in a person's app a layout naming it does nothing.
     this.show = shared("app.testWindow") === true ? (props()?.show ?? null) : null;
     this.model = this.show?.model ?? props()?.model ?? null; // the network open, or null for the list
+    this.showLastEdit = this.show?.openEdit === "last";
     this.list = null;       // the networks that can be opened
     this.net = null;        // the open network (shapes.js Network)
     this.problem = null;    // why it could not be read, in a sentence
@@ -78,6 +91,7 @@ export default class CaptainWeights extends View {
     this.pz = new PanZoom("wt");
     this.width = 820; this.height = 760; // until the block says its size: about what is left beside the terminal
     this.askOpen = false;   // whether the three things to ask an agent are showing
+    this.deploy = null;     // a deploy started from here: {state, project, ref, address, text} (deploy.js)
     this.asked = 0;         // the `at` of the last request from another screen that was handled
     this.readAt = 0;        // when the page last read
     if (this.model) this.open(this.model, cx); else this.loadList(cx);
@@ -108,6 +122,7 @@ export default class CaptainWeights extends View {
     this.model = model; this.net = null; this.problem = null; this.sel = null; this.selW = null; this.inputAt = 0;
     this.session = null; this.test = null; this.openEdit = null; this.readFor = null; this.seen = null; this.pulse = null; this.note = null; this.undoNote = null; this.drag = null;
     this.walk = { step: 0, playing: false }; this.mode = "values";
+    this.stopDeploy?.(); this.stopDeploy = null; this.deploy = null;
     this.pz = new PanZoom("wt");
     this.stop?.(); this.stop = null;
     this.read(cx);
@@ -124,6 +139,8 @@ export default class CaptainWeights extends View {
       if (mine !== this.reads || model !== this.model) return;
       // No session, no numbers: say why in the services' own sentence when it is one.
       if (!s.ok && !this.net) { this.problem = plainError(s.error, "Captain couldn't read that network."); return cx.notify(); }
+      // For the picture check (see `show` in init): open the last edit in the list, as a click on its line would.
+      if (s.ok && this.showLastEdit) { const last = (s.data.events ?? []).filter((e) => e.kind === "edit").at(-1); if (last) this.openEdit = last.id; }
       if (s.ok) {
         // The services answer with the newest session on the model. When an agent opens one, the page moves to
         // it: its record replaces the old one, nothing in it pulses as new, and the page listens to its topic.
@@ -213,6 +230,8 @@ export default class CaptainWeights extends View {
       cx.notify();
     });
   }
+
+  inputName(e, n) { return inputName(this.net, e, n); }
 
   /** Show an edit: its three numbers under the cost, and its line open in the timeline. */
   openTimeline(id, cx) { this.openEdit = this.openEdit === id ? null : id; cx.notify(); }
@@ -346,6 +365,10 @@ export default class CaptainWeights extends View {
   header(c) {
     const net = this.net;
     const facts = ledgerFacts(this.session?.ledger);
+    // "From the weights alone" is a claim about work done. On a session where nothing has been edited there is
+    // no work to make it about, so it waits for the first edit: before that the line only says what is allowed.
+    const edited = (this.session?.edits?.length ?? 0) > 0 || (this.session?.events ?? []).some((e) => e.kind === "edit");
+    facts.alone = facts.alone && edited;
     const starterModel = String(this.model ?? "").startsWith("starter:");
     const live = !net || starterModel ? "" : liveState().state === "live" ? "Live" : updatedWords(this.readAt);
     return v_flex().id("wt-head").flex_none().px(20).pt(12).pb(10).gap(3).border_b(1).border_color(c.rule)
@@ -359,7 +382,10 @@ export default class CaptainWeights extends View {
         .child(div().flex_1())
         .when(Boolean(net), (e) => e
           .child(SendToAgent(c, "wt-send", selectionPin(this)))
-          .child(Button(c, "wt-ask", this.askOpen ? "Hide what to ask" : "Ask an agent", (_e, cx) => { this.askOpen = !this.askOpen; cx.notify(); }, { small: true })))
+          .child(Button(c, "wt-ask", this.askOpen ? "Hide what to ask" : "Ask an agent", (_e, cx) => { this.askOpen = !this.askOpen; cx.notify(); }, { small: true }))
+          // The services' networks can be deployed. The tiny network kept in this page lives only while it is open.
+          .when(!starterModel && Boolean(this.session), (x) => x.child(Button(c, "wt-deploy-go", "Deploy this version", (_e, cx) => startDeploy(this, cx),
+            { small: true, disabled: this.deploy?.state === "asking" || this.deploy?.state === "running" }))))
         .when(Boolean(live), (e) => e.child(div().id("wt-live").flex_none().text_size(11.5).text_color(c.grey500).child(live))))
       .when(Boolean(net), (e) => e
         .child(h_flex().gap(10).items_center()
@@ -411,7 +437,7 @@ export default class CaptainWeights extends View {
           const n = start + m, on = n === this.inputAt;
           return div().id(`wt-in-${n}`).h(26).px(9).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
             .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy)
-            .on_click((_e, cx) => this.pickInput(n, cx)).child(e.name);
+            .on_click((_e, cx) => this.pickInput(n, cx)).child(inputName(this.net, e, n));
         }))
         .when(start + PAGE < ex.length, (e) => e.child(step("wt-in-later", "Later inputs", start + PAGE))));
   }
@@ -453,7 +479,11 @@ export default class CaptainWeights extends View {
     const rail = tight ? (this.sel ? W - 40 : 0) : narrow ? (this.sel ? Math.min(296, Math.round(W * 0.4)) : 0) : 340;
     const headH = net ? 84 : 46;
     const cw = Math.max(200, W - 40 - (rail && !tight ? rail + 1 : 0));
-    const ch = Math.max(180, H - headH - 44 - (tight ? 72 : 38) - (this.askOpen ? 42 : 0) - BAND_H - 14);
+    // While the error walks backward, a strip under the drawing says what the step shows. It is never laid over
+    // the drawing, where it hid the network's last column.
+    const walking = Boolean(net) && this.walk.step > 0 && Boolean(this.grad);
+    const saysH = walking ? (W < 560 ? 76 : 58) : 0;
+    const ch = Math.max(180, H - headH - 44 - (tight ? 72 : 38) - (this.askOpen ? 42 : 0) - (this.deploy ? 34 : 0) - BAND_H - 14 - saysH);
     const costW = Math.min(520, Math.max(300, Math.round((W - 40) * 0.45)));
     return v_flex().id("weights").size_full().bg(c.canvas).text_color(c.navy).font_family(FONT)
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1 || Math.abs(size.height - this.height) > 1) { this.width = size.width; this.height = size.height; cx.notify(); } })
@@ -464,15 +494,18 @@ export default class CaptainWeights extends View {
         .child(div().text_size(12.5).line_height("19px").text_color(c.fail).child(this.problem))
         .child(Button(c, "wt-retry", "Try again", (_e, cx) => this.open(this.model, cx), { small: true }))))
       .when(Boolean(net), (e) => e
+        .when(Boolean(this.deploy), (x) => x.child(DeployLine(c, this)))
         .when(this.askOpen, (x) => x.child(this.askStrip(c)))
         .child(this.inputs(c))
         .child(this.controls(c))
         .child(h_flex().flex_1().min_h(0)
-          .when(!(tight && rail > 0), (x) => x.child(div().pl(20).child(NetworkCanvas(c, this.drawing(), { id: "wt", pz: this.pz, layout: this.layout, width: cw, height: ch, extra: [WalkSays(c, this, cw)].filter(Boolean), focus: this.sel, keep: this.keep,
+          .when(!(tight && rail > 0), (x) => x.child(div().pl(20).child(NetworkCanvas(c, this.drawing(), { id: "wt", pz: this.pz, layout: this.layout, width: cw, height: ch, focus: this.sel, keep: this.keep,
             onNeuron: (at, cx) => this.pickNeuron(at, cx), onWeight: (at, cx) => this.pickWeight(at, cx) }))))
           .when(rail > 0, (x) => x
             .when(!tight, (y) => y.child(div().w(1).h_full().flex_none().bg(c.rule)))
             .child(this.side(c, tight ? W : rail, narrow))))
+        .when(walking, (x) => x.child(div().id("wt-walk-says").h(saysH).flex_none().px(20).pt(6).overflow_hidden().text_size(12.5).line_height("18px")
+          .child(walkWords(net, this.run, this.grad, this.walk.step, net.examples[this.inputAt].y))))
         .when(!tight, (x) => x.child(h_flex().id("wt-band").h(BAND_H).flex_none().border_t(1).border_color(c.rule).bg(c.surface)
           .child(div().pl(20).pt(10).child(CostPanel(c, this, { width: costW, height: BAND_H - 12 })))
           .child(div().w(16).flex_none())

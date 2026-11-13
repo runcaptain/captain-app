@@ -58,14 +58,14 @@ test('their tiny network opens through a session, as a screen\'s look, and nothi
   assert.equal(data('whole:no-session').numbers, false, 'the fixture: no numbers without a session');
   assert.deepEqual(asked.map(([p, m]) => `${m} ${p}`), ['GET /api/weights/models/tiny/session', `GET /api/weights/models/tiny?session=${personal}&watch=1`]);
   assert.equal(textOf(h, 'wt-facts'), '2 in, 1 out, 13 numbers (9 weights and 4 biases). Made-up data');
-  assert.ok(h.text().includes('Input 1 of 24') && h.text().includes(net.examples[0].name));
+  assert.ok(h.text().includes('Input 1 of 24') && h.text().includes('Input 2') && !h.text().includes(net.examples[0].name), 'their numbered names are said plainly');
   assert.equal(h.byIdPrefix('wt-n-').length, 6);
   assert.equal(textOf(h, 'wt-cost-says').includes('cross-entropy'), true);
   // Nobody has scored it yet, and the page does not ask.
   assert.equal(textOf(h, 'wt-cost-test'), 'not scored');
   assert.ok(h.text().includes('Test set (300 inputs)'), 'the size of the set the services keep back');
   // A person's own fresh session: no sandbox, nothing run, no score shown.
-  assert.equal(textOf(h, 'wt-alone'), 'From the weights alone');
+  assert.equal(h.byIdPrefix('wt-alone').length, 0, 'nothing edited yet: no claim to make');
   assert.ok(textOf(h, 'wt-ledger').includes('Forward passes: 0 of 50 used'));
   // Nudges work on their network too: gradients for cross-entropy, worked out in the page.
   await h.click('wt-n-2-0');

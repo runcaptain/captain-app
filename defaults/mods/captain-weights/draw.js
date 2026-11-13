@@ -294,7 +294,8 @@ export function NetworkCanvas(c, s, o) {
       const a = L.centre(k, i), b = L.centre(k + 1, j);
       // Lines from different neurons cross: numbers from the first sit nearer their start than numbers from the
       // second, so two never land on the same spot.
-      const t = 0.2 + 0.2 * (i % 2);
+      // Staggered by where the line starts and where it ends, so no two numbers share a spot.
+      const t = 0.18 + 0.13 * (i % 2) + 0.06 * (j % 3);
       const [x, y] = pz.at(a.x + L.r + (b.x - a.x - L.r * 2) * t, a.y + (b.y - a.y) * t);
       const on = s.selW && s.selW.k === k && s.selW.j === j && s.selW.i === i;
       over.push(div().id(`${o.id}-w-${k}-${j}-${i}`).absolute().left(x - 16 * z).top(y - 8 * z).px(3 * z).bg(c.surface2).cursor_pointer()

@@ -322,6 +322,11 @@ props_of() {
     captain-weights:tiny-walk) echo '{"show": {"model": "starter:tiny", "input": 3, "walk": 2}}' ;;
     captain-weights:tiny-plain) echo '{"show": {"model": "starter:tiny", "input": 1}}' ;;
     captain-weights:services-tiny-neuron) echo '{"show": {"model": "tiny", "input": 1, "neuron": [1, 1], "ask": true}}' ;;
+    # agent-edit: the page on the services' tiny network; then, from a second process, an agent opens a session
+    # and makes one edit. Pictures are taken as the edit arrives (the pulse, the new line) and after.
+    # edit-open: the same network afterwards, with that edit's line opened to its old and new values.
+    captain-weights:agent-edit) echo '{"show": {"model": "tiny", "input": 1}}' ;;
+    captain-weights:edit-open) echo '{"show": {"model": "tiny", "input": 1, "openEdit": "last"}}' ;;
     captain-weights:digits-plain) echo '{"show": {"model": "digits", "input": 2}}' ;;
     captain-weights:digits-neuron) echo '{"show": {"model": "digits", "input": 2, "neuron": [1, 4]}}' ;;
     captain-weights:digits-walk) echo '{"show": {"model": "digits", "input": 2, "walk": 3}}' ;;
@@ -457,6 +462,17 @@ EOF
     echo "$view: deployed again from a terminal at $(date +%T)"
     sleep 2; app shot "$OUT/captain-deployments-live-2s-after-deploy.png" >/dev/null || true
   fi
+  # An agent's edit made by a second process (cst in a terminal) while the Weights page is open: its line and
+  # the pulse on what it touched must show with nothing pressed and nothing asked of the window but the picture.
+  if [[ "$view" == captain-weights:agent-edit ]]; then
+    env -u CLAUDECODE CST_HOME=$CSTH "$CSTCMD" weights open tiny --agent --name demo >/dev/null 2>&1 || echo "$view: cst weights open failed"
+    sleep 2
+    env -u CLAUDECODE CST_HOME=$CSTH "$CSTCMD" weights edit scale --layer 1 --neuron 2 --factor 0.5 --why "this neuron drowns out the other two" >/dev/null 2>&1 || echo "$view: cst weights edit failed"
+    echo "$view: an agent's edit made from a terminal at $(date +%T)"
+    sleep 0.7; app shot "$OUT/captain-weights-agent-edit-arriving.png" >/dev/null || true
+    sleep 0.6; app shot "$OUT/captain-weights-agent-edit-arriving-2.png" >/dev/null || true
+    sleep 3; app shot "$OUT/captain-weights-agent-edit-after.png" >/dev/null || true
+  fi
   PREV_SUM=$(shasum "$OUT/${view/:/-}.png" | cut -d' ' -f1)
   errs=$(app status | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('errors', [])))")
   if [[ $ok == 1 && $errs == 0 ]]; then echo "$view: drawn ($OUT/${view/:/-}.png)"; else echo "$view: BLANK or errors ($errs) ($OUT/${view/:/-}.png)"; app status; fail=1; fi
@@ -466,7 +482,18 @@ EOF
   [[ "$view" == captain-project:hostsheet-* ]] && sleep 12
   if [[ "$view" == captain-project:ship || "$view" == captain-project:connect || "$view" == captain-project:ab || "$view" == captain-project:dep-* || "$view" == captain-project:host* ]]; then
     for _ in 1 2 3; do sleep 2; app do layout.select "{\"stack\":\"sections\",\"child\":\"$block\"}" >/dev/null || true; sleep 0.5; app shot "$OUT/${view/:/-}.png" >/dev/null; done
-    PREV_SUM=$(shasum "$OUT/${view/:/-}.png" | cut -d' ' -f1)
+    # An agent's edit made by a second process (cst in a terminal) while the Weights page is open: its line and
+  # the pulse on what it touched must show with nothing pressed and nothing asked of the window but the picture.
+  if [[ "$view" == captain-weights:agent-edit ]]; then
+    env -u CLAUDECODE CST_HOME=$CSTH "$CSTCMD" weights open tiny --agent --name demo >/dev/null 2>&1 || echo "$view: cst weights open failed"
+    sleep 2
+    env -u CLAUDECODE CST_HOME=$CSTH "$CSTCMD" weights edit scale --layer 1 --neuron 2 --factor 0.5 --why "this neuron drowns out the other two" >/dev/null 2>&1 || echo "$view: cst weights edit failed"
+    echo "$view: an agent's edit made from a terminal at $(date +%T)"
+    sleep 0.7; app shot "$OUT/captain-weights-agent-edit-arriving.png" >/dev/null || true
+    sleep 0.6; app shot "$OUT/captain-weights-agent-edit-arriving-2.png" >/dev/null || true
+    sleep 3; app shot "$OUT/captain-weights-agent-edit-after.png" >/dev/null || true
+  fi
+  PREV_SUM=$(shasum "$OUT/${view/:/-}.png" | cut -d' ' -f1)
   fi
   # captain-project:pins: the page pins two things the way "Send to agent" does, one after the other, through the
   # app's own file write. Both must be in the context file: the second pin used to be refused, because the app

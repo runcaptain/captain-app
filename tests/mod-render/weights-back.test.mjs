@@ -120,6 +120,20 @@ test('the chain rule for a picked weight: three named factors, and their product
   assert.equal(big.product, signed(measured(dn, de.x, de.y, 0, 3, lit)));
 });
 
+test('the walk\'s sentence has its own strip under the drawing, never over it', async () => {
+  const h = await page(TINY);
+  const height = () => h.byIdPrefix('wt-canvas')[0].call('h')[0];
+  const h0 = height();
+  await h.click('wt-walk-next');
+  const says = h.byIdPrefix('wt-walk-says')[0];
+  assert.ok(!says.call('absolute'), 'not laid over anything');
+  assert.equal(height(), h0 - says.call('h')[0], 'the drawing gives it the room');
+  const inCanvas = []; (function w(e, inside) { if (!e || typeof e !== 'object') return; const now = inside || e.call?.('id')?.[0] === 'wt-canvas'; if (now && e.call?.('id')?.[0] === 'wt-walk-says') inCanvas.push(e); for (const k of e.kids ?? []) w(k, now); })(h.mod.render(h.cx), false);
+  assert.equal(inCanvas.length, 0, 'the strip is not inside the drawing');
+  await h.click('wt-mode-values');
+  assert.equal(height(), h0);
+});
+
 test('beside a terminal the walk opens no panel by itself: the drawing keeps its width', async () => {
   const h = await page(TINY);
   const w0 = h.byIdPrefix('wt-canvas')[0].call('w')[0];
