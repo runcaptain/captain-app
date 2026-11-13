@@ -370,7 +370,7 @@ export class Ship {
   mark(c, st) {
     return st.done
       ? div().id(`ship-done-${st.id}`).size(22).flex_none().flex().items_center().justify_center().rounded_full().bg(c.goodLight).text_color(c.good).child(svg(icon("check")).size(13))
-      : div().size(22).flex_none().flex().items_center().justify_center().rounded_full().border_1().border_color(c.grey300).text_size(12.5).font_semibold().text_color(c.grey900).child(String(st.n));
+      : div().size(22).flex_none().flex().items_center().justify_center().rounded_full().border_1().border_color(c.grey300).text_size(13).font_semibold().text_color(c.grey900).child(String(st.n));
   }
 
   row(c, st, action, below) {
@@ -378,15 +378,15 @@ export class Ship {
       .child(h_flex().p(12).gap(12).items_center().flex_wrap()
         .child(this.mark(c, st))
         .child(v_flex().flex_1().min_w(280).gap(1)
-          .child(div().text_size(12.5).font_semibold().text_color(c.navy).child(st.title))
-          .child(div().id(`ship-text-${st.id}`).text_size(12.5).line_height("18px").text_color(c.grey500).child(this.w(st.text))))
+          .child(div().text_size(13).font_semibold().text_color(c.navy).child(st.title))
+          .child(div().id(`ship-text-${st.id}`).text_size(13).line_height("18px").text_color(c.grey500).child(this.w(st.text))))
         .when(Boolean(action), (e) => e.child(h_flex().flex_none().gap(6).items_center().child(action))))
       .when(Boolean(below), (e) => e.child(below));
   }
 
   stopBox(c) {
     return h_flex().id("ship-stop-ask").p(10).gap(10).items_center().bg(c.surface2).border_1().border_color(c.rule)
-      .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child("Stop it? The address goes away. What it answered is kept."))
+      .child(div().flex_1().min_w(0).text_size(13).text_color(c.grey900).child("Stop it? The address goes away. What it answered is kept."))
       .child(Button(c, "ship-stop-yes", "Stop it", (_e, cx) => this.stop(cx), { small: true }))
       .child(Button(c, "ship-stop-no", "Keep it running", (_e, cx) => { this.stopAsk = false; cx.notify(); }, { small: true }));
   }
@@ -395,18 +395,18 @@ export class Ship {
     const f = x.image ? this.thumbs.get(x.image) : null;
     const pic = f ? image(`cache/thumbs/${f}`).w(40).h(40).flex_none() : div().w(40).h(40).flex_none().bg(c.surface2);
     return h_flex().id(id).gap(8).py(5).items_center().border_t(1).border_color(c.rule)
-      .child(div().w(18).flex_none().text_size(12.5).text_color(c.grey500).child(String(x.position)))
+      .child(div().w(18).flex_none().text_size(13).text_color(c.grey500).child(String(x.position)))
       .when(Boolean(x.image), (e) => e.child(pic))
       .child(v_flex().flex_1().min_w(0)
-        .child(div().truncate().text_size(12.5).text_color(c.navy).child(x.title))
-        .when(x.price != null, (e) => e.child(div().text_size(12.5).text_color(c.grey500).child(`$${Number(x.price).toFixed(2)}`)))
-        .when(Boolean(x.why), (e) => e.child(div().id(`${id}-why`).text_size(12.5).text_color(c.blue).cursor_pointer()
+        .child(div().truncate().text_size(13).text_color(c.navy).child(x.title))
+        .when(x.price != null, (e) => e.child(div().text_size(13).text_color(c.grey500).child(`$${Number(x.price).toFixed(2)}`)))
+        .when(Boolean(x.why), (e) => e.child(div().id(`${id}-why`).text_size(13).text_color(c.blue).cursor_pointer()
           .on_click((_e, cx) => { if (this.whyOpen.has(id)) this.whyOpen.delete(id); else this.whyOpen.add(id); cx.notify(); }).child("Why is this here?")))
         .when(Boolean(x.why) && this.whyOpen.has(id), (e) => e.child(v_flex().id(`${id}-signals`).gap(1).pt(2)
-          .children(x.why.map((w, k) => div().id(`${id}-signal-${k}`).text_size(12.5).line_height("18px").text_color(c.grey900)
+          .children(x.why.map((w, k) => div().id(`${id}-signal-${k}`).text_size(13).line_height("18px").text_color(c.grey900)
             .child(`${Math.round(w.weight * 100)}% of what the model learned: ${w.label} (${Number(w.value).toFixed(2)})`))))))
       // Against the baseline: where it was. Words, so it reads the same in a screen reader and a picture.
-      .when(Boolean(x.move) && x.move !== "same", (e) => e.child(div().id(`${id}-move`).flex_none().px(6).h(18).flex().items_center().text_size(12.5)
+      .when(Boolean(x.move) && x.move !== "same", (e) => e.child(div().id(`${id}-move`).flex_none().px(6).h(18).flex().items_center().text_size(13)
         .bg(x.move === "down" ? c.failLight : c.goodLight).text_color(x.move === "down" ? c.fail : c.good)
         .child(x.move === "new" ? "new" : `${x.move} ${Math.abs(x.was - x.position)}`)));
   }
@@ -414,12 +414,12 @@ export class Ship {
   side(c, side, name, id) {
     return v_flex().id(id).flex_1().min_w(240).p(10).gap(2).bg(c.surface).border_1().border_color(c.rule)
       .child(h_flex().gap(6).items_center()
-        .child(div().text_size(12.5).font_semibold().child(name))
+        .child(div().text_size(13).font_semibold().child(name))
         .child(Badge(c, short(side.model_version)))
         .child(div().flex_1())
-        .child(div().id(`${id}-ms`).text_size(12.5).text_color(c.grey500).child(`${Number(side.ms).toFixed(side.ms < 10 ? 1 : 0)} ms`)))
+        .child(div().id(`${id}-ms`).text_size(13).text_color(c.grey500).child(`${Number(side.ms).toFixed(side.ms < 10 ? 1 : 0)} ms`)))
       .children(side.results.map((x, i) => this.resultCard(c, x, `${id}-r${i}`)))
-      .when(!side.results.length, (e) => e.child(div().py(8).text_size(12.5).text_color(c.grey500).child("Nothing found for this query.")));
+      .when(!side.results.length, (e) => e.child(div().py(8).text_size(13).text_color(c.grey500).child("Nothing found for this query.")));
   }
 
   // ---- connect your site, and shadow mode -----------------------------------------------------------------------
@@ -429,35 +429,35 @@ export class Ship {
     const k = this.conn, names = Object.keys(k.snippets ?? {});
     const open = this.code && names.includes(this.code) ? this.code : null;
     const below = v_flex().pl(46).pr(12).pb(12).gap(8)
-      .child(h_flex().gap(10).items_start().text_size(12.5)
+      .child(h_flex().gap(10).items_start().text_size(13)
         .child(div().w(70).flex_none().text_color(c.grey500).child("Address"))
-        .child(div().id("ship-connect-address").flex_1().min_w(0).font_family(MONO).text_size(12.5).text_color(c.navy).child(String(k.address ?? ""))))
-      .child(div().id("ship-connect-where").text_size(12.5).line_height("18px").text_color(c.grey900).child(k.text))
+        .child(div().id("ship-connect-address").flex_1().min_w(0).font_family(MONO).text_size(13).text_color(c.navy).child(String(k.address ?? ""))))
+      .child(div().id("ship-connect-where").text_size(13).line_height("18px").text_color(c.grey900).child(k.text))
       .when(Boolean(k.blocked), (e) => e.child(h_flex().id("ship-connect-blocked").gap(6).items_start().p(8).bg(c.warnLight)
         .child(svg(icon("triangle-alert")).size(13).mt(2).flex_none().text_color(c.warn))
-        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.navy).child(k.blocked))))
+        .child(div().flex_1().min_w(0).text_size(13).line_height("18px").text_color(c.navy).child(k.blocked))))
       .child(h_flex().id("ship-connect-live").gap(6).items_center()
         .child(svg(icon(k.connected ? "circle-check" : "clock")).size(13).flex_none().text_color(k.connected ? c.good : c.grey500))
-        .child(div().text_size(12.5).font_medium().text_color(k.connected ? c.good : c.grey900).child(k.live))
-        .when(k.test + k.simulated > 0, (e) => e.child(div().id("ship-connect-other").text_size(12.5).text_color(c.grey500)
+        .child(div().text_size(13).font_medium().text_color(k.connected ? c.good : c.grey900).child(k.live))
+        .when(k.test + k.simulated > 0, (e) => e.child(div().id("ship-connect-other").text_size(13).text_color(c.grey500)
           .child(`Not counted: ${[k.real && k.unlabelled ? `${k.unlabelled} unlabelled` : null, k.test ? `${k.test} test` : null, k.simulated ? `${k.simulated} simulated` : null].filter(Boolean).join(", ")}.`))))
       .child(h_flex().flex_wrap().gap(6).items_center()
         .child(Button(c, "ship-connect-key", "Copy the key", (_e, cx) => this.copyKey(cx), { small: true }))
         .child(Button(c, "ship-connect-test", "Send a test request", (_e, cx) => this.act(cx, "/staging/test", {}, (d) => d.text), { small: true }))
         .children(names.map((n) => this.pick1(c, `ship-connect-code-${n.replace(/ /g, "-")}`, n === "javascript" ? "JavaScript" : n === "python" ? "Python" : n, open === n, () => { this.code = open === n ? null : n; }))))
-      .child(div().id("ship-connect-key-note").text_size(12.5).line_height("18px").text_color(c.grey500).child(k.key_note))
+      .child(div().id("ship-connect-key-note").text_size(13).line_height("18px").text_color(c.grey500).child(k.key_note))
       .when(Boolean(open), (e) => e.child(v_flex().id("ship-connect-snippet").gap(4)
-        .child(div().p(10).bg(c.surface2).border_1().border_color(c.rule).font_family(MONO).text_size(12.5).line_height("18px").text_color(c.navy)
+        .child(div().p(10).bg(c.surface2).border_1().border_color(c.rule).font_family(MONO).text_size(13).line_height("18px").text_color(c.navy)
           .children(String(k.snippets[open]).split("\n").map((ln) => div().child(ln === "" ? " " : ln))))
         .child(h_flex().gap(8).items_center()
           .child(Button(c, "ship-connect-copy", "Copy this code", (_e, cx) => { cx.write_to_clipboard?.(k.snippets[open]); this.note = { tone: "good", text: "The code is on your clipboard. It reads the key from CAPTAIN_STAGING_KEY, so the key is never in your code." }; cx.notify(); }, { small: true }))
-          .child(div().id("ship-connect-fallback").flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey900).child(k.fallback)))))
+          .child(div().id("ship-connect-fallback").flex_1().min_w(0).text_size(13).line_height("18px").text_color(c.grey900).child(k.fallback)))))
       // One address a model, so a team's own testing tool can send each group of shoppers to its model.
       .when((k.addresses ?? []).length > 0, (e) => e.child(v_flex().id("ship-addresses").gap(4)
-        .child(div().id("ship-own-tests").text_size(12.5).line_height("18px").text_color(c.grey900).child(k.own_tests ?? ""))
+        .child(div().id("ship-own-tests").text_size(13).line_height("18px").text_color(c.grey900).child(k.own_tests ?? ""))
         .children(k.addresses.map((a) => h_flex().id(`ship-address-${a.model}`).gap(10).items_center().flex_wrap()
-          .child(div().w(150).flex_none().text_size(12.5).text_color(c.grey500).child(`${a.role}, ${short(a.model_version)}`))
-          .child(div().id(`ship-address-${a.model}-value`).flex_1().min_w(0).font_family(MONO).text_size(12.5).text_color(c.navy).child(a.address))
+          .child(div().w(150).flex_none().text_size(13).text_color(c.grey500).child(`${a.role}, ${short(a.model_version)}`))
+          .child(div().id(`ship-address-${a.model}-value`).flex_1().min_w(0).font_family(MONO).text_size(13).text_color(c.navy).child(a.address))
           .child(Button(c, `ship-address-${a.model}-copy`, "Copy", (_e, cx) => this.copy(cx, a.address, "The address is on your clipboard."), { small: true }))))))
       .when(this.both(), (e) => e.child(this.shadowBox(c)));
     return this.row(c, st, null, below);
@@ -469,26 +469,26 @@ export class Ship {
     const r = this.shadow ?? { status: "none" }, on = r.status === "running";
     return v_flex().id("ship-shadow").p(10).gap(6).bg(c.surface2).border_1().border_color(c.rule)
       .child(h_flex().gap(8).items_center()
-        .child(div().text_size(12.5).font_semibold().child("Test quietly with a copy of your site's requests"))
+        .child(div().text_size(13).font_semibold().child("Test quietly with a copy of your site's requests"))
         .when(on, (e) => e.child(Badge(c, "on", "good")))
         .when(Boolean(r.label) && r.status !== "none", (e) => e.child(Badge(c, r.label, r.evidence === "REAL_TRAFFIC" ? "good" : "warn")))
         .child(div().flex_1())
         .when(!on, (e) => e.child(Button(c, "ship-shadow-start", r.status === "none" ? "Start the quiet test" : "Start it again", (_e, cx) => this.act(cx, "/shadow/start", {}, this.w("The quiet test is on. Shoppers keep getting the baseline's results.")), { small: true })))
         .when(on, (e) => e.child(Button(c, "ship-shadow-stop", "End the quiet test", (_e, cx) => this.act(cx, "/shadow/stop", {}, "The quiet test is off."), { small: true }))))
-      .child(div().id("ship-shadow-text").text_size(12.5).line_height("18px").text_color(c.grey900)
+      .child(div().id("ship-shadow-text").text_size(13).line_height("18px").text_color(c.grey900)
         .child(this.w(r.status === "none" ? "Your site keeps showing the baseline's results. The candidate ranks a copy of the same requests silently, and Captain shows what it would have changed. No shopper sees the candidate, nobody is assigned to anything, and nothing a shopper does is collected." : r.text)))
-      .when(Boolean(r.ms), (e) => e.child(div().id("ship-shadow-ms").text_size(12.5).text_color(c.grey900)
+      .when(Boolean(r.ms), (e) => e.child(div().id("ship-shadow-ms").text_size(13).text_color(c.grey900)
         .child(`Response time, 95 in 100 requests under: ${r.ms.baseline.p95} ms baseline, ${r.ms.candidate.p95} ms candidate.`)))
       .when((r.queries ?? []).length > 0, (e) => e.child(v_flex().id("ship-shadow-queries").gap(2)
-        .child(div().text_size(12.5).font_semibold().text_color(c.navy).child("Queries that differ most. Click one to open it in Try it."))
+        .child(div().text_size(13).font_semibold().text_color(c.navy).child("Queries that differ most. Click one to open it in Try it."))
         .children(r.queries.slice(0, 6).map((q, i) => h_flex().id(`ship-shadow-q${i}`).gap(8).items_center().cursor_pointer().hover((x) => x.bg(c.surface))
           .on_click((_e, cx) => this.tryQuery(cx, q.query))
-          .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(c.blue).child(q.query))
-          .child(div().flex_none().text_size(12.5).text_color(c.grey500).child(`${this.w(q.text ?? `${q.moved} of the top 10 in another place.`)} ${q.requests} request${q.requests === 1 ? "" : "s"}.`))))));
+          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(c.blue).child(q.query))
+          .child(div().flex_none().text_size(13).text_color(c.grey500).child(`${this.w(q.text ?? `${q.moved} of the top 10 in another place.`)} ${q.requests} request${q.requests === 1 ? "" : "s"}.`))))));
   }
 
   pick1(c, id, label, on, onPick) {
-    return div().id(id).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+    return div().id(id).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(13).border_1()
       .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy)
       .on_click((_e, cx) => { onPick(); cx.notify(); }).child(label);
   }
@@ -593,42 +593,42 @@ export class Ship {
   /** Requests, newest first, and the one that is open beside them. */
   requestsTab(c) {
     const d = this.reqs, open = this.reqOpen;
-    const cell = (w, t, mono) => div().w(w).flex_none().truncate().text_size(12.5).child(String(t ?? ""));
+    const cell = (w, t, mono) => div().w(w).flex_none().truncate().text_size(13).child(String(t ?? ""));
     const list = v_flex().id("dep-requests").flex_1().min_w(360)
       .child(h_flex().gap(8).items_center().pb(6)
-        .child(div().id("dep-requests-text").flex_1().min_w(0).text_size(12.5).text_color(c.grey500).child(d ? d.text : "Reading the request log..."))
+        .child(div().id("dep-requests-text").flex_1().min_w(0).text_size(13).text_color(c.grey500).child(d ? d.text : "Reading the request log..."))
         .when(this.running(), (e) => e.child(RefreshMark(c, "dep-requests-refresh", this.refreshing === "requests", (_e, cx) => this.refreshNow(cx, "requests")))))
       .when(Boolean(d?.rows?.length), (e) => e
         .child(h_flex().gap(8).py(4).text_color(c.grey500).border_b(1).border_color(c.rule)
-          .child(cell(92, "Time")).child(div().flex_1().min_w(80).text_size(12.5).child("Query")).child(cell(80, "Answered by")).child(cell(64, "Took")).child(cell(74, "Traffic")).child(cell(70, "Status")))
+          .child(cell(92, "Time")).child(div().flex_1().min_w(80).text_size(13).child("Query")).child(cell(80, "Answered by")).child(cell(64, "Took")).child(cell(74, "Traffic")).child(cell(70, "Status")))
         .children(d.rows.map((r, i) => h_flex().id(`dep-request-${i}`).gap(8).py(5).items_center().cursor_pointer().border_b(1).border_color(c.rule)
           .when(open?.id === r.request_id, (x) => x.bg(c.blueLight)).hover((x) => x.bg(c.surface2))
           .on_click((_e, cx) => this.openRequest(cx, r.request_id))
-          .child(cell(92, clock(r.ts), true)).child(div().flex_1().min_w(80).truncate().text_size(12.5).text_color(c.navy).child(r.query ?? r.summary ?? ""))
+          .child(cell(92, clock(r.ts), true)).child(div().flex_1().min_w(80).truncate().text_size(13).text_color(c.navy).child(r.query ?? r.summary ?? ""))
           .child(cell(80, r.arm === "baseline" ? "Baseline" : "Candidate")).child(cell(64, `${Number(r.ms).toFixed(1)} ms`)).child(cell(74, r.traffic))
-          .child(div().w(70).flex_none().text_size(12.5).text_color(c.good).child("Answered")))));
+          .child(div().w(70).flex_none().text_size(13).text_color(c.good).child("Answered")))));
     const x = open?.data;
     const panel = !open ? null : v_flex().id("dep-request-panel").w(360).flex_none().p(10).gap(6).bg(c.surface2).border_1().border_color(c.rule)
       .child(h_flex().gap(6).items_center()
-        .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().child(x?.query ?? x?.summary ?? "Opening..."))
+        .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(x?.query ?? x?.summary ?? "Opening..."))
         .child(Button(c, "dep-request-close", "Close", (_e, cx) => { this.reqOpen = null; cx.notify(); }, { small: true })))
-      .when(Boolean(open.problem), (e) => e.child(div().text_size(12.5).text_color(c.fail).child(open.problem)))
+      .when(Boolean(open.problem), (e) => e.child(div().text_size(13).text_color(c.fail).child(open.problem)))
       .when(Boolean(x), (e) => e
-        .child(div().id("dep-request-meta").text_size(12.5).line_height("18px").text_color(c.grey900)
+        .child(div().id("dep-request-meta").text_size(13).line_height("18px").text_color(c.grey900)
           .child(`${x.arm === "baseline" ? "Baseline" : "Candidate"} ${short(x.model_version)} answered. ${x.time_text ?? `${Number(x.ms).toFixed(1)} ms at the endpoint.`} ${x.traffic === "real" ? "Real traffic." : x.traffic === "test" ? "Test traffic." : x.traffic === "simulated" ? "Simulated." : "Unlabelled: it didn't say it was a shopper."}`))
-        .child(h_flex().gap(6).items_center().child(div().text_size(12.5).text_color(c.grey500).child("Request")).child(div().id("dep-request-id").font_family(MONO).text_size(12.5).child(x.request_id)))
+        .child(h_flex().gap(6).items_center().child(div().text_size(13).text_color(c.grey500).child("Request")).child(div().id("dep-request-id").font_family(MONO).text_size(13).child(x.request_id)))
         .children(x.results.map((p, i) => v_flex().id(`dep-request-r${i}`).py(4).border_t(1).border_color(c.rule)
-          .child(h_flex().gap(6).child(div().w(18).flex_none().text_size(12.5).text_color(c.grey500).child(String(p.position))).child(div().flex_1().min_w(0).truncate().text_size(12.5).child(p.title))
+          .child(h_flex().gap(6).child(div().w(18).flex_none().text_size(13).text_color(c.grey500).child(String(p.position))).child(div().flex_1().min_w(0).truncate().text_size(13).child(p.title))
             .when((p.events ?? []).length > 0, (y) => y.child(Badge(c, p.events[p.events.length - 1], "good"))))
-          .when(Boolean(p.signals), (y) => y.child(div().pl(24).text_size(12.5).line_height("18px").text_color(c.grey500)
+          .when(Boolean(p.signals), (y) => y.child(div().pl(24).text_size(13).line_height("18px").text_color(c.grey500)
             .child(p.signals.filter((g) => g.value).slice(0, 4).map((g) => `${g.label} ${Number(g.value).toFixed(2)}`).join(", "))))))
-        .when(Boolean(x.shadow), (e2) => e2.child(div().id("dep-request-shadow").text_size(12.5).text_color(c.grey900)
+        .when(Boolean(x.shadow), (e2) => e2.child(div().id("dep-request-shadow").text_size(13).text_color(c.grey900)
           .child(this.w(x.shadow.same ? "Shadowed: the candidate would have returned the same top 10." : "Shadowed: the candidate would have returned a different top 10."))))
         .when((x.lines ?? []).length > 0, (e2) => e2.child(v_flex().id("dep-request-lines").pt(6).gap(1).border_t(1).border_color(c.rule)
-          .child(div().pb(2).text_size(12.5).text_color(c.grey500).child("Log lines of this request"))
+          .child(div().pb(2).text_size(13).text_color(c.grey500).child("Log lines of this request"))
           .children(x.lines.map((ln, i) => h_flex().id(`dep-request-line-${i}`).gap(8).items_start()
-            .child(div().w(84).flex_none().font_family(MONO).text_size(12.5).text_color(c.grey500).child(clock(ln.ts)))
-            .child(div().flex_1().min_w(0).font_family(MONO).text_size(12.5).line_height("18px").text_color(ln.level === "error" ? c.fail : c.grey900).child(ln.text)))))));
+            .child(div().w(84).flex_none().font_family(MONO).text_size(13).text_color(c.grey500).child(clock(ln.ts)))
+            .child(div().flex_1().min_w(0).font_family(MONO).text_size(13).line_height("18px").text_color(ln.level === "error" ? c.fail : c.grey900).child(ln.text)))))));
     return h_flex().id("dep-requests-wrap").w_full().p(12).gap(12).items_start().bg(c.surface).border_1().border_color(c.rule).child(list).when(Boolean(panel), (e) => e.child(panel));
   }
 
@@ -653,19 +653,19 @@ export class Ship {
   versionsTab(c) {
     const d = this.vers;
     return v_flex().id("dep-versions").w_full().p(12).gap(2).bg(c.surface).border_1().border_color(c.rule)
-      .child(div().pb(6).text_size(12.5).text_color(c.grey500).child(d ? d.text : "Reading the versions..."))
+      .child(div().pb(6).text_size(13).text_color(c.grey500).child(d ? d.text : "Reading the versions..."))
       .children((d?.rows ?? []).map((r) => v_flex().id(`dep-version-${r.n}`).py(6).border_t(1).border_color(c.rule)
         .child(h_flex().gap(10).items_center().flex_wrap()
-          .child(div().w(36).flex_none().text_size(12.5).font_semibold().child(`v${r.n}`))
-          .child(div().flex_1().min_w(160).truncate().text_size(12.5).text_color(c.navy).child(short(r.model_version)))
-          .when(r.live, (e) => e.child(div().flex_none().text_size(12.5).text_color(c.good).child("Running now")))
-          .child(div().flex_none().text_size(12.5).text_color(c.grey500).child(`${String(r.at).slice(0, 16).replace("T", " ")} by ${r.by ?? "someone"}`))
+          .child(div().w(36).flex_none().text_size(13).font_semibold().child(`v${r.n}`))
+          .child(div().flex_1().min_w(160).truncate().text_size(13).text_color(c.navy).child(short(r.model_version)))
+          .when(r.live, (e) => e.child(div().flex_none().text_size(13).text_color(c.good).child("Running now")))
+          .child(div().flex_none().text_size(13).text_color(c.grey500).child(`${String(r.at).slice(0, 16).replace("T", " ")} by ${r.by ?? "someone"}`))
           .when(Boolean(r.can_roll_back) && !this.busy, (e) => e.child(Button(c, `dep-version-${r.n}-back`, "Roll back", (_e, cx) => { this.verAsk = r.n; cx.notify(); }, { small: true }))))
         .when(this.verAsk === r.n, (e) => e.child(h_flex().id("dep-version-ask").mt(6).p(8).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
           .child(v_flex().flex_1().min_w(0).gap(6)
-            .child(div().text_size(12.5).text_color(c.grey900).child(`Put ${short(r.model_version)} back? What runs now keeps answering until it does. Say why, so the next person knows.`))
+            .child(div().text_size(13).text_color(c.grey900).child(`Put ${short(r.model_version)} back? What runs now keeps answering until it does. Say why, so the next person knows.`))
             .child(h_flex().gap(6).flex_wrap().children(["It gives worse results", "It is too slow", "It is failing requests", "It was deployed by mistake", "Another reason"].map((why, i) =>
-              div().id(`dep-version-why-${i}`).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+              div().id(`dep-version-why-${i}`).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(13).border_1()
                 .border_color(this.verWhy === why ? c.blue : c.grey300).bg(this.verWhy === why ? c.blueLight : c.surface).text_color(this.verWhy === why ? c.blue : c.navy)
                 .on_click((_e, cx) => { this.verWhy = why; cx.notify(); }).child(why)))))
           .child(Button(c, "dep-version-yes", "Roll back", (_e, cx) => this.rollBackTo(cx, r.n), { small: true, disabled: !this.verWhy }))
@@ -681,15 +681,15 @@ export class Ship {
       if (r.ok && this.backs) this.backs.auto = r.data;
       cx.notify();
     });
-    const chip = (id, label, on, click) => div().id(id).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
+    const chip = (id, label, on, click) => div().id(id).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(13).border_1()
       .border_color(on ? c.blue : c.grey300).bg(on ? c.blueLight : c.surface).text_color(on ? c.blue : c.navy).on_click(click).child(label);
     return v_flex().id("dep-rollbacks").w_full().mt(10).pt(10).gap(6).border_t(1).border_color(c.rule)
-      .child(div().text_size(12.5).font_medium().text_color(c.navy).child("Roll back by itself when a new version is unhealthy"))
+      .child(div().text_size(13).font_medium().text_color(c.navy).child("Roll back by itself when a new version is unhealthy"))
       .child(h_flex().gap(6).flex_wrap()
         .child(chip("dep-auto-off", "Off", !auto.on, set(0)))
         .children([[10, "In its first 10 minutes"], [30, "In its first 30 minutes"], [60, "In its first hour"]].map(([m, label]) => chip(`dep-auto-${m}`, label, auto.minutes === m, set(m)))))
-      .child(div().id("dep-auto-text").text_size(12.5).text_color(c.grey500).child(auto.text ?? "Reading..."))
-      .children((d?.rows ?? []).slice(0, 5).map((r, i) => div().id(`dep-rollback-${i}`).text_size(12.5).text_color(c.grey900)
+      .child(div().id("dep-auto-text").text_size(13).text_color(c.grey500).child(auto.text ?? "Reading..."))
+      .children((d?.rows ?? []).slice(0, 5).map((r, i) => div().id(`dep-rollback-${i}`).text_size(13).text_color(c.grey900)
         .child(`${String(r.at).slice(0, 16).replace("T", " ")} UTC, ${r.by} put ${short(r.to)} back in place of ${short(r.from)}. ${r.reason}`)));
   }
 

@@ -28,6 +28,7 @@ globalThis.fetch = async (url) => {
   if (p === '/api/projects') return reply(200, projects);
   if (p === '/api/workspace') return reply(200, { name: 'demo', org: 'demo', user: 'sam' });
   if (p === '/api/deployed') return reply(200, { rows: [{ project: 'shop', state: 'running', cloud: 'local' }] });
+  if (p === '/api/projects/shop/state') return reply(200, { recipe: { id: 'search-judgments', label: 'Search ranking' } });
   const m = /^\/api\/projects\/([^/]+)\/(stages|experiments)$/.exec(p);
   if (m && m[1] === 'kids') return reply(500, { detail: 'boom' });
   if (m && SUMS[m[1]]) return reply(200, m[2] === 'stages' ? SUMS[m[1]].stages : SUMS[m[1]].exps);
@@ -184,4 +185,68 @@ test('the Display popover: grouping, ordering and which properties show, kept, w
   // Picking a view or opening a project closes it.
   await again.click('ph-view-all');
   assert.equal(one(again, 'ph-display-panel').length, 0);
+});
+
+// ---- A project's page as a document with properties ----------------------------------------------------------------
+
+async function projectPage(width) {
+  for (const k of Object.keys(store)) delete store[k];
+  projects = ALL; asked = [];
+  globalThis.__shared = { 'captain.daemon': { state: 'ready', base: 'http://captain.test', token: 't' }, 'captain.scope': { kind: 'project', id: 'shop', label: 'Demo shop' } };
+  globalThis.__props = {}; globalThis.__overlays = [];
+  SUMS.shop.stages.inputs = [{ slot: 'catalog', label: 'Catalog', role: 'catalog', required: true, pinned: 'demo-catalog@v1', status: 'pinned', rows: 480 }, { slot: 'events', label: 'Events', role: 'events', required: false, status: 'missing' }];
+  const { default: Mod } = await import(path.join(dir, 'main.js'));
+  const h = harness(Mod);
+  await h.start();
+  h.mod.width = width;
+  await h.idle(80);
+  return h;
+}
+
+test('a project opens as a document: a large title, quiet sections, and its properties', async () => {
+  const h = await projectPage(1200);
+  // The bar above says where this is, with the way back. The name is in the page, large.
+  assert.equal(textIn(one(h, 'ph-crumb-projects')[0]), 'Projects');
+  const name = one(h, 'ph-name')[0];
+  assert.deepEqual([textIn(name), name.call('text_size')[0], name.call('line_height')[0]], ['Demo shop', 24, '32px']);
+  assert.equal(textIn(one(h, 'ph-building')[0]), 'Search ranking');
+  // The properties: a column beside the document on a wide page.
+  const props = one(h, 'ph-props')[0];
+  assert.equal(props.call('w')[0], 232);
+  assert.equal(textIn(props), 'Properties Deployed Running on this computer Baseline model keyword-baseline Data chosen 1 of 2 Made by sam Made ' + `${ALL[0].created_at.slice(0, 10)}, 1 month ago`);
+  assert.deepEqual(h.mod.propertyRows().map((r) => [r.id, Boolean(r.go)]), [['deployed', true], ['baseline', true], ['data', false], ['owner', false], ['created', false]], 'a value is a button only when it goes somewhere');
+  // The baseline opens that model's details in place.
+  await h.click('ph-prop-baseline');
+  assert.equal(h.mod.open, 'shop/keyword-baseline');
+  // Data and Models are rows on the page, not boxes: no border or fill around the lists or their rows.
+  for (const id of ['in-rows', 'exp-rows', 'in-catalog', 'exp-0']) { const e = one(h, id)[0]; assert.ok(e && !e.call('border_1') && !e.call('border_b'), `${id} is unboxed`); }
+  assert.equal(one(h, 'in-catalog')[0].call('min_h')[0], 44);
+  for (const part of ['part-inputs', 'part-experiments', 'part-ship']) assert.equal(one(h, part).length, 1, part);
+  // Three text sizes on the page: the title, rows and controls, captions.
+  const sizes = new Set();
+  (function w(e) { if (!e || typeof e !== 'object') return; const s = e.call?.('text_size')?.[0]; if (s != null) sizes.add(s); for (const k of e.kids ?? []) w(k); })(h.mod.render(h.cx));
+  assert.deepEqual([...sizes].sort((a, b) => a - b), [12, 13, 24]);
+  // The way back to the list.
+  await h.click('ph-crumb-projects');
+  assert.equal(globalThis.__shared['captain.scope'], null);
+});
+
+test('on a page too narrow for a column the properties sit under the title', async () => {
+  const h = await projectPage(600);
+  const props = one(h, 'ph-props')[0];
+  assert.ok(!props.call('w'), 'not a column');
+  const order = h.byIdPrefix('ph-').concat(h.byIdPrefix('part-')).map((e) => e.call('id')?.[0]);
+  const ids = []; (function w(e) { if (!e || typeof e !== 'object') return; const id = e.call?.('id')?.[0]; if (['ph-title', 'ph-props', 'part-inputs'].includes(id)) ids.push(id); for (const k of e.kids ?? []) w(k); })(h.mod.render(h.cx));
+  assert.deepEqual(ids, ['ph-title', 'ph-props', 'part-inputs'], `under the title, over the sections: ${order.length}`);
+});
+
+test('who made a project is shown by name: a sign-in address is cut at its "@"', async () => {
+  const { shortOwner } = await import(path.join(dir, 'projects-list.js'));
+  assert.equal(shortOwner('sam@example.test'), 'sam');
+  assert.equal(shortOwner('sam'), 'sam');
+  assert.equal(shortOwner(null), '');
+  delete store['projects-view'];
+  const h = await page([{ id: 'garden', name: 'Garden centre', created_by: 'sam@example.test', created_at: daysAgo(2) }]);
+  assert.equal(textIn(one(h, 'ph-p-0-owner')[0]), 'sam');
+  assert.ok(!h.text().includes('example.test'), 'the address is not on the page');
 });
