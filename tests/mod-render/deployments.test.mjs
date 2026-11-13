@@ -327,7 +327,8 @@ assert.ok(t.indexOf('Where it runs') < t.indexOf('Traffic and cost'), 'before th
 for (const label of ['Address', 'How to call it', 'Cloud and account', 'Region', 'Machine', 'Copies', 'Image', 'Model files', 'Role it runs as', 'Logs', 'Stops by itself after', 'Deployed by', 'Version'])
   assert.ok(t.includes(label), `Where it runs has ${label}`);
 assert.ok(t.includes('AWS, account ending 1234') && t.includes('ml.t2.medium: 2 virtual CPUs, 4 GB memory, about $0.07 an hour for each copy') && t.includes('1 up now. Fewest 1, most 3'), `the system: ${t}`);
-assert.ok(t.includes('Address · from AWS') && t.includes("Region · from Captain's record") && t.includes('Read from AWS just now.'), `each value says where it came from, beside its label: ${t.slice(0, 900)}`);
+// Where each fact was read from is not said on every label. The card's last line says when the cloud was read.
+assert.ok(!t.includes('Address · from') && !t.includes('Region · from') && t.includes('Read from AWS just now.'), `no source after every label: ${t.slice(0, 900)}`);
 // What a person copies has Copy: the address, a test request, the log's name. A request of several lines shows its first.
 for (const id of ['address', 'call', 'logs']) assert.equal(byId(h, `model-where-${id}-copy`).length, 1, `${id} can be copied`);
 assert.equal(byId(h, 'model-where-region-copy').length, 0, 'a region is read, not copied');
@@ -698,7 +699,7 @@ assert.ok(/Deploying to AWS: Building the model's image, (4[89]|5\d) s so far \(
 for (const part of ['Checking your account', '1 s', "Building the model's image", 'Starting the model', 'usually about 2 minutes', 'Checking it answers'])
   assert.ok(t.includes(part), `the steps say ${part}`);
 assert.ok(byId(h, 'dep-steps-gifts:staging').length === 1 && byId(h, 'dep-dot-gifts:staging').length === 1 && byId(h, 'dep-traffic-gifts:staging').length === 0, 'the same card, with its steps in place of its numbers');
-assert.ok(t.includes('Still building the image: 40 s. Building.') && t.includes('dana, '), 'the last thing the job said, and who started it');
+assert.ok(!t.includes('Still building the image: 40 s.') && t.includes('dana, '), 'the job\'s own last line is not repeated under the steps, and who started it is in the footer');
 // Nothing is offered that would act on a model still being made.
 for (const id of ['dep-open-gifts:staging', 'dep-stop-gifts:staging', 'dep-remove-gifts:staging', 'dep-start-gifts:staging', 'dep-forget-gifts:staging']) assert.equal(byId(h, id).length, 0, `no ${id} while it deploys`);
 // The seconds tick on the page's own clock, with no read from the services.

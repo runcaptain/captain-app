@@ -1,0 +1,21 @@
+# Deploying a model that is not a ranker: handover
+
+Written 2026-11-13 for whoever builds `POST /predict` (named inputs in, named outputs out, described by the model's manifest). Paths are under `backend/core/captain_search/` unless said. Read on `origin/captain`, not a worktree.
+
+1. **The one-call deploy** is `staging/deploy.py`: `offers` (where it can run), `plan` (what it makes and costs), `run` (steps `check`, `access`, `image`, `start`, `ready`, written to `staging/<project>/<env>/deploy.json`), `remove`. Routes: `POST` and `DELETE /api/projects/{pid}/deploy` in `server.py`. It ends by calling `staging.stage()`.
+2. **The runtime** is one program on every host: `staging/runtime.py`. `Runtime` loads a bundle, `make_app(rt)` serves it. It has `POST /rank`, `/rank/{arm}`, `/timing`, `/flush`, `GET /status`, and SageMaker's pair, `GET /ping` and `POST /invocations`. Add `/predict` here once, beside `/rank`.
+3. **How a request reaches it on each host.** This computer, Modal, Cloud Run and Azure: plain HTTP to the address, with the key as a bearer token. SageMaker has no address of its own: every call is `POST /invocations` with `{"op": "rank" | "timing" | "flush" | ..., "key": ...}` in the body, signed by AWS. `staging/__init__.py: call(ctx, rec, op, body)` hides the difference: it maps an `op` to a path, or to the envelope. A new `predict` op needs a line in that map and a branch in `/invocations`.
+4. **The bundle** is what `stage()` packs and each host's provider uploads (`compute_providers/aws.py`, `modal_serving.py`, `gcp_serving.py`, `azure_serving.py`, and `staging/hosts/*.py` for setup). A manifest-and-tensors model needs to be a bundle kind the runtime can load. The image is shared: check it carries numpy and the weights engine.
+5. **"Try it"** is `staging/__init__.py: query()`, behind `POST /api/projects/{pid}/staging/query`. It sends `{"query", "k"}`, joins the ids with catalog titles, and runs the baseline beside it. All of that is ranking. A predict form needs its own function and route.
+6. **The request log** is written by the runtime and read by `staging/traffic.py` and `staging/logs.py`. Each line holds a query, ids, a session and a traffic kind (`test`, `real`). The numbers (`staging/numbers.py`), health (`staging/health.py`) and the feature check (`staging/consistency.py`) read those fields. Give a predict line the same envelope (request id, time, milliseconds, ok or error, traffic kind) so counts, failures and response time work unchanged, and put inputs and outputs under their own key.
+7. **Copy-paste requests** shown to a person are built in `staging/traffic.py` (the long strings with `/rank` and `"op": "rank"`), and by `fleet.where_it_runs()` as the `call` fact. They need a predict form too.
+8. **Roll back** (`staging/rollback.py`) and versions key on the model version string, not on ranking. They should work as they are. Prove it with a test.
+
+## Traps
+
+- **A model on SageMaker cannot be called without counting as traffic in AWS's own numbers.** Nothing may call a cloud model on a timer. Status, health and the list read the cloud's state and the request log (`staging/fleet.py`, `cloud_watch.py`). Keep it so.
+- **Tests run on stand-ins, one per host**: `tests/test_staging_cloud.py` (AWS), `test_hosting_modal.py`, `test_hosting_clouds.py` (Google, Azure). The Modal workspace on the owner's machine runs production: run nothing against it. Real cloud runs are scripts for the owner to run.
+- **The app's script engine has no `setTimeout`.** The Node test harness had it, so a screen that used it passed its tests and hung in the app. Use `cx.timer`, or the kit's live channel (`kit/live.js`).
+- **Screens hear changes, they do not ask.** A deploy, stop or request that changes what a screen shows must bump its topic (`staging/announce.py`: `deployed`, `deployment:<project>`, `job:<id>`).
+- **The model's card is shared**: `defaults/captain/kit/modelcard.js`, synced to every mod with `scripts/captain-kit-sync`. Add "Try it" there once, not per screen. Its Traffic, Speed and Cost come from `numbers.py`.
+- **The picture check runs whatever backend its `cst` imports.** `tests/mod-render/shot-check.sh` now puts this tree first and stops if it is not. Sample names in tests and pictures come from `tests/demo-names.json` only.
