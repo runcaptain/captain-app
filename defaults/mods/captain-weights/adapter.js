@@ -222,6 +222,18 @@ export async function sendUndo(sessionId, editId, by = "you") {
   return api(`/api/weights/sessions/${enc(sessionId)}/undo`, { method: "POST", body: { edit: editId, by }, timeout: 30 });
 }
 
+/** What can be brought in from a folder or a storage address: {versions: [{path, address, name, description}],
+ *  count}. The services only list and read there. */
+export async function readRegistry(from) {
+  return api(`/api/weights/registry?from=${enc(from)}`, { timeout: 60 });
+}
+
+/** Bring a trained model in: the services copy its files into this workspace under `name`. `address` is a
+ *  registry row's own. Resolves to {model, version, ref, parameters, says}. */
+export async function sendImport(address, name) {
+  return api("/api/weights/import", { method: "POST", body: { folder: address, name }, timeout: 300 });
+}
+
 /** Save a session's changes as a new version of its network: {model, version, ref, changed}. This is the only
  *  call that makes a version, besides a deploy. */
 export async function sendSave(sessionId, note = "") {

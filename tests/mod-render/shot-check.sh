@@ -333,6 +333,8 @@ props_of() {
     captain-weights:parts-attention) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"part": "L0.self_attn", "head": 1}' ;;
     captain-weights:parts-table) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"part": "item", "row": 2}' ;;
     captain-weights:parts-rankers) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"rankers": true}' ;;
+    # The picker for bringing in a trained model, listing a made-up place.
+    captain-weights:bring) echo '{"show": {"bringFrom": "/made-up/models", "answers": {"/api/weights/registry?from=%2Fmade-up%2Fmodels": {"ok": true, "data": {"count": 3, "versions": [{"path": "arch-a/shop/v2", "address": "/made-up/models/arch-a/shop/v2", "name": "v2", "description": "wider, two layers"}, {"path": "arch-a/shop/v1", "address": "/made-up/models/arch-a/shop/v1", "name": "v1", "description": "the first one kept"}, {"path": "arch-b/garden/v1", "address": "/made-up/models/arch-b/garden/v1", "name": "v1", "description": null}]}}}}}' ;;
     captain-weights:parts-staged) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"part": "act", "edits": true, "edited": true, "stagedCell": 0.75}' ;;
     captain-weights:parts-tree) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"rankers": true, "deep": true, "tree": 3}' ;;
     captain-weights:tiny-walk) echo '{"show": {"model": "starter:tiny", "input": 3, "walk": 2}}' ;;
