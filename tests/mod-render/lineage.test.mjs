@@ -74,7 +74,9 @@ for (const w of ['Database table', 'Table', 'Model version', 'Evaluation']) asse
 // Arrows are drawn: one stroked path of curves and one filled path of arrowheads, a head for every edge shown.
 // Never a Unicode arrow.
 const paths = all.filter((e) => e.kind === 'path').map((e) => e.args[0]);
-const strokes = paths.filter((p) => p.kind === 'stroke'), fills = paths.filter((p) => p.kind === 'fill');
+const strokes = paths.filter((p) => p.kind === 'stroke');
+// Arrowheads are triangles; the dotted grid is a path of small squares.
+const fills = paths.filter((p) => p.kind === 'fill' && p.ops.every(([, a]) => a[0].length === 3));
 const shown = g.layout().edges.length;
 assert.equal(strokes.reduce((n, p) => n + p.ops.filter(([m]) => m === 'cubic_bezier_to').length, 0), shown, 'a curve for every edge');
 assert.equal(fills.reduce((n, p) => n + p.ops.filter(([m]) => m === 'add_polygon').length, 0), shown, 'an arrowhead for every edge');
@@ -83,7 +85,7 @@ assert.equal(fills.reduce((n, p) => n + p.ops.filter(([m]) => m === 'add_polygon
   const L0 = g.layout();
   const [from, to] = L0.edges[0];
   const tip = g.head(g.at(L0, to))[0];
-  assert.deepEqual(tip, [g.at(L0, to).x, g.at(L0, to).y + 26], `the head of ${from} to ${to} touches ${to}`);
+  assert.deepEqual(tip, [g.at(L0, to).x - 4, g.at(L0, to).y + 26], `the head of ${from} to ${to} ends on the dot at ${to}'s left edge`);
   assert.equal(g.head(g.at(L0, to)).length, 3, 'a triangle');
 }
 assert.ok(!/[←-⇿⟰-⟿➔-➾]/.test(text), 'no Unicode arrows');
@@ -221,3 +223,37 @@ console.log('lineage graph: ok');
   assert.equal(g2.zoom, mine, 'after the person moved it, a resize leaves their view alone');
 }
 console.log('lineage fit: ok');
+
+// A node graph, in the way people know one: rounded boxes with an icon, a dot where a connector joins a box, and
+// a dotted grid behind them that moves with the pan and spreads with the zoom.
+{
+  const g3 = new LineageGraph({ id: 'ng' });
+  g3.set(graph, null);
+  const c3 = palette(true);
+  const tree3 = g3.render(c3, { width: 900, height: 500 });
+  const all3 = []; (function w(e) { if (!e || typeof e !== 'object') return; all3.push(e); for (const k of e.kids ?? []) w(k); })(tree3);
+  const idOf = (e) => String(e.call?.('id')?.[0] ?? '');
+  const box = all3.find((e) => idOf(e) === 'ng-node-p:ranker');
+  assert.ok(box.call('rounded')?.[0] > 0, 'boxes are rounded');
+  const icons = []; (function w(e) { if (!e || typeof e !== 'object') return; if (e.kind === 'svg') icons.push(e); for (const k of e.kids ?? []) w(k); })(box);
+  assert.equal(icons.length, 1, 'an icon on the box');
+  // A dot on the right edge of every box something reads from, and on the left edge of every box made from something.
+  const L3 = g3.layout();
+  const outs = new Set(L3.edges.map(([a]) => a)), ins = new Set(L3.edges.map(([, b]) => b));
+  assert.equal(all3.filter((e) => idOf(e).startsWith('ng-dot-out-')).length, outs.size);
+  assert.equal(all3.filter((e) => idOf(e).startsWith('ng-dot-in-')).length, ins.size);
+  assert.ok(all3.find((e) => idOf(e) === 'ng-dot-in-p:ranker').call('rounded_full') !== undefined, 'the dots are round');
+  assert.equal(all3.filter((e) => idOf(e) === 'ng-dot-in-t:orders').length, 0, 'a source has nothing joining it from the left');
+  // The grid: one path, on the canvas, of small squares at the grid's spacing.
+  const grid = all3.find((e) => idOf(e) === 'ng-grid');
+  assert.ok(grid, 'a dotted grid');
+  const gp = g3.grid(220, 110);
+  assert.equal(gp.kind, 'fill');
+  assert.equal(gp.ops.length, Math.ceil(220 / (22 * g3.zoom)) * Math.ceil(110 / (22 * g3.zoom)), 'a dot every 22 units, scaled by the zoom');
+  const first = gp.ops[0][1][0][0];
+  g3.pan = { x: g3.pan.x + 5, y: g3.pan.y };
+  assert.notDeepEqual(g3.grid(220, 110).ops[0][1][0][0], first, 'the grid moves with the pan');
+  g3.zoom = 0.3;
+  assert.equal(g3.grid(220, 110), null, 'zoomed far out, the dots would touch: no grid');
+}
+console.log('lineage node graph: ok');

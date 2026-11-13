@@ -638,7 +638,8 @@ export default class CaptainRuns extends View {
       .child(h_flex().id("runs-filters").flex_none().flex_wrap().gap(6).p(10).border_b(1).border_color(c.rule)
         .child(chip(null, "All"))
         .child(chip("live", "Running now", counts.live))
-        .children(KINDS.map(([k, , label]) => chip(k, label, counts[k]))))
+        // A kind the workspace has none of gets no chip: the list doesn't advertise what nobody uses.
+        .children(KINDS.filter(([k]) => counts[k] > 0 || this.filter === k).map(([k, , label]) => chip(k, label, counts[k]))))
       .child(h_flex().flex_none().h(28).px(10).bg(c.surface2).border_b(1).border_color(c.rule).text_size(12).font_medium().text_color(c.grey900).items_center()
         .child(div().flex_1().min_w(0).px(4).child("Name"))
         .child(div().w(128).flex_none().px(4).child("Kind"))
