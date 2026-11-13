@@ -4,15 +4,18 @@
 //                   set by hand, and one bias is set wrong on purpose, so "Both on" comes out wrong: a mistake a
 //                   person or an agent can find and fix with one number.
 //   starter:digits  784-16-16-10, 13,002 numbers. Reads a 28 by 28 picture of a digit. The pictures are drawn
-//                   here from seven strokes with a little jitter.
-import { seeded, seededNet } from "./net.js";
+//                   here from seven strokes with a little jitter, and the network was trained on such pictures
+//                   (digits-weights.js). It was stopped early, so it still gets a few wrong. A score on these
+//                   pictures says nothing about handwriting.
+import { seeded } from "./net.js";
+import { SCALE, SIZES, PACKED } from "./digits-weights.js";
 
 export const TINY = "starter:tiny";
 export const DIGITS = "starter:digits";
 
 export const STARTERS = [
   { id: TINY, name: "Tiny network", says: "2 inputs, 3 hidden neurons, 1 output. Every number fits on the screen." },
-  { id: DIGITS, name: "Digit reader", says: "A 28 by 28 picture in, ten answers out. 13,002 numbers." },
+  { id: DIGITS, name: "Digit reader", says: "A 28 by 28 picture in, ten answers out. 13,002 numbers, trained on made-up digits." },
 ];
 
 function tiny() {
@@ -68,9 +71,31 @@ export function digitSet(seed, each) {
   return out;
 }
 
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/** The digit reader's numbers, unpacked (digits-weights.js): 16-bit steps of one scale, layer by layer, a layer's
+ *  weights row by row and then its biases. Decoded here by hand: the app's JavaScript may have no atob. */
+export function unpack(packed, scale, sizes) {
+  const bytes = [];
+  for (let n = 0; n + 3 < packed.length + 1; n += 4) {
+    const q = [0, 1, 2, 3].map((d) => B64.indexOf(packed[n + d]));
+    bytes.push((q[0] << 2) | (q[1] >> 4));
+    if (q[2] >= 0) bytes.push(((q[1] & 15) << 4) | (q[2] >> 2));
+    if (q[3] >= 0) bytes.push(((q[2] & 3) << 6) | q[3]);
+  }
+  let at = 0;
+  const next = () => { const v = bytes[at] | (bytes[at + 1] << 8); at += 2; return (v >= 32768 ? v - 65536 : v) * scale; };
+  const layers = [];
+  for (let k = 0; k + 1 < sizes.length; k++) {
+    const W = Array.from({ length: sizes[k + 1] }, () => Array.from({ length: sizes[k] }, next));
+    layers.push({ W, b: Array.from({ length: sizes[k + 1] }, next) });
+  }
+  return layers;
+}
+
 function digits() {
   return {
-    id: DIGITS, name: "Digit reader", ...seededNet([784, 16, 16, 10], 7),
+    id: DIGITS, name: "Digit reader", sizes: SIZES.slice(), squish: "sigmoid", cost: "squared_error", layers: unpack(PACKED, SCALE, SIZES),
     inputShape: [28, 28],
     outputNames: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
     examples: digitSet(11, 1),
