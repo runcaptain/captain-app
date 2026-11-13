@@ -62,7 +62,13 @@ async def _workspace_from_request(request: Request, call_next):
     # The Explorer's pick travels like the workspace: X-CST-Scope: <scope|engine|project|view>:<id>
     stok = _req_scope.set(request.headers.get("x-cst-scope") or request.query_params.get("scope") or None)
     try:
-        return await call_next(request)
+        response = await call_next(request)
+        # The change feed: a write that succeeded changes its topics, so every screen watching them reads again.
+        if response.status_code < 400:
+            from . import changes as CH
+
+            CH.bump(*CH.topics_for(request.method, request.url.path))
+        return response
     finally:
         _req_scope.reset(stok)
         _req_ws.reset(tok)
@@ -2891,7 +2897,10 @@ def _job(fn, label: str) -> str:
     JOBS[jid] = {"id": jid, "status": "queued", "progress": 0.0, "message": label, "result": None, "log": [label], "compute": "local"}
 
     def go():
+        from . import changes as CH
+
         JOBS[jid]["status"] = "running"
+        CH.bump("jobs")
         try:
             res = fn(lambda f: JOBS[jid].__setitem__("progress", round(float(f), 3)))
             JOBS[jid].update(status="done", progress=1.0, result=res, message="done")
@@ -2899,6 +2908,8 @@ def _job(fn, label: str) -> str:
         except Exception as e:  # noqa: BLE001
             JOBS[jid].update(status="failed", message=str(e))
             JOBS[jid]["log"].append(f"failed: {e}")
+        # A job that ended may have made or changed anything: every list reads again.
+        CH.bump(*CH.LISTS)
 
     threading.Thread(target=go, daemon=True).start()
     return jid
@@ -3127,6 +3138,18 @@ def rollback(body: dict):
     except ops.GateFailed as e:
         return JSONResponse({"error": str(e), "gate_results": e.results}, status_code=409)
     return d.model_dump(mode="json")
+
+
+# ---- the change feed ----------------------------------------------------------------------
+
+
+@app.get("/api/changes", dependencies=A)
+def changes_feed(since: int | None = None, topics: str = "", wait: float = 0):
+    """What changed after `since` among `topics` (comma-separated), held open for up to `wait` seconds and answered
+    the moment one of them changes: {seq, changed: [{topic, seq}], reset}. See changes.py."""
+    from . import changes as CH
+
+    return CH.wait_for(since, [t for t in topics.split(",") if t], wait)
 
 
 # ---- notebooks ----------------------------------------------------------------------------
