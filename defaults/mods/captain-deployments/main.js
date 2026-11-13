@@ -106,13 +106,26 @@ export default class CaptainDeployments extends View {
     cx.spawn((cx) => this.act(cx, row, "Stopping", () => api(`/api/projects/${encodeURIComponent(row.project)}/unstage`, { method: "POST", body: { env: row.env }, timeout: 600 })));
   }
 
+  /** Start a stopped model again, in the place it was. The services are asked for the plan first, so the question
+   *  names the place, says when that place has to be set up again, how long it takes and what it costs. It never
+   *  starts anywhere else: with no plan for that place, nothing is asked and the reason is shown. */
   start(row, cx) {
-    const cost = this.nums[row.id]?.cost?.rate_usd;
-    this.ask = { id: row.id, yes: "Start it again",
-      text: `Start ${row.model_version} again on ${row.where}?` + (cost ? ` It costs about ${money(cost)} an hour while it is up.` : ""),
-      go: (cx) => cx.spawn((cx) => this.act(cx, row, "Starting", () => api(`/api/projects/${encodeURIComponent(row.project)}/deploy`,
-        { method: "POST", body: { host: row.cloud, login: row.login, candidate: row.model_version, env: row.env, confirm: true }, timeout: 60 }))) };
+    const where = { host: row.cloud, login: row.login, candidate: row.model_version, env: row.env };
+    this.busy[row.id] = "Checking where it will run";
     cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${encodeURIComponent(row.project)}/deploy`, { method: "POST", body: { ...where, dry_run: true }, timeout: 60 });
+      delete this.busy[row.id];
+      if (!r.ok) { this.note = plainError(r.error, `It can't be started again on ${row.cloud_label} just now.`); return cx.notify(); }
+      const p = r.data;
+      this.ask = { id: row.id, yes: p.first_time && row.cloud !== "local" ? `Set up ${p.label} and start it` : "Start it again",
+        text: `Start ${row.model_label ?? row.model_version} again on ${p.label ?? row.cloud_label}? `
+          + (p.first_time && row.cloud !== "local" ? `This will set up ${p.label} again. ` : "")
+          + [p.minutes?.text, p.cost?.text].filter(Boolean).join(" "),
+        go: (cx) => cx.spawn((cx) => this.act(cx, row, `Starting on ${p.label ?? row.cloud_label}`, () => api(`/api/projects/${encodeURIComponent(row.project)}/deploy`,
+          { method: "POST", body: { ...where, confirm: true }, timeout: 60 }))) };
+      cx.notify();
+    });
   }
 
   remove(row, cx) {
@@ -120,7 +133,7 @@ export default class CaptainDeployments extends View {
     this.ask = { id: row.id, yes: "Remove it from the cloud",
       text: found ? `Remove ${row.name} from your ${row.cloud_label} account? It cannot be undone.`
         : `Remove ${row.project_name}'s model from ${row.cloud_label}? It stops answering, and what Captain made for it there is deleted. It cannot be undone.`,
-      go: (cx) => cx.spawn((cx) => this.act(cx, row, "Removing", () => found
+      go: (cx) => cx.spawn((cx) => this.act(cx, row, `Removing from ${row.cloud_label}`, () => found
         ? api("/api/deployed/remove", { method: "POST", body: { id: row.id, confirm: true }, timeout: 600 })
         : api(`/api/projects/${encodeURIComponent(row.project)}/deploy?env=${encodeURIComponent(row.env ?? "staging")}`, { method: "DELETE", timeout: 600 }))) };
     cx.notify();
