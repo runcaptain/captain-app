@@ -67,6 +67,10 @@ def resolve(ctx, ref: str) -> str:
         m = WS.manifest(ctx, name, version)
     except NotFound as e:
         raise ValueError(str(e)) from None
+    if m.get("kind") not in (None, "dense"):
+        from ..weights import real as R
+
+        raise ValueError(R.NOT_YET)
     return ref_of(name, m["version"])
 
 
