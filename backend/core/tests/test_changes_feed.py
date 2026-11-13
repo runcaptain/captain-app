@@ -232,7 +232,6 @@ def test_a_client_that_asks_again_lets_its_older_request_go(svc):
 def test_a_live_run_tells_its_end_at_once_and_one_written_by_another_process_is_seen(svc, tmp_path):
     from captain_search import live as LV
 
-    CH.on_listen(LV.watch_folder)
     seq = svc.get("/api/changes")["seq"]
     run = LV.start("custom", "A demo run", of="shop")
     assert _t(svc.get("/api/changes", since=seq, topics="runs", wait=0)) == ["runs"], "a run that began is news for the list"
