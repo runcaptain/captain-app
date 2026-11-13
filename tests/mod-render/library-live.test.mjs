@@ -81,7 +81,11 @@ await h.click('dtab-about');
 assert.ok(h.text().includes('Captain keeps it, in the folder drop/catalogs.'), 'where it lives');
 await h.click('ds-move');
 await until(() => Array.isArray(h.mod.page.folders), 'the folders there are');
+// The button is off until a folder is typed, and the line under the field says what will happen.
+assert.equal(h.byIdPrefix('ds-move-new-go')[0].call('on_click'), undefined, 'nothing typed: the button is off');
 h.mod.page.newFolder.set_value('Catalogs');
+await h.layoutLists({});
+assert.ok(h.text().includes('Captain will make the folder Catalogs and move it there.'), 'said as it is typed');
 await h.click('ds-move-new-go');
 await until((t) => t.includes('Moved to Catalogs.'), 'moved');
 await until((t) => t.includes('Captain keeps it, in the folder Catalogs.'), 'the page says its new folder');

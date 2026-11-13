@@ -6,6 +6,7 @@
 // Backend routes: GET /api/notebooks, GET|PUT /api/notebooks/{name}[/draft], POST .../save, POST .../import,
 // GET .../export?format=, GET /api/notebook-formats, GET /api/connections, and the kernel (kit/kernel.js).
 // Writes through a SQL connection are refused unless that connection is writable: the backend's read-only guard.
+import { idFrom, sayError } from "./kit/checks.js";
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar, InputState, Input, EditorState, Editor } from "gpui-base";
 import { readTextFile, writeTextFile, home, theme } from "herdr";
@@ -33,6 +34,27 @@ const fmtInt = (n) => int(n ?? 0);
 const secs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`);
 const cellText = (v) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 const expand = (p) => String(p ?? "").trim().replace(/^~(?=\/|$)/, home());
+/** What typing a new notebook's name will do, checked as it is typed: {id, text, off}. Any words are a name: Captain
+ *  makes the id from them. `off` is why the button is off, or null. */
+export function newNameCheck(typed, list) {
+  const words = String(typed ?? "").trim();
+  if (!words) return { id: null, text: null, off: "Give it a name." };
+  const id = idFrom(words, "notebook");
+  const has = (list ?? []).some((n) => n.name === id);
+  return { id, text: has ? `You already have a notebook called ${id}. This opens it.` : id === words ? null : `Captain will call it ${id}.`, off: null, has };
+}
+
+/** A path typed for a notebook to import, checked as it is typed: {text, off}. */
+export function importPathCheck(typed, found) {
+  const p = String(typed ?? "").trim();
+  if (!p) return { text: null, off: "Type the path of a notebook file." };
+  // While it is looked for the button stays on: someone who pastes a path and presses Import at once is not made to
+  // wait, and the import reads the file itself.
+  if (found === "checking") return { text: "Checking...", off: null };
+  if (found === false) return { text: `There's no file at ${p}, or it's over 1 MB.`, off: "That file can't be read.", bad: true };
+  return { text: null, off: null };
+}
+
 const plainNote = (t) => { const s = String(t ?? "").trim(); return s ? `${s[0].toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}` : ""; };
 
 export class Notebooks {
@@ -59,6 +81,10 @@ export class Notebooks {
     this.execCount = 0;
     this.newName = InputState.new({ placeholder: "New notebook" });
     this.importPath = InputState.new({ placeholder: "~/Downloads/analysis.ipynb" });
+    // Checked as they are typed: the line under each field follows every keystroke.
+    this.newName.on?.("change", (_e, cx) => cx.notify());
+    this.importPath.on?.("change", (_e, cx) => cx.notify());
+    this.pathFound = null; // {path, found}: whether a file is at the path typed
     this.sqlTools = new SqlTools(this);
   }
 
@@ -165,8 +191,11 @@ export class Notebooks {
   }
 
   newNotebook(cx) {
-    const name = this.newName.value().trim().replace(/\s+/g, "-");
-    if (!name) { this.note = { text: "Give the notebook a name first.", tone: "fail" }; cx.notify(); return; }
+    // Any words are a name: the id is made from them. Called with no form on screen too (an agent, a test), so the
+    // same check runs here as under the field.
+    const k = newNameCheck(this.newName.value(), this.list);
+    if (k.off) return;
+    const name = k.id;
     this.newName.set_value("");
     this.list ??= [];
     if (!this.list.some((n) => n.name === name)) this.list = [{ name, latest: null, has_draft: true }, ...this.list];
@@ -189,6 +218,7 @@ export class Notebooks {
 
   /** Every half second: autosave a draft 1.5 s after the last edit, and redraw while a cell runs (its clock). */
   tick(cx) {
+    this.checkPath(cx);
     if (this.open?.base !== undefined && this.dirty && !this.savingDraft && Date.now() - this.lastEdit > 1500) this.flushDraft(cx);
     if ([...this.state.values()].some((s) => s.status === "running")) cx.notify();
   }
@@ -223,7 +253,7 @@ export class Notebooks {
         this.note = { text: `Saved as version ${r.data.version}.`, tone: "good" };
         const row = this.list?.find((n) => n.name === name);
         if (row) Object.assign(row, { latest: r.data.version, has_draft: false });
-      } else this.note = { text: plainNote(r.error) || "Couldn't save.", tone: "fail" };
+      } else this.note = { text: sayError(r.data?.error ?? r.data?.detail ?? r.error).text || "Couldn't save.", tone: "fail" };
       cx.notify();
     });
     cx.notify();
@@ -231,15 +261,17 @@ export class Notebooks {
 
   importFile(cx) {
     const path = expand(this.importPath.value());
-    if (!path) { this.note = { text: "Type the path of a notebook file first.", tone: "fail" }; cx.notify(); return; }
+    if (!path) return;
     cx.spawn(async (cx) => {
       const text = await readTextFile(path);
-      if (text === null) { this.note = { text: `There's no file at ${this.importPath.value().trim()}, or it's over 1 MB.`, tone: "fail" }; cx.notify(); return; }
+      // Said under the field, where the path was typed.
+      if (text === null) { this.pathFound = { path: this.importPath.value().trim(), found: false }; cx.notify(); return; }
       const filename = path.split("/").pop();
-      const name = filename.replace(/\.[^.]+$/, "").replace(/\s+/g, "-");
+      const name = idFrom(filename.replace(/\.[^.]+$/, ""), "notebook");
       const r = await api(`/api/notebooks/${enc(name)}/import`, { body: { filename, content: text } });
-      if (!r.ok) { this.note = { text: plainNote(r.error) || "Couldn't read that notebook.", tone: "fail" }; cx.notify(); return; }
+      if (!r.ok) { this.note = { text: sayError(r.data?.error ?? r.data?.detail ?? r.error).text || "Couldn't read that notebook.", tone: "fail" }; cx.notify(); return; }
       this.importPath.set_value("");
+      this.pathFound = null;
       const fmt = this.formatLabel(r.data.format);
       this.load(cx);
       this.openNotebook(cx, r.data.name);
@@ -445,19 +477,42 @@ export class Notebooks {
       .child(this.body(c, w - lw));
   }
 
-  field(c, id, st, iconName, buttonLabel, onGo) {
-    return h_flex().gap(6).items_center()
-      .child(h_flex().id(id).flex_1().min_w(0).h(28).px(8).gap(6).items_center().border_1().border_color(c.grey300)
-        .child(this.icon(iconName, 13, c.grey500)).child(div().flex_1().min_w(0).child(Input.new(st).w_full().text_size(12).text_color(c.navy))))
-      .child(Button(c, `${id}-go`, buttonLabel, (_e, cx) => onGo(cx), { small: true }));
+  /** A field with its button. `check` is what typing so far will do ({text, off, bad}): its line shows under the
+   *  field as the person types, and the button is off, with the reason as its tip, while `off` is set. */
+  field(c, id, st, iconName, buttonLabel, onGo, check = {}) {
+    const off = check.off ?? null;
+    return v_flex().gap(3)
+      .child(h_flex().gap(6).items_center()
+        .child(h_flex().id(id).flex_1().min_w(0).h(28).px(8).gap(6).items_center().border_1().border_color(check.bad ? c.fail : c.grey300)
+          .child(this.icon(iconName, 13, c.grey500)).child(div().flex_1().min_w(0).child(Input.new(st).w_full().text_size(12).text_color(c.navy))))
+        .child(div().id(`${id}-go-wrap`).when(!!off, (e) => e.tooltip(off)).child(Button(c, `${id}-go`, buttonLabel, (_e, cx) => { if (!off) onGo(cx); }, { small: true, disabled: !!off }))))
+      .when(!!check.text, (e) => e.child(div().id(`${id}-says`).pl(2).text_size(11.5).line_height("15px").text_color(check.bad ? c.fail : c.grey500).child(check.text)));
+  }
+
+  /** From the screen's timer: a moment after the path stops changing, see whether a file is there. */
+  checkPath(cx) {
+    const typed = this.importPath.value().trim();
+    if (!typed) { this.pathFound = null; return; }
+    if (this.pathFound?.path === typed) return;
+    if (this.pathTyped?.path !== typed) { this.pathTyped = { path: typed, at: Date.now() }; this.pathFound = { path: null, found: "checking" }; cx.notify(); return; }
+    if (Date.now() - this.pathTyped.at < 500 || this.pathAsking === typed) return;
+    this.pathAsking = typed;
+    cx.spawn(async (cx) => {
+      const text = await readTextFile(expand(typed));
+      this.pathAsking = null;
+      if (this.importPath.value().trim() !== typed) return;
+      this.pathFound = { path: typed, found: text !== null };
+      cx.notify();
+    });
   }
 
   side(c, w) {
     const list = this.list;
     return v_flex().id("nb-list").w(w).h_full().flex_none().border_r(1).border_color(c.rule)
       .child(v_flex().flex_none().gap(8).p(10).border_b(1).border_color(c.rule)
-        .child(this.field(c, "nb-new", this.newName, "plus", "New", (cx) => this.newNotebook(cx)))
-        .child(this.field(c, "nb-import", this.importPath, "file-text", "Import", (cx) => this.importFile(cx)))
+        .child(this.field(c, "nb-new", this.newName, "plus", "New", (cx) => this.newNotebook(cx), newNameCheck(this.newName.value(), this.list)))
+        .child(this.field(c, "nb-import", this.importPath, "file-text", "Import", (cx) => this.importFile(cx),
+          importPathCheck(this.importPath.value(), this.importPath.value().trim() ? (this.pathFound?.path === this.importPath.value().trim() ? this.pathFound.found : "checking") : null)))
         .child(div().text_size(11).text_color(c.grey500).child(`Jupyter, Jupytext, Databricks, marimo, Quarto, R Markdown, MyST or Zeppelin.`)))
       .child(v_flex().id("nb-names").flex_1().min_h(0).overflow_y_scrollbar()
         .when(list === null, (e) => e.child(Skeleton(c, 6)))

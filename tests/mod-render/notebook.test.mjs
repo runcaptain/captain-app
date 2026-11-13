@@ -180,7 +180,10 @@ assert.ok(h.text().includes('Exported to ~/Downloads/weekly-check.qmd.'), 'expor
 
 // Import: reads the file, posts it, says what it was.
 globalThis.__files = { '/tmp/Downloads/analysis.py': 'import marimo\n' };
+// Nothing typed: the button is off. A path typed: it is on, and the line under the field follows the typing.
+assert.equal(h.byIdPrefix('nb-import-go')[0].call('on_click'), undefined, 'no path yet: Import is off');
 h.mod.nb.importPath.set_value('~/Downloads/analysis.py');
+await h.layoutLists({});
 await h.click('nb-import-go');
 await h.idle();
 const imp = globalThis.__bodies.filter(([p]) => /\/import$/.test(p)).pop();
