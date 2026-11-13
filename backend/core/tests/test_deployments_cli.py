@@ -36,7 +36,7 @@ def cst(*args):
 
 def test_list_show_and_sync_read_the_cloud(ws, aws):  # noqa: F811
     code, out = cst("deployments", "list")
-    assert code == 0 and "Nothing is deployed." in out
+    assert code == 0 and "No models are deployed yet." in out
     rec = SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
     FL.forget()
     code, out = cst("deployments", "list")
@@ -58,7 +58,7 @@ def test_list_show_and_sync_read_the_cloud(ws, aws):  # noqa: F811
     code, out = cst("deployments", "sync")
     assert code == 0 and "shop:" in out and "removed outside Captain" in out
     FL.forget()
-    assert "Nothing is deployed." not in cst("deployments", "list", "--stopped")[1] and "Removed outside Captain" in cst("deployments", "list", "--stopped")[1]
+    assert "No models are deployed yet." not in cst("deployments", "list", "--stopped")[1] and "Removed outside Captain" in cst("deployments", "list", "--stopped")[1]
     assert cst("deployments", "show", "nothing-here")[0] != 0
 
 
@@ -70,7 +70,7 @@ def test_a_stopped_deployment_is_a_row_in_the_list_and_in_its_json(ws):  # noqa:
     SG.unstage(ws, "shop")
     FL.forget()
     code, out = cst("deployments", "list")
-    assert code == 0 and "Stopped" in out and version in out and "0 deployed, 1 not running." in out
+    assert code == 0 and "Stopped" in out and version in out and "1 model, stopped." in out
     rows = json.loads(cst("--json", "deployments", "list")[1])["rows"]
     assert [(r["project"], r["state"]) for r in rows] == [("shop", "stopped")]
     assert json.loads(cst("--json", "deployments", "list", "--running")[1])["rows"] == []
