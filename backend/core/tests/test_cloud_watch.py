@@ -40,7 +40,7 @@ def quiet(monkeypatch):
     CH.reset_for_tests()
     SEQ.clear()
     CH.FEED.hear(lambda _seq, topics: [SEQ.__setitem__(t, SEQ.get(t, 0) + 1) for t in topics])
-    monkeypatch.setattr(AN, "LINGER_S", 0.0)  # a listener that leaves is gone at once, so a test need not wait 30 s
+    monkeypatch.setattr(AN, "LINGER_S", 0.0)  # a listener that leaves is gone at once, so a test need not wait the feed's 10 seconds
     for name in ("seq", "listen", "unlisten"):
         monkeypatch.setattr(AN, name, getattr(_Feed, name), raising=False)
     WT.stop_all()
@@ -87,6 +87,10 @@ def test_with_nobody_listening_nothing_is_asked(ws, aws, monkeypatch):  # noqa: 
     time.sleep(0.5)
     assert _asks(aws) == before and WT.status(ws) == []  # silent: no call to the cloud, no place being watched
     assert AN.seq("deployed") == told
+    # Someone listening to another part of the app does not start it.
+    AN.listen("projects")
+    time.sleep(0.4)
+    assert _asks(aws) == before and WT.status(ws) == []
     stop.set()
     SG.unstage(ws, "shop")
 
