@@ -387,7 +387,7 @@ def plan(ctx: Context, pid: str, host: str = "local", login: str | None = None, 
             from .. import compute as C
 
             named = (C.get(ctx, o["target"]).get("config") or {}).get("name_prefix")
-        each = [{"resource": "SageMaker endpoint", "name": f"{named or 'captain'}-{{project}}-staging",
+        each = [{"resource": "SageMaker endpoint", "name": f"{named or 'captain'}-{{project}}",
                  "why": "The model, answering. Made now, deleted when you stop it. It bills by the hour while it is up."}]
     # Which machine, and why this one, said once where "Show everything" puts it.
     # It is a choice, not a thing made, so it comes last and is left out of the count.

@@ -109,17 +109,28 @@ assert.ok(t.includes('3 deployed, 2 not running, 1 found in your cloud with no p
 assert.ok(shown(h) === 'shop trail' && t.includes('Asleep. It wakes on the next request and bills nothing until then.'), `Running shows what is up: ${shown(h)}`);
 assert.ok(t.includes('captain-old-experiment-staging') && t.includes('Found in your AWS account, not linked to a project.'), 'something no project knows is listed');
 assert.ok(t.includes('Link to a project') && byId(h, `dep-remove-${FOUND.id}`).length === 1, 'and can be linked or removed');
-assert.ok(byId(h, 'dep-cloud-aws').length === 1 && byId(h, 'dep-cloud-modal').length === 1 && byId(h, 'dep-project-shop').length === 1, 'filters by cloud and by project');
+// One row of filters: the state as chips, the cloud and the project as two pickers. A picker's choices show only
+// once it is opened.
+assert.ok(byId(h, 'dep-pick-cloud').length === 1 && byId(h, 'dep-pick-project').length === 1 && byId(h, 'dep-cloud-aws').length === 0, 'two pickers, closed');
+assert.ok(h.text().includes('Every cloud') && h.text().includes('Every project'), 'each says what it shows now');
 await h.click('dep-show-stopped');
 t = h.text();
 assert.ok(shown(h) === 'kids gifts' && t.includes('Failed: The primary container did not pass the ping health check.'), `Stopped: ${shown(h)}`);
 assert.ok(t.includes("Captain's record said it was running. The cloud says it failed, so the record now says failed."), 'what was corrected is said on the row');
 assert.ok(t.includes('Start again') && t.includes('Remove from the cloud') && t.includes('Stopped: no requests for 240 minutes.'), 'a stopped model can be started again or removed');
 await h.click('dep-show-all');
+await h.click('dep-pick-cloud');
+assert.ok(byId(h, 'dep-cloud-aws').length === 1 && byId(h, 'dep-cloud-modal').length === 1 && byId(h, 'dep-project-shop').length === 0, 'the cloud picker lists the clouds');
 await h.click('dep-cloud-modal');
-t = h.text();
 assert.equal(shown(h), 'trail', 'one cloud at a time');
+assert.ok(byId(h, 'dep-cloud-aws').length === 0 && h.text().includes('Modal'), 'the picker closes and says what was picked');
+await h.click('dep-pick-cloud');
 await h.click('dep-cloud-all');
+await h.click('dep-pick-project');
+await h.click('dep-project-shop');
+assert.equal(shown(h), 'shop', 'one project at a time');
+await h.click('dep-pick-project');
+await h.click('dep-project-all');
 
 // A removal asks first, and the question holds the only filled button on the screen.
 await h.click(`dep-remove-${OLD.id}`);
@@ -171,31 +182,47 @@ await h.click('dep-open-shop:staging');
 await h.idle(150);
 t = h.text();
 assert.ok(t.includes('All deployments') && t.includes('Demo shop') && t.includes('Running on 1 copy.') && t.includes('Its name in the cloud') && t.includes('captain-shop-staging'), `the page: ${t}`);
-for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time at the endpoint', 'Processor in use', 'Memory in use', 'Copies running', 'What it costs'])
+for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time', 'Processor in use', 'Memory in use', 'Copies running'])
   assert.ok(t.includes(label), `the model page has ${label}`);
+// Two submenus and no more, drawn with the kit's control.
+assert.ok(byId(h, 'submenu-traffic').length === 1 && byId(h, 'submenu-details').length === 1 && h.byIdPrefix('submenu-').filter((e) => /^submenu-[a-z]+$/.test(e.call('id')?.[0] ?? '')).length === 2, 'two submenus');
+assert.ok(t.includes('Traffic and cost') && t.includes('Details'), 'named for what is in them');
+// What it costs is the first thing on the page, as three figures.
+assert.ok(byId(h, 'model-cost-hour').length === 1 && t.includes('$0.07') && t.includes('an hour now') && t.includes('$0.92') && t.includes('today') && t.includes('$14.30') && t.includes('this month'), `cost first: ${t}`);
+assert.ok(t.indexOf('an hour now') < t.indexOf('Requests a minute'), 'cost is above the charts');
 assert.ok(t.includes('8,640 requests in the last 24 hours, none failed. A request typically takes 3.1 ms.') && !t.includes('95th percentile') && !t.includes('Median'), `no jargon in the headline: ${t}`);
-assert.ok(t.includes('typically 3.1 ms, 19 in 20 within 9.4 ms') && t.includes('$0.07 an hour now, $0.92 today, $14.30 this month.') && t.includes("From AWS's own metrics"), `numbers in words: ${t}`);
+assert.ok(t.includes('Typically 3.1 ms, 19 in 20 within 9.4 ms') && t.includes("From AWS's own metrics"), `numbers in words: ${t}`);
+assert.equal(byId(h, 'model-charts').length, 1, 'the charts share rows');
 await h.click('model-range-7d');
 await h.idle(100);
 assert.ok(sent.some((x) => x[1].startsWith('/api/projects/shop/deployed/numbers?range=7d')), 'a time range asks for that range');
-await h.click('model-part-versions');
+// Details: four sections on one page, each under its heading.
+await h.click('submenu-details');
 t = h.text();
-assert.ok(t.includes('Version 2') && t.includes('Running now') && t.includes('Put this version back'), `earlier versions: ${t}`);
+for (const heading of ['Earlier versions', 'Requests it answered', 'Its log', 'Copies and machine']) assert.ok(t.includes(heading), `Details has ${heading}`);
+assert.ok(t.includes('Version 2') && t.includes('Running now') && t.includes('Put this version back') && t.includes('trail running shoes') && t.includes('Loaded 480 products.') && t.includes('Keeps 1 up at all times.'), `all on one page: ${t}`);
+// Putting a version back asks why, and sends the reason: a roll back is recorded with it.
 await h.click('model-back-1');
+assert.ok(h.text().includes('Why? It is kept with the record of the change.') && byId(h, 'model-back-why-1').length === 1, 'asks why');
+for (const why of ['It gives worse results', 'It is too slow', 'It is failing requests', 'It was deployed by mistake', 'Another reason']) assert.ok(h.text().includes(why), `offers "${why}"`);
+assert.ok(!sent.some((x) => x[1].endsWith('/rollback')), 'nothing is put back before a reason is given');
+await h.click('model-back-why-1');
 await h.idle(60);
-assert.ok(sent.some((x) => x[0] === 'POST' && x[1] === '/api/projects/shop/staging/versions/1/rollback'), 'an earlier version is put back');
-await h.click('model-part-requests');
-assert.ok(h.text().includes('trail running shoes'), 'the requests it answered');
-await h.click('model-part-log');
-assert.ok(h.text().includes('Loaded 480 products.'), 'its log');
-await h.click('model-part-settings');
-assert.ok(h.text().includes('Keeps 1 up at all times.'), 'copies and machine');
+assert.deepEqual(sent.find((x) => x[0] === 'POST' && x[1] === '/api/projects/shop/staging/versions/1/rollback')?.[2], { reason: 'It is too slow' }, 'the reason goes with it');
+assert.equal(h.byIdPrefix('model-back-why-').length, 0, 'the question closes once answered');
 await h.click('model-close');
 assert.ok(h.text().includes('Ask the clouds again'), 'back to the list');
-// "Go back to an earlier version" on a row opens the page at the versions.
+// "Go back to an earlier version" on a row opens the page at Details, where the versions are first.
 await h.click('dep-back-shop:staging');
 await h.idle(120);
-assert.ok(h.text().includes('Put this version back'), 'straight to the versions');
+assert.ok(h.text().includes('Put this version back') && h.text().indexOf('Earlier versions') < h.text().indexOf('Requests it answered'), 'straight to the versions');
+
+// Another screen can ask for one model's page ("Open in Deployments" on a project's page).
+globalThis.__props = { open: 'shop:staging' };
+h = await open({ deployed: { rows: [SHOP], asked, text: '1 deployed.', read_at: '' }, numbers: { shop: numbers(8640) } });
+await h.idle(150);
+assert.ok(h.text().includes('All deployments') && byId(h, 'submenu-traffic').length === 1, 'opens that model\'s page');
+globalThis.__props = undefined;
 
 // ---- the screen rules ----
 for (const f of ['main.js', 'model.js', 'words.js']) {
@@ -206,6 +233,7 @@ for (const f of ['main.js', 'model.js', 'words.js']) {
 const main = fs.readFileSync(path.join(dir, 'main.js'), 'utf8'), model = fs.readFileSync(path.join(dir, 'model.js'), 'utf8');
 assert.equal((main.match(/font_family\(/g) ?? []).length, 1, 'one typeface on the list, set once');
 assert.equal((model.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font only for the address a person copies');
+assert.ok(!/model-part-/.test(model) && /Submenus\(c, PARTS/.test(model) && (model.match(/\{ id: "[a-z]+", label:/g) ?? []).length === 2, 'the model page declares two submenus');
 assert.equal((main.match(/kind: "primary"/g) ?? []).length, 2, 'two filled buttons in the source, never on screen together: the empty state, and an open question');
 assert.equal((model.match(/kind: "primary"/g) ?? []).length, 0, 'the model page has no filled button');
 // A name in the cloud is shown as the cloud has it ("captain-shop-staging"). Captain's own words never say these.

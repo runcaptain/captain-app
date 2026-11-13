@@ -1048,7 +1048,7 @@ def project_unstage(pid: str, body: dict | None = None):
 
     c, env = ctx(), (body or {}).get("env") or "staging"
     if not SG.state(c, pid, env):
-        raise HTTPException(400, f"Nothing is staged for {pid}.")
+        raise HTTPException(400, f"Nothing is deployed for {pid}.")
     return {"job": _job(lambda _p: SG.unstage(c, pid, env), f"stopping staging for {pid}")}
 
 

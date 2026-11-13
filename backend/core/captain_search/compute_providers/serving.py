@@ -161,6 +161,19 @@ class HttpServing(ServingProvider):
                 "how": "POST <url>/rank with the endpoint key. The address is public, and every route but /healthz and /ping needs the key."}
 
 
+def deployed_base(prefix: str, project: str, env: str) -> str:
+    """What a deployment is called in a cloud account, before the cloud's own limits: `<prefix>-<project>`. The
+    environment is added only when it is not the usual one, so a person reading their cloud console sees the
+    project's name and not Captain's word for where it sits ("captain-shop", not "captain-shop-staging")."""
+    return f"{prefix}-{project}" if env == "staging" else f"{prefix}-{project}-{env}"
+
+
+def kept_name(st: dict, kind: str) -> str | None:
+    """The name of the thing a deployment already runs as, when it has one. A deployment made under an older name
+    keeps it: computing a new name for it would start a second copy beside the first and leave the first billing."""
+    return next((r["name"] for r in st.get("existing") or [] if r.get("type") == kind and r.get("name")), None)
+
+
 def clean_name(text: str, limit: int = 63, lower: bool = True) -> str:
     """A name most clouds take: letters, digits and dashes, starting with a letter, no dash at either end."""
     import re

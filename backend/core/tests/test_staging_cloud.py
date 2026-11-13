@@ -241,7 +241,7 @@ def test_stage_query_and_unstage_leave_nothing_behind(ws, aws):  # noqa: F811
     said = []
     r = SG.stage(ws, "shop", target="sm", confirm=True, progress=said.append)
     assert r["status"] == "running" and r["kind"] == "aws-sagemaker"
-    assert r["endpoint"] == {"name": "captain-search-test-shop-staging", "region": "us-west-1"}
+    assert r["endpoint"] == {"name": "captain-search-test-shop", "region": "us-west-1"}
     assert [x["type"] for x in r["resources"]] == ["endpoint", "model", "endpoint-config"]
     assert any(s == "Starting the endpoint (about 2 minutes)" for s in said)  # the measured time, from the one table
     # every resource carries Captain's tags, so it can be found and removed without Captain's own records
@@ -268,7 +268,7 @@ def test_stage_query_and_unstage_leave_nothing_behind(ws, aws):  # noqa: F811
     assert out["spent"]["text"].startswith("Cost ") and out["spent"]["usd"] >= 0  # what it cost while it was up
     from captain_search import cost_estimates as CE
     assert CE.estimate(ws, "staging", "sm", {"instances": 1, "instance_type": "ml.t2.medium"})["low"] == r["cost"]["hourly_usd"]
-    assert ("delete_log_group", {"name": "/aws/sagemaker/Endpoints/captain-search-test-shop-staging"}) in aws.calls  # its log group too
+    assert ("delete_log_group", {"name": "/aws/sagemaker/Endpoints/captain-search-test-shop"}) in aws.calls  # its log group too
     assert aws.lineage == {"someone-elses-endpoint-1-aws-endpoint"}  # the lineage records SageMaker made for it go, and only those
     assert not aws.models and not aws.configs and not aws.endpoints
     assert C.tagged(ws, C.get(ws, "sm"), "shop", "staging") == []
@@ -366,7 +366,7 @@ def test_a_role_that_cannot_stop_its_own_endpoint_is_warned_about_before_the_con
     assert p["preflight"]["checked"] and p["preflight"]["can_delete"] is False and p["preflight"]["can_write"] is True
     assert p["warnings"] == [warn] and p["text"].endswith(warn)
     asked = {c[1]["action"]: c[1]["resource"] for c in aws.calls}
-    assert asked["sagemaker:DeleteEndpoint"].endswith(":endpoint/captain-search-test-shop-staging")
+    assert asked["sagemaker:DeleteEndpoint"].endswith(":endpoint/captain-search-test-shop")
     assert asked["s3:PutObject"] == "arn:aws:s3:::captain-test/cst/staging/preflight"
     with pytest.raises(SG.NeedsConfirm, match="can't stop itself when idle") as e:
         SG.stage(ws, "shop", target="sm")
@@ -533,3 +533,29 @@ def test_a_query_times_the_first_call_apart_from_a_warm_one(ws, aws):  # noqa: F
     reqs = L.read(ws, "shop", "staging", SG.state(ws, "shop")["id"])["requests"]
     assert len(reqs) == 4 and before == 0  # two queries, each beside the baseline
     SG.unstage(ws, "shop")
+
+
+# ---- the name in the cloud --------------------------------------------------------------------------
+
+
+def test_a_new_deployment_is_named_for_its_project_and_an_old_one_keeps_its_name(ws, aws):  # noqa: F811
+    """`<prefix>-<project>`, with no "staging" in it. A deployment already running under the older name keeps that
+    name when a new version is deployed onto it: a new name would start a second endpoint and leave the first billing."""
+    from captain_search.compute_providers.serving import deployed_base
+
+    assert deployed_base("captain", "shop", "staging") == "captain-shop" and deployed_base("captain", "shop", "eu") == "captain-shop-eu"
+    rec = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    assert rec["endpoint"]["name"] == "captain-search-test-shop"
+    SG.unstage(ws, "shop")
+    # An endpoint from before the change, still running under its old name.
+    rec = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    old = "captain-search-test-shop-staging"
+    aws.endpoints[old] = aws.endpoints.pop(rec["endpoint"]["name"])
+    aws.endpoints[old]["EndpointName"] = old
+    SG._save(ws, "shop", "staging", endpoint={"name": old, "region": "us-west-1"},
+             resources=[{**r, "name": old} if r["type"] == "endpoint" else r for r in SG.state(ws, "shop")["resources"]])
+    again = SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
+    assert again["endpoint"]["name"] == old and sorted(aws.endpoints) == [old]  # moved in place: one endpoint, not two
+    assert [c for c, _ in aws.calls].count("update_endpoint") == 1
+    SG.unstage(ws, "shop")
+    assert not aws.endpoints

@@ -339,8 +339,10 @@ class SageMakerProvider(_AWS):
     def _names(self, st: dict) -> dict:
         import re
 
+        from .serving import deployed_base, kept_name
+
         prefix = (self.config.get("name_prefix") or "captain").strip("-")
-        base = re.sub(r"[^A-Za-z0-9-]", "-", f"{prefix}-{st['project']}-{st['env']}").strip("-")[:50]
+        base = kept_name(st, "endpoint") or re.sub(r"[^A-Za-z0-9-]", "-", deployed_base(prefix, st["project"], st["env"])).strip("-")[:50]
         one = f"{base}-{st['id'][-8:]}"[:63]
         return {"endpoint": base, "config": one, "model": one}
 
