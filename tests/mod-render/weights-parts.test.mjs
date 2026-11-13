@@ -9,20 +9,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { harness, shapesIn } from './harness.mjs';
 import { fakeFeed } from './fixtures/captain-weights/reference.mjs';
-import { PARTS, SESSION, partsModel, partsRoutes, matrix } from './fixtures/captain-weights/parts.mjs';
+import { PARTS, SESSION, partsModel, partsRoutes, partsReset, partsRefuse, matrix, NOT_MEASURED } from './fixtures/captain-weights/parts.mjs';
 
 const { default: Weights } = await import('../../defaults/mods/captain-weights/main.js');
 const { weightsTransport, partsFrom, isParts } = await import('../../defaults/mods/captain-weights/adapter.js');
 const { localReset } = await import('../../defaults/mods/captain-weights/local.js');
 const { liveTransport, liveReset } = await import('../../defaults/mods/captain-weights/kit/live.js');
-const { partsLayout, treeLayout, reduceGrid, splitWords, leafWords, HEAT_MAX } = await import('../../defaults/mods/captain-weights/partsdraw.js');
+const { partsLayout, treeLayout, reduceGrid, splitWords, leafWords, HEAT_MAX, READABLE } = await import('../../defaults/mods/captain-weights/partsdraw.js');
+const { PanZoom } = await import('../../defaults/mods/captain-weights/canvas.js');
 const { partSentence, partsFacts, gainWords, windowOf, largestRows, READ_ONLY, WINDOW } = await import('../../defaults/mods/captain-weights/parts.js');
 const { MAX_SHAPES } = await import('../../defaults/mods/captain-weights/draw.js');
 
 let asked = [], opts = {}, feed;
-weightsTransport(async (path, o) => { asked.push([path, o?.method ?? 'GET']); return partsRoutes(path, opts) ?? { ok: false, error: 'Not Found' }; });
+weightsTransport(async (path, o) => { asked.push([path, o?.method ?? 'GET', o?.body]); return partsRoutes(path, opts, o ?? {}) ?? { ok: false, error: 'Not Found' }; });
 async function page(model, size = null, o = {}) {
-  localReset(); liveReset(); feed = fakeFeed(liveTransport); asked = []; opts = o;
+  localReset(); liveReset(); partsReset(); feed = fakeFeed(liveTransport); asked = []; opts = o;
   globalThis.__props = model ? { model } : {}; globalThis.__files = {}; globalThis.__toasts = [];
   const h = harness(Weights);
   await h.start();
@@ -100,7 +101,8 @@ test('it opens as blocks left to right, read only: nothing is written, edited, r
   assert.equal(textOf(h, 'wt-read-only'), READ_ONLY);
   assert.equal(text.split(READ_ONLY).length - 1, 1, 'said once');
   for (const id of ['wt-hand', 'wt-walk', 'wt-modes', 'wt-inputs', 'wt-deploy-go', 'wt-ask', 'wt-cost', 'wt-band']) assert.equal(h.byIdPrefix(id).length, 0, `${id} is hidden`);
-  assert.deepEqual(asked.map(([p, m]) => `${m} ${p}`), [`GET /api/weights/models/${PARTS}`], 'opening asks for the description and nothing else');
+  assert.deepEqual(asked.map(([p, m]) => `${m} ${p}`), [`GET /api/weights/models/${PARTS}`, `GET /api/weights/models/${PARTS}/session`], 'opening asks for the description and the session\'s record, and nothing else');
+  assert.equal(h.byIdPrefix('wt-save').length, 0, 'nothing changed: nothing to save');
   assert.ok(textOf(h, 'wt-part-wiring').startsWith('The order of the parts is the usual one'), 'how sure the wiring is, in the services\' words');
   assert.ok(shapesIn(h.mod.render(h.cx)) < MAX_SHAPES);
 });
@@ -178,6 +180,55 @@ test('rows read their names where the services give them, and a guess is said', 
   const plain = await page(PARTS, [1280, 800], { plain: true });
   await plain.click('wp-part-item');
   assert.ok(plain.text().includes('Largest rows') && plain.byIdPrefix('wt-part-labels-says').length === 0);
+});
+
+test('a deep tree shows three levels at a readable size, and a cut branch opens in place', async () => {
+  const h = await page(PARTS, [600, 760], { deep: true });
+  await h.click('submenu-rankers');
+  for (let n = 0; n < 3; n++) await h.click('wt-ranker-tree-next');
+  assert.equal(textOf(h, 'wt-ranker-tree-at'), 'Tree 4 of the first 4 is drawn (the ranker has 40).');
+  // 1 + 2 + 4 questions drawn, and each of the 8 branches under them is one box.
+  assert.equal(h.byIdPrefix('wr-node-').length, 7);
+  const stubs = h.byIdPrefix('wr-more-');
+  assert.equal(stubs.length, 8);
+  assert.ok(stubs.every((e) => e.kids[0].kids[0] === '3 more questions'), 'each says how many questions it holds');
+  assert.ok(h.mod.treePz.zoom >= 0.9, `readable: ${h.mod.treePz.zoom}`);
+  assert.equal(h.byIdPrefix('wr-minimap').length, 1, 'the map stays');
+  // Opening one shows it and the level under it, in place: the others stay cut.
+  const id = stubs[0].call('id')[0].replace('wr-more-', '');
+  await h.click(`wr-more-${id}`);
+  assert.equal(h.byIdPrefix('wr-more-').length, 7);
+  assert.equal(h.byIdPrefix('wr-node-').length, 7 + 3 + 4, 'its three questions and their four leaves');
+  const L = treeLayout(h.mod.pm.rankers.full.shown[3].nodes, { levels: 3, open: h.mod.pm.treeOpen });
+  for (const a of L.boxes) for (const b of L.boxes) if (a !== b && a.y === b.y) assert.ok(a.x + a.w <= b.x || b.x + b.w <= a.x, 'no two boxes overlap');
+  assert.equal(treeLayout(h.mod.pm.rankers.full.shown[3].nodes).boxes.filter((b) => b.stub).length, 0, 'with no limit the whole tree is laid out');
+  // Another tree starts cut again.
+  await h.click('wt-ranker-tree-prev');
+  await h.click('wt-ranker-tree-next');
+  assert.equal(h.byIdPrefix('wr-more-').length, 8);
+});
+
+test('the diagram opens fitted when its names stay readable, else at a readable size from its left edge, and Fit holds', async () => {
+  const pz = new PanZoom('t');
+  pz.settleReadable(400, 200, 1000, 600, READABLE);
+  assert.ok(pz.zoom > 1 && Math.abs(pz.pan.x + 200 * pz.zoom - 500) < 1e-9, 'a small drawing is fitted whole, centred');
+  const long = new PanZoom('t');
+  long.settleReadable(3000, 400, 600, 500, READABLE);
+  assert.deepEqual([long.zoom, long.pan.x], [READABLE, 24], 'too long to read fitted: readable, from the left edge');
+  assert.equal(long.pan.y, (500 - 400 * READABLE) / 2, 'and whole top to bottom when that fits');
+  const tall = new PanZoom('t');
+  tall.settleReadable(3000, 1200, 600, 400, READABLE);
+  assert.equal(tall.pan.y, 24, 'taller than the box: its top is in view, not its middle');
+  // On the page: the demo model is too long for 560 px, so it opens readable with the tables in view.
+  const h = await page(PARTS, [600, 760]);
+  assert.equal(h.mod.pz.zoom, READABLE);
+  assert.equal(h.mod.pz.pan.x, 24);
+  // Fit shows it all, and the next draw leaves it alone.
+  await h.click('wp-zoom-fit');
+  const z = h.mod.pz.zoom;
+  assert.ok(z < READABLE);
+  await h.idle(1);
+  assert.equal(h.mod.pz.zoom, z);
 });
 
 test('a long list of inputs shows about ten and scrolls by itself, and both lists open whole', async () => {
@@ -295,4 +346,126 @@ test('a refusal is said in plain words, and the model is read again only when th
   await h.idle(1);
   await h.click('wp-part-gone');
   assert.equal(textOf(h, 'wt-part-problem'), 'There is no tensor named gone.weight.');
+});
+
+// ---- Changing a trained model by hand ----------------------------------------------------------------------------
+
+/** Type into the part's number box, as a person would. */
+async function typePart(h, text) { h.mod.partInput.set_value(text); h.mod.partInput.handlers.change({}, h.cx); await h.idle(1); }
+const edits = () => asked.filter(([p, m]) => m === 'POST' && p.endsWith('/edits'));
+
+test('a model that cannot be changed offers no hand tools, and one that can says so', async () => {
+  const fixed = await page(PARTS, [1280, 800]);
+  await fixed.click('wp-part-act');
+  assert.equal(fixed.byIdPrefix('wt-phand').length, 0);
+  const h = await page(PARTS, [1280, 800], { edits: true });
+  assert.equal(textOf(h, 'wt-read-only'), 'This model can be read and changed here, not run yet.');
+  await h.click('wp-part-act');
+  assert.equal(textOf(h, 'wt-phand-row'), 'Row 1 of 4');
+  assert.equal(textOf(h, 'wt-phand-col'), 'Column 1 of 8');
+  const was = matrix('act.weight', 4, 8);
+  assert.equal(h.mod.partInput.value(), String(Number(was[0][0].toFixed(4))), 'the box starts at the number it would change');
+  assert.equal(textOf(h, 'wt-phand-measure'), NOT_MEASURED, 'said before anything is saved');
+  // A head's composed matrix is not a tensor of the model: it cannot be changed, its four raw matrices can.
+  await h.click('wp-part-L0.self_attn');
+  assert.equal(h.byIdPrefix('wt-phand').length, 0);
+  await h.click('wt-part-tensor-key');
+  assert.equal(one(h, 'wt-phand').length, 1);
+});
+
+test('typing a value for a cell only stages it, and "Set this value" sends exactly one edit', async () => {
+  const h = await page(PARTS, [1280, 800], { edits: true });
+  await h.click('wp-part-act');
+  await h.click('wt-phand-row-next');
+  await h.click('wt-phand-col-next');
+  await h.click('wt-phand-col-next');
+  const was = matrix('act.weight', 4, 8)[1][2];
+  assert.equal(textOf(h, 'wt-phand-row'), 'Row 2 of 4');
+  assert.equal(textOf(h, 'wt-phand-col'), 'Column 3 of 8');
+  assert.equal(h.byIdPrefix('wt-part-heat-cell').length, 1, 'the picked cell is outlined in the picture');
+  assert.equal(h.byIdPrefix('wt-phand-set').length, 0);
+  await typePart(h, '0.5');
+  assert.equal(textOf(h, 'wt-phand-unsaved'), `Not saved. ${was < 0 ? '-' : '+'}${Math.abs(was).toFixed(2)} will become +0.50.`);
+  assert.equal(textOf(h, 'wt-read-only'), 'Not saved: the picture shows your change as a preview.');
+  assert.equal(h.byIdPrefix('wt-part-preview').length, 1);
+  assert.equal(h.mod.pm.heat.values[1][2], was, 'the numbers the page holds are untouched');
+  // Enter does not save.
+  h.mod.partInput.handlers.submit({}, h.cx); await h.idle(5);
+  assert.equal(edits().length, 0, 'typing and Enter send nothing');
+  // Put it back, by the button and by Escape.
+  await h.click('wt-phand-back');
+  assert.equal(h.mod.pm.staged, null);
+  assert.equal(h.mod.partInput.value(), String(Number(was.toFixed(4))));
+  await typePart(h, '0.5');
+  await h.key('weights', 'escape');
+  assert.equal(h.mod.pm.staged, null);
+  assert.equal(edits().length, 0);
+  // Saved by the button: one edit, by the cell's place.
+  await typePart(h, '0.5');
+  await h.click('wt-phand-set');
+  assert.deepEqual(edits().map(([, , b]) => b), [{ op: 'set', indices: [[1, 2]], value: 0.5, tensor: 'act.weight', by: 'you' }]);
+  assert.equal(h.mod.pm.staged, null);
+  assert.equal(h.mod.pm.heat.values[1][2], 0.5);
+  assert.equal(textOf(h, 'wt-change-e1'), `You set 1 number in act.weight. ${NOT_MEASURED}`, 'the services\' sentence, with "Not measured"');
+  // It is in the session, not in a version, until "Save this version".
+  assert.equal(textOf(h, 'wt-save-text'), '1 change not saved as a version.');
+  assert.ok(!asked.some(([p, m]) => m === 'POST' && p.endsWith('/save')));
+  await h.click('wt-save-go');
+  assert.equal(textOf(h, 'wt-save-text'), `Saved as ${PARTS}, version 2.`);
+  assert.equal(textOf(h, 'wt-save-note'), NOT_MEASURED);
+});
+
+test('halve, double and zero a row wait for "Save this change", and an edit can be taken back', async () => {
+  const h = await page(PARTS, [1280, 800], { edits: true });
+  await h.click('wp-part-L0.self_attn');
+  await h.click('wt-part-tensor-key');
+  const was = matrix('L0.self_attn.in_proj_weight', 24, 8)[8];
+  for (const [id, says] of [['wt-phand-halve', 'Not saved. 8 numbers in this row will be halved.'], ['wt-phand-double', 'Not saved. 8 numbers in this row will be doubled.'], ['wt-phand-zero', 'Not saved. 8 numbers in this row will be set to zero.']]) {
+    await h.click(id);
+    assert.equal(textOf(h, 'wt-phand-unsaved'), says);
+    assert.equal(edits().length, 0, `${id} sends nothing`);
+    await h.click('wt-phand-back');
+    assert.equal(h.byIdPrefix('wt-phand-save').length, 0);
+  }
+  await h.click('wt-phand-zero');
+  await h.click('wt-phand-save');
+  // The key matrix is rows 8 to 16 of the stacked tensor: its first row is row 8 there.
+  assert.deepEqual(edits().map(([, , b]) => b), [{ op: 'zero', neurons: [8], tensor: 'L0.self_attn.in_proj_weight', by: 'you' }]);
+  assert.deepEqual(h.mod.pm.heat.values[0], [0, 0, 0, 0, 0, 0, 0, 0]);
+  assert.equal(textOf(h, 'wt-save-text'), '8 changes not saved as a version.');
+  await h.click('wt-phand-undo');
+  assert.deepEqual(asked.filter(([p, m]) => m === 'POST' && p.endsWith('/undo')).map(([, , b]) => b), [{ edit: 'e1', by: 'you' }]);
+  assert.deepEqual(h.mod.pm.heat.values[0], was, 'the row is back');
+  assert.ok(h.text().includes('You took back an edit to L0.self_attn.in_proj_weight.') && textOf(h, 'wt-change-e1').endsWith('Taken back.'));
+  assert.equal(h.byIdPrefix('wt-phand-undo').length, 0);
+});
+
+test('a refused edit stays staged, and leaving drops a staged change and says so', async () => {
+  const h = await page(PARTS, [1280, 800], { edits: true });
+  await h.click('wp-part-act');
+  partsRefuse('Only float32 tensors are edited.');
+  await typePart(h, '2');
+  await h.click('wt-phand-set');
+  assert.equal(textOf(h, 'wt-phand-note'), 'Only float32 tensors are edited.');
+  assert.ok(h.mod.pm.staged && h.byIdPrefix('wt-phand-set').length === 1, 'still staged, to try again or put back');
+  partsRefuse(null);
+  const sent = edits().length;
+  // Another row, another column, a cell of the picture, another matrix, another part, the rankers, the list.
+  await h.click('wt-phand-row-next');
+  assert.equal(h.mod.pm.staged, null);
+  assert.equal(textOf(h, 'wt-read-only'), 'Your unsaved change to Action table was dropped. Nothing was saved.');
+  await typePart(h, '2');
+  await h.fire('wt-part-heat', 'on_mouse_down', { local_position: { x: 5 * 18 + 3, y: 3 * 18 + 3 } });
+  assert.deepEqual([h.mod.pm.staged, h.mod.pm.row, h.mod.pm.col], [null, 3, 5], 'a press on the picture picks that cell');
+  await typePart(h, '2');
+  await h.click('wp-part-pos');
+  assert.equal(textOf(h, 'wt-read-only'), 'Your unsaved change to Action table was dropped. Nothing was saved.');
+  await typePart(h, '2');
+  await h.click('submenu-rankers');
+  assert.equal(h.mod.pm.staged, null);
+  await h.click('submenu-model');
+  await typePart(h, '2');
+  await h.click('wt-back');
+  assert.equal(textOf(h, 'wt-dropped'), 'Your unsaved change to Position table was dropped. Nothing was saved.');
+  assert.equal(edits().length, sent, 'nothing was ever sent by leaving');
 });

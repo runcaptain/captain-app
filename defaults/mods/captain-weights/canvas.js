@@ -59,6 +59,23 @@ export class PanZoom {
     this.pan = { x: within(w / 2 - fx, cw, w), y: within(h / 2 - fy, ch, h) };
   }
 
+  /** How a drawing of blocks opens: fitted whole when its words stay readable at that size (`floor` or more).
+   *  Otherwise at `floor`, the smallest size its words can be read at, from its left edge (or centred on `at`,
+   *  a point of the drawing), with its top in view. Like `settle`, it opens again only when the canvas or the
+   *  drawing changes size, and never once the person has moved the view. */
+  settleReadable(cw, ch, w, h, floor, at = null) {
+    this.view = { w, h };
+    const key = `${Math.round(w)}x${Math.round(h)}:${Math.round(cw)}x${Math.round(ch)}:${at ? `${Math.round(at.x)},${Math.round(at.y)}` : ""}`;
+    if (this.touched || key === this.fitFor) return;
+    this.fitFor = key;
+    const whole = Math.min((w - MARGIN * 2) / Math.max(1, cw), (h - MARGIN * 2) / Math.max(1, ch));
+    if (whole >= floor) return this.fit(cw, ch, w, h);
+    this.zoom = floor;
+    // Along each way: centred when it fits, else from its start (or around `at`), never past its own edges.
+    const along = (size, room, want) => (size * floor <= room - MARGIN * 2 ? (room - size * floor) / 2 : Math.min(MARGIN, Math.max(room - MARGIN - size * floor, want)));
+    this.pan = { x: along(cw, w, at ? w / 2 - at.x * floor : MARGIN), y: along(ch, h, at ? h / 2 - at.y * floor : MARGIN) };
+  }
+
   /** Give a canvas element the gestures. */
   gestures(e) {
     return e
@@ -98,7 +115,7 @@ export class PanZoom {
     return h_flex().absolute().top(8).right(8).gap(4)
       .child(btn("out", "-", "Zoom out", () => { this.touched = true; this.zoomBy(1 / 1.2, w / 2, h / 2); }))
       .child(btn("in", "+", "Zoom in", () => { this.touched = true; this.zoomBy(1.2, w / 2, h / 2); }))
-      .child(btn("fit", "Fit", "Show the whole network", () => { this.touched = false; this.fitFor = null; this.fit(cw, ch, w, h); }));
+      .child(btn("fit", "Fit", "Show the whole network", () => { this.touched = true; this.fit(cw, ch, w, h); }));  // the view is now the person's: the next draw must not open it again
   }
 
   /** A small map of the whole drawing with the part on screen outlined, when it does not all fit. `marks` are

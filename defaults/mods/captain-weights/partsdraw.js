@@ -13,6 +13,9 @@ import { tint, lineQuad, cells, STRENGTH } from "./draw.js";
 const PAD = 28, GAP = 46;
 const BLOCK_W = 150, NORM_W = 78, HEAD_H = 24;
 const CAPTION = 22; // the room over a block for its group's name
+export const READABLE = 0.8; // the smallest zoom at which a block's name can still be read
+export const TREE_READABLE = 0.9; // a tree's questions are sentences: they need nearly full size
+export const TREE_LEVELS = 3; // the levels of questions a tree shows before its branches are cut
 export const HEAT_MAX = 32; // the most cells a side a picture draws: 32 by 32 is at most 1,024 shapes
 
 /** "12 by 8". */
@@ -84,8 +87,10 @@ function joins(lines, pz, c) {
 export function PartsCanvas(c, model, o) {
   const pz = o.pz, L = o.layout ?? partsLayout(model);
   const w = Math.max(200, o.width), h = Math.max(160, o.height);
+  // It opens fitted, whole. A model too long for its names to be read that small opens at the smallest readable
+  // size from its left edge, or around the open part. Fit shows it all.
   const open = L.boxes.find((b) => b.part.id === o.sel);
-  pz.settle(L.width, L.height, w, h, open ? { x: open.x + open.w / 2, y: open.y + open.h / 2 } : { x: 0, y: L.height / 2 });
+  pz.settleReadable(L.width, L.height, w, h, READABLE, open ? { x: open.x + open.w / 2, y: open.y + open.h / 2 } : null);
   const z = pz.zoom;
   const over = [];
   for (const cap of L.captions) {
@@ -129,7 +134,7 @@ export function PartsCanvas(c, model, o) {
 
 // ---- One tree of a ranker ---------------------------------------------------------------------------------------
 
-const NODE_W = 156, NODE_H = 36, LEAF_W = 72, LEAF_H = 28, LEVEL = 72, SIDE = 8; // close together: a real tree has dozens of leaves
+const NODE_W = 184, NODE_H = 36, LEAF_W = 72, LEAF_H = 28, STUB_W = 104, LEVEL = 72, SIDE = 8; // close together: a real tree has dozens of leaves
 
 /** A threshold as a person would write it: 12.5, 3, 0.0312. */
 export function thresholdWords(v) {
@@ -146,21 +151,29 @@ export function leafWords(v) {
 }
 
 /** Where a tree's boxes sit: the root on top, a split's "no" child to the left and its "yes" child to the right
- *  (a larger value goes right, as on a number line), leaves evenly spaced. {boxes: [{node, x, y, w, h}], lines: [{from, to, says}], width, height}. */
-export function treeLayout(nodes) {
+ *  (a larger value goes right, as on a number line), leaves evenly spaced. Only the top `levels` levels of
+ *  questions are laid out: a question below them is a stub that says how many questions its branch holds, unless
+ *  its id is in `open` (a person opened it), which shows it and the level under it.
+ *  {boxes: [{node, leaf, stub, more, x, y, w, h}], lines: [{from, to, says}], width, height}. */
+export function treeLayout(nodes, { levels = Infinity, open = null } = {}) {
   const by = new Map((nodes ?? []).map((n) => [n.id, n]));
   const kids = new Set(); for (const n of by.values()) { if (n.yes != null) kids.add(n.yes); if (n.no != null) kids.add(n.no); }
   const root = [...by.values()].find((n) => !kids.has(n.id));
+  const isLeaf = (n) => n.leaf != null || (n.yes == null && n.no == null);
+  const questions = (n, seen = new Set()) => (!n || isLeaf(n) || seen.has(n.id) ? 0 : (seen.add(n.id), 1 + questions(by.get(n.yes), seen) + questions(by.get(n.no), seen)));
   const boxes = [], lines = [], seen = new Set();
   let nextX = PAD, deepest = 0;
-  const place = (n, depth) => {
+  const place = (n, depth, left) => {
     if (!n || seen.has(n.id)) return null;
     seen.add(n.id);
     deepest = Math.max(deepest, depth);
-    const leaf = n.leaf != null || (n.yes == null && n.no == null);
-    const w = leaf ? LEAF_W : NODE_W, h = leaf ? LEAF_H : NODE_H, y = PAD + depth * LEVEL;
+    const leaf = isLeaf(n), y = PAD + depth * LEVEL;
+    if (!leaf && open?.has(n.id)) left = Math.max(left, 2);
+    // A cut branch: one small box that says how much is under it.
+    if (!leaf && left <= 0) { const b = { node: n, leaf: false, stub: true, more: questions(n), x: nextX, y, w: STUB_W, h: LEAF_H }; nextX += STUB_W + SIDE; boxes.push(b); return b; }
+    const w = leaf ? LEAF_W : NODE_W, h = leaf ? LEAF_H : NODE_H;
     if (leaf) { const b = { node: n, leaf, x: nextX, y, w, h }; nextX += w + SIDE; boxes.push(b); return b; }
-    const a = place(by.get(n.no), depth + 1), d = place(by.get(n.yes), depth + 1);
+    const a = place(by.get(n.no), depth + 1, left - 1), d = place(by.get(n.yes), depth + 1, left - 1);
     const under = [a, d].filter(Boolean);
     const cx = under.length ? under.reduce((s, b) => s + b.x + b.w / 2, 0) / under.length : nextX + w / 2;
     const b = { node: n, leaf, x: cx - w / 2, y, w, h };
@@ -170,27 +183,37 @@ export function treeLayout(nodes) {
     if (d) lines.push({ from: b, to: d, says: "yes" });
     return b;
   };
-  place(root, 0);
-  // A wide split over two narrow leaves can reach past the left edge: move everything right to the margin.
-  const left = Math.min(PAD, ...boxes.map((b) => b.x));
+  place(root, 0, levels);
+  // A wide question over two narrow leaves can reach past its neighbours or the left edge: on each level, push
+  // boxes right until none overlaps, then move everything to the margin.
+  const rows = new Map();
+  for (const b of boxes) (rows.get(b.y) ?? rows.set(b.y, []).get(b.y)).push(b);
+  for (const row of rows.values()) { row.sort((p, q) => p.x - q.x); for (let n = 1; n < row.length; n++) row[n].x = Math.max(row[n].x, row[n - 1].x + row[n - 1].w + SIDE); }
+  const left = Math.min(...boxes.map((b) => b.x), PAD);
   if (left < PAD) for (const b of boxes) b.x += PAD - left;
   const width = Math.max(PAD * 2, ...boxes.map((b) => b.x + b.w + PAD));
-  return { boxes, lines, width, height: PAD * 2 + deepest * LEVEL + NODE_H };
+  return { boxes, lines, root: boxes.find((b) => b.node === root) ?? null, width, height: PAD * 2 + deepest * LEVEL + NODE_H };
 }
 
-/** One tree, drawn. `o` is {id, pz, width, height}. */
+/** One tree, drawn: its top levels at a size that can be read, each cut branch ending in a box that opens it in
+ *  place. `o` is {id, pz, width, height, open: Set of opened ids, onOpen(id, cx)}. */
 export function TreeCanvas(c, tree, o) {
-  const pz = o.pz, L = treeLayout(tree?.nodes);
+  const pz = o.pz, L = treeLayout(tree?.nodes, { levels: TREE_LEVELS, open: o.open });
   const w = Math.max(200, o.width), h = Math.max(140, o.height);
-  // It opens fitted to the box, whole. A tree too wide to read that small is a zoom or a drag away.
-  pz.settle(L.width, L.height, w, h, null);
+  // Fitted when its words stay readable. Otherwise at the smallest readable size, on its root.
+  pz.settleReadable(L.width, L.height, w, h, TREE_READABLE, L.root ? { x: L.root.x + L.root.w / 2, y: 0 } : null);
   const z = pz.zoom, over = [];
   for (const b of L.boxes) {
     const [x, y] = pz.at(b.x, b.y);
-    over.push(div().id(`${o.id}-node-${b.node.id}`).absolute().left(x).top(y).w(b.w * z).h(b.h * z).flex().items_center().justify_center().px(4 * z).overflow_hidden()
-      .bg(c.surface).border_1().border_color(b.leaf ? c.grey300 : c.grey500).text_size((b.leaf ? 10.5 : 11.5) * z).text_color(c.navy)
-      .tooltip(b.leaf ? "A leaf: what this path adds to the score" : `A split, which is one question: ${splitWords(b.node)}?`)
-      .child(div().truncate().child(b.leaf ? leafWords(b.node.leaf ?? 0) : splitWords(b.node))));
+    const box = div().id(`${o.id}-${b.stub ? "more" : "node"}-${b.node.id}`).absolute().left(x).top(y).w(b.w * z).h(b.h * z).flex().items_center().justify_center().px(4 * z).overflow_hidden()
+      .bg(b.stub ? c.surface2 : c.surface).border_1().border_color(b.stub ? c.blue : b.leaf ? c.grey300 : c.grey500).text_size((b.leaf || b.stub ? 10.5 : 11.5) * z).text_color(b.stub ? c.blue : c.navy);
+    over.push(b.stub
+      ? box.cursor_pointer().hover((s) => s.bg(c.blueLight)).tooltip("Show the questions under this one")
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation?.())
+        .on_click((_e, cx) => o.onOpen?.(b.node.id, cx))
+        .child(div().truncate().child(`${int(b.more)} more ${b.more === 1 ? "question" : "questions"}`))
+      : box.tooltip(b.leaf ? "A leaf: what this path adds to the score" : `A split, which is one question: ${splitWords(b.node)}?`)
+        .child(div().truncate().child(b.leaf ? leafWords(b.node.leaf ?? 0) : splitWords(b.node))));
   }
   for (const l of L.lines) {
     const [x, y] = pz.at((l.from.x + l.from.w / 2 + l.to.x + l.to.w / 2) / 2 - 14, (l.from.y + l.from.h + l.to.y) / 2 - 7);
@@ -200,7 +223,7 @@ export function TreeCanvas(c, tree, o) {
   return pz.gestures(div().id(`${o.id}-canvas`).relative().w(w).h(h).flex_none().overflow_hidden().border_1().border_color(c.rule).bg(c.surface2))
     .child(joins(lines, pz, c) ?? div())
     .children(over)
-    .child(pz.minimap(c, L.width, L.height, L.boxes.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, on: false }))) ?? div())
+    .child(pz.minimap(c, L.width, L.height, L.boxes.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, on: Boolean(b.stub) }))) ?? div())
     .child(pz.buttons(c, L.width, L.height));
 }
 
@@ -223,7 +246,7 @@ export function reduceGrid(values, max = HEAT_MAX) {
 
 /** A matrix as shaded cells: blue for positive, red for negative, stronger for larger, nothing for near zero.
  *  `grid` is from reduceGrid. Drawn into a box at most `width` wide and `maxH` tall. `mark` is a row to outline. */
-export function Heat(c, id, grid, { width, maxH = 220, mark = null } = {}) {
+export function Heat(c, id, grid, { width, maxH = 220, mark = null, cell = null, onCell = null } = {}) {
   const { values, rows, cols } = grid;
   if (!rows || !cols) return div().id(id);
   const size = Math.max(2, Math.min(18, Math.floor(Math.min(width / cols, maxH / rows))));
@@ -235,11 +258,18 @@ export function Heat(c, id, grid, { width, maxH = 220, mark = null } = {}) {
   const shade = (i) => { const v = values[Math.floor(i / cols)][i % cols], m = Math.abs(v) / top; return m < 0.08 ? null : tint(v > 0 ? c.blue : c.fail, STRENGTH[Math.min(2, Math.floor(m * 3))]); };
   cells(rows, cols, shade, 0, 0, size, (colour, poly) => (groups.get(colour) ?? groups.set(colour, []).get(colour)).push(poly));
   let box = div().id(id).relative().w(w).h(h).flex_none().border_1().border_color(c.grey300).bg(c.surface);
+  // A press on the picture picks the cell under it, where the app says where in the picture the press was.
+  if (onCell) box = box.cursor_pointer().on_mouse_down("left", (ev, cx) => {
+    const at = ev.local_position ?? (ev.bounds && ev.position ? { x: ev.position.x - ev.bounds.x, y: ev.position.y - ev.bounds.y } : null);
+    if (!at) return;
+    onCell(Math.max(0, Math.min(rows - 1, Math.floor(at.y / size))), Math.max(0, Math.min(cols - 1, Math.floor(at.x / size))), cx);
+  });
   if (paint) for (const [colour, polys] of groups) {
     let p = PathBuilder.fill();
     for (const poly of polys) p = p.add_polygon(poly, true);
     box = box.child(div().absolute().inset_0().child(paint(p.build(), colour)));
   }
   if (mark != null && mark >= 0 && mark < rows) box = box.child(div().id(`${id}-mark`).absolute().left(0).top(mark * size).w(w).h(size).border_1().border_color(c.navy));
+  if (cell && cell[0] >= 0 && cell[0] < rows && cell[1] >= 0 && cell[1] < cols) box = box.child(div().id(`${id}-cell`).absolute().left(cell[1] * size).top(cell[0] * size).size(size).border_2().border_color(c.navy));
   return box;
 }

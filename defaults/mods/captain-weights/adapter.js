@@ -90,7 +90,7 @@ export function partsFrom(d) {
   const address = typeof d.source === "string" ? "" : String(d.source?.from ?? "");
   const from = typeof d.source === "string" ? d.source : !address ? "" : /^[a-z][a-z0-9+.-]*:\/\//i.test(address) ? "Brought in from your model storage" : "Brought in from a folder on this computer";
   return { id: d.id, name: d.name ?? d.id, kind: "parts", kind_words: cap(d.kind_says ?? d.kind_words ?? "trained model"), parameters: d.parameters, width: d.width ?? null,
-    source: from, source_address: address, read_only: d.can?.says ?? null, wiring: d.wiring_says ?? "", heads_words: d.heads ? "" : d.heads_says ?? "",
+    source: from, source_address: address, read_only: d.can?.says ?? null, can_edit: d.can?.edit === true, edits_say: d.can?.edits_say ?? "", wiring: d.wiring_says ?? "", heads_words: d.heads ? "" : d.heads_says ?? "",
     parts, rankers: (d.rankers ?? []).map((r) => ({ id: r.name, name: r.name, trees: r.trees ?? null, inputs_count: r.inputs ?? null })) };
 }
 
@@ -127,6 +127,17 @@ export async function readPartNearest(sessionId, t, row) {
   const r = await api(`/api/weights/sessions/${enc(sessionId)}/nearest?${query({ tensor: t.how.tensor, row, top: 8, watch: 1 })}`, { timeout: 30 });
   if (!r?.ok) return r ?? { ok: false };
   return { ok: true, data: { row: r.data?.row ?? row, name: r.data?.label ?? null, nearest: (r.data?.nearest ?? []).map((x) => ({ row: x.row, name: x.label ?? null, similarity: x.cosine })) } };
+}
+
+/** Change numbers of one matrix of a trained model: one staged change (parthand.js) as one edit. A cell is set
+ *  by its place, a row is halved, doubled or zeroed whole. Rows are counted within the matrix, so a matrix that
+ *  is a range of a stacked tensor has its first row added. Resolves to the event that records it. The services
+ *  do not measure it: the event says so in its sentence. */
+export async function sendPartEdit(sessionId, t, staged) {
+  const row = (t.how.rows?.[0] ?? 0) + staged.row;
+  const what = staged.kind === "cell" ? { op: "set", indices: [[row, staged.col]], value: staged.value }
+    : staged.op === "zero" ? { op: "zero", neurons: [row] } : { op: "scale", neurons: [row], factor: staged.factor };
+  return api(`/api/weights/sessions/${enc(sessionId)}/edits`, { method: "POST", body: { ...what, tensor: t.how.tensor, by: "you" }, timeout: 30 });
 }
 
 /** What each row of a table stands for, when the services know: {labels: [one per row] or null, says, sure}.

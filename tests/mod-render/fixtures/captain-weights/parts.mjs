@@ -67,11 +67,58 @@ export function partsModel(o = {}) {
     parameters, parts, wiring_says: 'The order of the parts is the usual one for these names. The file holds numbers, not wiring, so it is not confirmed.',
     rankers: [{ name: 'full', objective: 'lambdarank', trees: 40, inputs: 4 }, { name: 'quick', objective: 'binary', trees: 25, inputs: 2 }],
     source: { from: '/models/demo/v1', read_at: '2026-11-13T10:00:00Z', files: {} },
-    can: { read: true, edit: false, run: false, deploy: false, says: 'This model can be read here, not changed or run yet.' } };
+    can: o.edits ? { read: true, edit: true, run: false, deploy: false, says: 'This model can be read and changed here, not run yet.', edits_say: NOT_MEASURED }
+      : { read: true, edit: false, run: false, deploy: false, says: 'This model can be read here, not changed or run yet.' } };
 }
+
+export const NOT_MEASURED = 'Not measured: this model cannot be run here yet.';
+// What a test has changed in the made-up model: the numbers set, and the session's record. `partsReset()` clears it.
+const CHANGED = { numbers: new Map(), events: [], refuse: null };
+export function partsReset() { CHANGED.numbers.clear(); CHANGED.events = []; CHANGED.refuse = null; }
+/** Make the next edit be refused with this sentence (null: accept again). */
+export function partsRefuse(sentence) { CHANGED.refuse = sentence; }
+export const partsEvents = () => CHANGED.events;
+/** A tensor's numbers as they are now: the made-up ones with every applied edit. */
+function current(name, R, C) {
+  const m = matrix(name, R, C);
+  for (const [key, v] of CHANGED.numbers) { const [t, r, c] = key.split('|'); if (t === name && m[r]) m[r][c] = v; }
+  return m;
+}
+/** The services' edit route for this kind: set by `indices`, or scale or zero whole rows by `neurons`. */
+function editAnswer(sh, body) {
+  if (CHANGED.refuse) return { ok: false, error: CHANGED.refuse };
+  const shape = sh[body.tensor];
+  if (!shape) return { ok: false, error: `There is no tensor named ${body.tensor}.` };
+  const [R, C] = shape.length === 2 ? shape : [1, shape[0] ?? 1], now = current(body.tensor, R, C);
+  const at = body.indices ?? (body.neurons ?? []).flatMap((r) => Array.from({ length: C }, (_x, c) => [r, c]));
+  const changes = at.map(([r, c]) => ({ tensor: body.tensor, index: [r, c], old: now[r][c], new: body.op === 'set' ? body.value : body.op === 'zero' ? 0 : now[r][c] * body.factor })).filter((x) => x.old !== x.new);
+  for (const x of changes) CHANGED.numbers.set(`${body.tensor}|${x.index[0]}|${x.index[1]}`, x.new);
+  const n = CHANGED.events.length + 1, verb = body.op === 'set' ? 'set' : body.op === 'zero' ? 'set to zero' : 'scaled';
+  const ev = { id: `e${n}`, seq: n, at: '2026-11-13T10:00:00Z', by: body.by ?? 'you', kind: 'edit', op: body.op, tensor: body.tensor, tensors: [body.tensor], changes, changed: changes.length, undone: false,
+    measured: false, not_measured: NOT_MEASURED, touched: { neurons: [], weights: [] }, sentence: `You ${verb} ${changes.length} ${changes.length === 1 ? 'number' : 'numbers'} in ${body.tensor}. ${NOT_MEASURED}` };
+  CHANGED.events.push(ev);
+  return { ok: true, data: ev };
+}
+function undoAnswer(body) {
+  const ev = CHANGED.events.find((e) => e.id === body.edit && e.kind === 'edit' && !e.undone);
+  if (!ev) return { ok: false, error: 'There is no such edit to take back.' };
+  for (const x of ev.changes) CHANGED.numbers.set(`${x.tensor}|${x.index[0]}|${x.index[1]}`, x.old);
+  ev.undone = true;
+  const n = CHANGED.events.length + 1, out = { id: `e${n}`, seq: n, by: 'you', kind: 'undo', undoes: ev.id, tensor: ev.tensor, measured: false, touched: { neurons: [], weights: [] }, sentence: `You took back an edit to ${ev.tensor}. ${NOT_MEASURED}` };
+  CHANGED.events.push(out);
+  return { ok: true, data: out };
+}
+const changedNow = () => { let n = 0; for (const [key, v] of CHANGED.numbers) { const [t, r, c] = key.split('|'); const sh = tensorShapes()[t]; if (matrix(t, sh[0], sh[1] ?? 1)[r]?.[c] !== v) n++; } return n; };
 
 const leaf = (n, value) => ({ leaf: n, value, count: 10 });
 const ask = (input, name, threshold, left, right, more = {}) => ({ input, name, threshold, gain: 5, categorical: false, missing_goes: 'left', left, right, ...more });
+/** A full tree `depth` questions deep, with made-up thresholds: 2^depth leaves. */
+function deepTree(depth, n = { at: 0 }) {
+  if (depth === 0) return leaf(n.at++, Number((0.01 * (n.at % 7) - 0.03).toFixed(2)));
+  const mine = n.at++;
+  return ask(mine % 3, ['price', 'items seen', 'days since last visit'][mine % 3], mine + 1, deepTree(depth - 1, n), deepTree(depth - 1, n));
+}
+
 /** The services' answer for one ranker (`GET /api/weights/models/demo-session/trees?ranker=`). A value at or below
  *  the threshold goes left. */
 export function rankerAnswer(ranker = 'full', o = {}) {
@@ -88,6 +135,7 @@ export function rankerAnswer(ranker = 'full', o = {}) {
       { tree: 0, leaves: 4, depth: 2, root: ask(1, 'price', 12.5, ask(0, 'items seen', 3, leaf(0, -0.05), leaf(1, 0.21)), ask(2, 'days since last visit', 7, leaf(2, 0.09), leaf(3, -0.18))) },
       { tree: 1, leaves: 3, depth: 2, root: ask(2, 'days since last visit', 2, leaf(0, -0.11), ask(1, 'price', 30, leaf(1, -0.07), leaf(2, 0.14))) },
       { tree: 2, leaves: 2, depth: 1, root: ask(0, 'shop section', 3, leaf(0, 0.02), leaf(1, -0.02), { categorical: true }) },
+      ...(o.deep ? [{ tree: 3, leaves: 32, depth: 5, root: deepTree(5) }] : []),
     ],
     rule: 'At each question, a value at or below the threshold goes left. Anything else goes right.' };
 }
@@ -97,13 +145,21 @@ const span = (text, size) => { if (!text) return [0, size]; const [a, b] = Strin
 
 /** Answers for the services' routes over the made-up model, or undefined for any other path. `tall` gives the
  *  item table 1,000 rows. `heads: null` is a model whose files do not say how many heads it has. */
-export function partsRoutes(path, o = {}) {
+export function partsRoutes(path, o = {}, opts = {}) {
   const [p, q = ''] = path.split('?');
   const arg = Object.fromEntries(q.split('&').filter(Boolean).map((kv) => kv.split('=').map(decodeURIComponent)));
   const m = partsModel(o), sh = tensorShapes(o);
   if (p === '/api/weights/models') return { ok: true, data: [{ id: m.id, name: m.name, says: m.says, sizes: [], parameters: m.parameters, versions: [1], kind: m.kind, kind_says: m.kind_says }] };
   if (p === `/api/weights/models/${PARTS}`) return { ok: true, data: m };
-  if (p === `/api/weights/models/${PARTS}/session`) return { ok: true, data: { id: SESSION, model: PARTS, ledger: { raw_weights: true, weights_read: 0, changed: 0, total: m.parameters }, events: [] } };
+  if (p === `/api/weights/models/${PARTS}/session`) return { ok: true, data: { id: SESSION, model: PARTS, ledger: { raw_weights: true, weights_read: 0, changed: changedNow(), total: m.parameters }, events: CHANGED.events.map((e) => ({ ...e })) } };
+  if (p === `/api/weights/sessions/${SESSION}/edits`) return o.edits ? editAnswer(sh, opts.body ?? {}) : { ok: false, error: 'This model can be read here, not changed or run yet.' };
+  if (p === `/api/weights/sessions/${SESSION}/undo`) return undoAnswer(opts.body ?? {});
+  if (p === `/api/weights/sessions/${SESSION}/save`) {
+    if (!changedNow()) return { ok: false, error: 'There is nothing to save: the network is the same as its base.' };
+    const n = CHANGED.events.length + 1;
+    CHANGED.events.push({ id: `e${n}`, seq: n, by: 'you', kind: 'save', sentence: `You saved the network as ${PARTS}@v2.` });
+    return { ok: true, data: { model: PARTS, version: 2, ref: `${PARTS}@v2`, base: `${PARTS}@v1`, changed: changedNow(), measured: false, not_measured: NOT_MEASURED } };
+  }
   if (p === `/api/weights/models/${PARTS}/trees`) return ['full', 'quick', undefined].includes(arg.ranker) ? { ok: true, data: rankerAnswer(arg.ranker, o) } : { ok: false, error: `${PARTS} has no ranker named '${arg.ranker}'.` };
   if (p === `/api/weights/models/${PARTS}/rankers`) return o.plain ? { ok: false, error: 'Not Found' } : { ok: true, data: { model: PARTS, version: 1,
     rankers: [{ name: 'full', trees: 40, inputs: 4, used: 3, unused: ['hour of day'] }, { name: 'quick', trees: 25, inputs: 2, used: 2, unused: [] }],
@@ -123,7 +179,7 @@ export function partsRoutes(path, o = {}) {
   }
   const shape = sh[arg.tensor];
   if (!shape) return { ok: false, error: `There is no tensor named ${arg.tensor}.` };
-  const [R, C] = shape.length === 2 ? shape : [1, shape[0] ?? 1], all = matrix(arg.tensor, R, C);
+  const [R, C] = shape.length === 2 ? shape : [1, shape[0] ?? 1], all = current(arg.tensor, R, C);
   if (at[1] === 'heatmap') {
     const [r0, r1] = span(arg.rows, R), grid = all.slice(r0, r1);
     return { ok: true, data: { tensor: arg.tensor, shape, rows: [r0, r1], cols: [0, C], grid_shape: [grid.length, C], scale: 1, min: -1, max: 1, grid, grids: [] } };

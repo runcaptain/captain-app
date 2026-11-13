@@ -15,6 +15,7 @@ import { readPartHeatmap, readPartNearest, readPartLabels, readRanker, readRanke
 import { signed, plain } from "./inspect.js";
 import { Heat, reduceGrid, shapeWords, countWords, HEAT_MAX } from "./partsdraw.js";
 import { serviceName } from "./hand.js";
+import { PartHandBlock, ChangesList, partTarget, withPartStaged, leavePart, syncPartInput, pickCell } from "./parthand.js";
 
 export const READ_ONLY = "This model can be read here, not changed or run yet.";
 export const WINDOW = 256;      // the most rows of a tall table read and drawn at once
@@ -26,6 +27,10 @@ export function partsState(model) {
     session: null, rankerAt: 0, treeAt: 0, rankers: {}, rankerProblem: null,
     labels: {},          // what each row of a table stands for, by part: {labels, says, sure} (asked for once)
     compared: null,      // the rankers side by side: which use each input
+    col: 0,              // the column the hand tools act on, with `row`
+    staged: null,        // a change by hand that is not saved (parthand.js)
+    dropped: null, handNote: null, typo: null, synced: "", busy: false,
+    treeOpen: new Set(), // the cut branches of the drawn tree that a person opened
     allInputs: false, allUnused: false, copied: false };
 }
 
@@ -65,8 +70,8 @@ export function partsPin(v) {
   return p ? { ref: `weights:${name}@part=${p.id}`, kind: "weights", label: `${m.name}: ${p.name} (${shapeWords(p.shape)})` } : { ref: `weights:${name}`, kind: "weights", label: `${m.name}: the whole model` };
 }
 
-const partOf = (v) => v.pm.model.parts.find((p) => p.id === v.pm.sel) ?? null;
-const tensorOf = (v, p = partOf(v)) => p?.tensors?.find((t) => t.id === v.pm.tensor) ?? p?.tensors?.[0] ?? null;
+export const partOf = (v) => v.pm.model.parts.find((p) => p.id === v.pm.sel) ?? null;
+export const tensorOf = (v, p = partOf(v)) => p?.tensors?.find((t) => t.id === v.pm.tensor) ?? p?.tensors?.[0] ?? null;
 
 /** The rows of a matrix to read: all of it, or for a table too tall to draw or send whole, WINDOW rows around
  *  the picked row. Null means all. */
@@ -92,7 +97,7 @@ export function loadPart(v, cx) {
   if (!p || !t) return;
   const mine = ++s.asks, table = p.kind === "embedding";
   cx.spawn(async (cx) => {
-    if (!s.session) { const got = await readSession(v.model); if (v.pm !== s) return; if (got?.ok && got.data?.id) s.session = got.data.id; }
+    if (!s.session) { const got = await readSession(v.model); if (v.pm !== s) return; if (got?.ok && got.data?.id) { s.session = got.data.id; v.session = got.data; } }
     if (mine !== s.asks) return;
     if (!s.session) { s.problem = "Captain couldn't open this model to read its numbers."; return cx.notify(); }
     const rows = windowOf(t.shape ?? p.shape, s.row);
@@ -108,6 +113,9 @@ export function loadPart(v, cx) {
     if (heat?.ok) { s.heat = { ...heat.data, grid: reduceGrid(heat.data.values) }; s.rows = largestRows(heat.data.values, heat.data.from ?? 0); }
     s.near = near == null ? null : near.ok ? near.data.nearest ?? [] : [];
     s.rowName = near?.ok && near.data.row === s.row ? near.data.name ?? null : null;
+    if (!s.staged) syncPartInput(v);
+    // For the picture check only (main.js `show`): stage a value for the picked cell, as typing it would.
+    if (Number.isFinite(s.showStage)) { const at = partTarget(v); if (at) { s.staged = { kind: "cell", row: at.row, col: at.col, value: s.showStage }; v.partInput.set_value(String(s.showStage)); } s.showStage = null; }
     cx.notify();
   });
 }
@@ -127,25 +135,27 @@ export function loadRanker(v, cx) {
 }
 
 /** Show the model or its rankers. */
-export function showView(v, view, cx) { v.pm.view = view; if (view === "rankers") loadRanker(v, cx); cx.notify(); }
-export function pickRanker(v, n, cx) { v.pm.rankerAt = n; v.pm.treeAt = 0; v.treePz = null; v.pm.rankerProblem = null; v.pm.allInputs = false; v.pm.allUnused = false; loadRanker(v, cx); cx.notify(); }
+export function showView(v, view, cx) { leavePart(v); v.pm.view = view; if (view === "rankers") loadRanker(v, cx); cx.notify(); }
+export function pickRanker(v, n, cx) { v.pm.rankerAt = n; v.pm.treeAt = 0; v.treePz = null; v.pm.treeOpen = new Set(); v.pm.rankerProblem = null; v.pm.allInputs = false; v.pm.allUnused = false; loadRanker(v, cx); cx.notify(); }
 
 /** Open a part (or close it, on a second click with no head named). */
 export function openPart(v, id, head, cx) {
   const s = v.pm;
+  leavePart(v);
   if (s.sel === id && head == null) { s.sel = null; return cx.notify(); }
   const same = s.sel === id;
   s.sel = id;
-  if (!same) { s.tensor = null; s.row = null; s.rowName = null; s.heat = null; s.rows = null; s.near = null; s.problem = null; s.head = 0; }
+  if (!same) { s.tensor = null; s.col = 0; s.row = null; s.rowName = null; s.heat = null; s.rows = null; s.near = null; s.problem = null; s.head = 0; }
   if (head != null) { s.head = head; const p = partOf(v); if (!tensorOf(v, p)?.per_head) s.tensor = p.tensors.find((t) => t.per_head)?.id ?? s.tensor; }
-  if (partOf(v)?.kind === "embedding" && s.row == null) s.row = 0;
+  if (s.row == null) s.row = 0; // the first row is picked: a table shows the rows most like it, and the hand tools act on it
   loadPart(v, cx);
   cx.notify();
 }
-export function pickTensor(v, id, cx) { v.pm.tensor = id; v.pm.heat = null; v.pm.rows = null; loadPart(v, cx); cx.notify(); }
-export function pickHead(v, n, cx) { v.pm.head = n; loadPart(v, cx); cx.notify(); }
+export function pickTensor(v, id, cx) { leavePart(v); v.pm.col = 0; v.pm.row = 0; v.pm.tensor = id; v.pm.heat = null; v.pm.rows = null; loadPart(v, cx); cx.notify(); }
+export function pickHead(v, n, cx) { leavePart(v); v.pm.head = n; loadPart(v, cx); cx.notify(); }
 export function pickRow(v, row, cx) {
-  const p = partOf(v), n = p?.shape?.[0] ?? 1;
+  const p = partOf(v), n = v.pm.heat?.shape?.[0] ?? p?.shape?.[0] ?? 1;
+  leavePart(v);
   v.pm.row = Math.max(0, Math.min(n - 1, row)); v.pm.near = null; v.pm.rowName = null;
   loadPart(v, cx); cx.notify();
 }
@@ -176,7 +186,8 @@ export function PartPanel(c, v, width) {
       .child(heading("Open a part"))
       .child(div().text_size(12.5).line_height("18px").text_color(c.grey500).child("Click a block in the drawing to see what it is, a picture of its numbers and its largest rows."))
       // How sure the order of the blocks is, in the services' own words.
-      .when(Boolean(s.model.wiring), (e) => e.child(div().id("wt-part-wiring").text_size(11.5).line_height("16px").text_color(c.grey500).child(s.model.wiring)));
+      .when(Boolean(s.model.wiring), (e) => e.child(div().id("wt-part-wiring").text_size(11.5).line_height("16px").text_color(c.grey500).child(s.model.wiring)))
+      .child(ChangesList(c, v) ?? div());
   }
   const t = tensorOf(v), table = p.kind === "embedding";
   const fact = (id, name, value) => v_flex().gap(2).child(label(c, name)).child(div().id(id).text_size(15).font_semibold().child(value));
@@ -196,22 +207,30 @@ export function PartPanel(c, v, width) {
   if (s.problem) return out.child(div().id("wt-part-problem").text_size(12.5).line_height("18px").text_color(c.fail).child(s.problem));
   if (!s.heat) return out.child(Skeleton(c, 4));
   // The picture. A matrix too large to draw cell by cell is averaged down, and the panel says so.
-  const g = s.heat.grid, [R, C] = s.heat.shape ?? [g.rows, g.cols];
-  const sent = s.heat.values.length, first = s.heat.from ?? 0, part = sent < R; // a tall table is read a window at a time
-  const mark = table && s.row != null && s.row >= first && s.row < first + sent ? Math.floor((s.row - first) / g.by[0]) : null;
-  out = out.child(v_flex().gap(4)
+  const sent = s.heat.values.length, first = s.heat.from ?? 0; // a tall table is read a window at a time
+  // A staged change shows in the picture as a preview. The numbers the page holds are not touched.
+  const g = s.staged ? reduceGrid(withPartStaged(s.heat.values, first, s.staged)) : s.heat.grid, [R, C] = s.heat.shape ?? [g.rows, g.cols];
+  const part = sent < R, target = partTarget(v);
+  const mark = s.row != null && s.row >= first && s.row < first + sent ? Math.floor((s.row - first) / g.by[0]) : null;
+  const cell = target && mark != null ? [mark, Math.floor(target.col / g.by[1])] : null;
+  const picture = v_flex().gap(4)
     .child(heading(`The numbers as a picture (${shapeWords([R, C])})`))
-    .child(Heat(c, "wt-part-heat", g, { width: Math.max(120, width), mark }))
+    .child(Heat(c, "wt-part-heat", g, { width: Math.max(120, target && width >= 520 ? Math.round(width * 0.5) : width), mark, cell, onCell: target ? (r, q, cx) => pickCell(v, first + r * g.by[0], q * g.by[1], cx) : null }))
+    .when(Boolean(s.staged), (e) => e.child(div().id("wt-part-preview").text_size(11.5).line_height("16px").text_color(c.blue).child("Not saved: the picture shows your change as a preview.")))
     .child(div().id("wt-part-heat-says").text_size(11.5).line_height("16px").text_color(c.grey500)
-      .child(`Each cell is one number: blue is positive, red is negative, stronger is larger, blank is near zero.${part ? ` Rows ${int(first + 1)} to ${int(first + sent)} of ${int(R)} are drawn, around the picked row.` : ""}${g.reduced ? ` Shown reduced: ${shapeWords([sent, C])} drawn as ${shapeWords([g.rows, g.cols])}, each cell an average.` : ""}`)));
-  // The largest rows, by their length as a vector. In a table a click picks the row.
+      .child(`Each cell is one number: blue is positive, red is negative, stronger is larger, blank is near zero.${part ? ` Rows ${int(first + 1)} to ${int(first + sent)} of ${int(R)} are drawn, around the picked row.` : ""}${g.reduced ? ` Shown reduced: ${shapeWords([sent, C])} drawn as ${shapeWords([g.rows, g.cols])}, each cell an average.` : ""}`));
+  // The largest rows, by their length as a vector. A click picks the row.
   const rows = s.rows ?? [], top = Math.max(1e-12, ...rows.map((r) => r.norm ?? 0));
   // What the rows stand for, where the services know (category names, price ranges).
   const known = table ? s.labels[p.id] ?? null : null, names = known?.labels ?? null;
+  // The hand tools sit beside the picture where the panel is wide enough, so both are on screen together.
+  const hand = PartHandBlock(c, v, names);
+  out = out.child(hand && width >= 520 ? h_flex().gap(16).items_start().child(div().flex_none().max_w(Math.round(width * 0.5)).child(picture)).child(div().flex_1().min_w(0).child(hand))
+    : hand ? v_flex().gap(12).child(picture).child(hand) : picture);
   if (rows.length) out = out.child(v_flex().id("wt-part-rows").gap(2)
     .child(h_flex().pb(2).child(div().flex_1().text_size(12.5).font_semibold().child(part ? "Largest rows of those drawn" : "Largest rows")).child(label(c, "size, and its largest number")))
     .children(rows.map((r) => barRow(c, `wt-part-row-${r.row}`, rowName(r, names), (r.norm ?? 0) / top, `${plain(r.norm)}, ${plain(r.largest)}`,
-      { on: table && r.row === s.row, go: table ? (_e, cx) => pickRow(v, r.row, cx) : null, tip: table ? "Pick this row" : `Row ${int(r.row + 1)}: its size is its length as a vector` }))));
+      { on: r.row === s.row, go: (_e, cx) => pickRow(v, r.row, cx), tip: "Pick this row. Its size is its length as a vector" }))));
   if (table) {
     const named = s.rowName ?? names?.[s.row] ?? null;
     const step = (id, text, to, off) => div().id(id).h(26).px(9).flex().flex_none().items_center().text_size(12.5).border_1().bg(c.surface).border_color(c.grey300).text_color(off ? c.grey500 : c.navy)
@@ -230,6 +249,8 @@ export function PartPanel(c, v, width) {
       // Where the names came from, in the services' own sentence, when a row's place is a guess.
       .when(Boolean(known?.says) && known.sure === false, (e) => e.child(div().id("wt-part-labels-says").text_size(11.5).line_height("16px").text_color(c.grey500).child(known.says))));
   }
+  const changes = ChangesList(c, v);
+  if (changes) out = out.child(changes);
   return out;
 }
 
@@ -246,7 +267,7 @@ export function gainWords(i) {
 export function TreeBar(c, v) {
   const s = v.pm, r = rankerOf(v), shown = r?.shown ?? [];
   const step = (id, text, to, off) => div().id(id).h(26).px(9).flex().flex_none().items_center().text_size(12.5).border_1().bg(c.surface).border_color(c.grey300).text_color(off ? c.grey500 : c.navy)
-    .when(!off, (e) => e.cursor_pointer().hover((x) => x.border_color(c.blue).text_color(c.blue)).on_click((_e, cx) => { s.treeAt = to; v.treePz = null; cx.notify(); })).child(text);
+    .when(!off, (e) => e.cursor_pointer().hover((x) => x.border_color(c.blue).text_color(c.blue)).on_click((_e, cx) => { s.treeAt = to; v.treePz = null; s.treeOpen = new Set(); cx.notify(); })).child(text);
   return h_flex().id("wt-ranker-trees").h(36).flex_none().gap(6).items_center()
     .child(div().id("wt-ranker-tree-at").flex_1().min_w(0).truncate().text_size(12.5).text_color(c.navy)
       .child(shown.length ? `Tree ${int(s.treeAt + 1)} of the first ${int(shown.length)} is drawn${(r.trees ?? 0) > shown.length ? ` (the ranker has ${int(r.trees)})` : ""}.` : ""))
