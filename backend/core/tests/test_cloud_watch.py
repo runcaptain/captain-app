@@ -210,7 +210,8 @@ def test_a_job_announces_every_step_line_and_its_end(ws, aws, monkeypatch):  # n
     assert len(said) == n
     hold.set()
     assert _until(lambda: SV.JOBS[jid]["status"] == "done")
-    assert len(said) > n and AN.seq(f"job:{jid}") == len(said) == AN.seq("deployed")
+    # The job's last words come a moment after its status: wait for the counts to agree, not for one instant.
+    assert _until(lambda: len(said) > n and AN.seq(f"job:{jid}") == len(said) == AN.seq("deployed"))
     # It still reads as a plain record for the route that returns it.
     import json
     assert json.loads(json.dumps(SV.JOBS[jid]))["result"] == {"text": "Stopped."}

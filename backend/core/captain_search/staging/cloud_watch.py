@@ -15,6 +15,13 @@ Rules it keeps:
   - It is never asking more than half the time: after an ask that took a while, it waits at least as long again.
     Asking Modal what is there starts a process (`modal app list`) that takes about a second and real CPU, so
     Modal is asked every two seconds, not every one.
+
+What asking Modal costs, as an estimate (2026-11-12): starting the process and loading Modal's command took 0.19
+seconds and 0.18 seconds of one processor, the median of five runs of a command of the same shape that touches no
+network and no workspace (`python -m modal app list --help`) on a laptop. At one ask every two seconds that is
+about 9% of one processor while a screen is open, before the network round trip, which was not measured: the only
+Modal workspace on the machine it was timed on runs production, and nothing was run against it. Listing through
+Modal's library inside the service, with no process to start, would remove that cost.
 """
 from __future__ import annotations
 
