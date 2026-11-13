@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { harness, shapesIn } from './harness.mjs';
 import { fakeFeed } from './fixtures/captain-weights/reference.mjs';
-import { PARTS, SESSION, partsModel, partsRoutes, partsReset, partsRefuse, matrix, NOT_MEASURED } from './fixtures/captain-weights/parts.mjs';
+import { PARTS, SESSION, partsModel, partsRoutes, partsReset, partsRefuse, matrix, NOT_MEASURED, SOURCE_SAYS } from './fixtures/captain-weights/parts.mjs';
 
 const { default: Weights } = await import('../../defaults/mods/captain-weights/main.js');
 const { weightsTransport, partsFrom, isParts } = await import('../../defaults/mods/captain-weights/adapter.js');
@@ -487,4 +487,27 @@ test('an older layout: item vectors are a table on the candidate side, and a par
   await h.click('wp-part-act');
   assert.equal(one(h, 'wt-phand').length, 1);
   assert.equal(h.byIdPrefix('wt-part-fixed').length, 0);
+});
+
+test('the services\' sentence about where a model came from shows on the list and on the page', async () => {
+  const h = await page(null, null, { sourced: true });
+  assert.equal(textOf(h, `wt-open-source-${PARTS}`), SOURCE_SAYS);
+  await h.click(`wt-open-btn-${PARTS}`);
+  assert.equal(textOf(h, 'wt-source'), SOURCE_SAYS, 'their sentence, in place of the page\'s own');
+  assert.equal(h.byIdPrefix('wt-source-copy').length, 1, 'the address can still be copied');
+  assert.ok(!h.text().includes('/models/demo'));
+});
+
+test('a tall table asks for the names of the rows on screen only', async () => {
+  const h = await page(PARTS, [1280, 800], { tall: true, named: true });
+  await h.click('wp-part-item');
+  assert.equal(asked.filter(([p]) => p.includes('/labels')).at(-1)[0], `${S}/labels?tensor=item.weight&rows=0%3A256`);
+  assert.equal(h.mod.pm.labels.item.labels.length, 256);
+  assert.equal(textOf(h, 'wt-part-row-at'), 'Row 1 of 1,000: thing 1');
+  h.mod.pm.row = 600; await h.idle(1);
+  await h.click('wt-part-row-next');
+  assert.equal(asked.filter(([p]) => p.includes('/labels')).at(-1)[0], `${S}/labels?tensor=item.weight&rows=473%3A729`);
+  assert.equal(textOf(h, 'wt-part-row-at'), 'Row 602 of 1,000: thing 602', 'a name is found by its row in the whole table');
+  const top = h.mod.pm.rows[0].row;
+  assert.equal(h.byIdPrefix(`wt-part-row-${top}`)[0].kids[0].kids[0], `thing ${top + 1}`);
 });
