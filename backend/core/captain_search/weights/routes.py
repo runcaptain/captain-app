@@ -66,7 +66,10 @@ def import_model(body: dict):
     import os
 
     from . import pipeline as WP
+    from . import real as R
 
+    if R.looks_real(str(b["folder"])):    # a folder of trained weights, or an s3:// address of one
+        return R.import_from(_ctx(), str(b["folder"]), b.get("name") or b.get("as"))
     folder = os.path.abspath(str(b["folder"]))
     return WP.collect(_ctx(), folder, folder, b.get("name"))
 
@@ -119,8 +122,9 @@ def stats(sid: str, tensor: str | None = None, neurons: bool = False, by: str | 
 
 
 @router.get("/sessions/{sid}/heatmap")
-def heatmap(sid: str, layer: int = 0, neuron: str | None = None, by: str | None = None, watch: bool = False):
-    return S.heatmap(_ctx(), sid, layer, neuron, by, watch)
+def heatmap(sid: str, layer: int = 0, neuron: str | None = None, by: str | None = None, watch: bool = False,
+            tensor: str | None = None, rows: str | None = None, cols: str | None = None):
+    return S.heatmap(_ctx(), sid, layer, neuron, by, watch, tensor=tensor, rows=rows, cols=cols)
 
 
 @router.get("/sessions/{sid}/template")
@@ -271,3 +275,6 @@ def export(sid: str, body: dict):
     if not b.get("folder"):
         raise S.WeightsError("Name the folder to write the tensors into.")
     return S.export(_ctx(), sid, str(b["folder"]), str(b.get("file") or "tensors.safetensors"), b.get("by"))
+
+
+from . import real_routes  # noqa: E402,F401  reading a trained session model: nearest rows, directions, attention, trees

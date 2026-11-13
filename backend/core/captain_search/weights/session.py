@@ -25,6 +25,7 @@ starts over if someone did), then tells the change feed: `weights:<model>` and `
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import secrets
@@ -50,6 +51,18 @@ PASS_INPUTS = 32
 
 class Refused(WeightsError):
     """An operation the session's allowances do not cover. It is written into the record, then raised."""
+
+
+def _by_kind(fn):
+    """A session on a model that is not a fully connected network (real.py) answers this operation in its own way,
+    or says in a sentence that it cannot yet."""
+    @functools.wraps(fn)
+    def run(ctx, sid, *args, **kw):
+        from . import real as R
+
+        other = R.handler(ctx, sid, fn.__name__)
+        return other(ctx, sid, *args, **kw) if other else fn(ctx, sid, *args, **kw)
+    return run
 
 
 # ---- loading and saving ---------------------------------------------------------------------------------------------
@@ -474,6 +487,7 @@ def _number_words(st: State, tensor: str, ix) -> str:
 
 # ---- reading ------------------------------------------------------------------------------------------------------------
 
+@_by_kind
 def layers(ctx, sid: str, by: str | None = None, watch: bool = False) -> dict:
     def fn(st):
         m = st.manifest
@@ -490,6 +504,7 @@ def layers(ctx, sid: str, by: str | None = None, watch: bool = False) -> dict:
     return _do(ctx, sid, fn, watch)
 
 
+@_by_kind
 def session_layers(ctx, sid: str) -> list[dict]:
     """The session's layers and their tensor names, for turning "layer 2" into a tensor. Shapes only: no numbers,
     so it is not an event."""
@@ -531,6 +546,7 @@ def _touch(st: State, k: int, kind: str, rows: range, cols: range | None) -> dic
     return {"neurons": neurons, "weights": weights}
 
 
+@_by_kind
 def read(ctx, sid: str, tensor: str, rows=None, cols=None, by: str | None = None, watch: bool = False) -> dict:
     """A slice of raw numbers. Refused when the session may not see raw weights. Every number returned is counted."""
     def fn(st):
@@ -566,6 +582,7 @@ def _tensor_stats(name: str, t: np.ndarray) -> dict:
             "norm": float(np.linalg.norm(f)), "zero_share": float((f == 0).mean()), "distinct": int(np.unique(f).size)}
 
 
+@_by_kind
 def stats(ctx, sid: str, tensor: str | None = None, neurons: bool = False, by: str | None = None, watch: bool = False) -> dict:
     """Numbers about the numbers: per tensor (weights and biases apart), and per neuron when asked."""
     def fn(st):
@@ -604,11 +621,15 @@ def _grid_shape(st: State, k: int, n: int) -> list[int]:
     return [side, side] if side * side == n and n > 3 else [1, n]
 
 
-def heatmap(ctx, sid: str, layer=0, neuron=None, by: str | None = None, watch: bool = False) -> dict:
-    """A layer's weights per input as grids, one per neuron: what each neuron looks for. `layer` counts from 0."""
+@_by_kind
+def heatmap(ctx, sid: str, layer=0, neuron=None, by: str | None = None, watch: bool = False, tensor: str | None = None,
+            rows=None, cols=None) -> dict:
+    """A layer's weights per input as grids, one per neuron: what each neuron looks for. `layer` counts from 0.
+    A layer can be named by its weight tensor instead. (`rows` and `cols` are for models read by tensor: real.py.)"""
     def fn(st):
-        ly = st.layer(layer)
-        k = int(layer)
+        k = st.where(tensor)[0] if tensor else layer
+        ly = st.layer(k)
+        k = int(k)
         w, b = st.cur[ly["weight"]], st.cur[ly["bias"]]
         if neuron in (None, ""):
             js = list(range(w.shape[0]))
@@ -634,6 +655,7 @@ def heatmap(ctx, sid: str, layer=0, neuron=None, by: str | None = None, watch: b
     return _do(ctx, sid, fn, watch)
 
 
+@_by_kind
 def template(ctx, sid: str, output=0, by: str | None = None, watch: bool = False) -> dict:
     """One output neuron's incoming weights: which neurons of the column before it vote for this output."""
     def fn(st):
@@ -732,6 +754,7 @@ def _cost_terms(net: N.Network, out: np.ndarray, want: np.ndarray) -> list[dict]
     return rows
 
 
+@_by_kind
 def forward(ctx, sid: str, inputs=None, targets=None, example=None, by: str | None = None) -> dict:
     """Run the network on inputs. Costs one forward pass."""
     def fn(st):
@@ -749,6 +772,7 @@ def forward(ctx, sid: str, inputs=None, targets=None, example=None, by: str | No
     return _do(ctx, sid, fn)
 
 
+@_by_kind
 def activations(ctx, sid: str, inputs=None, targets=None, example=None, by: str | None = None) -> dict:
     """Every neuron's weighted sum and activation for one input. Costs one forward pass."""
     def fn(st):
@@ -774,6 +798,7 @@ def activations(ctx, sid: str, inputs=None, targets=None, example=None, by: str 
     return _do(ctx, sid, fn)
 
 
+@_by_kind
 def gradients(ctx, sid: str, inputs=None, targets=None, example=None, layer=None, neuron=None, by: str | None = None) -> dict:
     """The cost and its gradient for every weight and bias, and what each neuron wants. Costs one forward pass and
     marks the session as having computed gradients."""
@@ -827,6 +852,7 @@ def gradients(ctx, sid: str, inputs=None, targets=None, example=None, layer=None
     return _do(ctx, sid, fn)
 
 
+@_by_kind
 def trace(ctx, sid: str, inputs=None, targets=None, example=None, path=None, by: str | None = None) -> dict:
     """The chain rule along one path through the network for one input: three factors per layer. Costs one forward
     pass and marks the session as having computed gradients."""
@@ -856,6 +882,7 @@ def trace(ctx, sid: str, inputs=None, targets=None, example=None, path=None, by:
     return _do(ctx, sid, fn)
 
 
+@_by_kind
 def cost_slice(ctx, sid: str, tensor: str, index, inputs=None, targets=None, example=None, span: float | None = None,
                points: int = 21, by: str | None = None) -> dict:
     """The cost as one number is moved and every other stays put: a slice through one of the network's dimensions.
@@ -993,6 +1020,7 @@ def _check_spec(st: State, spec, which: str):
                        "network are for looking at and are never scored.")
 
 
+@_by_kind
 def set_sets(ctx, sid: str, target=None, should_not_change=None, by: str | None = None) -> dict:
     """Name what the edits should fix (target) and what they must leave alone (should not change). The held-out set
     is the model's own and cannot be changed."""
@@ -1062,6 +1090,7 @@ def _drift(st: State, x) -> list[dict]:
     return rows
 
 
+@_by_kind
 def evaluate(ctx, sid: str, by: str | None = None) -> dict:
     """The base and the network as it is now, on the same three sets with the same settings, and how far each
     column's activations moved. Run by the tool: the examples are never returned."""
@@ -1314,6 +1343,7 @@ def _predicted(st: State, before: N.Network, parts: list[dict], cost: dict) -> d
             "gap": actual - change}
 
 
+@_by_kind
 def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
     """Change numbers. The edit is stored as a patch and measured on the three sets just before and just after.
 
@@ -1453,12 +1483,14 @@ def _last_apply(st: State, n: int) -> int:
     return max(i for i, (kind, m) in enumerate(st.doc["actions"]) if m == n and kind in ("apply", "redo"))
 
 
+@_by_kind
 def undo(ctx, sid: str, edit_id=None, by: str | None = None) -> dict:
     """Take an edit back: the last one still applied, or the one named. The exact old numbers return. The edit stays
     in the record, marked as taken back."""
     return _flip(ctx, sid, edit_id, by, "undo")
 
 
+@_by_kind
 def redo(ctx, sid: str, edit_id=None, by: str | None = None) -> dict:
     """Put back an edit that was taken back: the one taken back last, or the one named."""
     return _flip(ctx, sid, edit_id, by, "redo")
@@ -1632,6 +1664,7 @@ def compare(ctx, a: str, b: str) -> dict:
     return {"a": WS.ref_of(an, ma["version"]), "b": WS.ref_of(bn, mb["version"]), **_diff_tensors(where, ta, tb)}
 
 
+@_by_kind
 def save(ctx, sid: str, note: str = "", by: str | None = None) -> dict:
     """Save the network as it is now as a new version: the base plus patches, with this session's record attached.
     Nothing is overwritten."""
@@ -1678,6 +1711,7 @@ def close(ctx, sid: str, by: str | None = None) -> dict:
     return _do(ctx, sid, fn)
 
 
+@_by_kind
 def export(ctx, sid: str, folder: str, file: str = "tensors.safetensors", by: str | None = None) -> dict:
     """Write the network as it is now into a folder, for code to work on. Only a session that was allowed a sandbox
     may do this, and doing it is recorded."""
@@ -1701,6 +1735,11 @@ def whole(ctx, model: str, sid: str | None = None) -> dict:
     """A network for a screen. With no session: its description only (sizes, what inputs and outputs mean, its
     examples) and no numbers. With a session: every number as that session has edited them, counted in the
     session's record as a look by the screen."""
+    from . import real as R
+
+    other = R.whole(ctx, model, sid)    # a trained session model answers with its parts, and no numbers
+    if other is not None:
+        return other
     if sid:
         def fn(st):
             out = WS.whole(st.manifest, st.cur, ctx)
