@@ -125,8 +125,9 @@ export default class CaptainData extends View {
       // The one list, until it loads (while the services start, or after a failure that wasn't an answer).
       if (this.catalog.rows === null || (this.catalog.error && !this.catalog.error.status)) this.catalog.load(cx);
     });
-    // The lists stay current by themselves: every few seconds while Data is shown, at once when it comes back into
-    // view, and at once when a form changes something. A page that is open is left alone.
+    // The lists stay current by themselves, through the one live channel: read again the moment Data's topics
+    // change (a table added on another screen, by a form, from a terminal, or by a job that ended). No timer
+    // re-reads them. An open page has only its facts refreshed.
     keepFresh(cx, "data", (cx) => this.refreshLists(cx));
     // "Open <dataset>" from the palette: captain-go sets shared "captain.open" {section: "data", dataset, tab?, at}.
     // tab (a dataset page tab: health, insights, quality...) opens once that dataset is on the page.
@@ -204,11 +205,9 @@ export default class CaptainData extends View {
   /** Reload what is listed, quietly: the groups stay as they are, and so does the page of each. */
   refreshLists(cx) {
     if (this.graph || this.catalog.rows === null) return;
-    // A page is open: only its facts, and only every third time (about 15 seconds). The rows on the page, a filter
-    // being typed and the place in the grid are never touched.
+    // A page is open: only its facts. The rows on the page, a filter being typed and the place in the grid are never
+    // touched.
     if (this.shown) {
-      this.gentle = ((this.gentle ?? 0) + 1) % 3;
-      if (this.gentle !== 0) return;
       if (this.shown === "dataset") this.refreshDatasetFacts(cx);
       else this.tables.refreshFacts(cx);
       return;

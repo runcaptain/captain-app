@@ -94,6 +94,54 @@ const check = (screen, what, took, limit) => {
   assert.ok(!h.text().includes('Reconnecting'));
 }
 
+// ---- Data -------------------------------------------------------------------------------------------------------
+{
+  const h = await mount('captain-data');
+  await settle(h);
+  const n = (await get('/api/data/tables')).rows.length;
+  assert.ok(h.text().includes(`${n} tables`), `the list is up: ${h.text().slice(0, 200)}`);
+  // Through the service, from another client: a file is imported (a job). The count goes up by itself.
+  const csv = path.join(work, 'added-behind-its-back.csv');
+  fs.writeFileSync(csv, 'id,title\n1,Tent\n2,Stove\n');
+  const imp = await post('/api/datasets/import', { paths: [csv], folder: '' });
+  await job(imp.job);
+  check('Data', 'a table imported from elsewhere is counted', await within(h, 1000, (t) => t.includes(`${n + 1} tables`)), 1000);
+  // A table moved to a folder elsewhere: the open group shows the folder.
+  await h.click('cat-group-kept');
+  await post('/api/library/move', { names: ['added-behind-its-back'], folder: 'made-elsewhere' });
+  await post('/api/library/move', { names: ['demo-catalog'], folder: 'made-elsewhere' });
+  check('Data', 'a folder made from elsewhere shows in the open group', await within(h, 1000, (t) => t.includes('made-elsewhere')), 1000);
+}
+
+// ---- Runs -------------------------------------------------------------------------------------------------------
+{
+  const h = await mount('captain-runs');
+  await settle(h);
+  assert.ok(h.text().includes('demo-tuned-vs-bm25') && !h.text().includes('made-behind-its-back'), `the list is up: ${h.text().slice(0, 200)}`);
+  await post('/api/backtests', { name: 'made-behind-its-back', arms: ['demo-bm25', 'demo-tuned'], queries: 'demo-queries', judgments: 'demo-judgments', hypothesis: 'x' });
+  check('Runs', 'an evaluation saved from elsewhere is listed', await within(h, 1000, (t) => t.includes('made-behind-its-back')), 1000);
+  // It is run from elsewhere. When the run is over, the list's own record of that evaluation has its result, with
+  // nothing pressed: what the screen holds is what the services hold.
+  const before = JSON.stringify((await get('/api/backtests')).find((x) => x.name === 'made-behind-its-back'));
+  const run = await post('/api/backtests/made-behind-its-back/run', {});
+  if (run.job) await job(run.job);
+  let after = before;
+  for (let i = 0; i < 100 && after === before; i++) { after = JSON.stringify((await get('/api/backtests')).find((x) => x.name === 'made-behind-its-back')); if (after === before) await new Promise((r) => setTimeout(r, 100)); }
+  assert.notEqual(after, before, 'the services record the run');
+  check('Runs', 'a run that finished elsewhere is on the list as the services have it', await within(h, 1000, () => JSON.stringify(h.mod.data.backtests.find((x) => x.name === 'made-behind-its-back')) === after), 1000);
+}
+
+// ---- Notebooks --------------------------------------------------------------------------------------------------
+{
+  const h = await mount('captain-notebooks');
+  await settle(h);
+  assert.ok(h.text().includes('demo-zero-results'), `the list is up: ${h.text().slice(0, 200)}`);
+  await post('/api/notebooks/made-behind-its-back/save', { notebook: { nbformat: 4, nbformat_minor: 5, cells: [], metadata: {} }, message: 'x' });
+  check('Notebooks', 'a notebook saved from elsewhere is listed', await within(h, 1000, (t) => t.includes('made-behind-its-back')), 1000);
+  await post('/api/notebooks/made-behind-its-back/rename', { to: 'Named from elsewhere' });
+  check('Notebooks', 'a rename made elsewhere shows', await within(h, 1000, (t) => t.includes('Named from elsewhere')), 1000);
+}
+
 console.log(results.join('\n'));
 console.log('live sync: ok');
 process.exit(0);

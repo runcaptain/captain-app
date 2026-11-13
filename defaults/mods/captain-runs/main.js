@@ -211,8 +211,9 @@ export default class CaptainRuns extends View {
       else if (EARLIER_TAB[o.tab]) this.showKind(cx, o.tab);
       cx.notify();
     });
-    // The lists stay current by themselves: every few seconds while Runs is shown, at once when it comes back into
-    // view, and at once when a form changes something (a new evaluation, a new workflow). What is open stays open.
+    // The lists stay current by themselves, through the one live channel: read again the moment a run or a job
+    // changes (a new evaluation, a workflow that finished, a run started from a terminal). No timer re-reads them.
+    // What is open stays open.
     keepFresh(cx, "runs", (cx) => {
       if (this.starting) return;
       for (const k of ["backtests", "workflows", "grading", "replays"]) this.load(cx, k);

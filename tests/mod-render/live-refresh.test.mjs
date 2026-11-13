@@ -11,44 +11,38 @@ import { tidy } from './backend.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const root = path.resolve(here, '../..');
-const { keepFresh, viewShown, recordsChanged, connectionsChanged, FRESH_SECONDS } = await import('../../defaults/captain/kit/cst.js');
+const { keepFresh, VIEW_TOPICS } = await import('../../defaults/captain/kit/cst.js');
 
-// ---- the one helper every view uses -------------------------------------------------------------------------------
+// ---- the one helper every view uses: it is the live channel now, with no timer of its own ----------------------
 {
-  assert.ok(FRESH_SECONDS >= 2 && FRESH_SECONDS <= 10, 'a few seconds');
-  const stack = (active) => ({ id: 'root', children: [{ id: 'sections', active, children: [{ id: 'data' }, { id: 'runs' }] }] });
-  globalThis.__layout = stack('data');
-  assert.deepEqual([viewShown('data'), viewShown('runs')], [true, false]);
+  const { liveTransport, liveReset, liveState } = await import('../../defaults/captain/kit/live.js');
+  assert.deepEqual(VIEW_TOPICS.data, ['data', 'jobs', 'logins']);
+  assert.deepEqual(VIEW_TOPICS.runs, ['runs', 'jobs']);
+  assert.deepEqual(VIEW_TOPICS.notebooks, ['notebooks']);
+  const src = fs.readFileSync(path.join(root, 'defaults/captain/kit/cst.js'), 'utf8');
+  const body = src.slice(src.indexOf('export function keepFresh'), src.indexOf('/** Say that a connection was saved or removed'));
+  assert.ok(body.includes('watchLive(') && !body.includes('timer.'), 'keepFresh watches the change feed and keeps no timer');
+  liveReset();
+  let now = 5_000_000, seq = 1, changed = [];
+  liveTransport(() => Promise.resolve({ ok: true, data: { seq: (seq += 1), changed: changed.splice(0).map((topic) => ({ topic, seq })), reset: false } }), () => now);
   const timers = [], why = [];
-  const cx = { timer: { every: (_ms, f) => timers.push(f) } };
-  const realNow = Date.now;
-  let t = realNow();
-  Date.now = () => t;
-  try {
-    keepFresh(cx, 'data', (_cx, w) => why.push(w), 5);
-    const tick = (ms = 300) => { t += ms; for (const f of timers) f(cx); };
-    tick(); tick();
-    assert.deepEqual(why, [], 'nothing before the few seconds are up');
-    tick(5000);
-    assert.deepEqual(why, ['timer'], 'then by itself');
-    tick(); assert.equal(why.length, 1, 'and not again at once');
-    // A form changed something: at once, without waiting for the timer.
-    recordsChanged('backtest'); tick();
-    assert.deepEqual(why, ['timer', 'changed']);
-    connectionsChanged(); tick();
-    assert.deepEqual(why, ['timer', 'changed', 'changed'], 'a database or cloud connected counts too');
-    // Hidden behind another view: no asking. Back in view: at once.
-    globalThis.__layout = stack('runs');
-    tick(6000); tick(6000);
-    assert.equal(why.length, 3, 'a view that is not shown does not ask');
-    globalThis.__layout = stack('data');
-    tick();
-    assert.deepEqual(why.at(-1), 'shown', 'back in view: fresh at once');
-    // A change made while hidden still reaches it, so it is never older than the person's last action.
-    globalThis.__layout = stack('runs');
-    recordsChanged('dataset'); tick();
-    assert.equal(why.at(-1), 'changed');
-  } finally { Date.now = realNow; globalThis.__layout = undefined; }
+  const cx = { timer: { every: (_ms, f) => timers.push(f) }, spawn: (f) => f(cx), notify() {} };
+  const tick = async (ms = 1100) => { now += ms; for (const f of timers) f(cx); await new Promise((r) => setImmediate(r)); };
+  keepFresh(cx, 'data', (_cx, w, topics) => why.push([w, topics]));
+  await tick(); await tick(); await tick();
+  assert.deepEqual(why, [], 'nothing changed: nothing is read, however long it has been');
+  changed.push('notebooks');
+  await tick();
+  assert.deepEqual(why, [], 'a change to something else is not this view\'s business');
+  changed.push('data');
+  await tick();
+  assert.deepEqual(why, [['changed', ['data']]], 'a table changed: read at once');
+  changed.push('jobs');
+  await tick();
+  assert.deepEqual(why.at(-1), ['changed', ['jobs']], 'a job moved on: an import may have finished');
+  assert.equal(liveState().state, 'live');
+  liveReset();
+  liveTransport((path, opts) => import('../../defaults/captain/kit/cst.js').then((m) => m.api(path, opts)), () => Date.now());
 }
 
 const mount = async (mod, fixtures, routes) => {
@@ -99,16 +93,12 @@ const swap = (file, to) => { globalThis.__routes.find((r) => r[1] === file)[1] =
     await h.idle(20);
     assert.equal(h.asked().length, asked, 'no request while typing');
     h.mod.catalog.find.set_value(''); h.mod.catalog.typed = null;
-    // A page that is open: only its facts are asked for, gently (every third time), and never its rows.
+    // A page that is open: only its facts are asked for, when the feed says something changed, and never its rows.
     h.mod.openDataset(h.cx, 'demo-catalog');
     await h.idle(40);
     const grid = h.mod.page.grid ?? h.mod.page.rows ?? null;
     const detail = h.mod.detail;
     let during = h.asked().length;
-    h.mod.gentle = 0;
-    h.mod.refreshLists(h.cx); h.mod.refreshLists(h.cx);
-    await h.idle(20);
-    assert.equal(h.asked().length, during, 'two of three times nothing is asked');
     h.mod.refreshLists(h.cx);
     await h.idle(40);
     const got = h.asked().slice(during);
