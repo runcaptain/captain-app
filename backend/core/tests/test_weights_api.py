@@ -307,7 +307,7 @@ def test_the_commands_print_the_same_shapes_and_follow_the_session_opened_last(t
     assert cst("weights", "evaluate")["scores"] == "hidden"
     assert cst("weights", "close")["ledger"]["label"] == "from the weights alone"
     assert "closed" in cst("weights", "undo", code=1)["error"]
-    assert cst("weights", "sessions", "tiny")[0]["id"] in (s["id"], other["id"])
+    assert {r["id"] for r in cst("weights", "sessions", "tiny")} == {s["id"], other["id"], b["id"]}
 
 
 def test_the_plain_output_is_sentences_and_the_guide_is_shipped(tmp_path):
