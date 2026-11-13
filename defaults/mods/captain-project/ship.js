@@ -118,6 +118,9 @@ export class Ship {
         const changed = this.seenStatus !== undefined && this.seenFor === pid && this.seenStatus !== now;
         this.seenStatus = now; this.seenFor = pid;
         this.status = r.data; this.problem = null; this.settle(); this.around(cx);
+        // The deployed model's own card (kit/modelcard.js) is drawn from its row on the Deployments list, so it is
+        // the same card here as there. Read when something is deployed, and dropped when nothing is.
+        if (["running", "starting"].includes(r.data?.status)) this.loadRow(cx, pid); else { this.depRow = null; this.depNums = null; }
         if (changed && !this.busy) this.page.reload?.(cx);
         if (r.data?.status === "running" && !this.page.deployOpen) loadLive(this, cx); // the project page names the state too
         // The deployment page's own reads, once per project when the page is open: the chart, the live card, the open tab.
@@ -252,6 +255,21 @@ export class Ship {
       }
     } finally { stop(); this.jobWake = null; }
     return { ok: false, error: "It's still starting. Look again in a minute." };
+  }
+
+  /** This project's row of the Deployments list, and its numbers for the day: what the model's card is drawn from. */
+  loadRow(cx, pid) {
+    cx.spawn(async (cx) => {
+      const r = await api("/api/deployed", { scoped: false, timeout: 60 });
+      if (this.pid() !== pid || !r.ok) return;
+      const row = (r.data?.rows ?? []).find((x) => x.project === pid && x.link !== "unlinked" && x.in_cloud !== false) ?? null;
+      this.depRow = row;
+      cx.notify();
+      if (!row || (this.depNums && Date.now() - (this.depNumsAt ?? 0) < 60000)) return;  // the numbers are paid reads: once a minute
+      this.depNumsAt = Date.now();
+      const n = await api(`/api/projects/${enc(pid)}/deployed/numbers?range=24h&env=${enc(row.env ?? "staging")}`, { scoped: false, timeout: 60 });
+      if (this.pid() === pid && n.ok) { this.depNums = n.data; cx.notify(); }
+    });
   }
 
   stop(cx) {

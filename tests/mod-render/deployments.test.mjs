@@ -719,7 +719,7 @@ const main = fs.readFileSync(path.join(dir, 'main.js'), 'utf8'), model = fs.read
 assert.equal((main.match(/font_family\(FONT\)/g) ?? []).length, 1, 'one typeface on the list, set once');
 // The code font is for what a person copies (the address), and nothing else: mixed fonts were the first complaint.
 // A number that ticks in place has a fixed width, not another font.
-const cardSrc = fs.readFileSync(path.join(dir, 'card.js'), 'utf8');
+const cardSrc = fs.readFileSync(path.join(dir, 'kit', 'modelcard.js'), 'utf8');
 assert.equal((main.match(/font_family\(MONO\)/g) ?? []).length, 0, 'no code font in the list itself');
 assert.equal((cardSrc.match(/font_family\(MONO\)/g) ?? []).length, 1, 'on the card: the address only');
 assert.equal((model.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font on the page only for what a person copies');
