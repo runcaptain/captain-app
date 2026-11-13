@@ -18,6 +18,7 @@ import { PanZoom } from "./canvas.js";
 import { NetworkCanvas, layoutOf } from "./draw.js";
 import { Inspector } from "./inspect.js";
 import { CostPanel } from "./cost.js";
+import { WalkControls, ChainBlock, walkedFrom, stepsOf, steepestWeight } from "./back.js";
 
 const SIDE_W = 340; // the panel beside the drawing
 const BAND_H = 178; // the cost and the timeline, under the drawing
@@ -41,6 +42,7 @@ export default class CaptainWeights extends View {
     this.selW = null;       // the picked weight: {k: layer, j: to, i: from}
     this.mode = "values";   // what the lines show: "values" (the weights) or "nudges" (what the cost wants)
     this.grad = null;       // backpropagation for the chosen input, while nudges are showing
+    this.walk = { step: 0, playing: false }; // the backward walk: 0 is off, 1 the output's error, then a layer a step
     this.session = null;    // the session on this network: what the agent was allowed, and everything done
     this.test = null;       // the cost across the test set: {cost, right, of}
     this.openEdit = null;   // the edit opened in the timeline
@@ -49,6 +51,8 @@ export default class CaptainWeights extends View {
     this.pz = new PanZoom("wt");
     this.width = 1200; this.height = 760;
     if (this.model) this.open(this.model, cx); else this.loadList(cx);
+    // The walk's clock: one step a beat while it plays. It moves the picture only, and reads nothing.
+    cx.timer.every(1200, (cx) => { if (this.walk.playing) this.stepWalk(1, cx); });
   }
 
   loadList(cx) {
@@ -59,6 +63,7 @@ export default class CaptainWeights extends View {
   open(model, cx) {
     this.model = model; this.net = null; this.problem = null; this.sel = null; this.selW = null; this.inputAt = 0;
     this.session = null; this.test = null; this.openEdit = null; this.readFor = null;
+    this.walk = { step: 0, playing: false }; this.mode = "values";
     this.pz = new PanZoom("wt");
     this.stop?.(); this.stop = null;
     this.read(cx);
@@ -119,8 +124,31 @@ export default class CaptainWeights extends View {
   }
 
   /** Whether anything on screen needs the gradients. */
-  wantsGrad() { return this.mode === "nudges"; }
-  setMode(mode, cx) { this.mode = mode; this.rerun(); cx.notify(); }
+  wantsGrad() { return this.mode === "nudges" || this.walk.step > 0; }
+
+  /** Move the backward walk one step (dir 1) or back one (dir -1). The first step picks the weight with the
+   *  largest slope into the output when none is picked, so its chain rule is on screen from the start. */
+  stepWalk(dir, cx) {
+    if (!this.net) return;
+    const of = stepsOf(this.net), step = Math.max(0, Math.min(of, this.walk.step + dir));
+    if (step === this.walk.step && dir > 0) { this.walk.playing = false; return cx.notify(); }
+    this.walk.step = step;
+    if (step === 0) this.walk.playing = false;
+    if (step >= of) this.walk.playing = false;
+    if (step > 0) this.mode = "values";
+    this.rerun();
+    if (step > 0 && !this.selW && this.grad) { const at = steepestWeight(this.grad, this.net.layers.length - 1); this.selW = at; this.sel = { k: at.k + 1, j: at.j }; }
+    cx.notify();
+  }
+  /** Play from the start (or pause). */
+  playWalk(cx) {
+    if (this.walk.playing) { this.walk.playing = false; return cx.notify(); }
+    if (this.walk.step >= stepsOf(this.net)) this.walk.step = 0;
+    this.walk.playing = true;
+    this.stepWalk(1, cx);
+  }
+  stopWalk(cx) { this.walk = { step: 0, playing: false }; this.rerun(); cx.notify(); }
+  setMode(mode, cx) { this.mode = mode; if (mode === "nudges") this.walk = { step: 0, playing: false }; this.rerun(); cx.notify(); }
 
   pickInput(n, cx) { this.inputAt = n; this.rerun(); cx.notify(); }
   pickNeuron(at, cx) { this.sel = this.sel && this.sel.k === at.k && this.sel.j === at.j ? null : at; this.selW = null; cx.notify(); }
@@ -129,7 +157,7 @@ export default class CaptainWeights extends View {
 
   /** What the drawing needs to know. */
   drawing() {
-    return { net: this.net, run: this.run, grad: this.grad, sel: this.sel, selW: this.selW, mode: this.mode, walkedFrom: null, pulse: null };
+    return { net: this.net, run: this.run, grad: this.grad, sel: this.sel, selW: this.selW, mode: this.mode, walkedFrom: walkedFrom(this.net, this.walk.step), pulse: null };
   }
 
   header(c) {
@@ -186,7 +214,7 @@ export default class CaptainWeights extends View {
   }
 
   side(c) {
-    return div().id("wt-side").w(SIDE_W).flex_none().h_full().overflow_y_scroll().child(div().p(16).child(Inspector(c, this)));
+    return div().id("wt-side").w(SIDE_W).flex_none().h_full().overflow_y_scroll().child(div().p(16).child(Inspector(c, this, ChainBlock(c, this))));
   }
 
   render() {
@@ -204,7 +232,7 @@ export default class CaptainWeights extends View {
       .when(Boolean(net), (e) => e
         .child(this.inputs(c))
         .child(h_flex().flex_1().min_h(0)
-          .child(div().pl(20).child(NetworkCanvas(c, this.drawing(), { id: "wt", pz: this.pz, layout: this.layout, width: cw, height: ch,
+          .child(div().pl(20).child(NetworkCanvas(c, this.drawing(), { id: "wt", pz: this.pz, layout: this.layout, width: cw, height: ch, extra: WalkControls(c, this),
             onNeuron: (at, cx) => this.pickNeuron(at, cx), onWeight: (at, cx) => this.pickWeight(at, cx) })))
           .child(div().w(20).flex_none())
           .child(div().w(1).h_full().flex_none().bg(c.rule))

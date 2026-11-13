@@ -143,7 +143,9 @@ export function shapesFor(L, s, c, lineScale = 1) {
     const x1 = a.x + ra, y1 = a.y, x2 = b.x - rb, y2 = b.y;
     const pulsed = s.pulse?.weights?.has(`${l.k}:${l.j}:${l.i}`);
     const chosen = s.selW && s.selW.k === l.k && s.selW.j === l.j && s.selW.i === l.i;
-    const dim = !!sel && !l.attached && !pulsed;
+    // Dimmed: while the error walks backward, the layers it has not reached; otherwise, with a neuron open, the
+    // lines that are not its own.
+    const dim = !pulsed && (s.walkedFrom != null ? l.k < s.walkedFrom : !!sel && !l.attached);
     const hw = ((0.6 + 3.4 * l.m) * (pulsed ? 1.6 + 0.8 * (s.pulse.phase ?? 0) : chosen ? 1.5 : 1) * lineScale) / 2;
     const len = Math.hypot(x2 - x1, y2 - y1) || 1, nx = (-(y2 - y1) / len) * hw, ny = ((x2 - x1) / len) * hw;
     const colour = pulsed ? c.warn : `${l.v >= 0 ? c.blue : c.fail}${dim ? "1f" : STRENGTH[level(l.m, 3)]}`;
@@ -173,7 +175,7 @@ export function shapesFor(L, s, c, lineScale = 1) {
 const two = (v) => (Object.is(Number(v.toFixed(2)), -0) ? "0.00" : v.toFixed(2));
 
 /** The canvas: the shapes under, the circles and their words over them. `o` is {id, pz, width, height, onNeuron,
- *  onWeight} and the drawing state `s` (see shapesFor). */
+ *  onWeight, extra: elements laid over the drawing} and the drawing state `s` (see shapesFor). */
 export function NetworkCanvas(c, s, o) {
   const { net, run, sel } = s, pz = o.pz;
   const L = o.layout ?? layoutOf(net);
@@ -263,5 +265,6 @@ export function NetworkCanvas(c, s, o) {
     .children(layers)
     .children(over)
     .child(pz.minimap(c, L.width, L.height, marks) ?? div())
-    .child(pz.buttons(c, L.width, L.height));
+    .child(pz.buttons(c, L.width, L.height))
+    .children(o.extra ?? []);
 }

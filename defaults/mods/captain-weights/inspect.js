@@ -101,8 +101,9 @@ function weightRow(c, id, r, top, on, right, onPick) {
     .child(div().flex_1().min_w(0).truncate().text_right().text_size(11).text_color(c.grey500).child(right));
 }
 
-/** The panel. `v` is the page: {net, run, grad, sel, selW} and pickWeight(at, cx). */
-export function Inspector(c, v) {
+/** The panel. `v` is the page: {net, run, grad, sel, selW} and pickWeight(at, cx). `slot` is drawn under the
+ *  neuron's own numbers (the chain rule for a picked weight). */
+export function Inspector(c, v, slot = null) {
   const { net, run, grad, sel, selW } = v;
   if (!sel) {
     return v_flex().id("wt-inspect").gap(8)
@@ -126,6 +127,7 @@ export function Inspector(c, v) {
   }
   const nudge = nudgeSentence(f);
   if (nudge) out = out.child(div().id("wt-inspect-nudge").p(8).bg(c.surface2).text_size(12.5).line_height("18px").text_color(c.navy).child(nudge));
+  if (slot) out = out.child(slot);
   const list = (id, heading, rows, pick, right) => {
     const top = Math.max(0, ...rows.map((r) => Math.abs(r.w)));
     // The ones that matter most for this input first: by what they add when the network ran, else by size.
