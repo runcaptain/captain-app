@@ -304,3 +304,72 @@ def test_processor_and_memory_use_is_logged_once_a_minute(logs):
     applog.watch_usage(every=0.05, rounds=2).join(5)
     lines = [ln for ln in _text(logs).splitlines() if " usage  used " in ln]
     assert len(lines) == 2 and all(re.search(r"used \d+\.\d s of processor time in the last 0 s \(\d+% of one processor\), memory \d+ MB, \d+ threads$", ln) for ln in lines), lines
+
+
+# ---- what every thread is doing, on request -----------------------------------------------------------------------
+
+def test_cst_app_stacks_prints_where_every_thread_of_the_running_services_is(tmp_path):
+    """The services sat at half a processor and nothing said why. On SIGUSR1 they write every thread's stack into
+    services.log, and `cst app stacks` asks and prints it."""
+    import signal
+    import subprocess
+    import sys
+
+    if not hasattr(signal, "SIGUSR1"):
+        pytest.skip("no SIGUSR1 on this system")
+    logs_dir, home = tmp_path / "logs", tmp_path / "home"
+    home.mkdir()
+    code = (
+        "import json, os, sys, threading, time\n"
+        "from captain_search import applog as AL\n"
+        "AL.start(sys.argv[1]); AL.watch_stacks()\n"
+        "def listing_folders_in_a_loop():\n"
+        "    while True: os.listdir('.')\n"
+        "threading.Thread(target=listing_folders_in_a_loop, daemon=True, name='the-busy-one').start()\n"
+        "AL.info('services', 'started: a stand-in for the services')\n"
+        "json.dump({'pid': os.getpid(), 'port': 1, 'token': 'x', 'stacks': True}, open(os.path.join(sys.argv[2], 'serve.json'), 'w'))\n"
+        "time.sleep(30)\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", code, str(logs_dir), str(home)])
+    try:
+        for _ in range(100):
+            if (home / "serve.json").exists():
+                break
+            time.sleep(0.05)
+        time.sleep(0.2)
+        text = applog.ask_stacks(proc.pid, str(logs_dir / "services.log"))
+        assert "listing_folders_in_a_loop" in text and "Thread 0x" in text, text[:600]
+        assert text.count("most recent call first") >= 2, "every thread, not only the one that took the signal"
+        # the log's own lines are still whole, and a second ask adds a second dump
+        again = applog.ask_stacks(proc.pid, str(logs_dir / "services.log"))
+        assert "listing_folders_in_a_loop" in again
+        whole = (logs_dir / "services.log").read_text()
+        assert "started: a stand-in for the services" in whole and whole.count("listing_folders_in_a_loop") >= 2
+        # the command: finds the services by their record in the home folder, asks, prints
+        env = {**os.environ, "CST_HOME": str(home), "CAPTAIN_LOG_DIR": str(logs_dir)}
+        cst = os.path.join(os.path.dirname(sys.executable), "cst")
+        out = subprocess.run([cst, "app", "stacks"], env=env, capture_output=True, text=True)
+        assert out.returncode == 0, out.stderr[-400:]
+        assert "listing_folders_in_a_loop" in out.stdout and f"process {proc.pid}" in out.stdout and "innermost call first" in out.stdout
+        short = subprocess.run([cst, "--json", "app", "stacks", "--top", "2"], env=env, capture_output=True, text=True)
+        got = json.loads(short.stdout)
+        assert got["pid"] == proc.pid and got["threads"] >= 2 and all(len(t.split("\n")) <= 3 for t in got["stacks"])
+    finally:
+        proc.kill()
+        proc.wait()
+    # Services from before this existed would be ended by the signal: they are never sent it.
+    old = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"])
+    try:
+        (home / "serve.json").write_text(json.dumps({"pid": old.pid, "port": 1, "token": "x"}))
+        env = {**os.environ, "CST_HOME": str(home), "CAPTAIN_LOG_DIR": str(logs_dir)}
+        out = subprocess.run([os.path.join(os.path.dirname(sys.executable), "cst"), "app", "stacks"], env=env, capture_output=True, text=True)
+        assert out.returncode != 0 and "older version" in (out.stderr + out.stdout)
+        time.sleep(0.3)
+        assert old.poll() is None, "the older services were not sent the signal: they are still running"
+    finally:
+        old.kill()
+        old.wait()
+    # nothing running: said plainly
+    env = {**os.environ, "CST_HOME": str(home), "CAPTAIN_LOG_DIR": str(logs_dir)}
+    gone = subprocess.run([os.path.join(os.path.dirname(sys.executable), "cst"), "app", "stacks"], env=env, capture_output=True, text=True)
+    assert gone.returncode != 0 and "aren't running here" in (gone.stderr + gone.stdout)

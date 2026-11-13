@@ -375,7 +375,7 @@ def watch_once(ctx: Context, notify: bool = True, system: bool = False) -> list[
     from .. import projects as PR
 
     out = []
-    for pr in PR.listing(ctx):
+    for pr in PR.rows(ctx):
         try:
             envs = (PS.read(ctx, pr["id"])[0].get("staging") or {})
         except Exception:  # noqa: BLE001

@@ -4148,6 +4148,7 @@ def serve(host: str = "127.0.0.1", port: int = 0, token: str | None = None, ui: 
     port = sock.getsockname()[1]
     d = mount_ui(ui)
     info = {"port": port, "token": TOKEN, "pid": os.getpid(), "ui": f"http://127.0.0.1:{port}/" if d else None}
+    stacks = False  # set below once SIGUSR1 is safe to send: before that the signal would end the process
     os.makedirs(home(), exist_ok=True)
     p = os.path.join(home(), "serve.json")
     fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -4156,6 +4157,10 @@ def serve(host: str = "127.0.0.1", port: int = 0, token: str | None = None, ui: 
     print(json.dumps(info), flush=True)
     AL.start()
     AL.watch_threads()
+    if AL.watch_stacks():   # `cst app stacks`: every thread's stack into the log, on request
+        info["stacks"] = True
+        with open(p, "w") as fh:   # say so in the services' record: a `cst` must not send the signal to services that lack it
+            json.dump(info, fh)
     AL.watch_usage()
     AL.info("services", f"started: cst {VERSION}, pid {os.getpid()}, port {port}, home {home()}" + (", serving the screens" if d else ""))
     from .workflows import start_scheduler

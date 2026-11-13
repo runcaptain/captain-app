@@ -70,17 +70,44 @@ def every(cloud: str, is_busy: bool = True) -> float:
     return (BUSY_S.get(cloud, BUSY_DEFAULT_S) if is_busy else IDLE_S.get(cloud, IDLE_DEFAULT_S)) * SCALE
 
 
+_READ: dict = {}   # workspace -> (when, records, deploys under way): one read of Captain's records, shared for a moment
+READ_KEEP_S = 0.9         # in a bucket, where another machine's write is not always told
+READ_KEEP_LOCAL_S = 15.0  # on this computer every write moves the feed on, so a read stands until one does
+
+
+def _own(ctx: Context) -> tuple[list, dict]:
+    """Captain's own deployment records and the deploys under way, read at most about once a second however many
+    threads ask. The boss thread and each place's thread all want them every second. Reading them is a few small
+    files for each project, never a listing of the workspace: this once counted what every project holds on each
+    read (every dataset, run and model), four times a second, and cost a third of a processor on a small
+    workspace with nothing happening."""
+    from .. import changes as CH
+
+    # Kept only while nothing has been written since: any write, here or seen from outside, moves the feed on.
+    name, now, seq = ctx.workspace.name, time.monotonic(), CH.FEED.seq
+    with _lock:
+        hit = _READ.get(name)
+        keep = READ_KEEP_LOCAL_S if getattr(ctx.store, "root", None) else READ_KEEP_S
+        if hit and now - hit[0] < keep and hit[3] == seq:
+            return hit[1], hit[2]
+    records, going = FL._records(ctx), FL._deploying(ctx)
+    with _lock:
+        _READ[name] = (now, records, going, seq)
+    return records, going
+
+
 def busy(ctx: Context, src: dict) -> bool:
     """Is something of Captain's on this place: a deployment record there that is not stopped, or a deploy to it
     under way? Read from Captain's own records, which costs nothing."""
     try:
-        for _pr, _env, rec in FL._records(ctx):
+        records, going = _own(ctx)
+        for _pr, _env, rec in records:
             if str(rec.get("status")) in ("stopped", "removed", "None"):
                 continue
             cloud, login, _region, _target = FL._where_of(ctx, rec)
             if cloud == src["cloud"] and (login == src.get("login") or not login or not src.get("login")):
                 return True
-        return any(g.get("host") == src["cloud"] for g in FL._deploying(ctx).values())
+        return any(g.get("host") == src["cloud"] for g in going.values())
     except Exception:  # noqa: BLE001  when in doubt, look often
         return True
 
@@ -159,9 +186,10 @@ def _records_mark(ctx: Context) -> dict:
     """Captain's own records and the deploys under way, by project: what a local model or a deploy's step shows as."""
     out = {}
     try:
-        for pr, env, rec in FL._records(ctx):
+        records, going = _own(ctx)
+        for pr, env, rec in records:
             out[pr["id"]] = (str(rec.get("id")), str(rec.get("status")), str(rec.get("model_version")), str(rec.get("stopped_at")))
-        for (pid, env), g in FL._deploying(ctx).items():
+        for (pid, env), g in going.items():
             out[pid] = (*out.get(pid, ()), "deploying", str(g["step"].get("id")), str(g.get("last_line")))
     except Exception:  # noqa: BLE001
         pass
@@ -238,3 +266,4 @@ def stop_all() -> None:
         _boss.clear()
         _stop.clear()
         _places.clear()
+        _READ.clear()
