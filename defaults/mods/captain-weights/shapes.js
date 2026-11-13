@@ -72,6 +72,8 @@
  * @property {string} model
  * @property {Ledger} ledger
  * @property {WeightEvent[]} events       oldest first
+ * @property {{held_out?: {defined: boolean, of?: number, base?: {model: string, cost: number, right: number, of: number}}}} [sets]
+ *           held_out.base: how the version the session opened on does on its own test set, before any edit
  */
 
 /**

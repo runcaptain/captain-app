@@ -154,7 +154,14 @@ export default class CaptainWeights extends View {
         if (mine !== this.reads || model !== this.model) return;
         if (t.ok) this.test = t.data;
       } else if (last && Number.isFinite(last.after)) this.test = { cost: last.after, right: last.right_after ?? null, of: last.of ?? null };
-      else this.test = { unknown: true, hidden: scored?.scores === "hidden", of: this.session?.sets?.held_out?.of ?? null };
+      else {
+        // No score in the record. While nothing has been changed, the network is the version the session opened
+        // on, and the services say how that version does on its test set (a fact about the model, not a score
+        // shown to anyone). Once numbers have changed, that fact is about another network: say what is known.
+        const held = this.session?.sets?.held_out, base = held?.base;
+        if (base && Number.isFinite(base.cost) && this.session?.ledger?.changed === 0) this.test = { cost: base.cost, right: base.right ?? null, of: base.of ?? held.of ?? null };
+        else this.test = { unknown: true, hidden: scored?.scores === "hidden", of: held?.of ?? null };
+      }
       cx.notify();
     });
   }

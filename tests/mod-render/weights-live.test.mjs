@@ -142,6 +142,19 @@ test('"From the weights alone" shows only when the ledger says no sandbox, no fo
   assert.ok(asked.some(([p]) => p === '/api/weights/models/tiny?session=ws-1&watch=1'), 'the numbers are read through the session, as a screen\'s look');
   assert.equal(asked.filter(([p]) => p.includes('/evaluate')).length, 0, 'the page never asks for a score');
   assert.ok(asked.every(([, method]) => method === 'GET'), 'opening the page changes nothing');
+  // The services say how the version the session opened on does on its test set. While nothing has changed,
+  // that is this network's cost, and reading it is not a score shown to anyone.
+  serve(LEDGER);
+  served['/api/weights/models/tiny/session'].data.sets = { held_out: { defined: true, of: 300, base: { model: 'tiny@v1', cost: 0.0081, right: 300, of: 300 } } };
+  h = await page('tiny');
+  assert.equal(textOf(h, 'wt-cost-test'), '0.008');
+  assert.equal(textOf(h, 'wt-cost-test-under'), '300 of 300 right');
+  assert.equal(asked.filter(([p]) => p.includes('/evaluate')).length, 0);
+  // Once numbers have changed and their score is hidden, the base's cost is not this network's: it is not shown.
+  serve({ ...LEDGER, feedback: false, changed: 1 }, [{ id: 'e1', seq: 1, by: 'agent', kind: 'edit', op: 'set', layer: 1, neuron: 0, changed: 1, changes: [{ k: 0, j: 0, i: null, old: -3, new: -2 }], touched: { neurons: [[1, 0]], weights: [] }, scores: 'hidden' }]);
+  served['/api/weights/models/tiny/session'].data.sets = { held_out: { defined: true, of: 300, base: { model: 'tiny@v1', cost: 0.0081, right: 300, of: 300 } } };
+  h = await page('tiny');
+  assert.equal(textOf(h, 'wt-cost-test'), 'hidden');
   // A score in the record (an evaluation someone ran, an edit) is used.
   serve(LEDGER, [{ id: 'e1', seq: 1, by: 'agent', kind: 'evaluate', touched: { neurons: [], weights: [] }, cost: { test: { name: 'held out', of: 200, before: 0.19, after: 0.17, right_before: 179, right_after: 181 } } }]);
   h = await page('tiny');
