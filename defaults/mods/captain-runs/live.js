@@ -1,4 +1,5 @@
-// CAPTAIN: Runs, Live tab: what's running now and what just ran (GET /api/live), and one run as it happens
+// CAPTAIN: Runs, live: what's running now leads the one list of runs, and "Running now" filters to it with what
+// just ran (GET /api/live). This draws one run as it happens
 // (GET /api/live/{id}?since=n, asked again every second while it runs). Every live run draws the same way, from
 // its events (backend/core/captain_search/live.py): the stages, a progress bar with the time left, the latest of each
 // metric per arm, a metric's line as it fills in, simulated shoppers side by side (the same shopper on each arm),
@@ -20,7 +21,9 @@ const KEEP = { shoppers: 240, logs: 400, points: 600 };
 const PCT = new Set(["conversion", "ctr", "zero_result_rate", "judged@10", "coverage"]);
 
 // Still going: running here, or waiting for a compute target to start it.
-const going = (s) => s === "running" || s === "queued";
+export const going = (s) => s === "running" || s === "queued";
+/** A live run's kind, in the words of the one list's Kind column. */
+export const liveKind = (x) => (KIND[x?.kind] ?? KIND.custom)[1];
 const bare = (ref) => String(ref ?? "").split("@")[0];
 const secs = (s) => (s == null || !Number.isFinite(s) ? "" : s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
 const fmt = (name, v) => (v == null ? "" : PCT.has(name) ? `${(v * 100).toFixed(1)}%` : /revenue|rpv|usd|\$/.test(name) ? `$${Number(v).toFixed(2)}` : Math.abs(v) >= 1000 ? int(v) : Number(v).toFixed(Math.abs(v) < 1 ? 4 : 2));
@@ -82,7 +85,8 @@ export class Live {
         this.error = null;
         const want = pick ?? this.sel;
         if (want && this.list.some((x) => x.id === want)) this.select(cx, want);
-        else if (!this.sel && this.list.length) this.select(cx, (this.list.find((x) => going(x.status)) ?? this.list[0]).id);
+        // Asked for with nothing named ("Running now", an older Live link): the one going, else the newest.
+        else if (!this.sel && this.list.length && this.host.kind === "live") this.select(cx, (this.list.find((x) => going(x.status)) ?? this.list[0]).id);
       } else if (r.status) this.error = r; // the backend answered with a problem; otherwise it's still starting: ask again
       cx.notify();
     });
@@ -171,41 +175,6 @@ export class Live {
 
   // ---- drawing --------------------------------------------------------------------------------------------
 
-  render(c, w) {
-    const lw = Math.max(220, Math.min(320, Math.floor(w * 0.26)));
-    return h_flex().flex_1().min_h(0)
-      .child(this.side(c, lw))
-      .child(this.detail(c, w - lw));
-  }
-
-  side(c, lw) {
-    const rows = this.list ?? [];
-    const icon = this.host.icon.bind(this.host);
-    return v_flex().id("live-list").w(lw).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
-      .when(this.list === null && !this.error, (e) => e.child(Skeleton(c, 6)))
-      .when(!!this.error, (e) => e.child(div().p(12).text_size(12.5).text_color(c.fail).child("Couldn't list the live runs.")))
-      .when(Array.isArray(this.list) && !rows.length, (e) => e.child(v_flex().p(14).gap(8)
-        .child(div().text_size(13).font_medium().child("Nothing running"))
-        .child(div().text_size(12).line_height("18px").text_color(c.grey900).child("Run an offline evaluation and it shows here as it goes: each step, simulated shoppers on both versions side by side, and the numbers as they fill in. Your own simulator or training script can stream here too, through cst live."))))
-      .children(rows.map((x) => {
-        const on = x.id === this.sel;
-        const [ic] = KIND[x.kind] ?? KIND.custom;
-        const [sic, sword] = STATUS[x.status] ?? STATUS.running;
-        const pct = typeof x.progress === "number" ? Math.round(x.progress * 100) : null;
-        return v_flex().id(`live-${x.id}`).w_full().flex_none().px(10).py(7).gap(4).cursor_pointer()
-          .border_l(2).border_color(on ? c.blue : "#00000000").bg(on ? c.blueLight : c.surface).hover((s) => (on ? s : s.bg(c.surface2)))
-          .on_click((_e, cx) => this.select(cx, x.id))
-          .child(h_flex().gap(8).items_center()
-            .child(icon(ic, 15, on ? c.blue : c.grey500))
-            .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_family(MONO).text_color(on ? c.blue : c.navy).child(x.title))
-            .child(icon(sic, 13, x.status === "failed" ? c.fail : going(x.status) ? c.blue : c.grey500)))
-          .child(h_flex().gap(6).items_center().text_size(11).text_color(c.grey500)
-            .child(div().flex_1().min_w(0).truncate().child(x.status === "queued" ? `Waiting to start${x.where ? ` on ${x.where}` : ""}` : x.status === "running" ? (x.stage ?? "Starting") + (x.where ? `, on ${x.where}` : "") : `${sword} ${ago(x.ended ?? x.updated)}`))
-            .when(x.status === "running" && pct !== null, (e) => e.child(div().font_family(MONO).child(`${pct}%`))))
-          .when(x.status === "running" && pct !== null, (e) => e.child(div().h(3).w_full().bg(c.surface2).child(div().h_full().w(`${Math.max(2, pct)}%`).bg(c.blue))));
-      }));
-  }
-
   detail(c, w) {
     const run = this.run;
     if (!this.sel) return v_flex().flex_1().p(24).text_size(13).text_color(c.grey500).child(Array.isArray(this.list) && !this.list.length ? "" : "Pick a run.");
@@ -228,7 +197,7 @@ export class Live {
           .child(icon(sic, 13)).child(div().child(h.where && h.where !== "local" ? `${sword}, on ${h.where}` : sword)))
         .child(div().flex_1())
         .child(div().text_size(12).text_color(c.grey500).child([run.last ? `${secs(run.last)} in` : null, left != null ? `about ${secs(left)} left` : null].filter(Boolean).join(", ")))
-        .when(!going(h.status) && h.kind === "backtest" && !!h.of, (e) => e.child(Button(c, "live-open-result", "Open the result", (_e, cx) => this.host.openBacktest(cx, h.of), { kind: "primary", small: true }))))
+        .when(!going(h.status) && h.kind === "backtest" && !!h.of, (e) => e.child(Button(c, "live-open-result", "Open the result", (_e, cx) => this.host.openBacktest(cx, h.of), { small: true }))))
       .when(arms.length > 0, (e) => e.child(h_flex().flex_wrap().gap(14).text_size(12).text_color(c.grey900)
         .children(arms.map((a, i) => h_flex().gap(6).child(div().text_color(c.grey500).child(String.fromCharCode(65 + i))).child(div().font_family(MONO).text_color(c.navy).child(a))))))
       .child(this.progress(c, h, pct))

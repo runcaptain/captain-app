@@ -20,11 +20,11 @@ const PAGES = 5;
 const I = (name) => `mods/captain-nav/${name}.svg`;
 
 const SECTIONS = [
-  ["search", "Experiments", "Home. Each question you're working on: the hypothesis and its revisions, evidence, signals, runs, and the decision."],
-  ["database", "Data and signals", "Datasets (classes, grid, labels as code) and the signals you rank with."],
-  ["play", "Runs", "Every execution with its manifest, logs, artifacts and how reproducible it is: offline evaluations, off-policy evaluations, rating queues, workflows."],
-  ["git-compare", "Compare", "Metrics, slices, queries side by side, and the limits of what a result shows."],
-  ["send", "Launch review", "Candidates you send to review, serving contracts, linked deployments and their online outcomes."],
+  ["folder", "Projects", "Each thing you're building: its data, its models and where they're deployed."],
+  ["database", "Data", "Your sources and every table Captain reads, with where each came from."],
+  ["file-text", "Notebooks", "SQL, Python, notes and charts, saved as versions."],
+  ["play", "Runs", "Jobs and offline evaluations in one list, and how each model compares with the one before it."],
+  ["users", "Team", "Records your team shares, with drafts and review."],
 ];
 
 // What each checklist step's "Do it" opens: a designed form (captain-forms), or the
@@ -32,9 +32,7 @@ const SECTIONS = [
 const STEP_DO = {
   cloud: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "cloud" } },
   data: { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} },
-  investigation: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "investigation" } },
-  run: { mod: "captain-go", kind: "popup", width: 1, height: 1, props: { section: "investigations" } },
-  decision: { mod: "captain-go", kind: "popup", width: 1, height: 1, props: { section: "investigations" } },
+  run: { mod: "captain-forms", kind: "dialog", width: 560, props: { task: "backtest" } },
 };
 
 // The key bound to an action in the captain layout or globally, as people press it.

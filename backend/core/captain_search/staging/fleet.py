@@ -180,7 +180,7 @@ def _local_state(rec: dict) -> tuple[str, str | None]:
 def _row(pr: dict | None, env: str | None, rec: dict | None, cloud: str, login: str | None, region: str | None, thing: dict | None,
          state: str, reason: str | None, link: str, machine: str | None, corrected: list[str]) -> dict:
     name = (thing or {}).get("name") or ((rec or {}).get("endpoint") or {}).get("name")
-    where = CLOUDS.get(cloud, cloud) + (f", {region}" if region else "") + (f", {machine}" if machine else "")
+    where = CLOUDS.get(cloud, cloud) + (f", {region}" if region else "") + (f", {machine}" if machine and machine != CLOUDS.get(cloud) else "")
     copies_now = (thing or {}).get("copies_now")
     if link == "unlinked":
         text = f"Found in your {CLOUDS.get(cloud, cloud)} account, not linked to a project."
@@ -195,12 +195,13 @@ def _row(pr: dict | None, env: str | None, rec: dict | None, cloud: str, login: 
     elif state == "starting":
         text = "Starting" + (f": {reason}" if reason else ".")
     elif state == "stopped":
-        text = "Stopped" + (f": {reason}" if reason else ".")
+        text = _stopped_words(reason, (rec or {}).get("stopped_at"))
     else:
         text = "Running" + (f" on {copies_now} " + ("copy" if copies_now == 1 else "copies") if copies_now else "") + "."
     return {"id": f"{pr['id']}:{env}" if pr else f"cloud:{cloud}:{login or ''}:{region or ''}:{name}",
             "project": pr["id"] if pr else (thing or {}).get("project"), "project_name": (pr.get("name") or pr["id"]) if pr else None,
             "env": env or (thing or {}).get("env"), "model_version": (rec or {}).get("model_version") if link != "unlinked" else None,
+            "model_label": model_words((rec or {}).get("model_version"), pr["id"] if pr else None) if link != "unlinked" else None,
             "cloud": cloud, "cloud_label": CLOUDS.get(cloud, cloud), "login": login, "region": region, "machine": machine, "where": where,
             "name": name, "thing": THING.get(cloud),
             "copies": {"now": copies_now, "min": (thing or {}).get("copies_min"), "max": (thing or {}).get("copies_max")},
@@ -208,11 +209,68 @@ def _row(pr: dict | None, env: str | None, rec: dict | None, cloud: str, login: 
             "since": (thing or {}).get("since") or (rec or {}).get("started_at"),
             "stopped_at": (rec or {}).get("stopped_at") if state in ("stopped", "gone") else None,
             "by": (rec or {}).get("started_by") or (thing or {}).get("by"),
+            "by_name": short_name((rec or {}).get("started_by") or (thing or {}).get("by")),
             "link": link, "record_status": (rec or {}).get("status"), "corrected": corrected,
+            # Whether anything of it exists in a cloud (or runs on this computer) now. A model that was stopped does
+            # not: Captain only remembers it, so it can be started again. It is listed apart, as "stopped earlier".
+            "in_cloud": thing is not None or link in ("unlinked", "unknown") or (cloud == "local" and state == "running"),
+            "remembered_text": (None if (thing is not None or link in ("unlinked", "unknown") or (cloud == "local" and state == "running")) else
+                                f"Nothing of it is running {'on this computer' if cloud == 'local' else 'in ' + CLOUDS.get(cloud, cloud)} and nothing is billing. "
+                                "Captain remembers it so you can start it again."),
             "resources": (thing or {}).get("resources") or [],
             "sleeps": bool((rec or {}).get("scale_to_zero")), "address": ((rec or {}).get("endpoint") or {}).get("url"),
             "can": ([] if link == "unknown" else ["link", "remove"] if link == "unlinked" else
-                    ["open", "stop", "rollback"] if state in ("running", "asleep", "starting") else ["open", "start", "remove"])}
+                    ["open", "stop", "rollback"] if state in ("running", "asleep", "starting") else
+                    ["open", "remove"] if thing is not None else ["start", "forget"])}
+
+
+def short_name(who) -> str | None:
+    """A person as a row says them: the part of an address before the @. The whole address is in `by`."""
+    w = str(who or "").strip()
+    return (w.split("@", 1)[0] or w) if w else None
+
+
+def model_words(version, project=None) -> str | None:
+    """A model version as a person reads it beside its project's name: "shop/starter-ranker@v2" is "starter-ranker,
+    version 2". The project is not said twice, and the version is a word."""
+    v = str(version or "").strip()
+    if not v:
+        return None
+    name, _, n = v.partition("@")
+    if project and name.startswith(f"{project}/"):
+        name = name[len(project) + 1:]
+    n = n[1:] if n[:1] == "v" and n[1:].isdigit() else n
+    return f"{name}, version {n}" if n else name
+
+
+def ago_words(when) -> str | None:
+    """How long ago, in words: "just now", "20 minutes ago", "3 hours ago", "2 days ago"."""
+    try:
+        s = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(str(when))).total_seconds()
+    except (TypeError, ValueError):
+        return None
+    if s < 90:
+        return "just now"
+    for size, word in ((86400, "day"), (3600, "hour"), (60, "minute")):
+        if s >= size:
+            n = int(s // size)
+            return f"{n} {word}{'s' if n != 1 else ''} ago"
+    return "just now"
+
+
+def _stopped_words(reason, when) -> str:
+    """One sentence for a stopped model: who or what stopped it, and when. The record's reason is a note
+    ("stopped by dana@example.com", "stopped by itself: no requests for 240 minutes"), not a sentence."""
+    r, ago = str(reason or "").strip().rstrip("."), ago_words(when)
+    when_said = f", {ago}" if ago else ""
+    if r.lower().startswith("stopped by itself"):
+        why = r.partition(":")[2].strip()
+        return f"Stopped by itself{when_said}" + (f": {why}." if why else ".")
+    if r.lower().startswith("stopped by "):
+        return f"Stopped by {short_name(r[len('stopped by '):])}{when_said}."
+    if r:
+        return f"Stopped{when_said}: {r[0].lower() + r[1:] if r[:2] != 'It' else r}."
+    return f"Stopped{when_said}." if ago else "Stopped."
 
 
 def _correct(ctx: Context, pr: dict, env: str, rec: dict, thing: dict | None, asked_ok: bool, region: str | None) -> tuple[dict, list[str]]:
@@ -313,12 +371,13 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
     up = sum(1 for r in mine if r["state"] in ("running", "asleep", "starting"))
     loose = len(rows) - len(mine)
     could_not = [a for a in asked if not a["ok"]]
-    text = ("Nothing is deployed. Deploy a model from a project's page to see it here." if not rows else
-            f"{up} deployed" + (f", {len(mine) - up} not running" if len(mine) - up else "")
-            + (f", {loose} found in your cloud with no project" if loose else "") + ".")
+    # What is in a cloud now is what is counted. A model stopped earlier is remembered, not deployed.
+    text = _summary(up, [r["state"] for r in mine if r["in_cloud"] and r["state"] not in ("running", "asleep", "starting")], loose)
+    earlier = sum(1 for r in mine if not r["in_cloud"])
     if could_not:
         text += " Could not ask " + ", ".join(sorted({a["cloud_label"] for a in could_not})) + " just now."
-    out = {"rows": rows, "asked": asked, "text": text, "read_at": _now(), "ttl_s": TTL_S}
+    out = {"rows": rows, "asked": asked, "text": text, "read_at": _now(), "ttl_s": TTL_S, "stopped_earlier": earlier,
+           "stopped_text": f"Stopped earlier: {earlier} model{'s' if earlier != 1 else ''}." if earlier else None}
     # Marked with the records as they stand after any correction, so the corrected answer is the one kept.
     after = tuple(sorted((pr["id"], env, str(rec.get("id")), str(rec.get("status")), str(rec.get("model_version"))) for pr, env, rec in _records(ctx)))
     with _lock:
@@ -348,6 +407,21 @@ def _same(tag, value) -> bool:
     if not tag or not value:
         return False
     return str(tag) == str(value) or str(tag) == clean_name(str(value), 60)
+
+
+def _summary(up: int, down: list[str], loose: int) -> str:
+    """The line beside the screen's title: what is running now. "2 models running.", "No models running.", with a
+    word for any that is in a cloud and not answering ("1 failed"). Models stopped earlier are not in a cloud and
+    are not counted here: they have their own line."""
+    models = lambda k: f"{k} model{'s' if k != 1 else ''}"  # noqa: E731
+    said = f"{models(up)} running" if up else "No models running"
+    failed = sum(1 for s in down if s == "failed")
+    other = len(down) - failed
+    if failed:
+        said += f", {failed} failed"
+    if other:
+        said += f", {other} not answering"
+    return said + (f", {loose} found in your cloud with no project" if loose else "") + "."
 
 
 def _iso(s) -> bool:
@@ -450,6 +524,9 @@ def link(ctx: Context, row_id: str, pid: str, env: str = ENV) -> dict:
 # What each kind of thing is for, in a sentence a person who has never deployed a model can follow. Matched on the
 # kind's name, most specific first.
 WHAT_FOR = (
+    ("s3-object", "The files the model's image is built from. Kept so the image can be built again without sending them."),
+    ("s3-folder", "The files the model's image is built from. Kept so the image can be built again without sending them."),
+    ("log-group", "What the image build printed while it ran. Kept so a build that failed can be read."),
     ("build", "Builds the model's image inside your account. It runs only when an image is built."),
     ("codebuild", "Builds the model's image inside your account. It runs only when an image is built."),
     ("repository", "Holds the model's image in your account."),
@@ -468,7 +545,7 @@ WHAT_FOR = (
 
 # The kind of thing, as a person says it. Two things can share a name (a role and a repository both called
 # "captain-serving"), so the kind is shown beside the name.
-KIND_WORDS = (("codebuild", "Image build"), ("build", "Image build"), ("repository", "Image repository"), ("registry", "Image registry"),
+KIND_WORDS = (("s3-object", "Build package"), ("s3-folder", "Build package"), ("log-group", "Build log"), ("codebuild", "Image build"), ("build", "Image build"), ("repository", "Image repository"), ("registry", "Image registry"),
               ("role", "Role"), ("identity", "Identity"), ("service-account", "Service account"), ("bucket", "Bucket"), ("storage", "Storage account"),
               ("volume", "Volume"), ("environment", "Environment"), ("resource-group", "Resource group"), ("target", "Captain's note"))
 
@@ -485,6 +562,12 @@ def _what_for(kind: str) -> str:
     return next((text for word, text in WHAT_FOR if word in k), "Made by the first deploy. Deployments here use it.")
 
 
+def _same_word(login, cloud: str) -> bool:
+    """Whether a login's name only repeats its cloud: "aws" for AWS, "google" or "gcp" for Google Cloud."""
+    w = "".join(ch for ch in str(login or "").lower() if ch.isalnum())
+    return not w or w in {cloud, CLOUDS.get(cloud, "").lower().replace(" ", ""), {"gcp": "google", "aws": "amazon", "azure": "microsoft"}.get(cloud, cloud)}
+
+
 def created(ctx: Context) -> dict:
     """What Captain created in each cloud account the first time a model was deployed there: {places: [{cloud,
     cloud_label, login, region, status, things: [{kind, name, what_for}], in_use_by, can_remove, text}], text}.
@@ -499,13 +582,20 @@ def created(ctx: Context) -> dict:
             st = H.get(c).status(ctx)
         except Exception as e:  # noqa: BLE001
             st = {"status": "unknown", "created": [], "text": str(e)[:200]}
-        made = st.get("created") or []
+        # Captain's own note of where to deploy is not in the cloud account, so it is not listed as something that
+        # is. Removing a place's setup still clears it.
+        made = [x for x in st.get("created") or [] if "target" not in str(x.get("type") or "").lower()]
         if st.get("status") in (None, "none", "removed") or not made:
             continue
         using = sorted(name for cloud, name in rows if cloud == c and name)
-        places.append({"cloud": c, "cloud_label": CLOUDS[c], "login": st.get("profile"), "region": st.get("region"), "status": st.get("status"),
+        # The login's name is said only when it tells a person something: "aws" beside "AWS" does not.
+        who = st.get("profile")
+        places.append({"cloud": c, "cloud_label": CLOUDS[c], "login": who, "login_shown": None if _same_word(who, c) else who,
+                       "region": st.get("region"), "status": st.get("status"),
                        "created_at": st.get("created_at"), "created_by": st.get("created_by"),
                        "things": [{"kind": x.get("type"), "kind_label": _kind_word(x.get("type"), x.get("name")), "name": x.get("name"),
+                                   # A long address is shown by its last part: the whole of it is in `name`.
+                                   "short": (str(x.get("name") or "").rstrip("/").rsplit("/", 1)[-1] or x.get("name")) if "/" in str(x.get("name") or "") else x.get("name"),
                                    "what_for": ("Lets the image build read its files and save the image. Nothing else." if "role" in str(x.get("type")).lower()
                                                 and "build" in str(x.get("name")).lower() else _what_for(x.get("type")))} for x in made],
                        "in_use_by": using, "can_remove": not using,
@@ -515,3 +605,36 @@ def created(ctx: Context) -> dict:
     return {"places": places,
             "text": "Captain has created nothing in your cloud accounts." if not places else
                     "What the first deploy to each cloud created. A deployed model uses them, and they cost nothing or close to nothing while idle."}
+
+
+# ---- a model that was stopped earlier ----------------------------------------------------------------
+
+
+def forget_stopped(ctx: Context, pid: str, env: str = ENV, confirm: bool = False) -> dict:
+    """Forget a model that was stopped: remove Captain's own record of the deployment. Nothing in any cloud is
+    touched, because nothing of it is there. Refused while anything of it still exists in a cloud: stop or remove
+    that first."""
+    from .. import project_state as PS
+    from . import _note
+
+    row = one(ctx, pid, env, fresh=True)
+    if row is None:
+        raise ValueError(f"{pid} has no deployment to forget.")
+    if row["in_cloud"]:
+        raise ValueError(f"{row['project_name']}'s model is still in {row['cloud_label']}: {row['state_text']} Stop it or remove it from the cloud first.")
+    if not confirm:
+        raise ValueError(f"Confirm first. Captain will forget {row['project_name']}'s stopped model. Nothing in the cloud changes, and it can't be started again from here.")
+
+    def ch(doc):
+        st = dict(doc.get("staging") or {})
+        st.pop(env, None)
+        doc["staging"] = st
+        return True
+
+    PS._update(ctx, pid, ch)
+    try:
+        _note(ctx, pid, f"forgot the stopped deployment of {row.get('model_version') or 'a model'}")
+    except Exception:  # noqa: BLE001
+        pass
+    forget(ctx)
+    return {"project": pid, "env": env, "text": f"Forgot {row['project_name']}'s stopped model. Nothing in the cloud changed."}

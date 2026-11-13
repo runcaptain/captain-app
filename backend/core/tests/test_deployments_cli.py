@@ -36,11 +36,12 @@ def cst(*args):
 
 def test_list_show_and_sync_read_the_cloud(ws, aws):  # noqa: F811
     code, out = cst("deployments", "list")
-    assert code == 0 and "Nothing is deployed." in out
+    assert code == 0 and "No models running." in out
     rec = SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
     FL.forget()
     code, out = cst("deployments", "list")
-    assert code == 0 and "Running" in out and "AWS, us-west-1, ml.t2.medium" in out and ws.candidate in out
+    assert code == 0 and "Running" in out and "AWS, us-west-1, ml.t2.medium" in out
+    assert FL.model_words(ws.candidate, "shop") in out and ws.candidate not in out  # the model without its project said twice
     code, out = cst("--json", "deployments", "list")
     rows = json.loads(out)["rows"]
     assert code == 0 and rows[0]["state"] == "running" and rows[0]["name"] == rec["endpoint"]["name"] and rows[0]["link"] == "linked"
@@ -50,7 +51,7 @@ def test_list_show_and_sync_read_the_cloud(ws, aws):  # noqa: F811
     assert "Cost      About $" in out and "Source    From AWS's own metrics" in out and "CPU 20% on average" in out
     code, out = cst("--json", "deployments", "show", "shop", "--range", "24h")
     d = json.loads(out)
-    assert d["deployment"]["cloud"] == "aws" and d["numbers"]["range"] == "24h" and d["numbers"]["cost"]["month_usd"] > 0
+    assert d["deployment"]["cloud"] == "aws" and d["numbers"]["range"] == "24h" and d["numbers"]["cost"]["hourly_usd"] > 0 and d["numbers"]["cost"]["month_usd"] >= 0  # deployed a moment ago: a rate, and next to nothing so far
     code, out = cst("deployments", "sync")
     assert code == 0 and "Captain's records match the cloud. Nothing to correct." in out
     # Deleted in the cloud's console: sync says so, and the list moves it to the stopped ones.
@@ -58,8 +59,29 @@ def test_list_show_and_sync_read_the_cloud(ws, aws):  # noqa: F811
     code, out = cst("deployments", "sync")
     assert code == 0 and "shop:" in out and "removed outside Captain" in out
     FL.forget()
-    assert "Nothing is deployed." not in cst("deployments", "list", "--stopped")[1] and "Removed outside Captain" in cst("deployments", "list", "--stopped")[1]
+    assert "Stopped earlier." in cst("deployments", "list")[1] and "Removed outside Captain" in cst("deployments", "list", "--stopped")[1]
     assert cst("deployments", "show", "nothing-here")[0] != 0
+
+
+def test_a_stopped_deployment_is_a_row_in_the_list_and_in_its_json(ws):  # noqa: F811
+    """On a real account on 2026-11-12 the list printed only "0 deployed, 1 not running." and its JSON had no rows:
+    it counted the stopped model and did not show it."""
+    SG.stage(ws, "shop", baseline=True, target="local", confirm=True)
+    version = SG.state(ws, "shop")["model_version"]
+    SG.unstage(ws, "shop")
+    FL.forget()
+    code, out = cst("deployments", "list")
+    assert code == 0 and FL.model_words(version, "shop") in out and out.startswith("No models running.")
+    # It is listed apart, under what it is: stopped earlier, not in a cloud, not billing.
+    assert "Stopped earlier. Nothing of these is in a cloud or billing." in out and out.index("Stopped earlier.") < out.index("Stopped by ")
+    assert cst("deployments", "forget", "shop")[0] != 0 and "Confirm first" in cst("deployments", "forget", "shop")[1]
+    assert "This computer, This computer" not in out and "This computer" in out
+    rows = json.loads(cst("--json", "deployments", "list")[1])["rows"]
+    assert [(r["project"], r["state"]) for r in rows] == [("shop", "stopped")]
+    assert json.loads(cst("--json", "deployments", "list", "--running")[1])["rows"] == []
+    assert len(json.loads(cst("--json", "deployments", "list", "--stopped")[1])["rows"]) == 1
+    code, out = cst("deployments", "forget", "shop", "--yes")
+    assert code == 0 and "Nothing in the cloud changed." in out and cst("deployments", "list")[1].strip() == "No models running."
 
 
 def test_something_found_in_the_cloud_is_listed_linked_or_removed(ws, aws):  # noqa: F811

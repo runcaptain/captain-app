@@ -1,11 +1,10 @@
-// CAPTAIN: Data and signals, Datasets tab, as a directory: the person's own folders of datasets.
-// - A folder tree (GET /api/datasets/tree) with breadcrumbs. New folder, rename, remove an empty one.
-// - Select datasets (Cmd-click adds, Shift-click a range), then drag them onto a folder or use "Move to"
-//   (POST /api/library/move). Moving copies nothing and changes no version.
-// - Drop files or folders from Finder onto the tree or onto a folder, or use "Import files" with a path or the folder
-//   picker: POST /api/datasets/import {paths, folder} runs as a job. Its progress shows, then what happened: added,
-//   updated (a new version), unchanged, and each skipped file with its reason.
-// - An empty workspace is one big drop zone. The demo store is a small link under it.
+// CAPTAIN: Data, bringing files in. Drop files or folders from Finder onto the list of tables (or onto the empty
+// screen), or choose a folder: POST /api/datasets/import {paths, folder} runs as a job. Its progress shows, then
+// what happened: added, updated (a new version), unchanged, and each skipped file with its reason.
+// A file dropped on a dataset's page lands in that dataset's folder, so the same name there is a new version.
+// The folder tree that used to sit beside the datasets is gone with the Datasets tab: a dataset's folder shows in
+// the list's "Where it lives" column, its page moves it to another folder (About, "Where it lives"), and
+// `cst data mkdir | move | rename-folder | rmdir` rename and remove folders.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { pickFolder, home } from "herdr";
@@ -24,178 +23,27 @@ const base = (p) => String(p).split("/").filter(Boolean).pop() ?? p;
 const refName = (ref) => String(ref ?? "").replace(/@v\d+$/, "");
 const refVersion = (ref) => /@v(\d+)$/.exec(String(ref ?? ""))?.[1] ?? null;
 
-/** Every dataset under a folder node, depth first. */
-function datasetsIn(node) {
-  return [...(node.datasets ?? []), ...(node.folders ?? []).flatMap(datasetsIn)];
-}
-function find(node, path) {
-  if ((node.path ?? "") === path) return node;
-  for (const f of node.folders ?? []) { const r = find(f, path); if (r) return r; }
-  return null;
-}
-function allFolders(node, out = []) {
-  for (const f of node.folders ?? []) { out.push(f.path); allFolders(f, out); }
-  return out;
-}
-
 export class Library {
   /** host: the Data view (select, load, classColor, icon). */
   constructor(host) {
     this.host = host;
-    this.tree = null;
-    this.error = null;
-    this.open = new Set(); // expanded folder paths
-    this.cur = ""; // the folder the breadcrumbs show; new folders and imports go here
-    this.picked = new Set(); // selected dataset names
-    this.anchor = null;
-    this.drag = null; // {names} while a press on a dataset is held
     this.job = null; // {id, label, progress, status, message}
     this.summary = null; // the last import's result
     this.note = null; // {text, tone}
-    this.mode = null; // "new" | "import" | "rename" | "move"
-    this.newFolder = InputState.new({ placeholder: "Folder name" });
+    this.mode = null; // "import": the path box on the empty screen
     this.importPath = InputState.new({ placeholder: "~/Downloads/catalogs" });
-    this.renameTo = InputState.new({ placeholder: "New name" });
-    this.newFolder.on("submit", (_e, cx) => this.makeFolder(cx));
-    this.importPath.on("submit", (_e, cx) => this.importPaths(cx, [expand(this.importPath.value())], this.cur));
-    this.renameTo.on("submit", (_e, cx) => this.renameFolder(cx));
-    // Search every dataset, whatever folder it's in: its name, description and columns. Typing filters at once.
-    this.find = InputState.new({ placeholder: "Search datasets and columns" });
-    this.find.on("change", (_e, cx) => cx.notify());
-    this.flatAll = false; // every dataset in one list, folders aside
+    this.importPath.on("submit", (_e, cx) => this.importPaths(cx, [expand(this.importPath.value())], ""));
   }
 
-  /** The folder each dataset is in, from the tree ("" at the top). */
-  folderOf() {
-    const out = new Map();
-    const walk = (node) => {
-      for (const d of node.datasets ?? []) out.set(d.name, node.path ?? "");
-      for (const f of node.folders ?? []) walk(f);
-    };
-    if (this.tree) walk(this.tree);
-    return out;
-  }
-
-  /** Datasets for the search (or every one, flat), each with where it is and what matched. */
-  found() {
-    const words = this.find.value().trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const where = this.folderOf();
-    const cls = this.host.cls;
-    const tree = new Map();
-    const walk = (node) => { for (const d of node.datasets ?? []) tree.set(d.name, d); for (const f of node.folders ?? []) walk(f); };
-    if (this.tree) walk(this.tree);
-    const out = [];
-    for (const d of this.host.list ?? []) {
-      if (cls && !(d.classes ?? []).includes(cls)) continue;
-      const cols = d.columns ?? [];
-      const hay = `${d.name} ${d.description ?? ""} ${cols.join(" ")}`.toLowerCase();
-      if (!words.every((w) => hay.includes(w))) continue;
-      // Matched only through a column: say which.
-      const inName = words.every((w) => `${d.name} ${d.description ?? ""}`.toLowerCase().includes(w));
-      const col = !words.length || inName ? null : cols.find((c) => words.some((w) => c.toLowerCase().includes(w)));
-      out.push({ row: { ...d, ...(tree.get(d.name) ?? {}), leaf: tree.get(d.name)?.leaf ?? d.name.split("/").pop() }, folder: where.get(d.name) ?? "", col });
-    }
-    return out.sort((a, b) => a.row.name.localeCompare(b.row.name));
-  }
-
-  /** The search's results, or every dataset flat: one list, each row saying where it lives and what matched. */
-  flatRows(c) {
-    const hits = this.found();
-    const q = this.find.value().trim();
-    if (!hits.length) return [div().id("lib-found-none").p(12).text_size(12).text_color(c.grey500)
-      .child(q ? `No dataset matches "${q}". Search looks at names, descriptions and column names.` : "No datasets yet.")];
-    return [div().id("lib-found-count").px(10).py(6).text_size(11).text_color(c.grey500)
-      .child(q ? `${hits.length} match${hits.length === 1 ? "" : "es"} across every folder` : `All ${hits.length} datasets, folders aside`),
-    ...hits.map((h, i) => v_flex().id(`lib-found-${i}`).w_full()
-      .child(this.datasetRow(c, h.row, 0))
-      .when(!!h.folder || !!h.col, (e) => e.child(div().pl(8 + 17).pb(4).mt(-6).text_size(10.5).text_color(c.grey500)
-        .child([h.folder ? `in ${h.folder}` : null, h.col ? `column ${h.col}` : null].filter(Boolean).join(", ")))))];
-  }
-
-  // ---- data ------------------------------------------------------------------------------------------------------
-
-  load(cx) {
-    cx.spawn(async (cx) => {
-      const r = await api("/api/datasets/tree");
-      if (r.ok) {
-        this.tree = r.data ?? { path: "", folders: [], datasets: [] };
-        this.error = null;
-        if (!this.opened) { this.opened = true; for (const f of this.tree.folders ?? []) this.open.add(f.path); }
-        if (this.cur && !find(this.tree, this.cur)) this.cur = "";
-        if (this.revealing) { this.reveal(this.revealing); }
-      } else if (!r.starting) this.error = r;
-      cx.notify();
-    });
-  }
-
-  /** Open the tree down to a dataset's folder and make that folder current (after an import, or "Open" from elsewhere).
-   *  Waits for the next tree load when the dataset isn't in this one yet. */
-  reveal(name, cx) {
-    const walk = (node) => {
-      if ((node.datasets ?? []).some((d) => d.name === name)) return node.path ?? "";
-      for (const f of node.folders ?? []) { const p = walk(f); if (p !== null) return p; }
-      return null;
-    };
-    const path = this.tree ? walk(this.tree) : null;
-    if (path === null) { this.revealing = name; if (cx) this.load(cx); return; }
-    this.revealing = null;
-    const parts = path ? path.split("/") : [];
-    for (let i = 1; i <= parts.length; i++) this.open.add(parts.slice(0, i).join("/"));
-    this.cur = path;
-  }
+  /** Nothing to load: kept so the screen can ask every part to load the same way. */
+  load(_cx) {}
 
   refresh(cx) {
-    this.load(cx);
     this.host.load(cx);
+    this.host.catalog.load(cx);
   }
 
   say(text, tone = "muted") { this.note = { text, tone }; }
-
-  async call(cx, path, opts, done) {
-    const r = await api(path, opts);
-    if (r.ok) { if (done) this.say(done, "good"); this.refresh(cx); }
-    else this.say(sentence(r.data?.detail ?? r.data?.error ?? r.error) || "That didn't work.", "fail");
-    cx.notify();
-    return r;
-  }
-
-  makeFolder(cx) {
-    const name = this.newFolder.value().trim().replace(/\//g, "-");
-    if (!name) return;
-    const path = this.cur ? `${this.cur}/${name}` : name;
-    this.newFolder.set_value("");
-    this.mode = null;
-    this.open.add(this.cur);
-    cx.spawn(async (cx) => { await this.call(cx, "/api/library/folders", { body: { path } }, `Made ${path}.`); this.cur = path; this.open.add(path); });
-  }
-
-  renameFolder(cx) {
-    const to = this.renameTo.value().trim().replace(/\//g, "-");
-    if (!to || !this.cur) return;
-    const parent = this.cur.split("/").slice(0, -1).join("/");
-    const dest = parent ? `${parent}/${to}` : to;
-    const from = this.cur;
-    this.mode = null;
-    cx.spawn(async (cx) => { const r = await this.call(cx, "/api/library/rename", { body: { from, to: dest } }, `Renamed ${base(from)} to ${to}.`); if (r.ok) this.cur = dest; });
-  }
-
-  removeFolder(cx) {
-    const path = this.cur;
-    if (!path) return;
-    cx.spawn(async (cx) => {
-      const r = await this.call(cx, `/api/library/folders?path=${encodeURIComponent(path)}`, { method: "DELETE" }, `Removed ${base(path)}.`);
-      if (r.ok) this.cur = path.split("/").slice(0, -1).join("/");
-    });
-  }
-
-  move(cx, names, folder) {
-    if (!names.length) return;
-    this.mode = null;
-    cx.spawn(async (cx) => {
-      const r = await this.call(cx, "/api/library/move", { body: { names, folder } }, `Moved ${plural(names.length, "dataset")} to ${folder || "the top level"}.`);
-      if (r.ok) { this.picked.clear(); this.open.add(folder); }
-    });
-  }
 
   importPaths(cx, paths, folder) {
     paths = paths.filter(Boolean);
@@ -209,7 +57,6 @@ export class Library {
       if (!r.ok) { this.say(sentence(r.data?.detail ?? r.error) || "Couldn't start the import.", "fail"); cx.notify(); return; }
       this.importPath.set_value("");
       this.job = { id: r.data.job, label, folder: folder ?? "", progress: 0, status: "running", message: "" };
-      this.open.add(folder ?? "");
       cx.notify();
     });
     cx.notify();
@@ -218,7 +65,7 @@ export class Library {
   chooseFolder(cx) {
     cx.spawn(async (cx) => {
       const p = await pickFolder({ prompt: "Import" });
-      if (p) this.importPaths(cx, [p], this.cur);
+      if (p) this.importPaths(cx, [p], "");
     });
   }
 
@@ -249,169 +96,9 @@ export class Library {
     });
   }
 
-  // ---- selection and dragging ------------------------------------------------------------------------------------
-
-  flat() {
-    const out = [];
-    const walk = (node) => {
-      for (const f of node.folders ?? []) if (this.open.has(f.path)) walk(f);
-      for (const d of node.datasets ?? []) out.push(d.name);
-    };
-    if (this.tree) walk(this.tree);
-    return out;
-  }
-
-  press(e, cx, name) {
-    const m = e.modifiers ?? {};
-    if (m.platform) {
-      if (this.picked.has(name)) this.picked.delete(name); else this.picked.add(name);
-      this.anchor = name;
-    } else if (m.shift && this.anchor) {
-      const order = this.flat();
-      const [a, b] = [order.indexOf(this.anchor), order.indexOf(name)].sort((x, y) => x - y);
-      if (a >= 0 && b >= 0) for (const n of order.slice(a, b + 1)) this.picked.add(n);
-    } else {
-      if (!this.picked.has(name)) { this.picked.clear(); this.picked.add(name); }
-      this.anchor = name;
-      this.host.select(cx, name);
-    }
-    this.drag = { names: [...this.picked] };
-    cx.notify();
-  }
-
-  release(cx, folder) {
-    const d = this.drag;
-    this.drag = null;
-    if (!d || folder === null || folder === undefined) { cx.notify(); return; }
-    const moving = d.names.filter((n) => (n.includes("/") ? n.split("/").slice(0, -1).join("/") : "") !== folder);
-    if (moving.length) this.move(cx, moving, folder);
-    cx.notify();
-  }
-
-  // ---- drawing ---------------------------------------------------------------------------------------------------
-
   icon(name, size, color) {
-    // Folders and chevrons ship with Data and signals; the rest are the shared set.
-    if (["folder", "folder-open", "chevron-right", "chevron-down", "table"].includes(name)) return this.host.icon(name, size, color);
+    if (["folder-open"].includes(name)) return this.host.icon(name, size, color);
     return svg(icon(name)).size(size).flex_none().when(!!color, (e) => e.text_color(color));
-  }
-
-  render(c, w) {
-    const t = this.tree;
-    return v_flex().id("library").w(w).h_full().flex_none().border_r(1).border_color(c.rule)
-      // A press on a dataset ends here when it isn't released on a folder.
-      .on_mouse_up("left", (_e, cx) => { if (this.drag) { this.drag = null; cx.notify(); } })
-      .child(this.toolbar(c))
-      .when(!!this.job, (e) => e.child(this.progress(c)))
-      .when(!!this.summary, (e) => e.child(this.summaryPanel(c)))
-      .when(!!this.note, (e) => e.child(h_flex().flex_none().px(10).py(6).gap(8).items_start().text_size(12)
-        .text_color(this.note.tone === "fail" ? c.fail : this.note.tone === "good" ? c.good : c.grey900)
-        .child(div().flex_1().min_w(0).child(this.note.text))
-        .child(div().id("lib-note-x").cursor_pointer().on_click((_e, cx) => { this.note = null; cx.notify(); }).child(this.icon("x", 11)))))
-      .child(div().id("lib-tree").flex_1().min_h(0).overflow_y_scrollbar()
-        .on_drop((e, cx) => this.importPaths(cx, e.paths ?? [], this.cur))
-        // Files from Finder over the tree: it lights up, so it's clear a drop lands in the current folder.
-        .drag_over((st) => st.bg(c.blueLight))
-        .when(t === null && !this.error, (e) => e.child(div().p(12).text_size(12).text_color(c.grey500).child("")))
-        .when(!!this.host.listError, (e) => e.child(div().p(10).child(this.host.troubleView(c, "datasets-list", this.host.listR, this.host.listError, (cx) => this.refresh(cx)))))
-        .when(!!this.error && !this.host.listError, (e) => e.child(div().p(10).child(this.host.troubleView(c, "folders", this.error, "Couldn't load your folders.", (cx) => this.load(cx)))))
-        .when(!!t && (!!this.find.value().trim() || this.flatAll), (e) => e.children(this.flatRows(c)))
-        .when(!!t && !this.find.value().trim() && !this.flatAll, (e) => e.child(this.folderRow(c, { name: "All datasets", path: "", folders: t.folders, datasets: t.datasets }, 0, true))
-          .children(this.rows(c, t, 1))));
-  }
-
-  toolbar(c) {
-    const crumbs = this.cur ? this.cur.split("/") : [];
-    const node = this.tree ? find(this.tree, this.cur) : null;
-    const empty = node && !(node.folders ?? []).length && !(node.datasets ?? []).length;
-    const field = (id, st, go, label) => h_flex().gap(6).items_center()
-      .child(div().id(id).flex_1().min_w(0).h(26).px(8).flex().items_center().border_1().border_color(c.grey300)
-        .child(Input.new(st).w_full().text_size(12).text_color(c.navy)))
-      .child(Button(c, `${id}-go`, label, (_e, cx) => go(cx), { kind: "primary", small: true }));
-    return v_flex().flex_none().gap(8).p(10).border_b(1).border_color(c.rule)
-      .child(h_flex().gap(6).items_center()
-        .child(h_flex().id("lib-find").flex_1().min_w(0).h(28).px(8).gap(6).items_center().border_1().border_color(this.find.value().trim() ? c.blue : c.grey300)
-          .child(this.icon("search", 12, c.grey500)).child(div().flex_1().min_w(0).child(Input.new(this.find).w_full().text_size(12).text_color(c.navy))))
-        .when(!!this.find.value().trim(), (e) => e.child(div().id("lib-find-clear").flex_none().cursor_pointer().text_size(12).text_color(c.blue)
-          .on_click((_e, cx) => { this.find.set_value(""); cx.notify(); }).child("Clear")))
-        .child(div().id("lib-flat").flex_none().h(28).px(8).flex().items_center().cursor_pointer().text_size(12).border_1()
-          .border_color(this.flatAll ? c.blue : c.grey300).bg(this.flatAll ? c.blueLight : c.surface).text_color(this.flatAll ? c.blue : c.grey900)
-          .tooltip("Every dataset in one list, folders aside").on_click((_e, cx) => { this.flatAll = !this.flatAll; cx.notify(); }).child("Show all")))
-      .child(h_flex().flex_wrap().gap(4).items_center().text_size(12)
-        .child(div().id("crumb-root").cursor_pointer().text_color(crumbs.length ? c.blue : c.navy).font_medium()
-          .on_click((_e, cx) => { this.cur = ""; cx.notify(); }).child("All datasets"))
-        .children(crumbs.flatMap((p, i) => [
-          this.icon("chevron-right", 11, c.grey500),
-          div().id(`crumb-${i}`).cursor_pointer().text_color(i === crumbs.length - 1 ? c.navy : c.blue).font_medium()
-            .on_click((_e, cx) => { this.cur = crumbs.slice(0, i + 1).join("/"); cx.notify(); }).child(p),
-        ])))
-      .when((this.host.classes ?? []).length > 0, (e) => e.child(h_flex().flex_wrap().gap(4)
-        .child(this.host.chip(c, "All", null, !this.host.cls, (_e, cx) => { this.host.cls = null; cx.notify(); }))
-        .children(this.host.classes.map((k) => this.host.chip(c, k.name, k.color, this.host.cls === k.name, (_e, cx) => { this.host.cls = this.host.cls === k.name ? null : k.name; cx.notify(); }, k.datasets)))))
-      .child(h_flex().flex_wrap().gap(6)
-        .child(Button(c, "lib-import", "Import files", (_e, cx) => { this.mode = this.mode === "import" ? null : "import"; cx.notify(); }, { kind: "primary", small: true }))
-        .child(Button(c, "lib-new", "New folder", (_e, cx) => { this.mode = this.mode === "new" ? null : "new"; cx.notify(); }, { small: true }))
-        .when(!!this.cur, (e) => e.child(Button(c, "lib-rename", "Rename", (_e, cx) => { this.renameTo.set_value(base(this.cur)); this.mode = this.mode === "rename" ? null : "rename"; cx.notify(); }, { small: true })))
-        .when(!!this.cur && empty, (e) => e.child(Button(c, "lib-remove", "Remove folder", (_e, cx) => this.removeFolder(cx), { kind: "quiet", small: true })))
-        .when(this.picked.size > 0, (e) => e.child(Button(c, "lib-move", `Move ${fmtInt(this.picked.size)} to`, (_e, cx) => { this.mode = this.mode === "move" ? null : "move"; cx.notify(); }, { small: true }))))
-      .when(this.mode === "new", (e) => e.child(field("lib-new-name", this.newFolder, (cx) => this.makeFolder(cx), "Make")))
-      .when(this.mode === "rename", (e) => e.child(field("lib-rename-name", this.renameTo, (cx) => this.renameFolder(cx), "Rename")))
-      .when(this.mode === "import", (e) => e.child(v_flex().gap(6)
-        .child(field("lib-import-path", this.importPath, (cx) => this.importPaths(cx, [expand(this.importPath.value())], this.cur), "Import"))
-        .child(h_flex().gap(8).items_center()
-          .child(Button(c, "lib-pick", "Choose a folder", (_e, cx) => this.chooseFolder(cx), { small: true }))
-          .child(div().text_size(11).text_color(c.grey500).child(`Into ${this.cur || "the top level"}. CSV, TSV, Parquet, JSON or JSON lines; a folder keeps its structure. Or drag files here.`)))))
-      .when(this.mode === "move" && this.picked.size > 0, (e) => e.child(h_flex().flex_wrap().gap(4)
-        .children(["", ...(this.tree ? allFolders(this.tree) : [])].map((p, i) => div().id(`move-to-${i}`).h(22).px(6).flex().items_center().cursor_pointer()
-          .border_1().border_color(c.grey300).text_size(11.5).text_color(c.navy).hover((s) => s.border_color(c.blue).text_color(c.blue))
-          .on_click((_e, cx) => this.move(cx, [...this.picked], p)).child(p || "Top level")))));
-  }
-
-  rows(c, node, depth) {
-    const out = [];
-    for (const f of node.folders ?? []) {
-      out.push(this.folderRow(c, f, depth, false));
-      if (this.open.has(f.path)) out.push(...this.rows(c, f, depth + 1));
-    }
-    const cls = this.host.cls;
-    const shown = (node.datasets ?? []).filter((d) => !cls || (d.classes ?? []).includes(cls));
-    // Top-level datasets sit under their own heading, so they aren't lost below the folders.
-    if (depth === 1 && shown.length && (node.folders ?? []).length) out.push(h_flex().id("lib-loose").h(26).flex_none().pl(8 + depth * 14 + 17).pr(8).items_center().text_size(11).text_color(c.grey500)
-      .child(div().flex_1().child("Not in a folder")).child(div().child(fmtInt(shown.length))));
-    for (const d of shown) out.push(this.datasetRow(c, d, depth));
-    return out;
-  }
-
-  folderRow(c, f, depth, root) {
-    const on = this.cur === f.path;
-    const open = root || this.open.has(f.path);
-    const n = datasetsIn(f).length;
-    return h_flex().id(`folder-${f.path || "root"}`).h(30).flex_none().pl(8 + depth * 14).pr(8).gap(6).items_center().cursor_pointer()
-      .bg(on ? c.surface2 : c.surface).hover((s) => s.bg(this.drag ? c.blueLight : c.surface2))
-      .on_click((_e, cx) => { this.cur = f.path; if (!root) { if (this.open.has(f.path)) this.open.delete(f.path); else this.open.add(f.path); } cx.notify(); })
-      .on_mouse_up("left", (_e, cx) => { if (this.drag) { this.release(cx, f.path); cx.stop_propagation(); } })
-      .on_drop((e, cx) => { this.importPaths(cx, e.paths ?? [], f.path); cx.stop_propagation(); })
-      .drag_over((st) => st.bg(c.blueLight).text_color(c.blue))
-      .when(!root, (e) => e.child(this.icon(open ? "chevron-down" : "chevron-right", 11, c.grey500)))
-      .child(this.icon(open && !root ? "folder-open" : "folder", 14, on ? c.blue : c.grey900))
-      .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().text_color(on ? c.blue : c.navy).child(f.name))
-      .child(div().flex_none().text_size(11).text_color(c.grey500).child(n ? fmtInt(n) : ""));
-  }
-
-  datasetRow(c, d, depth) {
-    const on = this.host.sel === d.name;
-    const picked = this.picked.has(d.name);
-    return h_flex().id(`ds-${d.name}`).h(30).flex_none().pl(8 + depth * 14 + 17).pr(8).gap(6).items_center().cursor_pointer()
-      .bg(picked ? c.blueLight : c.surface).border_l(2).border_color(on ? c.blue : "#00000000")
-      .hover((s) => (picked ? s : s.bg(c.surface2)))
-      .tooltip(`${d.name}${d.description ? `\n${d.description}` : ""}`)
-      .on_mouse_down("left", (e, cx) => this.press(e, cx, d.name))
-      .child(this.host.icon("table", 13, on ? c.blue : c.grey500))
-      .child(div().flex_1().min_w(48).truncate().text_size(12.5).font_family(MONO).text_color(on ? c.blue : c.navy).child(d.leaf ?? d.name))
-      .when(d.latest != null, (e) => e.child(div().flex_none().px(4).border_1().border_color(c.grey300).text_size(10.5).font_family(MONO).text_color(c.grey900).child(`v${d.latest}`)))
-      .child(div().flex_none().h(18).px(5).flex().items_center().text_size(10.5).text_color(c.grey900).border_1().border_color(c.rule).child(d.kind ?? "data"))
-      .child(div().flex_none().w(56).truncate().text_right().text_size(11).font_family(MONO).text_color(c.grey500)
-        .child(!d.rows ? "" : d.rows >= 1e6 ? `${(d.rows / 1e6).toFixed(d.rows >= 1e7 ? 0 : 1)}M` : fmtInt(d.rows)));
   }
 
   progress(c) {
@@ -446,7 +133,7 @@ export class Library {
       .when(added.length + updated.length + skipped.length > 24, (e) => e.child(div().text_size(11).text_color(c.grey500).child("and more")));
   }
 
-  /** The whole Datasets tab when the workspace has no datasets yet. */
+  /** The whole Tables list when the workspace has no tables yet: one big drop zone. */
   empty(c) {
     return v_flex().id("lib-empty").flex_1().p(24).items_center().justify_center()
       .on_drop((e, cx) => this.importPaths(cx, e.paths ?? [], ""))
@@ -458,7 +145,8 @@ export class Library {
           .child("Drop files or whole folders: CSV, TSV, Parquet, JSON or JSON lines. Folders keep their structure, and dropping a file again makes a new version."))
         .child(h_flex().gap(8)
           .child(Button(c, "empty-pick", "Choose a folder", (_e, cx) => this.chooseFolder(cx), { kind: "primary" }))
-          .child(Button(c, "empty-import", "Type a path", (_e, cx) => { this.mode = this.mode === "import" ? null : "import"; cx.notify(); })))
+          .child(Button(c, "empty-import", "Type a path", (_e, cx) => { this.mode = this.mode === "import" ? null : "import"; cx.notify(); }))
+          .child(Button(c, "empty-connect", "Connect a database", () => openForm("database"))))
         .when(this.mode === "import", (e) => e.child(h_flex().w(420).gap(6).items_center()
           .child(div().id("empty-path").flex_1().min_w(0).h(28).px(8).flex().items_center().border_1().border_color(c.grey300)
             .child(Input.new(this.importPath).w_full().text_size(12).text_color(c.navy)))

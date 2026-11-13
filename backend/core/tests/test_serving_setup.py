@@ -180,7 +180,9 @@ def test_the_plan_says_what_will_be_created_and_what_it_costs_and_changes_nothin
     assert '"Resource": "*"' in text  # SageMaker endpoints only: everything else is named
     # Two statements may name every resource: SageMaker's endpoints, and the scaling service, whose targets and alarms
     # get names AWS makes up. Everything else names exactly what setup makes.
-    assert all(s["Resource"] != "*" for s in p["login_policy"]["Statement"] if s["Sid"] not in ("StagingEndpoints", "MoreThanOneCopy"))
+    assert all(s["Resource"] != "*" for s in p["login_policy"]["Statement"] if s["Sid"] not in ("StagingEndpoints", "MoreThanOneCopy", "ReadItsNumbers"))
+    reads = next(s for s in p["login_policy"]["Statement"] if s["Sid"] == "ReadItsNumbers")
+    assert reads["Action"] == ["cloudwatch:GetMetricData", "cloudwatch:ListMetrics"]  # read-only, and nothing else
     scaling = next(s for s in p["login_policy"]["Statement"] if s["Sid"] == "ScalingServiceRole")
     assert scaling["Action"] == "iam:CreateServiceLinkedRole" and "sagemaker.application-autoscaling.amazonaws.com" in scaling["Resource"]
     assert scaling["Condition"] == {"StringLike": {"iam:AWSServiceName": "sagemaker.application-autoscaling.amazonaws.com"}}

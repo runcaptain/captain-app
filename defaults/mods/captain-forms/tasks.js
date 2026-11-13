@@ -3,7 +3,7 @@
 // a command name or a flag.
 import { api, connectionsChanged } from "./kit/cst.js";
 import { exec, home, shared, setShared, openOverlay, notify, run as runCommand } from "herdr";
-import { askAgent } from "./kit/agent.js";
+import { askAgent, EVALUATION_FORM } from "./kit/agent.js";
 
 const notifyProblem = (text) => notify({ title: "Judging didn't start", body: text, level: "info" });
 
@@ -34,7 +34,6 @@ export function fixFor(gates, pipeline) {
   if (names.has("evidence") || names.has("complete"))
     return { label: sharedLabels ? "Rate the test set by hand" : "Start rating", task: "grading", values: { a: pipeline } };
   if (names.has("primary_metric")) return { label: "Run an offline evaluation", task: "backtest", values: { kind: "versions", b: pipeline } };
-  if (names.has("human_approval")) return { label: "Open Experiments", section: "investigations" };
   return null;
 }
 // Through the services' command runner, for the few tasks without their own route.
@@ -171,7 +170,8 @@ const COLORS = [["#0043CA", "Blue"], ["#7C3AED", "Violet"], ["#059669", "Green"]
 
 export const TASKS = [
   {
-    id: "investigation", label: "New experiment", icon: "search",
+    // Experiments left the screens (Edgar, 2026-11-12). The form still opens for `cst app open --form`.
+    id: "investigation", label: "New experiment", icon: "search", hidden: true,
     about: "Ask a question about your search or recommendations, and gather the evidence to answer it.",
     fields: [
       { key: "title", label: "Question", placeholder: "Does the typo-tolerant retriever help tail queries?", required: true },
@@ -676,8 +676,10 @@ export const TASKS = [
     } }), `Added the ${v.name.trim()} class.`),
   },
   {
-    id: "backtest", label: "Run an offline evaluation", icon: "flask-conical",
-    about: "Compare two versions of your search on the same queries, or try other settings of one version, and see whether the difference is real.",
+    // The New menu and the palette open the evaluation's own form (captain-evaluation). These fields stay for a
+    // caller that hands every value over (a failed launch criterion's fix, a project page).
+    id: "backtest", label: "New evaluation", icon: "flask-conical", opens: EVALUATION_FORM(),
+    about: "Test a model on your own questions, on logged searches or on a saved test set, and see whether it is better.",
     load: async () => ({ rows: await rowsByRef() }),
     fields: [
       { key: "kind", label: "What to test", kind: "choice", default: "versions",
@@ -747,7 +749,8 @@ export const TASKS = [
     } }), "Queue ready. Rate it in Runs, under Rating."),
   },
   {
-    id: "handoff", label: "Start a launch review", icon: "send",
+    // Launch review left the sidebar and the New menu (Edgar, 2026-11-12); a deployed model's More still opens it.
+    id: "handoff", label: "Start a launch review", icon: "send", hidden: true,
     about: "Check a version against your launch criteria and pass it to your own deployment process. Captain deploys nothing itself.",
     fields: [
       { key: "pipeline", label: "Candidate", kind: "choice", required: true, options: () => list("/api/pipelines", (p) => ({ value: `${p.name}@v${p.latest}`, label: p.name, chip: `v${p.latest}` })) },

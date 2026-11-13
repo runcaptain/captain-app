@@ -7,7 +7,7 @@
 //   an agent, the CLI), from the services' read log;
 // - who works with it (made its versions, built on it);
 // - recent activity, newest first.
-// A row opens what it names: a run in Comparisons, a dataset or a notebook here.
+// A row opens what it names: a run in Runs, a dataset here, a notebook in Notebooks.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { setShared, run } from "herdr";
@@ -56,17 +56,17 @@ export class DatasetInsights {
 
   /** Open what a row names, where it lives. */
   go(cx, e) {
-    if (e.kind === "dataset") { this.host.tab = "datasets"; this.host.select(cx, e.name); return; }
+    if (e.kind === "dataset") { this.host.openDataset(cx, e.name); return; }
     if (e.kind === "run") {
-      setShared("captain.open", { section: "comparisons", backtest: e.name, version: e.version, at: Date.now() });
-      run("layout.select", { stack: "sections", child: "comparisons" });
+      // A run opens in Runs, with its comparison in place.
+      setShared("captain.open", { section: "runs", backtest: e.name, version: e.version, at: Date.now() });
+      run("layout.select", { stack: "sections", child: "runs" });
     }
   }
 
   openNotebook(cx, name) {
-    const nb = this.host.nb;
-    this.host.tab = "notebooks";
-    if (nb.list === null) { nb.want = name; nb.load(cx); } else nb.openNotebook(cx, name);
+    setShared("captain.open", { section: "notebooks", notebook: name, at: Date.now() });
+    run("layout.select", { stack: "sections", child: "notebooks" });
     cx.notify();
   }
 
@@ -82,7 +82,7 @@ export class DatasetInsights {
     // Rows wrap in a narrow pane: the name first, the details under it when there's no room beside it.
     const row = (id, cells, onClick) => h_flex().id(id).min_h(28).py(4).px(8).gap_x(10).gap_y(2).flex_wrap().items_center().border_b(1).border_color(c.rule).text_size(12)
       .when(!!onClick, (e) => e.cursor_pointer().hover((s) => s.bg(c.surface2)).on_click(onClick)).children(cells);
-    return v_flex().id("ds-insights").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(12).gap(16)
+    return v_flex().id("ds-insights").flex_none().px(20).pb(14).gap(16)
       .child(div().text_size(13.5).text_color(c.navy).child(nothing
         ? "Nothing uses this dataset yet. Model versions built on it, runs scored with it and notebooks that name it will show here."
         : `Used by ${parts.length ? parts.join(", ") : "nothing yet"}. Named in ${plural(n.notebooks ?? 0, "notebook", "notebooks")}. Read ${plural(rd.reads, "time", "times")} in the last ${int(rd.days ?? 90)} days.`))

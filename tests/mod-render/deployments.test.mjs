@@ -13,8 +13,8 @@ globalThis.__shared = { 'captain.daemon': { state: 'ready', base: 'http://captai
 let world, sent;
 const reply = (status, data) => ({ status, ok: status < 300, text: async () => JSON.stringify(data) });
 const numbers = (requests, extra = {}) => ({ range: '24h', range_text: 'the last 24 hours', bucket_seconds: 300, source: 'cloud', source_text: "From AWS's own metrics (CloudWatch). They arrive a minute or two late.", not_read: [],
-  buckets: Array.from({ length: 288 }, (_, i) => ({ t: String(i), requests: requests / 288, errors: 0, p50_ms: 3, p95_ms: 9, cpu: 20, memory: 5, copies: 1 })),
-  summary: { requests, errors: 0, per_minute: requests / 1440, per_minute_peak: 12, p50_ms: 3.1, p95_ms: 9.4, cpu: 20, cpu_peak: 35, memory: 5, memory_peak: 6, copies_now: 1, copies_peak: 1 },
+  buckets: Array.from({ length: 288 }, (_, i) => ({ t: String(i), requests: requests / 288, errors: 0, p50_ms: 3, p95_ms: 9, cpu: 20, memory: 5, copies: null })),
+  summary: { requests, errors: 0, per_minute: requests / 1440, per_minute_peak: 12, p50_ms: 3.1, p95_ms: 9.4, cpu: 20, cpu_peak: 35, memory: 5, memory_peak: 6, copies_now: 1, copies_min: 1, copies_max: 3, copies_text: '1 copy up now. It may run 1 to 3.' },
   cost: { hourly_usd: 0.066, rate_usd: 0.066, today_usd: 0.92, month_usd: 14.3, text: 'About $0.07 an hour for each copy while it is up. Your AWS bill is the final word.' },
   text: `${requests.toLocaleString('en-US')} requests in the last 24 hours, no errors. Median 3.1 ms, 95th percentile 9.4 ms at the endpoint.`, ...extra });
 globalThis.fetch = async (url, opts = {}) => {
@@ -31,15 +31,16 @@ globalThis.fetch = async (url, opts = {}) => {
   if (p.endsWith('/staging/scale')) return reply(200, { text: 'Keeps 1 up at all times. It never sleeps, and bills for each copy by the hour. 1 up now.' });
   return reply(200, { text: 'Done.' });
 };
-const row = (o) => ({ env: 'staging', login: 'work-aws', copies: { now: 1, min: null, max: null }, since: new Date(Date.now() - 7200000).toISOString(), by: 'dana', link: 'linked',
-  corrected: [], sleeps: false, address: null, state_label: 'Running', can: [], ...o });
-const SHOP = row({ id: 'shop:staging', project: 'shop', project_name: 'Demo shop', model_version: 'shop/starter-ranker@v2', cloud: 'aws', cloud_label: 'AWS', region: 'us-west-1',
+const row = (o) => ({ env: 'staging', login: 'work-aws', copies: { now: 1, min: null, max: null }, since: new Date(Date.now() - 7200000).toISOString(), by: 'dana@example.com', by_name: 'dana', link: 'linked',
+  corrected: [], sleeps: false, address: null, state_label: 'Running', can: [], in_cloud: true, remembered_text: null, ...o });
+const SHOP = row({ id: 'shop:staging', project: 'shop', project_name: 'Demo shop', model_version: 'shop/starter-ranker@v2', model_label: 'starter-ranker, version 2', cloud: 'aws', cloud_label: 'AWS', region: 'us-west-1',
   machine: 'ml.t2.medium', where: 'AWS, us-west-1, ml.t2.medium', name: 'captain-shop-staging', state: 'running', state_text: 'Running on 1 copy.' });
 const TRAIL = row({ id: 'trail:staging', project: 'trail', project_name: 'Trail gear', model_version: 'trail/starter-ranker@v1', cloud: 'modal', cloud_label: 'Modal', login: 'modal', region: null,
   machine: '1 CPU, 2 GB', where: 'Modal, 1 CPU, 2 GB', name: 'captain-trail-staging', state: 'asleep', state_text: 'Asleep. It wakes on the next request and bills nothing until then.',
   sleeps: true, address: 'https://demo--captain-trail-staging.modal.run' });
 const OLD = row({ id: 'kids:staging', project: 'kids', project_name: 'Kids range', model_version: 'kids/keyword-baseline@v1', cloud: 'gcp', cloud_label: 'Google Cloud', login: 'g', region: 'us-central1',
-  machine: '1 vCPU, 2 GB', where: 'Google Cloud, us-central1, 1 vCPU, 2 GB', name: 'captain-kids-staging', state: 'stopped', state_text: 'Stopped: no requests for 240 minutes.', stopped_at: new Date(Date.now() - 3 * 86400000).toISOString() });
+  machine: '1 vCPU, 2 GB', where: 'Google Cloud, us-central1, 1 vCPU, 2 GB', name: 'captain-kids-staging', state: 'stopped', state_text: 'Stopped by itself, 3 days ago: no requests for 240 minutes.', in_cloud: false,
+  model_label: 'keyword-baseline, version 1', remembered_text: 'Nothing of it is running in Google Cloud and nothing is billing. Captain remembers it so you can start it again.', stopped_at: new Date(Date.now() - 3 * 86400000).toISOString() });
 const BAD = row({ id: 'gifts:staging', project: 'gifts', project_name: 'Gift finder', model_version: 'gifts/starter-ranker@v3', cloud: 'aws', cloud_label: 'AWS', region: 'us-west-1', machine: 'ml.t2.medium',
   where: 'AWS, us-west-1, ml.t2.medium', name: 'captain-gifts-staging', state: 'failed', state_text: 'Failed: The primary container did not pass the ping health check.',
   corrected: ["Captain's record said it was running. The cloud says it failed, so the record now says failed."] });
@@ -59,9 +60,9 @@ const filled = (h) => h.byIdPrefix('').filter((e) => e.calls?.some?.((x) => x[0]
 // ---- nothing deployed ----
 let h = await open({ deployed: { rows: [], asked: [], text: 'Nothing is deployed. Deploy a model from a project\'s page to see it here.', read_at: '' } });
 let t = h.text();
-assert.ok(t.includes('Deployments') && t.includes('Nothing is deployed') && byId(h, 'dep-go-projects').length === 1 && t.includes('Deploy a model'), `empty: ${t}`);
+assert.ok(t.includes('Deployments') && t.includes('Models') && t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 1 && t.includes('Deploy a model'), `empty: ${t}`);
 assert.equal(byId(h, 'dep-filters').length, 0, 'no filters over an empty list');
-assert.ok(!t.includes('What Captain created in your accounts'), 'no second section when nothing was created');
+assert.equal(byId(h, 'dep-created').length, 0, 'nothing about an account when nothing was created');
 
 // Nothing deployed, and things from an earlier deploy still in the account: the page is not empty. It says nothing
 // is deployed, offers to deploy, and lists what Captain created there with "Remove everything".
@@ -73,8 +74,16 @@ h = await open({ deployed: { rows: [], asked: [], text: 'Nothing is deployed.', 
     { kind: 'codebuild-project', name: 'captain-serving-build', what_for: "Builds the model's image inside your account. It runs only when an image is built." },
     { kind: 'bucket', name: 'captain-serving-us-west-1', what_for: "Holds the model's files and its request log." }] }] } });
 t = h.text();
-assert.ok(t.includes('Nothing is deployed') && t.includes('Deploy a model') && t.includes('What Captain created in your accounts'), `nothing deployed, but not an empty page: ${t}`);
+// The screen is a list of models first. What is in the account is one closed line at the bottom, until opened.
+assert.ok(t.includes('No models are running.') && t.includes('Deploy a model'), `no models, said under Models: ${t}`);
+assert.ok(t.includes('Set up in your AWS account: 5 things Captain created so it can deploy there.') && byId(h, 'dep-setup-show-aws').length === 1, `one line for the account: ${t}`);
+assert.ok(t.indexOf('Models') < t.indexOf('Set up in your AWS account'), 'the models come first');
+assert.equal(byId(h, 'dep-thing-aws-0').length, 0, 'closed: the things are not listed');
+assert.equal(byId(h, 'dep-setup-remove-aws').length, 0, 'closed: nothing to remove by accident');
+await h.click('dep-setup-show-aws');
+t = h.text();
 for (let i = 0; i < 5; i++) assert.equal(byId(h, `dep-thing-aws-${i}`).length, 1, `thing ${i} of the five is listed`);
+assert.ok(t.includes('Hide'), 'and it can be closed again');
 assert.ok(t.includes("Holds the model's files and its request log.") && byId(h, 'dep-setup-remove-aws').length === 1 && t.includes('Remove everything'), 'each with what it is for, and Remove everything');
 await h.click('dep-setup-remove-aws');
 assert.ok(h.text().includes('Remove everything Captain created in your AWS account?'), 'it asks first');
@@ -82,12 +91,63 @@ await h.click('dep-ask-yes');
 await h.idle(60);
 assert.ok(sent.some((x) => x[0] === 'DELETE' && x[1] === '/api/serving/setup?cloud=aws'), 'then removes it');
 
+// One model, stopped earlier, and what its first deploy left in the account. A person stopped their model and asked
+// "why is it still listed?": nothing of it was in the cloud, and the list showed Captain's memory of it as a
+// deployment. Now the list is what is in a cloud. A stopped model sits under one closed line.
+h = await open({ deployed: { rows: [OLD], asked, text: 'No models running.', stopped_earlier: 1, read_at: '' }, created: { text: '', places: [{ cloud: 'aws', cloud_label: 'AWS', login: 'aws', login_shown: null,
+  region: 'us-west-1', in_use_by: [], can_remove: true, text: '', things: [
+    { kind: 's3-object', kind_label: 'Build package', name: 's3://captain-serving-000000000000-us-west-1/build/serving.zip', short: 'serving.zip', what_for: "The files the model's image is built from. Kept so the image can be built again without sending them." },
+    { kind: 'log-group', kind_label: 'Build log', name: '/aws/codebuild/captain-serving-build', short: 'captain-serving-build', what_for: 'What the image build printed while it ran. Kept so a build that failed can be read.' }] }] } });
+t = h.text();
+assert.ok(t.includes('No models running.') && t.includes('Models') && t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 1, `nothing running: says so, and offers to deploy: ${t}`);
+assert.equal(shown(h), '', 'a stopped model is not in the list of what is deployed');
+assert.ok(t.includes('Stopped earlier: 1 model.') && byId(h, 'dep-earlier-show').length === 1, `it has its own closed line: ${t}`);
+assert.ok(t.indexOf('Stopped earlier') < t.indexOf('Set up in your AWS account') && t.indexOf('Models') < t.indexOf('Stopped earlier'), 'models, then stopped earlier, then the account');
+for (const gone of ['dep-show-running', 'dep-show-stopped', 'dep-show-all']) assert.equal(byId(h, gone).length, 0, 'no chips for the state');
+await h.click('dep-earlier-show');
+t = h.text();
+assert.equal(shown(h), 'kids', 'opened: the stopped model');
+assert.ok(t.includes('Kids range') && t.includes('keyword-baseline, version 1'), 'by its project and its model');
+assert.ok(t.includes('Stopped by itself, 3 days ago: no requests for 240 minutes. Nothing of it is running in Google Cloud and nothing is billing. Captain remembers it so you can start it again.'), `what it is, plainly: ${t}`);
+assert.ok(byId(h, `dep-start-${OLD.id}`).length === 1 && byId(h, `dep-forget-${OLD.id}`).length === 1, 'Start again and Forget it');
+assert.ok(byId(h, `dep-remove-${OLD.id}`).length === 0 && !t.includes('Remove from the cloud') && byId(h, `dep-open-${OLD.id}`).length === 0, 'nothing of it is in the cloud, so nothing offers to remove it from one');
+assert.equal(byId(h, `dep-spark-${OLD.id}`).length, 0, 'no small chart for a model with no requests in the last hour');
+assert.ok(!t.includes('$0.00 this month'), 'a cost that is not known is not shown as nothing');
+// Forgetting asks first, says nothing in the cloud changes, and removes only Captain's record.
+await h.click(`dep-forget-${OLD.id}`);
+assert.ok(h.text().includes("Forget Kids range's stopped model? Captain removes its own record of it. Nothing in the cloud changes, because nothing of it is there."), `the question: ${h.text()}`);
+assert.ok(byId(h, 'dep-ask-yes').length === 1 && byId(h, 'dep-go-projects').length === 0, 'an open question holds the one filled button');
+assert.ok(!sent.some((x) => x[1] === '/api/deployed/forget'), 'nothing is forgotten before the answer');
+await h.click('dep-ask-yes');
+await h.idle(60);
+assert.deepEqual(sent.find((x) => x[1] === '/api/deployed/forget')?.[2], { project: 'kids', env: 'staging', confirm: true }, 'then Captain forgets it');
+assert.ok(!sent.some((x) => x[0] === 'DELETE'), 'and nothing is removed from any cloud');
+// Start again says what it will do, and sends the same version to the same place.
+await h.click(`dep-start-${OLD.id}`);
+assert.ok(h.text().includes('Start kids/keyword-baseline@v1 again on Google Cloud, us-central1, 1 vCPU, 2 GB?'), 'start asks first');
+await h.click('dep-ask-yes');
+await h.idle(60);
+assert.deepEqual(sent.find((x) => x[0] === 'POST' && x[1] === '/api/projects/kids/deploy')?.[2], { host: 'gcp', login: 'g', candidate: 'kids/keyword-baseline@v1', env: 'staging', confirm: true }, 'the same version, the same place');
+// "Deploy a model" with several projects asks which, and goes to that project.
+await h.click('dep-go-projects');
+await h.idle(80);
+assert.ok(h.text().includes("Which project's model do you want to deploy?") && byId(h, 'dep-deploy-in-shop').length === 1 && byId(h, 'dep-deploy-in-trail').length === 1, `asks which project: ${h.text().slice(0, 300)}`);
+await h.click('dep-deploy-in-trail');
+assert.deepEqual(globalThis.__shared['captain.scope'], { kind: 'project', id: 'trail', label: 'Trail gear' }, 'and goes to it');
+assert.equal(byId(h, 'dep-ask').length, 0, 'the question closes');
+// The account line under it, opened: each thing named for what it is.
+await h.click('dep-setup-show-aws');
+t = h.text();
+assert.ok(t.includes('Build package') && t.includes('serving.zip') && t.includes('Build log') && !t.includes('| Made by the first deploy |') && !t.includes('s3://'), `each thing is named for what it is: ${t}`);
+assert.ok(t.includes('us-west-1') && !/us-west-1, aws\b/.test(t), 'a login named for its cloud is not repeated');
+
 // ---- one running ----
 h = await open({ deployed: { rows: [SHOP], asked, text: '1 deployed.', read_at: '' }, numbers: { shop: numbers(8640) } });
 t = h.text();
-assert.ok(t.includes('Demo shop') && t.includes('shop/starter-ranker@v2') && t.includes('Running on 1 copy.'), `the model, its version and its state in words: ${t}`);
+assert.ok(t.includes('Demo shop') && t.includes('starter-ranker, version 2') && !t.includes('shop/starter-ranker@v2') && t.includes('Running on 1 copy.'), `the model without its project said twice, and its state in words: ${t}`);
+assert.ok(t.includes('Deployed by dana, 2 h ago') && !t.includes('@example.com'), 'a person by the name before the @');
 assert.ok(t.includes('AWS, us-west-1, ml.t2.medium') && t.includes('8,640 requests in 24 hours, none failed, typically 3.1 ms'), `where, and its traffic: ${t}`);
-assert.ok(t.includes('$0.07 an hour, $14.30 this month') && t.includes('Deployed by dana, 2 h ago'), `cost and who: ${t}`);
+assert.ok(t.includes('$0.07 an hour, about $14.30 this month') && t.includes('Deployed by dana, 2 h ago'), `cost and who: ${t}`);
 assert.equal(byId(h, 'dep-spark-shop:staging').length, 1, 'a small chart of the last hour');
 for (const id of ['dep-open-shop:staging', 'dep-stop-shop:staging', 'dep-back-shop:staging']) assert.equal(byId(h, id).length, 1, `a running model has ${id}`);
 assert.ok(t.includes('Go back to an earlier version') && !t.includes('Start again') && !t.includes('Remove from the cloud'), 'a running model is stopped before it is removed');
@@ -103,24 +163,22 @@ const created = { places: [{ cloud: 'aws', cloud_label: 'AWS', login: 'work-aws'
     { kind: 'ecr-repository', name: 'captain-serving', what_for: "Holds the model's image in your account." }] },
 { cloud: 'gcp', cloud_label: 'Google Cloud', login: 'g', region: 'us-central1', in_use_by: [], can_remove: true, text: '',
   things: [{ kind: 'bucket', name: 'captain-serving-demo', what_for: "Holds the model's files and its request log." }] }], text: '' };
-h = await open({ deployed: { rows: [BAD, SHOP, TRAIL, FOUND, OLD], asked, text: '3 deployed, 2 not running, 1 found in your cloud with no project.', read_at: '' }, created,
+h = await open({ deployed: { rows: [BAD, SHOP, TRAIL, FOUND, OLD], asked, text: '2 models running, 1 failed, 1 found in your cloud with no project.', stopped_earlier: 1, read_at: '' }, created,
   numbers: { shop: numbers(8640), trail: numbers(120, { source: 'log', not_read: ['Modal keeps no history.'] }) } });
 t = h.text();
-assert.ok(t.includes('3 deployed, 2 not running, 1 found in your cloud with no project.'), 'the summary from the services');
-// Running is shown first: the stopped one is not, the failed one is under Stopped.
-assert.ok(shown(h) === 'shop trail' && t.includes('Asleep. It wakes on the next request and bills nothing until then.'), `Running shows what is up: ${shown(h)}`);
+assert.ok(t.includes('2 models running, 1 failed, 1 found in your cloud with no project.'), 'the title line from the services');
+// The list is what is in a cloud now: running, asleep and failed. The one stopped earlier is under its own line.
+assert.equal(shown(h), 'shop trail gifts', 'what is in a cloud');
+assert.ok(t.includes('Asleep. It wakes on the next request and bills nothing until then.') && t.includes('Failed: The primary container did not pass the ping health check.'), `asleep and failed are states of something that exists: ${shown(h)}`);
+assert.ok(t.includes("Captain's record said it was running. The cloud says it failed, so the record now says failed."), 'what was corrected is said on the row');
 assert.ok(t.includes('captain-old-experiment-staging') && t.includes('Found in your AWS account, not linked to a project.'), 'something no project knows is listed');
 assert.ok(t.includes('Link to a project') && byId(h, `dep-remove-${FOUND.id}`).length === 1, 'and can be linked or removed');
-// One row of filters: the state as chips, the cloud and the project as two pickers. A picker's choices show only
-// once it is opened.
-assert.ok(byId(h, 'dep-pick-cloud').length === 1 && byId(h, 'dep-pick-project').length === 1 && byId(h, 'dep-cloud-aws').length === 0, 'two pickers, closed');
+assert.ok(t.includes('Stopped earlier: 1 model.') && byId(h, `dep-start-${OLD.id}`).length === 0, 'the stopped one is behind its line');
+// Something in a cloud that failed: it can be opened and removed from the cloud. Not started "again": it is there.
+assert.ok(byId(h, `dep-open-${BAD.id}`).length === 1 && byId(h, `dep-remove-${BAD.id}`).length === 1 && byId(h, `dep-start-${BAD.id}`).length === 0, 'a failed one in the cloud');
+// Two pickers at the right, and no chips for the state. A picker's choices show only once it is opened.
+assert.ok(byId(h, 'dep-pick-cloud').length === 1 && byId(h, 'dep-pick-project').length === 1 && byId(h, 'dep-cloud-aws').length === 0 && byId(h, 'dep-show-all').length === 0, 'two pickers, closed');
 assert.ok(h.text().includes('Every cloud') && h.text().includes('Every project'), 'each says what it shows now');
-await h.click('dep-show-stopped');
-t = h.text();
-assert.ok(shown(h) === 'kids gifts' && t.includes('Failed: The primary container did not pass the ping health check.'), `Stopped: ${shown(h)}`);
-assert.ok(t.includes("Captain's record said it was running. The cloud says it failed, so the record now says failed."), 'what was corrected is said on the row');
-assert.ok(t.includes('Start again') && t.includes('Remove from the cloud') && t.includes('Stopped: no requests for 240 minutes.'), 'a stopped model can be started again or removed');
-await h.click('dep-show-all');
 await h.click('dep-pick-cloud');
 assert.ok(byId(h, 'dep-cloud-aws').length === 1 && byId(h, 'dep-cloud-modal').length === 1 && byId(h, 'dep-project-shop').length === 0, 'the cloud picker lists the clouds');
 await h.click('dep-cloud-modal');
@@ -134,25 +192,16 @@ assert.equal(shown(h), 'shop', 'one project at a time');
 await h.click('dep-pick-project');
 await h.click('dep-project-all');
 
-// A removal asks first, and the question holds the only filled button on the screen.
-await h.click(`dep-remove-${OLD.id}`);
+// A removal from the cloud asks first, and the question holds the only filled button on the screen.
+await h.click(`dep-remove-${BAD.id}`);
 t = h.text();
-assert.ok(t.includes("Remove Kids range's model from Google Cloud? It stops answering, and what Captain made for it there is deleted. It cannot be undone."), `the question: ${t}`);
+assert.ok(t.includes("Remove Gift finder's model from AWS? It stops answering, and what Captain made for it there is deleted. It cannot be undone."), `the question: ${t}`);
 assert.equal(byId(h, 'dep-ask-yes').length, 1);
 assert.ok(!sent.some((x) => x[0] === 'DELETE'), 'nothing is removed before the answer');
 await h.click('dep-ask-yes');
 await h.idle(60);
-assert.ok(sent.some((x) => x[0] === 'DELETE' && x[1].startsWith('/api/projects/kids/deploy')), 'then it is removed');
-// Start again says what it will cost, and sends the same version to the same place.
-await h.click('dep-show-stopped');
-await h.click(`dep-start-${BAD.id}`);
-assert.ok(h.text().includes('Start gifts/starter-ranker@v3 again on AWS, us-west-1, ml.t2.medium?'), 'start asks first');
-await h.click('dep-ask-yes');
-await h.idle(60);
-const started = sent.find((x) => x[0] === 'POST' && x[1] === '/api/projects/gifts/deploy');
-assert.deepEqual(started?.[2], { host: 'aws', login: 'work-aws', candidate: 'gifts/starter-ranker@v3', env: 'staging', confirm: true }, 'the same version, the same place');
+assert.ok(sent.some((x) => x[0] === 'DELETE' && x[1].startsWith('/api/projects/gifts/deploy')), 'then it is removed');
 // Linking picks a project.
-await h.click('dep-show-running');
 await h.click(`dep-link-${FOUND.id}`);
 await h.idle(60);
 assert.ok(h.text().includes('Which project should captain-old-experiment-staging belong to?') && byId(h, 'dep-link-trail').length === 1, 'pick a project');
@@ -160,9 +209,11 @@ await h.click('dep-link-trail');
 await h.idle(60);
 assert.deepEqual(sent.find((x) => x[1] === '/api/deployed/link')?.[2], { id: FOUND.id, project: 'trail' });
 
-// What Captain created in each account, with what each thing is for.
+// What Captain created in each account: one line each, opened to see what each thing is for.
+await h.click('dep-setup-show-aws');
+await h.click('dep-setup-show-gcp');
 t = h.text();
-assert.ok(t.includes('What Captain created in your accounts') && t.includes("Holds the model's image in your account.") && t.includes('In use by Demo shop. Stop that model first to remove these.'), `the setup section: ${t}`);
+assert.ok(t.includes('Set up in your AWS account: 2 things') && t.includes('Set up in your Google Cloud account: 1 thing Captain created') && t.includes("Holds the model's image in your account.") && t.includes('In use by Demo shop. Stop that model first to remove these.'), `the setup lines: ${t}`);
 assert.equal(byId(h, 'dep-setup-remove-aws').length, 0, 'in use: no removal offered');
 assert.equal(byId(h, 'dep-setup-remove-gcp').length, 1, 'not in use: Remove everything');
 await h.click('dep-setup-remove-gcp');
@@ -184,8 +235,10 @@ await h.click('dep-open-shop:staging');
 await h.idle(150);
 t = h.text();
 assert.ok(t.includes('All deployments') && t.includes('Demo shop') && t.includes('Running on 1 copy.') && t.includes('Its name in the cloud') && t.includes('captain-shop-staging'), `the page: ${t}`);
-for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time', 'Processor in use', 'Memory in use', 'Copies running'])
+for (const label of ['15 minutes', '1 hour', '24 hours', '7 days', 'Requests a minute', 'Requests that failed', 'Response time', 'Processor in use', 'Memory in use'])
   assert.ok(t.includes(label), `the model page has ${label}`);
+// Copies are said in words, from the cloud's count now and its settings. No chart: no history of them is kept.
+assert.ok(t.includes('1 copy up now. It may run 1 to 3.') && byId(h, 'model-chart-copies').length === 0 && !t.includes('Copies running'), `copies in words: ${t}`);
 // Two submenus and no more, drawn with the kit's control.
 assert.ok(byId(h, 'submenu-traffic').length === 1 && byId(h, 'submenu-details').length === 1 && h.byIdPrefix('submenu-').filter((e) => /^submenu-[a-z]+$/.test(e.call('id')?.[0] ?? '')).length === 2, 'two submenus');
 assert.ok(t.includes('Traffic and cost') && t.includes('Details'), 'named for what is in them');
@@ -218,6 +271,18 @@ assert.ok(h.text().includes('Ask the clouds again'), 'back to the list');
 await h.click('dep-back-shop:staging');
 await h.idle(120);
 assert.ok(h.text().includes('Put this version back') && h.text().indexOf('Earlier versions') < h.text().indexOf('Requests it answered'), 'straight to the versions');
+
+// What a real endpoint looked like on 2026-11-12: AWS had every request number and had published no processor or
+// memory numbers at all. Those two charts are left out and a sentence says why. Nothing is drawn empty.
+h = await open({ deployed: { rows: [SHOP], asked, text: '1 model running.', read_at: '' }, numbers: { shop: numbers(8640, {
+  buckets: Array.from({ length: 288 }, (_, i) => ({ t: String(i), requests: 30, errors: 0, p50_ms: 3, p95_ms: 9, cpu: null, memory: null, copies: null })),
+  not_read: ['AWS has not published processor and memory numbers for this endpoint.'] }) } });
+await h.click('dep-open-shop:staging');
+await h.idle(150);
+t = h.text();
+assert.ok(byId(h, 'model-chart-requests').length === 1 && byId(h, 'model-chart-time').length === 1, 'requests and response time are drawn');
+assert.ok(byId(h, 'model-chart-cpu').length === 0 && byId(h, 'model-chart-memory').length === 0 && !t.includes('Processor in use') && !t.includes('Memory in use'), 'no empty processor or memory chart');
+assert.ok(t.includes('AWS has not published processor and memory numbers for this endpoint.'), `and it says why: ${t}`);
 
 // Another screen can ask for one model's page ("Open in Deployments" on a project's page).
 globalThis.__props = { open: 'shop:staging' };
@@ -255,7 +320,7 @@ const main = fs.readFileSync(path.join(dir, 'main.js'), 'utf8'), model = fs.read
 assert.equal((main.match(/font_family\(/g) ?? []).length, 1, 'one typeface on the list, set once');
 assert.equal((model.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font only for the address a person copies');
 assert.ok(!/model-part-/.test(model) && /Submenus\(c, PARTS/.test(model) && (model.match(/\{ id: "[a-z]+", label:/g) ?? []).length === 2, 'the model page declares two submenus');
-assert.equal((main.match(/kind: "primary"/g) ?? []).length, 2, 'two filled buttons in the source, never on screen together: the empty state, and an open question');
+assert.equal((main.match(/kind: "primary"/g) ?? []).length, 2, 'two filled buttons in the source, never both on screen: Deploy a model when nothing is answering, and an open question, which hides it');
 assert.equal((model.match(/kind: "primary"/g) ?? []).length, 0, 'the model page has no filled button');
 // A name in the cloud is shown as the cloud has it ("captain-shop-staging"). Captain's own words never say these.
 for (const bad of [/\bengine\b/i, /\bdaemon\b/i, /\bpipeline/i, /\bendpoint config\b/i, /(^|[^-])\bstaging\b/i]) assert.ok(!bad.test(t), `no ${bad} on screen`);

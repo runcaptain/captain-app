@@ -37,16 +37,19 @@ const until = async (ok, what) => {
   for (let i = 0; i < 60 && !ok(h.text()); i++) { await h.layoutLists({}); await h.idle(250); }
   assert.ok(ok(h.text()), `${what}: ${h.text().slice(0, 900)}`);
 };
-await until(() => h.mod.detail && !h.mod.detail.error, 'a dataset open');
-h.mod.select(h.cx, 'demo-catalog');
+// The screen opens on the one list of tables; a row opens the dataset's page.
+await until(() => (h.mod.catalog.rows ?? []).some((r) => r.name === 'demo-catalog'), 'the list of tables');
+h.mod.catalog.openRow(h.cx, h.mod.catalog.rows.find((r) => r.name === 'demo-catalog'));
 await until(() => h.mod.detail?.name === 'demo-catalog', 'demo-catalog open');
 
-await h.click('dtab-lineage');
-await until((t) => t.includes('Trace a column') && t.includes('products'), 'lineage: the warehouse table it was read from');
+await h.click('ds-lineage-open');
+await until((t) => t.includes('Trace a column') && t.includes('products'), 'where it came from: the warehouse table it was read from');
 await h.click('ds-lineage-col-price');
 await until((t) => /price comes from .*products\.price/.test(t), 'the column traced to its table column');
+await h.click('ds-lineage-close');
 
-await h.click('dtab-quality');
+await h.click('dtab-about');
+await h.click('dsec-quality');
 await until((t) => /480 rows profiled/.test(t) && t.includes('price'), 'quality');
 stop();
 fs.rmSync(work, { recursive: true, force: true });

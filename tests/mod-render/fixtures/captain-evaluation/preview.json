@@ -1,0 +1,76 @@
+{
+ "source": "my-questions.csv",
+ "columns": [
+  "question",
+  "wanted",
+  "relevance",
+  "kind"
+ ],
+ "rows": [
+  [
+   "warm tent for two",
+   "p0000",
+   3,
+   "camping"
+  ],
+  [
+   "warm tent for two",
+   "p0001",
+   2,
+   "camping"
+  ],
+  [
+   "trail shoes",
+   "p0002",
+   null,
+   "footwear"
+  ],
+  [
+   null,
+   "p0003",
+   3,
+   "footwear"
+  ],
+  [
+   "rain jacket",
+   "p0004",
+   9,
+   "clothing"
+  ]
+ ],
+ "total": 5,
+ "mapping": {
+  "query": "question",
+  "product": "wanted",
+  "grade": "relevance",
+  "slice": "kind"
+ },
+ "default_grade": 3,
+ "ready": true,
+ "questions": 2,
+ "answers": 3,
+ "skipped": {
+  "no question": 1,
+  "a grade that isn't 0 to 3": 1
+ },
+ "sample": [
+  {
+   "query": "warm tent for two",
+   "product_id": "p0000",
+   "grade": 3,
+   "slice": "camping"
+  },
+  {
+   "query": "warm tent for two",
+   "product_id": "p0001",
+   "grade": 2,
+   "slice": "camping"
+  },
+  {
+   "query": "trail shoes",
+   "product_id": "p0002",
+   "grade": 3,
+   "slice": "footwear"
+  }
+ ]
+}

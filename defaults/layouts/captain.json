@@ -61,14 +61,10 @@
           "id": "project",
           "type": "block",
           "content": {
-            "mod": "captain-project"
-          }
-        },
-        {
-          "id": "investigations",
-          "type": "block",
-          "content": {
-            "mod": "captain-investigations"
+            "mod": "captain-project",
+            "props": {
+              "allProjects": true
+            }
           }
         },
         {
@@ -79,6 +75,13 @@
           }
         },
         {
+          "id": "notebooks",
+          "type": "block",
+          "content": {
+            "mod": "captain-notebooks"
+          }
+        },
+        {
           "id": "runs",
           "type": "block",
           "content": {
@@ -86,17 +89,10 @@
           }
         },
         {
-          "id": "comparisons",
+          "id": "deployments",
           "type": "block",
           "content": {
-            "mod": "captain-compare"
-          }
-        },
-        {
-          "id": "handoff",
-          "type": "block",
-          "content": {
-            "mod": "captain-handoff"
+            "mod": "captain-deployments"
           }
         },
         {

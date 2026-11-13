@@ -33,7 +33,7 @@ def _calls(aws, name):  # noqa: F811
 def test_a_running_endpoint_is_reported_as_the_cloud_reports_it(ws, aws):  # noqa: F811
     rec = SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
     d = FL.deployed(ws, fresh=True)
-    assert [a["ok"] for a in d["asked"]] == [True] and d["asked"][0]["cloud"] == "aws" and d["text"] == "1 deployed."
+    assert [a["ok"] for a in d["asked"]] == [True] and d["asked"][0]["cloud"] == "aws" and d["text"] == "1 model running."
     r = d["rows"][0]
     assert (r["project"], r["env"], r["model_version"], r["cloud"], r["region"], r["machine"]) == ("shop", "staging", ws.candidate, "aws", "us-west-1", "ml.t2.medium")
     assert (r["state"], r["link"], r["name"], r["copies"]["now"]) == ("running", "linked", rec["endpoint"]["name"], 1)
@@ -51,7 +51,7 @@ def test_an_endpoint_removed_outside_captain_is_noticed_and_the_record_set_right
     now = SG.state(ws, "shop")
     assert now["status"] == "stopped" and now["stop_reason"] == "It was removed outside Captain."
     again = _rows(ws)[0]  # read twice: still said, nothing more to correct
-    assert again["state"] == "gone" and again["corrected"] == [] and again["can"] == ["open", "start", "remove"]
+    assert again["state"] == "gone" and again["corrected"] == [] and again["can"] == ["start", "forget"] and not again["in_cloud"]
 
 
 def test_things_in_the_cloud_that_no_project_knows_are_listed(ws, aws):  # noqa: F811
@@ -68,7 +68,7 @@ def test_things_in_the_cloud_that_no_project_knows_are_listed(ws, aws):  # noqa:
     assert r["state_text"] == "Found in your AWS account, not linked to a project." and r["state"] == "running" and r["machine"] == "ml.m5.large"
     assert r["project"] == "another-workspaces-project" and r["project_name"] is None and r["model_version"] is None and r["can"] == ["link", "remove"]
     assert r["copies"]["now"] == 2 and r["id"] == "cloud:aws:p:us-west-1:other-team-ranker-staging"
-    assert d["text"] == "1 deployed, 2 found in your cloud with no project."
+    assert d["text"] == "1 model running, 2 found in your cloud with no project."
     assert not any(r["name"] == "payments-fraud-model" for r in d["rows"])
 
 
@@ -331,3 +331,79 @@ def test_a_deploy_or_a_stop_a_moment_ago_shows_at_once(ws):  # noqa: F811
     assert [r["state"] for r in FL.deployed(ws)["rows"]] == ["running"]
     SG.unstage(ws, "shop")
     assert [r["state"] for r in FL.deployed(ws)["rows"]] == ["stopped"]
+
+
+def test_what_was_created_names_each_thing_and_leaves_out_captains_own_note(ws, monkeypatch):  # noqa: F811
+    """What a real AWS account held on 2026-11-12. Two things were labelled "Made by the first deploy", Captain's own
+    note of where to deploy was listed as if it were in the account, and the login "aws" was said beside "AWS"."""
+    from captain_search.staging import hosts as H
+
+    made = [{"type": "s3-bucket", "name": "captain-serving-000000000000-us-west-1"}, {"type": "iam-role", "name": "captain-serving"},
+            {"type": "ecr-repository", "name": "captain-serving"}, {"type": "iam-role", "name": "captain-serving-build"},
+            {"type": "s3-object", "name": "s3://captain-serving-000000000000-us-west-1/build/serving.zip"},
+            {"type": "codebuild-project", "name": "captain-serving-build"}, {"type": "log-group", "name": "/aws/codebuild/captain-serving-build"},
+            {"type": "compute-target", "name": "aws-serving"}]
+    monkeypatch.setattr(type(H.get("aws")), "status", lambda self, ctx: {"status": "ready", "profile": "aws", "region": "us-west-1", "created": made})
+    FL.forget()
+    place = FL.created(ws)["places"][0]
+    assert [t["kind_label"] for t in place["things"]] == ["Bucket", "Role", "Image repository", "Role for the image build", "Build package", "Image build", "Build log"]
+    by = {t["kind_label"]: t for t in place["things"]}
+    assert by["Build package"]["short"] == "serving.zip" and by["Build package"]["what_for"].startswith("The files the model's image is built from.")
+    assert by["Build log"]["what_for"].startswith("What the image build printed while it ran.")
+    assert not any("Made by the first deploy" in t["kind_label"] or "target" in t["kind"] for t in place["things"])  # Captain's note is not in the account
+    assert place["login"] == "aws" and place["login_shown"] is None and place["text"].startswith("7 things in your AWS account.")
+    assert FL._same_word("aws", "aws") and FL._same_word("AWS", "aws") and not FL._same_word("work-aws", "aws") and FL._same_word(None, "modal")
+
+
+def test_the_title_counts_what_is_running_now():
+    s = FL._summary
+    assert s(0, [], 0) == "No models running." and s(1, [], 0) == "1 model running." and s(3, [], 0) == "3 models running."
+    assert s(2, ["failed"], 0) == "2 models running, 1 failed." and s(0, ["failed"], 0) == "No models running, 1 failed."
+    assert s(1, ["unknown"], 0) == "1 model running, 1 not answering."
+    assert s(1, [], 2) == "1 model running, 2 found in your cloud with no project."
+
+
+def test_a_stopped_model_is_remembered_not_deployed_and_can_be_forgotten(ws, aws):  # noqa: F811
+    """A person stopped their model and asked why it was still listed. Nothing of it was in the cloud: the list was
+    showing Captain's memory of it as if it were a deployment."""
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    d = FL.deployed(ws, fresh=True)
+    assert d["rows"][0]["in_cloud"] and d["rows"][0]["remembered_text"] is None and d["stopped_earlier"] == 0 and d["stopped_text"] is None
+    with pytest.raises(ValueError, match="is still in AWS"):
+        FL.forget_stopped(ws, "shop", confirm=True)  # never forget something that is still there and billing
+    SG.unstage(ws, "shop")
+    d = FL.deployed(ws, fresh=True)
+    r = d["rows"][0]
+    assert d["text"] == "No models running." and d["stopped_earlier"] == 1 and d["stopped_text"] == "Stopped earlier: 1 model."
+    assert not r["in_cloud"] and r["can"] == ["start", "forget"] and r["state"] == "stopped"
+    assert r["remembered_text"] == "Nothing of it is running in AWS and nothing is billing. Captain remembers it so you can start it again."
+    with pytest.raises(ValueError, match="Confirm first. Captain will forget .* Nothing in the cloud changes"):
+        FL.forget_stopped(ws, "shop")
+    calls = len(aws.calls)
+    out = FL.forget_stopped(ws, "shop", confirm=True)
+    assert out["text"].endswith("Nothing in the cloud changed.") and SG.state(ws, "shop") is None
+    assert not [c for c, _ in aws.calls[calls:] if c.startswith(("delete", "create", "update"))]  # the cloud was only read
+    assert FL.deployed(ws, fresh=True)["rows"] == [] and FL.deployed(ws)["text"] == "No models running."
+    with pytest.raises(ValueError, match="has no deployment to forget"):
+        FL.forget_stopped(ws, "shop", confirm=True)
+
+
+def test_a_row_says_who_and_when_in_words_and_names_the_model_plainly(ws):  # noqa: F811
+    """From a real screen on 2026-11-12: "Stopped: stopped by <an email address>", and the model shown as
+    "<project>/starter-ranker@v2" beside the project's own name."""
+    import datetime as dt
+
+    assert FL.model_words("shop/starter-ranker@v2", "shop") == "starter-ranker, version 2"
+    assert FL.model_words("shop/starter-ranker@v2") == "shop/starter-ranker, version 2" and FL.model_words("other/x@v1", "shop") == "other/x, version 1"
+    assert FL.model_words("plain", "shop") == "plain" and FL.model_words(None) is None
+    assert FL.short_name("dana@example.com") == "dana" and FL.short_name("dana") == "dana" and FL.short_name(None) is None
+    t = lambda **kw: (dt.datetime.now(dt.timezone.utc) - dt.timedelta(**kw)).isoformat(timespec="seconds")  # noqa: E731
+    assert FL._stopped_words("stopped by dana@example.com", t(minutes=20)) == "Stopped by dana, 20 minutes ago."
+    assert FL._stopped_words("stopped by itself: no requests for 240 minutes", t(hours=3)) == "Stopped by itself, 3 hours ago: no requests for 240 minutes."
+    assert FL._stopped_words("it did not start", t(days=2)) == "Stopped, 2 days ago: it did not start."
+    assert FL._stopped_words(None, None) == "Stopped." and FL._stopped_words("stopped by dana", t(seconds=10)) == "Stopped by dana, just now."
+    SG.stage(ws, "shop", baseline=True, target="local", confirm=True)
+    SG.unstage(ws, "shop")
+    r = FL.deployed(ws, fresh=True)["rows"][0]
+    assert r["state_text"].startswith("Stopped by ") and r["state_text"].endswith("just now.") and "stopped by" not in r["state_text"][1:] and "@" not in r["state_text"]
+    assert r["model_label"] == FL.model_words(r["model_version"], "shop") and not r["model_label"].startswith("shop/") and r["by_name"] and "@" not in r["by_name"]

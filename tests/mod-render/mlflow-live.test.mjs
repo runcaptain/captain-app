@@ -88,7 +88,7 @@ await until(h, (t) => t.includes('Served by demo-tuned') && t.includes('ranker v
 assert.ok(seen.every((s) => /\/search/.test(s)), `MLflow is only searched, never written: ${seen.join(', ')}`);
 
 // 3. Lineage: the MLflow run and model version upstream of the pipeline, on a dataset that feeds it.
-globalThis.__props = { pageTab: 'lineage' };
+globalThis.__props = { dataset: 'demo-catalog', pageTab: 'lineage' };
 const data = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-ml-')));
 fs.cpSync(path.join(root, 'defaults/mods/captain-data'), data, { recursive: true });
 const { default: Data } = await import(path.join(data, 'main.js'));

@@ -645,9 +645,11 @@ class SageMakerProvider(_AWS):
         ("cpu_max", "/aws/sagemaker/Endpoints", "CPUUtilization", "Maximum"),
         ("memory", "/aws/sagemaker/Endpoints", "MemoryUtilization", "Average"),
         ("memory_max", "/aws/sagemaker/Endpoints", "MemoryUtilization", "Maximum"),
-        # Each copy reports its CPU once a minute, so the count of reports in a minute is the copies that were up.
-        ("reports", "/aws/sagemaker/Endpoints", "CPUUtilization", "SampleCount"),
     )
+    # The request numbers (AWS/SageMaker, by EndpointName and VariantName) are always there for an endpoint that took
+    # requests. The processor and memory numbers (/aws/sagemaker/Endpoints) are not: on 2026-11-12 a real endpoint
+    # that ran for an hour on ml.t2.medium had none at all. So nothing is counted from them. They are shown when AWS
+    # has them, and said to be missing when it does not.
 
     def metrics(self, endpoint: str, start, end, period: int, only: tuple[str, ...] | None = None) -> dict:
         """CloudWatch's own numbers for one endpoint between two times, in buckets of `period` seconds: {id: {time:
@@ -668,6 +670,23 @@ class SageMakerProvider(_AWS):
             token = r.get("NextToken")
             if not token:
                 return out
+
+    def metric_names(self, endpoint: str) -> dict:
+        """Which numbers CloudWatch holds for an endpoint, by where it keeps them: {"copies": [...], "requests":
+        [...]}, each a list of {metric, dimensions}. Read-only. Asked only when the numbers expected are not there,
+        to say why: nothing under that name at all, or numbers kept under other dimensions than Captain asks for."""
+        cw = self._client("cloudwatch")
+        out = {}
+        for key, ns in (("copies", "/aws/sagemaker/Endpoints"), ("requests", "AWS/SageMaker")):
+            got, token = [], None
+            while True:
+                r = cw.list_metrics(Namespace=ns, Dimensions=[{"Name": "EndpointName", "Value": endpoint}], **({"NextToken": token} if token else {}))
+                got += [{"metric": m["MetricName"], "dimensions": {d["Name"]: d["Value"] for d in m.get("Dimensions") or []}} for m in r.get("Metrics", [])]
+                token = r.get("NextToken")
+                if not token or len(got) > 200:
+                    break
+            out[key] = got
+        return out
 
     def found(self, prefix: str = "captain") -> list[dict]:
         """Every SageMaker endpoint here that Captain made, whatever project made it: found by Captain's tag, or by

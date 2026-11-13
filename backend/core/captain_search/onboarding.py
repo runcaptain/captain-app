@@ -33,21 +33,19 @@ def status(ctx: Context) -> dict:
         {"id": "cloud", "title": "Add cloud credentials", "done": bool(cloud.profiles()) or kind == "local",
          "optional": kind == "local", "detail": f"{len(cloud.profiles())} profile(s)", "command": "cst cloud add"},
         {"id": "data", "title": "Bring in data", "done": len(datasets) > 0,
-         "detail": f"{len(datasets)} dataset(s). Drag catalogs, query sets, judgments and logs into Data and signals",
+         "detail": f"{len(datasets)} dataset(s). Drag catalogs, query sets, judgments and logs into Data",
          "command": "cst data import <files or folders> --folder <folder>"},
         {"id": "registry", "title": "Attach your model registry", "done": bool(_registries(ctx)), "optional": True,
          "detail": "an S3, GCS or Azure folder of model versions, for lineage", "command": "POST /api/registries {uri}"},
         {"id": "pipeline", "title": "Register a baseline", "done": len(pipelines) > 0,
          "detail": f"{len(pipelines)} model version(s)", "command": "cst pipeline new  (or: cst pipeline link s3://<registry>/...)"},
-        {"id": "investigation", "title": "Open an experiment", "done": len(inv) > 0,
-         "detail": f"{len(inv)} experiment(s)", "command": "cst investigate new --title \"<your question>\""},
-        {"id": "run", "title": "Run a comparison", "done": len(runs) > 0 or any(i["runs"] for i in inv),
-         "detail": f"{len(runs)} run(s)", "command": "cst investigate run <id>"},
-        {"id": "decision", "title": "Record a decision", "done": any(i.get("decision") for i in inv),
-         "detail": "continue, online test, reject or inconclusive", "command": "cst investigate decide <id>"},
+        # Experiments left the screens (2026-11-12): the tour ends at an offline evaluation, which is what a team
+        # opens Captain to run. `cst investigate` still works from a terminal.
+        {"id": "run", "title": "Run an offline evaluation", "done": len(runs) > 0 or any(i["runs"] for i in inv),
+         "detail": f"{len(runs)} run(s)", "command": "cst backtest run <name>"},
         {"id": "agent", "title": "Point an agent at Captain", "done": any((i.get("initiator") or {}).get("agent") for i in inv),
-         "optional": True, "detail": "in a shell here, or Cursor, Devin or any terminal: Copy prompt, or set CST_AGENT",
-         "command": "cst investigate prompt <id>"},
+         "optional": True, "detail": "in a shell here, or Cursor, Devin or any terminal: set CST_AGENT",
+         "command": "cst app context"},
     ]
     nxt = next((s["id"] for s in steps if not s["done"] and not s.get("optional")), None)
     return {"cst": shutil.which("cst"), "workspace": {"name": ctx.workspace.name, "storage": storage, "kind": kind},

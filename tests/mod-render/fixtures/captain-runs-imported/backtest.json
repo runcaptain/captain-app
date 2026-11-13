@@ -1,0 +1,50 @@
+{
+ "schema_version": 1,
+ "id": "01M6SD8SDA3CYYHP2JXV3120GM",
+ "org": "captain",
+ "workspace": "s",
+ "created_by": "ana@example.com",
+ "created_at": "2026-11-06T21:47:06Z",
+ "name": "demos/northpole/ab6c-seg",
+ "version": 1,
+ "parent": null,
+ "description": "",
+ "files": [],
+ "tags": {},
+ "kind": "backtest",
+ "mode": "imported",
+ "logs": null,
+ "compute": null,
+ "arms": [
+  "northpole-baseline@v1",
+  "northpole-ab6c@v1"
+ ],
+ "queries": "demo-queries@v2:holdout",
+ "judgments": "demo-judgments@v1",
+ "population": "demo-shoppers@v1",
+ "metrics": [
+  "ndcg@10",
+  "p@10",
+  "r@50",
+  "mrr",
+  "ctr",
+  "conversion",
+  "rpv",
+  "p99_ms"
+ ],
+ "preregistration": {
+  "hypothesis": "Multi-field BM25 with a price filter beats title-only BM25 on nDCG@10.",
+  "primary_metric": "ndcg@10",
+  "mde": 0.003,
+  "written_at": "2026-11-06T21:47:06Z"
+ },
+ "surfaces": [],
+ "runs": [
+  {
+   "version": 0,
+   "created": "2026-11-06T21:47:08+00:00",
+   "complete": true,
+   "independent": true
+  }
+ ]
+}

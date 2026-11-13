@@ -241,11 +241,11 @@ export class Models {
 
   render(c, w) {
     const regs = this.regs ?? [];
-    return v_flex().id("models").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(14)
+    return v_flex().id("models").flex_none().gap(14)
       .child(h_flex().gap(10).items_center()
         .child(div().text_size(14).font_semibold().child("Model registries"))
-        .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.grey900).child("Where your trained models live. Captain reads them for lineage and never writes to them."))
-        .child(Button(c, "reg-attach", "Attach a registry", (_e, cx) => this.toggleAttach(cx), { kind: "primary", small: true })))
+        .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.grey900).child("Where your trained models live. Captain reads them and never writes to them."))
+        .child(Button(c, "reg-attach", "Attach a registry", (_e, cx) => this.toggleAttach(cx), { small: true })))
       .when(this.attaching, (e) => e.child(this.form(c)))
       .when(!!this.job, (e) => e.child(v_flex().gap(6).p(10).border_1().border_color(c.rule)
         .child(h_flex().text_size(12).child(div().flex_1().child(this.job.label)).child(div().font_family(MONO).text_color(c.grey500).child(`${Math.round((this.job.progress ?? 0) * 100)}%`)))
@@ -382,7 +382,12 @@ export class Models {
             .when(parents.length > 0, (e) => e.child(h_flex().min_w(0).gap(4).items_center().text_size(11.5).text_color(c.grey900)
               .child(div().flex_none().child("built from")).child(div().min_w(0).truncate().font_family(MONO).child(parents.map(String).join(", ")))))
             .child(div().flex_1())
-            .child(div().flex_none().max_w(160).truncate().text_size(11).text_color(c.grey500).child((this.regs ?? []).find((r) => r.uri === m.registry)?.label ?? ""));
+            .child(div().flex_none().max_w(160).truncate().text_size(11).text_color(c.grey500).child((this.regs ?? []).find((r) => r.uri === m.registry)?.label ?? ""))
+            // Its whole chain, from the sources it was built on to where it runs.
+            .child(div().id(`model-lineage-${m.id}`).flex_none().h(22).px(8).flex().items_center().cursor_pointer().border_1().border_color(c.grey300).text_size(11.5).text_color(c.navy)
+              .hover((st) => st.border_color(c.blue).text_color(c.blue))
+              .on_click((_e, cx) => { cx.stop_propagation?.(); this.host.showGraph(cx, `model:${m.id}`, `${m.brand} ${m.version}`, "sources"); })
+              .child("Where this came from"));
         }))));
   }
 }

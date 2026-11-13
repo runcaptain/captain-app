@@ -10,8 +10,7 @@ import { shared, setShared, layout } from "herdr";
 
 /** Section ids, in the words the screens use (defaults/AGENTS.md, "Words"). */
 export const SCREENS = {
-  project: "Home", investigations: "Experiments", data: "Data and signals", runs: "Runs", comparisons: "Compare",
-  handoff: "Launch review", team: "Team",
+  project: "Projects", data: "Data", notebooks: "Notebooks", runs: "Runs", deployments: "Deployments", team: "Team",
 };
 
 // Field names that hold a secret, whatever the form calls them. The services' own list (commands.py SECRET_NAMES),

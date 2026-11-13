@@ -1,0 +1,14 @@
+[
+ {
+  "name": "demo-bm25",
+  "latest": 1
+ },
+ {
+  "name": "demo-tuned",
+  "latest": 1
+ },
+ {
+  "name": "demo-ranker",
+  "latest": 1
+ }
+]

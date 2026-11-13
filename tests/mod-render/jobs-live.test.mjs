@@ -35,7 +35,7 @@ fs.cpSync(path.join(root, 'defaults/mods/captain-runs'), dir, { recursive: true 
 const { default: Mod } = await import(path.join(dir, 'main.js'));
 const h = harness(Mod);
 await h.start();
-await h.click('tab-jobs');
+await h.click('runs-kind-jobs'); // the one list, filtered to jobs
 const until = async (ok, what) => {
   for (let i = 0; i < 80 && !ok(h.text()); i++) { await h.layoutLists({}); await h.idle(250); }
   assert.ok(ok(h.text()), `${what}: ${h.text().slice(0, 800)}`);
@@ -46,6 +46,8 @@ let t = h.text();
 assert.ok(t.includes('This computer'), 'place in words');
 assert.ok(!/sql nope -e|select 1|data list/.test(t), 'no command line on screen');
 
+await until(() => (h.mod.jobs.list ?? []).some((x) => x.state === 'failed'), 'the failed job, with its state');
+assert.ok(h.text().includes('Job') && h.text().includes('Failed'), 'its kind and its status, in words, on its row');
 const failed = h.mod.jobs.list.find((x) => x.state === 'failed');
 await h.click(`job-${failed.id}`);
 await until((t) => t.includes('cst exited with code 1') || /exited with code 1/.test(t), 'the failure reason');

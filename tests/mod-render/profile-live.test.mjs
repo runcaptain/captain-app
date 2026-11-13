@@ -29,10 +29,10 @@ process.on('uncaughtException', (e) => { stop(); console.error(e); process.exit(
 const line = await new Promise((res, rej) => { let b = ''; serve.stdout.on('data', (d) => { b += d; if (b.includes('\n')) res(b.split('\n')[0]); }); serve.on('exit', () => rej(new Error('cst serve exited'))); });
 const j = JSON.parse(line);
 globalThis.__shared = { 'captain.daemon': { state: 'ready', base: `http://127.0.0.1:${j.port}`, token: j.token } };
-globalThis.__props = { tab: 'profile' };
+globalThis.__props = {};
 
-const dir = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-compare-prof-')));
-fs.cpSync(path.join(root, 'defaults/mods/captain-compare'), dir, { recursive: true });
+const dir = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-runs-prof-')));
+fs.cpSync(path.join(root, 'defaults/mods/captain-runs'), dir, { recursive: true });
 const { default: Mod } = await import(path.join(dir, 'main.js'));
 const h = harness(Mod);
 await h.start();
@@ -41,14 +41,15 @@ const until = async (ok, what, n = 120) => {
   assert.ok(ok(h.text()), `${typeof what === "function" ? what() : what}: ${h.text().slice(0, 300)}`);
 };
 
-await until(() => (h.mod.backtests ?? []).some((b) => b.name === 'demo-tuned-vs-bm25'), 'runs listed');
-globalThis.__shared['captain.open'] = { section: 'comparisons', backtest: 'demo-tuned-vs-bm25', at: Date.now() };
-await until((t) => t.includes('Profile this run') && h.mod.sel?.backtest === 'demo-tuned-vs-bm25' && !!h.mod.run && !h.mod.run.error, 'the Profile tab on the run');
+await until(() => (h.mod.data.backtests ?? []).some((b) => b.name === 'demo-tuned-vs-bm25'), 'runs listed');
+// "Where the time goes" is a section of the run's comparison, in Runs (it was Compare's Profile tab).
+globalThis.__shared['captain.open'] = { section: 'runs', backtest: 'demo-tuned-vs-bm25', tab: 'profile', at: Date.now() };
+await until((t) => t.includes('Profile this run') && h.mod.cmp.sel?.backtest === 'demo-tuned-vs-bm25' && !!h.mod.cmp.run && !h.mod.cmp.run.error, 'the section on the run');
 assert.ok(h.text().includes('Measured offline on this computer, not production.'), 'labelled before anything runs');
 await h.click('prof-q-50');
 await h.click('prof-run');
-await until((t) => / at p99 against /.test(t), () => `the summary sentence (${JSON.stringify(h.mod.profiler.cur)?.slice(0, 400)})`);
-const res = h.mod.profiler.cur.result;
+await until((t) => / at p99 against /.test(t), () => `the summary sentence (${JSON.stringify(h.mod.cmp.profiler.cur)?.slice(0, 400)})`);
+const res = h.mod.cmp.profiler.cur.result;
 assert.equal(res.arms.length, 2, 'both arms timed');
 let t = h.text();
 assert.ok(/(adds|saves) [\d.]+ ms at p99 against/.test(t), 'adds or saves, in ms');
@@ -65,11 +66,11 @@ assert.equal(ov.mod, 'captain-explain');
 assert.equal(ov.props.run, 'demo-tuned-vs-bm25@v1');
 assert.ok(ov.props.query_id, 'with the query');
 
-// An imported run: its arms can't be replayed, and the tab says why.
-globalThis.__shared['captain.open'] = { section: 'comparisons', backtest: 'demos/shot/imported-readout', version: 1, at: Date.now() };
-await until((t) => t.includes('Profile this run') && h.mod.sel?.backtest === 'demos/shot/imported-readout' && !!h.mod.run, 'the imported run');
+// An imported run: its arms can't be replayed, and the section says why.
+globalThis.__shared['captain.open'] = { section: 'runs', backtest: 'demos/shot/imported-readout', version: 1, tab: 'profile', at: Date.now() };
+await until((t) => t.includes('Profile this run') && h.mod.cmp.sel?.backtest === 'demos/shot/imported-readout' && !!h.mod.cmp.run, 'the imported run');
 await h.click('prof-run');
-await until(() => !!h.mod.profiler.cur?.result || !!h.mod.profiler.cur?.error, 'profiled');
+await until(() => !!h.mod.cmp.profiler.cur?.result || !!h.mod.cmp.profiler.cur?.error, 'profiled');
 t = h.text();
 assert.ok(/isn't timed: from imported rankings, so it can't be replayed/.test(t) && t.includes('Nothing in this run can be timed.'), `skipped with the reason: ${t.slice(0, 600)}`);
 assert.ok(!h.byIdPrefix('prof-bar-').length, 'no empty bars');

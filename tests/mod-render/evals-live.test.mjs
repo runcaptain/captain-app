@@ -117,8 +117,9 @@ const r = harness(Runs);
 await r.start();
 const status = await call('GET', '/api/grading/apparel-grading');
 assert.match(String(status.rubric?.text ?? ''), /garment asked for/, 'the queue carries the rubric text');
-await r.click('tab-grading');
-r.mod.tab = 'grading';
+// The rating queue, from the one list of runs.
+for (let i = 0; i < 40 && !r.byIdPrefix('grading-apparel-grading').length; i++) { await r.layoutLists({}); await r.idle(150); }
+await r.click('grading-apparel-grading');
 r.mod.openGrader(r.cx, 'apparel-grading');
 await until(r, () => r.text().includes('the garment asked for'), 'the grader shows the rubric');
 assert.ok(r.text().includes('RUBRIC: APPAREL'));

@@ -126,19 +126,46 @@ UP = ("running", "asleep", "starting", "unknown")
 
 
 @deployments_app.command("list")
-def deployments_list(stopped: bool = typer.Option(False, "--stopped", help="the ones that are not running"),
-                     every: bool = typer.Option(False, "--all", help="running and not"),
+def deployments_list(running: bool = typer.Option(False, "--running", help="only the ones that are running, asleep or starting"),
+                     stopped: bool = typer.Option(False, "--stopped", help="only the ones that are not running"),
+                     every: bool = typer.Option(False, "--all", help="every one, which is what it shows anyway"),
                      fresh: bool = typer.Option(False, "--fresh", help="ask the clouds now, not the answer from a few seconds ago")):
     """Every deployed model across projects and clouds, as each cloud reports it. Captain's records are corrected
     from the clouds first. Things found in a cloud that no project knows are listed too."""
     from ..staging import fleet as FL
 
     d = _do(FL.deployed, ctx(), fresh)
-    rows = [r for r in d["rows"] if every or ((r["state"] in UP or r["link"] == "unlinked") != stopped)]
-    lines = [f"{(r['project_name'] or r['name'] or '')[:22]:22} {r['state_label'][:24]:24} {r['where'][:40]:40} "
-             f"{(r['model_version'] or 'not linked to a project')[:34]:34} {r['state_text']}" for r in rows]
+    # Every deployment by default, running first: one that is stopped is still a deployment a person may start
+    # again or remove, and a list that counts it and does not show it is no list.
+    up = lambda r: r["state"] in UP or r["link"] == "unlinked"  # noqa: E731
+    rows = [r for r in d["rows"] if every or not (running or stopped) or (running and up(r)) or (stopped and not up(r))]
+    line = lambda r: (f"{(r['project_name'] or r['name'] or '')[:22]:22} {r['state_label'][:24]:24} {r['where'][:40]:40} "  # noqa: E731
+                      f"{(r.get('model_label') or r['model_version'] or 'not linked to a project')[:34]:34} {r['state_text']}")
+    # What is in a cloud now, then what was stopped earlier, under its own heading: Captain only remembers those.
+    now, earlier = [r for r in rows if r["in_cloud"]], [r for r in rows if not r["in_cloud"]]
+    lines = [line(r) for r in now]
+    if earlier:
+        lines += ([""] if lines else []) + ["Stopped earlier. Nothing of these is in a cloud or billing. Start one again with: cst deployments start <project>"]
+        lines += [line(r) for r in earlier]
     lines += [f"Could not ask {a['cloud_label']} ({a['login'] or 'no login'}): {a['error']}" for a in d["asked"] if not a["ok"]]
-    emit({**d, "rows": rows}, "\n".join(lines) if lines else ("Nothing is deployed." if not d["rows"] else d["text"]))
+    emit({**d, "rows": rows}, "\n".join(([d["text"]] if d["rows"] else []) + lines) if lines else d["text"])
+
+
+@deployments_app.command("forget")
+def deployments_forget(name: str, env: str = typer.Option("staging", "--env"),
+                       yes: bool = typer.Option(False, "--yes", "-y", help="confirm: Captain's record of it is removed")):
+    """Forget a model that was stopped earlier: remove Captain's own record of the deployment. Nothing in any cloud
+    changes, because nothing of it is there."""
+    from ..staging import fleet as FL
+
+    if S.dry_run:
+        emit({"dry_run": True, "project": name}, f"Would forget {name}'s stopped model. Nothing in the cloud would change.")
+        return
+    try:
+        r = FL.forget_stopped(ctx(), name, env, confirm=yes)
+    except ValueError as e:
+        fail(str(e))
+    emit(r, r["text"])
 
 
 @deployments_app.command("sync")
@@ -165,15 +192,16 @@ def deployments_show(name: str, span: str = typer.Option("1h", "--range", help="
     n = _do(NB.numbers, c, name, env, span)
     s, cost = n["summary"], n.get("cost") or {}
     lines = [f"{row['project_name']}: {row['state_text']}",
-             f"Model     {row['model_version'] or 'not known'}",
+             f"Model     {row.get('model_label') or row['model_version'] or 'not known'}",
              f"Where     {row['where']}" + (f" ({row['name']})" if row.get("name") else ""),
              f"Since     {row['since'] or 'not known'}" + (f", by {row['by']}" if row.get("by") else ""),
              f"Traffic   {n['text']}"]
     if s.get("requests"):
         lines.append(f"          {s['per_minute']:g} requests a minute on average, {s['per_minute_peak']:g} at the busiest.")
     if s.get("cpu") is not None:
-        lines.append(f"Machine   CPU {s['cpu']:g}% on average, {s['cpu_peak']:g}% at the most. Memory {s['memory']:g}%."
-                     + (f" Copies: {s['copies_now']} now, {s['copies_peak']} at the most." if s.get("copies_now") else ""))
+        lines.append(f"Machine   CPU {s['cpu']:g}% on average, {s['cpu_peak']:g}% at the most. Memory {s['memory']:g}%.")
+    if s.get("copies_text"):
+        lines.append(f"Copies    {s['copies_text']}")
     lines.append(f"Cost      {cost.get('text') or 'not known'}")
     lines.append(f"Source    {n['source_text']}")
     lines += [f"Not read  {x}" for x in n["not_read"]] + [f"Corrected {x}" for x in row["corrected"]]

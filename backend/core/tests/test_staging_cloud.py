@@ -38,6 +38,7 @@ class FakeAWS:
         self.iam_refuses = False   # Captain's own sign-in may not ask IAM
         self.scaling = {}          # endpoint resource id -> {min, max, policy}: SageMaker's scaling on an endpoint
         self.copies = {}           # endpoint -> copies up now
+        self.metric_list = []      # what CloudWatch lists for an endpoint: [{Namespace, MetricName, Dimensions}]
         # What CloudWatch reports: 120 requests a minute, none failing, 3 ms median and 9 ms 95th percentile inside
         # the model, 20% of a core, 5% of memory, one copy reporting once a minute.
         self.metric = lambda name, stat, t, period: {
@@ -176,6 +177,10 @@ class FakeSM:
                 t += dt.timedelta(seconds=period)
             out.append({"Id": q["Id"], "Timestamps": ts, "Values": vs})
         return {"MetricDataResults": out}
+
+    def list_metrics(self, Namespace, Dimensions, **kw):
+        self._do("list_metrics", {"namespace": Namespace})
+        return {"Metrics": [m for m in self.w.metric_list if m["Namespace"] == Namespace]}
 
     def describe_endpoint_config(self, EndpointConfigName):
         return self.w.configs[EndpointConfigName]

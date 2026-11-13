@@ -3,7 +3,7 @@
 // small bars, field:term), boosts (rules fired, before and after, movement), filter (what it removed, and why) and the
 // final ranking with grades. A stage the engine can't explain says so plainly. With two systems, each stage sits side
 // by side and the first stage where a relevant result was lost is highlighted, with its sentence.
-// Props: {run, query_id, a?, b?} (GET /api/runs/{run}/queries/{qid}/explain, from Comparisons)
+// Props: {run, query_id, a?, b?} (GET /api/runs/{run}/queries/{qid}/explain, from a comparison in Runs)
 //      | {pipeline, q, vs?} (GET /api/explain) | none: pick a pipeline and type a query.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";

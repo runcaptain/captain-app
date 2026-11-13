@@ -171,7 +171,7 @@ def test_the_commands_are_named_like_the_pages(ws):  # noqa: F811
     from captain_search.cli.main import app
 
     run = lambda *a: CliRunner().invoke(app, list(a))  # noqa: E731
-    assert "Nothing is deployed." in run("deployments", "list").output
+    assert "No models running." in run("deployments", "list").output
     out = run("deploy", "shop", "--target", "local", "--allow-large")
     assert out.exit_code == 0, out.output
     url = SG.state(ws, "shop")["endpoint"]["url"]
@@ -180,7 +180,7 @@ def test_the_commands_are_named_like_the_pages(ws):  # noqa: F811
     ls = run("deployments", "list").output
     # The list is the cloud read now: the state in words, where it runs and the model version. It shows a deploy
     # made a moment ago, though the list was asked for just before it.
-    assert "Running" in ls and "This computer" in ls and SG.state(ws, "shop")["model_version"] in ls
+    assert "Running" in ls and "This computer" in ls and "starter-ranker, version " in ls and SG.state(ws, "shop")["model_version"] not in ls
     hist = run("deployments", "history", "shop").output
     assert hist.startswith("v1 ") and hist.strip().endswith("Live")
     lg = run("deployments", "logs", "shop", "--filter", "jacket").output

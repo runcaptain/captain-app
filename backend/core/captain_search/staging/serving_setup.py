@@ -166,6 +166,10 @@ def login_policy(storage_uri: str, region: str, account: str, n: dict, image_sou
                           "application-autoscaling:DescribeScalingPolicies", "application-autoscaling:DescribeScalingActivities",
                           "cloudwatch:PutMetricAlarm", "cloudwatch:DescribeAlarms", "cloudwatch:DeleteAlarms"],
                "Resource": "*"})
+    # Reading a deployed model's traffic, response time, processor, memory and hours from AWS's own numbers
+    # (CloudWatch). Read-only. Without these the numbers come from Captain's request log and say so. CloudWatch does
+    # not let a read be limited to one endpoint.
+    st.append({"Sid": "ReadItsNumbers", "Effect": "Allow", "Action": ["cloudwatch:GetMetricData", "cloudwatch:ListMetrics"], "Resource": "*"})
     st.append({"Sid": "ScalingServiceRole", "Effect": "Allow", "Action": "iam:CreateServiceLinkedRole",
                "Resource": f"arn:aws:iam::{account}:role/aws-service-role/sagemaker.application-autoscaling.amazonaws.com/*",
                "Condition": {"StringLike": {"iam:AWSServiceName": "sagemaker.application-autoscaling.amazonaws.com"}}})

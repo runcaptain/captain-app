@@ -54,6 +54,24 @@ export function Button(c, id, label, onClick, { kind = "secondary", disabled = f
     .child(label);
 }
 
+/** The most submenus a view may have (Edgar, 2026-11-12: "They need to be reduced down to one or two menus max"). */
+export const MAX_SUBMENUS = 2;
+
+/** A view's submenus: a segmented control beside its title. `tabs` is [{id, label, icon?}] and each draws with the
+ *  id `submenu-<id>`. A view has at most MAX_SUBMENUS: a third is refused here, and tests/mod-render/submenus.test.mjs
+ *  fails on any view that draws its own strip instead. Blend the extra one into a list as a kind or a filter. */
+export function Submenus(c, tabs, active, onSelect) {
+  if (tabs.length > MAX_SUBMENUS) throw new Error(`a view has at most ${MAX_SUBMENUS} submenus, got ${tabs.length}: ${tabs.map((t) => t.label).join(", ")}`);
+  return h_flex().flex_none().border_1().border_color(c.grey300).children(tabs.map((t, i) => {
+    const on = t.id === active;
+    return h_flex().id(`submenu-${t.id}`).h(28).px(12).gap(6).items_center().cursor_pointer().text_size(12.5)
+      .when(i < tabs.length - 1, (e) => e.border_r(1).border_color(c.grey300))
+      .bg(on ? c.navy : c.surface).text_color(on ? c.surface : c.grey900)
+      .on_click((_e, cx) => onSelect(t.id, cx))
+      .child(div().child(t.label));
+  }));
+}
+
 /** Tabs along a 1px rule; the active one has a 2px blue underline. */
 export function Tabs(c, id, tabs, active, onSelect) {
   return h_flex().h(36).flex_none().gap(18).border_b(1).border_color(c.rule).children(tabs.map((t) => {

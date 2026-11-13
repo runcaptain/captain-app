@@ -1,0 +1,37 @@
+[
+ {
+  "name": "local",
+  "kind": "local",
+  "purposes": [
+   "backtest",
+   "serve"
+  ]
+ },
+ {
+  "name": "aws-batch",
+  "kind": "aws-batch",
+  "provider": "aws",
+  "profile": "aws-main",
+  "region": "us-west-1",
+  "purposes": [
+   "backtest"
+  ]
+ },
+ {
+  "name": "shop-serving",
+  "kind": "aws-sagemaker",
+  "provider": "aws",
+  "profile": "aws-main",
+  "region": "us-west-1",
+  "purposes": [
+   "serve"
+  ]
+ },
+ {
+  "name": "gcp-jobs",
+  "kind": "gcp-cloud-run",
+  "provider": "gcp",
+  "profile": "gcp-main",
+  "region": "us-central1"
+ }
+]

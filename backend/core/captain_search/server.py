@@ -1556,6 +1556,19 @@ def deployed_created():
     return FL.created(ctx())
 
 
+@app.post("/api/deployed/forget", dependencies=A)
+def deployed_forget(body: dict):
+    """{project, env?, confirm}: forget a model that was stopped earlier. Captain removes its own record of the
+    deployment. Nothing in any cloud changes: nothing of it is there. Without `confirm` it answers 409 with what
+    would happen. Refused while anything of it is still in a cloud."""
+    from .staging import fleet as FL
+
+    try:
+        return FL.forget_stopped(ctx(), str(body.get("project") or ""), str(body.get("env") or "staging"), confirm=bool(body.get("confirm")))
+    except ValueError as e:
+        raise HTTPException(409 if str(e).startswith("Confirm first") else 400, str(e)) from None
+
+
 @app.get("/api/deployed/differences", dependencies=A)
 def deployed_differences():
     """What differs between Captain's records and the cloud, after correcting it: {corrected, unlinked, not_asked,
@@ -1815,6 +1828,21 @@ def connection_test(name: str):
     from .connectors.checks import verify
 
     return {"name": name, **verify(ctx().load_connection(name))}
+
+
+@app.get("/api/data/tables", dependencies=A)
+def data_tables(q: str | None = None, kind: str | None = None, project: str | None = None):
+    """Every table in one list: the datasets Captain keeps versions of and each connected database's tables.
+    {rows: [{kind: dataset | table, name, where, rows, versions, last_read, columns, ...}], connections: [...]}.
+    q: every word in the name, where it lives, the description or a column's name. kind: dataset or table.
+    ?project= and the Explorer's X-CST-Scope filter the datasets; a database's tables belong to no project, so
+    they are left out while something is picked."""
+    from .data import catalog as CAT
+
+    c = ctx()
+    pick = (_req_scope.get() or "").partition(":")
+    scoped = bool(project) or (bool(pick[2]) and pick[0] != "view")
+    return CAT.tables(c, _member(c, project, "dataset"), q, kind if kind in ("dataset", "table") else None, scoped)
 
 
 @app.get("/api/tables", dependencies=A)
@@ -2998,6 +3026,16 @@ def run_histogram(name: str, a: str | None = None, b: str | None = None, bins: i
     return CP.histogram(ctx(), name, a, b, bins)
 
 
+@app.get("/api/regression", dependencies=A)
+def regression(model: str | None = None, project: str | None = None, limit: int = 50):
+    """Regression testing: every evaluation run, newest first, with the model judged, the model it is compared
+    with and the change on the primary metric. ?model= keeps one model's runs. See compare.regression."""
+    from . import compare as CP
+
+    c = ctx()
+    return CP.regression(c, _member(c, project, "backtest"), model, limit)
+
+
 @app.get("/api/compare-runs", dependencies=A)
 def compare_runs(a: str, b: str):
     from . import compare as CP
@@ -3429,10 +3467,44 @@ def population_add(body: dict):
 
 @app.post("/api/backtests", dependencies=A)
 def backtest_add(body: dict):
+    """{name, arms, queries?, judgments?, population?, hypothesis, primary?, mde?, mode?, logs?, compute?, surfaces?,
+    population_size?}. population_size is how many simulated shoppers a replay of logged searches makes (4000 unless
+    given): a limit the form shows as a field rather than hiding."""
     return ops.backtest_plan(ctx(), body["name"], body["arms"], body.get("queries") or None, body.get("judgments") or None,
                              body.get("population") or None, body["hypothesis"], body.get("primary", "ndcg@10"),
                              float(body.get("mde", 0.003)), mode=body.get("mode", "simulated"), logs=body.get("logs") or None,
-                             compute=body.get("compute") or None, surfaces=body.get("surfaces") or None).model_dump(mode="json")
+                             compute=body.get("compute") or None, surfaces=body.get("surfaces") or None,
+                             population_size=int(body.get("population_size") or 4000)).model_dump(mode="json")
+
+
+@app.get("/api/evaluations/options", dependencies=A)
+def evaluation_options():
+    """What the New evaluation form offers, straight from what a run can do: the measures (each with one line and
+    what it needs), the fixed depths they look at, the slices a run always reports, and the limits with their
+    defaults. Nothing here is a setting the runner ignores."""
+    from . import testsets as TS
+    from .eval import evalform as EF
+
+    return EF.options() | {"grades": TS.GRADE_WORDS}
+
+
+@app.post("/api/testsets/preview", dependencies=A)
+def testset_preview(body: dict):
+    """{source: {dataset | file}, mapping?: {query, product, grade?, slice?}, default_grade?, limit?}: the table's
+    columns and first rows, the mapping (guessed when not given), and what it would make. Writes nothing."""
+    from . import testsets as TS
+
+    return TS.preview(ctx(), body.get("source") or {}, body.get("mapping") or None, int(body.get("default_grade", 3)),
+                      max(1, min(int(body.get("limit", 8)), 50)))
+
+
+@app.post("/api/testsets", dependencies=A)
+def testset_create(body: dict):
+    """{name, source, mapping, default_grade?}: make <name>/questions and <name>/answers from a table of the person's
+    own questions and wanted products. Returns {queries, judgments, questions, answers, skipped}."""
+    from . import testsets as TS
+
+    return TS.from_pairs(ctx(), body["name"], body.get("source") or {}, body.get("mapping") or {}, int(body.get("default_grade", 3)))
 
 
 @app.post("/api/registry/import", dependencies=A)
