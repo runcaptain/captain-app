@@ -450,6 +450,9 @@ def link(ctx: Context, row_id: str, pid: str, env: str = ENV) -> dict:
 # What each kind of thing is for, in a sentence a person who has never deployed a model can follow. Matched on the
 # kind's name, most specific first.
 WHAT_FOR = (
+    ("s3-object", "The files the model's image is built from. Kept so the image can be built again without sending them."),
+    ("s3-folder", "The files the model's image is built from. Kept so the image can be built again without sending them."),
+    ("log-group", "What the image build printed while it ran. Kept so a build that failed can be read."),
     ("build", "Builds the model's image inside your account. It runs only when an image is built."),
     ("codebuild", "Builds the model's image inside your account. It runs only when an image is built."),
     ("repository", "Holds the model's image in your account."),
@@ -468,7 +471,7 @@ WHAT_FOR = (
 
 # The kind of thing, as a person says it. Two things can share a name (a role and a repository both called
 # "captain-serving"), so the kind is shown beside the name.
-KIND_WORDS = (("codebuild", "Image build"), ("build", "Image build"), ("repository", "Image repository"), ("registry", "Image registry"),
+KIND_WORDS = (("s3-object", "Build package"), ("s3-folder", "Build package"), ("log-group", "Build log"), ("codebuild", "Image build"), ("build", "Image build"), ("repository", "Image repository"), ("registry", "Image registry"),
               ("role", "Role"), ("identity", "Identity"), ("service-account", "Service account"), ("bucket", "Bucket"), ("storage", "Storage account"),
               ("volume", "Volume"), ("environment", "Environment"), ("resource-group", "Resource group"), ("target", "Captain's note"))
 
@@ -485,6 +488,12 @@ def _what_for(kind: str) -> str:
     return next((text for word, text in WHAT_FOR if word in k), "Made by the first deploy. Deployments here use it.")
 
 
+def _same_word(login, cloud: str) -> bool:
+    """Whether a login's name only repeats its cloud: "aws" for AWS, "google" or "gcp" for Google Cloud."""
+    w = "".join(ch for ch in str(login or "").lower() if ch.isalnum())
+    return not w or w in {cloud, CLOUDS.get(cloud, "").lower().replace(" ", ""), {"gcp": "google", "aws": "amazon", "azure": "microsoft"}.get(cloud, cloud)}
+
+
 def created(ctx: Context) -> dict:
     """What Captain created in each cloud account the first time a model was deployed there: {places: [{cloud,
     cloud_label, login, region, status, things: [{kind, name, what_for}], in_use_by, can_remove, text}], text}.
@@ -499,13 +508,20 @@ def created(ctx: Context) -> dict:
             st = H.get(c).status(ctx)
         except Exception as e:  # noqa: BLE001
             st = {"status": "unknown", "created": [], "text": str(e)[:200]}
-        made = st.get("created") or []
+        # Captain's own note of where to deploy is not in the cloud account, so it is not listed as something that
+        # is. Removing a place's setup still clears it.
+        made = [x for x in st.get("created") or [] if "target" not in str(x.get("type") or "").lower()]
         if st.get("status") in (None, "none", "removed") or not made:
             continue
         using = sorted(name for cloud, name in rows if cloud == c and name)
-        places.append({"cloud": c, "cloud_label": CLOUDS[c], "login": st.get("profile"), "region": st.get("region"), "status": st.get("status"),
+        # The login's name is said only when it tells a person something: "aws" beside "AWS" does not.
+        who = st.get("profile")
+        places.append({"cloud": c, "cloud_label": CLOUDS[c], "login": who, "login_shown": None if _same_word(who, c) else who,
+                       "region": st.get("region"), "status": st.get("status"),
                        "created_at": st.get("created_at"), "created_by": st.get("created_by"),
                        "things": [{"kind": x.get("type"), "kind_label": _kind_word(x.get("type"), x.get("name")), "name": x.get("name"),
+                                   # A long address is shown by its last part: the whole of it is in `name`.
+                                   "short": (str(x.get("name") or "").rstrip("/").rsplit("/", 1)[-1] or x.get("name")) if "/" in str(x.get("name") or "") else x.get("name"),
                                    "what_for": ("Lets the image build read its files and save the image. Nothing else." if "role" in str(x.get("type")).lower()
                                                 and "build" in str(x.get("name")).lower() else _what_for(x.get("type")))} for x in made],
                        "in_use_by": using, "can_remove": not using,

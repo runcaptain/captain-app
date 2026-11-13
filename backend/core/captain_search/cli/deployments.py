@@ -126,19 +126,23 @@ UP = ("running", "asleep", "starting", "unknown")
 
 
 @deployments_app.command("list")
-def deployments_list(stopped: bool = typer.Option(False, "--stopped", help="the ones that are not running"),
-                     every: bool = typer.Option(False, "--all", help="running and not"),
+def deployments_list(running: bool = typer.Option(False, "--running", help="only the ones that are running, asleep or starting"),
+                     stopped: bool = typer.Option(False, "--stopped", help="only the ones that are not running"),
+                     every: bool = typer.Option(False, "--all", help="every one, which is what it shows anyway"),
                      fresh: bool = typer.Option(False, "--fresh", help="ask the clouds now, not the answer from a few seconds ago")):
     """Every deployed model across projects and clouds, as each cloud reports it. Captain's records are corrected
     from the clouds first. Things found in a cloud that no project knows are listed too."""
     from ..staging import fleet as FL
 
     d = _do(FL.deployed, ctx(), fresh)
-    rows = [r for r in d["rows"] if every or ((r["state"] in UP or r["link"] == "unlinked") != stopped)]
+    # Every deployment by default, running first: one that is stopped is still a deployment a person may start
+    # again or remove, and a list that counts it and does not show it is no list.
+    up = lambda r: r["state"] in UP or r["link"] == "unlinked"  # noqa: E731
+    rows = [r for r in d["rows"] if every or not (running or stopped) or (running and up(r)) or (stopped and not up(r))]
     lines = [f"{(r['project_name'] or r['name'] or '')[:22]:22} {r['state_label'][:24]:24} {r['where'][:40]:40} "
              f"{(r['model_version'] or 'not linked to a project')[:34]:34} {r['state_text']}" for r in rows]
     lines += [f"Could not ask {a['cloud_label']} ({a['login'] or 'no login'}): {a['error']}" for a in d["asked"] if not a["ok"]]
-    emit({**d, "rows": rows}, "\n".join(lines) if lines else ("Nothing is deployed." if not d["rows"] else d["text"]))
+    emit({**d, "rows": rows}, "\n".join(lines + ([d["text"]] if d["rows"] else [])) if lines else ("Nothing is deployed." if not d["rows"] else d["text"]))
 
 
 @deployments_app.command("sync")

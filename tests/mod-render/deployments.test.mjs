@@ -82,6 +82,22 @@ await h.click('dep-ask-yes');
 await h.idle(60);
 assert.ok(sent.some((x) => x[0] === 'DELETE' && x[1] === '/api/serving/setup?cloud=aws'), 'then removes it');
 
+// One model, stopped, and what its first deploy left in the account (what a person saw on 2026-11-12, when the
+// screen said only "Nothing is running. Stopped ones are under Stopped." and offered nothing to do).
+h = await open({ deployed: { rows: [OLD], asked, text: '0 deployed, 1 not running.', read_at: '' }, created: { text: '', places: [{ cloud: 'aws', cloud_label: 'AWS', login: 'aws', login_shown: null,
+  region: 'us-west-1', in_use_by: [], can_remove: true, text: '', things: [
+    { kind: 's3-object', kind_label: 'Build package', name: 's3://captain-serving-000000000000-us-west-1/build/serving.zip', short: 'serving.zip', what_for: "The files the model's image is built from. Kept so the image can be built again without sending them." },
+    { kind: 'log-group', kind_label: 'Build log', name: '/aws/codebuild/captain-serving-build', short: 'captain-serving-build', what_for: 'What the image build printed while it ran. Kept so a build that failed can be read.' }] }] } });
+t = h.text();
+assert.ok(t.includes('Nothing is running') && byId(h, 'dep-go-projects').length === 1 && t.includes('Deploy a model'), `nothing running: says so, and offers to deploy: ${t}`);
+assert.equal(shown(h), 'kids', 'the stopped model is right there, not behind a filter');
+assert.ok(byId(h, `dep-start-${OLD.id}`).length === 1 && byId(h, `dep-remove-${OLD.id}`).length === 1, 'with Start again and Remove from the cloud');
+assert.ok(t.includes('Build package') && t.includes('serving.zip') && t.includes('Build log') && !t.includes('| Made by the first deploy |') && !t.includes('s3://'), `each thing is named for what it is: ${t}`);
+assert.ok(t.includes('us-west-1') && !/us-west-1, aws\b/.test(t), 'a login named for its cloud is not repeated');
+await h.click(`dep-start-${OLD.id}`);
+assert.ok(byId(h, 'dep-ask-yes').length === 1 && byId(h, 'dep-go-projects').length === 0, 'an open question holds the one filled button');
+await h.click('dep-ask-no');
+
 // ---- one running ----
 h = await open({ deployed: { rows: [SHOP], asked, text: '1 deployed.', read_at: '' }, numbers: { shop: numbers(8640) } });
 t = h.text();
@@ -107,7 +123,11 @@ h = await open({ deployed: { rows: [BAD, SHOP, TRAIL, FOUND, OLD], asked, text: 
   numbers: { shop: numbers(8640), trail: numbers(120, { source: 'log', not_read: ['Modal keeps no history.'] }) } });
 t = h.text();
 assert.ok(t.includes('3 deployed, 2 not running, 1 found in your cloud with no project.'), 'the summary from the services');
-// Running is shown first: the stopped one is not, the failed one is under Stopped.
+// Every deployment is listed at first, stopped and failed ones too. Running narrows it to what is up.
+assert.equal(shown(h), 'shop trail kids gifts', 'everything at first');
+assert.equal(byId(h, 'dep-none-running').length, 0, 'something is running, so nothing says otherwise');
+await h.click('dep-show-running');
+t = h.text();
 assert.ok(shown(h) === 'shop trail' && t.includes('Asleep. It wakes on the next request and bills nothing until then.'), `Running shows what is up: ${shown(h)}`);
 assert.ok(t.includes('captain-old-experiment-staging') && t.includes('Found in your AWS account, not linked to a project.'), 'something no project knows is listed');
 assert.ok(t.includes('Link to a project') && byId(h, `dep-remove-${FOUND.id}`).length === 1, 'and can be linked or removed');
@@ -144,7 +164,6 @@ await h.click('dep-ask-yes');
 await h.idle(60);
 assert.ok(sent.some((x) => x[0] === 'DELETE' && x[1].startsWith('/api/projects/kids/deploy')), 'then it is removed');
 // Start again says what it will cost, and sends the same version to the same place.
-await h.click('dep-show-stopped');
 await h.click(`dep-start-${BAD.id}`);
 assert.ok(h.text().includes('Start gifts/starter-ranker@v3 again on AWS, us-west-1, ml.t2.medium?'), 'start asks first');
 await h.click('dep-ask-yes');
@@ -152,7 +171,6 @@ await h.idle(60);
 const started = sent.find((x) => x[0] === 'POST' && x[1] === '/api/projects/gifts/deploy');
 assert.deepEqual(started?.[2], { host: 'aws', login: 'work-aws', candidate: 'gifts/starter-ranker@v3', env: 'staging', confirm: true }, 'the same version, the same place');
 // Linking picks a project.
-await h.click('dep-show-running');
 await h.click(`dep-link-${FOUND.id}`);
 await h.idle(60);
 assert.ok(h.text().includes('Which project should captain-old-experiment-staging belong to?') && byId(h, 'dep-link-trail').length === 1, 'pick a project');
@@ -255,7 +273,7 @@ const main = fs.readFileSync(path.join(dir, 'main.js'), 'utf8'), model = fs.read
 assert.equal((main.match(/font_family\(/g) ?? []).length, 1, 'one typeface on the list, set once');
 assert.equal((model.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font only for the address a person copies');
 assert.ok(!/model-part-/.test(model) && /Submenus\(c, PARTS/.test(model) && (model.match(/\{ id: "[a-z]+", label:/g) ?? []).length === 2, 'the model page declares two submenus');
-assert.equal((main.match(/kind: "primary"/g) ?? []).length, 2, 'two filled buttons in the source, never on screen together: the empty state, and an open question');
+assert.equal((main.match(/kind: "primary"/g) ?? []).length, 3, 'three filled buttons in the source, never two on screen: nothing deployed, nothing running, and an open question (which hides the others)');
 assert.equal((model.match(/kind: "primary"/g) ?? []).length, 0, 'the model page has no filled button');
 // A name in the cloud is shown as the cloud has it ("captain-shop-staging"). Captain's own words never say these.
 for (const bad of [/\bengine\b/i, /\bdaemon\b/i, /\bpipeline/i, /\bendpoint config\b/i, /(^|[^-])\bstaging\b/i]) assert.ok(!bad.test(t), `no ${bad} on screen`);
