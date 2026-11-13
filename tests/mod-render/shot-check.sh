@@ -122,6 +122,9 @@ CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-wide.py >/dev/null
 # A dataset of three files, for the Sample data file picker.
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-multifile.py >/dev/null
 CST_HOME=$WORK/cst "$CST_PY" tests/mod-render/seed-images.py >/dev/null
+# SHOT_WEIGHTS_FROM=<a folder or address of a trained model>: bring it into the scratch workspace as "shot-model",
+# so captain-weights:real and its two sister views show a real trained model read by the real services. Read only.
+[[ -n "${SHOT_WEIGHTS_FROM:-}" ]] && CST_HOME=$WORK/cst "$CSTCMD" weights import "$SHOT_WEIGHTS_FROM" --as shot-model >/dev/null
 # An MLflow model version linked to demo-tuned, so lineage draws MLflow upstream of it. The tracking server isn't
 # there: lineage draws from the link alone.
 CST_HOME=$WORK/cst "$CSTCMD" mlflow use --uri http://127.0.0.1:9 >/dev/null 2>&1 || true
@@ -323,6 +326,9 @@ props_of() {
     captain-weights:tiny-staged) echo '{"show": {"model": "starter:tiny", "input": 3, "neuron": [1, 1], "stagedValue": -9}}' ;;
     captain-weights:tiny-staged-halve) echo '{"show": {"model": "starter:tiny", "input": 3, "neuron": [1, 0], "stagedNeuron": {"op": "scale", "factor": 0.5}}}' ;;
     # parts-*: a made-up trained model (a small transformer with rankers), handed to the page with its answers.
+    captain-weights:real) echo '{"show": {"model": "shot-model"}}' ;;
+    captain-weights:real-attention) echo '{"show": {"model": "shot-model", "part": "L0.self_attn", "head": 1}}' ;;
+    captain-weights:real-rankers) echo '{"show": {"model": "shot-model", "rankers": true}}' ;;
     captain-weights:parts-plain) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{}' ;;
     captain-weights:parts-attention) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"part": "L0.self_attn", "head": 1}' ;;
     captain-weights:parts-table) node tests/mod-render/fixtures/captain-weights/parts-shot.mjs '{"part": "item", "row": 2}' ;;
