@@ -203,9 +203,37 @@ export default class CaptainData extends View {
 
   /** Reload what is listed, quietly: the groups stay as they are, and so does the page of each. */
   refreshLists(cx) {
-    if (this.shown || this.graph || this.catalog.rows === null) return;
+    if (this.graph || this.catalog.rows === null) return;
+    // A page is open: only its facts, and only every third time (about 15 seconds). The rows on the page, a filter
+    // being typed and the place in the grid are never touched.
+    if (this.shown) {
+      this.gentle = ((this.gentle ?? 0) + 1) % 3;
+      if (this.gentle !== 0) return;
+      if (this.shown === "dataset") this.refreshDatasetFacts(cx);
+      else this.tables.refreshFacts(cx);
+      return;
+    }
     if (this.tab === "sources") { this.tables.load(cx); if (this.models.regs !== null && !this.models.job) this.models.load(cx); }
     else this.catalog.refresh(cx);
+  }
+
+  /** The open dataset's facts: how many versions Captain keeps and which is the latest (the list), and its record
+   *  when it is still the version on the page (row count, description, health's inputs). Nothing else is asked. */
+  refreshDatasetFacts(cx) {
+    const name = this.sel, was = this.detail;
+    if (!name || !was || was.error) return;
+    cx.spawn(async (cx) => {
+      const [ds, one] = await Promise.all([api(`/api/datasets${this.cls ? `?class=${encodeURIComponent(this.cls)}` : ""}`), api(`/api/datasets/${enc(name)}?v=${encodeURIComponent(was.version)}`)]);
+      if (this.sel !== name || this.detail !== was) return; // the person moved on while it was asked
+      let changed = false;
+      if (ds.ok && Array.isArray(ds.data) && ds.data.some((d) => d.name === name) && JSON.stringify(ds.data) !== JSON.stringify(this.list)) { this.list = ds.data; changed = true; }
+      if (one.ok && one.data?.version === was.version) {
+        for (const k of ["row_count", "description", "truncated", "tags", "classes", "role"]) {
+          if (JSON.stringify(one.data[k]) !== JSON.stringify(was[k])) { was[k] = one.data[k]; changed = true; }
+        }
+      }
+      if (changed) cx.notify();
+    });
   }
 
   /** A dataset's page, over the list. */
