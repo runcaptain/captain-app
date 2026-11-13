@@ -584,6 +584,20 @@ def _answer(row: np.ndarray) -> int:
     return int(row[0] > 0.5) if row.size == 1 else int(row.argmax())
 
 
+def _cost_terms(net: N.Network, out: np.ndarray, want: np.ndarray) -> list[dict]:
+    """What each output adds to one example's cost. The terms add up to the cost."""
+    one = N.Network(net.layers, net.cost)
+    rows = []
+    for j in range(out.size):
+        if net.cost == "squared_error":
+            term = float((out[j] - want[j]) ** 2)
+        else:
+            p = float(np.clip(out[j], 1e-12, 1 - 1e-12))
+            term = float(-want[j] * np.log(p)) if one.layers[-1].activation == "softmax" else float(-(want[j] * np.log(p) + (1 - want[j]) * np.log(1 - p)))
+        rows.append({"output": j, "a": float(out[j]), "wanted": float(want[j]), "term": term})
+    return rows
+
+
 def forward(ctx, sid: str, inputs=None, targets=None, example=None, by: str | None = None, watch: bool = False) -> dict:
     """Run the network on inputs. Costs one forward pass."""
     def fn(st):
@@ -596,8 +610,8 @@ def forward(ctx, sid: str, inputs=None, targets=None, example=None, by: str | No
         if y is not None:
             res["cost"] = N.cost(net, xb, y)
         if not st.watch:
-            st.event("run", f"{_Who(st, by)} ran the network on {name}. {st.doc['used']['forward_used']} of "
-                            f"{st.doc['allowed']['forward_passes']} forward passes are used.", by, op="forward", input=name,
+            st.event("run", f"{_Who(st, by)} ran the network on {name}. That is forward pass {st.doc['used']['forward_used']} of "
+                            f"{st.doc['allowed']['forward_passes']}.", by, op="forward", input=name,
                      inputs=len(xb), cost_after=res.get("cost"))
         return {**res, **_left(st)}
     return _do(ctx, sid, fn, watch)
@@ -621,9 +635,10 @@ def activations(ctx, sid: str, inputs=None, targets=None, example=None, by: str 
             yb = N._targets(net, y, 1)
             res["wanted"] = yb[0].tolist()
             res["cost"] = float(N.cost_each(net, acts[-1], yb)[0])
+            res["cost_terms"] = _cost_terms(net, acts[-1][0], yb[0])
         if not st.watch:
-            st.event("run", f"{_Who(st, by)} looked at every neuron's activation on {name}. {st.doc['used']['forward_used']} of "
-                            f"{st.doc['allowed']['forward_passes']} forward passes are used.", by, op="activations", input=name,
+            st.event("run", f"{_Who(st, by)} looked at every neuron's activation on {name}. That is forward pass {st.doc['used']['forward_used']} of "
+                            f"{st.doc['allowed']['forward_passes']}.", by, op="activations", input=name,
                      inputs=1, cost_after=res.get("cost"))
         return {**res, **_left(st)}
     return _do(ctx, sid, fn, watch)
@@ -665,6 +680,16 @@ def gradients(ctx, sid: str, inputs=None, targets=None, example=None, layer=None
                 raise WeightsError(f"Layer {layer} has {gw.shape[0]} neurons, numbered from 0. There is no neuron {neuron}.")
             res["row"] = {"layer": int(layer), "neuron": int(neuron), "tensor": ly["weight"], "gradient": gw[int(neuron)].tolist(),
                           "bias_gradient": float(g["layers"][int(layer)]["bias"][int(neuron)])}
+        if layer not in (None, "") and int(layer) >= 1:
+            # How the neurons of the column before come to want what they want: each neuron after them asks, through
+            # its weight, and the asks add up. cells[i][j] is what neuron j of this layer asks of neuron i before it.
+            st.layer(layer)
+            k = int(layer)
+            w = np.asarray(net.layers[k].weight, dtype=float)
+            cells = w.T * g["layers"][k]["dcost_dz"][None, :]
+            if cells.size <= GRAD_CAP:
+                res["desires"] = {"layer": k, "of_column": k, "asked_by_column": k + 1, "cells": cells.tolist(),
+                                  "sums": cells.sum(axis=1).tolist(), "exact": g["examples"] == 1}
         if not st.watch:
             st.doc["used"]["gradients_computed"] = True
             st.event("gradients", f"{_Who(st, by)} computed the gradient of the cost on {name}. The cost is {_g(g['cost'])}.", by,
@@ -700,6 +725,63 @@ def trace(ctx, sid: str, inputs=None, targets=None, example=None, path=None, by:
                      touched={"neurons": [[c, j] for c, j in enumerate(t["path"])],
                               "weights": [[s["layer"], *s["weight"]["index"]] for s in t["steps"]]})
         return {**t, **_left(st)}
+    return _do(ctx, sid, fn, watch)
+
+
+def cost_slice(ctx, sid: str, tensor: str, index, inputs=None, targets=None, example=None, span: float | None = None,
+               points: int = 21, by: str | None = None, watch: bool = False) -> dict:
+    """The cost as one number is moved and every other stays put: a slice through one of the network's dimensions.
+
+    The network is run once per point, so this costs `points` forward passes. Nothing is changed."""
+    def fn(st):
+        k, kind = st.where(tensor)
+        t = st.cur[tensor]
+        try:
+            ix = tuple(int(v) for v in (index if isinstance(index, (list, tuple)) else str(index).split(",")))
+        except ValueError:
+            raise WeightsError("A position is written like 2,0 for a weight or 2 for a bias.") from None
+        if len(ix) != t.ndim or any(not 0 <= v < n for v, n in zip(ix, t.shape)):
+            raise WeightsError(f"The position {list(ix)} is outside {tensor}, whose shape is {list(t.shape)}.")
+        n_pts = int(points)
+        if not 3 <= n_pts <= 201:
+            raise WeightsError("A slice has between 3 and 201 points.")
+        x, y, name = _inputs(st, inputs, targets, example)
+        if y is None:
+            raise WeightsError("A slice of the cost needs the wanted outputs as well as the inputs.")
+        net = st.net().copy()
+        xb = N._batch(net, x)
+        now = float(t[ix])
+        half = float(span) / 2 if span not in (None, "") else max(1.0, abs(now))
+        if not half > 0:
+            raise WeightsError("The span of a slice is a number above zero.")
+        if not st.watch:
+            a, u = st.doc["allowed"], st.doc["used"]
+            if len(xb) > a["pass_inputs"]:
+                raise Refused(f"One forward pass holds at most {a['pass_inputs']} inputs in this session, and this one has {len(xb)}.")
+            if u["forward_used"] + n_pts > a["forward_passes"]:
+                raise Refused(f"A slice of {n_pts} points runs the network {n_pts} times, and this session has "
+                              f"{max(0, a['forward_passes'] - u['forward_used'])} forward passes left.")
+            for _ in range(n_pts):
+                _spend(st, len(xb), "slice")
+        slope = N.backprop(net, xb, y)["layers"][k][kind][ix]
+        values = np.linspace(now - half, now + half, n_pts)
+        target = net.layers[k].weight if kind == "weight" else net.layers[k].bias
+        target = np.asarray(target, dtype=float).copy()
+        setattr(net.layers[k], kind, target)
+        costs = []
+        for v in values:
+            target[ix] = v
+            costs.append(N.cost(net, xb, y))
+        target[ix] = now
+        cost_now = N.cost(net, xb, y)
+        if not st.watch:
+            st.doc["used"]["gradients_computed"] = True
+            st.event("run", f"{_Who(st, by)} measured the cost along {tensor}{list(ix)} at {n_pts} points on {name}. "
+                            f"That used {n_pts} forward passes.", by, op="slice", tensor=tensor, input=name, inputs=len(xb),
+                     args={"index": list(ix), "points": n_pts, "span": 2 * half}, cost_after=cost_now,
+                     touched=_touch(st, k, kind, range(ix[0], ix[0] + 1), range(ix[1], ix[1] + 1) if kind == "weight" else None))
+        return {"tensor": tensor, "index": list(ix), "value": now, "cost": cost_now, "slope": float(slope), "values": values.tolist(),
+                "costs": costs, "examples": len(xb), "dimensions": st.total(), **_left(st)}
     return _do(ctx, sid, fn, watch)
 
 
@@ -1077,6 +1159,34 @@ def _first_cost(cost: dict, key: str):
     return None
 
 
+def _predicted(st: State, before: N.Network, parts: list[dict], override: dict | None, cost: dict) -> dict | None:
+    """What the gradient said this edit would do to the cost on the target, beside what it did. Only for a session
+    that has already computed gradients: this never computes them behind the record's back. A large gap means the
+    edit was not small."""
+    if not st.doc["used"]["gradients_computed"] or "target" not in cost:
+        return None
+    keep = dict(st.doc["sets"])
+    try:
+        if override:
+            st.doc["sets"] = {**keep, **override}
+        got = _resolve(st, "target")
+    finally:
+        st.doc["sets"] = keep
+    if got is None or len(got[0]) == 0:
+        return None
+    g = N.backprop(before, got[0], got[1])
+    by_tensor = {}
+    for ly, gl in zip(st.manifest["layers"], g["layers"]):
+        by_tensor[ly["weight"]], by_tensor[ly["bias"]] = gl["weight"].reshape(-1), gl["bias"].reshape(-1)
+    change = 0.0
+    for p in parts:
+        idx = np.asarray(p["indices"], dtype=np.int64)
+        change += float((by_tensor[p["tensor"]][idx] * (np.asarray(p["new"]) - np.asarray(p["old"]))).sum())
+    actual = cost["target"]["after"] - cost["target"]["before"]
+    return {"on": "target", "change": change, "after": cost["target"]["before"] + change, "actual_change": actual,
+            "gap": actual - change}
+
+
 def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
     """Change numbers. The edit is stored as a patch and measured on the three sets just before and just after.
 
@@ -1117,6 +1227,7 @@ def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
             override = {"target": _check_spec(st, {"examples": [target]}, "target"),
                         "should_not_change": _check_spec(st, {"not_examples": [target]}, "should_not_change")}
         cost = _three(st, before, st.net(), override)
+        predicted = _predicted(st, before, parts, override, cost)
         changed = int(sum(len(p["indices"]) for p in parts))
         changes, touched = _changes(st, patch, "old", "new")
         tensors = [p["tensor"] for p in parts]
@@ -1131,7 +1242,8 @@ def edit(ctx, sid: str, req: dict, by: str | None = None) -> dict:
                       factor=float(req["factor"]) if op == "scale" else None, why=why,
                       args={k: v for k, v in req.items() if k not in ("why", "hypothesis", "by", "direction", "values", "inputs", "targets")},
                       changes=changes, changed=changed, share=round(changed / st.total(), 6), touched=touched, cost=cost,
-                      cost_before=_first_cost(cost, "before"), cost_after=_first_cost(cost, "after"), undone=False)
+                      cost_before=_first_cost(cost, "before"), cost_after=_first_cost(cost, "after"), undone=False,
+                      **({"predicted": predicted} if predicted else {}))
         st.doc["edits"].append({"n": n, "event": ev["id"], "op": op.replace("_", "-"), "tensors": tensors, "why": why, "by": ev["by"],
                                 "state": "applied", "changed": changed, "patch": key})
         st.doc["actions"].append(["apply", n])
@@ -1247,8 +1359,7 @@ def diff(ctx, sid: str, by: str | None = None, watch: bool = False) -> dict:
     def fn(st):
         out = _diff(st)
         if not st.watch:
-            st.event("read", f"{_Who(st, by)} compared the network with its base: {_plural(out['changed'], 'number')} of "
-                             f"{out['total']:,} differ.", by, op="diff")
+            st.event("read", f"{_Who(st, by)} compared the network with its base: {out['changed']:,} of {out['total']:,} numbers differ.", by, op="diff")
         return out
     return _do(ctx, sid, fn, watch)
 

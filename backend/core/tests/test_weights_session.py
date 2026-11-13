@@ -335,3 +335,42 @@ def test_two_writers_on_one_session_both_land(ctx):
     assert not errs, errs
     s = S.session(ctx, sid)
     assert len(s["edits"]) == 6 and s["ledger"]["changed"] == 6 and sorted(e["n"] for e in s["edits"]) == [1, 2, 3, 4, 5, 6]
+
+
+def test_the_quantities_a_lesson_draws_are_returned_by_name(ctx):
+    sid = S.open_session(ctx, "tiny", forward_passes=40)["id"]
+    a = S.activations(ctx, sid, example=1)
+    assert sum(t["term"] for t in a["cost_terms"]) == pytest.approx(a["cost"]) and set(a["cost_terms"][0]) == {"output", "a", "wanted", "term"}
+    d = S.open_session(ctx, "digits", forward_passes=1)["id"]
+    a = S.activations(ctx, d, example=0)
+    assert len(a["cost_terms"]) == 10 and sum(t["term"] for t in a["cost_terms"]) == pytest.approx(a["cost"])
+
+    # Adding up the desires: what each later neuron asks of the ones before it, and the sums are their dcost_da.
+    g = S.gradients(ctx, sid, example=1, layer=1)
+    des = g["desires"]
+    assert (des["of_column"], des["asked_by_column"], des["exact"]) == (1, 2, True) and len(des["cells"]) == 3 and len(des["cells"][0]) == 1
+    assert des["sums"] == pytest.approx(g["layers"][0]["dcost_da"])
+    assert "desires" not in S.gradients(ctx, sid, example=1)
+
+    # A slice of the cost along one number: its middle is the number now, and its slope there is the gradient.
+    r = S.cost_slice(ctx, sid, "layer1.weight", [2, 0], example=[0, 1, 2, 3], span=2.0, points=11)
+    assert len(r["values"]) == len(r["costs"]) == 11 and r["values"][5] == pytest.approx(r["value"]) and r["costs"][5] == pytest.approx(r["cost"])
+    assert r["dimensions"] == 13 and r["forward_used"] == 3 + 11
+    h = r["values"][6] - r["values"][5]
+    assert r["slope"] == pytest.approx((r["costs"][6] - r["costs"][4]) / (2 * h), rel=0.2, abs=1e-3)
+    assert S.session(ctx, sid)["ledger"]["changed"] == 0, "a slice changes nothing"
+    with pytest.raises(S.Refused, match="runs the network 30 times"):
+        S.cost_slice(ctx, sid, "layer1.bias", 0, example=0, points=30)
+    assert S.session(ctx, sid)["ledger"]["forward_used"] == 14, "a slice that does not fit is refused whole"
+    assert len(S.cost_slice(ctx, sid, "layer1.bias", 0, example=0, points=30, watch=True)["costs"]) == 30
+
+
+def test_an_edit_after_gradients_carries_what_the_gradient_predicted_beside_what_happened(ctx):
+    sid = S.open_session(ctx, "tiny", forward_passes=5)["id"]
+    ev = S.edit(ctx, sid, {"op": "add", "layer": 2, "neuron": 0, "from": None, "value": 0.001})
+    assert "predicted" not in ev, "no gradients were computed in this session yet"
+    S.gradients(ctx, sid, example=0)
+    small = S.edit(ctx, sid, {"op": "add", "layer": 2, "neuron": 0, "from": None, "value": 0.001})["predicted"]
+    assert small["on"] == "target" and small["change"] == pytest.approx(small["actual_change"], rel=0.05)
+    big = S.edit(ctx, sid, {"op": "add", "layer": 2, "neuron": 0, "from": None, "value": -25.0})["predicted"]
+    assert abs(big["gap"]) > 10 * abs(small["gap"]), "a large edit lands far from the straight-line prediction"

@@ -66,6 +66,8 @@ description: "lambdarank, 400 trees"
 cost: {train_usd: 3.5, train_gpu_hours: 0.5, gpu_type: A10G}
 ```
 
+`network_dir` and `network_name` are covered under "Writing a network" below.
+
 Unknown keys fail the retrain, so a typo doesn't vanish. A non-zero exit fails it too, with the last lines of output.
 `artifact_dir` is capped at 2 GB. Larger weights belong in your own storage, named by `registry_ref`.
 
@@ -91,6 +93,60 @@ print(f"ndcg@10={score}", flush=True)
 (out / "result.yaml").write_text(
     f"metrics:\n  ndcg@10: {score}\nartifact_dir: model\nparams:\n  trees: 400\n")
 ```
+
+## Writing a network
+
+A training command that makes a small fully connected network can hand it to Captain's Weights page, where a
+person or an agent opens it, reads it and edits it with a record (`cst docs weights`). Two things, both optional:
+
+- **The network.** Write a model folder under `CST_OUT` and name it in `result.yaml` as `network_dir`. The folder
+  holds `manifest.json` and one tensor file, `.safetensors` or `.npz`. Captain stores it as the next version of
+  the weights model `network_name` (the pipeline's name when left out) and tags the new pipeline version with
+  `weights_model: <name>@vN`. The retrain's answer gains `network: {model, version, ref, parameters, sizes,
+  cost_points}`.
+- **The cost per step.** Append one JSON object per line to `CST_OUT/cost.jsonl` as training goes:
+  `{"step": 12, "cost": 0.31}`. `loss` is read as `cost`. Captain follows the file while the command runs and
+  puts each point on the live run as the metric `cost`, so Runs draws the curve as it falls. Flush after each
+  line. The points are kept with the model, thinned to 2,000.
+
+The manifest says what the tensors are. `cst docs weights` has the full form. The short one:
+
+```json
+{"format": "captain-weights/1", "name": "mine", "cost": "cross_entropy",
+ "layers": [{"name": "layer1", "activation": "sigmoid", "weight": "layer1.weight", "bias": "layer1.bias"},
+            {"name": "layer2", "activation": "sigmoid", "weight": "layer2.weight", "bias": "layer2.bias"}],
+ "inputs": {"meaning": "two numbers between 0 and 1"}, "outputs": {"meaning": "1 when they add to more than 1"},
+ "tensors": {"layer1.weight": {"file": "tensors.npz"}, "layer1.bias": {"file": "tensors.npz"},
+             "layer2.weight": {"file": "tensors.npz"}, "layer2.bias": {"file": "tensors.npz"}},
+ "sets": {"held_out": {"file": "sets/held_out.npz"}}}
+```
+
+A weight table is outputs by inputs: row `j` holds the weights coming into neuron `j`. Activations are `sigmoid`,
+`relu`, `tanh`, `linear`, and `softmax` on the last layer. Costs are `squared_error` and `cross_entropy`. Shapes
+and sizes are read from the tensors. Any language can write this: an `.npz` is what `numpy.savez` makes.
+
+`sets` is optional. Each set is an `.npz` in the folder with `x` (inputs, one row per example) and `y` (class
+numbers, or one row of wanted outputs per example). `held_out` is what every edit is scored on and is never shown
+to an agent. `evaluation` is the pool the target and "should not change" sets are drawn from. `practice` may be
+looked at. Say under `data` whether the examples are real or synthetic.
+
+A ten-line trainer, using the network code that ships with Captain (`CST_PYTHON` has it):
+
+```python
+import json, os, numpy as np
+from captain_search.weights import files, net
+out = os.environ["CST_OUT"]
+x = np.random.default_rng(0).random((200, 2)); y = (x.sum(axis=1) > 1).astype(int)
+n = net.init([2, 4, 1], "sigmoid", "cross_entropy", seed=0)
+with open(os.path.join(out, "cost.jsonl"), "a") as log:
+    for step, cost in net.train(n, x, y, rate=2.0, steps=300):
+        log.write(json.dumps({"step": step, "cost": cost}) + "\n"); log.flush()
+files.write_model(os.path.join(out, "network"), n, "sum-above-one", inputs={"meaning": "two numbers"}, outputs={"meaning": "1 when they add to more than 1"})
+open(os.path.join(out, "result.yaml"), "w").write("network_dir: network\nnetwork_name: sum-above-one\nmetrics: {cost: %.4f}\n" % cost)
+```
+
+Outside a retrain, `cst weights import <folder> [--name <model>]` brings in the same kind of folder. A
+`cost.jsonl` inside it is kept with the model.
 
 ## On a compute target
 
