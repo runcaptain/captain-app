@@ -199,7 +199,8 @@ def deployments_show(name: str, span: str = typer.Option("1h", "--range", help="
     lines = [f"{row['project_name']}: {row['state_text']}",
              f"Model     {row.get('model_label') or row['model_version'] or 'not known'}",
              f"Where     {row['where']}" + (f" ({row['name']})" if row.get("name") else ""),
-             f"Since     {row['since'] or 'not known'}" + (f", by {row['by']}" if row.get("by") else ""),
+             "Deployed  " + (", ".join(x for x in (f"by {row['by_name']}" if row.get("by_name") else None, FL.ago_words(row.get("since"))) if x) or "not known")
+             + (f". Version {row['version_n']} of this deployment." if row.get("version_n") else "."),
              f"Traffic   {n['text']}"]
     if s.get("requests"):
         lines.append(f"          {s['per_minute']:g} requests a minute on average, {s['per_minute_peak']:g} at the busiest.")

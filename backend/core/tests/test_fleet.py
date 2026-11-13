@@ -441,7 +441,7 @@ def test_a_running_model_says_where_it_lives_from_the_clouds_own_describe(ws, aw
     assert f["files"]["value"].startswith("s3://") and f["files"]["value"].endswith(rec["bundle"])
     assert f["logs"]["value"] == f"/aws/sagemaker/Endpoints/{name}" and f["logs"]["copy"]
     assert f["stops"]["value"].endswith("minutes with no requests") and f["by"]["value"].endswith("just now")
-    assert f["version"]["value"] == f"{FL.model_words(ws.candidate, 'shop')} ({ws.candidate})"
+    assert f["version"]["value"] == f"Version 1 of this deployment: {FL.model_words(ws.candidate, 'shop')} ({ws.candidate})"
     # An account with an alias is said by its alias.
     aws.aliases = ["demo-team"]
     from captain_search.compute_providers import aws as AWSP
@@ -714,3 +714,25 @@ def test_the_endpoint_start_says_something_true_while_it_waits(ws, aws, monkeypa
         assert SS.BUILD_PHASES[phase] and SS.BUILD_PHASES[phase][0].isupper() and phase not in SS.BUILD_PHASES[phase]
     assert (SS.BUILD_PHASES["BUILD"], SS.BUILD_PHASES["POST_BUILD"]) == ("Building", "Pushing the image")
     SG.unstage(ws, "shop")
+
+
+def test_a_model_coming_up_says_where_and_what_the_cloud_is_doing(ws, aws):  # noqa: F811
+    """A real list read "Starting: Creating" while SageMaker made the endpoint. "Creating" is AWS's word, not a sentence."""
+    assert FL._starting_words("aws", "Creating") == "Starting on AWS: the endpoint is being created."
+    assert FL._starting_words("aws", "Updating") == "Starting on AWS: the endpoint is moving to the new version."
+    assert FL._starting_words("gcp", "Cloud Run is rolling it out") == "Starting on Google Cloud: cloud Run is rolling it out." or FL._starting_words("gcp", "Cloud Run is rolling it out").startswith("Starting on Google Cloud: ")
+    assert FL._starting_words("local", None) == "Starting on this computer." and FL._starting_words("modal", "") == "Starting on Modal."
+    rec = SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    aws.endpoints[rec["endpoint"]["name"]]["polls"] = 0  # SageMaker says Creating on the next ask
+    r = FL.deployed(ws, fresh=True)["rows"][0]
+    assert r["state"] == "starting" and r["state_text"] == "Starting on AWS: the endpoint is being created."
+
+
+def test_a_row_says_which_version_of_the_deployment_it_is(ws, aws):  # noqa: F811
+    SG.stage(ws, "shop", baseline=True, target="sm", confirm=True)
+    assert FL.deployed(ws, fresh=True)["rows"][0]["version_n"] == 1
+    SG.stage(ws, "shop", candidate=ws.exp, target="sm", confirm=True)
+    r = FL.deployed(ws, fresh=True)["rows"][0]
+    assert r["version_n"] == 2  # the second version put on this deployment, from its own history
+    v = {x["id"]: x for x in FL.where_it_runs(ws, "shop")["facts"]}["version"]["value"]
+    assert v == f"Version 2 of this deployment: {FL.model_words(ws.candidate, 'shop')} ({ws.candidate})"

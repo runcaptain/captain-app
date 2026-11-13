@@ -47,6 +47,8 @@ def test_list_show_and_sync_read_the_cloud(ws, aws):  # noqa: F811
     assert code == 0 and rows[0]["state"] == "running" and rows[0]["name"] == rec["endpoint"]["name"] and rows[0]["link"] == "linked"
     code, out = cst("deployments", "show", "shop")
     assert code == 0 and "Running on 1 copy." in out and "Where     AWS, us-west-1, ml.t2.medium" in out
+    # Who deployed it and when, as the list says it: a name and how long ago. Not a timestamp and a whole address.
+    assert "Deployed  by tester, just now. Version 1 of this deployment." in out and "T0" not in out.split("Deployed  ")[1].splitlines()[0] and "@" not in out
     assert "Traffic   7,200 requests in the last hour, no errors." in out and "120 requests a minute on average" in out
     assert "Cost      About $" in out and "Source    From AWS's own metrics" in out and "CPU 20% on average" in out
     code, out = cst("--json", "deployments", "show", "shop", "--range", "24h")

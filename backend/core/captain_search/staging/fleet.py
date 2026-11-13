@@ -230,7 +230,7 @@ def _row(pr: dict | None, env: str | None, rec: dict | None, cloud: str, login: 
     elif state == "asleep":
         text = "Asleep. It wakes on the next request and bills nothing until then."
     elif state == "starting":
-        text = "Starting" + (f": {reason}" if reason else ".")
+        text = _starting_words(cloud, reason)
     elif state == "stopped":
         text = _stopped_words(reason, (rec or {}).get("stopped_at"))
     else:
@@ -305,6 +305,20 @@ def ago_words(when) -> str | None:
             n = int(s // size)
             return f"{n} {word}{'s' if n != 1 else ''} ago"
     return "just now"
+
+
+# A cloud's own word for a thing that is coming up, as a person would say it.
+STARTING = {"Creating": "the endpoint is being created", "Updating": "the endpoint is moving to the new version",
+            "SystemUpdating": "the cloud is updating the machine it runs on", "RollingBack": "it is going back to the version before"}
+
+
+def _starting_words(cloud: str, reason) -> str:
+    """One sentence for a model that is coming up: where, and what the cloud is doing. "Starting on AWS: the endpoint
+    is being created." The cloud's own state ("Creating") is not a sentence."""
+    r = str(reason or "").strip().rstrip(".")
+    where = "on this computer" if cloud == "local" else f"on {CLOUDS.get(cloud, cloud)}"
+    what = STARTING.get(r) or (r[0].lower() + r[1:] if r else "")
+    return f"Starting {where}" + (f": {what}." if what else ".")
 
 
 def _stopped_words(reason, when) -> str:
@@ -427,6 +441,17 @@ def deployed(ctx: Context, fresh: bool = False) -> dict:
             live["deploying"] = g
             continue
         rows.append(_deploying_row(g))
+    # Which version of the deployment each one is, from the project's own history of what was put on it.
+    for r in rows:
+        if r["link"] == "unlinked" or not r.get("project") or r["state"] == "deploying":
+            continue
+        try:
+            from . import traffic as TF
+
+            live = next((v for v in TF.versions(ctx, r["project"])["rows"] if v.get("live")), None)
+            r["version_n"] = live["n"] if live else None
+        except Exception:  # noqa: BLE001  a project with no history yet has no number, and says none
+            r["version_n"] = None
     order = {"deploying": -1, "failed": 0, "starting": 1, "running": 2, "asleep": 3, "unknown": 4, "gone": 5, "stopped": 6}
     rows.sort(key=lambda r: (order.get(r["state"], 9), -(dt.datetime.fromisoformat(r["since"]).timestamp() if _iso(r.get("since")) else 0)))
     mine = [r for r in rows if r["link"] != "unlinked"]
@@ -859,7 +884,8 @@ def where_it_runs(ctx: Context, pid: str, env: str = ENV) -> dict:
         add("stops", "Stops by itself after", f"{float(rec['idle_minutes']):g} minutes with no requests")
     when = ago_words(got.get("since") or rec.get("started_at"))
     add("by", "Deployed by", ", ".join(x for x in (short_name(rec.get("started_by")), when) if x))
-    add("version", "Version", f"{row.get('model_label') or rec.get('model_version')}" + (f" ({rec['model_version']})" if row.get("model_label") and rec.get("model_version") else ""))
+    add("version", "Version", (f"Version {row['version_n']} of this deployment: " if row.get("version_n") else "") + f"{row.get('model_label') or rec.get('model_version')}"
+        + (f" ({rec['model_version']})" if row.get("model_label") and rec.get("model_version") else ""))
     said = (f"Read from {label} just now." if got else f"{label} could not be asked just now ({why}). These are from Captain's record." if why else
             "On this computer." if cloud == "local" else
             f"Nothing of it is in {label} now. These are from Captain's record of when it ran." if not row["in_cloud"] else f"From Captain's record. Captain can't ask {label} for these yet.")
