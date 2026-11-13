@@ -236,7 +236,9 @@ export async function sendUndo(sessionId, editId, by = "you") {
  *  A registry is named in words, never by its address. With a folder or a storage address: {versions: [{path,
  *  address, name, description}], count}. The services only list and read there. */
 export async function readRegistry(from = null) {
-  return api(from ? `/api/weights/registry?from=${enc(from)}` : "/api/weights/registry", { timeout: 60 });
+  // Two plain calls, so the services' address test reads each address where it is asked for.
+  if (from) return api(`/api/weights/registry?from=${enc(from)}`, { timeout: 60 });
+  return api("/api/weights/registry", { timeout: 60 });
 }
 
 /** Bring a trained model in: the services copy its files into this workspace under `name`. `address` is a
