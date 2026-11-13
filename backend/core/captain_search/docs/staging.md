@@ -749,6 +749,13 @@ On either change a message goes out, once:
   it is never printed or sent to a screen, only whether one is set;
 - as a notification of the computer the service runs on (macOS), and in the app.
 
+**Captain's own calls to a model in a cloud are rare.** On SageMaker every call to an endpoint counts as traffic:
+it shows in your own metrics, can trip an alarm on invocations, and counts toward adding a copy. So whether a
+model is up comes from the cloud's own state, which costs nothing to ask. The model itself is asked how it is at
+most once a minute by a page, and once every five minutes by the health check, and it is asked to write its log
+only when a person opens something that reads it. A model on this computer is asked every time: nothing counts
+it.
+
 **What a check never does.** It never wakes a host that sleeps when idle: with no copy up the health is "Asleep".
 It never alerts while a deploy is running on that project. It never calls a model healthy on numbers it doesn't
 have.

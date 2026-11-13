@@ -731,7 +731,9 @@ def status(ctx: Context, pid: str, env: str = ENV, sweep: bool = True) -> dict:
                 return {**out, "text": _status_text(rec, None, asleep="yes" if out["asleep"] else "unknown")}
             elif s["state"] == "running" and rec.get("how") != "image":
                 out["copies"] = s.get("copies")
-                health = call(ctx, rec, "status", {})
+                # The cloud says it is running, and that is what "Running" means here. What only the model knows
+                # (requests since it started, memory) is asked at most once a minute, not on every read.
+                health = ask_status(ctx, rec)
             else:
                 out["status"] = "starting" if s["state"] == "starting" else out["status"]
     except Exception as e:  # noqa: BLE001
@@ -876,7 +878,50 @@ _products: dict[str, tuple[dict, str, list]] = {}
 _CONNECTED: set = set()  # deployments this process has already called: the first call to one is timed apart
 
 
-def read_flush(ctx: Context, rec: dict | None) -> bool:
+# Captain's own questions to a model in a cloud are rare. On SageMaker every call to the endpoint counts as
+# traffic: it shows in the customer's own metrics, trips alarms on invocations, and counts toward adding a copy.
+# (2026-11-12: 24 test searches read as "160 requests in the last hour". A project page left open asked the
+# model how it was every five seconds.) Whether a model is up comes from the cloud, which is free to ask. What
+# only the model knows is asked at most this often, and the last answer is used in between.
+ASK_EVERY_S = 60.0
+_ASKED: dict = {}    # deployment id -> (when, answer or error)
+_FLUSHED: dict = {}  # deployment id -> when it was last asked to write its log
+
+
+def ask_status(ctx: Context, rec: dict, max_age_s: float | None = None, timeout: float = 30.0) -> dict:
+    """The model's own status. On this computer it is asked every time: that costs nothing and reaches nobody's
+    metrics. In a cloud it is asked at most every `max_age_s` (a minute unless given), and the last answer is
+    returned in between, with `asked_ago_s`. A failure is remembered for as long, so a model that is down is not
+    called every few seconds either."""
+    if rec.get("kind") == "local":
+        return call(ctx, rec, "status", {}, timeout=timeout)
+    age = ASK_EVERY_S if max_age_s is None else float(max_age_s)
+    hit = _ASKED.get(rec.get("id"))
+    now = time.monotonic()
+    if hit and now - hit[0] < age:
+        if isinstance(hit[1], Exception):
+            raise ValueError(str(hit[1]))
+        return {**hit[1], "asked_ago_s": round(now - hit[0])}
+    try:
+        out = call(ctx, rec, "status", {}, timeout=timeout)
+    except Exception as e:  # noqa: BLE001
+        _ASKED[rec.get("id")] = (now, e)
+        raise
+    _ASKED[rec.get("id")] = (now, out)
+    return out
+
+
+def forget_asked(rec_id: str | None = None) -> None:
+    """Drop what was remembered (after a deploy or a stop, and in tests)."""
+    if rec_id is None:
+        _ASKED.clear()
+        _FLUSHED.clear()
+    else:
+        _ASKED.pop(rec_id, None)
+        _FLUSHED.pop(rec_id, None)
+
+
+def read_flush(ctx: Context, rec: dict | None, asked_for: bool = False) -> bool:
     """Ask a running endpoint to write its log, before something reads it. This is for reads the page repeats
     (the request list, the readout, shadow mode, how much traffic arrived): on a host that sleeps when idle it
     does nothing while no copy is up, so looking at a page never wakes one and never keeps one awake. Never raises:
@@ -887,6 +932,13 @@ def read_flush(ctx: Context, rec: dict | None) -> bool:
     try:
         if rec.get("scale_to_zero") and awake is not None and not awake(ctx, rec):
             return False
+        # In a cloud a flush is a call to the model, and a page repeats its reads. The model writes its own log
+        # every 15 seconds, so asking it on a timer adds nothing: at most once a minute, unless a person asked.
+        if rec.get("kind") != "local" and not asked_for:
+            last = _FLUSHED.get(rec.get("id"))
+            if last is not None and time.monotonic() - last < ASK_EVERY_S:
+                return False
+        _FLUSHED[rec.get("id")] = time.monotonic()
         call(ctx, rec, "flush", {})
         return True
     except Exception:  # noqa: BLE001
