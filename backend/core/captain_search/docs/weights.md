@@ -347,6 +347,7 @@ session a slice answers `{"measured": true, "scores": "hidden"}` with no costs, 
 | `cst weights redo [<edit>]` | `POST /api/weights/sessions/{s}/redo` | an event |
 | `cst weights evaluate` | `POST /api/weights/sessions/{s}/evaluate` | the three sets and the drift |
 | `cst weights save --as <note>` | `POST /api/weights/sessions/{s}/save` | the new version |
+| `cst weights note "<text>"` | `POST /api/weights/sessions/{s}/note` | an event: a thought put in the record. Body: `{"text": "..."}` |
 | `cst weights close` | `POST /api/weights/sessions/{s}/close` | the session, closed. Nothing more can be run or changed in it |
 | `cst weights report` | `GET /api/weights/sessions/{s}/report` | the whole record |
 | `cst weights events` | `GET /api/weights/sessions/{s}/events?since=` | the short event list |
@@ -393,7 +394,7 @@ said the edit would do, beside what it did. A large `gap` means the edit was not
 ```
 
 `kind` is one of `open`, `read`, `run`, `gradients`, `edit`, `undo`, `redo`, `evaluate`, `save`, `export`, `sets`,
-`close`, `refused`. Every event has `sentence`. Events that scored something have `cost_before` and `cost_after`.
+`close`, `note`, `program`, `refused`. `by` is `agent`, `you` or `captain`. Every event has `sentence`. Events that scored something have `cost_before` and `cost_after`.
 A run's own cost is `run_cost`.
 
 In an edit's `cost`, `before` is the network just before this edit and `after` is just after it. A set that is not
@@ -714,6 +715,83 @@ Each row of `by_input` and `unused` has its `group`. The names are the short cod
 `gain` from training, its `share` of all gain, and how many trees use it. `unused` is every input with no question
 at all. `constant` is true when LightGBM itself marked the input as holding one value in training. `trees` asks for
 up to 20 of the first trees.
+
+## Let Captain run the agent
+
+`cst weights program <model> --goal "<plain words>"` starts an agent on the network, follows it, and gives the
+verdict itself. A person does not have to start the agent or tell it the rules.
+
+```
+cst weights program tiny --goal "It answers wrong when both inputs are on. Fix that with the smallest edit." \
+    --target-input 1,1 --target-output 0 --blind
+```
+
+| Option | Meaning |
+|---|---|
+| `--agent claude` or `codex` | which agent. Left out: whichever is installed, claude first |
+| `--blind` | hide every score from the agent until the end. Needed for "from the weights alone" |
+| `--passes N` | forward passes the agent may use. Default 0 |
+| `--max-edits N` | edits the agent may make. Default 5. A further edit is refused |
+| `--target-example N`, or `--target-input` with `--target-output` | the one thing to fix |
+| `--leave-alone 0,1` | classes that must not change. Left out: every class in the model's evaluation pool |
+| `--keep` / `--undo-if-worse` | keep the result whatever the scores say and even if the run is stopped, or take back a result that did harm or was stopped (the default) |
+| `--project shop --deploy-on local` | deploy a kept result |
+| `--time-limit 600` | seconds before the agent is stopped |
+| `--dry-run` (before `weights`) | print the plan, the command and the agent's instructions. Start nothing |
+
+What happens:
+
+1. Captain opens a session as an agent. The record says which agent and that Captain started it.
+2. Captain names the three sets, before the agent starts. The agent cannot change them.
+3. Captain starts the agent's own command line with no window: `claude -p` or `codex exec`. The agent gets the
+   goal, its session, its limits and the rules in `weights/playbook.md`. The only `cst` it can reach runs these on
+   its one session and refuses everything else: session, report, events, layers, read, stats, heatmap, template,
+   forward, activations, gradients, trace, slice, edit, undo, redo, diff, evaluate, note. Claude Code is also
+   started with only its shell tool and allowed only commands that begin `cst weights`. Codex has no such
+   setting, so it runs in its own sandbox and the record says it was not held to named commands.
+4. Each thing the agent does is printed as its event lands: reads, notes ("The agent thinks: ..."), edits.
+5. When the agent stops, Captain measures the three sets itself, the network when the run began against the
+   network now. A result is taken back whole when the target did not improve, when an answer that should not
+   change was right and is now wrong, or when the held-out set lost more than 1 in 100 right answers. Otherwise
+   it is kept and saved as a new version. What the agent says about its own work is printed and decides nothing.
+
+Claude Code prints its answer once, at the end. If it has printed and then nothing more happens for 60 seconds,
+Captain ends its command line and judges the result. The report then says so, and it is not called out of time.
+
+Ctrl-C stops the agent, and so does the time limit. A stopped run takes its edits back and saves nothing, unless
+`--keep` was given. The report says "Stopped. Nothing was kept." and the edits stay in the record as taken back.
+After Ctrl-C the command exits with code 130.
+
+The report, also what `--json` prints:
+
+```json
+{"goal": "...", "agent": "claude", "session": "ws-3f9a1c2e", "model": "tiny@v1",
+ "allowed": {"raw_weights": true, "sandbox": false, "forward_passes": 0, "forward_used": 0, "blind": true,
+             "max_edits": 5, "restricted": true, "restriction": "Claude Code was started with only its shell tool..."},
+ "edits": [{"id": "e6", "n": 1, "op": "set", "why": "the output bias keeps it off", "state": "applied", "changed": 1,
+            "sentence": "The agent set 1 number in layer2.bias (layer 2, neuron 1)."}],
+ "notes": ["The output bias is far below the rest."], "refused": [],
+ "changed": 1, "total": 13, "share": 0.0769,
+ "scores": {"target": {"name": "target", "of": 1, "before": 9.2, "after": 0.01, "right_before": 0, "right_after": 1,
+                       "answers_changed": 1, "broke": 0}},
+ "label": "from the weights alone", "weights_alone": true,
+ "kept": true, "reason": "Kept. The target improved (cost 9.2 to 0.01, 0 to 1 right of 1), and the rest held.",
+ "taken_back": 0, "saved": "tiny@v2", "kept_in_session": false, "deployed": null,
+ "stopped": false, "timed_out": false, "ended_after_answer": false, "agent_exit": 0, "agent_said": "..."}
+```
+
+`scores` has `target`, `keep` and `test` like an edit's `cost`. `broke` is how many answers were right before and
+are wrong now.
+
+From a page: `POST /api/weights/sessions/{s}/program` with `{"goal": "...", "agent": "claude", "max_edits": 5,
+"target_input": [1, 1], "target_output": [0], "should_not_change": [0, 1], "keep": false, "time_limit_s": 600}`
+starts the same run on that session and answers `{"job", "session", "agent", "goal"}`. The job is on the feed
+under `jobs`, `job:<id>` and `weights-session:<id>`, its log gets each line, and its result is the report. The
+session's own allowances apply, and it is left open. A result Captain keeps stays in the session and is not
+saved as a new version: the report has `"saved": null` and `"kept_in_session": true`, and the person saves it with
+`POST /api/weights/sessions/{s}/save`. Send `"save": true` to save it at once, as the command line does.
+`"dry_run": true` answers the plan and starts nothing.
+`POST /api/weights/sessions/{s}/program/stop` stops the agent, and Captain's verdict follows.
 
 ## A pinned neuron
 
