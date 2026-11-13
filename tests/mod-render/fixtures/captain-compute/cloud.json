@@ -1,0 +1,9 @@
+{
+ "profiles": [
+  {
+   "name": "aws-main",
+   "provider": "aws"
+  }
+ ],
+ "active": null
+}

@@ -1,0 +1,15 @@
+{
+ "a": "demo-tuned-vs-bm25@v2",
+ "b": "demo-historic-replay@v1",
+ "comparable": false,
+ "issues": [
+  {
+   "code": "different-queries",
+   "text": "different query sets (demo-queries@v2:holdout vs demo-queries@v1)"
+  },
+  {
+   "code": "different-mode",
+   "text": "different modes (simulated vs historic)"
+  }
+ ]
+}

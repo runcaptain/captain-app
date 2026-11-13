@@ -28,7 +28,7 @@ process.on('uncaughtException', (e) => { stop(); console.error(e); process.exit(
 const line = await new Promise((res, rej) => { let b = ''; serve.stdout.on('data', (d) => { b += d; if (b.includes('\n')) res(b.split('\n')[0]); }); serve.on('exit', () => rej(new Error('cst serve exited'))); });
 const j = JSON.parse(line);
 globalThis.__shared = { 'captain.daemon': { state: 'ready', base: `http://127.0.0.1:${j.port}`, token: j.token } };
-globalThis.__props = { tab: 'tables' };
+globalThis.__props = { tab: 'sources' };
 
 const dir = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'captain-data-tables-')));
 fs.cpSync(path.join(root, 'defaults/mods/captain-data'), dir, { recursive: true });
@@ -40,12 +40,32 @@ const until = async (ok, what) => {
   assert.ok(ok(h.text()), `${what}: ${h.text().slice(0, 700)}`);
 };
 
+// Sources: the connection's card says its tables haven't been read, and reads them.
 await until((t) => t.includes('demo-store') && t.includes("Its tables haven't been read yet"), 'the connection, not read yet');
+// Until then the one list has the datasets only, and says the database is waiting to be read.
+assert.ok(!(h.mod.catalog.rows ?? []).some((r) => r.kind === 'table'), 'no database tables listed before the read');
 await h.click('pull-demo-store');
 await until((t) => /Read 2 tables in 1 schema of demo-store\./.test(t), 'read');
-await until((t) => t.includes('products') && t.includes('search_log') && /[a-z]+-store\.main/.test(t) && !t.includes('"'), 'schema tree, schema in words');
-const tableId = h.mod.tables.trees.get('demo-store').schemas[0].name;
-await h.click(`table-demo-store/${tableId}/products`);
+await until((t) => t.includes('2 tables, last read'), 'the card says how many and when');
+
+// Tables: the database's tables are in the one list with the datasets, each saying where it lives.
+await h.click('see-demo-store');
+await until(() => h.mod.tab === 'tables' && (h.mod.catalog.rows ?? []).filter((r) => r.kind === 'table').length === 2, 'its two tables, in the list');
+let listed = h.text();
+assert.ok(listed.includes('products') && listed.includes('search_log') && /demo-store, [a-z-]+\.main/.test(listed) && !listed.includes('"'), `where they live, in words: ${listed.slice(0, 500)}`);
+assert.ok(listed.includes('Read where it lives'), 'Captain keeps no versions of a database table');
+h.mod.catalog.kind = null;
+h.mod.catalog.find.set_value('');
+h.mod.catalog.load(h.cx);
+await until(() => h.mod.catalog.asked === '' && h.mod.catalog.rows.filter((r) => r.kind === 'dataset').length > 1 && h.mod.catalog.rows.filter((r) => r.kind === 'table').length === 2, 'datasets and database tables together');
+await h.layoutLists({});
+
+// A row opens the table's page: Rows first, then About (its columns and how it is queried).
+await h.click(`cat-row-${h.mod.catalog.rows.findIndex((r) => r.kind === 'table' && r.name === 'products')}`);
+await until(() => !!h.mod.tables.page?.columns, 'the table page');
+assert.deepEqual(h.byIdPrefix('ttab-').map((e) => e.call('id')[0]), ['ttab-rows', 'ttab-about'], 'two views');
+assert.ok(h.text().includes('Read where it lives: Captain keeps no versions of it.'), 'what it is, in one line');
+await h.click('ttab-about');
 await until((t) => t.includes('Columns 8') && t.includes('price') && /double|float/.test(t), 'columns');
 
 // Rows: the whole table, paged, sorted on the services by a header click.
@@ -60,7 +80,7 @@ await h.click('gnext-table-rows');
 await until((t) => /101 to 200 of 480/.test(t), 'next page');
 assert.ok(h.text().includes('Download CSV'), 'CSV export from the grid');
 
-await h.click('ttab-insights');
+await h.click('ttab-about');
 await until((t) => t.includes('Who queries it') && t.includes('Example queries') && t.includes('Open in a notebook'), 'insights');
 await h.click('ex-nb-0');
 // Notebooks is its own view: Data hands it the query, and it starts a notebook with that query as its first cell.
@@ -80,10 +100,11 @@ assert.deepEqual(globalThis.__runs.at(-1), ['layout.select', { stack: 'sections'
   assert.ok(n.text().includes('products-query'), 'named after the table');
 }
 
-h.mod.tab = 'tables';
-h.mod.tables.search.set_value('price');
-h.mod.tables.find(h.cx);
-await until((t) => /demo-store, [a-z]+-store\.main/.test(t) && t.includes('products'), 'search finds the table by a column');
+// The list's search finds the table by a column.
+await h.click('crumb-tables');
+h.mod.catalog.find.set_value('price');
+h.mod.catalog.load(h.cx);
+await until(() => (h.mod.catalog.rows ?? []).some((r) => r.kind === 'table' && r.name === 'products' && r.matched_column === 'price'), 'search finds the table by a column');
 
 stop();
 fs.rmSync(work, { recursive: true, force: true });

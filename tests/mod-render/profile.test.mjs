@@ -2,7 +2,7 @@
 // the slowest queries. Checks the words on screen.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/profile.test.mjs
 import assert from 'node:assert/strict';
-import { Profiler } from '../../defaults/mods/captain-compare/profile.js';
+import { Profiler } from '../../defaults/mods/captain-runs/profile.js';
 import { palette } from '../../defaults/captain/kit/tokens.js';
 
 const stage = (s, p99, share) => ({ stage: s, kind: s, p50_ms: p99 / 2, p95_ms: p99 * 0.9, p99_ms: p99, mean_ms: p99 / 2, share });

@@ -21,7 +21,7 @@ test('every Captain palette entry is listed once, with an icon', () => {
   const ids = all.map((e) => e.id);
   assert.equal(new Set(ids).size, ids.length, `duplicate ids: ${ids.filter((x, i) => ids.indexOf(x) !== i)}`);
   const titles = all.map((e) => e.title);
-  for (const t of ['Compare your own rankings', 'Connect MLflow', 'Explain a query', 'New workspace...', 'Cloud and compute', 'Run an offline evaluation', 'Import a dataset']) {
+  for (const t of ['Compare your own rankings', 'Connect MLflow', 'Explain a query', 'New workspace...', 'Cloud and compute', 'New evaluation', 'Import a dataset']) {
     assert.ok(titles.includes(t), `${t} is in the palette`);
   }
   const captain = all.filter((e) => e.group === 'Captain');
@@ -38,7 +38,7 @@ test('typing an earlier word finds the entry under its new name', () => {
     captain: openEntries([], [], [{ name: 'demo-tuned-vs-bm25' }]),
   } };
   const find = (q) => { const v = new Palette(); v.query = q; v.recent = []; return v.rows().map((r) => r.e.title); };
-  for (const [typed, title] of [['backtest', 'Run an offline evaluation'], ['grading', 'Start rating'], ['comparisons', 'Go to Runs'],
+  for (const [typed, title] of [['backtest', 'New evaluation'], ['qa pairs', 'New evaluation'], ['grading', 'Start rating'], ['comparisons', 'Go to Runs'],
     ['compare', 'Open demo-tuned-vs-bm25'], ['home', 'Go to Projects'], ['datasets', 'Go to Data']]) {
     assert.ok(find(typed).includes(title), `"${typed}" finds ${title}: ${find(typed).slice(0, 6).join(', ')}`);
   }
@@ -66,7 +66,7 @@ test('the sidebar has only the agreed views, and the removed screens are nowhere
   const stack = find(layout, 'sections');
   const slots = stack.children.map((k) => k.id);
   for (const it of ITEMS) assert.ok(slots.includes(it.id), `${it.label} has a slot in the layout`);
-  for (const gone of ['investigations', 'handoff']) assert.ok(!slots.includes(gone), `${gone} is not a screen any more`);
+  for (const gone of ['investigations', 'handoff', 'comparisons']) assert.ok(!slots.includes(gone), `${gone} is not a screen any more`);
   assert.equal(stack.active, 'project', 'the app opens on Projects');
   assert.equal(stack.children.find((k) => k.id === 'project').content.props.allProjects, true, 'and on every project, not the last one');
   for (const k of stack.children) assert.ok(fs.existsSync(new URL(`../../defaults/mods/${k.content.mod}/main.js`, import.meta.url)), `${k.content.mod} exists`);

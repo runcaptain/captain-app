@@ -561,8 +561,9 @@ experiment, ci_low, ci_high}` (REAL_TRAFFIC). Live rollbacks are refused. Demo-t
 ## Onboarding
 
 `GET /api/onboarding` returns `{cst, workspace: {name, storage, kind}, workspaces, counts, steps: [{id, title, done,
-optional?, detail, command}], next}`. The steps are workspace, cloud, data, pipeline, investigation, run,
-decision and agent. Each is read from real records, so onboarding never marks a step done that isn't.
+optional?, detail, command}], next}`. The steps are workspace, cloud, data, registry, pipeline, run and agent. Each
+is read from real records, so onboarding never marks a step done that isn't. The tour ends at an offline
+evaluation: experiments have no screen since 2026-11-12, so it no longer asks for one or for a recorded decision.
 
 ## Inspect differences (spec S5), built for native screens
 
@@ -575,6 +576,37 @@ Lists are sorted, filtered and paged on the server, because native mods must not
 | GET | `/api/runs/{run}/compatibility` | `{trustworthy, warnings: [{code, text}]}`: not-independent, incomplete, uneven-coverage, exposure-bias, offline, not-holdout, small-slices |
 | GET | `/api/runs/{run}/histogram?bins=21` | the per-query delta distribution, pre-binned: `{n, edges, counts}` |
 | GET | `/api/compare-runs?a=&b=` | `{comparable, issues: [{code, text}]}` across two runs |
+
+## A person's own test set, and what the New evaluation form offers
+
+- `GET /api/evaluations/options` returns `{measures, slices, limits, not_yet, default_measure, grades}`, read from the
+  runner's own tables, so the form never offers what a run would ignore. A measure is `{id, label, line, needs
+  (answers, logs or shoppers), depth}`. A limit is `{id, label, default, line, only?}`. `not_yet` names what was asked
+  for and a run can't do: `{what, why}`.
+- `POST /api/testsets/preview {source: {dataset} or {file}, mapping?: {query, product, grade?, slice?},
+  default_grade?, limit?}` returns the table's `columns` and first `rows`, the `mapping` (guessed from the column
+  names when not given), and what it would make: `{ready, questions, answers, skipped: {reason: n}, sample:
+  [{query, product_id, grade, slice}], problem?}`. It writes nothing.
+- `POST /api/testsets {name, source, mapping, default_grade?}` makes `<name>/questions` (a query set) and
+  `<name>/answers` (judgments, `judgment_source` human) and returns `{queries, judgments, questions, answers,
+  skipped}`. The same name again is a new version of each. Every row of the table is read; a row with no question,
+  no product or a grade outside 0 to 3 is skipped and counted.
+- `POST /api/backtests` also takes `population_size`: how many simulated shoppers a replay of logged searches makes
+  (4000 unless given).
+
+## Regression testing (the Runs screen's Compare)
+
+`GET /api/regression?model=&project=&limit=` returns `{rows, models}`: every evaluation run, newest first, one row
+each. A row is `{name, version, created, mode, model, against, metric, delta, ci_low, ci_high, comparison, evidence,
+value, against_value, too_few_judged, own_labeler, independent}`. The model judged is the primary comparison's B arm,
+and `value` and `against_value` are the two arms' scores on that measure. `comparison` is `win`, `noise` or `loss`
+as the run recorded it; the screens say Better, No clear difference and Worse. `too_few_judged` (an arm has under 90%
+of its top 10 judged) and `own_labeler` (the model learned from the labeler that grades the test set) come with every
+row, because either one changes what the result means. `model` keeps one model's rows, by its name without the
+version. `models` lists every model that has a row. `?project=` and `X-CST-Scope` filter by evaluation.
+
+`GET /api/compare-runs?a=<name@vN>&b=<name@vN>` (already there) says whether two runs' numbers are on one scale:
+`{comparable, issues: [{code, text}]}`.
 
 ## Per-request workspace
 
@@ -660,6 +692,25 @@ CLI: `cst data import <paths> --folder <f>`, `cst data mkdir|move|rename-folder|
   SQLGlot.
 
 CLI: `cst tables pull|list|show|search|sample`.
+
+## Every table in one list (the Data screen's Tables)
+
+`GET /api/data/tables?q=&kind=&project=` returns `{rows, connections}`: the datasets Captain keeps versions of and
+each connected database's tables, together, sorted by name. A dataset is a table Captain keeps versions of.
+
+- A dataset row: `{kind: "dataset", name, where, folder, rows, versions, version, last_read, columns, classes,
+  dataset_kind, description, by_reference}`. `versions` is how many Captain keeps. `where` is in words:
+  "Captain, folder logs", "Captain, a saved query on demo-store". `last_read` is the last day anything read it.
+- A database table row: `{kind: "table", name, where, connection, schema, engine, rows, versions: null, last_read,
+  columns, type, description}`. Captain keeps no versions of it. `last_read` is when its database's tables were
+  last read.
+- `q`: every word must be in the name, where it lives, the description or a column's name. A row matched only
+  through a column carries `matched_column`. `kind` is `dataset` or `table`.
+- `?project=` and `X-CST-Scope` filter the datasets. A database's tables belong to no project, so they are left
+  out while something is picked. `connections` always lists every database: `{connection, engine, pulled_at,
+  tables}`.
+- It asks no database anything. Database tables come from what `POST /api/tables/{conn}/pull` cached, and
+  `last_read` from one listing of the read log's keys.
 
 ## Projects (one per company)
 

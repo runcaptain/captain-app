@@ -116,7 +116,7 @@ filled in. A record outside the Explorer's pick opens by showing the whole works
 `--as-asked` an agent's accept is refused. `cst projects slot-add`, `slot-edit`, `slot-rm`, `input`, `input-clear`,
 `pin`, `kind` and `evaluation` work for an agent when the person asked. Each change an agent makes is written to
 the project's history with the agent's name, the time and, for an accept, the person's instruction; the proposal
-keeps `applied_by` and `on_instruction` too. The person sees it on Home: the proposal panel says "Applied by
+keeps `applied_by` and `on_instruction` too. The person sees it on the project's page: the proposal panel says "Applied by
 <agent> on your instruction", and Recent changes under "Everything in this project" lists the last ten. Rejecting a proposal, deleting a project, deleting data and
 overriding a live launch review stay with the person, in the app.
 
@@ -1147,9 +1147,9 @@ The owner walked the whole app on 2026-11-12 and asked for far fewer screens. Th
 | View | Section id, mod | What it holds |
 |---|---|---|
 | Projects | `project`, `captain-project` | Home. The app opens on **All projects**, and so do the sidebar's Projects and the logo. A project's page opens from there or from the Explorer |
-| Data | `data`, `captain-data` | The workspace's sources and every table Captain reads |
+| Data | `data`, `captain-data` | Two submenus. **Tables**: every table in one list, a dataset or a database's table alike, with where it lives, its rows, whether Captain keeps versions of it and when it was last read (`GET /api/data/tables`). **Sources**: the databases and model registries they come from |
 | Notebooks | `notebooks`, `captain-notebooks` | SQL, Python, notes and charts, saved as versions. `cst app open notebook:<name>` opens one |
-| Runs | `runs`, `captain-runs` | Jobs and offline evaluations, and how a model compares with the one it is judged against |
+| Runs | `runs`, `captain-runs` | Two submenus. **Runs**: everything that runs in one list with a Kind column and filters (offline evaluations, jobs, rating, workflows, off-policy evaluations), what is running now first. **Compare**: regression testing, every evaluation run with the change against the model it is compared with (`GET /api/regression`) |
 | Deployments | `deployments` | Every model that is running somewhere, across projects |
 | Team | `team`, `captain-team` | Shared records, drafts and review |
 
@@ -1158,6 +1158,85 @@ The owner walked the whole app on 2026-11-12 and asked for far fewer screens. Th
 comparison shows in Runs. `cst app open compare` and `comparison:<evaluation>` open Runs. `cst app open
 experiments` and `launch-review` say the screen is gone and name the command. Don't send a person to
 Experiments, Compare or Launch review: say what to do in Runs, or run the command for them.
+
+### Data: one list of tables
+
+A dataset is a table Captain keeps versions of. A database's table is one Captain reads where it lives. They are
+one list, and the **Versions** column says which is which ("Captain keeps 3 versions", "Read where it lives").
+There is no Datasets screen and no Labels screen. `cst labels` still defines and previews labels.
+
+- A row opens the table's page in place, with a crumb back to the list. A page has two views, **Rows** and
+  **About**, and one button, **Where this came from**, which opens the lineage graph. About is one page: the
+  facts, the schema, every version, what made it and its files, then sections that load when opened ("What uses
+  it", "Quality of each column", "Health of this test set").
+- `cst app open dataset:<name> --tab sample|about|insights|quality|health|lineage` still opens the right place:
+  an earlier tab's name opens About with that section open.
+- Searching the list asks the services, so a column's name finds its table.
+- Folders are not drawn as a tree any more. A dataset's folder is part of "Where it lives", and
+  `cst data mkdir | move | rename-folder | rmdir` still arrange them.
+- With a project picked in the Explorer the list shows that project's datasets only: a database's tables belong
+  to no project.
+
+### Where this came from: lineage as a graph
+
+Lineage is not a tab or a submenu. It opens from **Where this came from** on a table's page, on a database
+table's page, and on a model in Sources. It is a graph (`kit/lineage.js`): a box for each source, table, model
+version, model, evaluation and deployment, and an arrow from what was read to what was made from it.
+
+- Laid out left to right in columns: upstream on the left of the box it opened from, downstream on the right.
+  A table shows where it came from and what used it. A model shows its whole chain. The layout is written in
+  the kit (columns by distance, then two sweeps that put a box near the boxes it is joined to). There is no
+  graph library.
+- Hovering a box lights everything upstream and downstream of it and dims the rest. Clicking a box opens it: a
+  table on its page, an evaluation in Runs. A box with no page (a model version, a deployment) shows its
+  details instead. Drag to pan, Command and scroll to zoom, Fit to see it all.
+- Arrows are drawn as paths with arrowheads. Never write a Unicode arrow.
+- It reads the lineage index that was already there: `GET /api/lineage/graph?node=<id>&up=10&down=10`, where an
+  id is `dataset:<name>@vN`, `table:<connection>/<schema.table>`, `model:<id>`, `pipeline:<name>@vN` or
+  `run:<evaluation>@vN`. A table whose lineage was never read says so instead of drawing one box.
+
+### Runs: one list, the comparison in place, and regression testing
+
+- An offline evaluation opens beside the list with its **comparison in place**. There is no Compare screen to go
+  to. It reads top to bottom: what limits the result, the verdict, what to do next, the arms, every measure, the
+  per-query change, then four sections that open in place and load when opened: "Query by query", "By slice",
+  "By surface" and "Where the time goes".
+- **The verdict is one of three words: Better, No clear difference, Worse**, and one sentence
+  ("ranker is better than keyword-baseline on nDCG@10. Human graded."). Say those words to a person, never
+  win, noise or loss: those stay in the records and the CLI. The sentence always ends with where the evidence
+  comes from. A model that agrees with its own labeler is never Better. Too few judged results is never Better
+  or Worse. When both are true, both are said. `kit/verdict.js` writes it, and `tests/mod-render/regression.test.mjs`
+  holds it to those rules.
+- **Compare** is the regression table: one row per run, newest first, with the model, the model it is compared
+  with, the change with its interval and the verdict word. Pick a model to see only its runs. Tick two rows to
+  put those two runs side by side: what stops them being compared comes first (`GET /api/compare-runs`), and a
+  difference across two runs is said to have no interval, because they were scored separately.
+- `cst app open run:<evaluation>` and `comparison:<evaluation>[@vN]` open the same page. `--tab queries |
+  segments | surfaces | profile` opens that section. `cst app open runs --tab jobs | workflows | grading |
+  replays | live | compare` filters the list to that kind, or opens Compare.
+- One filled button: **New evaluation**.
+
+### New evaluation: a person sets one up themselves
+
+The form (`captain-evaluation`) has six steps: which models, what to test on, what decides it, limits, where it
+runs, and the name it is saved under.
+
+- **What to test on** is one of three. Their own questions and answers: a table in Data or a file on this
+  computer (or dropped on the form), with a column mapper (Question, Wanted product, Grade, Group) and a
+  preview that says what it makes and which rows it leaves out, with the reason. Logged searches. Or a saved
+  test set. Their own answers become judgments marked human, so the run reads Human graded.
+- **What decides it** is one measure, picked from the list with one line each. A run computes every measure it
+  has the data for, whatever is picked. A measure this test can't decide on says why.
+- **Limits are fields with their defaults**, never hidden: the smallest gain worth acting on, the grade a row
+  with no grade counts as, and, for logged searches, how many simulated shoppers.
+- **The setup is saved under its name as a test.** The same name again is the same test on another model, and
+  its runs line up in Runs, Compare. "Run it on another model" on an evaluation opens the form on that test:
+  pick the model and run. `cst app open form:backtest --value test=<name>` does the same for a person.
+- Three things the owner asked for are not something a run can do, so the form says them instead of drawing a
+  control that does nothing: how many results deep (each measure looks 10 deep, recall 50), which slices (a
+  run always reports by group and by traffic), and which measures to compute (all of them).
+  `GET /api/evaluations/options` lists these under `not_yet`, with the reason.
+- From a terminal the same thing is `cst backtest plan` then `cst backtest run`.
 
 ## Captain project page (Projects)
 
@@ -1256,6 +1335,12 @@ and compute, with the estimate beside it and "How this is estimated" under it (t
 price came from, how the time was worked out). New candidate, Run an offline evaluation, Generate synthetic events,
 Start rating, retrain, workflows and snapshots from a connection all show it (kit `cost.js`: `RunsOn`, `CostLine`).
 
+- **Where runs go** is one setting for the workspace, and the sidebar's cloud chip shows it ("Runs on This
+  computer"). Clicking the chip opens the compute picker: every place work can run (this computer, then each
+  compute target that runs jobs), with the current one checked. Picking one changes the setting
+  (`PUT /api/settings/compute {backtest}`) and nothing else. Every "Runs on" row then opens on that place; a
+  person can still pick another place for one run, and a place handed to a form (`values.compute`) stays. "Add
+  a place to run work" and the cloud logins open from the picker.
 - `cst costs estimate <kind> --where <place> --size name=value` prints the same estimate and its basis. Kinds:
   `training`, `evaluation`, `synthetic-events`, `snapshot`, `judging`, `staging`, `workflow`. `--project <id>` takes
   the size from a project's starter ranker plan. The route is `POST /api/costs/estimate`.

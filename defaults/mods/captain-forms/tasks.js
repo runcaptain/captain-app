@@ -3,7 +3,7 @@
 // a command name or a flag.
 import { api, connectionsChanged } from "./kit/cst.js";
 import { exec, home, shared, setShared, openOverlay, notify, run as runCommand } from "herdr";
-import { askAgent } from "./kit/agent.js";
+import { askAgent, EVALUATION_FORM } from "./kit/agent.js";
 
 const notifyProblem = (text) => notify({ title: "Judging didn't start", body: text, level: "info" });
 
@@ -676,8 +676,10 @@ export const TASKS = [
     } }), `Added the ${v.name.trim()} class.`),
   },
   {
-    id: "backtest", label: "Run an offline evaluation", icon: "flask-conical",
-    about: "Compare two versions of your search on the same queries, or try other settings of one version, and see whether the difference is real.",
+    // The New menu and the palette open the evaluation's own form (captain-evaluation). These fields stay for a
+    // caller that hands every value over (a failed launch criterion's fix, a project page).
+    id: "backtest", label: "New evaluation", icon: "flask-conical", opens: EVALUATION_FORM(),
+    about: "Test a model on your own questions, on logged searches or on a saved test set, and see whether it is better.",
     load: async () => ({ rows: await rowsByRef() }),
     fields: [
       { key: "kind", label: "What to test", kind: "choice", default: "versions",

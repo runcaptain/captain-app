@@ -1,7 +1,7 @@
-// Data and signals as a directory, against a real backend (this repo's backend/core, or `cst` on PATH) and the real
-// kit: no fixtures. An empty workspace shows the drop zone. Finder drops import files (a .txt is skipped with its
-// reason), a changed file comes back as a new version, a dataset is dragged onto a folder, and folders are made,
-// renamed and removed.
+// Bringing files into Data, against a real backend (this repo's backend/core, or `cst` on PATH) and the real kit: no
+// fixtures. An empty workspace shows the drop zone. Finder drops import files (a .txt is skipped with its reason)
+// and they join the one list of tables. A changed file dropped on its dataset's page comes back as a new version.
+// A dataset moves to a folder from its page, and the list's "Where it lives" says so.
 //
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/library-live.test.mjs
 import fs from 'node:fs';
@@ -54,45 +54,38 @@ await until((t) => /Added 2, 1 skipped\./.test(t), 'import summary');
 let t = h.text();
 assert.ok(t.includes("isn't a table"), `skipped reason: ${t.slice(0, 400)}`);
 assert.ok(t.includes('shop') && t.includes('queries'), 'imported rows listed');
-await until((t) => t.includes('All datasets') && t.includes('shop | v1'), 'the tree shows the new dataset');
+await until((t) => t.includes('drop/catalogs/shop') && t.includes('Captain, folder drop/catalogs') && t.includes('Captain keeps 1 version'), 'the one list shows the new dataset, its folder and that Captain keeps versions of it');
 
-// 3. The same file, changed: a new version, shown with its version chip.
+// 3. The same file, changed, dropped on the dataset's own page: it lands in its folder, so it is a new version.
 fs.writeFileSync(path.join(drop, 'catalogs', 'shop.csv'), 'id,title,price\n1,Sofa,100\n2,Lamp,20\n3,Rug,55\n');
-// Dropped onto its own folder (open the folders first): the same name there, so a new version.
-await h.click('folder-drop');
-await h.click('folder-drop/catalogs');
-await h.fire('folder-drop/catalogs', 'on_drop', { paths: [path.join(drop, 'catalogs', 'shop.csv')] });
+const row = () => h.mod.catalog.rows.findIndex((r) => r.name === 'drop/catalogs/shop');
+await h.click(`cat-row-${row()}`);
+await until(() => h.mod.detail?.name === 'drop/catalogs/shop', 'its page');
+assert.equal(h.mod.page.folder(), 'drop/catalogs');
+await h.fire('dataset-page', 'on_drop', { paths: [path.join(drop, 'catalogs', 'shop.csv')] });
 await until((t) => /updated 1 \(new version\)/.test(t), 'update summary');
-await until((t) => t.includes('shop | v2'), 'the tree shows v2');
+await until((t) => t.includes('This is version 2 of 2'), 'the page shows version 2');
 
-// 4. A new folder, then drag the catalog onto it.
-await h.click('crumb-root');
-assert.ok(h.text().includes('drop/catalogs/shop | v2') || h.mod.detail?.version === 2, 'the detail shows the new version');
-await h.click('lib-new');
-h.mod.lib.newFolder.set_value('Catalogs');
-await h.click('lib-new-name-go');
-await until((t) => t.includes('Made Catalogs.'), 'folder made');
-const shop = h.mod.list.find((d) => d.name === 'drop/catalogs/shop');
-await h.fire(`ds-${shop.name}`, 'on_mouse_down', {});
-await h.fire('folder-Catalogs', 'on_mouse_up', {});
-await until((t) => t.includes('Moved 1 dataset to Catalogs.'), 'moved by dragging');
-const inCatalogs = (h.mod.lib.tree.folders.find((f) => f.path === 'Catalogs')?.datasets ?? []).map((d) => d.leaf);
-assert.ok(inCatalogs.includes('shop'), `shop is in Catalogs: ${JSON.stringify(inCatalogs)}`);
+// 4. Move it to a new folder, from its page.
+await h.click('dtab-about');
+assert.ok(h.text().includes('Captain keeps it, in the folder drop/catalogs.'), 'where it lives');
+await h.click('ds-move');
+await until(() => Array.isArray(h.mod.page.folders), 'the folders there are');
+h.mod.page.newFolder.set_value('Catalogs');
+await h.click('ds-move-new-go');
+await until((t) => t.includes('Moved to Catalogs.'), 'moved');
+await until((t) => t.includes('Captain keeps it, in the folder Catalogs.'), 'the page says its new folder');
+await h.click('crumb-tables');
+await until((t) => t.includes('Captain, folder Catalogs') && t.includes('Captain keeps 2 versions'), 'the list says where it lives now, and that there are two versions');
 
-// 5. Rename the folder; a new empty one can be removed.
-h.mod.lib.cur = 'Catalogs';
-await h.click('lib-rename');
-h.mod.lib.renameTo.set_value('Product catalogs');
-await h.click('lib-rename-name-go');
-await until((t) => t.includes('Renamed Catalogs to Product catalogs.'), 'renamed');
-h.mod.lib.cur = '';
-await h.click('lib-new');
-h.mod.lib.newFolder.set_value('Scratch');
-await h.click('lib-new-name-go');
-await until((t) => t.includes('Made Scratch.'), 'second folder');
-await until((t) => t.includes('Remove folder'), 'an empty folder can be removed');
-await h.click('lib-remove');
-await until((t) => t.includes('Removed Scratch.'), 'removed');
+// 5. And back to the top level, by picking it.
+await h.click(`cat-row-${row()}`);
+await until(() => h.mod.detail?.name === 'drop/catalogs/shop', 'its page again');
+await h.click('dtab-about');
+await h.click('ds-move');
+await until(() => (h.mod.page.folders ?? []).includes('Catalogs'), 'Catalogs is offered');
+await h.click('move-to-0');
+await until((t) => t.includes('Moved to the top level.'), 'moved to the top level');
 
 stop();
 fs.rmSync(work, { recursive: true, force: true });

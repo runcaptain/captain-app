@@ -1,0 +1,6 @@
+{
+ "a": "demo-tuned-vs-bm25@v2",
+ "b": "demo-tuned-vs-bm25@v1",
+ "comparable": true,
+ "issues": []
+}

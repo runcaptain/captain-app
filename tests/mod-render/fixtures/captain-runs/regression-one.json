@@ -1,0 +1,46 @@
+{
+ "rows": [
+  {
+   "name": "demo-tuned-vs-bm25",
+   "version": 2,
+   "created": "2026-11-06T21:50:10+00:00",
+   "mode": "simulated",
+   "model": "demo-tuned@v1",
+   "against": "demo-bm25@v1",
+   "metric": "ndcg@10",
+   "delta": 0.04583,
+   "ci_low": 0.00856,
+   "ci_high": 0.08433,
+   "comparison": "win",
+   "evidence": "SIMULATED",
+   "value": 0.8187,
+   "against_value": 0.7729,
+   "too_few_judged": false,
+   "own_labeler": false,
+   "independent": true
+  },
+  {
+   "name": "demo-tuned-vs-bm25",
+   "version": 1,
+   "created": "2026-11-06T21:47:08+00:00",
+   "mode": "simulated",
+   "model": "demo-tuned@v1",
+   "against": "demo-bm25@v1",
+   "metric": "ndcg@10",
+   "delta": -0.021,
+   "ci_low": -0.04,
+   "ci_high": -0.002,
+   "comparison": "loss",
+   "evidence": "SIMULATED",
+   "value": 0.7519,
+   "against_value": 0.7729,
+   "too_few_judged": false,
+   "own_labeler": false,
+   "independent": true
+  }
+ ],
+ "models": [
+  "demo-tuned",
+  "shop/ranker"
+ ]
+}

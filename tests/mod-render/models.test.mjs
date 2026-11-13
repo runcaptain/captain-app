@@ -1,4 +1,4 @@
-// Data and signals, Models tab, against fixtures: attached registries with Sync and Detach (a second click confirms),
+// Data, Sources, the model registries, against fixtures: attached registries with Sync and Detach (a second click confirms),
 // attaching a new one (address, login, name) as a job, and every model by architecture with what it was built from.
 //   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/models.test.mjs
 import fs from 'node:fs';
@@ -33,7 +33,7 @@ fs.copyFileSync(path.join(here, 'fixture-cst.js'), path.join(work, 'kit/cst.js')
 const { default: Mod } = await import(path.join(work, 'main.js'));
 const h = harness(Mod);
 await h.start();
-await h.click('tab-models');
+await h.click('submenu-sources'); // registries sit under Sources, with the databases
 await h.idle();
 
 let t = h.text();
@@ -44,6 +44,15 @@ assert.ok(t.includes('shop v2') && t.includes('built from') && t.includes('shop@
 // Click a model: it and its parent light up.
 await h.click('model-shop@v2');
 assert.equal(h.mod.models.focus, 'shop@v2');
+// "Where this came from" on a model: its whole chain, as the graph, with a crumb back to Sources.
+await h.click('model-lineage-shop@v2');
+await h.idle();
+assert.ok(globalThis.__asked.some((p) => p.startsWith('/api/lineage/graph?node=model%3Ashop%40v2&up=10&down=10')), `asks for the model's whole chain: ${globalThis.__asked.filter((p) => p.includes('lineage'))}`);
+assert.ok(h.text().includes('Where shop v2 came from'), `the crumb says what this is: ${h.text().slice(0, 200)}`);
+assert.equal(h.mod.graph.back, 'sources');
+await h.click('crumb-back');
+assert.equal(h.mod.graph, null);
+assert.ok(h.text().includes('Model registries'), 'back on Sources');
 
 // Attach opens on the login's buckets, registries first; an attached one has no Attach button. Only AWS logins show.
 await h.click('reg-attach');

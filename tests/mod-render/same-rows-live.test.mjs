@@ -66,23 +66,24 @@ await until(w, () => globalThis.__toasts.length > 0, 'imported');
 assert.match(globalThis.__toasts[0].body, /^480 rows in, 480 kept/, globalThis.__toasts[0].body);
 assert.equal(globalThis.__toasts[0].title, 'Imported products-copy, version 1');
 
-// 2. Tables: the same table's Rows tab. (The wizard's "open this dataset" was for a Data already running: drop it.)
+// 2. Tables: the same database table's Rows. (The wizard's "open this dataset" was for a Data already running: drop it.)
 delete globalThis.__shared['captain.open'];
 globalThis.__props = { tab: 'tables' };
 const data = harness(Data);
 await data.start();
-await until(data, () => data.mod.tables.trees.get('demo-store')?.schemas?.length, 'Tables read');
-await data.click(`table-demo-store/${schema}/products`);
+await until(data, () => (data.mod.catalog.rows ?? []).some((r) => r.kind === 'table' && r.name === 'products'), 'the database table is in the one list');
+await data.click(`cat-row-${data.mod.catalog.rows.findIndex((r) => r.kind === 'table' && r.name === 'products')}`);
 await until(data, () => !!data.mod.tables.page?.columns, 'the table page');
+assert.equal(data.mod.tables.sel.schema, schema);
 await data.click('ttab-rows');
 await until(data, () => data.mod.tables.rows && !data.mod.tables.rows.loading && data.mod.tables.rows.table.rows.length > 0, 'Rows tab');
 await until(data, (t) => /1 to 100 of 480/.test(t), () => `Rows pager: ${JSON.stringify(data.mod.tables.rows.page)}`);
 const fromTables = await byId(data, data.mod.tables.rows);
 
-// 3. The dataset it became: Sample data.
+// 3. The dataset it became: its Rows.
 globalThis.__shared['captain.open'] = { section: 'data', dataset: 'products-copy', fresh: true, at: Date.now() };
 await until(data, () => data.mod.sel === 'products-copy' && !!data.mod.detail?.version, 'the dataset open');
-await until(data, (t) => t.includes('Sample data'), () => `the dataset page (tab ${data.mod.tab}, detail ${JSON.stringify(data.mod.detail)?.slice(0, 200)})`);
+await until(data, (t) => t.includes('A table Captain keeps versions of'), () => `the dataset page (tab ${data.mod.tab}, detail ${JSON.stringify(data.mod.detail)?.slice(0, 200)})`);
 await data.click('dtab-sample');
 await until(data, () => data.mod.page.rows && !data.mod.page.rows.loading && data.mod.page.rows.table.rows.length > 0, 'Sample data');
 const fromDataset = await byId(data, data.mod.page.rows);

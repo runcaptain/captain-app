@@ -47,6 +47,7 @@ export default class CaptainForms extends View {
     this.errors = {};
     // Where the work runs and what it costs there (kit cost.js), for a task with a "runs-on" field.
     this.cost = costState(this.values.compute || LOCAL);
+    if (this.values.compute) this.cost.picked = true; // a place handed in with the form stays, whatever the default
     if (this.task) this.start(cx);
   }
 

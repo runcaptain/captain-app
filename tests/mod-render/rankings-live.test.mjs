@@ -96,7 +96,7 @@ assert.ok(!importOff(h), 'Import is on');
 await h.click('rk-import');
 await until(h, () => !h.mod.busy, 'the import finished');
 assert.ok(!h.mod.error, `no error: ${h.mod.error}`);
-await until(h, () => globalThis.__shared['captain.open']?.section === 'comparisons', 'it opened in Comparisons');
+await until(h, () => globalThis.__shared['captain.open']?.section === 'runs', 'it opened in Runs, where its comparison shows');
 const opened = globalThis.__shared['captain.open'];
 assert.equal(opened.backtest, 'team-results', `opens the new run: ${JSON.stringify(opened)}`);
 const runRec = await get(`/api/runs/${opened.backtest}?v=${opened.version}`);

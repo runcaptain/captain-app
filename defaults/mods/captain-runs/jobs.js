@@ -1,4 +1,5 @@
-// CAPTAIN: Runs, Jobs tab: every job on every compute target (GET /api/jobs, newest first), with live state and time,
+// CAPTAIN: Runs, jobs: every job on every compute target (GET /api/jobs, newest first) is a row of the one list
+// (kind "Job"), and this is what one opens to, with live state and time,
 // where it runs in words ("AWS ECS, us-west-1"), its log tail (GET /api/jobs/{id}/logs?since=, followed while it
 // runs) and Stop (POST /api/jobs/{id}/cancel, a second click confirms). A job's own command line never shows: its
 // name is said in words, and the command is behind Copy details. A finished job shows what it cost, in the services'
@@ -58,6 +59,12 @@ function when(iso) {
   return s < 90 ? "just now" : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 129600 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} days ago`;
 }
 
+/** A job's state for the one list of runs: [the word, its tone, whether it is still going]. */
+export function jobState(j) {
+  const [word] = STATE[j.state] ?? [j.state ?? "Unknown"];
+  return [word, j.state === "failed" ? "fail" : j.state === "running" ? "blue" : j.state === "succeeded" ? "good" : null, !DONE.has(j.state)];
+}
+
 export class Jobs {
   constructor(host) {
     this.host = host;
@@ -79,7 +86,8 @@ export class Jobs {
         this.host.starting = false; // the services answered: Runs stops waiting for them
         this.list = Array.isArray(r.data) ? r.data : [];
         this.error = null;
-        if (!this.sel && this.list[0]) this.pick(cx, this.list[0].id);
+        // Asked for with nothing named (the Jobs filter, an older Jobs link): the newest.
+        if (!this.sel && this.list[0] && this.host.kind === "jobs") this.pick(cx, this.list[0].id);
       } else if (!r.starting) this.error = r;
       cx.notify();
     });
@@ -131,40 +139,10 @@ export class Jobs {
 
   // ---- drawing ---------------------------------------------------------------------------------------------------
 
-  render(c, w) {
-    const lw = Math.max(240, Math.min(340, Math.floor(w * 0.34)));
-    return h_flex().id("jobs").flex_1().min_h(0).child(this.side(c, lw)).child(this.detail(c));
-  }
-
   stateChip(c, j) {
     const [word, ic] = STATE[j.state] ?? [j.state ?? "Unknown", "queued"];
     const col = j.state === "failed" ? c.fail : j.state === "succeeded" ? c.good : j.state === "running" ? c.blue : c.grey900;
     return h_flex().flex_none().gap(4).items_center().text_size(11.5).text_color(col).child(this.host.icon(ic, 12, col)).child(div().child(word));
-  }
-
-  side(c, w) {
-    const list = this.list;
-    return v_flex().id("jobs-list").w(w).h_full().flex_none().border_r(1).border_color(c.rule).overflow_y_scrollbar()
-      .when(list === null && !this.error, (e) => e.child(Skeleton(c, 8)))
-      .when(!!this.error, (e) => e.child(div().p(10).child(this.host.troubleView(c, "jobs", this.error, "Couldn't load the jobs.", (cx) => this.load(cx)))))
-      .when(Array.isArray(list) && !list.length, (e) => e.child(v_flex().p(14).gap(6)
-        .child(div().text_size(13).font_medium().child("No jobs yet"))
-        .child(div().text_size(12).line_height("18px").text_color(c.grey900)
-          .child("A job is work Captain runs once on a compute target: this computer, AWS, Google Cloud, Azure or Modal. Offline evaluations and retrains you start on the cloud show up here with their logs."))))
-      .children((list ?? []).map((j) => {
-        const on = this.sel === j.id;
-        return v_flex().id(`job-${j.id}`).w_full().flex_none().px(10).py(8).gap(3).cursor_pointer()
-          .border_l(2).border_color(on ? c.blue : "#00000000").bg(on ? c.blueLight : c.surface).hover((s) => (on ? s : s.bg(c.surface2)))
-          .on_click((_e, cx) => this.pick(cx, j.id))
-          .child(h_flex().gap(6).items_center()
-            .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().text_color(on ? c.blue : c.navy).child(jobWords(j)))
-            .child(this.stateChip(c, j)))
-          .child(h_flex().gap(6).text_size(11).text_color(c.grey500)
-            .child(this.host.icon(j.target_kind === "local" ? "compute" : "cloud", 11, c.grey500))
-            .child(div().flex_1().min_w(0).truncate().child(`${place(j)}, ${when(j.submitted_at)}`))
-            .child(div().flex_none().font_family(MONO).child(took(j))))
-          .when(Boolean(costText(j.cost)), (e) => e.child(div().id(`job-cost-${j.id}`).truncate().text_size(11).text_color(c.grey500).child(costText(j.cost))));
-      }));
   }
 
   detail(c) {

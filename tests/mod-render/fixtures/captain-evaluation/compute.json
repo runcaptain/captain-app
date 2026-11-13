@@ -1,0 +1,1 @@
+[{"name": "local", "kind": "local"}, {"name": "aws-batch", "kind": "aws-batch", "provider": "aws", "region": "us-west-1"}]

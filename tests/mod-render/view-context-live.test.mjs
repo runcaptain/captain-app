@@ -97,9 +97,13 @@ globalThis.__shared['captain.scope'] = null;
 const data = await load('captain-data');
 const hd = harness(data.Mod);
 await hd.start();
+// Data opens on the one list of tables; opening a row's page is what selects a dataset.
+for (let i = 0; i < 80 && !(hd.mod.catalog.rows ?? []).some((r) => r.kind === 'dataset'); i++) { await hd.layoutLists({}); await hd.idle(150); }
+assert.equal(shared('captain.view.data')?.dataset ?? null, null, 'nothing is selected on the list');
+await hd.click(`cat-row-${hd.mod.catalog.rows.findIndex((r) => r.kind === 'dataset')}`);
 for (let i = 0; i < 80 && !shared('captain.view.data')?.dataset; i++) { await hd.layoutLists({}); await hd.idle(150); }
 const dv = shared('captain.view.data');
-assert.equal(dv?.tab, 'datasets', JSON.stringify(dv));
+assert.equal(dv?.tab, 'tables', JSON.stringify(dv));
 assert.ok(dv.dataset, `a dataset is selected and published: ${JSON.stringify(dv)}`);
 globalThis.__layout = sections('data');
 cur = currentView();
@@ -107,7 +111,7 @@ assert.equal(cur.section, 'data');
 assert.equal(cur.screen, 'Data');
 assert.equal(cur.view.dataset, dv.dataset);
 snap = viewSnapshot();
-assert.ok(snap.includes('- Screen: Data, tab datasets') && snap.includes(`- Dataset: ${dv.dataset}`), snap);
+assert.ok(snap.includes('- Screen: Data, tab tables') && snap.includes(`- Dataset: ${dv.dataset}`), snap);
 assert.ok(!snap.includes('- Next:'), 'the project page\'s Next line is not this screen\'s');
 // Back to Home: the project again.
 globalThis.__shared['captain.scope'] = { kind: 'project', id: 'gifts', label: 'Gifts' };
