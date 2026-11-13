@@ -200,13 +200,24 @@ def test_an_open_project_page_makes_no_call_to_a_cloud_model_over_sixty_seconds(
         h = HL.check(ws, "shop", notify=False)
     assert calls == [], f"the scheduled check called the model: {calls}"
     n0 = h["requests"]   # the few test requests the deploy itself sent
-    assert h["status"] == "unknown" and h["text"] == (f"Running. Only {n0} requests in the last 15 minutes, too few to judge by." if n0 else "Running, no requests to judge by."), h["text"]
-    assert HL.words({}, {**h, "requests": 0}) == "Running, no requests to judge by."
+    assert h["status"] == "unknown" and h["text"] == (f"Running. Only {n0} requests in the last 15 minutes, too few to judge by yet." if n0 else "Running. No requests to judge by yet."), h["text"]
+    assert HL.words({}, {**h, "requests": 0}) == "Running. No requests to judge by yet."
+    # the panel can say where each fact came from: the cloud's state and the request log, and no call to the model
+    assert [x["fact"] for x in h["sources"]] == ["Whether it is up", "How many requests failed, and how fast they were"]
+    assert h["sources"][0]["from"] == "Modal's own state. The model was not called."
+    assert h["sources"][1]["from"] == "The request log: the requests it answered in the last 15 minutes."
+    # An hour of the schedule: sixty checks of every running model in the workspace, as the service and
+    # `cst deployments watch` run them. Zero calls to the model.
+    for _ in range(60):
+        out = HL.watch_once(ws, notify=False)
+        assert [x["project"] for x in out] == ["shop"]
+    assert calls == [], f"an hour of scheduled checks called the model {len(calls)} times"
     assert not h["alert"], "no traffic is not an alert"
     # "Check now" is a person asking: the model itself is asked, once.
     got = c.post("/api/projects/shop/staging/health/check", headers=hd, json={})
     assert got.status_code == 200 and calls == ["status"], "Check now asks the model once"
     assert got.json()["status"] == "healthy" and got.json()["answering"] is True
+    assert got.json()["sources"][0]["from"] == "Captain asked the model itself, because you pressed Check now."
     calls.clear()
     # With requests in the log, the scheduled check judges them, still with no call: failures over the target are
     # unhealthy on the second check, and enough good ones are healthy.

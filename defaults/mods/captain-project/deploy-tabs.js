@@ -4,10 +4,11 @@
 //
 // Three states are said apart everywhere: stopped, idle, and handling requests. An endpoint that is up with nothing
 // to do is fine, and is never drawn as a fault.
-import { div } from "gpui-kit";
+import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, Input } from "gpui-base";
 import { MONO } from "./kit/tokens.js";
 import { Badge, Button } from "./kit/ui.js";
+import { icon } from "./kit/icons.js";
 
 const short = (ref) => String(ref ?? "").replace(/^.*\//, "");
 const clock = (ts) => String(ts ?? "").slice(11, 23);
@@ -34,6 +35,14 @@ export function Bars(c, id, values, { height = 56, color, over = [], marks = [],
       .child(div().flex_1()).child(div().child(to)));
 }
 
+/** The small refresh mark the Deployments screen uses: an icon with a name for screen readers and a tooltip, for
+ *  someone who wants the newest now. The screen keeps itself current: this is never the way it stays so. */
+export function RefreshMark(c, id, busy, onClick) {
+  return div().id(id).size(24).flex().flex_none().items_center().justify_center().text_color(busy ? c.blue : c.grey500)
+    .accessibility_label("Refresh").tooltip(busy ? "Refreshing" : "Refresh")
+    .when(!busy, (e) => e.cursor_pointer().hover((x) => x.text_color(c.navy)).on_click(onClick))
+    .child(svg(icon("refresh-cw")).size(14));
+}
 const shell = (c, id) => v_flex().id(id).w_full().p(12).gap(8).bg(c.surface).border_1().border_color(c.rule);
 const lead = (c, id, text) => div().id(id).text_size(12.5).line_height("18px").text_color(c.grey500).child(text);
 
@@ -71,7 +80,7 @@ export function LogsTab(ship, c) {
       .child(h_flex().id("dep-logs-filter").w(260).h(28).px(8).items_center().border_1().border_color(c.grey300)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(ship.logBox).w_full().text_size(12.5).text_color(c.navy)))
       .child(Button(c, "dep-logs-apply", "Filter", (_e, cx) => { ship.logsD = null; ship.loadTab(cx); cx.notify(); }, { small: true }))
-      .when(ship.running(), (e) => e.child(Button(c, "dep-logs-refresh", ship.refreshing === "logs" ? "Refreshing..." : "Refresh", (_e, cx) => ship.refreshNow(cx, "logs"), { small: true, disabled: Boolean(ship.refreshing) })))
+      .when(ship.running(), (e) => e.child(RefreshMark(c, "dep-logs-refresh", ship.refreshing === "logs", (_e, cx) => ship.refreshNow(cx, "logs"))))
       .when(Boolean(ship.logBox.value().trim()), (e) => e.child(Button(c, "dep-logs-clear", "Show all", (_e, cx) => { ship.logBox.set_value(""); ship.logsD = null; ship.loadTab(cx); cx.notify(); }, { small: true })))
       .child(div().flex_1().min_w(0))
       .when(Boolean(d?.streaming), (e) => e.child(h_flex().id("dep-logs-streaming").gap(6).items_center()

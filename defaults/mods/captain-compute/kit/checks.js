@@ -1,6 +1,4 @@
 // CAPTAIN: what every form checks, in one place, so no form can skip it.
-// The same file as defaults/mods/captain-forms/checks.js, in the kit so every mod's forms can use it
-// (tests/mod-render/form-rule.test.mjs fails if the two differ, apart from these two lines).
 //
 // - A field is checked as the person types. Its problem is one plain sentence under that field.
 // - A name is never refused for its spelling. The words typed are the label, and Captain makes the id from them

@@ -32,7 +32,7 @@ globalThis.fetch = async (url, opts = {}) => {
 };
 const { default: Forms } = await import(path.join(dir, 'main.js'));
 const { TASKS } = await import(path.join(dir, 'tasks.js'));
-const { idFrom, isId, sayError, looksRaw } = await import(path.join(dir, 'checks.js'));
+const { idFrom, isId, sayError, looksRaw } = await import(path.join(dir, 'kit/checks.js'));
 const { palette } = await import(path.join(dir, 'kit/tokens.js'));
 const byId = (h, id) => h.byIdPrefix(id).filter((e) => e.call('id')?.[0] === id);
 const text = (h, id) => { const e = byId(h, id)[0]; const t = (x) => (typeof x === 'string' ? x : (x?.kids ?? []).map(t).join('')); return e ? t(e) : null; };

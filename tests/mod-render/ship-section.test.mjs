@@ -107,7 +107,8 @@ const open = async (w, deployOpen = false) => {
       key: { can_rotate: true, previous_valid: false, text: 'The key has not been changed since it was made.' } },
     backs: { rows: [{ at: '2026-11-12T18:30:00+00:00', by: 'Captain', from: 'shop/starter-ranker@v1', to: 'shop/keyword-baseline@v1', version: 1, auto: true, reason: 'It turned unhealthy 4 minutes after it was deployed. It is not answering.' }],
       auto: { minutes: null, on: false, text: 'Off: an unhealthy version stays up until you roll it back.' }, text: '1 roll back so far.' },
-    health: { project: 'shop', status: 'healthy', text: 'Healthy. 0 of its last 62 requests failed, in the last 15 minutes. 95 in 100 took under 0.6 ms at the endpoint.', checked_at: '2026-11-12T19:30:00+00:00', reasons: [], target: { p95_ms: null, error_rate: 0.05, set: false } }, job: () => ({ status: 'running', host: 'aws', login: 'aws-main', steps: STEPS }), ...w };
+    health: { project: 'shop', status: 'healthy', text: 'Healthy. 0 of its last 62 requests failed, in the last 15 minutes. 95 in 100 took under 0.6 ms at the endpoint.', checked_at: '2026-11-12T19:30:00+00:00', reasons: [], target: { p95_ms: null, error_rate: 0.05, set: false },
+      sources: [{ fact: 'Whether it is up', from: "AWS's own state. The model was not called." }, { fact: 'How many requests failed, and how fast they were', from: 'The request log: the requests it answered in the last 15 minutes.' }] }, job: () => ({ status: 'running', host: 'aws', login: 'aws-main', steps: STEPS }), ...w };
   sent = []; jobReads = 0; page.deployOpen = deployOpen;
   const h = harness(Dep);
   await h.start();
@@ -338,6 +339,8 @@ assert.equal(byId(h, 'dep-unhealthy').length, 0, 'nothing is said at the top whi
 await h.click('dep-more-health');
 t = h.text();
 assert.ok(t.includes('Captain checks once a minute how many requests fail') && t.includes('Healthy. 0 of its last 62 requests failed') && t.includes('Last checked 19:30 UTC.'), `its health, under its sentence: ${t.slice(-900)}`);
+// The panel says where each fact came from, so a person can tell the model itself was not called.
+assert.ok(t.includes("Whether it is up") && t.includes("AWS's own state. The model was not called.") && t.includes('The request log: the requests it answered in the last 15 minutes.'), `where each fact came from: ${t.slice(-900)}`);
 assert.ok(t.includes('No target is set yet.') && t.includes('Unhealthy when 95 in 100 requests take longer than') && t.includes('Unhealthy when more requests than this fail'), 'the targets, in words');
 await h.click('dep-health-p95-200');
 await wait(h, () => h.mod.ship.healthD?.target?.p95_ms === 200, 'the target is saved');
@@ -463,6 +466,22 @@ await h.click('ship-open-in-deployments');
 assert.equal(globalThis.__shared['captain.open']?.section, 'deployments');
 assert.equal(globalThis.__shared['captain.open']?.open, 'shop:staging', 'it asks for this model');
 assert.ok(globalThis.__runs.some((r) => r[0] === 'layout.select' && r[1]?.child === 'deployments'), 'and the Deployments screen is selected');
+// The request list and the log keep themselves current. For someone who wants the newest now there is a small
+// refresh mark: an icon with a name and a tooltip, not a text button. Only it asks a model in a cloud for its log.
+h = await open({ places: [LOCAL, AWS], staging: RUN }, true);
+await h.click('dep-more-requests');
+await wait(h, () => Boolean(h.mod.ship.reqs), 'the requests are read');
+{
+  const mark = byId(h, 'dep-requests-refresh')[0];
+  const words = (e) => (e.kids ?? []).flatMap((x) => (typeof x === 'string' ? [x] : x && typeof x === 'object' ? words(x) : []));
+  assert.ok(mark, 'the refresh mark is there');
+  assert.deepEqual(words(mark), [], 'it is an icon: no word on it');
+  assert.deepEqual([mark.call('accessibility_label'), mark.call('tooltip')], [['Refresh'], ['Refresh']], 'named for screen readers, with a tooltip');
+  assert.equal(sent.filter((x) => x[1].includes('refresh=true')).length, 0, 'nothing asked for a refresh by itself');
+  await h.click('dep-requests-refresh');
+  await wait(h, () => sent.some((x) => x[1].includes('/staging/requests?refresh=true')), 'pressing it asks for the newest');
+}
+
 // Asleep, and stopped: said in words.
 h = await open({ places: [LOCAL, AWS], staging: { ...RUN, asleep: true }, live: { state: 'asleep', label: 'Asleep' } }, true);
 assert.ok(h.text().includes('Asleep on AWS. It wakes on the next request, and costs nothing asleep.'), `asleep: ${h.text()}`);

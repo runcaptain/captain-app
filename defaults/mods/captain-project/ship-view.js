@@ -429,6 +429,11 @@ function healthBody(ship, c) {
     .on_click((_e, cx) => healthDo(ship, cx, body)).child(label);
   return v_flex().id("dep-health").w_full().p(12).gap(8).bg(c.surface).border_1().border_color(c.rule)
     .child(line(c, "dep-health-text", h?.text ?? "Reading its health...", h?.status === "unhealthy" ? "fail" : "grey900"))
+    // Where each fact came from, so a person can tell what Captain looked at and what it did not call.
+    .when((h?.sources ?? []).length > 0, (e) => e.child(v_flex().id("dep-health-sources").gap(2)
+      .children(h.sources.map((x, i) => h_flex().id(`dep-health-source-${i}`).gap(10).items_start()
+        .child(div().w(250).flex_none().text_size(12.5).text_color(c.grey500).child(x.fact))
+        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey900).child(x.from))))))
     .when(Boolean(h?.checked_at), (e) => e.child(line(c, "dep-health-when", `Last checked ${String(h.checked_at).slice(11, 16)} UTC.${h.last_request_at ? ` Last request ${String(h.last_request_at).slice(11, 16)} UTC.` : ""}`, "grey500")))
     .child(v_flex().gap(4)
       .child(div().text_size(12.5).font_medium().text_color(c.navy).child("Unhealthy when 95 in 100 requests take longer than"))
