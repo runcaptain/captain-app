@@ -90,12 +90,3 @@ export function WalkButtons(c, v) {
     .child(btn("wt-walk-next", "Next step", "One step further back", (cx) => v.stepWalk(1, cx), step >= of))
     .child(btn("wt-walk-prev", "Previous step", "One step toward the output", (cx) => v.stepWalk(-1, cx), step <= 0));
 }
-
-/** What the walk's step shows, in a sentence laid over the foot of the drawing. Null when not walking. */
-export function WalkSays(c, v, width) {
-  const e = v.net.examples[v.inputAt];
-  if (!(v.walk.step > 0) || !e) return null;
-  return div().id("wt-walk-says").absolute().left(8).bottom(8).w(Math.max(200, Math.min(600, width - 16))).p(8).bg(c.surface).border_1().border_color(c.grey300).text_size(12.5).line_height("18px")
-    .on_mouse_down("left", (_e, cx) => cx.stop_propagation?.())
-    .child(walkWords(v.net, v.run, v.grad, v.walk.step, e.y));
-}

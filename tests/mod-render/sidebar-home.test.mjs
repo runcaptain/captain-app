@@ -34,7 +34,7 @@ const ask = async (h, o) => { globalThis.__shared['captain.open'] = { ...o, at: 
 {
   const { ITEMS, openEntry } = await import('../../defaults/mods/captain-nav/main.js');
   const entries = ITEMS.filter((x) => !x.run);
-  assert.deepEqual(entries.map((x) => x.id), ['project', 'data', 'notebooks', 'runs', 'deployments', 'team']);
+  assert.deepEqual(entries.map((x) => x.id), ['project', 'data', 'notebooks', 'runs', 'weights', 'deployments', 'team']);
   for (const it of entries) {
     openEntry(it);
     const o = globalThis.__shared['captain.open'];
@@ -123,6 +123,25 @@ const ask = async (h, o) => { globalThis.__shared['captain.open'] = { ...o, at: 
   openEntry(ITEMS.find((x) => x.id === 'deployments'));
   view.takeOpen({ notify: () => drawn++ });
   assert.equal(view.page, null, 'a second click goes home again');
+}
+
+// ---- Weights: an open network closes, the list of networks shows ------------------------------------------------------
+{
+  const { default: Weights } = await import('../../defaults/mods/captain-weights/main.js');
+  const { openEntry, ITEMS } = await import('../../defaults/mods/captain-nav/main.js');
+  let drawn = 0;
+  const cx = { notify: () => drawn++, spawn() {} };
+  const view = Object.assign(Object.create(Weights.prototype), { model: 'tiny', net: { name: 'tiny' }, session: { id: 'ws-1' }, sel: { k: 1, j: 0 }, asked: 0, list: [] });
+  openEntry(ITEMS.find((x) => x.id === 'weights'));
+  view.takeOpen(cx);
+  assert.deepEqual([view.model, view.net, view.sel], [null, null, null], 'the sidebar\'s own request closes the network');
+  view.model = 'tiny';
+  view.takeOpen(cx);
+  assert.equal(view.model, 'tiny', 'handled once');
+  await new Promise((r) => setTimeout(r, 3));
+  openEntry(ITEMS.find((x) => x.id === 'weights'));
+  view.takeOpen(cx);
+  assert.equal(view.model, null, 'a second click goes home again');
 }
 
 // ---- Projects: every project, never the project last open -----------------------------------------------------------

@@ -134,13 +134,21 @@ function serve(ledger, events = []) {
     '/api/weights/sessions/ws-1/evaluate': { ok: true, data: { sets: { held_out: { name: 'held out', defined: true, of: 200, before: 0.19, after: 0.19, right_before: 179, right_after: 179, answers_changed: 0 } } } },
   };
 }
+const EDITED = [{ id: 'e1', seq: 1, by: 'agent', kind: 'edit', op: 'set', layer: 1, neuron: 0, changed: 1, changes: [{ k: 0, j: 0, i: null, old: -3, new: -2 }], touched: { neurons: [[1, 0]], weights: [] }, scores: 'hidden' }];
 const LEDGER = { raw_weights: true, weights_read: 13, sandbox: false, sandbox_used: false, forward_allowed: 20, forward_used: 0, gradients_computed: false, changed: 0, total: 13, share: 0, feedback: true, scores_shown: false, weights_alone: true, label: 'from the weights alone' };
 
 test('"From the weights alone" shows only when the ledger says no sandbox, no forward pass and no score shown along the way', async () => {
+  // A session where nothing has been edited makes no claim: the line only says what is allowed.
   serve(LEDGER);
   let h = await page('tiny');
-  assert.equal(textOf(h, 'wt-alone'), 'From the weights alone');
+  assert.equal(h.byIdPrefix('wt-alone').length, 0, 'no badge before the first edit');
   assert.equal(textOf(h, 'wt-ledger'), 'Raw weights: 13 read. Sandbox: not allowed. Forward passes: 0 of 20 used.');
+  // After an edit, with every condition met, it shows.
+  serve({ ...LEDGER, changed: 1 }, EDITED);
+  h = await page('tiny');
+  assert.equal(textOf(h, 'wt-alone'), 'From the weights alone');
+  serve(LEDGER);
+  h = await page('tiny');
   // The services' own network drew: cross-entropy, their names, and the test set scored by them.
   assert.ok(textOf(h, 'wt-title') === 'tiny' && h.text().includes('exactly one is high'));
   // The services keep the test set, and the page never asks them to score it: a score shown is feedback, and
@@ -193,7 +201,7 @@ test('"From the weights alone" shows only when the ledger says no sandbox, no fo
   ];
   for (const [why, ledger] of no) {
     assert.equal(ledgerFacts(ledger).alone, false, why);
-    serve(ledger);
+    serve(ledger, EDITED);
     h = await page('tiny');
     assert.equal(h.byIdPrefix('wt-alone').length, 0, why);
     assert.ok(!h.text().includes('From the weights alone'), why);
@@ -227,7 +235,8 @@ test('a network with many inputs shows ten at a time', async () => {
   assert.ok(h.text().includes('Input 1 of 23') && h.text().includes('Later inputs') && !h.text().includes('Earlier inputs'));
   assert.ok(h.text().includes('Made-up data'), 'a network that says its data is made up is labelled so');
   await h.click('wt-in-later');
-  assert.ok(h.text().includes('Input 11 of 23') && h.text().includes('practice 10') && h.text().includes('Earlier inputs'));
+  assert.ok(h.text().includes('Input 11 of 23') && h.text().includes('Input 12') && !h.text().includes('practice'), 'a numbered name from the services is said plainly, counting from 1');
+  assert.ok(h.text().includes('Earlier inputs'));
   await h.click('wt-in-later');
   assert.equal(h.byIdPrefix('wt-in-').filter((e) => /^wt-in-\d+$/.test(e.call('id')[0])).length, 3, 'the last three');
   await h.click('wt-in-earlier');

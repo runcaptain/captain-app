@@ -54,7 +54,7 @@ test('it is a page in the window\'s main slot beside the terminal, never a dialo
   const { staticEntries, ITEMS } = await import('../../defaults/mods/captain-nav/main.js');
   const entry = staticEntries(ITEMS).find((e) => e.title === "Open a network's weights");
   assert.deepEqual([entry.overlay.mod, entry.overlay.props.section], ['captain-go', 'weights'], 'the palette selects the page');
-  assert.ok(!ITEMS.some((i) => i.id === 'weights'), 'not a sidebar view');
+  assert.deepEqual(ITEMS.map((i) => i.id).slice(3, 6), ['runs', 'weights', 'deployments'], 'in the sidebar, between Runs and Deployments');
   for (const f of fs.readdirSync('defaults/mods/captain-weights').filter((x) => x.endsWith('.js'))) assert.ok(!/closeOverlay|kind:\s*"dialog"/.test(fs.readFileSync(`defaults/mods/captain-weights/${f}`, 'utf8')), f);
   // `cst app open weights:<model>` and links set shared "captain.open": the page opens that network, once.
   const h = await page(null);
@@ -268,4 +268,15 @@ test('the words: no arrows, no long dashes, no backend words', async () => {
     assert.ok(!/\b(engine|daemon)\b/i.test(text));
   }
   assert.equal(factsOf(starter(TINY)), '2 in, 1 out, 13 numbers (9 weights and 4 biases)');
+});
+
+test('an input\'s name is in words, counting from 1', async () => {
+  const { inputName } = await import('../../defaults/mods/captain-weights/main.js');
+  const pic = { inputShape: [28, 28] }, plain = {};
+  assert.equal(inputName(pic, { name: 'practice 0: 9' }, 0), 'Picture 1: a 9');
+  assert.equal(inputName(pic, { name: 'example 3: 8' }, 2), 'Picture 3: an 8');
+  assert.equal(inputName(pic, { name: 'example 4' }, 3), 'Picture 4');
+  assert.equal(inputName(plain, { name: 'practice 11' }, 11), 'Input 12');
+  assert.equal(inputName(plain, { name: 'Both on' }, 3), 'Both on', 'a name already in words is kept');
+  assert.equal(inputName(plain, {}, 0), 'Input 1');
 });

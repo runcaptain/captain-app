@@ -1131,8 +1131,8 @@ different fonts, different styles". A render test counts the first two on the pr
    bare nouns ("Metrics", "Versions") as the first thing a person sees. Something behind "More" opens with one
    sentence saying what it is for.
 
-8. **Six views, two submenus.** The sidebar lists Projects, Data, Notebooks, Runs, Deployments and Team, and
-   nothing else under Views. A view has at most two submenus, drawn with the kit's `Submenus` (it refuses a
+8. **Seven views, two submenus.** The sidebar lists Projects, Data, Notebooks, Runs, Weights, Deployments and Team,
+   and nothing else under Views. A view has at most two submenus, drawn with the kit's `Submenus` (it refuses a
    third, and `tests/mod-render/submenus.test.mjs` fails a view that draws its own strip). A record's page has
    no strip of tabs either. Something that would be a third submenu becomes a kind or a filter in a list, a
    section of a page, or a button that opens it.
@@ -1150,6 +1150,7 @@ The owner walked the whole app on 2026-11-12 and asked for far fewer screens. Th
 | Data | `data`, `captain-data` | Two submenus. **Tables**: every table, a dataset or a database's table alike, grouped by where it lives, five at a time (`GET /api/data/tables`). **Sources**: the databases and model registries they come from |
 | Notebooks | `notebooks`, `captain-notebooks` | SQL, Python, notes and charts, saved as versions. `cst app open notebook:<name>` opens one |
 | Runs | `runs`, `captain-runs` | Two submenus. **Runs**: everything that runs in one list with a Kind column and filters (offline evaluations, jobs, rating, workflows, off-policy evaluations), what is running now first. **Compare**: regression testing, every evaluation run with the change against the model it is compared with (`GET /api/regression`) |
+| Weights | `weights`, `captain-weights` | A network drawn neuron by neuron: what an agent reads and changes in it, as it happens. See "Weights: a network, drawn" below |
 | Deployments | `deployments` | Every model that is running somewhere, across projects |
 | Team | `team`, `captain-team` | Shared records, drafts and review |
 
@@ -1449,8 +1450,8 @@ cst projects generate-events my-project --sessions 20000 --days 30
 
 ### Weights: a network, drawn (`captain-weights`)
 
-Not a sidebar view, and not a dialog: a page in the window's main slot, beside the terminal you run in, so the
-person can watch the network while you work on it. Show it with `cst app open weights` (the list of networks) or
+A sidebar view (Weights, between Runs and Deployments), never a dialog: a page in the window's main slot, beside
+the terminal you run in, so the person can watch the network while you work on it. Show it with `cst app open weights` (the list of networks) or
 `cst app open weights:<model>` (one network, by the name `cst weights models` lists). A person opens it from the
 palette entry "Open a network's weights". The word "Weights" at the top of the page goes back to the list.
 
@@ -1470,7 +1471,8 @@ What a person sees, so you can tell them where to look:
 - **"What the agent is doing"**: every read, run and edit of the session as a sentence, newest first. What you
   touch pulses in the drawing as you touch it. Each edit opens to its old and new values and can be taken back.
   The top of the page is the session's ledger. "From the weights alone" shows only when the ledger says no sandbox was
-  allowed, no forward pass was used, and no score was shown to you before your last edit (open the session with
+  allowed, no forward pass was used, no score was shown to you before your last edit, and you have made at
+  least one edit (open the session with
   `--blind` to keep scores hidden until you save or close). You cannot set it, and you should never claim it when
   it is not shown.
 - **By hand**: a person can type or drag a weight or a bias, halve, double or zero a neuron, and take it back.

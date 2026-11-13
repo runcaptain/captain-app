@@ -41,6 +41,9 @@ export const ITEMS = [
   { id: "data", label: "Data", was: "data and signals sources tables datasets catalogs databases", icon: "database" },
   { id: "notebooks", label: "Notebooks", was: "sql python charts", icon: icon("file-text") },
   { id: "runs", label: "Runs", was: "offline evaluations backtests rating grading off-policy replays compare comparisons regression jobs", icon: "play" },
+  // Weights: a network drawn neuron by neuron, to watch what an agent reads and changes in it (captain-weights).
+  // In the sidebar so a person finds it without the palette (the owner's helper, 2026-11-13).
+  { id: "weights", label: "Weights", was: "neurons neural network layers bias backpropagation gradient cost inside a model", icon: icon("waypoints") },
   // Deployments: every deployed model across projects and clouds, read from the clouds (captain-deployments).
   { id: "deployments", label: "Deployments", was: "deployed models endpoints hosting stop remove traffic cost", icon: icon("server") },
   // Team collaboration was only in the palette, so people who built it couldn't find it (Edgar, 2026-11-09).
