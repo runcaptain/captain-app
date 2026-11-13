@@ -11,17 +11,45 @@ export function shapesIn(tree) {
   return n;
 }
 
+let current = null; // the screen the test touched last: see `beat`
 export function harness(Mod) {
   const pending = [];
   const timers = [];
   const timings = [];
   const cx = {
     spawn: (f) => pending.push(Promise.resolve().then(() => f(cx))),
-    timer: { every: (_ms, f) => timers.push(f), after: (_ms, f) => timers.push(f) },
+    // As the app's: `every` calls again and again at its interval, `after` calls once. Both give back a handle that
+    // cancels. (`after` used to be kept and called on every pass like `every`, so a callback that re-armed itself
+    // multiplied without end here and nowhere else, and a one-shot wait looked like a poll.)
+    timer: {
+      every: (ms, f) => { const t = { f, ms: Math.max(1, Number(ms) || 1), every: true, due: performance.now() + (Number(ms) || 0) }; timers.push(t); return handle(t); },
+      after: (ms, f) => { const t = { f, ms: Number(ms) || 0, every: false, due: performance.now() + (Number(ms) || 0) }; timers.push(t); return handle(t); },
+    },
     notify() {},
     stop_propagation() {},
     focus_handle: () => ({ focus() {} }),
   };
+  const handle = (t) => ({ cancel() { t.dead = true; }, drop() { t.dead = true; }, stop() { t.dead = true; } });
+  /** Call the timers that are due, as the app does as time passes. `force` calls every one now, due or not: one
+   *  pass of the clock for a test that does not want to wait. A one-shot timer is called once, then gone. */
+  function fire(force = false) {
+    const at = performance.now();
+    for (const t of [...timers]) {
+      if (t.dead || (!force && at < t.due)) continue;
+      if (t.every) t.due = at + t.ms; else t.dead = true;
+      t.f(cx);
+    }
+    for (let i = timers.length - 1; i >= 0; i--) if (timers[i].dead) timers.splice(i, 1);
+  }
+  // Time passes whether or not the test is looking, as in the app: a timer that comes due is called even while the
+  // test awaits something else (a form's task that waits on a job through the live channel, say).
+  // Only for the screen the test touched last. In the app each mod runs by itself. Here several are mounted one
+  // after another in one process and share the test's fixtures, so an earlier screen's timers must not go on
+  // asking for what a later screen's fixtures do not hold. An earlier screen's timers run again when it is touched.
+  const me = {};
+  current = me;
+  const beat = setInterval(() => { if (current !== me) return; try { fire(false); } catch (e) { queueMicrotask(() => { throw e; }); } }, 20);
+  beat.unref?.();
   const mod = new Mod();
   let tree = null;
 
@@ -68,16 +96,18 @@ export function harness(Mod) {
     timings,
     asked: () => globalThis.__asked ?? [],
     async start() {
+      current = me;
       mod.init(globalThis.__props ?? {}, cx);
       await settle();
       render();
     },
     /** Draw the named lists for these ranges (as layout would), run the timers, fetch, and render again. */
     async layoutLists(ranges) {
+      current = me;
       render();
       all(ranges);
       for (let i = 0; i < 6; i++) {
-        for (const f of timers) f(cx);
+        fire(true);
         await settle();
       }
       render();
@@ -109,7 +139,15 @@ export function harness(Mod) {
     },
     /** Let spawned work run (kernel replies arrive on timers), then render. */
     async idle(ms = 60) {
-      await new Promise((r) => setTimeout(r, ms));
+      current = me;
+      // Time passes as it does in the app: a timer that comes due while waiting is called.
+      const end = performance.now() + ms;
+      for (;;) {
+        const left = end - performance.now();
+        await new Promise((r) => setTimeout(r, Math.max(0, Math.min(20, left))));
+        fire(false);
+        if (performance.now() >= end) break;
+      }
       await settle();
       render();
     },

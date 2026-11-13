@@ -4,6 +4,7 @@
 import { api, connectionsChanged } from "./kit/cst.js";
 import { exec, home, shared, setShared, openOverlay, notify, run as runCommand } from "herdr";
 import { askAgent, EVALUATION_FORM } from "./kit/agent.js";
+import { jobDone } from "./kit/live.js";
 
 const notifyProblem = (text) => notify({ title: "Judging didn't start", body: text, level: "info" });
 
@@ -131,15 +132,12 @@ async function datasetsOf(kinds) {
     .filter((d) => kinds.includes(d.kind) || (d.classes ?? []).some((c) => kinds.includes(roles.get(c))))
     .map((d) => ({ value: `${d.name}@v${d.latest}`, label: d.name, chip: `v${d.latest}` }));
 }
-/** Wait for a job the services started (an import, a publish), up to two minutes. */
+/** Wait for a job the services started (an import, a publish), up to two minutes. The job says so itself on the
+ *  live channel: it is read when it does, not on a clock. */
 async function waitJob(id) {
-  if (!id) return { ok: false, error: "It didn't start." };
-  for (let i = 0; i < 240; i++) {
-    const r = await api(`/api/jobs/${encodeURIComponent(id)}`, { scoped: false });
-    if (r.ok && r.data?.status === "done") return { ok: true, result: r.data.result };
-    if (r.ok && r.data?.status === "failed") return { ok: false, error: plain(r.data.message) };
-    try { await exec("sleep", ["0.5"]); } catch { break; }
-  }
+  const r = await jobDone(null, id, { minutes: 2 });
+  if (r.ok) return { ok: true, result: r.result };
+  if (r.failed) return { ok: false, error: r.message ? plain(r.message) : "It didn't start." };
   return { ok: false, error: "It's still running. Check Runs, Jobs, in a minute." };
 }
 /** The Starter ranker card's lines: what it reads, the cutoff it picked and why, and what to know before training. */
@@ -157,12 +155,9 @@ export function starterLines(p) {
 
 /** Wait for a training job: up to twenty minutes, since the first run also sets the trainer up. */
 async function waitTraining(id) {
-  for (let i = 0; i < 2400; i++) {
-    const r = await api(`/api/jobs/${encodeURIComponent(id)}`, { scoped: false });
-    if (r.ok && r.data?.status === "done") return { ok: true, result: r.data.result };
-    if (r.ok && r.data?.status === "failed") return { ok: false, error: plain(r.data.message) };
-    try { await exec("sleep", ["0.5"]); } catch { break; }
-  }
+  const r = await jobDone(null, id, { minutes: 20 });
+  if (r.ok) return { ok: true, result: r.result };
+  if (r.failed) return { ok: false, error: plain(r.message) };
   return { ok: false, error: "It's still training. Check Runs, Live, in a minute: it joins the project's candidates when it lands." };
 }
 

@@ -25,6 +25,7 @@ import { Brand, engineTitle } from "./kit/brands.js";
 import { ResultGrid } from "./kit/grid.js";
 import { int } from "./kit/num.js";
 import { costState, refreshEstimate, CostLine } from "./kit/cost.js";
+import { hear, watchLive } from "./kit/live.js";
 
 const enc = encodeURIComponent;
 const fmtInt = (n) => int(n ?? 0);
@@ -134,7 +135,14 @@ export default class CaptainImport extends View {
     this.dest = this.dests[0];
     this.path.on("submit", (_e, cx) => this.importFiles(cx, [expand(this.path.value())]));
     this.loadSources(cx);
-    cx.timer.every(500, (cx) => this.tick(cx));
+    // What is typed: the estimate and the name's check follow it. The window's own state, not Captain's data.
+    cx.timer.every(500, (cx) => this.tick(cx, true));
+    // Work this dialog started (reading a database's tables, preparing and running an import): each job says so
+    // itself on the live channel and is read once each time it does.
+    watchLive(cx, ["job:"], (cx, why, topics) => {
+      const ids = [this.pullJob, this.prepJob, this.importJob].filter(Boolean);
+      if (ids.length && (why !== "changed" || ids.some((id) => topics.includes(`job:${id}`)))) this.tick(cx);
+    });
     // A database connected from here ("Connect a new source") or anywhere else shows up at once.
     watchConnections(cx, (cx) => cx.spawn(async (cx) => {
       const seq = (this.connSeq = (this.connSeq ?? 0) + 1);
@@ -289,6 +297,7 @@ export default class CaptainImport extends View {
       const r = await api(`/api/tables/${enc(conn)}/pull`, { body: {} });
       if (!r.ok) { this.reading = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't read its tables.", tone: "fail" }; cx.notify(); return; }
       this.pullJob = r.data.job;
+      this.tick(cx); // read it once now: from here on the job says so itself
       cx.notify();
     });
   }
@@ -305,12 +314,13 @@ export default class CaptainImport extends View {
     return { kind: "snapshot", where: src.connection, size: sql ? { sql } : {} };
   }
 
-  tick(cx) {
+  tick(cx, typing = false) {
     if (this.input) {
       const want = this.snapshotWant();
       cx.spawn(async (cx) => { if (await refreshEstimate(this.snapCost, want)) cx.notify(); });
     }
     if (this.step === 3 && this.source?.kind === "db") this.checkName(cx);
+    if (typing) return; // the clock's pass: nothing is asked of a job on a clock
     if (this.pullJob && !this.polling) {
       this.polling = true;
       cx.spawn(async (cx) => {
@@ -468,6 +478,7 @@ export default class CaptainImport extends View {
       const r = await api("/api/prepare/import", { body: { source: p.source, role: p.role, mapping: p.mapping, options: p.options, name: this.finalName, folder: this.target, project: dest.kind === "project" ? dest.id : undefined } });
       if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't start the import.", tone: "fail" }; cx.notify(); return; }
       this.prepJob = r.data.job;
+      this.tick(cx);
       cx.notify();
     });
     cx.notify();
@@ -509,6 +520,7 @@ export default class CaptainImport extends View {
       const r = await api("/api/datasets/import", { body: { paths, folder: folderShown(this.newFolder.value()) || this.folder, project: this.dest.kind === "project" ? this.dest.id : undefined } });
       if (!r.ok) { this.busy = false; this.note = { text: sentence(r.data?.error ?? r.error) || "Couldn't start the import.", tone: "fail" }; cx.notify(); return; }
       this.importJob = r.data.job;
+      this.tick(cx);
       cx.notify();
     });
     cx.notify();
@@ -527,12 +539,13 @@ export default class CaptainImport extends View {
     if (r.data?.job) {
       this.note = { text: "Taking the snapshot. This can take a minute for a big table.", tone: "muted" };
       cx.notify();
-      for (let i = 0; i < 600; i++) {
+      const ear = hear(cx, [`job:${r.data.job}`]); // the job says so itself: read when it does, not on a clock
+      try { for (let i = 0; i < 6000; i++) {
         const j = await api(`/api/jobs/${enc(r.data.job)}`, { scoped: false });
         if (j.ok && j.data?.status === "done") break;
         if (j.ok && j.data?.status === "failed") { this.busy = false; this.note = { text: sentence(j.data.message ?? j.data.error) || "The snapshot stopped.", tone: "fail" }; cx.notify(); return; }
-        await new Promise((res) => cx.timer.after(500, () => res()));
-      }
+        await ear.next(60000);
+      } } finally { ear.stop(); }
     }
     this.busy = false;
     setShared("captain.explorer.rev", Date.now()); // the project page reads its inputs again

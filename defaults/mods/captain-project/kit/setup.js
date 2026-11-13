@@ -14,6 +14,7 @@ import { api } from "./cst.js";
 import { Button, plainError } from "./ui.js";
 import { icon } from "./icons.js";
 import { MONO } from "./tokens.js";
+import { watchLive, jobDone } from "./live.js";
 
 const CLOUDS = [
   { id: "aws", label: "Amazon S3", scheme: "s3://" },
@@ -21,21 +22,13 @@ const CLOUDS = [
   { id: "azure", label: "Azure Blob Storage", scheme: "az://" },
 ];
 
-const sleep = (cx, ms) => new Promise((resolve) => cx.timer.after(ms, () => resolve()));
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Wait for a backend job: {ok, result} or {ok: false, error}. */
 async function finished(cx, job, onProgress) {
-  for (let i = 0; i < 1800; i++) {
-    const r = await api(`/api/jobs/${encodeURIComponent(job)}`);
-    if (r.ok) {
-      const st = r.data?.status;
-      if (st === "done") return { ok: true, result: r.data?.result ?? {} };
-      if (st === "failed") return { ok: false, error: r.data?.message || r.data?.error || "It didn't finish." };
-      onProgress?.(r.data?.progress ?? null, r.data?.message ?? null);
-    }
-    await sleep(cx, 700);
-  }
+  const r = await jobDone(cx, job, { minutes: 21, onStep: (j) => { onProgress?.(j.progress ?? null, j.message ?? null); } });
+  if (r.ok) return { ok: true, result: r.result };
+  if (r.failed) return { ok: false, error: r.message || "It didn't finish." };
   return { ok: false, error: "This took too long." };
 }
 
@@ -66,7 +59,7 @@ export class StorageSetup {
     for (const st of [this.name, this.bucket, this.prefix]) st.on("change", () => { this.check = null; this.error = null; });
     this.loadProfiles(cx);
     // A login connected meanwhile (Connect a cloud account opens over this) shows up without a reload.
-    cx.timer.every(3000, (cx) => { if (this.step === "storage" && this.where === "cloud") this.loadProfiles(cx); });
+    watchLive(cx, ["logins"], (cx) => { if (this.step === "storage" && this.where === "cloud") this.loadProfiles(cx); });
   }
 
   loadProfiles(cx) {

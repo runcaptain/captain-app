@@ -14,21 +14,18 @@ import { Badge, Button, Skeleton, plainError } from "./ui.js";
 import { icon } from "./icons.js";
 import { MONO } from "./tokens.js";
 import { int } from "./num.js";
+import { jobDone } from "./live.js";
 
 const pct = (x) => (x == null ? "" : `${Math.round(x * 100)}%`);
 // A dataset's role. The record's own `kind` is "dataset"; the role is in `classes` (the list's `kind` carries it too).
 const ROLES = ["queries", "judgments", "events", "catalog"];
 const kindOf = (d) => (d?.classes ?? []).find((k) => ROLES.includes(k)) ?? (ROLES.includes(d?.kind) ? d.kind : null);
-const sleep = (cx, ms) => new Promise((r) => cx.timer.after(ms, () => r()));
 
 /** Wait for a job: {ok, result} or {ok: false, error}. */
 async function finished(cx, job) {
-  for (let i = 0; i < 600; i++) {
-    const r = await api(`/api/jobs/${encodeURIComponent(job)}`);
-    if (r.ok && r.data?.status === "done") return { ok: true, result: r.data.result ?? {} };
-    if (r.ok && r.data?.status === "failed") return { ok: false, error: r.data?.message || r.data?.error || "It didn't finish." };
-    await sleep(cx, 600);
-  }
+  const r = await jobDone(cx, job, { minutes: 6 });
+  if (r.ok) return { ok: true, result: r.result };
+  if (r.failed) return { ok: false, error: r.message || "It didn't finish." };
   return { ok: false, error: "This took too long." };
 }
 

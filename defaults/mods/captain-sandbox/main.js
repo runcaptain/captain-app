@@ -17,9 +17,9 @@ import { api } from "./kit/cst.js";
 import { Button, Badge, Skeleton, plainError } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { int, num } from "./kit/num.js";
+import { hear } from "./kit/live.js";
 
 const MAX_KNOBS = 3;
-const sleep = (cx, ms) => new Promise((r) => cx.timer.after(ms, () => r()));
 const kindOf = (d) => d?.kind ?? (d?.classes ?? []).find((k) => ["queries", "judgments"].includes(k)) ?? null;
 const key = (values) => JSON.stringify(values);
 const TONE = { win: "good", loss: "bad", noise: "neutral" };
@@ -126,13 +126,15 @@ export default class Sandbox extends View {
     cx.spawn(async (cx) => {
       const r = await api("/api/sandbox/sweep", { body: { pipeline: this.pipeline, queries: this.queries, judgments: this.judgments, ...(Object.keys(knobs).length ? { knobs } : {}), ...(this.sample ? { sample: this.sample, top: 2 } : {}) } });
       if (!r.ok || !r.data?.job) { this.busy = null; this.error = plainError(r.error, "Captain couldn't start the sweep."); cx.notify(); return; }
-      for (let i = 0; i < 1200; i++) {
+      // The job says so itself on the live channel: it is read when it does, not on a clock.
+      const ear = hear(cx, [`job:${r.data.job}`]);
+      try { for (let i = 0; i < 12000; i++) {
         const j = await api(`/api/jobs/${encodeURIComponent(r.data.job)}`);
         if (j.ok && j.data?.status === "done") { this.result = j.data.result; this.busy = null; cx.notify(); return; }
         if (j.ok && j.data?.status === "failed") { this.busy = null; this.error = plainError(j.data?.message ?? j.data?.error, "The sweep didn't finish."); cx.notify(); return; }
         if (j.ok) { this.progress = j.data?.progress ?? null; cx.notify(); }
-        await sleep(cx, 700);
-      }
+        await ear.next(60000);
+      } } finally { ear.stop(); }
       this.busy = null; this.error = "This took too long."; cx.notify();
     });
   }

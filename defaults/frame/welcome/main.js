@@ -15,6 +15,7 @@ import { api } from "./kit/cst.js";
 import { Skeleton, ServiceError } from "./kit/ui.js";
 import { isDark, palette } from "./kit/tokens.js";
 import { StorageSetup } from "./kit/setup.js";
+import { watchLive } from "./kit/live.js";
 
 const PAGES = 5;
 const I = (name) => `mods/captain-nav/${name}.svg`;
@@ -56,7 +57,10 @@ export default class Welcome extends View {
     this.setup = new StorageSetup({ first: true, done: () => { this.page = 2; } });
     this.setup.start(cx);
     this.refresh(cx);
-    cx.timer.every(4000, (cx) => { if (this.page === PAGES) this.refresh(cx); });
+    // Until the services first answer, ask again. From then on the steps follow what is really there: they are read
+    // again the moment a project, a dataset, a run or a login changes (the live channel), not on a clock.
+    cx.timer.every(4000, (cx) => { if (this.state !== "ready") this.refresh(cx); });
+    watchLive(cx, ["projects", "data", "runs", "notebooks", "logins", "compute", "settings", "deployed"], (cx) => { if (this.page === PAGES) this.refresh(cx); });
   }
 
   finish(outcome) {

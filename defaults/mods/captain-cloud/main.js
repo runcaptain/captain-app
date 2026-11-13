@@ -10,6 +10,7 @@ import { palette, isDark, FONT, RADIUS } from "./kit/tokens.js";
 import { Card, Button, Empty, Problem } from "./kit/ui.js";
 import { icon } from "./kit/icons.js";
 import { Brand } from "./kit/brands.js";
+import { watchLive } from "./kit/live.js";
 
 const SHORT = { aws: "AWS", gcp: "Google Cloud", azure: "Azure", modal: "Modal", local: "This computer" };
 // How each kind of sign-in is said, in place of its id ("adc", "default", "local").
@@ -36,7 +37,8 @@ export default class CaptainCloud extends View {
     this.testing = {};
     this.load(cx);
     watchWorkspace(cx, (cx) => this.load(cx));
-    cx.timer.every(15000, (cx) => this.load(cx));
+    // A login added, renamed or removed anywhere (another screen, `cst cloud` in a terminal) shows at once.
+    watchLive(cx, ["logins", "settings", "compute"], (cx) => this.load(cx));
   }
 
   load(cx) {

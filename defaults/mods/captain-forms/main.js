@@ -15,6 +15,7 @@ import { api } from "./kit/cst.js";
 import { recordsChanged } from "./kit/cst.js";
 import { watchView, publishView, safeFields } from "./kit/view.js";
 import { costState, loadPlaces, refreshEstimate, needsConfirm, costSlice, RunsOn, LOCAL } from "./kit/cost.js";
+import { liveStart } from "./kit/live.js";
 
 const IMPORT = { mod: "captain-import", kind: "dialog", width: 900, height: 640, props: {} };
 
@@ -75,6 +76,7 @@ export default class CaptainForms extends View {
     // Every field is looked at again a few times a second: what changed is marked touched, and a check that needs
     // the services runs by itself once the typing pauses. Nothing waits for the button.
     cx.timer.every(250, (cx) => this.watch(cx));
+    liveStart(cx); // a task that waits on a job hears it on the live channel (tasks.js)
     // A default can depend on what the caller preset (New candidate opens on your own command when a ranker is named).
     for (const f of this.task.fields) if (f.default !== undefined) this.values[f.key] ??= typeof f.default === "function" ? f.default(this.values) : f.default;
     // Text inputs keep state, which gpui-kit only lets a view create outside render.
