@@ -158,6 +158,23 @@ export class Tables {
     cx.notify();
   }
 
+  /** The open table's facts (its row count, when it was last read, its description), asked for again. Its columns,
+   *  its rows, the filter and the place in the grid are left alone. */
+  refreshFacts(cx) {
+    const s = this.sel, was = this.page;
+    if (!s || !was || was.error) return;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/tables/${enc(s.conn)}/${enc(s.schema)}/${enc(s.name)}`);
+      if (this.sel !== s || this.page !== was || !r.ok) return; // the person moved on while it was asked
+      let changed = false;
+      for (const [k, v] of Object.entries(r.data ?? {})) {
+        if (v !== null && typeof v === "object") continue; // lists and records (columns, samples) stay as drawn
+        if (was[k] !== v) { was[k] = v; changed = true; }
+      }
+      if (changed) cx.notify();
+    });
+  }
+
   /** The Rows tab: the whole table, a page at a time, sorted and filtered by the services (kit grid, paged). */
   loadRows(cx) {
     const s = this.sel;
