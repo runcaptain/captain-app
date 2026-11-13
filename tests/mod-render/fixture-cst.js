@@ -13,6 +13,14 @@ export async function api(p, opts = {}) {
   if (globalThis.__down) return { ...globalThis.__down };
   // The engine is not up yet: what kit/cst.js answers while the app starts the daemon.
   if (globalThis.__starting) return { ok: false, starting: true, error: "Captain's engine is starting." };
+  // The change feed (kit/live.js). Quiet by default, as a workspace nobody is touching. A test says something
+  // changed by putting topics in globalThis.__changed: the next request for the feed answers with them, once.
+  if (p.startsWith('/api/changes') && !routes.some(([re]) => re.test(p))) {
+    const feed = (globalThis.__feed ??= { seq: 1000 });
+    const changed = (globalThis.__changed ?? []).splice(0);
+    if (changed.length) feed.seq += 1;
+    return { ok: true, status: 200, data: { seq: feed.seq, changed: changed.map((topic) => ({ topic, seq: feed.seq })), reset: false, partial: [] }, error: null };
+  }
   // A route may name a method as its third item: [/path/, 'file', 'POST'].
   const method = opts.method ?? (opts.body !== undefined ? 'POST' : 'GET');
   for (const [re, file, want] of routes) {

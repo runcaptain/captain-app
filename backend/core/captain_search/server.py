@@ -2901,6 +2901,12 @@ def _start_cloud_watch(every_s: float = 5.0) -> threading.Thread:
                 WT.start(ctx())
             except Exception:  # noqa: BLE001  the watch never takes the service down
                 pass
+            try:  # compute jobs: their hosts are asked for their state while someone listens (jobs_watch.py)
+                from . import jobs_watch as JW
+
+                JW.start(ctx())
+            except Exception:  # noqa: BLE001
+                pass
             time.sleep(every_s)
 
     th = threading.Thread(target=loop, daemon=True, name="cst-cloud-watch")
@@ -3290,6 +3296,15 @@ _CHANGES_POOL = None
 def _topics(text: str | None) -> list[str] | None:
     ts = [t.strip() for t in str(text or "").split(",") if t.strip()]
     return ts or None
+
+
+def _watch_live_folder() -> None:
+    from . import live as LV
+
+    LV.watch_folder()
+
+
+CH.on_listen(_watch_live_folder)  # runs written by another process on this computer (live.py)
 
 
 @app.get("/api/changes", dependencies=A)

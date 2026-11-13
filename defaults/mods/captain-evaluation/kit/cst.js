@@ -4,6 +4,7 @@
 // Requests go through fetch, in-process, so the token never shows up in `ps`.
 // Where they listen comes only from the app (shared "captain.daemon").
 import { shared, setShared, layout } from "herdr";
+import { watchLive } from "./live.js";
 
 // When this copy of the mod started: services get ~15 s to come up before a screen says so.
 const BORN = Date.now();
@@ -158,27 +159,31 @@ export function viewShown(section, stack = "sections") {
   return (node.active ?? node.children?.[0]?.id) === section;
 }
 
-export const FRESH_SECONDS = 5;
 
 /** Keep a view's lists current by themselves (the owner: "everything needs to refresh live"). `fn(cx, why)` reloads
  *  quietly: it must not blank what is drawn, or move the person's place. It is called
- *    - every FRESH_SECONDS while the view is the one shown ("timer"),
+ *    - the moment one of `topics` changes on the live channel (kit/live.js), whoever changed it: this screen,
+ *      another, a terminal, a cloud ("live"). Also when the channel says something may have been missed, and
+ *      every two seconds while it is down,
  *    - at once when the view comes back into view ("shown"),
  *    - at once when a form anywhere changes records, or a connection is saved or removed ("changed").
- *  There is no change stream from the services for lists, so the timer is what catches a change made from a
- *  terminal. Runs' live runs and jobs have their own, faster timers. */
-export function keepFresh(cx, section, fn, seconds = FRESH_SECONDS) {
-  let was = viewShown(section), due = Date.now() + seconds * 1000;
+ *  Nothing is read on a clock. A view that is not the one shown reads nothing: it reads when it is shown again.
+ *  The 300 ms look is at the window's own shared values (which view is shown, what a form just did), not at
+ *  Captain's data. */
+export function keepFresh(cx, section, fn, topics = []) {
+  let was = viewShown(section);
   let rec = shared("captain.records.changed")?.at ?? null, con = shared("captain.connections.changed") ?? null;
+  if (Array.isArray(topics) && topics.length) {
+    watchLive(cx, topics, (cx) => { if (viewShown(section)) fn(cx, "live"); });
+  }
   cx.timer.every(300, (cx) => {
     const now = viewShown(section);
     const r = shared("captain.records.changed")?.at ?? null, k = shared("captain.connections.changed") ?? null;
     const changed = r !== rec || k !== con;
     rec = r; con = k;
-    const why = changed ? "changed" : now && !was ? "shown" : now && Date.now() >= due ? "timer" : null;
+    const why = changed ? "changed" : now && !was ? "shown" : null;
     was = now;
     if (!why) return;
-    due = Date.now() + seconds * 1000;
     fn(cx, why);
   });
 }

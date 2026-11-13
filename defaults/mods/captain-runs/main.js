@@ -12,6 +12,7 @@ import { theme, run, shared, openOverlay, props as layoutProps } from "herdr";
 import { Curve } from "./kit/chart.js";
 import { api, retry, details, watchWorkspace, watchScope, keepFresh } from "./kit/cst.js";
 import { watchView } from "./kit/view.js";
+import { watchLive } from "./kit/live.js";
 import { SendToAgent } from "./kit/context.js";
 import { palette, isDark, FONT, MONO } from "./kit/tokens.js";
 import { Loading, Skeleton, Button, Submenus } from "./kit/ui.js";
@@ -157,7 +158,6 @@ export default class CaptainRuns extends View {
     // The compute picker on the cloud chip changed where runs go: the "Runs on" row follows.
     let place = placeChanged();
     cx.timer.every(500, (cx) => { const now = placeChanged(); if (now !== place) { place = now; this.cost.backtests.picked = false; this.loadPlaces(cx); } });
-    cx.timer.every(1000, (cx) => this.pollJob(cx));
     // Compute jobs: their state and log lines. Live runs: what's running now, drawn as it goes (live.js).
     this.jobs = new Jobs(this);
     this.live = new Live(this);
@@ -166,9 +166,12 @@ export default class CaptainRuns extends View {
     this.reg = new Regression(this);
     cx.timer.every(150, (cx) => { if (this.tab === "runs" && this.kind === "backtests") this.cmp.tick(cx); });
     this.loadAll(cx);
-    cx.timer.every(1000, (cx) => { if (this.kind === "live") this.live.tick(cx); });
-    cx.timer.every(4000, (cx) => this.live.load(cx)); // what is running now leads the list wherever Runs is
-    cx.timer.every(2000, (cx) => this.jobs.tick(cx));
+    // One clock, once a second, for what ticks on the page: a running run's elapsed time. It reads nothing but a
+    // finished run's cost, which is written a moment after its job ends and has no topic of its own.
+    cx.timer.every(1000, (cx) => { if (this.kind === "live") this.live.clock(cx); });
+    // Everything else stays current from the one live channel (kit/live.js): what is running now, an open run's
+    // events, the jobs and an open job's log. Read the moment it changes, whoever changed it.
+    watchLive(cx, ["runs", "run:", "jobs", "job:"], (cx, why, topics) => this.changed(cx, why, topics));
     // Layout props (a layout, or the real-window check): {tab: "jobs" | "grading" | "live" | "compare", live?: id,
     // backtest?, version?, section?, query?} opens on that.
     const p = layoutProps?.() ?? {};
@@ -217,7 +220,7 @@ export default class CaptainRuns extends View {
       if (this.starting) return;
       for (const k of ["backtests", "workflows", "grading", "replays"]) this.load(cx, k);
       if (this.tab === "compare") this.reg.load(cx);
-    });
+    }, ["runs"]);
     // The Explorer's pick filters the lists: load them again.
     watchScope(cx, (cx) => { this.data = {}; this.loadAll(cx); if (this.tab === "compare") this.reg.load(cx); cx.notify(); });
     // What this screen shows, for agents (cst app context): the submenu, the kind of thing open and which one.
@@ -436,12 +439,31 @@ export default class CaptainRuns extends View {
       if (!r.ok) this.job = { label, status: "failed", message: say(r, "Couldn't start it.") };
       else {
         this.job.id = r.data?.job;
+        this.pollJob(cx); // read it once now: from here on the job says so itself on the live channel
         // A run that streams: watch it in Live.
         if (r.data?.live) { this.kind = "live"; this.opened1 = true; this.grader = null; this.live.load(cx, r.data.live); }
       }
       cx.notify();
     });
     cx.notify();
+  }
+
+  /** The live channel says something changed (`why` "changed", with the topics), or that something may have been
+   *  missed ("reset", "reconnected", and "fallback" every two seconds while the channel is down). Each part reads
+   *  what it shows of it. */
+  changed(cx, why, topics = []) {
+    const all = why !== "changed";
+    const has = (t) => all || topics.includes(t);
+    // What is running now leads the list wherever Runs is.
+    if (has("runs")) this.live.load(cx);
+    // The open live run: its new events. A run that went out as a job is also read on when its job says something.
+    const sel = this.live.sel, job = this.live.run?.head?.job;
+    if (sel && this.kind === "live" && (has(`run:${sel}`) || (job && has(`job:${job}`)))) this.live.read(cx);
+    // The jobs: the list when one changes state, and the open job's log when it says something.
+    if (has("jobs")) this.jobs.load(cx, false); // the services ask each place themselves while someone listens
+    if (this.jobs.sel && has(`job:${this.jobs.sel}`)) this.jobs.follow(cx, this.jobs.sel);
+    // Work this screen started (an evaluation, a workflow): its state and its last words.
+    if (this.job?.id && has(`job:${this.job.id}`)) this.pollJob(cx);
   }
 
   pollJob(cx) {

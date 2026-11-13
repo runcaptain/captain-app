@@ -73,9 +73,82 @@ def _changed(rid: str) -> None:
     try:
         from . import changes
 
+        changes.bump(f"run:{rid}")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _listed(rid: str) -> None:
+    """Tell the change feed that what the list of runs shows of this run changed: it began, moved to another
+    step, or ended. Never held back, so a run's end is told the moment it ends."""
+    _TOLD[rid] = time.monotonic()
+    try:
+        from . import changes
+
         changes.bump("runs", f"run:{rid}")
     except Exception:  # noqa: BLE001
         pass
+
+
+# ---- runs written by another process ----------------------------------------------------------------------------
+# A run started from a terminal, or by a job on this computer, writes its files in the live folder, which is not in
+# the workspace. While someone listens to runs, the folder is looked at once a second: a file that changed tells
+# its run, and a header that changed tells the list too.
+
+_watch: dict = {"thread": None, "seen": {}, "primed": False}
+
+
+def _look() -> set[str]:
+    now: dict[str, int] = {}
+    try:
+        with os.scandir(_dir()) as it:
+            for e in it:
+                if e.name.endswith((".json", ".jsonl")):
+                    now[e.name] = e.stat().st_mtime_ns
+    except OSError:
+        return set()
+    before, first = _watch["seen"], not _watch["primed"]
+    _watch["seen"], _watch["primed"] = now, True
+    out: set[str] = set()
+    if first:
+        return out
+    for name in set(now) | set(before):
+        if now.get(name) == before.get(name):
+            continue
+        rid = name.rsplit(".", 1)[0]
+        if time.monotonic() - _TOLD.get(rid, 0.0) < 1.5:
+            continue   # this process wrote it and told it already
+        out.add(f"run:{rid}")
+        if name.endswith(".json"):
+            out.add("runs")
+    return out
+
+
+def _watching() -> None:
+    from . import changes
+
+    while changes.listening("runs") or changes.listening("run:"):
+        t0 = time.monotonic()
+        try:
+            ts = _look()
+            if ts:
+                changes.bump(*ts)
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(max(0.05, 1.0 - (time.monotonic() - t0)))
+    _watch["thread"], _watch["primed"] = None, False
+
+
+def watch_folder() -> None:
+    """Start looking at the live folder if someone listens to runs and nothing is looking. Called by the change
+    feed each time a request starts listening."""
+    from . import changes
+
+    t = _watch["thread"]
+    if (t is not None and t.is_alive()) or not (changes.listening("runs") or changes.listening("run:")):
+        return
+    _watch["thread"] = threading.Thread(target=_watching, daemon=True, name="watch-live-runs")
+    _watch["thread"].start()
 
 
 def _write_header(rid: str, head: dict) -> None:
@@ -118,7 +191,7 @@ class Run:
             with open(ep, "a") as f:
                 f.write(json.dumps(ev, default=str) + "\n")
             self.head["events"] = self._n
-            _changed(self.id)
+            (_listed if type_ == "stage" else _changed)(self.id)
             if type_ == "stage":
                 self.head["stage"] = data.get("name")
                 # When this step began, in seconds since the run started: the screen counts the step's own time
@@ -171,6 +244,7 @@ class Run:
             if status == "done":
                 self.head["progress"] = 1.0
             _write_header(self.id, self.head)
+        _listed(self.id)
 
 
 def _now() -> str:
@@ -188,6 +262,7 @@ def start(kind: str, title: str, *, of: str | None = None, arms: list[str] | Non
             "events": 0, "pid": pid or os.getpid()}
     _write_header(rid, head)
     open(_paths(rid)[1], "a").close()
+    _listed(rid)
     return Run(rid, head)
 
 
@@ -311,7 +386,7 @@ class StoreRun(Run):
             self._n += 1
             self._buf.append(json.loads(json.dumps(ev, default=str)))
             self.head["events"] = self._n
-            _changed(self.id)
+            (_listed if type_ == "stage" else _changed)(self.id)
             if type_ == "stage":
                 self.head["stage"] = data.get("name")
                 if data.get("name") not in self.head.setdefault("stages", []):
@@ -360,6 +435,7 @@ class StoreRun(Run):
         if status == "done":
             self.head["progress"] = 1.0
         self.flush()
+        _listed(self.id)
 
 
 def start_remote(ctx, kind: str, title: str, *, of: str | None = None, arms: list[str] | None = None,
