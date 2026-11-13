@@ -20,8 +20,8 @@ Where bumps come from
 - Writes made outside this process (a `cst` command in a terminal, an agent, another machine): `Watcher`, while
   anyone is listening. A workspace on this computer is seen within about a second. One in a bucket within about
   two, and only for its few index objects (see `BucketWatch`).
-- What only a cloud knows (a model that stopped by itself): `staging/cloud_watch.py`, while anyone listens to
-  `deployed`.
+- What only a cloud knows (a model that stopped by itself): flow-clouds' watcher, which calls `bump` here and
+  runs only while `listening("deployed")` or `listening("deployment:")`.
 
 The wire is `GET /api/changes` (a long poll) and `/api/changes/ws` in server.py.
 """
@@ -35,7 +35,8 @@ import time
 
 KEEP = 4096          # how many changes the feed remembers: a client further behind is told to read everything again
 HOLD_S = 25.0        # how long a long poll is held open with nothing to say
-LINGER_S = 30.0      # how long the watchers keep going after the last listener left (a long poll comes straight back)
+LINGER_S = 10.0      # how long a topic still counts as listened to after the last request for it ended: a long poll
+                     # comes straight back, and a client that vanished simply stops asking
 
 
 def _now() -> str:
@@ -140,27 +141,35 @@ class Feed:
             if fn in self._heard:
                 self._heard.remove(fn)
 
-    def _since(self, since: int, want: set[str] | None) -> tuple[list[str], bool]:
-        """(the topics that changed after `since`, whether the client must read everything again). Lock held."""
+    def _since(self, since: int, want: set[str] | None) -> tuple[list[dict], bool]:
+        """(the topics that changed after `since`, each with the sequence of its latest change; whether the client
+        must read everything again). Lock held."""
         if since > self.seq or since < self.base:
             return [], True                      # from another run of the service
         if self.log and since < self.log[0][0] - 1 and since < self.seq:
             return [], True                      # further behind than the feed remembers
-        hit: set[str] = set()
-        for seq, ts in reversed(self.log):
+        hit: dict[str, int] = {}
+        for seq, ts in reversed(self.log):   # newest first, so the first time a topic is met is its latest change
             if seq <= since:
                 break
-            hit |= ts if want is None else (ts & want)
-        return sorted(hit), False
+            for t in ts if want is None else (ts & want):
+                hit.setdefault(t, seq)
+        return [{"topic": t, "seq": hit[t]} for t in sorted(hit)], False
 
     def answer(self, since: int | None, topics=None) -> dict:
         """What a client is told right now, without waiting."""
         want = None if topics is None else set(topics)
         with self.cond:
             if not since:
-                return {"seq": self.seq, "changed": [], "at": _now()}
+                return {"seq": self.seq, "changed": [], "reset": False, "at": _now()}
             changed, reset = self._since(int(since), want)
-            return {"seq": self.seq, "changed": changed, "at": _now(), **({"reset": True} if reset else {})}
+            return {"seq": self.seq, "changed": changed, "reset": reset, "at": _now()}
+
+    def touch(self, topics=None) -> None:
+        """A client asked about these topics without waiting (it polls). It counts as listening for a while."""
+        ts = set(topics) if topics else {"*"}
+        self.listen(ts)
+        self.unlisten(ts)
 
     def wait(self, since: int | None, topics=None, timeout: float = HOLD_S) -> dict:
         """Hold until one of `topics` changes after `since`, or `timeout` passes. With no `since` it answers at
@@ -175,10 +184,10 @@ class Feed:
                 while True:
                     changed, reset = self._since(int(since), want)
                     if changed or reset:
-                        return {"seq": self.seq, "changed": changed, "at": _now(), **({"reset": True} if reset else {})}
+                        return {"seq": self.seq, "changed": changed, "reset": reset, "at": _now()}
                     left = end - time.monotonic()
                     if left <= 0:
-                        return {"seq": self.seq, "changed": [], "at": _now()}
+                        return {"seq": self.seq, "changed": [], "reset": False, "at": _now()}
                     self.cond.wait(left)
         finally:
             self.unlisten(want or {"*"})
@@ -217,7 +226,15 @@ FEED = Feed()
 
 
 def bump(*topics: str) -> int:
+    """Something changed under each topic. Safe from any thread, and cheap enough to call on every progress line.
+    Returns the new sequence number."""
     return FEED.bump(*topics)
+
+
+def listening(prefix: str | None = None) -> bool:
+    """Is a request open for a topic that is `prefix` or starts with it, or did one end under 10 seconds ago?
+    With no prefix: for any topic. What a watcher asks before it does work nobody would see."""
+    return FEED.listening(prefix)
 
 
 # ---- every write through this process ---------------------------------------------------------------------------------
@@ -399,10 +416,12 @@ def watch(store) -> None:
         _WATCHERS[uri].ensure()
 
 
-_CLOUD_HOOKS: list = []   # called when someone starts listening: staging/cloud_watch.py registers itself here
+_CLOUD_HOOKS: list = []   # called each time a request starts listening, so a watcher starts at once
 
 
 def on_listen(fn) -> None:
+    """Call `fn()` each time a request starts listening (not only the first), from that request's thread. It
+    must be quick and safe to call often."""
     if fn not in _CLOUD_HOOKS:
         _CLOUD_HOOKS.append(fn)
 

@@ -3228,20 +3228,6 @@ def kernel_start(body: dict):
 # ---- the change feed: what changed, the moment it changes (changes.py) -----------------------------------------
 
 _CHANGES_POOL = None
-_CLOUD_WATCH = False
-
-
-def _cloud_watch() -> None:
-    """What only a cloud knows (a model that stopped by itself) is asked for while someone listens to what is
-    deployed, and never otherwise (staging/cloud_watch.py). Attached on the first listener."""
-    global _CLOUD_WATCH
-    if _CLOUD_WATCH:
-        return
-    _CLOUD_WATCH = True
-    from .staging import cloud_watch as CW
-
-    CW.attach(lambda: ctx())
-
 
 def _topics(text: str | None) -> list[str] | None:
     ts = [t.strip() for t in str(text or "").split(",") if t.strip()]
@@ -3249,24 +3235,28 @@ def _topics(text: str | None) -> list[str] | None:
 
 
 @app.get("/api/changes", dependencies=A)
-async def changes_wait(since: int | None = None, topics: str | None = None, hold: float = CH.HOLD_S):
-    """Held open until one of `topics` (comma separated) changes after `since`, up to 25 seconds, then
-    {seq, changed: [topics], at}. Ask again with the `seq` it gave. With no `since`, or 0, it answers at once with
+async def changes_wait(since: int | None = None, topics: str | None = None, wait: float | None = None, hold: float | None = None):
+    """Held open until one of `topics` (comma separated) changes after `since`, for `wait` seconds (25 at most,
+    and when not given), then {seq, changed: [{topic, seq}], reset, at}: each topic with the sequence of its
+    latest change. `wait=0` answers at once. Ask again with the `seq` it gave. With no `since`, or 0, it answers at once with
     the current `seq`: read everything once, then wait from there. A `since` older than the feed remembers, or
     from before the service restarted, answers at once with `reset: true`: read everything again. With no
     `topics` it answers for any change. Topics: projects, project:<id>, data, table:<name>, runs, run:<id>, jobs,
     job:<id>, deployed, deployment:<project>, notebooks, logins, compute, settings, team."""
     global _CHANGES_POOL
     ctx()  # the workspace this client is looking at is watched for writes made outside this process
-    _cloud_watch()
     if not since:
+        return CH.FEED.answer(since, _topics(topics))
+    hold = wait if wait is not None else hold
+    if hold is not None and float(hold) <= 0:
+        CH.FEED.touch(_topics(topics))  # a client that asks without waiting is still a listener
         return CH.FEED.answer(since, _topics(topics))
     if _CHANGES_POOL is None:
         from concurrent.futures import ThreadPoolExecutor
 
         # Its own threads: a client that waits must never take one from the requests that do work.
         _CHANGES_POOL = ThreadPoolExecutor(max_workers=64, thread_name_prefix="changes")
-    return await asyncio.get_running_loop().run_in_executor(_CHANGES_POOL, CH.FEED.wait, since, _topics(topics), max(0.0, min(float(hold), CH.HOLD_S)))
+    return await asyncio.get_running_loop().run_in_executor(_CHANGES_POOL, CH.FEED.wait, since, _topics(topics), max(0.0, min(float(CH.HOLD_S if hold is None else hold), CH.HOLD_S)))
 
 
 @app.websocket("/api/changes/ws")
@@ -3278,7 +3268,6 @@ async def changes_ws(ws: WebSocket):
         await ws.close(code=4401)
         return
     await ws.accept()
-    _cloud_watch()
     loop = asyncio.get_running_loop()
     box: asyncio.Queue = asyncio.Queue()
     want: set[str] = set()
@@ -3309,7 +3298,7 @@ async def changes_ws(ws: WebSocket):
                 continue
             hit = sorted(topics if not want else topics & want)
             if hit:
-                await ws.send_json({"seq": seq, "changed": hit, "at": CH._now()})
+                await ws.send_json({"seq": seq, "changed": [{"topic": t, "seq": seq} for t in hit], "reset": False, "at": CH._now()})
             if reader.done():
                 break
     except (WebSocketDisconnect, RuntimeError):

@@ -117,11 +117,11 @@ A screen reads again what it already reads.
 
 | Address | What it does |
 |---|---|
-| `GET /api/changes?since=<seq>&topics=a,b,c` | Held open up to 25 seconds. Answers the moment a listed topic changes: `{seq, changed: [topics], at}` |
+| `GET /api/changes?since=<seq>&topics=a,b,c&wait=<seconds>` | Held open for `wait` seconds, 25 at most and by default. `wait=0` answers at once. Answers the moment a listed topic changes: `{seq, changed: [{topic, seq}], reset, at}` |
 | `/api/changes/ws?token=<token>` | The same messages over one connection. Send `{topics: [...], since?}`, and again to change what you listen to |
 
 - **First call:** no `since`. It answers at once with the current `seq`. Read everything, then wait from it.
-- **Nothing changed:** `{seq, changed: []}` after 25 seconds. Ask again with that `seq`.
+- **Nothing changed:** `{seq, changed: [], reset: false}` when the wait ends. Ask again with that `seq`.
 - **`reset: true`:** the `since` is older than the feed remembers (4,096 changes), or from before the service
   restarted. Read everything again, then wait from the `seq` it gave.
 - **Topics:** `projects`, `project:<id>`, `data`, `table:<name>`, `runs`, `run:<id>`, `jobs`, `job:<id>`,
@@ -137,8 +137,8 @@ How soon a change is told:
 | By another machine, to a workspace in a bucket | About 2 seconds, for its index objects only: the project list, each project's state, the settings, the library, the serving setup |
 | In a cloud (a model that stopped by itself, a copy added) | About 1 to 2 seconds, while someone listens to `deployed` or a `deployment:<project>` |
 
-The cloud is asked for its own state, which is free and never a call to a model. Nothing is asked while nobody
-listens. A cloud that errors is asked less often, up to once a minute.
+A topic counts as listened to while a request for it is open, and for 10 seconds after the last one ended. The
+watchers for outside writes and for the clouds run only while a topic they feed is listened to.
 
 ## Removed
 
