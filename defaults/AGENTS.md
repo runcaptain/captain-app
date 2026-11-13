@@ -1177,7 +1177,9 @@ The owner: "I think everything needs to refresh live." A list is never older tha
 `keepFresh(cx, section, fn)` in the kit calls `fn` every 5 seconds while the view is shown, at once when the view
 comes back into view, and at once when a form changes records (`recordsChanged`) or a connection changes. The
 reload must be quiet: nothing drawn goes blank, open groups stay open, the page of a list stays, a search being
-typed is not interrupted, and an open page or notebook is not reloaded under the person. The services have no
+typed is not interrupted. An open table or dataset page refreshes only its facts, about every 15 seconds: the
+row count, the description, how many versions Captain keeps. Its rows, its columns, a filter and the place in
+the grid are never reloaded. An open notebook's text is never reloaded: only the list beside it. The services have no
 change stream for lists, so the timer is what catches a change made with `cst` in a terminal. A form that
 makes or changes something calls `recordsChanged` after its submit succeeds.
 

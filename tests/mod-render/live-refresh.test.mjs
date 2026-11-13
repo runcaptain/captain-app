@@ -99,13 +99,28 @@ const swap = (file, to) => { globalThis.__routes.find((r) => r[1] === file)[1] =
     await h.idle(20);
     assert.equal(h.asked().length, asked, 'no request while typing');
     h.mod.catalog.find.set_value(''); h.mod.catalog.typed = null;
-    // A page that is open is left alone.
+    // A page that is open: only its facts are asked for, gently (every third time), and never its rows.
     h.mod.openDataset(h.cx, 'demo-catalog');
     await h.idle(40);
-    const during = h.asked().length;
-    h.mod.refreshLists(h.cx);
+    const grid = h.mod.page.grid ?? h.mod.page.rows ?? null;
+    const detail = h.mod.detail;
+    let during = h.asked().length;
+    h.mod.gentle = 0;
+    h.mod.refreshLists(h.cx); h.mod.refreshLists(h.cx);
     await h.idle(20);
-    assert.equal(h.asked().length, during, 'an open page is not reloaded under the person');
+    assert.equal(h.asked().length, during, 'two of three times nothing is asked');
+    h.mod.refreshLists(h.cx);
+    await h.idle(40);
+    const got = h.asked().slice(during);
+    assert.ok(got.length > 0 && got.every((p) => /^\/api\/datasets(\?|$|\/demo-catalog\?v=)/.test(p)), `only the list and its record: ${got}`);
+    assert.ok(!got.some((p) => p.includes('/rows')), 'never its rows');
+    assert.equal(h.mod.detail, detail, 'the page keeps its record: nothing is redrawn from scratch');
+    assert.equal(h.mod.page.grid ?? h.mod.page.rows ?? null, grid, 'and its grid');
+    assert.equal(h.mod.shown, 'dataset');
+    // A database table's page: its facts are merged in place; its columns and rows stay as drawn.
+    const src = fs.readFileSync(path.join(root, 'defaults/mods/captain-data/tables.js'), 'utf8');
+    const body = src.slice(src.indexOf('  refreshFacts(cx) {'), src.indexOf('  /** The Rows tab'));
+    assert.ok(body.includes('typeof v === "object"') && !body.includes('loadRows') && !body.includes('this.page ='), 'facts only');
   } finally { fs.rmSync(path.join(here, 'fixtures/captain-data/.fresh-more.json'), { force: true }); }
 }
 
