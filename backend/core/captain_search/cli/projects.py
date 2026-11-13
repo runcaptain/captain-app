@@ -548,16 +548,16 @@ def _staging_errors():
 @projects_app.command("stage")
 def stage(name: str,
           candidate: Optional[str] = typer.Option(None, "--candidate", help="a candidate id or model version; default the newest judged candidate"),
-          baseline: bool = typer.Option(False, "--baseline", help="stage the baseline itself"),
+          baseline: bool = typer.Option(False, "--baseline", help="deploy the baseline itself"),
           env: str = typer.Option("staging", "--env"),
           target: Optional[str] = typer.Option(None, "--target", help="compute target, or `local` for this computer; default the workspace's serving target"),
           endpoint: Optional[str] = typer.Option(None, "--endpoint", help="an HTTP endpoint you already run (POST {query, k} -> {ids}); Captain wraps it"),
           endpoint_auth_secret: Optional[str] = typer.Option(None, "--endpoint-auth-secret", help="name of a secret sent to your endpoint as a Bearer token"),
           image: Optional[str] = typer.Option(None, "--image", help="a container image that serves the model (SageMaker contract), for a cloud target"),
           idle_minutes: Optional[float] = typer.Option(None, "--idle-minutes", help="stop by itself after this long with no requests; default 240"),
-          allow_large: bool = typer.Option(False, "--allow-large", help="stage on this computer even when the model is over the size limit for it (Settings)"),
+          allow_large: bool = typer.Option(False, "--allow-large", help="deploy on this computer even when the model is over the size limit for it (Settings)"),
           yes: bool = typer.Option(False, "--yes", "-y", help="confirm the cost of a cloud deploy")):
-    """Run a model version as a live staging endpoint: on your compute target, or on this computer with --target local."""
+    """Deploy a model version as a live endpoint: on your compute target, or on this computer with --target local."""
     from .. import staging as SG
 
     c = ctx()
@@ -578,14 +578,14 @@ def stage(name: str,
                 typer.echo(p["preflight"]["note"])
             if not typer.confirm("Start it?"):
                 raise typer.Exit(1)
-        _by_hand(c, name, "stage a model version")
+        _by_hand(c, name, "deploy a model version")
         r = SG.stage(c, name, candidate, baseline, env, target, endpoint, endpoint_auth_secret, image, confirm=True,
                      idle_minutes=idle_minutes, progress=None if S.json else lambda t: typer.echo(t, err=True),
                      allow_large=allow_large)
     except _staging_errors() as e:
         fail(str(e))
     ep = r.get("endpoint") or {}
-    emit(r, f"Staged {r['model_version']} " + ("on this computer" if r["kind"] == "local" else f"on {r['target']}")
+    emit(r, f"Deployed {r['model_version']} " + ("on this computer" if r["kind"] == "local" else f"on {r['target']}")
             + f"\nEndpoint: {ep.get('url') or ep.get('name')}\n{r['cost']['text']}"
             + ("\nSleeps when nobody calls it, and wakes on the next request." if r.get("scale_to_zero")
                else f"\nStops by itself after {r['idle_minutes']:g} minutes with no requests.")
@@ -597,7 +597,7 @@ def staging_copies(name: str, fewest: Optional[int] = typer.Option(None, "--fewe
                    most: Optional[int] = typer.Option(None, "--most", help="the most copies at once"),
                    idle_seconds: Optional[int] = typer.Option(None, "--idle-seconds", help="how long an idle copy stays up, where the host lets it be set"),
                    env: str = typer.Option("staging", "--env")):
-    """How many copies the staged endpoint may run and how long an idle one stays up. With a value, change it."""
+    """How many copies the deployed model may run and how long an idle one stays up. With a value, change it."""
     from .. import staging as SG
 
     try:
@@ -613,27 +613,27 @@ def staging_copies(name: str, fewest: Optional[int] = typer.Option(None, "--fewe
 
 @projects_app.command("unstage")
 def unstage(name: str, env: str = typer.Option("staging", "--env")):
-    """Stop the staging endpoint and remove every resource Captain created for it."""
+    """Stop the deployed model and remove every resource Captain created for it."""
     from .. import staging as SG
 
     c = ctx()
     if S.dry_run:
         rec = SG.public(_do(SG.state, c, name, env))
         emit({"dry_run": True, "would_remove": (rec or {}).get("resources") or [], "staged": rec},
-             "Would stop staging" + (" and remove " + ", ".join(f"{r['type']} {r['name']}" for r in rec["resources"]) if rec and rec.get("resources") else ""))
+             "Would stop the deployed model" + (" and remove " + ", ".join(f"{r['type']} {r['name']}" for r in rec["resources"]) if rec and rec.get("resources") else ""))
         return
-    _by_hand(c, name, "stop staging")
+    _by_hand(c, name, "stop the deployed model")
     try:
         r = SG.unstage(c, name, env)
     except _staging_errors() as e:
         fail(str(e))
-    emit(r, "Staging stopped." if r["status"] == "stopped" else f"Staging stopped, but {r['error']}")
+    emit(r, "The deployed model is stopped." if r["status"] == "stopped" else f"The deployed model is stopped, but {r['error']}")
 
 
 @projects_app.command("staging")
 def staging_status(name: str, env: str = typer.Option("staging", "--env"),
                    no_sweep: bool = typer.Option(False, "--no-sweep", help="only look: don't stop an endpoint that is past its idle limit")):
-    """Where staging stands: what is running, where, since when, and when it stops by itself."""
+    """What is deployed: what is running, where, since when, and when it stops by itself."""
     from .. import staging as SG
 
     try:
@@ -655,7 +655,7 @@ def staging_status(name: str, env: str = typer.Option("staging", "--env"),
 
 @projects_app.command("staging-query")
 def staging_query(name: str, query: str, k: int = typer.Option(10, "-k"), env: str = typer.Option("staging", "--env")):
-    """Ask the staged endpoint for results, with the baseline's results beside them. Logged as test traffic."""
+    """Ask the deployed model for results, with the baseline's results beside them. Logged as test traffic."""
     from .. import staging as SG
 
     try:
@@ -676,7 +676,7 @@ def staging_query(name: str, query: str, k: int = typer.Option(10, "-k"), env: s
 def staging_check(name: str, env: str = typer.Option("staging", "--env"),
                   sample: int = typer.Option(5000, "--sample", help="how many (query, product) pairs to compare at most"),
                   min_match: float = typer.Option(0.999, "--min-match", help="the share of pairs that must match exactly")):
-    """Compare the features the staging endpoint served with the features training computes, for the same pairs."""
+    """Compare the features the deployed model served with the features training computes, for the same pairs."""
     from ..staging import consistency as SC
 
     try:
@@ -714,7 +714,7 @@ for _name in ("ab", "ab-start", "ab-readout", "ab-ramp", "ab-rollback", "ab-stop
 @projects_app.command("staging-connect")
 def staging_connect(name: str, env: str = typer.Option("staging", "--env"),
                     code: Optional[str] = typer.Option(None, "--code", help="print one snippet: curl, javascript, python (or `aws cli` in the cloud)")):
-    """How a site calls the staged endpoint, whether it can reach it, and how many real requests have arrived."""
+    """How a site calls the deployed model, whether it can reach it, and how many real requests have arrived."""
     from ..staging import traffic as TF
 
     try:
@@ -794,7 +794,7 @@ def shadow_stop(name: str):
 
 @projects_app.command("staging-serve", hidden=True)
 def staging_serve(bundle: str, host: str = typer.Option("127.0.0.1", "--host"), port: int = typer.Option(8080, "--port")):
-    """Run the staging runtime over a serving bundle. Staging starts this for you; the runner image runs it."""
+    """Run the serving runtime over a serving bundle. A deploy starts this for you; the runner image runs it."""
     from ..staging import runtime as RT
 
     RT.serve(ctx(), bundle, host=host, port=port)

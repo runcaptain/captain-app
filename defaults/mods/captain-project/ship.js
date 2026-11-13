@@ -444,6 +444,29 @@ export class Ship {
       .on_click((_e, cx) => { onPick(); cx.notify(); }).child(label);
   }
 
+  /** Change what the deployed model accepts (its size and rate limits, its time budget). */
+  saveProtect(cx, body) {
+    this.protNote = null;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/protect`, { method: "PUT", body, scoped: false });
+      if (r.ok) { this.protD = r.data; this.protNote = { tone: "good", text: "Saved. It takes effect in a few seconds." }; }
+      else this.protNote = { tone: "fail", text: plainError(r.error, "That couldn't be saved.") };
+      cx.notify();
+    });
+  }
+
+  /** Make a new key. The old one keeps working for the time chosen, so a site can switch with no downtime. */
+  rotateKey(cx, graceMinutes) {
+    this.protNote = null; this.keyAsk = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/key/rotate`, { body: { grace_minutes: graceMinutes }, scoped: false, timeout: 60 });
+      if (r.ok) { if (this.protD) this.protD = { ...this.protD, key: r.data }; this.protNote = { tone: "good", text: "The key was changed. Copy the new one and give it to your site." }; }
+      else this.protNote = { tone: "fail", text: plainError(r.error, "The key couldn't be changed.") };
+      cx.notify();
+    });
+  }
+
   /** What a tab needs, asked when it is opened and again while it stays open. */
   loadTab(cx) {
     const pid = this.pid();
@@ -575,7 +598,7 @@ export class Ship {
         .when(this.verAsk === r.n, (e) => e.child(h_flex().id("dep-version-ask").mt(6).p(8).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
           .child(v_flex().flex_1().min_w(0).gap(6)
             .child(div().text_size(12.5).text_color(c.grey900).child(`Put ${short(r.model_version)} back? What runs now keeps answering until it does. Say why, so the next person knows.`))
-            .child(h_flex().gap(6).flex_wrap().children(["It gives worse results", "It is too slow", "It is failing requests", "Deployed by mistake"].map((why, i) =>
+            .child(h_flex().gap(6).flex_wrap().children(["It gives worse results", "It is too slow", "It is failing requests", "It was deployed by mistake", "Another reason"].map((why, i) =>
               div().id(`dep-version-why-${i}`).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
                 .border_color(this.verWhy === why ? c.blue : c.grey300).bg(this.verWhy === why ? c.blueLight : c.surface).text_color(this.verWhy === why ? c.blue : c.navy)
                 .on_click((_e, cx) => { this.verWhy = why; cx.notify(); }).child(why)))))

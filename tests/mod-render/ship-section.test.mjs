@@ -52,16 +52,19 @@ globalThis.fetch = async (url, opts = {}) => {
   sent.push([opts.method ?? 'GET', p + u.search, body]);
   if (p.endsWith('/deploy/hosts')) return reply(200, { project: 'shop', model_version: 'shop/starter-ranker@v2', beside: 'shop/keyword-baseline@v1', hosts: world.places });
   if (p.endsWith('/deploy') && (opts.method ?? 'GET') === 'GET') { jobReads += 1; return reply(200, world.job(jobReads)); }
+  if (p.endsWith('/deploy') && opts.method === 'DELETE') return reply(200, { job: 'rm-1' });
   if (p.endsWith('/deploy')) {
     if (body.host === 'local' || body.confirm) return reply(200, { job: 'dep-1', run: 'run-1', plan: body.host === 'local' ? { steps: [] } : PLAN });
     return reply(409, { needs_confirm: true, detail: 'Confirm first.', plan: PLAN });
   }
-  if (p.endsWith('/staging/versions')) return reply(200, { text: '2 versions staged so far.', live: 'shop/starter-ranker@v2', rows: [
+  if (p.endsWith('/staging/versions')) return reply(200, { text: '2 versions deployed so far.', live: 'shop/starter-ranker@v2', rows: [
     { n: 2, model_version: 'shop/starter-ranker@v2', at: '2026-11-12T19:00:00+00:00', by: 'dev', live: true, can_roll_back: false },
     { n: 1, model_version: 'shop/keyword-baseline@v1', at: '2026-11-12T18:00:00+00:00', by: 'dev', live: false, can_roll_back: true }] });
   if (p.endsWith('/rollback')) return reply(200, { job: 'rb-1' });
   if (p.endsWith('/staging/rollbacks/auto')) { world.backs = { ...world.backs, auto: body.minutes ? { minutes: body.minutes, on: true, text: `On: if a new version is unhealthy in its first ${body.minutes} minutes, Captain puts the previous one back and tells you.` } : { minutes: null, on: false, text: 'Off: an unhealthy version stays up until you roll it back.' } }; return reply(200, world.backs.auto); }
   if (p.endsWith('/staging/rollbacks')) return reply(200, world.backs);
+  if (p.endsWith('/staging/protect')) { if ((opts.method ?? 'GET') === 'PUT') world.prot = { ...world.prot, limits: { ...world.prot.limits, ...(body.rate_per_s !== undefined ? { rate_per_s: body.rate_per_s || null } : {}) }, rate_text: body.rate_per_s ? `Up to ${body.rate_per_s} requests a second on each copy. More than that are refused, and told to try again in a second.` : world.prot.rate_text }; return reply(200, world.prot); }
+  if (p.endsWith('/staging/key/rotate')) return reply(200, { rotated: true, can_rotate: true, previous_valid: true, text: 'Changed 2026-11-12 20:00 UTC by dev. The old key works until 2026-11-12 21:00 UTC.' });
   if (p.endsWith('/staging/live')) return reply(200, world.live);
   if (p.endsWith('/staging/health/check')) return reply(200, { ...world.health, checked_at: '2026-11-12T19:31:00+00:00', changed: false, alert: null });
   if (p.endsWith('/staging/health/target')) { world.health = { ...world.health, target: { p95_ms: body.p95_ms ?? null, error_rate: body.error_rate ?? 0.05, set: true } }; return reply(200, world.health); }
@@ -98,6 +101,10 @@ class Dep extends View {
 }
 const open = async (w, deployOpen = false) => {
   world = { places: [LOCAL], staging: NONE, live: { state: 'handling', label: 'Handling requests' }, real: 0,
+    prot: { limits: { max_request_kb: 256, rate_per_s: null }, budget: { ms: null, fallback: true }, has_fallback: true,
+      size_text: 'Requests up to 256 KB. A bigger one is refused with a sentence saying so.', rate_text: 'No limit on requests a second.',
+      budget_text: "No time budget. If this model fails, the request is answered with the compared model's results.",
+      key: { can_rotate: true, previous_valid: false, text: 'The key has not been changed since it was made.' } },
     backs: { rows: [{ at: '2026-11-12T18:30:00+00:00', by: 'Captain', from: 'shop/starter-ranker@v1', to: 'shop/keyword-baseline@v1', version: 1, auto: true, reason: 'It turned unhealthy 4 minutes after it was deployed. It is not answering.' }],
       auto: { minutes: null, on: false, text: 'Off: an unhealthy version stays up until you roll it back.' }, text: '1 roll back so far.' },
     health: { project: 'shop', status: 'healthy', text: 'Healthy. 0 of its last 62 requests failed, in the last 15 minutes. 95 in 100 took under 0.6 ms at the endpoint.', checked_at: '2026-11-12T19:30:00+00:00', reasons: [], target: { p95_ms: null, error_rate: 0.05, set: false } }, job: () => ({ status: 'running', host: 'aws', login: 'aws-main', steps: STEPS }), ...w };
@@ -403,6 +410,59 @@ world.staging = RUN;
 await h.idle(20);
 assert.equal(byId(h, 'ship-deployed').length, 1, 'and the deployed view appears');
 
+// Settings holds what the model accepts from a site: its key, a size and rate limit, and a time budget.
+h = await open({ places: [LOCAL, AWS], staging: RUN }, true);
+await h.click('dep-more-settings');
+await wait(h, () => Boolean(h.mod.ship.protD), 'what it accepts is read');
+t = h.text();
+assert.ok(t.includes('The key has not been changed since it was made.') && t.includes('Requests up to 256 KB.') && t.includes('No limit on requests a second.') && t.includes("No time budget. If this model fails, the request is answered with the compared model's results."), `the sentences: ${t.slice(-1000)}`);
+await h.click('dep-rate-50');
+await wait(h, () => h.mod.ship.protD?.limits?.rate_per_s === 50, 'the rate limit is saved');
+assert.deepEqual(sent.find((x) => x[0] === 'PUT' && x[1].endsWith('/staging/protect'))[2], { rate_per_s: 50 });
+assert.ok(h.text().includes('Up to 50 requests a second on each copy.') && h.text().includes('Saved. It takes effect in a few seconds.'));
+await h.click('dep-key-change');
+assert.equal(sent.filter((x) => x[1].endsWith('/staging/key/rotate')).length, 0, 'changing the key asks first');
+await h.click('dep-key-grace-0');
+await h.click('dep-key-yes');
+await wait(h, () => sent.some((x) => x[1].endsWith('/staging/key/rotate')), 'then asks the services');
+assert.deepEqual(sent.find((x) => x[1].endsWith('/staging/key/rotate'))[2], { grace_minutes: 0 });
+assert.ok(h.text().includes('The old key works until 2026-11-12 21:00 UTC.') && h.text().includes('The key was changed. Copy the new one and give it to your site.'));
+
+// A failed deploy says what now exists in the account and offers to remove it. "Deploy again" is offered only
+// when it can work: when it cannot, the services' sentence says what to do in its place.
+const FAILED = { status: 'failed', steps: [{ id: 'check', title: 'Checking your account', status: 'done' }, { id: 'start', title: 'Starting the model', status: 'failed' }],
+  failed_step: { id: 'start', title: 'Starting the model' }, error: 'The image could not be pulled.', exists_now: [{ resource: 's3-bucket', name: 'captain-serving-demo' }, { resource: 'iam-role', name: 'captain-serving' }] };
+let removed = false;
+h = await open({ places: [LOCAL, AWS], staging: NONE, job: () => (removed ? { status: 'removed', steps: [], exists_now: [], can: [] } : { ...FAILED, can: ['retry', 'remove'], fix_text: null }) });
+await h.click('ship-deploy-aws:aws-main');
+await wait(h, () => byId(h, 'ship-confirm').length === 1, 'the confirm opens');
+await h.click('ship-confirm-yes');
+await wait(h, () => Boolean(h.mod.ship.djob?.failed), 'the failure is shown');
+t = h.text();
+assert.ok(t.includes('This now exists in your account: s3-bucket captain-serving-demo, iam-role captain-serving.'), `what exists: ${t.slice(-700)}`);
+assert.ok(byId(h, 'ship-progress-again').length === 1 && byId(h, 'ship-progress-remove').length === 1 && byId(h, 'ship-progress-fix').length === 0);
+removed = true;
+await h.click('ship-progress-remove');
+await wait(h, () => sent.some((x) => x[0] === 'DELETE' && x[1].endsWith('/deploy')), 'Remove what was created asks the services');
+await wait(h, () => Boolean(h.mod.ship.removeNote), 'and says when it is gone');
+await h.idle(60);
+assert.ok(h.text().includes('Removed. Nothing from this deploy is left in your account.') && byId(h, 'ship-progress-remove').length === 0 && !h.text().includes('This now exists'), `after removing: ${h.mod.ship.removeNote} | ${JSON.stringify(h.mod.ship.djob?.failed)} | ${h.text().slice(-400)}`);
+h = await open({ places: [LOCAL, AWS], staging: NONE, job: () => ({ ...FAILED, exists_now: [], can: [], fix_text: 'That place is not connected in Captain any more. Connect its cloud login again, or deploy somewhere else.' }) });
+await h.click('ship-deploy-aws:aws-main');
+await wait(h, () => byId(h, 'ship-confirm').length === 1, 'the confirm opens');
+await h.click('ship-confirm-yes');
+await wait(h, () => Boolean(h.mod.ship.djob?.failed), 'the failure is shown');
+assert.equal(byId(h, 'ship-progress-again').length, 0, 'Deploy again is not offered when it cannot work');
+assert.ok(h.text().includes('Connect its cloud login again, or deploy somewhere else.') && byId(h, 'ship-progress-remove').length === 0, 'what to do is said in its place');
+
+// The Deployments screen is the one place to manage every deployed model: the project page links to it, and
+// does not keep a second list.
+h = await open({ places: [LOCAL, AWS], staging: RUN }, false);
+globalThis.__runs = [];
+await h.click('ship-open-in-deployments');
+assert.equal(globalThis.__shared['captain.open']?.section, 'deployments');
+assert.equal(globalThis.__shared['captain.open']?.open, 'shop:staging', 'it asks for this model');
+assert.ok(globalThis.__runs.some((r) => r[0] === 'layout.select' && r[1]?.child === 'deployments'), 'and the Deployments screen is selected');
 // Asleep, and stopped: said in words.
 h = await open({ places: [LOCAL, AWS], staging: { ...RUN, asleep: true }, live: { state: 'asleep', label: 'Asleep' } }, true);
 assert.ok(h.text().includes('Asleep on AWS. It wakes on the next request, and costs nothing asleep.'), `asleep: ${h.text()}`);

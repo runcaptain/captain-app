@@ -279,7 +279,7 @@ def test_requests_newest_first_and_one_request_in_full(ws):  # noqa: F811
     a = SG.call(ws, rec, "rank", {"traffic": "real", "query": "jacket", "k": 5, "session_id": "s1", "request_id": "first"})
     SG.call(ws, rec, "rank", {"query": "boots", "k": 3, "traffic": "test", "request_id": "second"})
     r = TF.requests(ws, "shop")
-    assert [x["request_id"] for x in r["rows"]] == ["second", "first"] and r["total"] == 2 and r["text"] == "2 requests since this version was staged."
+    assert [x["request_id"] for x in r["rows"]] == ["second", "first"] and r["total"] == 2 and r["text"] == "2 requests since this version was deployed."
     top = r["rows"][1]
     assert top["query"] == "jacket" and top["arm"] == "candidate" and top["model_version"] == ws.candidate and top["results"] == 5 and top["status"] == "answered"
     assert r["rows"][0]["traffic"] == "test" and top["traffic"] == "real" and top["ms"] >= 0
@@ -330,13 +330,13 @@ def test_a_model_over_the_size_limit_is_not_staged_on_this_computer_even_with_me
         ST.set_local_limit(ws, 1024)
         r = FT.check(ws, arms, roomy)
         assert r["outcome"] == "over-limit" and r["limit_mb"] == 1024
-        assert r["text"] == (f"This model needs about {big['memory_mb'] / 1024:.1f} GB to serve, which is more than the 1 GB limit for staging on "
+        assert r["text"] == (f"This model needs about {big['memory_mb'] / 1024:.1f} GB to serve, which is more than the 1 GB limit for deploying on "
                              "this computer. Deploy it to a cloud.")
-        with pytest.raises(ValueError, match="more than the 1 GB limit for staging on this computer.*raise the limit in Settings, or pass --allow-large"):
+        with pytest.raises(ValueError, match="more than the 1 GB limit for deploying on this computer.*raise the limit in Settings, or pass --allow-large"):
             SG.stage(ws, "shop", target="local")
         assert SG.state(ws, "shop") is None
         out = CliRunner().invoke(app, ["projects", "stage", "shop", "--target", "local"])
-        assert out.exit_code == 1 and "1 GB limit for staging on this computer" in out.output
+        assert out.exit_code == 1 and "1 GB limit for deploying on this computer" in out.output
         # the limit is a setting: raise it and the same model is offered, with the free-memory test still applied
         ST.set_local_limit(ws, 4096)
         assert FT.check(ws, arms, roomy)["outcome"] == "fits" and FT.check(ws, arms, {"memory_mb": 2000, "disk_mb": 500_000})["outcome"] == "wont-fit"

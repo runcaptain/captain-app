@@ -207,6 +207,43 @@ await h.click('dep-set-edit');
 await h.click('dep-set-idle-60');
 await until(h, () => h.mod.shipPath.setNote?.tone === 'good', 'the idle time changes while it runs');
 assert.equal((await get('/api/projects/outdoor/staging/settings')).idle_minutes, 60);
+// What it accepts from a site, in Settings: its key, a size and rate limit, and a time budget. On a real endpoint.
+await until(h, () => Boolean(h.mod.shipPath.protD), 'what it accepts is read');
+t = h.text();
+assert.ok(t.includes('The key has not been changed since it was made.') && t.includes('Requests up to 256 KB.') && t.includes('No limit on requests a second.') && t.includes('No time budget.'), `the starting state, in sentences: ${t.slice(-1200)}`);
+{
+  const ep = (await get('/api/projects/outdoor/staging')).staged.endpoint.url;
+  const ask = async (key, body = {}) => (await fetch(`${ep}/rank`, { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'jacket', k: 3, ...body }) })).status;
+  const oldKey = (await get('/api/projects/outdoor/staging/key')).key;
+  assert.equal(await ask(oldKey), 200);
+  // This test gives the endpoint its key through the environment, as a server with no keychain does. Captain can
+  // only change a key it keeps itself, and says so in place of the button. (Changing a key against a real
+  // endpoint, with the old one still working, is tests/test_deployment_protect.py.)
+  let newKey = oldKey;
+  if (byId(h, 'dep-key-change').length === 0) {
+    assert.ok(h.text().includes('The key is set in the environment as') && h.text().includes('Change it there and deploy again.'), `why the key can't be changed here: ${h.text().slice(-700)}`);
+  } else {
+    await h.click('dep-key-change');
+    assert.ok(h.text().includes('How long should the old one keep working, so your site can switch?'), 'changing the key asks how long the old one lasts');
+    await h.click('dep-key-grace-1440');
+    await h.click('dep-key-yes');
+    await until(h, () => h.mod.shipPath.protNote?.tone === 'good', 'the key is changed');
+    newKey = (await get('/api/projects/outdoor/staging/key')).key;
+    assert.ok(newKey && newKey !== oldKey, 'a new key');
+    assert.deepEqual([await ask(newKey), await ask(oldKey), await ask('wrong')], [200, 200, 401], 'no downtime: the new key and the old key both work');
+    t = h.text();
+    assert.ok(t.includes('The old key works until') && !t.includes(newKey) && !t.includes(oldKey), 'said in a sentence, and no key is ever on screen');
+  }
+  // a size limit, a rate limit and a time budget, each a click
+  await h.click('dep-size-64');
+  await until(h, () => h.mod.shipPath.protD?.limits?.max_request_kb === 64, 'the size limit is saved');
+  await h.click('dep-budget-200');
+  await until(h, () => h.mod.shipPath.protD?.budget?.ms === 200, 'the time budget is saved');
+  t = h.text();
+  assert.ok(t.includes('Requests up to 64 KB.') && /If this model takes longer than 200 ms, or fails, the request is answered with the compared model's results\.|A request that takes longer than 200 ms is refused\./.test(t), `the new sentences: ${t.slice(-1200)}`);
+  await h.idle(600);
+  assert.equal(await ask(newKey, { note: 'x'.repeat(100000) }), 413, 'a request over the size limit is refused by the endpoint itself');
+}
 await h.click('dep-open-close');
 
 // What an agent is told when the deployment is pinned: no key, no secret.

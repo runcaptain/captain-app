@@ -24,7 +24,7 @@ import { int } from "./kit/num.js";
 import { Ship } from "./ship.js";
 import { costText } from "./kit/cost.js";
 
-const RUN_WORDS = { training: "Training", evaluation: "Offline evaluation", "synthetic-events": "Simulated events", snapshot: "Snapshot", judging: "Judging", staging: "Staging", workflow: "Workflow" };
+const RUN_WORDS = { training: "Training", evaluation: "Offline evaluation", "synthetic-events": "Simulated events", snapshot: "Snapshot", judging: "Judging", staging: "Deploying", workflow: "Workflow" };
 const day = (iso) => (iso ? String(iso).slice(0, 10) : "");
 const go = (section, extra) => { setShared("captain.open", { section, ...extra, at: Date.now() }); run("layout.select", { stack: "sections", child: section }); };
 const form = (task, values = {}, args) => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, values, ...(args ? { args } : {}) } });
@@ -295,7 +295,7 @@ export default class ProjectHome extends View {
 
   project() { return (this.projects ?? []).find((p) => p.id === this.pid()) ?? null; }
 
-  goTo(section) { go(section); }
+  goTo(section, extra) { go(section, extra); }
 
   /** The staged model's own page: its header (is it up, where, who is calling it) and its tabs. */
   openDeployment(cx) { this.deployOpen = true; this.shipPath.listOpen = false; this.shipPath.loadTab(cx); cx.notify(); }
@@ -1130,7 +1130,7 @@ export default class ProjectHome extends View {
         .child(div().text_color(c.grey500).child("/"))
         .child(div().text_color(c.navy).font_medium().child("Deployment"))
         .child(div().flex_1())
-        .child(div().id("dep-all").text_color(c.blue).cursor_pointer().on_click((_e, cx) => this.shipPath.openList(cx)).child("All deployments")))
+        .child(div().id("dep-all").text_color(c.blue).cursor_pointer().on_click(() => go("deployments")).child("All deployments")))
       // An open question (the confirm) or a deploy in progress takes the banner's place: one filled button.
       .when(!this.shipPath.dconfirm && !this.shipPath.jobShown(), (e) => e.child(this.nextLine(c)))
       .child(this.shipPath.deployed(c));
