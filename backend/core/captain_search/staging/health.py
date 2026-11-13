@@ -161,7 +161,10 @@ def measure(ctx: Context, pid: str, env: str = ENV, window: int = WINDOW_MINUTES
     errs = [x for x in got.get("lines") or [] if x.get("level") == "error" and (_t(x.get("ts")) or since) >= since]
     ms = [float(r["ms"]) for r in reqs if r.get("ms") is not None]
     total = len(reqs) + len(errs)  # a request that failed has a log line and no request record
-    out.update(requests=total, errors=len(errs), error_rate=round(len(errs) / total, 4) if total else None,
+    fell = sum(1 for r in reqs if r.get("fallback"))
+    out["fallbacks"] = fell
+    # A request the compared model had to answer is this model failing, though the site got an answer.
+    out.update(requests=total, errors=len(errs), error_rate=round((len(errs) + fell) / total, 4) if total else None,
                p50_ms=_pct(ms, 50), p95_ms=_pct(ms, 95),
                last_request_at=max((str(r.get("ts")) for r in got["requests"]), default=None))
     return out
@@ -177,8 +180,11 @@ def judge(m: dict, tgt: dict) -> list[str]:
     if m["requests"] >= MIN_REQUESTS:
         rate, limit = m.get("error_rate") or 0.0, tgt["error_rate"]
         if limit is not None and rate > limit:
-            why.append(f"{m['errors']:,} of its last {m['requests']:,} requests failed ({rate:.1%}), over the {limit:.0%} "
-                       f"{'target' if tgt['set'] else 'Captain allows until you set a target'}.")
+            fell = int(m.get("fallbacks") or 0)
+            why.append((f"{m['errors'] + fell:,} of its last {m['requests']:,} requests failed or were answered by the compared model "
+                        f"because this one was slow or failed ({rate:.1%}), over the {limit:.0%} " if fell else
+                        f"{m['errors']:,} of its last {m['requests']:,} requests failed ({rate:.1%}), over the {limit:.0%} ")
+                       + f"{'target' if tgt['set'] else 'Captain allows until you set a target'}.")
         if tgt.get("p95_ms") is not None and m.get("p95_ms") is not None and m["p95_ms"] > tgt["p95_ms"]:
             why.append(f"95 in 100 requests took up to {_ms(m['p95_ms'])} at the endpoint, over the {_ms(tgt['p95_ms'])} target.")
     return why

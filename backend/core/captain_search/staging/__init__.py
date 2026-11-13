@@ -17,7 +17,7 @@ model, its feature spec and lookup tables) are copied beside it; the catalog is 
 
 What can be served: a keyword-search version or a starter ranker (Captain's own runtime), and any version that
 ranks by calling a service the team already runs (it is wrapped: Captain's runtime sits in front and does the
-logging and the split). A model trained outside Captain with no serving entry point is refused in a sentence;
+logging). A model trained outside Captain with no serving entry point is refused in a sentence;
 bring an HTTP endpoint (`--endpoint`) or a container image (`--image`) for it.
 
 Project state. `projects/<id>/state.yaml` gains `staging: {<env>: record}`. A record holds the endpoint, the
@@ -232,8 +232,8 @@ def _key(rec: dict) -> str | None:
     try:
         return get_secret(rec["key_secret"])
     except KeyError:
-        raise ValueError("this computer doesn't hold the key for the staging endpoint (it is kept in the keychain "
-                         "of the computer that staged it). Stage it again from here, or ask whoever staged it.") from None
+        raise ValueError("this computer doesn't hold the key for the deployed model (it is kept in the keychain "
+                         "of the computer that deployed it). Deploy it again from here, or ask whoever deployed it.") from None
 
 
 def control(ctx: Context, pid: str, env: str = ENV) -> dict:
@@ -244,7 +244,7 @@ def control(ctx: Context, pid: str, env: str = ENV) -> dict:
 
 
 def set_control(ctx: Context, pid: str, env: str, **fields) -> dict:
-    """Change what the running endpoint does (which arm it serves, the split, the idle limit). The runtime re-reads
+    """Change what the running endpoint does (which model it serves, the idle limit). The runtime re-reads
     this every few seconds, and at once when asked."""
     k = RT.control_key(pid, env)
     store = L.shared(ctx, pid, env)
@@ -261,7 +261,7 @@ def set_control(ctx: Context, pid: str, env: str, **fields) -> dict:
             return doc
         except Conflict:  # someone else wrote: read again
             time.sleep(0.01)
-    raise ValueError("the staging settings kept changing while saving. Try again.")
+    raise ValueError("the deployment's settings kept changing while saving. Try again.")
 
 
 # ---- choosing what to stage ----------------------------------------------------------------------
@@ -275,7 +275,7 @@ def _pick(ctx: Context, doc: dict, candidate: str | None, baseline: bool) -> tup
     exps = doc.get("experiments") or []
     if baseline:
         if not champ:
-            raise ValueError("This project has no baseline yet. Set one first, then stage it.")
+            raise ValueError("This project has no baseline yet. Set one first, then deploy it.")
         return {"baseline": champ}, "baseline", None
     exp = None
     if candidate:
@@ -287,7 +287,7 @@ def _pick(ctx: Context, doc: dict, candidate: str | None, baseline: bool) -> tup
         exp = (judged or rest or [None])[-1]
         target = exp["pipeline"] if exp else champ
         if not target:
-            raise ValueError("There is nothing to stage yet. Set a baseline or train a candidate first.")
+            raise ValueError("There is nothing to deploy yet. Set a baseline or train a candidate first.")
     if target == champ:
         return {"baseline": champ}, "baseline", None
     arms = {"candidate": target}
@@ -303,8 +303,8 @@ def _target(ctx: Context, name: str | None) -> dict:
     name = name or ST.default_compute(ctx, "serve") or "local"
     t = C.get(ctx, name)
     if t["kind"] != "local" and not C.can_stage(ctx, t):
-        raise ValueError(f"Compute target {name} ({t['kind']}) can't run a staging endpoint yet. Use a target that "
-                         "serving setup made (AWS, Modal, Google Cloud or Azure), or stage on this computer with --target local.")
+        raise ValueError(f"Compute target {name} ({t['kind']}) can't run a deployed model yet. Use a target that "
+                         "serving setup made (AWS, Modal, Google Cloud or Azure), or deploy on this computer with --target local.")
     return t
 
 
@@ -338,7 +338,7 @@ def plan(ctx: Context, pid: str, candidate: str | None = None, baseline: bool = 
             "arms": arms, "serve": serve, "experiment": exp, "model_version": arms[serve], "cost": c,
             "needs_confirm": bool(c["billing"]), "local_fit": local_fit, "preflight": pre, "warnings": (pre or {}).get("warnings") or [], "replaces": cur["model_version"] if cur and cur.get("status") == "running" else None,
             "how": "endpoint" if endpoint else "image" if image else "captain",
-            "text": (f"Stage {arms[serve]} on " + ("this computer" if t["kind"] == "local" else f"{t['name']} ({t['kind']})")
+            "text": (f"Deploy {arms[serve]} on " + ("this computer" if t["kind"] == "local" else f"{t['name']} ({t['kind']})")
                      + (f", beside the baseline {arms['baseline']}" if serve == "candidate" and arms.get("baseline") else "")
                      + ". " + c["text"] + "".join(" " + w for w in (pre or {}).get("warnings") or []))}
 
@@ -416,9 +416,9 @@ def _start_local(ctx: Context, bundle_key: str, bid: str, key_sha: str) -> dict:
         pass
     if not tail or "MemoryError" in tail or "Killed" in tail:
         # A process the system ends for using too much memory leaves no message of its own. Say what most likely happened.
-        raise ValueError("The staging endpoint ended while it was loading the catalog, most likely because this computer "
+        raise ValueError("The model stopped while it was loading the catalog, most likely because this computer "
                          "ran out of memory. Close other work and try again, or deploy it to a cloud.")
-    raise ValueError("The staging endpoint did not start on this computer." + (f" It said: {tail}" if tail else ""))
+    raise ValueError("The model did not start on this computer." + (f" It said: {tail}" if tail else ""))
 
 
 def _stop_local(ep: dict) -> bool:
@@ -473,13 +473,12 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
     if dry_run:
         return {**p, "dry_run": True}
     if p["kind"] == "local" and (p.get("local_fit") or {}).get("outcome") in ("wont-fit", "over-limit"):
-        raise ValueError(p["local_fit"]["text"] + (" To stage it here anyway, raise the limit in Settings, or pass --allow-large."
+        raise ValueError(p["local_fit"]["text"] + (" To deploy it here anyway, raise the limit in Settings, or pass --allow-large."
                                                    if p["local_fit"]["outcome"] == "over-limit" else ""))  # refused before anything starts, in the sentence the choice shows
     if p["needs_confirm"] and not confirm:
         raise NeedsConfirm("Confirm the cost first. " + p["cost"]["text"] + "".join(" " + w for w in p["warnings"]), p)
-    running_test = (PS.get(ctx, pid).get("ab") or {})
-    if running_test.get("status") == "running" and running_test.get("mode") == "captain":
-        raise ValueError("An A/B test is running on this endpoint. Roll it back or end it before staging another version.")
+    # Nothing about a test stops a deploy. Captain runs no A/B tests, and a record of one left in a project's
+    # state by an older version is ignored.
     say = progress or (lambda _t: None)
     t = C.get(ctx, p["target"])
     C._check_serving_storage(ctx, t)  # refused here, in a sentence, before a bundle is written
@@ -556,10 +555,10 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
             try:
                 set_secret(rec["key_secret"], key)
             except Exception as e:  # noqa: BLE001
-                raise ValueError("This computer has no keychain to keep the staging endpoint's key in "
-                                 f"({type(e).__name__}). Set {rec['key_secret']} in the environment and stage again.") from None
+                raise ValueError("This computer has no keychain to keep the deployed model's key in "
+                                 f"({type(e).__name__}). Set {rec['key_secret']} in the environment and deploy again.") from None
         set_control(ctx, pid, env, stage=bundle["id"], serve=p["serve"], split=None, experiment=None, salt=bundle["id"],
-                    idle_minutes=idle, shadow=None)
+                    idle_minutes=idle, shadow=None, **({} if old_key and key == old_key else {"keys": None}))
     _save(ctx, pid, env, rec)
     try:
         if t["kind"] == "local":
@@ -597,7 +596,7 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
                 set_secret(old["key_secret"], old_key)
             if old.get("bundle"):
                 set_control(ctx, pid, env, stage=old["id"], serve=old.get("serve"), split=None, experiment=None, salt=old["id"])
-            _save(ctx, pid, env, {**old, "error": f"Restaging {p['model_version']} did not work, so {old['model_version']} "
+            _save(ctx, pid, env, {**old, "error": f"Deploying {p['model_version']} did not work, so {old['model_version']} "
                                                   f"is still running. {str(e)[:400]}"})
         else:
             rec.pop("switching_from", None)
@@ -609,7 +608,7 @@ def stage(ctx: Context, pid: str, candidate: str | None = None, baseline: bool =
         if arm_name == p["serve"] and p["how"] == "captain":
             _record_deploy(ctx, pid, env, r, t, {"type": t["kind"], "executed": True,
                                                  "endpoint": (rec["endpoint"] or {}).get("name") or (rec["endpoint"] or {}).get("url")})
-    _note(ctx, pid, f"staged {p['model_version']} on {'this computer' if t['kind'] == 'local' else t['name']}")
+    _note(ctx, pid, f"deployed {p['model_version']} on {'this computer' if t['kind'] == 'local' else t['name']}")
     return public(rec)
 
 
@@ -619,7 +618,7 @@ def unstage(ctx: Context, pid: str, env: str = ENV, reason: str | None = None) -
 
     rec = state(ctx, pid, env)
     if not rec:
-        raise ValueError(f"Nothing is staged for {pid}.")
+        raise ValueError(f"Nothing is deployed for {pid}.")
     left: list = []
     if rec.get("status") in ("running", "starting", "failed") or rec.get("resources"):
         if rec.get("kind") == "local":
@@ -651,7 +650,7 @@ def unstage(ctx: Context, pid: str, env: str = ENV, reason: str | None = None) -
                 stop_reason=rec.get("stop_reason") if was == "stopped" else (reason or f"stopped by {whoami()}"),
                 error=("Captain could not remove: " + ", ".join(f"{r['type']} {r['name']}" for r in left)) if left else None)
     if was != "stopped":
-        _note(ctx, pid, f"stopped staging ({rec['stop_reason']})")
+        _note(ctx, pid, f"stopped the deployed model ({rec['stop_reason']})")
         up = _ago(rec.get("started_at"))
         if rec.get("kind") != "local" and up is not None:
             # What it cost while it was up, beside its estimate, and into the project's running total.
@@ -660,16 +659,16 @@ def unstage(ctx: Context, pid: str, env: str = ENV, reason: str | None = None) -
                 from .. import cost_estimates as CE
 
                 spent = CE.note_actual(ctx, rec["id"], C2.get(ctx, rec["target"]), up, kind="staging", project=pid,
-                                       title=f"Staging {rec.get('model_version')}")
+                                       title=f"Deployed {rec.get('model_version')}")
                 rec = _save(ctx, pid, env, spent={"usd": spent.get("usd"), "text": spent.get("text")})
             except Exception:  # noqa: BLE001  a cost that can't be worked out never blocks a stop
                 pass
 
-        def end(doc):  # a test cannot go on without its endpoint
-            ab = doc.get("ab") or {}
-            if ab.get("status") == "running" and ab.get("mode") == "captain":
-                ab["status"], ab["ended_at"] = "finished", _now()
-                doc["ab"] = ab
+        def end(doc):  # a quiet test cannot go on without the model it was testing
+            sh = doc.get("shadow") or {}
+            if sh.get("status") == "running":
+                sh.update(status="ended", ended_at=_now(), end_reason="the model stopped")
+                doc["shadow"] = sh
 
         PS._update(ctx, pid, end)
     return public(rec)
@@ -694,7 +693,7 @@ def status(ctx: Context, pid: str, env: str = ENV, sweep: bool = True) -> dict:
     rec = state(ctx, pid, env)
     if not rec:
         return {"project": pid, "env": env, "status": "none", "staged": None,
-                "text": "Nothing is staged. Staging runs a model version as a live endpoint you can try before launch review."}
+                "text": "Nothing is deployed. Deploying runs a model version as a live endpoint you can try, with an address you can use."}
     out = {"project": pid, "env": env, "status": rec.get("status"), "staged": public(rec), "health": None}
     if rec.get("status") != "running":
         return {**out, "text": _status_text(rec, None)}
@@ -736,7 +735,7 @@ def status(ctx: Context, pid: str, env: str = ENV, sweep: bool = True) -> dict:
         rec = _save(ctx, pid, env, status="stopped", stopped_at=_now(), stop_reason=f"stopped by itself: {why}")
         if rec.get("resources"):
             unstage(ctx, pid, env)
-        _note(ctx, pid, f"staging stopped by itself ({why})")
+        _note(ctx, pid, f"the deployed model stopped by itself ({why})")
         rec = state(ctx, pid, env)
         return {**out, "status": "stopped", "staged": public(rec), "text": _status_text(rec, None)}
     if health and sweep and not rec.get("scale_to_zero") and health.get("idle_s", 0) >= float(health.get("idle_minutes") or rec.get("idle_minutes") or IDLE_MINUTES) * 60:
@@ -777,7 +776,7 @@ def _status_text(rec: dict, health: dict | None, asleep: str | None = None) -> s
         w = _where(rec)["text"]
         t = f"{rec['model_version']} is {w[0].lower()}{w[1:]}"
         if health and health.get("shadow"):
-            t += " Shadow mode is on: every request is answered with the baseline's results."
+            t += " A quiet test is on: every request is answered with the baseline's results."
         if asleep == "yes":
             t += " Asleep: no copy is up, and it costs nothing. It wakes on the next request."
         elif asleep:
@@ -790,7 +789,7 @@ def _status_text(rec: dict, health: dict | None, asleep: str | None = None) -> s
     if s == "starting":
         return f"{rec['model_version']} is starting {where}."
     if s == "failed":
-        return f"Staging failed: {rec.get('error') or 'no reason recorded'}"
+        return f"The deploy failed: {rec.get('error') or 'no reason recorded'}"
     return f"Stopped ({rec.get('stop_reason') or 'no reason recorded'})."
 
 
@@ -802,7 +801,7 @@ def scale(ctx: Context, pid: str, env: str = ENV, min_copies: int | None = None,
 
     rec = state(ctx, pid, env)
     if not rec or rec.get("status") != "running":
-        raise ValueError("Staging is not running. Stage a model version first.")
+        raise ValueError("Nothing is deployed. Deploy a model first.")
     if rec.get("kind") == "local":
         if any(v is not None for v in (min_copies, max_copies, idle_seconds)):
             raise ValueError("On this computer there is one copy. Deploy it to a cloud to run more.")
@@ -818,7 +817,7 @@ def scale(ctx: Context, pid: str, env: str = ENV, min_copies: int | None = None,
         raise ValueError("The most copies is at least 1.")
     out = C.set_staged_scale(ctx, t, rec, min_copies=min_copies, max_copies=max_copies, idle_seconds=idle_seconds)
     _save(ctx, pid, env, scale=out.pop("scale", None) or rec.get("scale"))
-    _note(ctx, pid, "changed the staged endpoint's copies: " + out["text"])
+    _note(ctx, pid, "changed the deployed model's copies: " + out["text"])
     return {"project": pid, **out}
 
 
@@ -826,19 +825,19 @@ def scale(ctx: Context, pid: str, env: str = ENV, min_copies: int | None = None,
 
 
 def call(ctx: Context, rec: dict, op: str, body: dict, arm: str | None = None, timeout: float = 30.0) -> dict:
-    """One call to the staged endpoint: rank, outcome, flush, status or reload."""
+    """One call to the staged endpoint: rank, timing, flush, status or reload."""
     import httpx
 
     from .. import compute as C
 
     if rec.get("status") != "running":
-        raise ValueError("Staging is not running. Stage a model version first.")
+        raise ValueError("Nothing is deployed. Deploy a model first.")
     if rec.get("kind") == "local":
         base = (rec.get("endpoint") or {}).get("url")
         if op == "status":
             r = httpx.get(base + "/healthz", timeout=timeout)
         else:
-            path = {"rank": "/rank" + (f"/{arm}" if arm else ""), "outcome": "/outcome", "flush": "/flush",
+            path = {"rank": "/rank" + (f"/{arm}" if arm else ""), "timing": "/timing", "flush": "/flush",
                     "reload": "/reload"}[op]
             r = httpx.post(base + path, json=body, headers={"Authorization": f"Bearer {_key(rec)}"}, timeout=timeout)
         if r.status_code >= 400:
@@ -846,7 +845,7 @@ def call(ctx: Context, rec: dict, op: str, body: dict, arm: str | None = None, t
                 detail = r.json().get("detail")
             except Exception:  # noqa: BLE001
                 detail = r.text[:200]
-            raise ValueError(f"The staging endpoint refused the request: {detail}")
+            raise ValueError(f"The deployed model refused the request: {detail}")
         return r.json()
     t = C.get(ctx, rec["target"])
     if rec.get("how") == "image":
@@ -864,6 +863,7 @@ def call(ctx: Context, rec: dict, op: str, body: dict, arm: str | None = None, t
 
 
 _products: dict[str, tuple[dict, str, list]] = {}
+_CONNECTED: set = set()  # deployments this process has already called: the first call to one is timed apart
 
 
 def read_flush(ctx: Context, rec: dict | None) -> bool:
@@ -941,7 +941,7 @@ def query(ctx: Context, pid: str, q: str, k: int = 10, env: str = ENV) -> dict:
     requests are logged as test traffic, never as shoppers."""
     rec = serving(ctx, pid, env)
     if not rec or rec.get("status") != "running":
-        raise ValueError("Staging is not running. Stage a model version first.")
+        raise ValueError("Nothing is deployed. Deploy a model first.")
     if not str(q or "").strip():
         raise ValueError("Type a query to try.")
     arms = rec.get("arms") or {}
@@ -949,11 +949,25 @@ def query(ctx: Context, pid: str, q: str, k: int = 10, env: str = ENV) -> dict:
     serve = rec.get("serve") or next(iter(arms))
     cat_of = next((r for r in (arms.get("baseline"), arms.get("candidate")) if r and servable_quiet(ctx, r) == "captain"), None)
 
+    # The first call from a process signs in to the cloud and opens a connection, which can take several times as
+    # long as the request itself. So it is made on its own, with a call that asks nothing of the model, and timed
+    # apart: the round trips below are then what a site that keeps its connection open would see.
+    first_ms = None
+    if rec.get("kind") != "local" and rec.get("id") not in _CONNECTED:
+        t0 = time.perf_counter()
+        try:
+            call(ctx, rec, "status", {})
+            first_ms = round((time.perf_counter() - t0) * 1000, 1)
+            _CONNECTED.add(rec.get("id"))
+        except Exception:  # noqa: BLE001  the rank call below says what is wrong, in its own words
+            first_ms = None
+
     def side(arm: str) -> dict:
         from .traffic import signal_label
 
         t0 = time.perf_counter()
         res = call(ctx, rec, "rank", {**body, "explain": True}, arm=None if rec.get("how") == "image" else arm)
+        trip = round((time.perf_counter() - t0) * 1000, 1)  # the call alone: joining the catalog below is this computer's work
         rows = _joined(ctx, res, cat_of)
         imp = res.get("importance") or {}
         top = [n for n, _ in sorted(imp.items(), key=lambda kv: -kv[1])[:4]]
@@ -962,11 +976,15 @@ def query(ctx: Context, pid: str, q: str, k: int = 10, env: str = ENV) -> dict:
             x["why"] = ([{"signal": n, "label": signal_label(n), "value": sig.get(n), "weight": imp[n]} for n in top if n in sig]
                         if sig else None)
         return {"arm": arm, "model_version": res["model_version"], "ms": res["ms"],
-                "round_trip_ms": round((time.perf_counter() - t0) * 1000, 1), "request_id": res["request_id"],
+                "round_trip_ms": trip, "request_id": res["request_id"],
                 "results": rows,
                 "why_note": None if imp else "This version ranks by keyword match alone: there is no trained model to explain."}
 
     out = {"project": pid, "query": q, "k": int(k), "staged": side(serve), "baseline": None, "traffic": "test"}
+    warm = out["staged"]["round_trip_ms"]
+    out["timing"] = {"first_call_ms": first_ms, "warm_ms": warm, "inside_ms": out["staged"]["ms"],
+                     "text": (f"The first call took {first_ms:.0f} ms: it signs in to your cloud and opens the connection. " if first_ms is not None else "")
+                             + f"With the connection open, a request takes {warm:.0f} ms from this computer, {out['staged']['ms']:.1f} ms of it inside the model."}
     if not rec.get("tried"):
         _save(ctx, pid, env, tried=True)
     if serve != "baseline" and arms.get("baseline") and rec.get("how") != "image":
@@ -992,8 +1010,10 @@ def servable_quiet(ctx: Context, pipeline: str) -> str | None:
 
 
 def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
-    """Where the project stands on the way to launch review: what is staged, the steps with their status, and the
-    next thing to do. Reads the state doc only, so the project page can ask for it on every load."""
+    """Where the project stands on the way to a running endpoint: what is deployed, the steps with their status,
+    and the next thing to do. It ends at a deployed model with its address: launch review is not a step here (it is
+    still there from the terminal, `cst handoff`). Reads the state doc only, so the project page can ask for it on every load. A record of an
+    A/B test left in the doc by an older version is ignored."""
     rec = (doc.get("staging") or {}).get(env) or None
     on = bool(rec and rec.get("status") == "running")
     champ = doc.get("champion")
@@ -1001,76 +1021,34 @@ def ship_state(ctx: Context, doc: dict, env: str = ENV) -> dict:
     judged = [e for e in exps if e.get("status") not in ("trained", "failed", "backtesting", None)]
     cand = (judged or exps or [None])[-1]
     steps = [
-        {"n": 1, "id": "stage", "title": "Stage", "done": on,
+        {"n": 1, "id": "stage", "title": "Deploy", "done": on,
          "status": (f"{rec['model_version']} is running " + ("on this computer. Only this computer can reach it." if rec.get("kind") == "local" else f"on {rec.get('target')}. Your site can call it.")) if on
-         else "Not staged." if not rec or rec.get("status") == "stopped" else f"Staging {rec.get('status')}.",
+         else "Not deployed." if not rec or rec.get("status") == "stopped" else f"The deploy {rec.get('status')}.",
          "action": None if on else {"action": "stage", "experiment": cand["id"]} if cand else {"action": "stage", "baseline": True} if champ else None},
         {"n": 2, "id": "try", "title": "Try it", "done": on and bool(rec.get("tried")),
-         "status": "Tried." if on and rec.get("tried") else "Type a query and see the results." if on else "Waits for staging.",
+         "status": "Tried." if on and rec.get("tried") else "Type a search and see the results." if on else "Waits for a deployed model.",
          "action": {"action": "try"} if on and not rec.get("tried") else None},
     ]
     connected = on and bool(rec.get("connected_at"))
     local = bool(rec and rec.get("kind") == "local")
     sh = doc.get("shadow") or None
-    steps.append({"n": 3, "id": "connect", "title": "Connect your site", "done": connected,
-                  "status": ("Your site is sending requests." + (" Shadow mode is on: shoppers see the baseline." if sh and sh.get("status") == "running" else "")) if connected
-                  else "A site can't reach an endpoint on this computer. Deploy it to a cloud, or keep testing here with simulated shoppers." if on and local
-                  else "Waiting for the first request from your site." if on else "Waits for staging.",
+    quiet = bool(sh and sh.get("status") == "running")
+    steps.append({"n": 3, "id": "connect", "title": "Use it from your site", "done": connected,
+                  "status": ("Your site is sending requests." + (" A quiet test is on: shoppers see the compared model's results." if quiet else "")) if connected
+                  else "A site can't reach a model on this computer. Deploy it to a cloud." if on and local
+                  else "Waiting for the first request from your site." if on else "Waits for a deployed model.",
                   "action": {"action": "connect"} if on and not connected else None})
-    ab = doc.get("ab") or None
     both = on and {"baseline", "candidate"} <= set(rec.get("arms") or {}) and rec.get("how") != "image"
-    last = (ab or {}).get("last_readout") or {}
-    brought = ((ab or {}).get("brought") or [None])[-1]
-    ab_done = bool(ab and (last.get("enough") or brought))
-    if not ab:
-        ab_status = ("Split traffic between the baseline and the candidate." if both else
-                     "Waits for a candidate staged beside the baseline.")
-    elif ab["status"] == "running":
-        ab_status = ((f"The candidate gets {ab['split']:.0%} of traffic. " if ab.get("split") is not None else "Running in your own A/B system. ")
-                     + (last.get("text") or (brought or {}).get("text") or "No readout yet."))
-    else:
-        ab_status = ("Rolled back to the baseline. " if ab["status"] == "rolled_back" else "Ended. ") + (last.get("text") or (brought or {}).get("text") or "")
-    steps.append({"n": 4, "id": "ab", "title": "A/B test", "done": ab_done, "status": ab_status.strip(),
-                  "action": {"action": "ab-start"} if both and (not ab or ab["status"] != "running") else None})
-    review_of = (ab or {}).get("arms", {}).get("candidate") or (rec or {}).get("arms", {}).get("candidate") or champ
-    chk = (rec or {}).get("check") or {}
-    sent = False
-    if review_of and (rec or ab):
-        from .. import handoff as HO
-
-        try:
-            sent = bool(HO.listing(ctx, review_of))
-        except Exception:  # noqa: BLE001
-            sent = False
-    steps.append({"n": 5, "id": "launch-review", "title": "Launch review", "done": sent,
-                  "status": ("Sent to launch review." if sent else
-                             "Served features don't match training, so launch review will ask for a reason to go on." if chk.get("status") == "fail" else
-                             "Check it against your launch criteria and pass it to your own deployment process. Captain deploys nothing itself."),
-                  "action": {"action": "handoff", "pipeline": review_of} if review_of and not sent else None})
-    # The next thing to do. A test that is running comes first; an ended one no longer decides anything.
-    live_ab = bool(ab and ab["status"] == "running")
-    shipped = bool(ab and (ab.get("decision") or {}).get("choice") == "ship")
-    real = not (ab or {}).get("practice") and (not last.get("evidence") or last.get("evidence") == "REAL_TRAFFIC")
     nxt = None
-    if shipped and not sent and review_of:
-        nxt = {"action": "handoff", "pipeline": review_of, "text": f"Send {review_of} to launch review."}
-    elif judged and not on:
+    if judged and not on:
         nxt = {"action": "stage", "experiment": judged[-1]["id"], "text": f"Deploy {judged[-1]['pipeline']} to try it live."}
     elif on and not rec.get("tried"):
         nxt = {"action": "try", "text": "Try the deployed model: type a search on its screen."}
-    elif live_ab and not ab_done:
-        nxt = ({"action": "ab-wait", "text": "The practice test needs more sessions. Send simulated shoppers at staging."} if ab.get("practice")
-               else {"action": "ab-watch", "text": "The A/B test is collecting sessions. The readout on the deployed model's screen says how many more it needs."})
-    elif live_ab and real and not ab.get("decision"):
-        nxt = {"action": "ab-decide", "text": "The A/B test has enough sessions. Decide: ship it, keep the baseline, or keep testing."}
-    elif live_ab and ab.get("practice"):
-        nxt = {"action": "connect", "text": "That was practice on simulated shoppers. To test for real, connect your site."}
-    elif on and not connected and not live_ab:
-        nxt = ({"action": "connect", "text": "A site can't reach this computer. Deploy it to a cloud, or practice here with simulated shoppers."}
-               if local else {"action": "connect", "text": "Connect your site: copy the code from the deployed model's screen (More, Send it real traffic) and send the first request."})
-    elif both and connected and not live_ab:
-        nxt = ({"action": "shadow-start", "text": "Your site is connected. Start shadow mode to see what the candidate would change, before any shopper sees it."}
-               if not sh else {"action": "ab-start", "text": "Start an A/B test: split traffic between the baseline and the candidate."})
+    elif on and not connected:
+        nxt = ({"action": "connect", "text": "A site can't reach this computer. Deploy the model to a cloud to use it from your site."}
+               if local else {"action": "connect", "text": "Use it from your site: copy the code from the deployed model's screen (More, Use it from your site) and send the first request."})
+    elif both and connected and not sh:
+        nxt = {"action": "shadow-start", "text": "Your site is connected. Test quietly with a copy of your site's requests, before any shopper sees this model."}
     return {"staging": public(rec), "steps": steps, "next": nxt}
 
 
@@ -1084,9 +1062,8 @@ def agent_summary(ctx: Context, pid: str, env: str = ENV) -> dict:
             "endpoint": rec.get("endpoint"), "started_at": rec.get("started_at"), "cost": (rec.get("cost") or {}).get("text"),
             "stops_after_idle_minutes": rec.get("idle_minutes"), "stop_reason": rec.get("stop_reason"),
             "served_features_check": (rec.get("check") or {}).get("text"),
-            "ab_test": ({k: (doc.get("ab") or {}).get(k) for k in ("id", "status", "mode", "split", "primary", "guardrails", "arms")}
-                        | {"readout": ((doc.get("ab") or {}).get("last_readout") or {}).get("text")}) if doc.get("ab") else None,
+            "ab_tests": "Captain runs no A/B tests. Give your own testing tool each model's address (cst projects staging-connect).",
             "steps": [{"label": f"{s['n']} {s['title']}", "done": s["done"], "status": s["status"]} for s in sh["steps"]],
             "next": sh["next"], "commands": {"stage": f"cst projects stage {pid} --target local", "status": f"cst projects staging {pid}",
                                              "try": f"cst projects staging-query {pid} \"<query>\"", "check": f"cst projects staging-check {pid}",
-                                             "ab": f"cst projects ab {pid}", "stop": f"cst projects unstage {pid}"}}
+                                             "use_from_site": f"cst projects staging-connect {pid}", "stop": f"cst projects unstage {pid}"}}

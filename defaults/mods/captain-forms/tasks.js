@@ -84,6 +84,9 @@ export async function recipes() {
   return (Array.isArray(list) && list.length ? list : FALLBACK_RECIPES).map((x) => ({ ...x, title: x.label ?? x.title, about: x.description ?? x.about, needs: needsOf(x),
     icon: RECIPE_ICONS[x.id] ?? (x.source && x.source !== "builtin" ? "users" : "workflow"), team: Boolean(x.source && x.source !== "builtin") }));
 }
+// What an input can be, in the words the page uses, with the dataset kind the services know it by.
+const INPUT_KINDS = [{ value: "catalog", label: "Products" }, { value: "events", label: "Events" }, { value: "queries", label: "Queries" },
+  { value: "judgments", label: "Labels" }, { value: "generic", label: "A table" }, { value: "any", label: "Something else" }];
 const recipeOptions = (ctx) => (ctx.recipes ?? []).map((r) => ({ value: r.id, label: r.title, about: r.about, needs: r.needs, icon: r.icon, chip: r.team ? "your team's" : null }));
 // A project's inputs: each slot's title and the dataset kinds it takes (project_state.SLOTS).
 const SLOT_WORDS = { catalog: ["Catalog", ["catalog"]], events: ["Events", ["events", "logs"]], queries: ["Queries", ["queries"]],
@@ -180,21 +183,43 @@ export const TASKS = [
   },
   {
     id: "project", label: "New project", icon: "workflow",
-    about: "Start with what you're building. It decides which inputs the project asks for, and you can add or remove inputs later.",
+    about: "Name it, say what you're building, and list what it reads. Nothing here is fixed: inputs and the trainer can be changed on the project's page.",
     load: async () => ({ recipes: await recipes() }),
     fields: [
-      { key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true, options: recipeOptions },
       { key: "name", label: "Name", placeholder: "Outdoor store search", required: true },
+      { key: "recipe", label: "What are you building?", kind: "choice", cards: true, required: true,
+        options: (ctx) => [...recipeOptions(ctx), { value: "other", label: "Something else", icon: "plus", about: "Any other model. Say what it is, then list what it reads.", needs: "whatever your training reads." }] },
+      { key: "what", label: "What is it?", required: true, placeholder: "A fraud score for each payment, from past chargebacks", when: (v) => v.recipe === "other",
+        help: "In your own words." },
+      // The inputs, filled from the kind picked above and then the person's: add, rename and remove before creating.
+      { key: "inputs", label: "Inputs", kind: "rows", when: (v) => Boolean(v.recipe), seedOn: (v) => v.recipe, placeholder: "Product embeddings",
+        seed: (ctx, v) => ((ctx.recipes ?? []).find((r) => r.id === v.recipe)?.slots ?? []).map((x) => ({ id: x.id, label: x.label ?? x.id, kind: (x.accepts ?? ["any"])[0], required: Boolean(x.required) })),
+        kinds: INPUT_KINDS, addLabel: "Add an input", empty: "No inputs yet. Add what your training reads, or add them later on the project's page.",
+        help: "What training reads. Rename one, remove one, or add your own. You choose the data for each on the project's page." },
+      { key: "trainer", label: "How is it trained?", kind: "choice", required: true, default: (v) => (String(v.recipe ?? "").startsWith("search-") ? "builtin" : "command"), resetOn: "recipe",
+        when: (v) => Boolean(v.recipe),
+        options: [{ value: "builtin", label: "Captain's built-in ranker" }, { value: "command", label: "My own training command" }, { value: "repo", label: "My own repo" }],
+        help: (_ctx, v) => (v.trainer === "builtin" ? "A search ranker Captain trains from products and search events. It needs both among the inputs."
+          : v.trainer === "repo" ? "Captain runs the command in your repo. It reads the inputs and reports its results."
+          : "Any command. It reads the inputs and reports its results.") },
+      { key: "repo", label: "Repo address", required: true, placeholder: "https://github.com/your-team/ranker.git", when: (v) => v.trainer === "repo" },
+      { key: "command", label: "Training command", placeholder: "python train.py", optional: true, when: (v) => v.trainer === "command" || v.trainer === "repo" },
       { key: "description", label: "What it's for", optional: true, placeholder: "Product search for the outdoor storefront" },
     ],
     submit: async (v) => {
-      const r = await api("/api/projects", { body: { name: v.name.trim(), kind: v.recipe, ...(v.description ? { description: v.description.trim() } : {}) } });
+      const inputs = (v.inputs ?? []).map((x) => ({ ...(x.id ? { id: x.id } : {}), label: String(x.label ?? "").trim(), kind: x.kind, ...(x.required ? { required: true } : {}) }));
+      if (inputs.some((x) => !x.label)) return { ok: false, error: "Every input needs a name. Name it, or remove it." };
+      // Only what the form was given is sent: with no list of inputs the kind's own are used, as before.
+      const body = { name: v.name.trim(), kind: v.recipe, ...(v.inputs !== undefined ? { slots: inputs } : {}),
+        ...(v.trainer ? { trainer: { how: v.trainer, ...(v.command && v.trainer !== "builtin" ? { command: v.command.trim() } : {}), ...(v.trainer === "repo" ? { repo: String(v.repo ?? "").trim() } : {}) } } : {}),
+        ...(v.recipe === "other" ? { what: String(v.what ?? "").trim() } : {}), ...(v.description ? { description: v.description.trim() } : {}) };
+      const r = await api("/api/projects", { body });
       const made = ok(r, "");
       if (!made.ok) return made;
       setShared("captain.explorer.rev", Date.now()); // the Explorer lists it now
       setShared("captain.scope", { kind: "project", id: r.data?.id, label: r.data?.name ?? v.name.trim() });
       runCommand("layout.select", { stack: "sections", child: "project" });
-      return { ok: true, message: `Project ${v.name.trim()} made. Its inputs come next.` };
+      return { ok: true, message: `Project ${v.name.trim()} made. Choose the data for its inputs next.` };
     },
   },
   // ---- a project's own tasks: opened from its page with its values preset (project, pins, champion, registry) ----
@@ -742,27 +767,6 @@ export const TASKS = [
       return ok(r, "Sent to launch review. Record the deployment once your process has run it.");
     },
   },
-  // Opened from a project's A/B step when the team splits traffic in its own system.
-  {
-    id: "ab-result", label: "Bring in an A/B readout", icon: "activity", hidden: true,
-    about: "The result from your own A/B system. It is recorded as real traffic only when you say the traffic was real.",
-    fields: [
-      { key: "metric", label: "Metric", required: true, help: "What the test measured, such as conversion or revenue per session." },
-      { key: "baseline", label: "Baseline value", required: true },
-      { key: "candidate", label: "Candidate value", required: true },
-      { key: "ci_low", label: "Difference, low end of the interval", optional: true },
-      { key: "ci_high", label: "Difference, high end of the interval", optional: true },
-      { key: "source", label: "Where the numbers come from", required: true, help: "The A/B system and its report." },
-      { key: "traffic", label: "The traffic was", kind: "choice", required: true, options: [{ value: "real", label: "Real shoppers" }, { value: "test", label: "Test traffic" }] },
-    ],
-    submit: async (v) => {
-      const num = (x) => (x === undefined || x === null || String(x).trim() === "" ? undefined : Number(x));
-      if (![v.baseline, v.candidate].every((x) => Number.isFinite(Number(x)))) return { ok: false, error: "The baseline and candidate values are numbers." };
-      const r = await api(`/api/projects/${encodeURIComponent(v.project)}/ab/result`, { scoped: false,
-        body: { metric: v.metric, baseline: Number(v.baseline), candidate: Number(v.candidate), ci_low: num(v.ci_low), ci_high: num(v.ci_high), source: v.source, traffic: v.traffic } });
-      return ok(r, "The readout is recorded on the project.");
-    },
-  },
   // Opened from a record (props.args.id), not listed in New.
   {
     id: "decision", label: "Record a decision", icon: "circle-check", hidden: true,
@@ -817,14 +821,14 @@ export const TASKS = [
   },
   {
     id: "add-outcome", label: "Add an online result", icon: "chart-line", hidden: true,
-    about: "A result from your A/B testing system. It counts as real-traffic evidence.",
+    about: "A result from your own testing tool. It counts as real-traffic evidence.",
     fields: [
       { key: "metric", label: "Metric", required: true, placeholder: "conversion rate" },
       { key: "value", label: "Change", required: true, placeholder: "0.012", help: "The measured lift as a number, e.g. 0.012 for +1.2%." },
       { key: "ci_low", label: "Interval low", optional: true },
       { key: "ci_high", label: "Interval high", optional: true },
       { key: "source", label: "Where it comes from", required: true, placeholder: "the Optimizely report for test 42" },
-      { key: "experiment", label: "A/B test", optional: true },
+      { key: "experiment", label: "The test's name in your tool", optional: true },
     ],
     submit: async (v, ctx, args) => {
       const num = (x) => (x === undefined || x === "" ? undefined : Number(x));

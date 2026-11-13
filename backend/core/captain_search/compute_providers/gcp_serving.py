@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 
 from . import ProviderError
-from .serving import HttpServing, clean_name
+from .serving import HttpServing, clean_name, deployed_base, kept_name
 
 RUN = "https://run.googleapis.com/v2"
 LABELS = {"app": "captain", "captain-purpose": "serving"}
@@ -103,7 +103,7 @@ class CloudRunServing(HttpServing):
 
     def _names(self, st: dict) -> dict:
         prefix = (self.config.get("name_prefix") or "captain").strip("-")
-        return {"service": clean_name(f"{prefix}-{st['project']}-{st['env']}", 49)}
+        return {"service": kept_name(st, "cloud-run-service") or clean_name(deployed_base(prefix, st["project"], st["env"]), 49)}
 
     def _parent(self, rest: Rest) -> str:
         return f"projects/{rest.project}/locations/{self.region}"
@@ -161,7 +161,7 @@ class CloudRunServing(HttpServing):
     def stage(self, st: dict, progress=None) -> dict:
         say = progress or (lambda _t: None)
         if st.get("image"):
-            raise ProviderError("A container image of your own can't be staged on Cloud Run from Captain yet. Use an endpoint you already run.")
+            raise ProviderError("A container image of your own can't be deployed on Cloud Run from Captain yet. Use an endpoint you already run.")
         rest = self._rest()
         n = self._names(st)
         res = {"type": "cloud-run-service", "name": n["service"], "region": self.region, "project": rest.project}
@@ -297,6 +297,36 @@ class CloudRunServing(HttpServing):
                      how="The service is private: your organization doesn't allow a public address. A caller needs the Cloud Run "
                          "Invoker role on it, and sends its Google identity token beside the endpoint key.")
         return a
+
+    def found(self, prefix: str = "captain") -> list[dict]:
+        """Every Cloud Run service in this project and region that Captain made, whatever Captain project made it: by
+        Captain's label, or by the name prefix. Reads the list only. Cloud Run does not say how many copies are up,
+        and asking the service would wake it, so the copies are left unknown."""
+        rest = self._rest()
+        start = prefix.strip("-") + "-"
+        out, token = [], None
+        while True:
+            r = rest.call("GET", f"{RUN}/{self._parent(rest)}/services", params={"pageSize": 100, **({"pageToken": token} if token else {})})
+            for s in r.get("services") or []:
+                lb, name = s.get("labels") or {}, s["name"].rsplit("/", 1)[-1]
+                if lb.get("app") != "captain" and not name.startswith(start):
+                    continue
+                t = s.get("terminalCondition") or {}
+                state = ("failed" if t.get("state") == "CONDITION_FAILED" else
+                         "starting" if s.get("reconciling") or t.get("state") not in (None, "CONDITION_SUCCEEDED") else "running")
+                res = (((s.get("template") or {}).get("containers") or [{}])[0].get("resources") or {}).get("limits") or {}
+                sc = (s.get("template") or {}).get("scaling") or {}
+                out.append({"type": "cloud-run-service", "name": name, "region": self.region,
+                            "resources": [{"type": "cloud-run-service", "name": name, "region": self.region, "project": rest.project}],
+                            "state": state, "reason": (t.get("message") or t.get("reason")) if state != "running" else None,
+                            "machine": (f"{res.get('cpu')} vCPU, {res.get('memory')}" if res.get("cpu") and res.get("memory") else None),
+                            "copies_now": None, "copies_min": sc.get("minInstanceCount"), "copies_max": sc.get("maxInstanceCount"),
+                            "since": s.get("createTime"), "changed": s.get("updateTime"),
+                            "project": lb.get("project"), "env": lb.get("env"), "stage": lb.get("stage") or lb.get("captain-stage"),
+                            "by": s.get("creator"), "by_tag": lb.get("app") == "captain", "by_prefix": name.startswith(start)})
+            token = r.get("nextPageToken")
+            if not token:
+                return out
 
     def tagged(self, project: str, env: str) -> list[dict]:
         rest = self._rest()

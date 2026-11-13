@@ -44,20 +44,19 @@ def test_the_log_has_a_line_per_request_to_the_millisecond_and_can_be_filtered_a
     SG.stage(ws, "shop", target="local", allow_large=True)
     got = _site(ws, 3)
     rec = SG.state(ws, "shop")
-    SG.call(ws, rec, "outcome", {"request_id": got[0]["request_id"], "event": "click", "product_id": got[0]["ids"][0]})
     lg = OB.logs(ws, "shop")
     texts = [x["text"] for x in lg["rows"]]
     assert texts[0].startswith("Ready in ") and lg["streaming"] and "interleave" in lg["note"]
-    assert sum(t.startswith("Ranked 'jacket' with the candidate in ") for t in texts) == 1 and any(t.startswith("Outcome: click of ") for t in texts)
+    assert sum(t.startswith("Ranked 'jacket' with the candidate in ") for t in texts) == 1 and not any(t.startswith("Outcome") for t in texts)
     assert all(len(x["ts"]) == 24 and x["ts"].endswith("Z") for x in lg["rows"])  # 2026-11-11T16:05:49.231Z: milliseconds
     assert [x["ts"] for x in lg["rows"]] == sorted(x["ts"] for x in lg["rows"])
     only = OB.logs(ws, "shop", q="TENT")
     assert only["matching"] == 1 and only["total"] == lg["total"] and "tent" in only["rows"][0]["text"] and only["text"] == f"1 of {lg['total']} lines match."
     # the lines of one request, which is what the Requests panel shows
     mine = OB.logs(ws, "shop", request_id=got[0]["request_id"])
-    assert [x["text"].split(" ")[0] for x in mine["rows"]] == ["Ranked", "Outcome:"]
+    assert [x["text"].split(" ")[0] for x in mine["rows"]] == ["Ranked"]
     one = TF.request(ws, "shop", got[0]["request_id"])
-    assert [x["text"].split(" ")[0] for x in one["lines"]] == ["Ranked", "Outcome:"] and one["site_ms"] is None
+    assert [x["text"].split(" ")[0] for x in one["lines"]] == ["Ranked"] and one["site_ms"] is None
     assert one["time_text"].endswith("Your site didn't report how long it took.")
     # following: only what came after the last line seen
     _site(ws, 1, start=10)
@@ -86,12 +85,12 @@ def test_settings_are_grouped_and_the_idle_time_can_be_changed_while_it_runs(ws)
     with pytest.raises(ValueError, match="between 5 minutes and 7 days"):
         OB.set_idle(ws, "shop", 1)
     SG.unstage(ws, "shop")
-    with pytest.raises(ValueError, match="Nothing is staged"):
+    with pytest.raises(ValueError, match="Nothing is deployed"):
         OB.set_idle(ws, "shop", 60)
 
 
 def test_cost_of_a_local_endpoint_is_none_and_says_so(ws):  # noqa: F811
-    assert OB.cost(ws, "shop")["text"] == "Nothing is staged, so nothing is costing anything."
+    assert OB.cost(ws, "shop")["text"] == "Nothing is deployed, so nothing is costing anything."
     SG.stage(ws, "shop", target="local", allow_large=True)
     c = OB.cost(ws, "shop")
     assert c["free"] and c["text"] == "Runs on this computer. No cloud cost." and c["month_usd"] == 0 and c["hourly_usd"] is None
@@ -128,37 +127,34 @@ def test_metrics_give_median_and_95th_percentile_at_the_endpoint_and_as_the_site
     assert m["buckets"][-1]["requests"] == 20 and m["buckets"][-1]["p50"] <= m["buckets"][-1]["p95"]
     assert m["summary"]["p50"] is not None and m["summary"]["errors"] == 0 and m["summary"]["copies"] == 1 and m["summary"]["copies_max"] == 1
     assert m["summary"]["site_p50"] is None and m["summary"]["site_text"].startswith("As your site sees it: not reported yet.")
-    assert m["markers"] and m["markers"][0]["text"].startswith("Version 1 staged: ") and m["markers"][0]["slot"] is not None
+    assert m["markers"] and m["markers"][0]["text"].startswith("Version 1 deployed: ") and m["markers"][0]["slot"] is not None
     assert m["text"].startswith("20 requests in the last 15 minutes, no errors. At the endpoint: median ")
     # the site reports what it saw: with an outcome, or by itself
     for i, r in enumerate(got[:10]):
-        SG.call(ws, rec, "outcome", {"request_id": r["request_id"], "event": "click", "product_id": r["ids"][0], "client_ms": 100 + i})
-    SG.call(ws, rec, "outcome", {"request_id": got[10]["request_id"], "event": "timing", "ms": 300})
+        SG.call(ws, rec, "timing", {"request_id": r["request_id"], "ms": 100 + i})
+    SG.call(ws, rec, "timing", {"request_id": got[10]["request_id"], "ms": 300})
     m = OB.metrics(ws, "shop", span="1h")
     assert m["summary"]["site_reported"] == 11 and m["summary"]["site_p50"] == 105 and m["summary"]["site_p95"] == 300
     assert m["summary"]["site_text"] == "As your site sees it: median 105 ms, 95th percentile 300 ms, from 11 requests your site timed."
     assert TF.request(ws, "shop", got[0]["request_id"])["site_ms"] == 100
     assert TF.request(ws, "shop", got[0]["request_id"])["time_text"].endswith("100 ms as your site saw it.")
-    from captain_search.staging import ab as AB  # a timing is not an outcome: nothing counts it as a shopper's action
-
     from captain_search.staging import logs as L
 
-    assert len(L.read(ws, "shop", "staging", rec["id"])["outcomes"]) == 10
-    assert AB  # imported to show the readout still loads beside timings
+    assert "outcomes" not in L.read(ws, "shop", "staging", rec["id"])  # a timing is all a site reports back
     with pytest.raises(ValueError, match="15m, 1h, 24h or 7d"):
         OB.metrics(ws, "shop", span="2h")
     with pytest.raises(Exception, match="number of milliseconds"):
-        SG.call(ws, rec, "outcome", {"request_id": got[0]["request_id"], "event": "timing", "ms": "soon"})
+        SG.call(ws, rec, "timing", {"request_id": got[0]["request_id"], "ms": "soon"})
 
 
 def test_the_deployments_list_shows_live_and_stopped_across_projects(ws):  # noqa: F811
-    assert OB.deployments(ws)["rows"] == [] and OB.deployments(ws)["text"].startswith("Nothing is staged in any project.")
+    assert OB.deployments(ws)["rows"] == [] and OB.deployments(ws)["text"].startswith("Nothing is deployed in any project.")
     SG.stage(ws, "shop", target="local", allow_large=True)
     _site(ws, 5)
     d = OB.deployments(ws, "live")
     row = d["rows"][0]
     assert len(d["rows"]) == 1 and row["project"] == "shop" and row["status"] == "Handling requests" and row["copies"] == 1
-    assert row["requests_24h"] == 5 and sum(row["series"]) == 5 and len(row["series"]) == 30 and row["since_text"].startswith("Staged by ")
+    assert row["requests_24h"] == 5 and sum(row["series"]) == 5 and len(row["series"]) == 30 and row["since_text"].startswith("Deployed by ")
     assert row["where"] == "Running on this computer." and row["line"] == "Copies: 1 live. Requests: 0 running."
     assert OB.deployments(ws, "stopped")["rows"] == [] and OB.deployments(ws, "stopped")["text"] == "Nothing has been stopped yet."
     SG.unstage(ws, "shop")
@@ -175,14 +171,16 @@ def test_the_commands_are_named_like_the_pages(ws):  # noqa: F811
     from captain_search.cli.main import app
 
     run = lambda *a: CliRunner().invoke(app, list(a))  # noqa: E731
-    assert "Nothing is staged in any project." in run("deployments", "list").output
+    assert "No models are deployed yet." in run("deployments", "list").output
     out = run("deploy", "shop", "--target", "local", "--allow-large")
     assert out.exit_code == 0, out.output
     url = SG.state(ws, "shop")["endpoint"]["url"]
     assert out.output.strip().splitlines()[-1] == url  # the address is the last line, so a script can take it
     _site(ws, 2)
     ls = run("deployments", "list").output
-    assert "Handling requests" in ls and "copies 1" in ls and "Staged by" in ls and "(2 requests in 24 h)" in ls
+    # The list is the cloud read now: the state in words, where it runs and the model version. It shows a deploy
+    # made a moment ago, though the list was asked for just before it.
+    assert "Running" in ls and "This computer" in ls and SG.state(ws, "shop")["model_version"] in ls
     hist = run("deployments", "history", "shop").output
     assert hist.startswith("v1 ") and hist.strip().endswith("Live")
     lg = run("deployments", "logs", "shop", "--filter", "jacket").output
@@ -191,20 +189,18 @@ def test_the_commands_are_named_like_the_pages(ws):  # noqa: F811
     # the old names still work, and the gated deploy commands are still there
     assert run("projects", "staging", "shop").exit_code == 0 and "promote" in run("deploy", "--help").output
     assert run("deploy", "history", "--env", "shop-staging").exit_code == 0
-    assert "Staging stopped." in run("deployments", "stop", "shop").output
-    assert "Stopped" in run("deployments", "list", "--stopped").output and run("deployments", "list").output.strip().startswith("Nothing is staged")
+    assert "Stopped shop's model. It no longer answers or bills." in run("deployments", "stop", "shop").output
+    assert "Stopped" in run("deployments", "list", "--stopped").output and "Running" not in run("deployments", "list").output
 
 
 def test_reading_a_page_never_wakes_a_host_that_sleeps(ws, monkeypatch):  # noqa: F811
     """The request list, the readout, shadow mode and the traffic count are read again and again by the page. On a
     host that sleeps when idle they must not send anything to an endpoint with no copy up."""
-    from captain_search.staging import ab as AB
-
     SG.stage(ws, "shop", target="local", allow_large=True)
     _site(ws, 3)
     sent = []
     real_call = SG.call
-    for mod in (SG, TF, AB, OB):
+    for mod in (SG, TF, OB):
         monkeypatch.setattr(mod, "call", lambda ctx, rec, op, body, *a, **k: (sent.append(op), real_call(ctx, rec, op, body, *a, **k))[1])
     TF.requests(ws, "shop")
     assert sent == ["flush"]  # an ordinary host is asked to write its log first
@@ -213,7 +209,7 @@ def test_reading_a_page_never_wakes_a_host_that_sleeps(ws, monkeypatch):  # noqa
     monkeypatch.setattr(SG, "_awake", lambda ctx, rec: False, raising=False)
     sent.clear()
     assert TF.requests(ws, "shop")["total"] == 3  # what was already written is still read
-    AB.traffic_seen(ws, "shop"); AB.readout(ws, "shop"); TF.shadow(ws, "shop")
+    TF.shadow(ws, "shop")
     assert "flush" not in sent, sent
     monkeypatch.setattr(SG, "_awake", lambda ctx, rec: True, raising=False)  # a copy is up: it is asked again
     TF.requests(ws, "shop")

@@ -280,6 +280,89 @@ def set_kind(ctx: Context, pid: str, kind: str) -> dict:
     return get(ctx, pid)
 
 
+OTHER = "other"  # "Something else": the person says what they are building, in their own words
+TRAINERS = ("builtin", "command", "repo")
+
+
+def start(ctx: Context, pid: str, kind: str | None = None, what: str | None = None, slots: list | None = None,
+          trainer: dict | None = None) -> dict:
+    """Set up a new project in one go, from the New project form: what it builds, the inputs it asks for and how
+    it trains. Nothing here is locked: the inputs and the trainer can be changed on the project's page.
+
+    kind     a recipe id, or "other" with `what`, the person's own description. No recipe is forced on it.
+    slots    the inputs, as edited in the form: [{label, kind?, id?, required?, why?}]. `kind` is the kind of
+             dataset it takes (catalog, events, queries, judgments, logs, generic, any). An input that came from
+             the recipe keeps what the recipe knows about it (its role). When given, this list is the project's
+             inputs, whatever the recipe had.
+    trainer  {how: builtin | command | repo, command?, repo?}: Captain's built-in ranker, a training command of
+             the team's own, or their repo with the command to run in it."""
+    from . import recipes as RC
+
+    recipe = None
+    if kind and kind != OTHER:
+        recipe = RC.get(ctx, kind)
+        set_kind(ctx, pid, kind)
+    said = " ".join(str(what or "").split())
+    if kind == OTHER and not said:
+        raise ValueError("Say what you are building, in a few words.")
+    known = {x["id"]: x for x in (recipe or {}).get("slots") or []}
+    new = None
+    if slots is not None:
+        new, seen = [], set()
+        for raw in slots:
+            label = " ".join(str((raw or {}).get("label") or "").split())
+            if not label:
+                raise ValueError("Every input needs a name.")
+            base = dict(known.get(str(raw.get("id") or ""), {}))
+            accepts = [str(raw["kind"])] if raw.get("kind") else base.get("accepts") or ["any"]
+            spec = {**base, "label": label, "accepts": accepts, "required": bool(raw.get("required", base.get("required", False))),
+                    "why": str(raw.get("why") or base.get("why") or "")}
+            if not base:
+                spec.pop("id", None)  # named by its label
+            got = RC.check_slot({"role": "custom", **spec}, origin=base.get("origin") or "custom")
+            if got["id"] in seen:
+                raise ValueError(f"Two inputs are named {label!r}. Give each its own name.")
+            seen.add(got["id"])
+            new.append(got)
+    how = str((trainer or {}).get("how") or "")
+    if trainer is not None and how not in TRAINERS:
+        raise ValueError("The trainer is one of: builtin, command or repo.")
+    command = " ".join(str((trainer or {}).get("command") or "").split())
+    repo = str((trainer or {}).get("repo") or "").strip()
+    if how == "repo" and not repo:
+        raise ValueError("Give the address of your training repo.")
+
+    def ch(doc):
+        if kind == OTHER:
+            doc["kind"] = OTHER
+            doc["recipe"] = {"id": OTHER, "label": said[:80], "source": "you"}
+            doc["evaluation"] = {"method": "auto"}
+            if new is None:
+                doc["slots"] = []
+        if said:
+            doc["building"] = said[:400]
+        if new is not None:
+            doc["slots"] = new
+            ids = {x["id"] for x in new}
+            doc["pins"] = {k: v for k, v in (doc.get("pins") or {}).items() if k in ids}
+            doc["inputs"] = {k: v for k, v in (doc.get("inputs") or {}).items() if k in ids}
+            for i in ids:
+                doc["pins"].setdefault(i, None)
+        if how:
+            doc["trainer_choice"] = {"how": how, **({"command": command} if command else {}), **({"repo": repo} if repo else {})}
+            if how == "builtin":
+                doc["trainer_suggestion"] = None
+            else:
+                doc["trainer_suggestion"] = {"id": "your-repo" if how == "repo" else "your-command",
+                                             "label": "Your training repo" if how == "repo" else "Your training command",
+                                             "command": command or "python train.py", **({"repo": repo} if repo else {}),
+                                             "why": "The command the New project form was given."}
+        return None
+
+    _update(ctx, pid, ch)
+    return get(ctx, pid)
+
+
 def _own_slots(doc: dict) -> list[dict]:
     if doc.get("slots") is None:  # an older project: its five slots become its own, editable list
         doc["slots"] = [dict(s) for s in LEGACY_SLOTS]
@@ -1037,5 +1120,5 @@ def stages(ctx: Context, pid: str) -> dict:
                                "text": f"Newer version available: {newest_champ}."}] if newest_champ else []},
         "ship": {"registry": {k: reg.get(k) for k in ("arch", "brand", "uri")},
                  "ready": bool(champ and reg.get("arch") and reg.get("brand")), "online": NOT_ONLINE,
-                 "staging": shp["staging"], "steps": shp["steps"], "ab": bool(doc.get("ab"))},
+                 "staging": shp["staging"], "steps": shp["steps"]},
     }

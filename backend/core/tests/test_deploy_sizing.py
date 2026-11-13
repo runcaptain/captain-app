@@ -120,7 +120,7 @@ def test_a_workspace_name_prefix_names_what_a_first_deploy_makes(ws, logins, mod
     p = DP.plan(ws, "shop", "modal")
     made = [x["name"] for g in p["creates"]["groups"] for x in g["items"] if x["resource"] != "Machine"]
     # The volume and the app carry it. The compute target ("modal-serving") is a name inside Captain, not in the cloud.
-    assert "team-two-serving" in made and "team-two-{project}-staging" in made
+    assert "team-two-serving" in made and "team-two-{project}" in made
     DP.run(ws, "shop", "modal", confirm=True)
     assert modal.volumes and all(any(str(part).startswith("team-two") for part in v) for v in modal.volumes)
     ST.set_serving_prefix(ws, "")
@@ -139,6 +139,6 @@ def test_on_aws_the_prefix_names_the_serving_bucket_and_the_endpoint_too(ws, log
     p = DP.plan(ws, "shop", "aws")
     made = {x["resource"]: x["name"] for g in p["creates"]["groups"] for x in g["items"]}
     # A workspace kept on this computer gets a serving bucket: named with the prefix, like the roles and the repository.
-    assert made["S3 bucket"].startswith("team-two-serving-") and made["SageMaker endpoint"] == "team-two-{project}-staging"
+    assert made["S3 bucket"].startswith("team-two-serving-") and made["SageMaker endpoint"] == "team-two-{project}"
     assert made["ECR repository"] == "team-two-serving" and made["CodeBuild project"] == "team-two-serving-build"
     assert SS._serving_uri(None, "000000000000", "us-west-1", "w") == "s3://captain-serving-000000000000-us-west-1/w"

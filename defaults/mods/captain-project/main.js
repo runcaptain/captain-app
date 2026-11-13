@@ -5,7 +5,7 @@
 //   Experiments  each trained version judged against the champion on the sealed holdout: nDCG@10 with its interval,
 //                recall, judged share, evidence, label independence and the verdict. A model trained on the labeler
 //                that grades the holdout reads "agrees with its own labeler", never as a win.
-//   Ship         the registry place, staging, the live handoff and the online check.
+//   Ship         where the model can be deployed, and what is deployed: a running endpoint with its address.
 // Below them, everything in the project (GET /api/projects/{id}/home): datasets, runs, pipelines, models, notebooks.
 // The project is the Explorer's pick (shared "captain.scope" {kind: "project"}), else the last one opened here.
 import { View, div, svg } from "gpui-kit";
@@ -24,7 +24,7 @@ import { int } from "./kit/num.js";
 import { Ship } from "./ship.js";
 import { costText } from "./kit/cost.js";
 
-const RUN_WORDS = { training: "Training", evaluation: "Offline evaluation", "synthetic-events": "Simulated events", snapshot: "Snapshot", judging: "Judging", staging: "Staging", workflow: "Workflow" };
+const RUN_WORDS = { training: "Training", evaluation: "Offline evaluation", "synthetic-events": "Simulated events", snapshot: "Snapshot", judging: "Judging", staging: "Deploying", workflow: "Workflow" };
 const day = (iso) => (iso ? String(iso).slice(0, 10) : "");
 const go = (section, extra) => { setShared("captain.open", { section, ...extra, at: Date.now() }); run("layout.select", { stack: "sections", child: section }); };
 const form = (task, values = {}, args) => openOverlay({ mod: "captain-forms", kind: "dialog", width: 560, props: { task, values, ...(args ? { args } : {}) } });
@@ -126,6 +126,15 @@ export default class ProjectHome extends View {
     this.shipFrom = (layoutProps?.() ?? {}).shipFrom ?? null; // the real-window check: start the Ship steps at "connect" or "ab"
     this.shipFirst = Boolean((layoutProps?.() ?? {}).shipFirst) || Boolean(this.shipFrom); // the real-window check: the Ship steps at the top
     watchScope(cx, (cx) => this.load(cx));
+    // The sidebar's Projects and the logo ask for the list of every project (captain-nav).
+    cx.timer.every(300, (cx) => {
+      const o = shared("captain.open");
+      if (o?.section !== "project" || !o.all || o.at === this.openedAll) return;
+      this.openedAll = o.at;
+      if (Date.now() - o.at > 10000) return; // from an earlier session
+      this.deployOpen = false; this.shipPath.listOpen = false;
+      this.allProjects(cx);
+    });
     watchWorkspace(cx, (cx) => { this.last = null; this.load(cx); });
     watchRecords(cx, (cx) => this.load(cx));
     // What this page shows, for agents (cst app context): the project, the open candidate and the Next line.
@@ -244,7 +253,7 @@ export default class ProjectHome extends View {
       if (st.ok && ex.ok) this.loadCosts(cx, pid);
       if (st.ok && ex.ok) { this.stages = st.data; this.exps = ex.data; } else if (!(st.starting || ex.starting)) this.problem = st.ok ? ex : st;
       if (this.openFirst && this.exps) { this.open = this.exps.experiments.find((e) => !e.is_champion)?.id ?? null; this.openFirst = false; }
-      // Staging and the A/B test are asked for only when the project has one: most projects have neither.
+      // What is deployed is asked for only when the project has something deployed: most projects don't.
       if (this.stages) this.shipPath.sync(cx, this.stages.ship);
       if (this.pinCheck && this.stages) {
         this.pinCheck = false;
@@ -286,7 +295,7 @@ export default class ProjectHome extends View {
 
   project() { return (this.projects ?? []).find((p) => p.id === this.pid()) ?? null; }
 
-  goTo(section) { go(section); }
+  goTo(section, extra) { go(section, extra); }
 
   /** The staged model's own page: its header (is it up, where, who is calling it) and its tabs. */
   openDeployment(cx) { this.deployOpen = true; this.shipPath.listOpen = false; this.shipPath.loadTab(cx); cx.notify(); }
@@ -629,7 +638,7 @@ export default class ProjectHome extends View {
       e.feature_timing ?? null,
       ...[...(e.inputs_read ?? []), ...(e.eval_inputs ?? [])].filter((x) => x.changed_since_pin).map((x) => `${x.slot} was read live and has changed since it was chosen${x.as_of ? ` (read ${day(x.as_of)})` : ""}, so a rerun may differ.`),
       ev?.coverage_note ?? (ev?.click_grades ? "Click grades only exist for products the old ranker showed, which favors the old ranker." : null),
-      ev ? "Not yet confirmed online: an offline result until your team's own A/B or shadow readout agrees." : e.is_champion ? null : "Not judged against the baseline yet.",
+      ev ? "Not yet confirmed online: an offline result until a result from your own testing tool agrees." : e.is_champion ? null : "Not judged against the baseline yet.",
     ].filter(Boolean);
     return v_flex().px(12).pb(12).gap(8)
       .child(div().id(`exp-${i}-full`).text_size(12.5).text_color(c.grey500).child(`Full name: ${e.pipeline}`))
@@ -637,7 +646,7 @@ export default class ProjectHome extends View {
       .child(h_flex().flex_wrap().gap(6)
         .when(Boolean(ev?.run), (x) => x.child(Button(c, `exp-${i}-open`, "Open the comparison", () => {
           const r = parseRef(ev.run);
-          go("comparisons", { backtest: r.name, version: r.version ?? undefined });
+          go("runs", { backtest: r.name, version: r.version ?? undefined });
         }, { small: true })))
         .child(Button(c, `exp-${i}-rerun`, "Rerun with changes", () => form("experiment", { ...this.values(), how: e.trainer === "lightgbm-ltr" ? "starter" : "own", base: name, labels: e.labels ?? undefined }), { small: true }))
         .when(Boolean(champ) && !e.is_champion, (x) => x.child(Button(c, `exp-${i}-judge`, ev ? "Judge again against the baseline" : "Judge against the baseline", (_e, cx) => this.backtest(cx, e), { small: true, disabled: this.busy || e.status === "backtesting" })))
@@ -723,7 +732,7 @@ export default class ProjectHome extends View {
   }
 
   /** Ship: only where to deploy, or what is deployed. Publishing to the model registry happens inside Deploy when
-   *  a registry is configured, and the review before launch sits behind the deployed model's screen. */
+   *  a registry is configured. Ship ends at a running endpoint with its address. */
   ship(c) {
     return this.part(c, "ship", "Ship", null, [], this.shipPath.section(c));
   }
@@ -837,7 +846,7 @@ export default class ProjectHome extends View {
         `No datasets yet. ${joins}`))
       .child(this.section(c, "runs", "Recent runs", h.runs ?? [],
         (r, i) => this.row(c, `ph-run-${i}`, r.backtest, `${(r.arms ?? []).join(" vs ")}, ${day(r.created_at)}`, [String(r.run ?? "").split("@")[1] ?? null], "git-compare",
-          () => go("comparisons", { backtest: r.backtest, version: Number(String(r.run ?? "").split("@v")[1]) || undefined })),
+          () => go("runs", { backtest: r.backtest, version: Number(String(r.run ?? "").split("@v")[1]) || undefined })),
         "No runs yet. Judge a candidate against the baseline."))
       .child(this.section(c, "pipelines", "Model versions", h.pipelines ?? [],
         (p, i) => this.row(c, `ph-pl-${i}`, `${p.name}@v${p.version ?? 1}`, `Evaluate other settings (by ${p.created_by ?? "?"} ${day(p.created_at)})`, [], "layers",
@@ -929,47 +938,35 @@ export default class ProjectHome extends View {
     return { label: "New candidate", task: "experiment" };
   }
 
+  /** One project, as a card: its name, what it is, how many models, its state in one plain sentence (the sentence
+   *  the project's own page uses), and where it is deployed. The whole card opens the project. */
   projectCard(c, p, i) {
     const sum = this.summaries?.[p.id];
     const ready = sum && !sum.failed;
     const exps = ready ? sum.exps.experiments ?? [] : [];
-    const champ = ready ? sum.exps.champion : null;
-    const champExp = exps.find((e) => e.is_champion);
-    // The verdict worth showing: the champion's own, else the newest challenger judged against it.
-    const judged = [...exps].reverse().find((e) => !e.is_champion && e.evaluation);
-    const shown = champExp?.evaluation ? { who: "Baseline", v: verdictOf(champExp.evaluation) } : judged ? { who: parseRef(judged.pipeline).name, v: verdictOf(judged.evaluation) } : null;
-    const tone = shown ? { good: c.good, bad: c.fail, warn: c.warn, neutral: c.grey500 }[shown.v.tone] : c.grey500;
-    const next = ready ? this.nextOf(sum) : null;
-    const cr = parseRef(champ);
+    const champ = ready && sum.exps.champion ? inProject(parseRef(sum.exps.champion).name) : null;
+    // The model worth a sentence: the newest one judged against the compared model, else the compared model itself.
+    const told = [...exps].reverse().find((e) => !e.is_champion && e.evaluation) ?? exps.find((e) => e.is_champion) ?? exps.at(-1) ?? null;
+    const state = !told ? "No model yet." : `${inProject(parseRef(told.pipeline).name)}: ${verdictSentence(told, champ).replace(/^./, (x) => x.toLowerCase())}`;
+    const rec = ready ? sum.stages.ship?.staging ?? null : null;
+    const place = { local: "this computer", aws: "AWS", modal: "Modal", gcp: "Google Cloud", azure: "Azure" }[rec?.host ?? (rec?.kind === "local" ? "local" : "")] ?? null;
+    const deployed = rec?.status === "running" ? `Running on ${place ?? "your cloud"}` : "Not deployed";
+    const what = p.description || (ready ? sum.stages.recipe?.label : null) || "";
     return v_flex().id(`ph-p-${i}`).w(300).min_h(176).flex_none().p(14).gap(8).bg(c.surface).border_1().border_color(c.rule).cursor_pointer()
       .hover((s) => s.border_color(c.blue)).on_click((_e, cx) => this.pickProject(cx, p))
       .child(h_flex().gap(10).items_center()
         .child(ProjectBadge(c, p, 28))
         .child(v_flex().flex_1().min_w(0)
-          .child(div().truncate().text_size(15).font_semibold().child(p.name))
-          .child(div().truncate().text_size(12.5).text_color(c.grey500).child(p.description || "No description"))))
+          .child(div().id(`ph-p-${i}-name`).truncate().text_size(15).font_semibold().child(p.name))
+          .when(Boolean(what), (e) => e.child(div().id(`ph-p-${i}-what`).truncate().text_size(12.5).text_color(c.grey500).child(what)))))
       .child(!sum ? div().text_size(12.5).text_color(c.grey500).child("Reading...")
         : sum.failed ? div().text_size(12.5).text_color(c.grey500).child("Couldn't read this project. Open it to try again.")
-        : v_flex().gap(5)
-          .child(h_flex().gap(6).items_center().min_w(0)
-            .child(svg(icon("trophy")).size(13).flex_none().text_color(champ ? c.blue : c.grey300))
-            .child(champ
-              ? h_flex().gap(6).items_center().min_w(0).child(div().min_w(0).truncate().font_family(MONO).text_size(12.5).child(cr.name)).when(cr.version != null, (e) => e.child(Badge(c, `v${cr.version}`)))
-              : div().text_size(12.5).text_color(c.grey500).child("No baseline yet")))
-          .child(h_flex().gap(6).items_center().min_w(0)
-            .child(svg(icon(shown ? shown.v.icon : "clock")).size(13).flex_none().text_color(tone))
-            .child(div().min_w(0).truncate().text_size(12.5).text_color(tone).child(shown ? `${shown.who}: ${shown.v.text.toLowerCase()}` : "Nothing judged yet")))
-          .child(h_flex().gap(6).items_center()
-            .child(svg(icon("flask-conical")).size(13).flex_none().text_color(c.grey500))
-            .child(div().text_size(12.5).text_color(c.grey900).child(`${int(exps.length)} candidate${exps.length === 1 ? "" : "s"}`))))
+        : v_flex().gap(4)
+          .child(div().id(`ph-p-${i}-models`).text_size(12.5).text_color(c.grey900).child(`${int(exps.length)} model${exps.length === 1 ? "" : "s"}`))
+          .child(div().id(`ph-p-${i}-state`).text_size(12.5).line_height("18px").text_color(c.grey900).child(state))
+          .child(div().id(`ph-p-${i}-deployed`).text_size(12.5).text_color(c.grey900).child(deployed)))
       .child(div().flex_1())
-      .when(Boolean(next), (e) => e.child(h_flex().child(Button(c, `ph-p-${i}-next`, next.label, (_e, cx) => {
-        this.pickProject(cx, p);
-        const pins = Object.fromEntries(sum.stages.inputs.map((x) => [x.slot, x.pinned]));
-        if (next.task === "input") pickInput(p.id, next.slot);
-        else if (next.task === "pin") form("pin", { project: p.id, pins, slot: next.slot });
-        else if (next.task === "experiment") form("experiment", { project: p.id, pins, champion: champ });
-      }, { small: true }))));
+      .child(h_flex().child(Button(c, `ph-p-${i}-open`, "Open", (_e, cx) => this.pickProject(cx, p), { small: true })));
   }
 
   /** 1. What you're building: the recipe that decided the inputs. */
@@ -996,7 +993,7 @@ export default class ProjectHome extends View {
     if (st?.next?.text) {
       const slot = (st.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.slot === st.next.slot);
       const label = { "set-input": slot ? `Choose ${slot.noun}` : "Choose an input", "add-evaluation": "Add an evaluation set", "baseline-start": "Start with keyword search",
-        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New model", backtest: "Compare it", stage: "Deploy", try: "Open it", connect: "Open the deployment", "ab-decide": "Open the deployment", "ab-start": "Start an A/B test", "ab-wait": "Send simulated shoppers", "shadow-start": "Start shadow mode", handoff: "Send to launch review" }[st.next.action] ?? null;
+        "new-experiment": firstCandidate(st) ? "Train a starter ranker" : "New model", backtest: "Compare it", stage: "Deploy", try: "Open it", connect: "Open the deployment", "shadow-start": "Start the quiet test" }[st.next.action] ?? null;
       return { text: st.next.text, label, action: st.next };
     }
     const req = (st?.inputs ?? []).map((i) => this.slotOf(i)).find((i) => i.required && i.empty);
@@ -1032,11 +1029,7 @@ export default class ProjectHome extends View {
     if (a.action === "assist") return this.startAssist(cx);
     // Staging asks where first (this computer, or the connected cloud), so the Next button opens the deployment page.
     if (a.action === "stage" || a.action === "try" || a.action === "connect") { this.shipPath.more = a.action === "connect" ? "traffic" : null; return this.openDeployment(cx); }
-    if (a.action === "ab-start") { this.shipPath.more = "traffic"; this.shipPath.openSetup(false); return this.openDeployment(cx); }
-    if (a.action === "ab-decide" || a.action === "ab-watch") { this.shipPath.more = "traffic"; return this.openDeployment(cx); }
-    if (a.action === "shadow-start") return this.shipPath.act(cx, "/shadow/start", {}, "Shadow mode is on. Shoppers keep getting the baseline's results.");
-    if (a.action === "ab-wait") return this.shipPath.simulate(cx);
-    if (a.action === "handoff") return form("handoff", { pipeline: a.pipeline });
+    if (a.action === "shadow-start") return this.shipPath.act(cx, "/shadow/start", {}, this.shipPath.w("The quiet test is on. Shoppers keep getting the baseline's results."));
     const e = (this.exps?.experiments ?? []).find((x) => x.id === a.experiment);
     if (a.action === "backtest" && e) return this.backtest(cx, e);
     if (a.action === "make-champion" && e) { this.open = e.id; cx.notify(); }
@@ -1082,11 +1075,8 @@ export default class ProjectHome extends View {
     if (this.listProblem) return Problem(c, this.listProblem, (cx) => { this.listProblem = null; this.load(cx); });
     if (ps === null) return Skeleton(c, 4);
     const newBtn = Button(c, "ph-empty-new", "New project", () => form("project"), { kind: "primary" });
-    if (!ps.length) return Empty(c, "Start with a project", "A project holds one search you're improving: its catalog, the labels that grade it, the candidates you train and the baseline you ship.", newBtn);
+    if (!ps.length) return Empty(c, "Start with a project", "A project holds one model you're building: its data, the models you train and compare, and where it's deployed.", newBtn);
     return v_flex().gap(10)
-      .child(v_flex().gap(1)
-        .child(div().text_size(15).font_semibold().child("Projects"))
-        .child(div().text_size(12.5).text_color(c.grey500).child("Each one is a search you're improving. Open one to see its inputs, candidates and baseline.")))
       .child(h_flex().id("ph-projects").flex_wrap().items_start().gap(10).children(ps.map((p, i) => this.projectCard(c, p, i))));
   }
 
@@ -1097,9 +1087,9 @@ export default class ProjectHome extends View {
     // The name comes first: its block never goes under 220 px, and the actions drop to a second row when the row is
     // narrow (a terminal column open) instead of squeezing the name to "S...".
     const head = h_flex().min_h(56).py(8).flex_none().px(24).gap(10).items_center().border_b(1).border_color(c.rule)
-      .child(pid ? ProjectBadge(c, { id: pid, icon: p?.icon ?? null }, 28) : div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("house")).size(15)))
+      .child(pid ? ProjectBadge(c, { id: pid, icon: p?.icon ?? null }, 28) : div().size(28).flex_none().flex().items_center().justify_center().bg(c.blueLight).text_color(c.blue).child(svg(icon("folder")).size(15)))
       .child(v_flex().flex_1().min_w(160)
-        .child(div().id("ph-name").text_size(18).font_semibold().truncate().child(p?.name ?? (pid ? shared("captain.scope")?.label ?? pid : "Home")))
+        .child(div().id("ph-name").text_size(18).font_semibold().truncate().child(p?.name ?? (pid ? shared("captain.scope")?.label ?? pid : "Projects")))
         // What it builds, as one line. Nothing else sits under the name.
         .when(Boolean(pid) && Boolean(this.recipe()), (e) => e.child(div().id("ph-building").text_size(12.5).text_color(c.grey500).truncate().child(this.recipe()))))
       .when(Boolean(pid), (e) => e.child(this.moreMenu(c)))
@@ -1125,7 +1115,7 @@ export default class ProjectHome extends View {
         .child(div().text_color(c.grey500).child("/"))
         .child(div().text_color(c.navy).font_medium().child("Deployment"))
         .child(div().flex_1())
-        .child(div().id("dep-all").text_color(c.blue).cursor_pointer().on_click((_e, cx) => this.shipPath.openList(cx)).child("All deployments")))
+        .child(div().id("dep-all").text_color(c.blue).cursor_pointer().on_click(() => go("deployments")).child("All deployments")))
       // An open question (the confirm) or a deploy in progress takes the banner's place: one filled button.
       .when(!this.shipPath.dconfirm && !this.shipPath.jobShown(), (e) => e.child(this.nextLine(c)))
       .child(this.shipPath.deployed(c));

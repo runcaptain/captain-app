@@ -130,7 +130,7 @@ def check(ctx: Context, pid: str, env: str = "staging", sample: int = SAMPLE, mi
 
     rec = state(ctx, pid, env)
     if not rec:
-        raise ValueError(f"Nothing is staged for {pid}. Stage a model version and try it first.")
+        raise ValueError(f"Nothing is deployed for {pid}. Deploy a model and try it first.")
     if rec.get("how") == "image":
         out = {"status": "unavailable", "text": "Not checked: your own container doesn't log the features it serves."}
     else:
@@ -143,7 +143,7 @@ def check(ctx: Context, pid: str, env: str = "staging", sample: int = SAMPLE, mi
         if not m["checked"]:
             out = {**m, "status": "nothing-to-check",
                    "text": ("Nothing to check yet. Try a query first, so the endpoint serves something." if not m["requests"]
-                            else "Not checked: the staged version ranks without trained features, so there is nothing to compare.")}
+                            else "Not checked: the deployed version ranks without trained features, so there is nothing to compare.")}
         else:
             ok = m["match_rate"] >= min_match and not m["missing_rate"] and not m["extra_rate"] and not m["without_request_id"]
             pct = f"{m['match_rate'] * 100:.1f}".rstrip("0").rstrip(".")

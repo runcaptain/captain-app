@@ -109,7 +109,7 @@ await h.click('ship-copy-key');
 await until(h, () => copied === 'render-test-key', 'Copy its key reads it from the keychain');
 assert.ok(!h.text().includes('render-test-key'), 'and never draws it');
 const labels = () => h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]);
-assert.deepEqual(labels(), [...['Requests it has answered'], ...(haveTrainer ? ['Where the two models disagree'] : []), 'Is it healthy?', 'Check it uses the same numbers it was trained on', 'Send it real traffic', 'Earlier versions', 'Logs', 'Settings'], 'More: labels that say what each is for, and no review before there is traffic');
+assert.deepEqual(labels(), [...['Requests it has answered'], ...(haveTrainer ? ['Where the two models disagree'] : []), 'Is it healthy?', 'Check it uses the same numbers it was trained on', 'Use it from your site', 'Earlier versions', 'Logs', 'Settings'], 'More: labels that say what each is for, and no review before there is traffic');
 clean(t, 'on the deployed screen');
 
 // Try a search: the results, beside the model it is compared with, by that model's own name.
@@ -140,9 +140,9 @@ await until(h, () => h.mod.shipPath.healthD?.target?.p95_ms === 200, 'the target
 assert.equal((await get('/api/projects/outdoor/staging/health')).target.set, true);
 await h.click('dep-open-close');
 
-// The check that it uses the numbers it was trained on: a launch gate, behind More with its last result.
+// The check that it uses the numbers it was trained on: behind More with its last result.
 await more(h, 'check');
-assert.ok(h.text().includes('It must pass before launch.'), 'it opens with what it is for');
+assert.ok(h.text().includes('It should pass before you put it in production.'), 'it opens with what it is for');
 await h.click('dep-check-now');
 await until(h, () => Boolean(h.mod.shipPath.checkResult), 'the check answers');
 t = h.text();
@@ -174,16 +174,18 @@ await until(h, () => byId(h, 'dep-request-id').length === 1 && byId(h, 'dep-requ
 assert.ok(/Ranked '.+' with the (candidate|baseline) in [\d.]+ ms: \d+ results\./.test(h.text()), 'what the model wrote for that request');
 await h.click('dep-open-close');
 
-// Send it real traffic: connecting a site comes first, and on this computer the page says a site can't reach it.
+// Use it from your site: on this computer the page says a site can't reach it, and gives an address a model.
 await more(h, 'traffic', (s) => Boolean(s.conn));
 t = h.text();
-assert.ok(t.includes('Connect your site') && t.includes("A site can't reach an endpoint on this computer. Two ways forward: deploy it to a cloud, so your site can call it, or keep testing here with simulated shoppers."), `the honest line: ${t.slice(-900)}`);
+assert.ok(t.includes('Use it from your site') && t.includes("A site can't reach a model on this computer. Deploy it to a cloud, so your site can call it."), `the honest line: ${t.slice(-900)}`);
+assert.ok(t.includes("To compare models on real shoppers, split traffic in your own testing tool and send each group to its model's address.") && t.includes('The deployed model') && /http:\/\/127\.0\.0\.1:\d+\/rank/.test(t), `an address a model, and the paragraph: ${t.slice(-900)}`);
+assert.ok(!t.includes('A/B') && !t.includes('simulated shoppers'), 'nothing about an A/B test');
 assert.ok(/Not counted: \d+ test\./.test(t), 'searches typed here are shown as not counted');
 assert.ok(!t.includes('render-test-key'), 'the key is never on screen');
 for (const id of ['ship-connect-code-curl', 'ship-connect-code-javascript', 'ship-connect-code-python']) assert.equal(byId(h, id).length, 1, id);
 await h.click('ship-connect-code-python');
 t = h.text();
-assert.ok(t.includes('def rank(query, session_id):') && t.includes('"traffic": "real"') && t.includes('client_ms') && t.includes('CAPTAIN_STAGING_KEY'), 'the code a site uses: it labels its shoppers and reports its own time');
+assert.ok(t.includes('def rank(query, session_id):') && t.includes('"traffic": "real"') && t.includes('/timing') && !t.includes('/outcome') && t.includes('CAPTAIN_STAGING_KEY'), 'the code a site uses: it labels its shoppers and reports its own time, and nothing a shopper did');
 await h.click('dep-open-close');
 
 // Earlier versions, the log and the settings, each opening with what it is for.
@@ -205,6 +207,43 @@ await h.click('dep-set-edit');
 await h.click('dep-set-idle-60');
 await until(h, () => h.mod.shipPath.setNote?.tone === 'good', 'the idle time changes while it runs');
 assert.equal((await get('/api/projects/outdoor/staging/settings')).idle_minutes, 60);
+// What it accepts from a site, in Settings: its key, a size and rate limit, and a time budget. On a real endpoint.
+await until(h, () => Boolean(h.mod.shipPath.protD), 'what it accepts is read');
+t = h.text();
+assert.ok(t.includes('The key has not been changed since it was made.') && t.includes('Requests up to 256 KB.') && t.includes('No limit on requests a second.') && t.includes('No time budget.'), `the starting state, in sentences: ${t.slice(-1200)}`);
+{
+  const ep = (await get('/api/projects/outdoor/staging')).staged.endpoint.url;
+  const ask = async (key, body = {}) => (await fetch(`${ep}/rank`, { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'jacket', k: 3, ...body }) })).status;
+  const oldKey = (await get('/api/projects/outdoor/staging/key')).key;
+  assert.equal(await ask(oldKey), 200);
+  // This test gives the endpoint its key through the environment, as a server with no keychain does. Captain can
+  // only change a key it keeps itself, and says so in place of the button. (Changing a key against a real
+  // endpoint, with the old one still working, is tests/test_deployment_protect.py.)
+  let newKey = oldKey;
+  if (byId(h, 'dep-key-change').length === 0) {
+    assert.ok(h.text().includes('The key is set in the environment as') && h.text().includes('Change it there and deploy again.'), `why the key can't be changed here: ${h.text().slice(-700)}`);
+  } else {
+    await h.click('dep-key-change');
+    assert.ok(h.text().includes('How long should the old one keep working, so your site can switch?'), 'changing the key asks how long the old one lasts');
+    await h.click('dep-key-grace-1440');
+    await h.click('dep-key-yes');
+    await until(h, () => h.mod.shipPath.protNote?.tone === 'good', 'the key is changed');
+    newKey = (await get('/api/projects/outdoor/staging/key')).key;
+    assert.ok(newKey && newKey !== oldKey, 'a new key');
+    assert.deepEqual([await ask(newKey), await ask(oldKey), await ask('wrong')], [200, 200, 401], 'no downtime: the new key and the old key both work');
+    t = h.text();
+    assert.ok(t.includes('The old key works until') && !t.includes(newKey) && !t.includes(oldKey), 'said in a sentence, and no key is ever on screen');
+  }
+  // a size limit, a rate limit and a time budget, each a click
+  await h.click('dep-size-64');
+  await until(h, () => h.mod.shipPath.protD?.limits?.max_request_kb === 64, 'the size limit is saved');
+  await h.click('dep-budget-200');
+  await until(h, () => h.mod.shipPath.protD?.budget?.ms === 200, 'the time budget is saved');
+  t = h.text();
+  assert.ok(t.includes('Requests up to 64 KB.') && /If this model takes longer than 200 ms, or fails, the request is answered with the compared model's results\.|A request that takes longer than 200 ms is refused\./.test(t), `the new sentences: ${t.slice(-1200)}`);
+  await h.idle(600);
+  assert.equal(await ask(newKey, { note: 'x'.repeat(100000) }), 413, 'a request over the size limit is refused by the endpoint itself');
+}
 await h.click('dep-open-close');
 
 // What an agent is told when the deployment is pinned: no key, no secret.

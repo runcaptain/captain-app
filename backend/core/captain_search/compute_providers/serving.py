@@ -10,7 +10,7 @@ them through compute.py and never branches on the cloud:
   staged_status(rec)        {state: running | starting | failed | gone, reason?, copies?, ask?}. `copies` is how
                             many copies are up right now, for a host that sleeps when idle (None when the host
                             doesn't say). `ask` is True when asking the endpoint itself costs next to nothing.
-  invoke(rec, payload)      one call to the endpoint: {"op": rank | outcome | flush | status | reload, "key", ...}.
+  invoke(rec, payload)      one call to the endpoint: {"op": rank | timing | flush | status | reload, "key", ...}.
   unstage(resources)        delete these. Returns the ones that are still there.
   tagged(project, env)      every resource here that carries Captain's labels for a project's staging.
   stage_preflight(st, uri)  what the endpoint's identity may do, asked without changing anything.
@@ -69,7 +69,7 @@ class ServingProvider:
         return d
 
 
-ROUTES = {"outcome": "/outcome", "flush": "/flush", "reload": "/reload"}
+ROUTES = {"timing": "/timing", "flush": "/flush", "reload": "/reload"}
 _clients: dict = {}
 
 
@@ -111,7 +111,7 @@ class HttpServing(ServingProvider):
         ep = rec.get("endpoint") or {}
         base = str(ep.get("url") or "").rstrip("/")
         if not base:
-            raise ProviderError("this endpoint has no address recorded. Stage it again.")
+            raise ProviderError("This deployment has no address recorded. Deploy it again.")
         body = dict(payload)
         op, key, arm = body.pop("op", "rank"), body.pop("key", None), body.pop("arm", None)
         front = self._front_door(rec)
@@ -121,16 +121,16 @@ class HttpServing(ServingProvider):
             else:
                 path = "/rank" + (f"/{arm}" if arm else "") if op == "rank" else ROUTES.get(op)
                 if path is None:
-                    raise ProviderError(f"unknown op {op!r}: rank, outcome, flush, status or reload")
+                    raise ProviderError(f"unknown op {op!r}: rank, timing, flush, status or reload")
                 r = _client(base).post(base + path, json=body, headers={**front, "Authorization": f"Bearer {key}"}, timeout=self.INVOKE_TIMEOUT_S)
         except httpx.HTTPError as e:
-            raise ProviderError(f"The staging endpoint did not answer: {type(e).__name__} {str(e)[:200]}") from None
+            raise ProviderError(f"The deployed model did not answer: {type(e).__name__} {str(e)[:200]}") from None
         if r.status_code >= 400:
             try:
                 detail = r.json().get("detail")
             except Exception:  # noqa: BLE001
                 detail = r.text[:200]
-            raise ProviderError(f"The staging endpoint refused the request ({r.status_code}): {detail}")
+            raise ProviderError(f"The deployed model refused the request ({r.status_code}): {detail}")
         return r.json()
 
     def wait_ready(self, url: str, stage_id: str, rec: dict | None = None, deadline_s: float | None = None, failed=None) -> float:
@@ -159,6 +159,19 @@ class HttpServing(ServingProvider):
         ep = rec.get("endpoint") or {}
         return {"url": ep.get("url"), "auth": "Authorization: Bearer <the endpoint key>",
                 "how": "POST <url>/rank with the endpoint key. The address is public, and every route but /healthz and /ping needs the key."}
+
+
+def deployed_base(prefix: str, project: str, env: str) -> str:
+    """What a deployment is called in a cloud account, before the cloud's own limits: `<prefix>-<project>`. The
+    environment is added only when it is not the usual one, so a person reading their cloud console sees the
+    project's name and not Captain's word for where it sits ("captain-shop", not "captain-shop-staging")."""
+    return f"{prefix}-{project}" if env == "staging" else f"{prefix}-{project}-{env}"
+
+
+def kept_name(st: dict, kind: str) -> str | None:
+    """The name of the thing a deployment already runs as, when it has one. A deployment made under an older name
+    keeps it: computing a new name for it would start a second copy beside the first and leave the first billing."""
+    return next((r["name"] for r in st.get("existing") or [] if r.get("type") == kind and r.get("name")), None)
 
 
 def clean_name(text: str, limit: int = 63, lower: bool = True) -> str:

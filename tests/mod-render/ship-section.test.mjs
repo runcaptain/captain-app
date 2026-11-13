@@ -52,16 +52,19 @@ globalThis.fetch = async (url, opts = {}) => {
   sent.push([opts.method ?? 'GET', p + u.search, body]);
   if (p.endsWith('/deploy/hosts')) return reply(200, { project: 'shop', model_version: 'shop/starter-ranker@v2', beside: 'shop/keyword-baseline@v1', hosts: world.places });
   if (p.endsWith('/deploy') && (opts.method ?? 'GET') === 'GET') { jobReads += 1; return reply(200, world.job(jobReads)); }
+  if (p.endsWith('/deploy') && opts.method === 'DELETE') return reply(200, { job: 'rm-1' });
   if (p.endsWith('/deploy')) {
     if (body.host === 'local' || body.confirm) return reply(200, { job: 'dep-1', run: 'run-1', plan: body.host === 'local' ? { steps: [] } : PLAN });
     return reply(409, { needs_confirm: true, detail: 'Confirm first.', plan: PLAN });
   }
-  if (p.endsWith('/staging/versions')) return reply(200, { text: '2 versions staged so far.', live: 'shop/starter-ranker@v2', rows: [
+  if (p.endsWith('/staging/versions')) return reply(200, { text: '2 versions deployed so far.', live: 'shop/starter-ranker@v2', rows: [
     { n: 2, model_version: 'shop/starter-ranker@v2', at: '2026-11-12T19:00:00+00:00', by: 'dev', live: true, can_roll_back: false },
     { n: 1, model_version: 'shop/keyword-baseline@v1', at: '2026-11-12T18:00:00+00:00', by: 'dev', live: false, can_roll_back: true }] });
   if (p.endsWith('/rollback')) return reply(200, { job: 'rb-1' });
   if (p.endsWith('/staging/rollbacks/auto')) { world.backs = { ...world.backs, auto: body.minutes ? { minutes: body.minutes, on: true, text: `On: if a new version is unhealthy in its first ${body.minutes} minutes, Captain puts the previous one back and tells you.` } : { minutes: null, on: false, text: 'Off: an unhealthy version stays up until you roll it back.' } }; return reply(200, world.backs.auto); }
   if (p.endsWith('/staging/rollbacks')) return reply(200, world.backs);
+  if (p.endsWith('/staging/protect')) { if ((opts.method ?? 'GET') === 'PUT') world.prot = { ...world.prot, limits: { ...world.prot.limits, ...(body.rate_per_s !== undefined ? { rate_per_s: body.rate_per_s || null } : {}) }, rate_text: body.rate_per_s ? `Up to ${body.rate_per_s} requests a second on each copy. More than that are refused, and told to try again in a second.` : world.prot.rate_text }; return reply(200, world.prot); }
+  if (p.endsWith('/staging/key/rotate')) return reply(200, { rotated: true, can_rotate: true, previous_valid: true, text: 'Changed 2026-11-12 20:00 UTC by dev. The old key works until 2026-11-12 21:00 UTC.' });
   if (p.endsWith('/staging/live')) return reply(200, world.live);
   if (p.endsWith('/staging/health/check')) return reply(200, { ...world.health, checked_at: '2026-11-12T19:31:00+00:00', changed: false, alert: null });
   if (p.endsWith('/staging/health/target')) { world.health = { ...world.health, target: { p95_ms: body.p95_ms ?? null, error_rate: body.error_rate ?? 0.05, set: true } }; return reply(200, world.health); }
@@ -70,15 +73,19 @@ globalThis.fetch = async (url, opts = {}) => {
     summary: { requests: 62, errors: 0, p50: 0.2, p95: 0.6, site_reported: 0 }, text: '62 requests in the last hour, no errors.' });
   if (p.endsWith('/staging/cost')) return reply(200, { free: false, month_text: '$0.79', rate_text: 'About $0.07 an hour while it is up, about $1.58 a day.' });
   if (p.endsWith('/staging/requests')) return reply(200, { rows: [{ request_id: 'r1', ts: '2026-11-11T16:06:02.118Z', query: 'jacket', arm: 'candidate', ms: 2.7, traffic: 'real' }], total: 1, text: '1 request since this version was deployed.' });
-  if (p.endsWith('/staging/connect')) return reply(200, { connected: world.real > 0, real: world.real, unlabelled: 0, test: 0, simulated: 0, running: 0, snippets: {}, test_request: 'curl https://example.invalid/rank', live: 'Waiting for the first request.', text: '' });
+  if (p.endsWith('/staging/connect')) return reply(200, { connected: world.real > 0, real: world.real, unlabelled: 0, test: 0, simulated: 0, running: 0, snippets: {}, test_request: 'curl https://example.invalid/rank', live: 'Waiting for the first request.', text: '',
+    own_tests: 'To compare models on real shoppers, split traffic in your own testing tool and send each group to its model\'s address.',
+    addresses: [{ model: 'candidate', model_version: 'shop/starter-ranker@v2', role: 'The deployed model', address: 'https://example.invalid/rank', how: 'POST, with the key as a bearer token' },
+      { model: 'baseline', model_version: 'shop/keyword-baseline@v1', role: 'The compared model', address: 'https://example.invalid/rank/baseline', how: 'POST, with the key as a bearer token' }] });
   if (p.endsWith('/staging/differ')) return reply(200, { checked: 40, same: 10, mostly_same: false, text: 'It ranks differently from the other model on 30 of 40 searches checked.',
     queries: [{ query: 'rain jacket under 50', moved: 9 }, { query: 'trail shoes', moved: 4 }] });
   if (p.endsWith('/staging/check')) { world.staging = { ...world.staging, staged: { ...world.staging.staged, check: world.check } }; return reply(200, world.check); }
-  if (p.endsWith('/shadow') || p.endsWith('/ab/options')) return reply(200, { status: 'none', ready: false, shares: [], text: '' });
+  if (p.endsWith('/shadow')) return reply(200, { status: 'none', text: '' });
+  // Captain runs no A/B tests: a screen that still asks for one gets what the services give, nothing.
+  if (/\/ab(\/|$)/.test(p)) return reply(404, { detail: 'Not Found' });
   if (p.endsWith('/staging/query')) return reply(200, { query: body.query, same_order: false, moved: 2, staged: { model_version: 'shop/starter-ranker@v2', ms: 2.7, results: [{ id: 'p1', position: 1, title: 'Rain Jacket' }] },
     baseline: { model_version: 'shop/keyword-baseline@v1', ms: 0.3, results: [{ id: 'p2', position: 1, title: 'Wind Jacket' }] } });
   if (p.endsWith('/staging')) return reply(200, world.staging);
-  if (p.endsWith('/ab')) return reply(200, { status: 'none', experiment: null, can_measure: ['clicks'] });
   return reply(200, {});
 };
 
@@ -94,6 +101,10 @@ class Dep extends View {
 }
 const open = async (w, deployOpen = false) => {
   world = { places: [LOCAL], staging: NONE, live: { state: 'handling', label: 'Handling requests' }, real: 0,
+    prot: { limits: { max_request_kb: 256, rate_per_s: null }, budget: { ms: null, fallback: true }, has_fallback: true,
+      size_text: 'Requests up to 256 KB. A bigger one is refused with a sentence saying so.', rate_text: 'No limit on requests a second.',
+      budget_text: "No time budget. If this model fails, the request is answered with the compared model's results.",
+      key: { can_rotate: true, previous_valid: false, text: 'The key has not been changed since it was made.' } },
     backs: { rows: [{ at: '2026-11-12T18:30:00+00:00', by: 'Captain', from: 'shop/starter-ranker@v1', to: 'shop/keyword-baseline@v1', version: 1, auto: true, reason: 'It turned unhealthy 4 minutes after it was deployed. It is not answering.' }],
       auto: { minutes: null, on: false, text: 'Off: an unhealthy version stays up until you roll it back.' }, text: '1 roll back so far.' },
     health: { project: 'shop', status: 'healthy', text: 'Healthy. 0 of its last 62 requests failed, in the last 15 minutes. 95 in 100 took under 0.6 ms at the endpoint.', checked_at: '2026-11-12T19:30:00+00:00', reasons: [], target: { p95_ms: null, error_rate: 0.05, set: false } }, job: () => ({ status: 'running', host: 'aws', login: 'aws-main', steps: STEPS }), ...w };
@@ -210,8 +221,8 @@ assert.ok(t.includes('https://runtime.sagemaker.us-west-1.amazonaws.com/endpoint
 assert.ok(t.includes('Try a search') && t.includes('It has answered 62 requests in the last hour. Usually in under 1 ms at the endpoint, almost always within 1 ms.'), 'a search box, and how much and how fast in a sentence');
 assert.ok(t.includes('About $0.07 an hour while it is up, about $1.58 a day. $0.79 so far this month.') && byId(h, 'ship-stop').length === 1, 'the cost and Stop');
 const labels = h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]);
-assert.deepEqual(labels, ['Requests it has answered', 'Where the two models disagree', 'Is it healthy?', 'Check it uses the same numbers it was trained on', 'Send it real traffic', 'Earlier versions', 'Logs', 'Settings'], 'More, with labels that say what each is for');
-assert.ok(!labels.includes('Review before launch'), 'the review is not offered before there is real traffic or a test result');
+assert.deepEqual(labels, ['Requests it has answered', 'Where the two models disagree', 'Is it healthy?', 'Check it uses the same numbers it was trained on', 'Use it from your site', 'Earlier versions', 'Logs', 'Settings'], 'More, with labels that say what each is for');
+assert.ok(!labels.includes('Review before launch'), 'launch review is on no screen');
 assert.ok(t.includes('Each request it answered: what was asked, what it returned, and how long it took.'), 'each with a sentence');
 assert.equal(h.byIdPrefix('dep-tab-').length, 0, 'no tabs');
 assert.ok(!/\bMetrics\b|\bVersions\b|\bCopies\b|[Ss]taging|Stage it|Try it\b/.test(t), `no bare nouns and no old words: ${t}`);
@@ -227,10 +238,10 @@ await wait(h, () => h.mod.ship.result?.query === 'rain jacket under 50', 'pickin
 assert.equal(byId(h, 'dep-open-differ').length, 0, 'and the list gets out of the way of the results');
 h.mod.ship.result = null;
 
-// The check that it uses the numbers it was trained on: a launch gate, with its last result and Check now.
+// The check that it uses the numbers it was trained on: with its last result and Check now.
 await h.click('dep-more-check');
 t = h.text();
-assert.ok(t.includes('This compares the two. It must pass before launch.') && t.includes('Not checked yet.') && byId(h, 'dep-check-now').length === 1, `the check, before it has run: ${t}`);
+assert.ok(t.includes('This compares the two. It should pass before you put it in production.') && t.includes('Not checked yet.') && byId(h, 'dep-check-now').length === 1, `the check, before it has run: ${t}`);
 assert.equal(byId(h, 'dep-check-failed').length, 0);
 world.check = { status: 'fail', text: 'Served features differ from training on 4% of 250 values checked.', checked: 250, match_rate: 0.96, features: [{ feature: 'title_bm25', mismatch_rate: 0.09 }, { feature: 'price_rank', mismatch_rate: 0.03 }] };
 await h.click('dep-check-now');
@@ -265,10 +276,12 @@ await h.click('dep-open-close');
 assert.equal(byId(h, 'dep-open-requests').length, 0);
 await h.click('ship-stop');
 assert.ok(h.text().includes('Stop it? The address goes away. What it answered is kept.'), 'Stop asks first');
-// With real traffic, the review appears, last.
+// Launch review is on no screen, with or without real traffic: the path ends at a running endpoint and its address.
 h = await open({ places: [LOCAL, AWS], staging: RUN, real: 12 }, true);
 await wait(h, () => Boolean(h.mod.ship.conn), 'traffic is read');
-assert.equal(h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]).at(-1), 'Review before launch', 'the review appears once there is real traffic');
+assert.ok(!h.byIdPrefix('dep-more-').some((e) => /[Rr]eview|[Ll]aunch/.test(e.kids[0].kids[0])) && byId(h, 'dep-more-review').length === 0, 'no review under More');
+assert.ok(!/[Ll]aunch review|Send to launch/.test(h.text()), 'and nothing on the deployed screen names it');
+assert.deepEqual(h.mod.ship.steps().map((x) => x.title), ['Deploy', 'Try it', 'Use it from your site'], 'the steps agents read end at a site using it');
 
 // The screen rules on the deployed screen and on everything behind More: no filled button (the next step's is
 // the banner above this screen), and the code font only on what a person copies: the address, a request's id,
@@ -276,7 +289,7 @@ assert.equal(h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]).at(-1), 'Re
 {
   const { palette, MONO } = await import(path.join(dir, 'kit/tokens.js'));
   const solid = palette(false).solid;
-  const COPIED = /^(ship-address|ship-connect-address|ship-connect-snippet|dep-request-id|dep-log-\d+|dep-request-line-\d+)$/;
+  const COPIED = /^(ship-address|ship-address-\w+-value|ship-connect-address|ship-connect-snippet|dep-request-id|dep-log-\d+|dep-request-line-\d+)$/;
   const idOf = (e) => e.call('id')?.[0] ?? '';
   const counts = (hh) => {
     const all = hh.byIdPrefix('');
@@ -291,7 +304,7 @@ assert.equal(h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]).at(-1), 'Re
   await wait(hh, () => Boolean(hh.mod.ship.conn) && Boolean(hh.mod.ship.met), 'the screen is read');
   const seen = {};
   seen.screen = counts(hh);
-  for (const id of ['requests', 'differ', 'health', 'check', 'traffic', 'versions', 'logs', 'settings', 'review']) {
+  for (const id of ['requests', 'differ', 'health', 'check', 'traffic', 'versions', 'logs', 'settings']) {
     await hh.click(`dep-more-${id}`);
     await hh.idle(120);
     seen[id] = counts(hh);
@@ -302,12 +315,19 @@ assert.equal(h.byIdPrefix('dep-more-').map((e) => e.kids[0].kids[0]).at(-1), 'Re
     assert.deepEqual(k.stray, [], `the code font only on what a person copies, on ${where}`);
   }
   console.log(`  counted on ${Object.keys(seen).length} views: 0 filled buttons, code font only on copied text`);
-  // Inside "Send it real traffic" the words are the page's: this model, and the other model by its own name.
+  // Inside "Use it from your site" the words are the page's: this model, and the other model by its own name.
   await hh.click('dep-more-traffic');
   await hh.idle(120);
   const tt = hh.text();
-  assert.ok(!/\b(the |The |a )?(candidate|baseline)\b(?!-)/.test(tt.replace(/keyword-baseline/g, '')), `no "candidate" or "baseline" inside Send it real traffic: ${tt.match(/.{60}\b(candidate|baseline)\b.{40}/)?.[0]}`);
-  assert.ok(tt.includes("Your site keeps showing keyword-baseline's results. This model ranks the same requests silently"), `shadow mode in the page's words: ${tt.slice(-900)}`);
+  assert.ok(!/\b(the |The |a )?(candidate|baseline)\b(?!-)/.test(tt.replace(/keyword-baseline/g, '').replace(/\/rank\/baseline/g, '')), `no "candidate" or "baseline" in a sentence inside Use it from your site (an address a person copies may hold one): ${tt.match(/.{60}\b(candidate|baseline)\b.{40}/)?.[0]}`);
+  assert.ok(tt.includes("Your site keeps showing keyword-baseline's results. This model ranks a copy of the same requests silently"), `the quiet test in the page's words: ${tt.slice(-900)}`);
+  assert.ok(tt.includes("Test quietly with a copy of your site's requests") && tt.includes('nothing a shopper does is collected') && !/[Ss]hadow mode/.test(tt), 'the quiet test under its plain label');
+  // One address a model, for a team's own testing tool, and the one paragraph that says so.
+  assert.ok(tt.includes("To compare models on real shoppers, split traffic in your own testing tool and send each group to its model's address."), `the paragraph: ${tt.slice(-900)}`);
+  assert.ok(tt.includes('The deployed model, starter-ranker@v2') && tt.includes('https://example.invalid/rank') && tt.includes('The compared model, keyword-baseline@v1') && tt.includes('https://example.invalid/rank/baseline'), 'an address a model');
+  // Nothing about an A/B test, a ramp or simulated shoppers, here or anywhere on the deployed screen.
+  for (const word of ['A/B', 'Ramp', 'ramp to', 'simulated shoppers', 'of traffic', 'Start an A/B test', 'Practice with']) assert.ok(!tt.includes(word), `"${word}" is gone`);
+  assert.equal(sent.filter((x) => /\/ab(\/|$)/.test(x[1])).length, 0, 'and no screen asks the services about a test');
 }
 
 // Health: the last recorded check in words, the targets a person sets, and Check now. Unhealthy is said at the top
@@ -390,6 +410,59 @@ world.staging = RUN;
 await h.idle(20);
 assert.equal(byId(h, 'ship-deployed').length, 1, 'and the deployed view appears');
 
+// Settings holds what the model accepts from a site: its key, a size and rate limit, and a time budget.
+h = await open({ places: [LOCAL, AWS], staging: RUN }, true);
+await h.click('dep-more-settings');
+await wait(h, () => Boolean(h.mod.ship.protD), 'what it accepts is read');
+t = h.text();
+assert.ok(t.includes('The key has not been changed since it was made.') && t.includes('Requests up to 256 KB.') && t.includes('No limit on requests a second.') && t.includes("No time budget. If this model fails, the request is answered with the compared model's results."), `the sentences: ${t.slice(-1000)}`);
+await h.click('dep-rate-50');
+await wait(h, () => h.mod.ship.protD?.limits?.rate_per_s === 50, 'the rate limit is saved');
+assert.deepEqual(sent.find((x) => x[0] === 'PUT' && x[1].endsWith('/staging/protect'))[2], { rate_per_s: 50 });
+assert.ok(h.text().includes('Up to 50 requests a second on each copy.') && h.text().includes('Saved. It takes effect in a few seconds.'));
+await h.click('dep-key-change');
+assert.equal(sent.filter((x) => x[1].endsWith('/staging/key/rotate')).length, 0, 'changing the key asks first');
+await h.click('dep-key-grace-0');
+await h.click('dep-key-yes');
+await wait(h, () => sent.some((x) => x[1].endsWith('/staging/key/rotate')), 'then asks the services');
+assert.deepEqual(sent.find((x) => x[1].endsWith('/staging/key/rotate'))[2], { grace_minutes: 0 });
+assert.ok(h.text().includes('The old key works until 2026-11-12 21:00 UTC.') && h.text().includes('The key was changed. Copy the new one and give it to your site.'));
+
+// A failed deploy says what now exists in the account and offers to remove it. "Deploy again" is offered only
+// when it can work: when it cannot, the services' sentence says what to do in its place.
+const FAILED = { status: 'failed', steps: [{ id: 'check', title: 'Checking your account', status: 'done' }, { id: 'start', title: 'Starting the model', status: 'failed' }],
+  failed_step: { id: 'start', title: 'Starting the model' }, error: 'The image could not be pulled.', exists_now: [{ resource: 's3-bucket', name: 'captain-serving-demo' }, { resource: 'iam-role', name: 'captain-serving' }] };
+let removed = false;
+h = await open({ places: [LOCAL, AWS], staging: NONE, job: () => (removed ? { status: 'removed', steps: [], exists_now: [], can: [] } : { ...FAILED, can: ['retry', 'remove'], fix_text: null }) });
+await h.click('ship-deploy-aws:aws-main');
+await wait(h, () => byId(h, 'ship-confirm').length === 1, 'the confirm opens');
+await h.click('ship-confirm-yes');
+await wait(h, () => Boolean(h.mod.ship.djob?.failed), 'the failure is shown');
+t = h.text();
+assert.ok(t.includes('This now exists in your account: s3-bucket captain-serving-demo, iam-role captain-serving.'), `what exists: ${t.slice(-700)}`);
+assert.ok(byId(h, 'ship-progress-again').length === 1 && byId(h, 'ship-progress-remove').length === 1 && byId(h, 'ship-progress-fix').length === 0);
+removed = true;
+await h.click('ship-progress-remove');
+await wait(h, () => sent.some((x) => x[0] === 'DELETE' && x[1].endsWith('/deploy')), 'Remove what was created asks the services');
+await wait(h, () => Boolean(h.mod.ship.removeNote), 'and says when it is gone');
+await h.idle(60);
+assert.ok(h.text().includes('Removed. Nothing from this deploy is left in your account.') && byId(h, 'ship-progress-remove').length === 0 && !h.text().includes('This now exists'), `after removing: ${h.mod.ship.removeNote} | ${JSON.stringify(h.mod.ship.djob?.failed)} | ${h.text().slice(-400)}`);
+h = await open({ places: [LOCAL, AWS], staging: NONE, job: () => ({ ...FAILED, exists_now: [], can: [], fix_text: 'That place is not connected in Captain any more. Connect its cloud login again, or deploy somewhere else.' }) });
+await h.click('ship-deploy-aws:aws-main');
+await wait(h, () => byId(h, 'ship-confirm').length === 1, 'the confirm opens');
+await h.click('ship-confirm-yes');
+await wait(h, () => Boolean(h.mod.ship.djob?.failed), 'the failure is shown');
+assert.equal(byId(h, 'ship-progress-again').length, 0, 'Deploy again is not offered when it cannot work');
+assert.ok(h.text().includes('Connect its cloud login again, or deploy somewhere else.') && byId(h, 'ship-progress-remove').length === 0, 'what to do is said in its place');
+
+// The Deployments screen is the one place to manage every deployed model: the project page links to it, and
+// does not keep a second list.
+h = await open({ places: [LOCAL, AWS], staging: RUN }, false);
+globalThis.__runs = [];
+await h.click('ship-open-in-deployments');
+assert.equal(globalThis.__shared['captain.open']?.section, 'deployments');
+assert.equal(globalThis.__shared['captain.open']?.open, 'shop:staging', 'it asks for this model');
+assert.ok(globalThis.__runs.some((r) => r[0] === 'layout.select' && r[1]?.child === 'deployments'), 'and the Deployments screen is selected');
 // Asleep, and stopped: said in words.
 h = await open({ places: [LOCAL, AWS], staging: { ...RUN, asleep: true }, live: { state: 'asleep', label: 'Asleep' } }, true);
 assert.ok(h.text().includes('Asleep on AWS. It wakes on the next request, and costs nothing asleep.'), `asleep: ${h.text()}`);

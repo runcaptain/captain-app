@@ -1,6 +1,7 @@
-// CAPTAIN: the Ship part of a project's page as a path a person walks: 1 Stage, 2 Try it, 3 Connect your site,
-// 4 A/B test, 5 Launch review. An A/B test means nothing until a site is calling the endpoint, so step 3 comes first:
-// where it runs and who can reach it, the code to call it, a live count of real requests, and shadow mode
+// CAPTAIN: the Ship part of a project's page as a path a person walks: 1 Deploy, 2 Try it, 3 Use it from your site,
+// and it ends there, at a running endpoint with its address. Captain runs no A/B tests: a team compares models on real shoppers in its own testing tool, and
+// step 3 gives that tool an address for each model. Step 3 is also where it runs and who can reach it, the code
+// to call it, a live count of real requests, and a quiet test on a copy of the site's requests
 // (Edgar, 2026-11-10: "make it easier to stage ml models to be deployed ... business user friendly"). A staged model
 // runs in the team's own cloud, or on this computer; Captain hosts nothing. Each step has a status, one primary
 // action and a tick when it is done. Words stay plain: where it runs, what it costs, when it stops by itself. The
@@ -10,8 +11,6 @@
 //   POST /api/projects/{id}/unstage          stop it and remove what Captain made
 //   POST /api/projects/{id}/staging/query    the Try it box: the staged results beside the baseline's
 //   POST /api/projects/{id}/staging/check    did serving compute the features training computes? One line.
-//   GET  /api/projects/{id}/ab               the A/B readout: sessions per arm, the primary metric, guardrails
-//   POST /api/projects/{id}/ab/start|ramp|rollback|stop|simulate   each one click, with a confirmation, in history
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { exec, appHome, openOverlay, run } from "herdr";
@@ -60,13 +59,9 @@ export class Ship {
     this.cost = costState(); // what the staged endpoint costs to keep up (POST /api/costs/estimate, kit/cost.js)
     this.conn = null;      // GET /staging/connect: the address, the snippets, how many real requests arrived
     this.shadow = null;    // GET /shadow: what the candidate would change, with no shopper seeing it
-    this.opts = null;      // GET /ab/options: has a site sent anything, and what each share means in sessions a day
     this.diff = null;      // GET /staging/differ: the queries where the two versions differ most
     this.code = null;      // which snippet is open
     this.whyOpen = new Set(); // results whose "Why is this here?" is open
-    this.ab = null;        // GET /ab: the readout
-    this.setup = null;     // the A/B form while it is open: {split, primary, mode}
-    this.ask2 = null;      // a ramp or a rollback waiting for a yes: {kind, split?}
     this.dp = null;        // GET /deploy/places: where this project's model can run, one card each
     this.dconfirm = null;  // a cloud deploy waiting for a yes: {place, plan, all}
     this.djob = null;      // a deploy in progress: {place, steps, message, started, failed?}
@@ -107,22 +102,10 @@ export class Ship {
     const pid = this.pid();
     if (!pid) return;
     if (pid !== this.shown) {
-      this.shown = pid; this.status = null; this.result = null; this.note = null; this.confirm = null; this.askError = null; this.ab = null; this.setup = null; this.ask2 = null;
+      this.shown = pid; this.status = null; this.result = null; this.note = null; this.confirm = null; this.askError = null;
       this.dp = null; this.dpFor = null; this.dconfirm = null; this.dnote = null; this.more = null;
       this.met = null; this.liveD = null; this.copiesD = null; this.logsD = null; this.setD = null; this.costD = null; this.reqs = null; this.vers = null; this.reqOpen = null; this.tabsFor = null;
     }
-    cx.spawn(async (cx) => {
-      const r = await api(`/api/projects/${enc(pid)}/ab`, { scoped: false, timeout: 60 });
-      if (this.pid() !== pid) return;
-      if (r.ok) {
-        this.ab = r.data;
-        // The readout just crossed "enough": the page's own steps and Next line are one read behind. Read again, once.
-        const known = (this.page.stages?.ship?.steps ?? []).find((x) => x.id === "ab")?.done;
-        const key = `${r.data?.ab?.id}:${Boolean(r.data?.enough)}`;
-        if (r.data?.enough && known === false && this.abTold !== key) { this.abTold = key; this.page.reload?.(cx); }
-      }
-      cx.notify();
-    });
     cx.spawn(async (cx) => {
       const r = await api(`/api/projects/${enc(pid)}/staging`, { scoped: false });
       if (this.pid() !== pid) return;
@@ -136,11 +119,11 @@ export class Ship {
     });
   }
 
-  /** What sits around a running endpoint: who is calling it, shadow mode, what the A/B form may offer, and (once
+  /** What sits around a running endpoint: who is calling it, the quiet test, and (once
    *  per staged version) the queries where the two versions differ. Nothing is asked while nothing runs. */
   around(cx) {
     const pid = this.pid(), s = this.staged();
-    if (!this.running()) { this.conn = null; this.opts = null; this.diff = null; this.diffFor = null; return; }
+    if (!this.running()) { this.conn = null; this.diff = null; this.diffFor = null; return; }
     const get = (path, set) => cx.spawn(async (cx) => { const r = await api(`/api/projects/${enc(pid)}${path}`, { scoped: false, timeout: 60 }); if (this.pid() === pid && r.ok) { set(r.data); cx.notify(); } });
     get("/staging/connect", (d) => {
       this.conn = d;
@@ -150,7 +133,6 @@ export class Ship {
     });
     if (this.both()) {
       get("/shadow", (d) => { this.shadow = d; });
-      get("/ab/options", (d) => { this.opts = d; });
       if (this.diffFor !== s.id) { this.diffFor = s.id; this.diff = null; get("/staging/differ", (d) => { this.diff = d; }); }
     }
   }
@@ -186,15 +168,14 @@ export class Ship {
   /** For agents: where it runs and the estimate. */
   costSlice() { return this.running() ? costSlice({ ...this.cost, where: this.staged().kind === "local" ? "local" : this.staged().target }) : null; }
 
-  /** From the project's own answer (GET /stages): ask for the details only when something is staged or tested. */
+  /** From the project's own answer (GET /stages): ask for the details only when something is deployed. */
   sync(cx, ship) {
     this.cx = cx;
     if (this.dpFor !== this.pid()) { this.dpFor = this.pid(); loadDeployPlaces(this, cx); } // where it can run: one card each
-    if (ship?.staging || ship?.ab) return this.load(cx);
+    if (ship?.staging) return this.load(cx);
     const pid = this.pid();
-    if (pid !== this.shown) { this.shown = pid; this.result = null; this.note = null; this.confirm = null; this.askError = null; this.setup = null; this.ask2 = null; }
+    if (pid !== this.shown) { this.shown = pid; this.result = null; this.note = null; this.confirm = null; this.askError = null; }
     this.status = { status: "none", staged: null, text: "Nothing is deployed." };
-    this.ab = { status: "none", experiment: null, can_measure: [] };
     this.problem = null;
   }
 
@@ -285,40 +266,6 @@ export class Ship {
     });
   }
 
-  /** One A/B action (start, ramp, roll back, stop), then read everything again. */
-  abDo(cx, what, body, done) {
-    if (this.busy) return;
-    this.cx = cx;
-    this.busy = { start: "Starting the A/B test", ramp: "Changing the split", rollback: "Rolling back", stop: "Ending the test" }[what];
-    this.busyStep = "ab";
-    this.note = null; this.ask2 = null;
-    cx.notify();
-    cx.spawn(async (cx) => {
-      const r = await api(`/api/projects/${enc(this.pid())}/ab/${what}`, { body: body ?? {}, scoped: false, timeout: 120 });
-      this.busy = null;
-      this.note = r.ok ? { tone: "good", text: done } : { tone: "fail", text: plainError(r.error, "That didn't work. Try again.") };
-      if (r.ok && what === "start") this.setup = null;
-      this.load(cx);
-      this.page.reload?.(cx);
-    });
-  }
-
-  /** Simulated shoppers at staging, so the loop can be seen with no traffic yet. Everything they produce reads SIMULATED. */
-  simulate(cx) {
-    if (this.busy) return;
-    this.cx = cx;
-    this.busy = "Sending simulated shoppers"; this.busyStep = "ab"; this.note = null;
-    cx.notify();
-    cx.spawn(async (cx) => {
-      const r = await api(`/api/projects/${enc(this.pid())}/ab/simulate`, { body: { sessions: 1000 }, scoped: false });
-      const done = r.ok ? await this.wait(r.data.job, 30) : { ok: false, error: plainError(r.error, "The simulated shoppers didn't start.") };
-      this.busy = null;
-      this.note = done.ok ? { tone: "good", text: done.result?.text ?? "Simulated shoppers sent." } : { tone: "fail", text: done.error };
-      this.load(cx);
-      this.page.reload?.(cx);
-    });
-  }
-
   /** Thumbnails for the results that have a picture (POST /api/media/thumbs, as the data grid does). */
   pictures(cx) {
     const want = [];
@@ -341,7 +288,7 @@ export class Ship {
     const what = st?.model_version ? short(st.model_version) : null;
     const tried = on && Boolean(st?.tried || this.result);
     return [
-      { n: 1, id: "stage", title: "Stage", done: on,
+      { n: 1, id: "stage", title: "Deploy", done: on,
         text: on ? this.status.text : this.busy ?? (st?.status === "failed" ? this.status.text
           : cand ? `Run ${short(cand.pipeline)} as a live endpoint you can try, beside the baseline.`
           : champ ? "Run the baseline as a live endpoint you can try." : "Train a model first. Then you can deploy it."),
@@ -350,12 +297,10 @@ export class Ship {
         text: on ? `Type a query and see what ${what} returns${st?.arms?.baseline && st.serve !== "baseline" ? ", beside the baseline" : ""}.` : "After it is deployed, type a query and see the results.",
         action: on ? "try" : null, label: null, ...(on ? {} : { waiting_on: "Deploy a model first." }) },
       this.connectStepData(),
-      this.abStepData(),
-      this.launchStepData(),
     ];
   }
 
-  /** Both versions are on the endpoint, so traffic can be split between them. */
+  /** Both models are on the endpoint: this one, and the one it is compared with. */
   both() {
     const st = this.staged();
     return this.running() && Boolean(st?.arms?.baseline) && Boolean(st?.arms?.candidate) && st.how !== "image";
@@ -366,40 +311,9 @@ export class Ship {
     const text = !on ? "After it is deployed, point your site at it and watch the first request arrive."
       : !k ? "Looking for requests from your site..."
       : k.connected ? k.live
-      : k.blocked ?? "Waiting for the first request. Copy a snippet below into your site.";
-    return { n: 3, id: "connect", title: "Connect your site", done: Boolean(on && k?.connected), text, action: on && !k?.connected ? "connect" : null, label: null,
+      : k.blocked ?? "Waiting for the first request. Copy the code below into your site.";
+    return { n: 3, id: "connect", title: "Use it from your site", done: Boolean(on && k?.connected), text, action: on && !k?.connected ? "connect" : null, label: null,
       ...(on ? {} : { waiting_on: "Deploy a model first." }) };
-  }
-
-  abStepData() {
-    const r = this.ab, a = r?.ab, live = a?.status === "running", o = this.opts;
-    const done = Boolean(a && (r.enough || r.brought));
-    let text;
-    if (a?.status === "rolled_back" && r.rolled_back) text = r.rolled_back.text;
-    else if (!a || !live) text = !this.both() ? "After a model is deployed beside the one it is compared with, split traffic between them."
-      : o && !o.ready ? o.text
-      : a ? `${a.status === "rolled_back" ? "Rolled back to the baseline." : "The last test ended."} Start another when you're ready.`
-      : "Your site is sending requests. Split them between the baseline and the candidate, and see which one shoppers prefer.";
-    else if (a.mode === "own") text = r.text;
-    // The result itself is in the readout below, once: here only what is running.
-    else text = `${a.practice ? "Practice on simulated shoppers. " : ""}The candidate gets ${pct(a.split)} of traffic.${r.enough ? "" : " Not enough data yet."}`;
-    const can = this.both() && !live;
-    return { n: 4, id: "ab", title: "A/B test", done, text: String(text ?? "").trim(), action: can ? (o?.ready ? "ab-start" : "ab-practice") : null,
-      label: can ? (o?.ready ? (a ? "Start another A/B test" : "Start an A/B test") : "Practice with simulated shoppers") : null,
-      ...(a || this.both() ? {} : { waiting_on: "Deploy a model beside the one it is compared with first." }) };
-  }
-
-  /** What launch review would be sent: the test's candidate, else the staged candidate, else the baseline. */
-  reviewOf() { return this.ab?.ab?.arms?.candidate ?? this.staged()?.arms?.candidate ?? this.page.exps?.champion ?? null; }
-
-  launchStepData() {
-    const of = this.reviewOf(), sent = Boolean((this.page.stages?.ship?.steps ?? []).find((x) => x.id === "launch-review")?.done);
-    const failed = this.staged()?.check?.status === "fail";
-    return { n: 5, id: "launch-review", title: "Launch review", done: sent,
-      text: sent ? `${short(of)} was sent to launch review. Your own deployment process takes it from there.`
-        : failed ? "Served features don't match training, so launch review will ask for a reason to go on."
-        : "Check it against your launch criteria and pass it to your own deployment process. Captain deploys nothing itself.",
-      action: of && !sent ? "handoff" : null, label: of && !sent ? "Send to launch review" : null, ...(of ? {} : { waiting_on: "Set a baseline or train a candidate first." }) };
   }
 
   // ---- drawing ---------------------------------------------------------------------------------------------------
@@ -489,6 +403,13 @@ export class Ship {
         .child(h_flex().gap(8).items_center()
           .child(Button(c, "ship-connect-copy", "Copy this code", (_e, cx) => { cx.write_to_clipboard?.(k.snippets[open]); this.note = { tone: "good", text: "The code is on your clipboard. It reads the key from CAPTAIN_STAGING_KEY, so the key is never in your code." }; cx.notify(); }, { small: true }))
           .child(div().id("ship-connect-fallback").flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(c.grey900).child(k.fallback)))))
+      // One address a model, so a team's own testing tool can send each group of shoppers to its model.
+      .when((k.addresses ?? []).length > 0, (e) => e.child(v_flex().id("ship-addresses").gap(4)
+        .child(div().id("ship-own-tests").text_size(12.5).line_height("18px").text_color(c.grey900).child(k.own_tests ?? ""))
+        .children(k.addresses.map((a) => h_flex().id(`ship-address-${a.model}`).gap(10).items_center().flex_wrap()
+          .child(div().w(150).flex_none().text_size(12.5).text_color(c.grey500).child(`${a.role}, ${short(a.model_version)}`))
+          .child(div().id(`ship-address-${a.model}-value`).flex_1().min_w(0).font_family(MONO).text_size(12.5).text_color(c.navy).child(a.address))
+          .child(Button(c, `ship-address-${a.model}-copy`, "Copy", (_e, cx) => this.copy(cx, a.address, "The address is on your clipboard."), { small: true }))))))
       .when(this.both(), (e) => e.child(this.shadowBox(c)));
     return this.row(c, st, null, below);
   }
@@ -497,17 +418,16 @@ export class Ship {
    *  would have changed. Comes before any split. */
   shadowBox(c) {
     const r = this.shadow ?? { status: "none" }, on = r.status === "running";
-    const abLive = this.ab?.ab?.status === "running" && this.ab.ab.mode === "captain";
     return v_flex().id("ship-shadow").p(10).gap(6).bg(c.surface2).border_1().border_color(c.rule)
       .child(h_flex().gap(8).items_center()
-        .child(div().text_size(12.5).font_semibold().child("Shadow mode"))
+        .child(div().text_size(12.5).font_semibold().child("Test quietly with a copy of your site's requests"))
         .when(on, (e) => e.child(Badge(c, "on", "good")))
         .when(Boolean(r.label) && r.status !== "none", (e) => e.child(Badge(c, r.label, r.evidence === "REAL_TRAFFIC" ? "good" : "warn")))
         .child(div().flex_1())
-        .when(!on && !abLive, (e) => e.child(Button(c, "ship-shadow-start", r.status === "none" ? "Start shadow mode" : "Start shadow mode again", (_e, cx) => this.act(cx, "/shadow/start", {}, "Shadow mode is on. Shoppers keep getting the baseline's results."), { small: true })))
-        .when(on, (e) => e.child(Button(c, "ship-shadow-stop", "End shadow mode", (_e, cx) => this.act(cx, "/shadow/stop", {}, "Shadow mode is off."), { small: true }))))
+        .when(!on, (e) => e.child(Button(c, "ship-shadow-start", r.status === "none" ? "Start the quiet test" : "Start it again", (_e, cx) => this.act(cx, "/shadow/start", {}, this.w("The quiet test is on. Shoppers keep getting the baseline's results.")), { small: true })))
+        .when(on, (e) => e.child(Button(c, "ship-shadow-stop", "End the quiet test", (_e, cx) => this.act(cx, "/shadow/stop", {}, "The quiet test is off."), { small: true }))))
       .child(div().id("ship-shadow-text").text_size(12.5).line_height("18px").text_color(c.grey900)
-        .child(this.w(r.status === "none" ? "Your site keeps showing the baseline's results. The candidate ranks the same requests silently, and Captain shows what it would have changed. No shopper sees the candidate." : r.text)))
+        .child(this.w(r.status === "none" ? "Your site keeps showing the baseline's results. The candidate ranks a copy of the same requests silently, and Captain shows what it would have changed. No shopper sees the candidate, nobody is assigned to anything, and nothing a shopper does is collected." : r.text)))
       .when(Boolean(r.ms), (e) => e.child(div().id("ship-shadow-ms").text_size(12.5).text_color(c.grey900)
         .child(`Response time, 95 in 100 requests under: ${r.ms.baseline.p95} ms baseline, ${r.ms.candidate.p95} ms candidate.`)))
       .when((r.queries ?? []).length > 0, (e) => e.child(v_flex().id("ship-shadow-queries").gap(2)
@@ -524,153 +444,27 @@ export class Ship {
       .on_click((_e, cx) => { onPick(); cx.notify(); }).child(label);
   }
 
-  /** Before a test starts: the candidate's share, the metric that decides it, and who splits the traffic. */
-  setupBox(c) {
-    const f = this.setup, can = this.ab?.can_measure ?? ["clicks", "purchases"];
-    const line = (label, kids) => v_flex().gap(4).child(div().text_size(12.5).font_semibold().text_color(c.navy).child(label)).child(h_flex().flex_wrap().gap(6).children(kids));
-    return v_flex().id("ship-ab-setup").p(10).gap(10).bg(c.surface2).border_1().border_color(c.rule)
-      .child(line("Who splits the traffic", [
-        this.pick1(c, "ship-ab-mode-captain", "The deployed model", f.mode === "captain", () => { f.mode = "captain"; }),
-        this.pick1(c, "ship-ab-mode-own", "My own A/B system", f.mode === "own", () => { f.mode = "own"; })]))
-      .when(Boolean(f.practice), (e) => e.child(div().id("ship-ab-practice").p(8).bg(c.warnLight).text_size(12.5).line_height("18px").text_color(c.navy)
-        .child("Practice with simulated shoppers. Everything it shows is SIMULATED, and a practice test can't go to launch review.")))
-      .when(f.mode === "captain", (e) => e.child(line("This model's share of traffic", [0.01, 0.05, 0.25, 0.5].map((x) => this.pick1(c, `ship-ab-split-${Math.round(x * 100)}`, pct(x), f.split === x, () => { f.split = x; }))))
-        // What the share means here, in this endpoint's own sessions a day.
-        .child(div().id("ship-ab-share-text").text_size(12.5).line_height("18px").text_color(c.grey900)
-          .child(this.w(f.practice ? `${pct(f.split)} of the simulated shoppers go to the candidate.` : (this.opts?.shares ?? []).find((x) => Math.abs(x.split - f.split) < 1e-9)?.text ?? `${pct(f.split)} of sessions`))))
-      .child(line("What decides it", can.map((m) => this.pick1(c, `ship-ab-primary-${m}`, METRICS[m], f.primary === m, () => { f.primary = m; }))))
-      .when(f.mode === "captain", (e) => e.child(line("Guardrails: click one to change it", [...can.filter((m) => m !== f.primary), "latency"].map((m) => {
-        const must = (f.must ??= { latency: true })[m];
-        return this.pick1(c, `ship-ab-guard-${m}`, `${m === "latency" ? "Response time" : METRICS[m]}: ${must ? "must not get worse" : "watch"}`, Boolean(must), () => { f.must[m] = !must; });
-      }))))
-      .child(div().id("ship-ab-setup-note").text_size(12.5).line_height("18px").text_color(c.grey900).child(f.mode === "captain"
-        ? "If a guardrail marked must not get worse clearly drops, Captain pauses the ramp and says why. One marked watch is shown and never blocks. A shopper always sees the same version."
-        : "Captain gives you an address for each version on the endpoint. Split traffic in your system, then bring the readout in here."))
-      .child(h_flex().gap(6)
-        .child(Button(c, "ship-ab-start-go", "Start the A/B test", (_e, cx) => this.abDo(cx, "start", { split: f.split, primary: f.primary, mode: f.mode, practice: Boolean(f.practice),
-          guardrails: [...can.filter((m) => m !== f.primary), "latency"].map((m) => `${m}:${(f.must ?? { latency: true })[m] ? "must" : "watch"}`) },
-          this.w(f.practice ? `The practice test is running on simulated shoppers: the candidate gets ${pct(f.split)}. SIMULATED.`
-            : f.mode === "captain" ? `The A/B test is running: the candidate gets ${pct(f.split)} of traffic.` : "The A/B test is recorded. Split the traffic in your own system.")), { small: true }))
-        .child(Button(c, "ship-ab-start-no", "Not now", (_e, cx) => { this.setup = null; cx.notify(); }, { small: true })));
+  /** Change what the deployed model accepts (its size and rate limits, its time budget). */
+  saveProtect(cx, body) {
+    this.protNote = null;
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/protect`, { method: "PUT", body, scoped: false });
+      if (r.ok) { this.protD = r.data; this.protNote = { tone: "good", text: "Saved. It takes effect in a few seconds." }; }
+      else this.protNote = { tone: "fail", text: plainError(r.error, "That couldn't be saved.") };
+      cx.notify();
+    });
   }
 
-  /** The readout: where the numbers came from, each arm, the primary metric with its interval, and the guardrails. */
-  readoutBox(c) {
-    const r = this.ab, a = r.ab;
-    const tone = r.evidence === "REAL_TRAFFIC" ? "good" : "warn";
-    const arm = (name, id) => {
-      const x = r.arms?.[name];
-      const v = r.primary?.[name];
-      return v_flex().id(id).flex_1().min_w(200).p(10).gap(2).bg(c.surface).border_1().border_color(c.rule)
-        .child(h_flex().gap(6).items_center().child(div().text_size(12.5).font_semibold().child(name === "baseline" ? "Baseline" : "Candidate")).child(Badge(c, short(x?.model_version))))
-        .child(div().id(`${id}-sessions`).text_size(12.5).text_color(c.grey900).child(`${Number(x?.sessions ?? 0).toLocaleString("en-US")} sessions`))
-        .when(v != null, (e) => e.child(div().id(`${id}-value`).text_size(15).font_semibold().text_color(c.navy).child(r.primary.metric === "revenue" ? `$${Number(v).toFixed(2)}` : `${(Number(v) * 100).toFixed(1)}%`))
-          .child(div().text_size(12.5).text_color(c.grey500).child(METRICS[r.primary.metric] ?? r.primary.metric)));
-    };
-    return v_flex().id("ship-ab-readout").gap(8)
-      .child(h_flex().gap(8).items_center().flex_wrap()
-        .child(Badge(c, r.label ?? "No traffic yet", r.evidence === "REAL_TRAFFIC" ? "good" : r.evidence ? "warn" : "neutral"))
-        .when(Boolean(r.evidence) && r.evidence !== "REAL_TRAFFIC", (e) => e.child(div().id("ship-ab-evidence").text_size(12.5).text_color(c.warn).child(r.evidence === "SIMULATED"
-          ? "SIMULATED: these shoppers are generated. Nothing here says what real shoppers will do."
-          : r.evidence === "UNLABELLED" ? "Unlabelled: these requests don't say they are shoppers. Send \"traffic\": \"real\" from your site, as the Connect your site code does."
-          : "Test traffic: these requests are not shoppers."))))
-      .when(!r.evidence && this.conn?.reachable === false, (e) => e.child(div().id("ship-ab-unreachable").text_size(12.5).text_color(c.grey900)
-        .child("A site can't reach this endpoint, so no shopper will arrive. Only this computer can send it requests.")))
-      .child(h_flex().flex_wrap().items_start().gap(10).child(arm("baseline", "ship-ab-baseline")).child(arm("candidate", "ship-ab-candidate")))
-      .child(div().id("ship-ab-primary").text_size(12.5).line_height("18px").text_color(r.enough ? c.navy : c.grey900).child(this.w(r.primary?.text ?? r.text)))
-      .children((r.guardrails ?? []).map((g, i) => h_flex().id(`ship-ab-guard-${i}`).gap(6).items_center()
-        .child(svg(icon(g.ok ? "circle-check" : "triangle-alert")).size(12).flex_none().text_color(g.ok ? c.good : c.fail))
-        .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(g.ok ? c.grey900 : c.fail).child(this.w(g.text)))))
-      .when(Boolean(r.hard_stop), (e) => e.child(div().id("ship-ab-paused").px(10).py(6).text_size(12.5).bg(c.failLight).text_color(c.fail).child(`${r.hard_stop} Roll back, or ramp down.`)))
-      .when((r.segments ?? []).length > 0, (e) => e.child(v_flex().id("ship-ab-segments").gap(3)
-        .child(div().text_size(12.5).font_semibold().text_color(c.navy).child("By kind of query and shopper"))
-        .children(r.segments.map((x) => div().id(`ship-ab-segment-${x.segment}`).text_size(12.5).line_height("18px")
-          .text_color(x.verdict === "candidate behind" ? c.fail : x.enough ? c.grey900 : c.grey500).child(this.w(x.text))))
-        .when(Boolean(r.segment_warning), (y) => y.child(div().id("ship-ab-segment-warning").text_size(12.5).font_medium().text_color(c.fail).child(r.segment_warning)))))
-      .when(Boolean(r.srm), (e) => e.child(div().id("ship-ab-srm").text_size(12.5).text_color(r.srm.ok ? c.grey500 : c.fail).child(this.w(r.srm.text))))
-      .when(Boolean(r.needed?.text) && a.status === "running", (e) => e.child(div().id("ship-ab-needed").text_size(12.5).line_height("18px").text_color(c.navy).child(r.needed.text)))
-      .when(a.status === "running", (e) => e.child(this.endings(c)))
-      .when(Boolean(r.decision), (e) => e.child(div().id("ship-ab-decision").text_size(12.5).text_color(c.navy)
-        .child(`Decided: ${r.decision.label}, by ${r.decision.by} on ${String(r.decision.at).slice(0, 10)}.${r.decision.note ? ` "${r.decision.note}"` : ""}`)))
-      .when(a.status === "running", (e) => e.child(h_flex().id("ship-ab-actions").flex_wrap().gap(6).items_center()
-        .child(div().text_size(12.5).font_semibold().child("Ramp"))
-        .children(RAMP.map((x) => this.pick1(c, `ship-ab-ramp-${Math.round(x * 100)}`, pct(x), Math.abs((a.split ?? 0) - x) < 1e-9, () => { if (Math.abs((a.split ?? 0) - x) > 1e-9 && !(r.hard_stop && x > (a.split ?? 0))) this.ask2 = { kind: "ramp", split: x }; })))
-        .child(Button(c, "ship-ab-rollback", "Roll back", (_e, cx) => { this.ask2 = { kind: "rollback" }; cx.notify(); }, { small: true }))
-        .when(Boolean(a.practice), (x) => x.child(Button(c, "ship-ab-simulate", "Send simulated shoppers at it", (_e, cx) => this.simulate(cx), { small: true, kind: "quiet", disabled: Boolean(this.busy) })))
-        .child(Button(c, "ship-ab-refresh", "Read again", (_e, cx) => this.load(cx), { small: true }))));
-  }
-
-  /** How a test ends: three choices, each recorded. Ship it opens launch review with the readout attached, and is
-   *  only offered on enough real traffic. */
-  endings(c) {
-    const r = this.ab, cand = r.ab.arms.candidate;
-    return v_flex().id("ship-ab-endings").gap(4)
-      .child(h_flex().flex_wrap().gap(6).items_center()
-        .child(div().text_size(12.5).font_semibold().child("Decide"))
-        .child(Button(c, "ship-ab-ship", "Ship it", (_e, cx) => this.act(cx, "/ab/decide", { choice: "ship" }, "Recorded: ship it. Launch review opens with this readout attached.",
-          (d) => form("handoff", { pipeline: d.launch_review?.pipeline ?? cand })), { small: true, disabled: !r.can_ship }))
-        .child(Button(c, "ship-ab-keep", this.w("Keep the baseline"), (_e, cx) => this.act(cx, "/ab/decide", { choice: "keep-baseline" }, this.w("Recorded: keep the baseline. Every shopper gets the baseline again.")), { small: true }))
-        .child(Button(c, "ship-ab-more", "Keep testing", (_e, cx) => this.act(cx, "/ab/decide", { choice: "keep-testing" }, "Recorded: keep testing."), { small: true })))
-      .when(!r.can_ship && Boolean(r.cannot_ship), (e) => e.child(div().id("ship-ab-cannot-ship").text_size(12.5).text_color(c.grey900).child(this.w(r.cannot_ship))));
-  }
-
-  /** A ramp or a rollback asks first: one click, one confirmation. */
-  askBox(c) {
-    const k = this.ask2, a = this.ab?.ab;
-    const text = this.w(k.kind === "ramp" ? `Give the candidate ${pct(k.split)} of traffic? It gets ${pct(a?.split ?? 0)} now.` : "Roll back? Every shopper gets the baseline again, and this test ends.");
-    return h_flex().id("ship-ab-ask").p(10).gap(10).items_center().bg(c.surface2).border_1().border_color(c.rule)
-      .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.grey900).child(text))
-      .child(k.kind === "ramp"
-        ? Button(c, "ship-ab-ask-yes", `Ramp to ${pct(k.split)}`, (_e, cx) => this.abDo(cx, "ramp", { split: k.split }, this.w(`The candidate now gets ${pct(k.split)} of traffic.`)), { small: true })
-        : Button(c, "ship-ab-ask-yes", "Roll back", (_e, cx) => this.abDo(cx, "rollback", {}, this.w("Rolled back. Every shopper gets the baseline again.")), { small: true }))
-      .child(Button(c, "ship-ab-ask-no", "Not now", (_e, cx) => { this.ask2 = null; cx.notify(); }, { small: true }));
-  }
-
-  /** A test the team runs in its own system: where each version answers, and the readout they bring back. */
-  ownBox(c) {
-    const r = this.ab, adr = r.addresses ?? r.ab?.addresses ?? {};
-    return v_flex().id("ship-ab-own").gap(6)
-      .children(Object.entries(adr).map(([name, x]) => h_flex().id(`ship-ab-address-${name}`).gap(10).text_size(12.5)
-        .child(div().w(80).flex_none().text_color(c.grey500).child(name === "baseline" ? "Baseline" : "Candidate"))
-        .child(div().flex_1().min_w(0).font_family(MONO).text_size(12.5).child(x.url ?? `${x.endpoint}${x.region ? ` in ${x.region}` : ""}, arm ${name}`))))
-      .when(Boolean(r.brought), (e) => e.child(h_flex().gap(8).items_center().child(Badge(c, r.label, r.evidence === "REAL_TRAFFIC" ? "good" : "warn"))
-        .child(div().id("ship-ab-brought").text_size(12.5).text_color(c.navy).child(this.w(r.brought.text)))))
-      .child(h_flex().gap(6)
-        .child(Button(c, "ship-ab-bring", r.brought ? "Bring in a newer readout" : "Bring in the readout", () => form("ab-result", { project: this.pid(), traffic: "real" }), { small: true, kind: r.brought ? "secondary" : "primary" }))
-        .when(r.ab?.status === "running", (e) => e.child(Button(c, "ship-ab-end", "End the test", (_e, cx) => this.abDo(cx, "stop", {}, "The A/B test is ended."), { small: true }))));
-  }
-
-  /** Open the A/B form. `practice`: on simulated shoppers, for an endpoint no site is calling. */
-  openSetup(practice) {
-    const can = this.opts?.can_measure ?? this.ab?.can_measure ?? [];
-    this.setup = { split: practice ? 0.5 : 0.05, primary: can.includes("purchases") ? "purchases" : "clicks", mode: "captain", must: { latency: true }, practice: Boolean(practice) };
-  }
-
-  abStep(c, st) {
-    const r = this.ab, a = r?.ab, o = this.opts;
-    const open = !this.setup && !this.busy;
-    // The form opens once a site is sending real requests. Before that, the only way in says what it is: practice.
-    const btn = h_flex().flex_none().flex_wrap().gap(6).items_center()
-      .when(open && st.action === "ab-start", (e) => e.child(Button(c, "ship-ab-start", st.label, (_e, cx) => { this.openSetup(false); cx.notify(); }, { small: true, kind: a ? "secondary" : "primary" })))
-      .when(open && this.both() && a?.status !== "running", (e) => e.child(Button(c, "ship-ab-practice-go", "Practice with simulated shoppers", (_e, cx) => { this.openSetup(true); cx.notify(); }, { small: true, kind: o?.ready ? "quiet" : "secondary" })));
-    if (this.busy && this.busyStep === "ab") btn.child(div().id("ship-ab-busy").text_size(12.5).text_color(c.grey500).child(`${this.busy}...`));
-    const body = [];
-    if (this.setup) body.push(this.setupBox(c));
-    const filed = a?.status === "rolled_back" && r.rolled_back;
-    if (filed) body.push(div().id("ship-ab-filed").text_size(12.5).text_color(c.grey500).child("That test's readout is filed with the project. It is no longer current."));
-    else if (a && a.mode === "own") body.push(this.ownBox(c));
-    else if (a && r.arms) body.push(this.readoutBox(c));
-    if (this.ask2 && a?.status === "running") body.push(this.askBox(c));
-    const below = body.length ? v_flex().pl(46).pr(12).pb(12).gap(8).children(body) : null;
-    return this.row(c, st, btn, below);
-  }
-
-  launchStep(c, st) {
-    const of = this.reviewOf();
-    const btn = h_flex().flex_none().gap(6).items_center()
-      .when(st.action === "handoff", (e) => e.child(Button(c, "ship-handoff", "Send to launch review", () => form("handoff", { pipeline: of }), { small: true })))
-      .child(Button(c, "ship-open-handoff", "Open Launch review", () => this.page.goTo?.("handoff"), { small: true, kind: "quiet" }));
-    return this.row(c, st, btn, null);
+  /** Make a new key. The old one keeps working for the time chosen, so a site can switch with no downtime. */
+  rotateKey(cx, graceMinutes) {
+    this.protNote = null; this.keyAsk = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await api(`/api/projects/${enc(this.pid())}/staging/key/rotate`, { body: { grace_minutes: graceMinutes }, scoped: false, timeout: 60 });
+      if (r.ok) { if (this.protD) this.protD = { ...this.protD, key: r.data }; this.protNote = { tone: "good", text: "The key was changed. Copy the new one and give it to your site." }; }
+      else this.protNote = { tone: "fail", text: plainError(r.error, "The key couldn't be changed.") };
+      cx.notify();
+    });
   }
 
   /** What a tab needs, asked when it is opened and again while it stays open. */
@@ -804,7 +598,7 @@ export class Ship {
         .when(this.verAsk === r.n, (e) => e.child(h_flex().id("dep-version-ask").mt(6).p(8).gap(8).items_center().bg(c.surface2).border_1().border_color(c.rule)
           .child(v_flex().flex_1().min_w(0).gap(6)
             .child(div().text_size(12.5).text_color(c.grey900).child(`Put ${short(r.model_version)} back? What runs now keeps answering until it does. Say why, so the next person knows.`))
-            .child(h_flex().gap(6).flex_wrap().children(["It gives worse results", "It is too slow", "It is failing requests", "Deployed by mistake"].map((why, i) =>
+            .child(h_flex().gap(6).flex_wrap().children(["It gives worse results", "It is too slow", "It is failing requests", "It was deployed by mistake", "Another reason"].map((why, i) =>
               div().id(`dep-version-why-${i}`).h(26).px(10).flex().flex_none().items_center().cursor_pointer().text_size(12.5).border_1()
                 .border_color(this.verWhy === why ? c.blue : c.grey300).bg(this.verWhy === why ? c.blueLight : c.surface).text_color(this.verWhy === why ? c.blue : c.navy)
                 .on_click((_e, cx) => { this.verWhy = why; cx.notify(); }).child(why)))))

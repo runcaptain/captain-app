@@ -678,9 +678,9 @@ def cost_of(ctx: Context, target: dict, seconds: float, staging: bool = False) -
         most = m["hourly"] * seconds / 3600
         return {"usd": round(most, 4), "free": False, "seconds": round(seconds, 1), "where": where, "upper_bound": True,
                 "hourly_usd": round(m["hourly"], 6), "machine": m["label"], "priced_as_of": m["priced_as_of"], "price_source": m["price_source"],
-                "text": f"Cost at most {'$0.01' if most < 0.01 else money(most)} (staged {duration_words(seconds)} on {where}, billed only while a copy was awake)",
+                "text": f"Cost at most {'$0.01' if most < 0.01 else money(most)} (deployed for {duration_words(seconds)} on {where}, billed only while a copy was awake)",
                 "detail": f"{m['label']}, ${m['hourly']:.4f} an hour awake, prices as of {m['priced_as_of']}. This is the ceiling: "
-                          "the whole time staged, as if one copy never slept."}
+                          "the whole time it was deployed, as if one copy never slept."}
     billed = max(seconds, m["min_seconds"])
     usd = m["hourly"] * billed / 3600
     return {"usd": round(usd, 4), "free": False, "seconds": round(seconds, 1), "billed_seconds": round(billed, 1),

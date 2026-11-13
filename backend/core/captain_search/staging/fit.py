@@ -6,7 +6,7 @@ estimates that from the catalog's row count, compares it with the memory and dis
 `fits`, `tight` (allowed, with a warning), `wont-fit` (not offered: stage it in your cloud) or `over-limit`.
 
 Fitting is not enough. A big model with a lot of products should not run on a laptop even when the memory is
-there, so there is a size limit for staging on this computer, separate from free memory: by default a model that
+there, so there is a size limit for deploying on this computer, separate from free memory: by default a model that
 needs more than 1 GB to serve (this estimate, with headroom, counting the baseline beside it) is `over-limit` and
 not offered here. The limit is a workspace setting (`staging.local_limit_mb`, 0 for none). It is the first test;
 free memory is the second.
@@ -112,7 +112,7 @@ def check(ctx: Context, arms: dict[str, str], have: dict | None = None, allow_la
     lim = limit_mb(ctx)
     if lim and nd["memory_mb"] > lim and not allow_large:
         return {"need": nd, "free": None, "measured": MEASURED, "limit_mb": lim, "outcome": "over-limit",
-                "text": f"This model needs about {_gb(nd['memory_mb'])} to serve, which is more than the {_gb(lim)} limit for staging on "
+                "text": f"This model needs about {_gb(nd['memory_mb'])} to serve, which is more than the {_gb(lim)} limit for deploying on "
                         "this computer. Deploy it to a cloud."}
     hv = have if have is not None else free()
     mem, disk = hv.get("memory_mb"), hv.get("disk_mb")

@@ -68,6 +68,7 @@ TITLES = {"check": "Checking your account", "image": "Building the model's image
 DEFAULT_REGION = {"aws": "us-east-1", "gcp": "us-central1", "azure": "eastus"}
 # A run that has said nothing for this long is taken to have died with its process, so another may start.
 STALE_S = 180
+BEAT_S = 30  # a run says it is alive this often, even when its step has nothing to say
 
 
 def _now() -> str:
@@ -386,7 +387,7 @@ def plan(ctx: Context, pid: str, host: str = "local", login: str | None = None, 
             from .. import compute as C
 
             named = (C.get(ctx, o["target"]).get("config") or {}).get("name_prefix")
-        each = [{"resource": "SageMaker endpoint", "name": f"{named or 'captain'}-{{project}}-staging",
+        each = [{"resource": "SageMaker endpoint", "name": f"{named or 'captain'}-{{project}}",
                  "why": "The model, answering. Made now, deleted when you stop it. It bills by the hour while it is up."}]
     # Which machine, and why this one, said once where "Show everything" puts it.
     # It is a choice, not a thing made, so it comes last and is left out of the count.
@@ -473,10 +474,75 @@ def _exists_now(ctx: Context, pid: str, host: str, env: str) -> list[dict]:
     return out
 
 
+def _stopped_before_the_model_was_up(doc: dict) -> bool:
+    """Whether a failed or stalled deploy stopped in one of the steps that get the model running. A step added
+    after those (publishing to a registry, say) can fail with the model up, and that failure is real: a running
+    model does not make it go away."""
+    step = doc.get("failed_step") or next((s for s in doc.get("steps") or [] if s.get("status") in ("running", "failed")), None)
+    return step is None or step.get("id") in STEPS
+
+
+def _superseded(doc: dict, rec: dict | None) -> bool:
+    """A deploy that is marked failed, or stalled, for a project whose model is running now and was started at or
+    after that deploy began. The model being up is the fact: the panel about the attempt is history."""
+    if not rec or rec.get("status") != "running" or not _stopped_before_the_model_was_up(doc):
+        return False
+    if doc.get("status") == "failed":
+        pass
+    elif doc.get("status") == "running":
+        try:
+            if (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(doc["updated_at"])).total_seconds() <= STALE_S:
+                return False
+        except (KeyError, ValueError):
+            return False
+    else:
+        return False
+    return str(rec.get("started_at") or "") >= str(doc.get("started_at") or "")
+
+
+def close_stale(ctx: Context, pid: str, env: str = ENV, cloud_says_running: bool = True) -> bool:
+    """Close a deploy left failed or stalled, because the model is running. Called when the cloud itself reports
+    the endpoint up (fleet.py), and by `status` when the record says so. Returns whether anything was closed."""
+    doc, _ = _read(ctx, pid, env)
+    if not doc or doc.get("status") not in ("failed", "running") or not _stopped_before_the_model_was_up(doc):
+        return False
+    if doc["status"] == "running":
+        try:
+            if (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(doc["updated_at"])).total_seconds() <= STALE_S:
+                return False  # a deploy that is really going: leave it be
+        except (KeyError, ValueError):
+            return False
+    if not cloud_says_running:
+        return False
+    was = doc.get("failed_step") or next(({"id": s["id"], "title": s["title"]} for s in doc.get("steps") or [] if s.get("status") == "running"), None)
+    for s in doc.get("steps") or []:
+        if s.get("status") in ("running", "failed", "pending"):
+            s["status"] = "done"
+    doc.update(status="done", ended_at=doc.get("ended_at") or _now(), failed_step=None, error=None,
+               closed={"at": _now(), "why": "The model is running, so this deploy is closed as done.",
+                       "stopped_at_step": was.get("title") if was else None})
+    _write(ctx, pid, env, doc)
+    return True
+
+
 def status(ctx: Context, pid: str, env: str = ENV) -> dict:
     """Where the last deploy of this project stands. Reads the workspace only."""
     doc, _ = _read(ctx, pid, env)
     rec = state(ctx, pid, env)
+    if doc and doc.get("host") != "local" and (doc.get("status") == "failed" or (rec or {}).get("status") in ("failed", "starting")):
+        # Before saying a cloud deploy failed, ask the cloud. If the endpoint is up, the record and this deploy are
+        # set right (fleet.py), and what comes back below is the truth. Kept for a few seconds, so a page that
+        # polls does not ask each time. A cloud that can't be asked changes nothing.
+        try:
+            from . import fleet as FL
+
+            FL.one(ctx, pid, env)
+            doc, _ = _read(ctx, pid, env)
+            rec = state(ctx, pid, env)
+        except Exception:  # noqa: BLE001
+            pass
+    if doc and _superseded(doc, rec) and close_stale(ctx, pid, env):
+        doc, _ = _read(ctx, pid, env)
     if not doc:
         return {"project": pid, "env": env, "status": "none", "steps": [], "failed_step": None, "error": None, "exists_now": [], "can": [],
                 "staged": public(rec), "text": "Nothing has been deployed from here yet."}
@@ -491,9 +557,21 @@ def status(ctx: Context, pid: str, env: str = ENV) -> dict:
             out.update(status="failed", failed_step={"id": step["id"], "title": step["title"]} if step else None,
                        error="This deploy stopped before it finished: Captain was closed or lost its connection while it ran. "
                              "Nothing is lost. Retry picks up where it stopped.")
+    out["fix_text"] = None
     if out["status"] == "failed":
         out["exists_now"] = _exists_now(ctx, pid, out["host"], env)
-        out["can"] = ["retry"] + (["remove"] if out["exists_now"] else [])
+        # "Deploy again" is offered only when the same deploy can be planned again. When it can't (the login is
+        # gone, the model no longer fits that place, there is nothing to stage), the reason is said instead, so the
+        # panel shows what to do and not a button that fails. Read from the workspace alone: no cloud is asked.
+        why = None
+        try:
+            o = next((h for h in offers(ctx, pid, env=env)["hosts"] if h["host"] == out["host"] and (h.get("login") == out.get("login") or out["host"] == "local")), None)
+            why = ("That place is not connected in Captain any more. Connect its cloud login again, or deploy somewhere else." if o is None
+                   else None if o["can_deploy"] else o.get("why_not"))
+        except Exception as e:  # noqa: BLE001
+            why = str(e)[:300]
+        out["fix_text"] = why
+        out["can"] = ([] if why else ["retry"]) + (["remove"] if out["exists_now"] else [])
     else:
         out.setdefault("exists_now", [])
         out["can"] = []
@@ -575,6 +653,23 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
             begin("image")
         line(t)
 
+    # A step can be silent for minutes (a cloud starting an endpoint prints nothing while it waits). `status` takes
+    # a run that has said nothing for STALE_S to have died, so without this a slow start was reported as failed
+    # while it was still going, and the page kept that red panel after the model came up.
+    import threading
+
+    alive = threading.Event()
+
+    def beat() -> None:
+        while not alive.wait(BEAT_S):
+            if doc["status"] != "running":
+                return
+            try:
+                _write(ctx, pid, env, doc)
+            except Exception:  # noqa: BLE001
+                pass
+
+    threading.Thread(target=beat, daemon=True, name="deploy-heartbeat").start()
     try:
         begin("check")
         if host == "local":
@@ -624,6 +719,7 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
                 end("failed", str(e)[:400])
                 soft_failed.append({"id": a["id"], "title": a["title"], "error": str(e)[:400]})
                 say("line", text=str(e)[:400], step=a["id"])
+        alive.set()
         doc.update(status="done", ended_at=_now(), address=ep.get("url") or ep.get("name"), soft_failed=soft_failed)
         _write(ctx, pid, env, doc)
         say("done", address=doc["address"], model_version=p["model_version"])
@@ -634,6 +730,7 @@ def run(ctx: Context, pid: str, host: str = "local", login: str | None = None, c
         end("failed", str(e)[:400])
         s = by_id[failed]
         s["status"] = "failed"
+        alive.set()
         doc.update(status="failed", ended_at=_now(), failed_step={"id": failed, "title": s["title"]}, error=str(e)[:600] or type(e).__name__,
                    policy=policy)
         _write(ctx, pid, env, doc)

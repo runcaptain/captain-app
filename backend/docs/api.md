@@ -1059,6 +1059,11 @@ CLI: `cst mlflow use --uri URL | --databricks CONN`, `cst mlflow experiments|run
   - compute targets, with `default_for` and each kind's `live_tested`;
   - compute `defaults`, the available `kinds`, registries, MLflow (no links) and model keys (set or not).
   `check=true` runs select 1 on each connection and each target's test. Secrets are never included.
+- `GET /api/deployed` `?fresh=`: what is deployed, as each connected cloud reports it, with Captain's records
+  corrected from that. `{rows, asked, text, read_at}`. `GET /api/deployed/differences`: only what differed.
+  See "What is deployed" in the staging docs.
+- `GET /api/projects/{id}/deployed/numbers` `?range=15m|1h|24h|7d`: one deployment's traffic, errors, response
+  time, CPU, memory, copies and cost, from the cloud's own metrics, with the request log as the second source.
 - `PUT /api/settings/serving {host, machine}`: the machine a deploy on that host (`aws`, `modal`, `gcp`, `azure`)
   uses, in place of the smallest the model fits on. `machine` is a name from `machines` in
   `GET /api/projects/{id}/deploy/hosts`. Empty goes back to the smallest that fits. `{name_prefix}` sets the start

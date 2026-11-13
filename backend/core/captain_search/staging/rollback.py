@@ -63,9 +63,6 @@ def go(ctx: Context, pid: str, to: int | None = None, reason: str | None = None,
     if row is None:
         raise ValueError(f"There is no earlier version {to} to go back to. See cst deployments history {pid}.")
     doc = PS.get(ctx, pid)
-    ab = doc.get("ab") or {}
-    if ab.get("status") == "running" and ab.get("mode") == "captain":
-        raise ValueError("An A/B test is running. Roll the test back, or end it, before putting another version on the endpoint.")
     left = rec.get("model_version")
     is_base = row["model_version"] == doc.get("champion")
     # The same one-job deploy, to the same place. What is running stays up until the earlier version answers.

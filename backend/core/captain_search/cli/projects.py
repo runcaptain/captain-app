@@ -548,16 +548,16 @@ def _staging_errors():
 @projects_app.command("stage")
 def stage(name: str,
           candidate: Optional[str] = typer.Option(None, "--candidate", help="a candidate id or model version; default the newest judged candidate"),
-          baseline: bool = typer.Option(False, "--baseline", help="stage the baseline itself"),
+          baseline: bool = typer.Option(False, "--baseline", help="deploy the baseline itself"),
           env: str = typer.Option("staging", "--env"),
           target: Optional[str] = typer.Option(None, "--target", help="compute target, or `local` for this computer; default the workspace's serving target"),
           endpoint: Optional[str] = typer.Option(None, "--endpoint", help="an HTTP endpoint you already run (POST {query, k} -> {ids}); Captain wraps it"),
           endpoint_auth_secret: Optional[str] = typer.Option(None, "--endpoint-auth-secret", help="name of a secret sent to your endpoint as a Bearer token"),
           image: Optional[str] = typer.Option(None, "--image", help="a container image that serves the model (SageMaker contract), for a cloud target"),
           idle_minutes: Optional[float] = typer.Option(None, "--idle-minutes", help="stop by itself after this long with no requests; default 240"),
-          allow_large: bool = typer.Option(False, "--allow-large", help="stage on this computer even when the model is over the size limit for it (Settings)"),
+          allow_large: bool = typer.Option(False, "--allow-large", help="deploy on this computer even when the model is over the size limit for it (Settings)"),
           yes: bool = typer.Option(False, "--yes", "-y", help="confirm the cost of a cloud deploy")):
-    """Run a model version as a live staging endpoint: on your compute target, or on this computer with --target local."""
+    """Deploy a model version as a live endpoint: on your compute target, or on this computer with --target local."""
     from .. import staging as SG
 
     c = ctx()
@@ -578,14 +578,14 @@ def stage(name: str,
                 typer.echo(p["preflight"]["note"])
             if not typer.confirm("Start it?"):
                 raise typer.Exit(1)
-        _by_hand(c, name, "stage a model version")
+        _by_hand(c, name, "deploy a model version")
         r = SG.stage(c, name, candidate, baseline, env, target, endpoint, endpoint_auth_secret, image, confirm=True,
                      idle_minutes=idle_minutes, progress=None if S.json else lambda t: typer.echo(t, err=True),
                      allow_large=allow_large)
     except _staging_errors() as e:
         fail(str(e))
     ep = r.get("endpoint") or {}
-    emit(r, f"Staged {r['model_version']} " + ("on this computer" if r["kind"] == "local" else f"on {r['target']}")
+    emit(r, f"Deployed {r['model_version']} " + ("on this computer" if r["kind"] == "local" else f"on {r['target']}")
             + f"\nEndpoint: {ep.get('url') or ep.get('name')}\n{r['cost']['text']}"
             + ("\nSleeps when nobody calls it, and wakes on the next request." if r.get("scale_to_zero")
                else f"\nStops by itself after {r['idle_minutes']:g} minutes with no requests.")
@@ -597,7 +597,7 @@ def staging_copies(name: str, fewest: Optional[int] = typer.Option(None, "--fewe
                    most: Optional[int] = typer.Option(None, "--most", help="the most copies at once"),
                    idle_seconds: Optional[int] = typer.Option(None, "--idle-seconds", help="how long an idle copy stays up, where the host lets it be set"),
                    env: str = typer.Option("staging", "--env")):
-    """How many copies the staged endpoint may run and how long an idle one stays up. With a value, change it."""
+    """How many copies the deployed model may run and how long an idle one stays up. With a value, change it."""
     from .. import staging as SG
 
     try:
@@ -613,27 +613,27 @@ def staging_copies(name: str, fewest: Optional[int] = typer.Option(None, "--fewe
 
 @projects_app.command("unstage")
 def unstage(name: str, env: str = typer.Option("staging", "--env")):
-    """Stop the staging endpoint and remove every resource Captain created for it."""
+    """Stop the deployed model and remove every resource Captain created for it."""
     from .. import staging as SG
 
     c = ctx()
     if S.dry_run:
         rec = SG.public(_do(SG.state, c, name, env))
         emit({"dry_run": True, "would_remove": (rec or {}).get("resources") or [], "staged": rec},
-             "Would stop staging" + (" and remove " + ", ".join(f"{r['type']} {r['name']}" for r in rec["resources"]) if rec and rec.get("resources") else ""))
+             "Would stop the deployed model" + (" and remove " + ", ".join(f"{r['type']} {r['name']}" for r in rec["resources"]) if rec and rec.get("resources") else ""))
         return
-    _by_hand(c, name, "stop staging")
+    _by_hand(c, name, "stop the deployed model")
     try:
         r = SG.unstage(c, name, env)
     except _staging_errors() as e:
         fail(str(e))
-    emit(r, "Staging stopped." if r["status"] == "stopped" else f"Staging stopped, but {r['error']}")
+    emit(r, "The deployed model is stopped." if r["status"] == "stopped" else f"The deployed model is stopped, but {r['error']}")
 
 
 @projects_app.command("staging")
 def staging_status(name: str, env: str = typer.Option("staging", "--env"),
                    no_sweep: bool = typer.Option(False, "--no-sweep", help="only look: don't stop an endpoint that is past its idle limit")):
-    """Where staging stands: what is running, where, since when, and when it stops by itself."""
+    """What is deployed: what is running, where, since when, and when it stops by itself."""
     from .. import staging as SG
 
     try:
@@ -655,7 +655,7 @@ def staging_status(name: str, env: str = typer.Option("staging", "--env"),
 
 @projects_app.command("staging-query")
 def staging_query(name: str, query: str, k: int = typer.Option(10, "-k"), env: str = typer.Option("staging", "--env")):
-    """Ask the staged endpoint for results, with the baseline's results beside them. Logged as test traffic."""
+    """Ask the deployed model for results, with the baseline's results beside them. Logged as test traffic."""
     from .. import staging as SG
 
     try:
@@ -666,8 +666,9 @@ def staging_query(name: str, query: str, k: int = typer.Option(10, "-k"), env: s
     for side in (r["staged"], r["baseline"]):
         if not side:
             continue
-        lines.append(f"{side['arm'].capitalize()} ({side['model_version']}), {side['ms']:.1f} ms")
+        lines.append(f"{side['arm'].capitalize()} ({side['model_version']}), {side['ms']:.1f} ms inside the model, {side['round_trip_ms']:.0f} ms round trip")
         lines += [f"  {x['position']:>2}. {x['title'][:70]}" for x in side["results"]]
+    lines.append(r["timing"]["text"])
     emit(r, "\n".join(lines))
 
 
@@ -675,7 +676,7 @@ def staging_query(name: str, query: str, k: int = typer.Option(10, "-k"), env: s
 def staging_check(name: str, env: str = typer.Option("staging", "--env"),
                   sample: int = typer.Option(5000, "--sample", help="how many (query, product) pairs to compare at most"),
                   min_match: float = typer.Option(0.999, "--min-match", help="the share of pairs that must match exactly")):
-    """Compare the features the staging endpoint served with the features training computes, for the same pairs."""
+    """Compare the features the deployed model served with the features training computes, for the same pairs."""
     from ..staging import consistency as SC
 
     try:
@@ -694,184 +695,26 @@ def staging_check(name: str, env: str = typer.Option("staging", "--env"),
         raise typer.Exit(1)
 
 
-# ---- A/B test on staging -----------------------------------------------------------------------------
+# ---- A/B tests: Captain runs none. The old commands say so. ----------------------------------------
 
 
-def _readout_text(r: dict) -> str:
-    if not r.get("experiment"):
-        return r["text"]
-    lines = [r["text"]]
-    for a in ("baseline", "candidate"):
-        x = (r.get("arms") or {}).get(a)
-        if x:
-            lines.append(f"  {a:9} {x['model_version']:40} {x['sessions']:>7,} sessions")
-    for g in r.get("guardrails") or []:
-        lines.append(("  ok   " if g["ok"] else "  FAIL ") + g["text"])
-    for x in r.get("segments") or []:
-        lines.append("  " + x["text"])
-    for k in ("segment_warning", "hard_stop"):
-        if r.get(k):
-            lines.append(r[k])
-    if (r.get("needed") or {}).get("text"):
-        lines.append(r["needed"]["text"])
-    if (r.get("rolled_back") or {}).get("text"):
-        lines = [r["rolled_back"]["text"], "The readout below is filed with the test, not current."] + lines
-    if r.get("decision"):
-        lines.append(f"Decided: {r['decision']['label']} ({r['decision']['by']}, {r['decision']['at'][:10]}).")
-    if r.get("srm"):
-        lines.append("  " + r["srm"]["text"])
-    if r.get("split") is not None and r.get("status") == "running":
-        lines.append(f"The candidate gets {r['split']:.0%} of traffic.")
-    return "\n".join(lines)
+NO_AB = "Captain no longer runs A/B tests. Give your own testing tool each model's address."
 
 
-@projects_app.command("ab-start")
-def ab_start(name: str,
-             split: str = typer.Option("5%", "--split", help="the candidate's share of traffic: 5, 5% or 0.05"),
-             practice: bool = typer.Option(False, "--practice", help="practice on simulated shoppers, with no site sending traffic. SIMULATED throughout; it can't go to launch review"),
-             primary: Optional[str] = typer.Option(None, "--primary", help="clicks, purchases or revenue; default purchases"),
-             guardrail: list[str] = typer.Option([], "--guardrail", help="a guardrail: a metric, or metric:must (a clear drop pauses the ramp) or metric:watch (shown only). Repeat; default the others as watch, and latency:must"),
-             own: bool = typer.Option(False, "--own", help="your own A/B system splits the traffic: Captain gives each arm's address"),
-             min_sessions: int = typer.Option(200, "--min-sessions", help="sessions each arm needs before the readout says anything")):
-    """Start an A/B test between the baseline and the staged candidate."""
-    from ..staging import ab as AB
-
-    c = ctx()
-    if not S.dry_run:
-        _by_hand(c, name, "start an A/B test")
-    try:
-        r = AB.start(c, name, AB.share(split), primary, guardrail or None, "own" if own else "captain", min_sessions,
-                     dry_run=S.dry_run, practice=practice)
-    except _staging_errors() as e:
-        fail(str(e))
-    text = (f"A/B test {r['id']} started: the candidate gets {r['split']:.0%} of traffic. Primary metric: {r['primary']}."
-            + (" Practice on simulated shoppers: SIMULATED, and it can't go to launch review." if practice else "")
-            if not own else f"A/B test {r['id']} recorded. Send each arm's traffic to:\n"
-            + "\n".join(f"  {a}: {x.get('url') or x.get('endpoint')}" for a, x in (r.get("addresses") or {}).items()))
-    emit(r, text)
+def _no_ab() -> None:
+    """What every former `ab-*` command does now: say where A/B testing lives, and exit 2."""
+    typer.echo(NO_AB, err=True)
+    raise typer.Exit(2)
 
 
-@projects_app.command("ab", hidden=True)
-def ab_old_name(name: str, traffic: Optional[str] = typer.Option(None, "--traffic")):
-    """The earlier name of `ab-readout`."""
-    ab_readout(name, traffic)
-
-
-@projects_app.command("ab-readout")
-def ab_readout(name: str, traffic: Optional[str] = typer.Option(None, "--traffic", help="real, simulated or test; default the strongest there is")):
-    """The A/B readout: sessions per arm, the primary metric with its interval, and the guardrails."""
-    from ..staging import ab as AB
-
-    try:
-        r = AB.readout(ctx(), name, traffic)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, _readout_text(r))
-
-
-@projects_app.command("ab-ramp")
-def ab_ramp(name: str, split: str = typer.Argument(..., help="the candidate's new share: 1, 5, 25, 50 or 100 (also 5% or 0.05)")):
-    """Give the candidate a larger (or smaller) share of traffic. No redeploy."""
-    from ..staging import ab as AB
-
-    c = ctx()
-    if not S.dry_run:
-        _by_hand(c, name, "ramp the A/B test")
-    try:
-        r = AB.ramp(c, name, AB.share(split), dry_run=S.dry_run)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, f"The candidate now gets {r['split']:.0%} of traffic.")
-
-
-@projects_app.command("ab-rollback")
-def ab_rollback(name: str, reason: Optional[str] = typer.Option(None, "--reason", help="why, in a sentence: it is kept with the test")):
-    """Roll back: every shopper gets the baseline again. With no test running, restage the previous version."""
-    from ..staging import ab as AB
-
-    c = ctx()
-    if not S.dry_run:
-        _by_hand(c, name, "roll back staging")
-    try:
-        r = AB.rollback(c, name, dry_run=S.dry_run, reason=reason)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, f"Rolled back to {r['rolled_back_to']}.")
-
-
-@projects_app.command("ab-stop")
-def ab_stop(name: str):
-    """End the A/B test and keep the endpoint as it is, with no split."""
-    from ..staging import ab as AB
-
-    try:
-        r = AB.stop(ctx(), name)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, "The A/B test is ended.")
-
-
-@projects_app.command("ab-simulate")
-def ab_simulate(name: str, sessions: int = typer.Option(1000, "--sessions"), seed: int = typer.Option(7, "--seed")):
-    """Send simulated shoppers at staging, so the whole loop can be seen with no traffic yet. Everything reads SIMULATED."""
-    from ..staging import ab as AB
-
-    try:
-        r = AB.simulate(ctx(), name, sessions, seed)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, r["text"])
-
-
-@projects_app.command("ab-outcomes")
-def ab_outcomes(name: str, events: str = typer.Argument(..., help="an events dataset whose rows carry request_id")):
-    """Bring in outcomes (clicks, purchases) from an events dataset that carries the request_id /rank returned."""
-    from ..staging import ab as AB
-
-    try:
-        r = AB.import_outcomes(ctx(), name, events, dry_run=S.dry_run)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, f"{r['outcomes']:,} outcomes from {r['events']}: {r['matched']:,} match a request the endpoint served, {r['unmatched']:,} don't.")
-
-
-@projects_app.command("ab-result")
-def ab_result(name: str, metric: str = typer.Option(..., "--metric"), baseline: float = typer.Option(..., "--baseline"),
-              candidate: float = typer.Option(..., "--candidate"), source: str = typer.Option(..., "--source", help="the A/B system and its report"),
-              traffic: str = typer.Option("real", "--traffic", help="real, simulated or test"),
-              ci_low: Optional[float] = typer.Option(None, "--ci-low"), ci_high: Optional[float] = typer.Option(None, "--ci-high"),
-              sessions: Optional[int] = typer.Option(None, "--sessions"),
-              review: Optional[str] = typer.Option(None, "--review", help="a launch review id to attach the result to")):
-    """Record the readout from your own A/B system."""
-    from ..staging import ab as AB
-
-    try:
-        r = AB.bring(ctx(), name, metric, baseline, candidate, source, traffic, ci_low, ci_high, sessions, review)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, r["text"])
-
-
-@projects_app.command("ab-decide")
-def ab_decide(name: str, choice: str = typer.Argument(..., help="ship, keep-baseline or keep-testing"),
-              note: str = typer.Option("", "--note")):
-    """End the A/B test with a recorded choice: ship it (to launch review, with the readout), keep the baseline, or keep testing."""
-    from ..staging import ab as AB
-
-    c = ctx()
-    _by_hand(c, name, "decide on the A/B test")
-    try:
-        r = AB.decide(c, name, choice, note)
-    except _staging_errors() as e:
-        fail(str(e))
-    emit(r, f"Recorded: {r['decision']['label']}."
-            + (f"\nNext: send {r['launch_review']['pipeline']} to launch review. The readout goes with it ({r['launch_review']['evidence']})." if r.get("launch_review") else ""))
+for _name in ("ab", "ab-start", "ab-readout", "ab-ramp", "ab-rollback", "ab-stop", "ab-simulate", "ab-outcomes", "ab-result", "ab-decide"):
+    projects_app.command(_name, hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(_no_ab)
 
 
 @projects_app.command("staging-connect")
 def staging_connect(name: str, env: str = typer.Option("staging", "--env"),
                     code: Optional[str] = typer.Option(None, "--code", help="print one snippet: curl, javascript, python (or `aws cli` in the cloud)")):
-    """How a site calls the staged endpoint, whether it can reach it, and how many real requests have arrived."""
+    """How a site calls the deployed model, whether it can reach it, and how many real requests have arrived."""
     from ..staging import traffic as TF
 
     try:
@@ -922,7 +765,7 @@ def shadow_start(name: str):
         r = TF.shadow_start(c, name)
     except _staging_errors() as e:
         fail(str(e))
-    emit(r, f"Shadow mode is on. Shoppers see {r['arms']['baseline']}. {r['arms']['candidate']} ranks the same requests, and nobody sees it.")
+    emit(r, f"The quiet test is on. Shoppers see {r['arms']['baseline']}. {r['arms']['candidate']} ranks the same requests, and nobody sees it.")
 
 
 @projects_app.command("shadow")
@@ -946,12 +789,12 @@ def shadow_stop(name: str):
         r = TF.shadow_stop(ctx(), name)
     except _staging_errors() as e:
         fail(str(e))
-    emit(r, "Shadow mode is off.")
+    emit(r, "The quiet test is off.")
 
 
 @projects_app.command("staging-serve", hidden=True)
 def staging_serve(bundle: str, host: str = typer.Option("127.0.0.1", "--host"), port: int = typer.Option(8080, "--port")):
-    """Run the staging runtime over a serving bundle. Staging starts this for you; the runner image runs it."""
+    """Run the serving runtime over a serving bundle. A deploy starts this for you; the runner image runs it."""
     from ..staging import runtime as RT
 
     RT.serve(ctx(), bundle, host=host, port=port)

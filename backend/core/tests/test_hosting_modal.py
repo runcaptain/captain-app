@@ -23,7 +23,7 @@ from captain_search.workspace import Context
 from test_staging import keychain, ws  # noqa: F401  (fixtures)
 
 ENV = "captain-search-test"
-URL = "https://w--captain-shop-staging-endpoint-web.modal.run"
+URL = "https://w--captain-shop-endpoint-web.modal.run"
 
 
 class NotFoundError(Exception):
@@ -230,7 +230,7 @@ def test_stage_query_and_unstage_leave_nothing_behind(ws, modal):  # noqa: F811
     with pytest.raises(SG.NeedsConfirm):
         SG.stage(ws, "shop", target="modal-serving")
     r = SG.stage(ws, "shop", target="modal-serving", confirm=True)
-    name = "captain-search-test-shop-staging"
+    name = "captain-search-test-shop"
     assert r["status"] == "running" and r["scale_to_zero"] and r["endpoint"] == {"name": name, "url": URL, "environment": ENV}
     assert {(x["type"], x["name"]) for x in r["resources"]} == {("modal-app", name), ("modal-secret", name)}
     app = modal.apps[(ENV, name)]
@@ -276,7 +276,7 @@ def test_a_deploy_that_fails_removes_the_secret_and_says_why(ws, modal):  # noqa
 
 def test_captain_never_deploys_over_or_stops_an_app_it_did_not_make(ws, modal):  # noqa: F811
     _setup(ws)
-    name = "captain-search-test-shop-staging"
+    name = "captain-search-test-shop"
     modal.apps[(ENV, name)] = {"tags": {"team": "someone-else"}, "stopped": False}
     with pytest.raises(ProviderError, match="already exists here and Captain did not make it"):
         SG.stage(ws, "shop", target="modal-serving", confirm=True)
@@ -288,16 +288,16 @@ def test_captain_never_deploys_over_or_stops_an_app_it_did_not_make(ws, modal): 
 
 def test_a_secret_of_that_name_it_did_not_make_stops_the_deploy(ws, modal):  # noqa: F811
     _setup(ws)
-    modal.secrets[(ENV, "captain-search-test-shop-staging")] = {"THEIRS": "1"}
+    modal.secrets[(ENV, "captain-search-test-shop")] = {"THEIRS": "1"}
     with pytest.raises(ProviderError, match="secret named .* already exists here and Captain did not make it"):
         SG.stage(ws, "shop", target="modal-serving", confirm=True)
-    assert modal.secrets[(ENV, "captain-search-test-shop-staging")] == {"THEIRS": "1"}
+    assert modal.secrets[(ENV, "captain-search-test-shop")] == {"THEIRS": "1"}
 
 
 def test_teardown_is_refused_while_a_model_is_staged_there(ws, modal):  # noqa: F811
     _setup(ws)
     SG.stage(ws, "shop", target="modal-serving", confirm=True)
-    with pytest.raises(ValueError, match="has a model staged on this target"):
+    with pytest.raises(ValueError, match="has a model deployed here"):
         H.get("modal").teardown(ws)
     SG.unstage(ws, "shop")
     assert H.get("modal").teardown(ws)["status"] == "removed"
@@ -541,7 +541,6 @@ def test_copies_from_the_cli_and_the_api_and_a_plan_with_nothing_to_warn_about(w
 
 
 def test_a_site_is_given_the_address_and_the_key_header_not_aws_calls(ws, modal):  # noqa: F811
-    from captain_search.staging import ab as AB
     from captain_search.staging import traffic as TF
 
     _setup(ws)
@@ -550,4 +549,6 @@ def test_a_site_is_given_the_address_and_the_key_header_not_aws_calls(ws, modal)
     assert c["reachable"] and c["address"] == URL and c["text"].startswith(f"Running on Modal at {URL}")
     assert all(URL in code and "CAPTAIN_STAGING_KEY" in code and "sagemaker" not in code.lower() for code in c["snippets"].values())
     assert c["test_request"].startswith(f"curl -s {URL}/rank")
-    assert AB.addresses(SG.state(ws, "shop"))["candidate"] == {"url": f"{URL}/rank/candidate", "auth": "Authorization: Bearer <the endpoint key>"}
+    adr = {a["model"]: a for a in c["addresses"]}  # one address a model, for a team's own testing tool
+    assert adr["candidate"]["address"] == f"{URL}/rank" and adr["baseline"]["address"] == f"{URL}/rank/baseline"
+    assert adr["candidate"]["how"] == "POST, with the key as a bearer token"

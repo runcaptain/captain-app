@@ -531,18 +531,45 @@ def projects_list():
 
 @app.post("/api/projects", dependencies=A)
 def project_create(body: dict):
-    """{name, description?, brands?, kind?, icon?}. With kind (a recipe id, GET /api/recipes) the project starts with that
-    recipe's input slots."""
+    """{name, description?, brands?, icon?, kind?, what?, slots?, trainer?}. `kind` is a recipe id (GET /api/recipes)
+    or "other" with `what`, the person's own description of what they are building. `slots` is the list of inputs
+    as the form was left: [{label, kind?, id?, required?, why?}], which replaces the recipe's when given. `trainer` is
+    {how: builtin | command | repo, command?, repo?}. Everything is checked before the project exists."""
     from . import project_state as PS
     from . import projects as PR
     from . import recipes as RC
 
     c = ctx()
     kind = body.get("kind") or None
-    if kind:
+    if kind and kind != PS.OTHER:
         RC.get(c, kind)  # an unknown kind fails before the project exists
+    custom = any(body.get(k) is not None for k in ("what", "slots", "trainer")) or kind == PS.OTHER
+    if custom:
+        try:  # the same checks `start` makes, on nothing, so a bad form leaves no half-made project
+            if kind == PS.OTHER and not str(body.get("what") or "").strip():
+                raise ValueError("Say what you are building, in a few words.")
+            seen = set()
+            for raw in body.get("slots") or []:
+                if not str((raw or {}).get("label") or "").strip():
+                    raise ValueError("Every input needs a name.")
+                got = RC.check_slot({**({"id": raw["id"]} if raw.get("id") else {}), "label": raw["label"], "accepts": [raw["kind"]] if raw.get("kind") else ["any"]})
+                if got["id"] in seen:
+                    raise ValueError(f"Two inputs are named {str(raw['label']).strip()!r}. Give each its own name.")
+                seen.add(got["id"])
+            t = body.get("trainer")
+            if t is not None and str((t or {}).get("how") or "") not in PS.TRAINERS:
+                raise ValueError("The trainer is one of: builtin, command or repo.")
+            if t and t.get("how") == "repo" and not str(t.get("repo") or "").strip():
+                raise ValueError("Give the address of your training repo.")
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
     p = PR.create(c, str(body.get("name", "")), body.get("description", ""), body.get("brands"), body.get("icon"))
-    if kind:
+    if custom:
+        try:
+            PS.start(c, p["id"], kind, body.get("what"), body.get("slots"), body.get("trainer"))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+    elif kind:
         PS.set_kind(c, p["id"], kind)
     return {**p, "kind": kind}
 
@@ -1006,7 +1033,23 @@ def project_staging(pid: str, env: str = "staging", sweep: bool = True):
     sweep (the default) an endpoint past its idle limit is stopped here."""
     from . import staging as SG
 
-    return _staging_call(SG.status, ctx(), pid, env, sweep)
+    c = ctx()
+    cloud = None
+    rec = SG.state(c, pid, env)
+    if rec and rec.get("kind") != "local":
+        # The cloud is the truth for a model deployed there: its record is set right from the cloud before it is
+        # read (staging/fleet.py, kept a few seconds). A model deployed, stopped or replaced from somewhere else
+        # then shows as it is. If the cloud can't be asked just now, the record stands as it is.
+        try:
+            from .staging import fleet as FL
+
+            row = FL.one(c, pid, env)
+            if row:
+                cloud = {k: row.get(k) for k in ("state", "state_label", "state_text", "link", "corrected", "copies")}
+        except Exception:  # noqa: BLE001
+            cloud = None
+    out = _staging_call(SG.status, c, pid, env, sweep)
+    return {**out, "cloud": cloud} if isinstance(out, dict) else out
 
 
 @app.post("/api/projects/{pid}/stage", dependencies=A)
@@ -1048,7 +1091,7 @@ def project_unstage(pid: str, body: dict | None = None):
 
     c, env = ctx(), (body or {}).get("env") or "staging"
     if not SG.state(c, pid, env):
-        raise HTTPException(400, f"Nothing is staged for {pid}.")
+        raise HTTPException(400, f"Nothing is deployed for {pid}.")
     return {"job": _job(lambda _p: SG.unstage(c, pid, env), f"stopping staging for {pid}")}
 
 
@@ -1072,46 +1115,6 @@ def project_staging_check(pid: str, body: dict | None = None):
     b = body or {}
     return _staging_call(SC.check, ctx(), pid, b.get("env") or "staging", int(b.get("sample") or SC.SAMPLE),
                          float(b.get("min_match") or SC.MIN_MATCH))
-
-
-# ---- A/B test on staging: a split between the baseline and the candidate, ramp and roll back -----------------
-
-
-@app.get("/api/projects/{pid}/ab", dependencies=A)
-def project_ab(pid: str, traffic: str | None = None):
-    """The A/B readout: {experiment, status, split, traffic, evidence, label, arms: {baseline, candidate: {sessions}},
-    primary: {metric, baseline, candidate, diff, ci_low, ci_high, verdict, text}, guardrails, enough, srm, text}.
-    status "none" when no test was started."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.readout, ctx(), pid, traffic)
-
-
-@app.post("/api/projects/{pid}/ab/start", dependencies=A)
-def project_ab_start(pid: str, body: dict | None = None):
-    """{split?, primary?, guardrails?, mode?: captain|own, min_sessions?, dry_run?}"""
-    from .staging import ab as AB
-
-    b = body or {}
-    return _staging_call(AB.start, ctx(), pid, b.get("split") or 0.05, b.get("primary") or None, b.get("guardrails"),
-                         b.get("mode") or "captain", int(b.get("min_sessions") or AB.MIN_SESSIONS), dry_run=bool(b.get("dry_run")),
-                         practice=bool(b.get("practice")))
-
-
-@app.post("/api/projects/{pid}/ab/ramp", dependencies=A)
-def project_ab_ramp(pid: str, body: dict):
-    """{split}: the candidate's new share of traffic."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.ramp, ctx(), pid, body.get("split") or 0)
-
-
-@app.post("/api/projects/{pid}/ab/rollback", dependencies=A)
-def project_ab_rollback(pid: str, body: dict | None = None):
-    """Every shopper gets the baseline again (or, with no test running, the previous version is staged again)."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.rollback, ctx(), pid, reason=(body or {}).get("reason") or None)
 
 
 def _host_options(q: dict) -> dict:
@@ -1320,27 +1323,9 @@ def serving_setup_remove(cloud: str = "aws"):
     return {"job": _job(lambda _p: SS.teardown(c), "removing the serving setup")}
 
 
-@app.get("/api/projects/{pid}/ab/options", dependencies=A)
-def project_ab_options(pid: str):
-    """What the A/B form needs before it opens: {ready, real, sessions, per_day, shares: [{split, label, text}],
-    can_measure, text}. ready is false until a real request has reached the endpoint."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.options, ctx(), pid)
-
-
-@app.post("/api/projects/{pid}/ab/decide", dependencies=A)
-def project_ab_decide(pid: str, body: dict):
-    """{choice: ship | keep-baseline | keep-testing, note?}: how the test ends, recorded. ship returns
-    {launch_review: {pipeline, readout, evidence}} and is refused without enough real traffic."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.decide, ctx(), pid, str(body.get("choice") or ""), str(body.get("note") or ""))
-
-
 @app.get("/api/projects/{pid}/staging/connect", dependencies=A)
 def project_staging_connect(pid: str, env: str = "staging"):
-    """Connect your site: {reachable, address, text, live, real, test, simulated, last_real_at, connected, snippets,
+    """Use it from your site: {reachable, address, text, live, real, test, simulated, last_real_at, connected, snippets,
     key_note, fallback, blocked?}. Only real requests count as a site calling."""
     from .staging import traffic as TF
 
@@ -1511,6 +1496,75 @@ def project_staging_metrics(pid: str, range: str = "1h"):  # noqa: A002  the que
     return _staging_call(OB.metrics, ctx(), pid, "staging", range)
 
 
+@app.get("/api/deployed", dependencies=A)
+def deployed(fresh: bool = False):
+    """What is deployed, as each connected cloud reports it, with Captain's records corrected from that:
+    {rows, asked, text, read_at}. One row per deployed model across projects and clouds: project, model_version,
+    cloud, region, machine, copies, state (starting, running, asleep, stopped, failed, gone, unknown) with the
+    cloud's reason, since, by, and `link`: linked, unlinked (in the cloud, no project knows it), gone (removed
+    outside Captain), local, or unknown (the cloud could not be asked). Kept for a few seconds. `fresh=true` asks now."""
+    from .staging import fleet as FL
+
+    return FL.deployed(ctx(), fresh=fresh)
+
+
+@app.get("/api/projects/{pid}/deployed/numbers", dependencies=A)
+def deployed_numbers(pid: str, range: str = "1h", env: str = "staging"):  # noqa: A002
+    """Traffic and numbers for one deployment, from the cloud's own metrics, with the request log as the second
+    source: {source, source_text, buckets, summary, cost, not_read, text}. `range` is 15m, 1h, 24h or 7d. Each
+    bucket: {t, requests, errors, p50_ms, p95_ms, cpu, memory, copies}. `cost`: {hourly_usd, today_usd, month_usd,
+    text}. What a host does not report is said in `not_read`, never shown as a zero."""
+    from .staging import numbers as NB
+
+    try:
+        return NB.numbers(ctx(), pid, env, range)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.post("/api/deployed/link", dependencies=A)
+def deployed_link(body: dict):
+    """{id, project}: give a project something found in a cloud that no project knows (a row of GET /api/deployed
+    whose `link` is unlinked). Captain does not know its model version or its key, and the answer says so."""
+    from .staging import fleet as FL
+
+    try:
+        return FL.link(ctx(), str(body.get("id") or ""), str(body.get("project") or ""), str(body.get("env") or "staging"))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.post("/api/deployed/remove", dependencies=A)
+def deployed_remove(body: dict):
+    """{id, confirm}: remove from the cloud something Captain made that no project knows. Without `confirm` it
+    answers 409 with what would be deleted. It cannot be undone."""
+    from .staging import fleet as FL
+
+    try:
+        return FL.remove_found(ctx(), str(body.get("id") or ""), confirm=bool(body.get("confirm")))
+    except ValueError as e:
+        raise HTTPException(409 if str(e).startswith("Confirm first") else 400, str(e)) from None
+
+
+@app.get("/api/deployed/created", dependencies=A)
+def deployed_created():
+    """What Captain created in each cloud account the first time a model was deployed there, with what each thing
+    is for: {places: [{cloud, cloud_label, login, region, things: [{kind, name, what_for}], in_use_by, can_remove,
+    text}], text}. `DELETE /api/serving/setup?cloud=` removes one place's."""
+    from .staging import fleet as FL
+
+    return FL.created(ctx())
+
+
+@app.get("/api/deployed/differences", dependencies=A)
+def deployed_differences():
+    """What differs between Captain's records and the cloud, after correcting it: {corrected, unlinked, not_asked,
+    in_sync, text}."""
+    from .staging import fleet as FL
+
+    return FL.differences(ctx())
+
+
 @app.get("/api/staging/deployments", dependencies=A)  # not /api/deployments: that is the deploy history, and stays
 def staged_deployments(which: str = "live"):
     """Every staged model across projects: {rows: [{project, name, model_version, state, status, where, by,
@@ -1544,6 +1598,32 @@ def project_staging_rollback_to(pid: str, n: int, body: dict | None = None):
     if not any(r["n"] == n for r in _staging_call(RB.earlier, c, pid)):
         raise HTTPException(400, f"There is no earlier version {n} to go back to.")
     return {"job": _job(lambda _p: RB.go(c, pid, n, why), f"rolling {pid} back to version {n}")}
+
+
+@app.get("/api/projects/{pid}/staging/protect", dependencies=A)
+def project_staging_protect(pid: str):
+    """What the deployed model accepts: {limits: {max_request_kb, rate_per_s}, budget: {ms, fallback}, has_fallback,
+    size_text, rate_text, budget_text, key: {rotated_at, previous_until, previous_valid, can_rotate, why_not, text}}."""
+    from .staging import protect as PT
+
+    return _staging_call(PT.get, ctx(), pid)
+
+
+@app.put("/api/projects/{pid}/staging/protect", dependencies=A)
+def project_staging_protect_put(pid: str, body: dict):
+    """Any of {max_request_kb, rate_per_s, budget_ms, fallback}. Takes effect in a few seconds, with no restart."""
+    from .staging import protect as PT
+
+    return _staging_call(lambda c, p: PT.change(c, p, **{k: body[k] for k in ("max_request_kb", "rate_per_s", "budget_ms", "fallback") if k in body}), ctx(), pid)
+
+
+@app.post("/api/projects/{pid}/staging/key/rotate", dependencies=A)
+def project_staging_key_rotate(pid: str, body: dict | None = None):
+    """{grace_minutes?}: make a new key. The old one keeps working for the grace period (an hour unless given).
+    The answer never holds the key: it is copied the way it always is (GET .../staging/key)."""
+    from .staging import protect as PT
+
+    return _staging_call(PT.rotate_key, ctx(), pid, (body or {}).get("grace_minutes"))
 
 
 @app.get("/api/projects/{pid}/staging/rollbacks", dependencies=A)
@@ -1584,44 +1664,6 @@ def project_shadow_stop(pid: str, body: dict | None = None):
     from .staging import traffic as TF
 
     return _staging_call(TF.shadow_stop, ctx(), pid)
-
-
-@app.post("/api/projects/{pid}/ab/stop", dependencies=A)
-def project_ab_stop(pid: str, body: dict | None = None):
-    from .staging import ab as AB
-
-    return _staging_call(AB.stop, ctx(), pid)
-
-
-@app.post("/api/projects/{pid}/ab/simulate", dependencies=A)
-def project_ab_simulate(pid: str, body: dict | None = None):
-    """{sessions?, seed?}: send simulated shoppers at staging, as a job. Everything read from them says SIMULATED."""
-    from .staging import ab as AB
-
-    c, b = ctx(), body or {}
-    _staging_call(AB._running, c, pid, b.get("env") or "staging")  # refuse now, in a sentence, not inside the job
-    return {"job": _job(lambda p: AB.simulate(c, pid, int(b.get("sessions") or 1000), int(b.get("seed") or 7), progress=p),
-                        f"sending simulated shoppers at staging for {pid}")}
-
-
-@app.post("/api/projects/{pid}/ab/outcomes", dependencies=A)
-def project_ab_outcomes(pid: str, body: dict):
-    """{events, dry_run?}: bring in outcomes from an events dataset that carries request_id."""
-    from .staging import ab as AB
-
-    return _staging_call(AB.import_outcomes, ctx(), pid, str(body.get("events") or ""), dry_run=bool(body.get("dry_run")))
-
-
-@app.post("/api/projects/{pid}/ab/result", dependencies=A)
-def project_ab_result(pid: str, body: dict):
-    """{metric, baseline, candidate, source, traffic?, ci_low?, ci_high?, sessions?, handoff?}: the readout from the
-    team's own A/B system."""
-    from .staging import ab as AB
-
-    b = body
-    return _staging_call(AB.bring, ctx(), pid, str(b.get("metric") or ""), float(b.get("baseline") or 0), float(b.get("candidate") or 0),
-                         str(b.get("source") or ""), b.get("traffic") or "real", b.get("ci_low"), b.get("ci_high"),
-                         b.get("sessions"), b.get("handoff") or None)
 
 
 @app.get("/api/sources", dependencies=A)

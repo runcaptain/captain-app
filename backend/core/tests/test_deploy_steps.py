@@ -80,19 +80,32 @@ def test_a_registry_that_cannot_be_written_fails_only_its_step(ws, monkeypatch):
     assert "registry_saved" not in PS.get(ws, "shop") or not PS.get(ws, "shop")["registry_saved"]
 
 
-def test_launch_review_still_needs_its_evidence_after_a_deploy_that_saved_to_the_registry(ws, monkeypatch):  # noqa: F811
-    """The honesty gates are unchanged by one-step Deploy: a deployed and saved version has no test result and no
-    real traffic, so its readout can't go to launch review."""
+def test_launch_review_keeps_its_evidence_gate_from_the_terminal_and_is_on_no_screen(ws, monkeypatch):  # noqa: F811
+    """The honesty gates are unchanged by one-step Deploy and by Captain no longer running A/B tests: a deployed and
+    saved version with only simulated evidence still cannot launch. Real-traffic evidence now comes from the
+    team's own testing tool, brought in from the terminal. Launch review itself is off every screen."""
+    from captain_search import handoff as HO
     from captain_search import model_versions as MV
-    from captain_search.staging import ab as AB
+    from captain_search import ops
 
     PS.set_registry(ws, "shop", "two-tower", "shop", "s3://registry-bucket")
     monkeypatch.setattr(MV, "publish", lambda *a, **k: {"path": "s3://registry-bucket/two-tower/shop/v1/"})
     DP.run(ws, "shop", "local")
-    with pytest.raises(ValueError, match="No real request has reached this endpoint yet"):
-        AB.start(ws, "shop")
-    AB.start(ws, "shop", split=0.5, practice=True)
-    r = AB.readout(ws, "shop")
-    assert not r["can_ship"] and r["evidence"] != "REAL_TRAFFIC"
-    with pytest.raises(ValueError):
-        AB.decide(ws, "shop", "ship")
+    PS.experiment_backtest(ws, "shop", ws.exp)
+    env = ops.env_create(ws, "prod", "live", {"type": "record"})
+    gate = next(g for g in ops.gates_for(ws, env, ws.candidate) if g["gate"] == "evidence")
+    assert not gate["ok"] and gate["detail"].startswith("SIMULATED"), gate  # simulated evidence never launches
+    with pytest.raises(ops.GateFailed, match="evidence"):
+        ops.promote(ws, ws.candidate, "prod", confirm=True)
+    # launch review is no longer a step on any screen: the path ends at a running endpoint with its address
+    sh = SG.ship_state(ws, PS.get(ws, "shop"))
+    assert [s["id"] for s in sh["steps"]] == ["stage", "try", "connect"]
+    said = str([sh["steps"], sh["next"]]).lower()
+    assert "launch" not in said and "handoff" not in said and "review" not in said
+    ag = SG.agent_summary(ws, "shop")
+    assert "launch" not in str([ag["steps"], ag["next"], ag["commands"]]).lower()
+    # and the way to bring it in is still there, labelled as what it is
+    d = ops.promote(ws, ws.candidate, "prod", confirm=True, override_reason="graded by hand outside Captain")
+    b = HO.outcome(ws, d.handoff, "conversion", 0.012, "our testing tool, report 41")
+    assert b["links"][-1]["evidence"] == "REAL_TRAFFIC" and b["links"][-1]["source"] == "our testing tool, report 41"
+
