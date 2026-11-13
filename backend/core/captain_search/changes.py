@@ -10,6 +10,7 @@ what it already reads. The feed carries no data: only "this changed".
     projects, project:<id>          data, table:<name>          runs, run:<id>          jobs, job:<id>
     weights, weights:<model>        weights-session:<id>
     deployed, deployment:<project>  notebooks                   logins      compute     settings     team
+    pins (what a person gave their agent)                       views (the team's own screens, in the project folder)
 
 A change to one thing bumps its own topic and its list's (project:shop and projects), so a list listens to the
 plural and a page to its own.
@@ -553,8 +554,8 @@ class FolderWatch:
     three times a second, and `topics(name)` says what a changed file tells. `mine(name)` is true for a file this process just
     wrote and told about itself."""
 
-    def __init__(self, path, topics, listens: tuple, mine=None):
-        self.path, self.topics, self.listens, self.mine = path, topics, tuple(listens), mine
+    def __init__(self, path, topics, listens: tuple, mine=None, deep: bool = False):
+        self.path, self.topics, self.listens, self.mine, self.deep = path, topics, tuple(listens), mine, deep
         self.seen: dict[str, int] = {}
         self.primed = False
         self.thread: threading.Thread | None = None
@@ -565,10 +566,27 @@ class FolderWatch:
     def look(self) -> set[str]:
         now: dict[str, int] = {}
         try:
-            with os.scandir(self.path()) as it:
-                for e in it:
-                    if not e.name.endswith(".tmp"):
-                        now[e.name] = e.stat().st_mtime_ns
+            root = self.path()
+            if not root:
+                now = {}
+            elif self.deep:
+                # Every file under it, by its own change time: an editor that saves in place moves the file's time,
+                # not its folder's. For a small folder of code (a team's views), never a workspace.
+                for d, dirs, files in os.walk(root):
+                    dirs[:] = [x for x in dirs if not x.startswith(".") and x != "node_modules"]
+                    for name in files:
+                        p = os.path.join(d, name)
+                        try:
+                            now[os.path.relpath(p, root)] = os.stat(p).st_mtime_ns
+                        except OSError:
+                            pass
+                    if len(now) > 5000:
+                        break
+            else:
+                with os.scandir(root) as it:
+                    for e in it:
+                        if not e.name.endswith(".tmp"):
+                            now[e.name] = e.stat().st_mtime_ns
         except OSError:
             now = {}
         before, first = self.seen, not self.primed
@@ -604,9 +622,10 @@ class FolderWatch:
 _FOLDERS: list[FolderWatch] = []
 
 
-def watch_folder(path, topics, listens: tuple, mine=None) -> FolderWatch:
-    """Look at a folder outside the workspace while someone listens to `listens`. `path()` gives the folder."""
-    w = FolderWatch(path, topics, listens, mine)
+def watch_folder(path, topics, listens: tuple, mine=None, deep: bool = False) -> FolderWatch:
+    """Look at a folder outside the workspace while someone listens to `listens`. `path()` gives the folder, or
+    nothing when there is none just now. `deep` looks at every file under it."""
+    w = FolderWatch(path, topics, listens, mine, deep)
     _FOLDERS.append(w)
     return w
 

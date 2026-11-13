@@ -129,7 +129,8 @@ A screen reads again what it already reads.
   workspace on this computer. For one in a bucket it names `deployed` and each `deployment:<project>`, and any
   folder too large to list every two seconds.
 - **Topics:** `projects`, `project:<id>`, `data`, `table:<name>`, `runs`, `run:<id>`, `jobs`, `job:<id>`,
-  `deployed`, `deployment:<project>`, `notebooks`, `logins`, `compute`, `settings`, `team`. A change to one thing
+  `deployed`, `deployment:<project>`, `notebooks`, `logins`, `compute`, `settings`, `team`, `pins` (what a person
+  gave their agent), `views` (the team's own screens in the project folder). A change to one thing
   bumps its own topic and its list's.
 
 How soon a change is told:

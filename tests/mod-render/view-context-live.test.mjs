@@ -18,7 +18,9 @@ const root = path.resolve(here, '../..');
 const { bin: cst, why } = cstBin();
 if (!cst) { console.log(`view-context render test: skipped (${why})`); process.exit(0); }
 const work = tidy(fs.mkdtempSync(path.join(os.tmpdir(), 'cst-view-')));
-const env = { ...process.env, CST_HOME: path.join(work, 'cst') };
+// The app's own folder for this test, where the pins file lives: the services look at it for what a terminal pins.
+const appHome = path.join(work, 'app-home');
+const env = { ...process.env, CST_HOME: path.join(work, 'cst'), CAPTAIN_APP_HOME: appHome };
 delete env.CLAUDECODE;
 spawnSync(cst, ['init', 'viewtest', '--storage', path.join(work, 'store')], { env });
 spawnSync(cst, ['demo', 'seed', '--legacy'], { env });
@@ -222,8 +224,14 @@ assert.ok(nt.includes('AGENT CONTEXT') && nt.includes('Projects, Gifts'), `the c
 assert.ok(nt.includes(`${dv.dataset}@v${shared('captain.view.data').version}`) && nt.includes('demo-tuned-vs-bm25') && nt.includes('Clear'), 'the pinned things are listed');
 assert.ok(!/[←-⇿—]/.test(nt), 'no arrows or em dashes in the sidebar');
 // Something pinned from the command line (cst context add) shows up without a click.
+// The sidebar does not read the file on a clock: the services see it change on disk and say so on the live channel
+// ("pins"). So the file changes where the services look, as `cst context add` would change it, and in the
+// window's own view of it.
+for (let i = 0; i < 8; i++) { await hn.layoutLists({}); await hn.idle(120); } // the sidebar is listening
 globalThis.__files[pinFile] = JSON.stringify({ items: [...pinned(), { ref: 'project:gifts', kind: 'project', label: 'Gifts', added_by: 'cli', added_at: 'now' }] });
-for (let i = 0; i < 20 && hn.byIdPrefix('ctx-pin-2').length === 0; i++) { await hn.layoutLists({}); await hn.idle(30); }
+fs.mkdirSync(path.join(appHome, 'context'), { recursive: true });
+fs.writeFileSync(path.join(appHome, 'context', 'viewtest.json'), globalThis.__files[pinFile]);
+for (let i = 0; i < 40 && hn.byIdPrefix('ctx-pin-2').length === 0; i++) { await hn.layoutLists({}); await hn.idle(30); }
 assert.ok(hn.byIdPrefix('ctx-pin-2').length > 0, 'a pin added by cst appears');
 await hn.click('ctx-pin-0-x');
 await hn.idle(50);
