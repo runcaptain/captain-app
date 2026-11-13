@@ -105,7 +105,7 @@ class Host:
         from ... import project_state as PS
         from ... import projects as PR
 
-        for pr in PR.listing(ctx):
+        for pr in PR.rows(ctx):
             for _env, st in ((PS.read(ctx, pr["id"])[0].get("staging") or {}).items()):
                 if st.get("status") in ("running", "starting") and st.get("target") == rec.get("target"):
                     raise ValueError(f"{pr['name']} has a model deployed here. Stop it first, then remove what the first deploy created.")

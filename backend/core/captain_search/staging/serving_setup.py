@@ -534,7 +534,7 @@ def teardown(ctx: Context, progress=None) -> dict:
     rec = read(ctx)
     if not rec:
         raise ValueError("Serving was never set up for this workspace.")
-    for pr in PR.listing(ctx):
+    for pr in PR.rows(ctx):
         for env, st in ((PS.read(ctx, pr["id"])[0].get("staging") or {}).items()):
             if st.get("status") == "running" and st.get("target") == rec.get("target"):
                 raise ValueError(f"{pr['name']} has a model deployed here. Stop it first, then remove what the first deploy created.")

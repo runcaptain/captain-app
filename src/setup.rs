@@ -65,6 +65,7 @@ impl Setup {
             Ok(core) => match crate::hc::check(&core.hello) {
                 Ok(()) => {
                     let Some(requests) = self.requests.take() else { return };
+                    tracing::info!(target: "captain::window", "closed the setup window: the terminals are ready");
                     window.remove_window();
                     crate::open_main(core, requests, cx);
                     return;
@@ -196,7 +197,10 @@ impl Render for Setup {
             Need::Fix(Mismatch::Newer { .. }) => div()
                 .flex()
                 .gap(px(10.0))
-                .child(button("quit", "Quit", false).on_click(cx.listener(|_, _, _, cx| cx.quit()))),
+                .child(button("quit", "Quit", false).on_click(cx.listener(|_, _, _, cx| {
+                    crate::logs::quit_asked("the person, with the Quit button on the setup screen");
+                    cx.quit()
+                }))),
             Need::Fix(_) => div()
                 .flex()
                 .gap(px(10.0))

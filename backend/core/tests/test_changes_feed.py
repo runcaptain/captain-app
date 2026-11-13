@@ -359,3 +359,111 @@ def test_the_socket_carries_the_same_messages(svc):
     with pytest.raises(Exception):  # noqa: B017,PT011  no token, no connection
         with svc.c.websocket_connect("/api/changes/ws") as ws:
             ws.receive_json()
+
+
+# ---- what the watch for outside writes costs ----------------------------------------------------------------------
+# On a real workspace the installed app's services sat at 50 to 75 percent of a processor with nobody doing anything:
+# the watch looked at every folder three times a second. It is told by the system now where the system can, and a
+# watch that has to look keeps to a budget.
+
+def _big(tmp_path, dirs=2000, per=10):
+    import os
+
+    root = tmp_path / "big"
+    for d in range(dirs):
+        p = root / "datasets" / f"demo-{d:05d}" / "v1"
+        p.mkdir(parents=True)
+        for f in range(per):
+            (p / f"part-{f:03d}.parquet").touch()
+    (root / "projects" / "shop").mkdir(parents=True)
+    return str(root)
+
+
+@pytest.mark.parametrize("how", ["events", "looks"])
+def test_an_idle_workspace_of_20000_files_costs_under_half_a_second_of_processor_in_15_seconds(tmp_path, monkeypatch, how):
+    import select
+
+    from captain_search.storage.backend import LocalStore
+
+    if how == "events" and not hasattr(select, "kqueue"):
+        pytest.skip("this system has no kqueue: the watch looks, and that is the other case")
+    CH.reset_for_tests()
+    if how == "looks":
+        monkeypatch.setattr(CH.Watcher, "_events_loop", lambda self: False)   # as on a system without file events
+    store = LocalStore(_big(tmp_path))                                        # 20,000 files in 4,000 folders
+    CH.watch(store)
+    w = CH._WATCHERS[store.uri]
+    cpu = time.process_time()
+    CH.FEED.listen({"data", "projects"})
+    try:
+        time.sleep(15.0)
+        used = time.process_time() - cpu
+        assert w.mode == how
+        assert used < 0.5, f"{used:.2f} s of processor in 15 idle seconds ({how})"
+        if how == "looks":
+            # It has slowed its looks to keep to its budget, and says so: a screen keeps a slow read of its own.
+            assert w.gap > 1.0 and "data" in CH.partial(store, ["data", "notebooks"]) and CH.partial(store, ["logins"]) == []
+        else:
+            assert CH.partial(store) == [], "told by the system: nothing is late"
+        # and it still sees a write, by this test standing in for another process
+        seq = CH.FEED.seq
+        (tmp_path / "big" / "projects" / "shop" / "state.yaml").write_text("x: 1")
+        got = CH.FEED.wait(seq, {"project:shop"}, timeout=6.0)
+        assert [c["topic"] for c in got["changed"]] == ["project:shop"]
+    finally:
+        CH.FEED.unlisten({"data", "projects"})
+        CH.reset_for_tests()
+
+
+def test_the_watch_holds_only_the_folders_the_listeners_topics_come_from_and_stops_when_they_leave(tmp_path, monkeypatch):
+    from captain_search.storage.backend import LocalStore
+
+    CH.reset_for_tests()
+    monkeypatch.setattr(CH, "LINGER_S", 0.4)
+    root = tmp_path / "ws"
+    for d in ("notebooks/zero-results", "datasets/demo-catalog/v1", "projects/shop", "objects/sha256/ab"):
+        (root / d).mkdir(parents=True)
+    store = LocalStore(str(root))
+    CH.watch(store)
+    w = CH._WATCHERS[store.uri]
+    assert w.thread is None and w.mode == "idle", "nobody listens: nothing watches"
+    CH.FEED.listen({"notebooks"})
+    try:
+        for _ in range(40):
+            if w.tops is not None and w.mode != "idle":
+                break
+            time.sleep(0.05)
+        assert w.tops == {"notebooks"}, f"only where notebooks are kept: {w.tops}"
+        seq = CH.FEED.seq
+        (root / "datasets" / "demo-catalog" / "v1" / "manifest.yaml").write_text("x: 1")   # not what is listened to
+        (root / "notebooks" / "zero-results" / "v1.yaml").write_text("x: 1")
+        got = CH.FEED.wait(seq, None, timeout=3.0)
+        time.sleep(0.5)
+        assert {c["topic"] for c in CH.FEED.answer(seq, None)["changed"]} == {"notebooks"}, "the dataset's folder is not watched"
+        assert got["changed"]
+    finally:
+        CH.FEED.unlisten({"notebooks"})
+    for _ in range(60):
+        if w.thread is None:
+            break
+        time.sleep(0.1)
+    assert w.thread is None and w.mode == "idle", "the last listener left: the watch stopped, and holds nothing open"
+    CH.reset_for_tests()
+
+
+def test_another_process_writing_a_folder_a_moment_after_this_one_did_is_still_told(svc):
+    """This process's own write is not told twice by the watch. That must not hide someone else's write to the
+    same folder just after it: it once did, for half a second, and that write was then never told at all."""
+    import os
+
+    seq = svc.get("/api/changes", topics="projects")["seq"]
+    t, box = _waiter(svc, seq, "project:demo-shop")
+    time.sleep(0.6)                                                        # the watch is up
+    svc.ctx.store.put_new("projects/demo-shop/state.yaml", b"x: 1\n")     # this process
+    t.join(3)
+    seq = box["answer"]["seq"]
+    t, box = _waiter(svc, seq, "project:demo-shop")
+    with open(os.path.join(svc.root, "projects", "demo-shop", "notes-from-a-terminal.yaml"), "w") as fh:   # another, 0.15 s later
+        fh.write("x: 2\n")
+    t.join(3)
+    assert "answer" in box and _t(box["answer"]) == ["project:demo-shop"], "the other process's write, just after ours, was not told"

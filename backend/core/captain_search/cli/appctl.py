@@ -603,6 +603,83 @@ def app_open(target: str = typer.Argument(..., help="A screen (projects, data, n
     emit({"opened": what}, f"Opened {target} in Captain." + (" The form is filled in and waiting for the person: nothing was submitted." if "form" in what else ""))
 
 
+@app_app.command("stacks")
+def app_stacks(top: int = typer.Option(0, "--top", help="Only the first so many frames of each thread (0: all of them)")):
+    """What every thread of Captain's services is doing right now.
+
+    For when the services use a processor and nothing says why. The running services write each thread's Python
+    stack into services.log, and this prints what they wrote: the innermost call first, so the first lines of a
+    thread say where it is. Run it two or three times: a thread that is in the same place each time is the one."""
+    import json as _json
+
+    from .. import applog
+    from ..workspace import home
+
+    path = os.path.join(home(), "serve.json")
+    try:
+        with open(path) as fh:
+            rec = _json.load(fh)
+        pid = int(rec["pid"])
+        os.kill(pid, 0)
+    except Exception:  # noqa: BLE001
+        fail("Captain's services aren't running here, so there is nothing to ask. Open Captain, or run `cst serve`.")
+    # Services from before this command existed do not catch the signal: it would end them. They say so by not
+    # saying they can.
+    if not rec.get("stacks"):
+        fail(f"The running services (process {pid}) are an older version that can't be asked. Restart Captain, then try again.")
+    try:
+        text = applog.ask_stacks(pid)
+    except RuntimeError as e:
+        fail(str(e))
+    if not text:
+        fail(f"The services (process {pid}) wrote nothing within two seconds. They may be an older version: restart Captain and try again.")
+    threads = [t for t in text.split("\n\n") if t.strip()]
+    if top > 0:
+        threads = ["\n".join(t.split("\n")[: top + 1]) for t in threads]
+    emit({"pid": pid, "threads": len(threads), "stacks": threads}, f"{len(threads)} threads of Captain's services (process {pid}), innermost call first:\n\n" + "\n\n".join(threads))
+
+
+@app_app.command("logs")
+def app_logs(follow: bool = typer.Option(False, "--follow", "-f", help="Keep printing new lines until interrupted"),
+             since: Optional[str] = typer.Option(None, "--since", help="Only the last so long: 30m, 1h, 2d"),
+             which: str = typer.Option("all", "--which", help="app, services, crash or all"),
+             bundle: bool = typer.Option(False, "--bundle", help="Write one zip for a bug report to the Desktop and print its path"),
+             last: bool = typer.Option(False, "--last", help="What happened last time: the last run's crash record, else the end of its log"),
+             to: Optional[str] = typer.Option(None, "--to", help="With --bundle: the folder to write the zip in")):
+    """Print Captain's logs: the app's (app.log), the services' (services.log) and crash records.
+
+    They live in ~/Library/Logs/Captain on a Mac ($CAPTAIN_LOG_DIR picks another folder). Secrets are taken out
+    when a line is written, and again when a bundle is made, so a bundle can go into a bug report."""
+    from .. import applog
+
+    if which not in ("app", "services", "crash", "all"):
+        fail("--which takes app, services, crash or all")
+    if bundle:
+        path = applog.bundle(to)
+        emit({"path": path}, path)
+        return
+    if last:
+        typer.echo(applog.what_happened(), nl=False)
+        return
+    try:
+        seconds = applog.since_seconds(since) if since else None
+    except ValueError as e:
+        fail(str(e))
+    text = applog.read(which, seconds)
+    if S.json and not follow:
+        emit({"folder": applog.log_dir(), "which": which, "text": text})
+        return
+    if text:
+        typer.echo(text, nl=False)
+    elif not follow:
+        typer.secho(f"no log lines in {applog.log_dir()}" + (f" in the last {since}" if since else ""), err=True)
+    if follow:
+        try:
+            applog.follow(which)
+        except KeyboardInterrupt:
+            pass
+
+
 @app_app.command("check")
 def app_check(folder: str):
     """Load a mod once, render it, and exit nonzero with the exact error. Run after every change to a mod."""

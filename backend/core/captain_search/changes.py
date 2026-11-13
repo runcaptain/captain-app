@@ -239,6 +239,14 @@ class Feed:
                 self._left[t] = now
             self.last_listener = now
 
+    def names(self, linger: float | None = None) -> set[str]:
+        """The topics listened to now: a request open for them, or one that ended under ten seconds ago."""
+        now = time.monotonic()
+        linger = LINGER_S if linger is None else linger
+        with self.cond:
+            self._left = {t: at for t, at in self._left.items() if now - at < linger}
+            return set(self._listening) | set(self._left)
+
     def listening(self, prefix: str | None = None, linger: float | None = None) -> bool:
         """Is anyone listening (to a topic that is `prefix` or starts with it, or to anything)? A long poll leaves
         and comes straight back, so a listener that left a moment ago still counts."""
@@ -292,25 +300,98 @@ def wrote(store, key: str) -> None:
 
 # ---- writes made outside this process -------------------------------------------------------------------------------
 
+BUDGET = 0.02        # the most of one processor a watcher that has to look may use, averaged over its looks
+MAX_GAP_S = 5.0      # the longest it waits between looks to stay inside that
+MAX_DIRS = 8000      # folders one watcher holds open for the system's file events; past this it looks instead
+
+
+def _gap(every: float, took: float, budget: float = BUDGET) -> float:
+    """How long to wait after a look that took `took` seconds: the usual gap, stretched so that looking uses at
+    most `budget` of one processor, up to MAX_GAP_S."""
+    # A little under the budget: the work around a look (its thread waking, the feed told) is not in `took`.
+    return min(MAX_GAP_S, max(every, took / (budget * 0.75), 0.05))
+
+
+def _kinds(topics) -> set[str]:
+    return {str(t).split(":")[0] for t in topics}
+
+
 class Watcher:
     """Watches one workspace on this computer for writes this process did not make: a `cst` command in a terminal,
-    an agent. It looks at every folder's change time about three times a second, which is cheap (a folder's time moves when a
-    file is added to it or replaced in it, and the stores only ever add or replace). A change is told within about
-    a third of a second, so a screen shows it inside one second. A look never takes more than half the time: on a
-    very large workspace the wait grows to as long as the look took. It runs only while someone is listening."""
+    an agent. It runs only while someone is listening, only for the folders their topics can come from, and it
+    stops when the last listener has been gone ten seconds.
+
+    Two ways, and which is in `mode`:
+    - "events". Where the system has them (macOS and the BSDs: kqueue), each folder is held open and the system
+      says when a file is added to it or replaced in it, which is all a store ever does. An idle workspace costs
+      nothing: the thread sleeps until the system wakes it. A change is told within a few hundredths of a second.
+    - "looks". Elsewhere, or past MAX_DIRS folders, every folder's change time is looked at about three times a
+      second. Looking costs processor time in proportion to the workspace, so it has a budget: at most 2 percent
+      of one processor. On a large workspace the wait between looks stretches, up to five seconds, and the feed's
+      answer names its topics as only partly watched (`partial`), so a screen never says "Live" over a late read.
+    """
 
     EVERY_S = 0.3
     SKIP = ("objects",)   # blobs named by their hash: nothing a screen lists
+    SETTLE_S = 0.05       # after the system says a folder changed: long enough for this process to say it wrote it
 
     def __init__(self, root: str, uri: str):
         self.root, self.uri = root, uri
         self.seen: dict[str, int] = {}
+        self.own: dict[str, float] = {}
         self.lock = threading.Lock()
         self.thread: threading.Thread | None = None
         self.primed = False
+        self.mode = "idle"
+        self.gap = self.EVERY_S
+        self.looks = 0            # looks made (the "looks" mode), and events handled (the "events" mode): for tests
+        self.poked = False        # a request just started listening: what is watched may need to follow
+        self.tops: set[str] | None = None
 
-    def _dirs(self):
-        stack = [self.root]
+    def _on(self) -> bool:
+        """Someone is listening, and this is still the watcher of its workspace."""
+        return FEED.listening() and _WATCHERS.get(self.uri) is self
+
+    # ---- which folders the listeners' topics can come from
+
+    def _wanted(self) -> set[str] | None:
+        """The top folders worth watching for what is listened to now. None: all of them."""
+        names = FEED.names()
+        if "*" in names:
+            return None
+        want = _kinds(names)
+        tops = set()
+        try:
+            with os.scandir(self.root) as it:
+                for e in it:
+                    if e.is_dir(follow_symlinks=False) and e.name not in self.SKIP and not e.name.startswith(".tmp"):
+                        if _kinds(topics_for(f"{e.name}/a/b/c")) & want:
+                            tops.add(e.name)
+        except OSError:
+            pass
+        return tops
+
+    def _top_wanted(self, name: str) -> bool:
+        """Is this top folder one the listeners' topics can come from, as they are right now?"""
+        if name in self.SKIP or name.startswith(".tmp"):
+            return False
+        names = FEED.names()
+        return "*" in names or bool(_kinds(topics_for(f"{name}/a/b/c")) & _kinds(names))
+
+    def _dirs(self, tops: set[str] | None = None):
+        """The workspace's own folder, then every folder under the wanted top folders."""
+        try:
+            yield self.root, os.stat(self.root).st_mtime_ns
+        except OSError:
+            return
+        stack = []
+        try:
+            with os.scandir(self.root) as it:
+                for e in it:
+                    if e.is_dir(follow_symlinks=False) and e.name not in self.SKIP and not e.name.startswith(".tmp") and (tops is None or e.name in tops):
+                        stack.append(e.path)
+        except OSError:
+            return
         while stack:
             d = stack.pop()
             try:
@@ -321,13 +402,21 @@ class Watcher:
             try:
                 with os.scandir(d) as it:
                     for e in it:
-                        if e.is_dir(follow_symlinks=False) and not (d == self.root and e.name in self.SKIP) and not e.name.startswith(".tmp"):
+                        if e.is_dir(follow_symlinks=False) and not e.name.startswith(".tmp"):
                             stack.append(e.path)
             except OSError:
                 continue
 
+    def _topics_of(self, d: str) -> set[str]:
+        rel = os.path.relpath(d, self.root).replace(os.sep, "/")
+        # A folder that changed had a file added or replaced in it. The file's name is not known from the folder
+        # alone, so the folder stands for it ("projects/shop/" for "projects/shop/state.yaml").
+        if rel == ".":
+            return {"projects", "settings", "data"}   # the workspace's own top files: projects.yaml, settings.yaml, library.yaml
+        return topics_for(rel + "/x")
+
     def saw(self, key: str) -> None:
-        """This process just wrote `key`: remember its folder's new time, so the scan does not report it again."""
+        """This process just wrote `key`: its folder's change time is remembered, so the watch does not tell it again."""
         d = os.path.dirname(os.path.join(self.root, str(key).lstrip("/")))
         with self.lock:
             while d.startswith(self.root):
@@ -339,9 +428,26 @@ class Watcher:
                     break
                 d = os.path.dirname(d)
 
+    def _mine(self, d: str, now: float = 0.0) -> bool:
+        """Is this folder as this process last left it? Then the change the system reported was this process's own
+        write, told when it was made. Judged by the folder's own change time, not by how recently this process
+        wrote: another process's write a moment after ours moves the time on, and is told."""
+        try:
+            m = os.stat(d).st_mtime_ns
+        except OSError:
+            return False
+        with self.lock:
+            if self.seen.get(d) == m:
+                return True
+            self.seen[d] = m
+            return False
+
+    # ---- looking (the fallback)
+
     def scan(self) -> set[str]:
         """One look. Returns the topics of what changed since the last look (nothing on the first)."""
-        now = dict(self._dirs())
+        self.looks += 1
+        now = dict(self._dirs(self.tops))
         with self.lock:
             before, first = self.seen, not self.primed
             changed = [d for d, m in now.items() if before.get(d) != m]
@@ -351,16 +457,19 @@ class Watcher:
             return set()
         out: set[str] = set()
         for d in changed + gone:
-            rel = os.path.relpath(d, self.root).replace(os.sep, "/")
-            # A folder whose time moved had a file added or replaced in it. The file's name is not known from the
-            # folder alone, so the folder stands for it ("projects/shop/" for "projects/shop/state.yaml").
-            out |= topics_for("" if rel == "." else rel + "/x")
-            if rel == ".":
-                out |= {"projects", "settings", "data"}   # the workspace's own top files: projects.yaml, settings.yaml, library.yaml
+            out |= self._topics_of(d)
         return out
 
-    def run(self) -> None:
-        while FEED.listening():
+    def _look_loop(self) -> None:
+        self.mode = "looks"
+        tops_at = 0.0
+        while self._on():
+            if self.poked or time.monotonic() - tops_at > 3.0:   # what is listened to changes
+                self.poked = False
+                tops, tops_at = self._wanted(), time.monotonic()
+                if tops != self.tops:
+                    with self.lock:
+                        self.tops, self.primed = tops, False   # other folders: the next look is a first look
             t0 = time.monotonic()
             try:
                 ts = self.scan()
@@ -368,12 +477,166 @@ class Watcher:
                     FEED.bump(*ts)
             except Exception:  # noqa: BLE001
                 pass
-            took = time.monotonic() - t0
-            time.sleep(max(0.05, self.EVERY_S - took, took))
+            self.gap = _gap(self.EVERY_S, time.monotonic() - t0)
+            end = time.monotonic() + self.gap
+            while time.monotonic() < end and self._on():
+                time.sleep(min(0.25, max(0.0, end - time.monotonic())))
+
+    # ---- the system's file events
+
+    def _events_loop(self) -> bool:
+        """Hold each wanted folder open and sleep until the system says one changed. False when this can't be done
+        here (no kqueue, too many folders, the system refused): the caller looks instead."""
+        import select
+
+        if not hasattr(select, "kqueue"):
+            return False
+        try:
+            import resource
+
+            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            need = MAX_DIRS + 512
+            if soft < need:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (min(need, hard) if hard != resource.RLIM_INFINITY else need, hard))
+        except Exception:  # noqa: BLE001
+            pass
+        flags_open = getattr(os, "O_EVTONLY", os.O_RDONLY)
+        note = select.KQ_NOTE_WRITE | select.KQ_NOTE_DELETE | select.KQ_NOTE_RENAME | select.KQ_NOTE_EXTEND
+        kq = select.kqueue()
+        fds: dict[int, str] = {}
+        dirs: dict[str, int] = {}
+
+        def add(d: str) -> bool:
+            if d in dirs:
+                return True
+            if len(dirs) >= MAX_DIRS:
+                return False
+            try:
+                fd = os.open(d, flags_open)
+                kq.control([select.kevent(fd, select.KQ_FILTER_VNODE, select.KQ_EV_ADD | select.KQ_EV_CLEAR, note)], 0, 0)
+            except OSError:
+                return False
+            fds[fd], dirs[d] = d, fd
+            return True
+
+        def drop(d: str) -> None:
+            fd = dirs.pop(d, None)
+            if fd is not None:
+                fds.pop(fd, None)
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+        def sync() -> bool:
+            tops = self._wanted()
+            if tops == self.tops and dirs:
+                return True
+            self.tops = tops
+            keep = set()
+            for d, _ in self._dirs(tops):
+                keep.add(d)
+                if not add(d):
+                    return False
+            for d in [d for d in dirs if d not in keep]:
+                drop(d)
+            return True
+
+        try:
+            if not sync():
+                return False
+            self.mode = "events"
+            synced = time.monotonic()
+            while self._on():
+                try:
+                    evs = kq.control(None, 256, 0.25)
+                except OSError:
+                    return False
+                # What is listened to changes: the folders held open follow it, at once when a request starts
+                # listening (`ensure` says so), and every few seconds besides.
+                if self.poked or time.monotonic() - synced > 3.0:
+                    self.poked, synced = False, time.monotonic()
+                    if not sync():
+                        return False
+                if not evs:
+                    continue
+                time.sleep(self.SETTLE_S)                  # this process's own write says so in that time (`saw`)
+                try:
+                    evs += kq.control(None, 256, 0)        # what else came meanwhile, told with it
+                except OSError:
+                    pass
+                self.looks += 1
+                now, out = time.monotonic(), set()
+                for ev in evs:
+                    d = fds.get(ev.ident)
+                    if d is None:
+                        continue
+                    if ev.fflags & (select.KQ_NOTE_DELETE | select.KQ_NOTE_RENAME) and not os.path.isdir(d):
+                        drop(d)
+                        out |= self._topics_of(d)
+                        continue
+                    # A folder made inside it is held open too, and what is already in it is told.
+                    try:
+                        with os.scandir(d) as it:
+                            new = [e.path for e in it if e.is_dir(follow_symlinks=False) and e.path not in dirs and not e.name.startswith(".tmp")
+                                   and (d != self.root or self._top_wanted(e.name))]
+                    except OSError:
+                        new = []
+                    while new:
+                        n = new.pop()
+                        if not add(n):
+                            return False
+                        if not self._mine(n, now):
+                            out |= self._topics_of(n)
+                        try:
+                            with os.scandir(n) as it:
+                                new += [e.path for e in it if e.is_dir(follow_symlinks=False) and e.path not in dirs]
+                        except OSError:
+                            pass
+                    if not self._mine(d, now):
+                        out |= self._topics_of(d)
+                if out:
+                    FEED.bump(*out)
+            return True
+        finally:
+            for fd in list(fds):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            try:
+                kq.close()
+            except OSError:
+                pass
+
+    def partial(self) -> tuple[set[str], set[str]]:
+        """(topic names, topic prefixes) only partly watched: everything this workspace's folders feed, while the
+        watch has had to slow its looks to stay inside its budget. Nothing while it is told by the system, or
+        looks often."""
+        if self.mode != "looks" or self.gap <= 1.0:
+            return set(), set()
+        names, prefixes = {"projects", "settings", "data"}, set()
+        try:
+            tops = [e.name for e in os.scandir(self.root) if e.is_dir() and e.name not in self.SKIP]
+        except OSError:
+            tops = []
+        for top in tops:
+            for t in topics_for(f"{top}/a/b/c"):
+                (prefixes.add(t.split(":")[0] + ":") if ":" in t else names.add(t))
+        return names, prefixes
+
+    def run(self) -> None:
+        try:
+            if not self._events_loop():
+                self._look_loop()
+        except Exception:  # noqa: BLE001  the watch never takes the service down
+            pass
         with self.lock:
-            self.thread, self.primed = None, False   # the next listener starts from a fresh look
+            self.thread, self.primed, self.mode, self.tops = None, False, "idle", None   # the next listener starts afresh
+            self.seen, self.own, self.gap = {}, {}, self.EVERY_S
 
     def ensure(self) -> None:
+        self.poked = True
         with self.lock:
             if self.thread is not None and self.thread.is_alive():
                 return
@@ -608,8 +871,9 @@ class FolderWatch:
                     FEED.bump(*ts)
             except Exception:  # noqa: BLE001
                 pass
-            took = time.monotonic() - t0
-            time.sleep(max(0.05, 0.3 - took, took))
+            # The four folders outside the workspace share the budget: a quarter each. A folder with thousands of
+            # files in it (years of live runs) is looked at less often, never harder.
+            time.sleep(_gap(0.3, time.monotonic() - t0, BUDGET / 4))
         self.thread, self.primed = None, False
 
     def ensure(self) -> None:

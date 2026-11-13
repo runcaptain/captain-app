@@ -37,3 +37,10 @@ export const appHome = () => '/tmp/captain-app';
 export const machines = () => globalThis.__machines ?? [];
 // A test that starts a mod with a command loop (captain-nav) sets __nextCommand to one that waits, as the app's does.
 export const nextCommand = () => (globalThis.__nextCommand ? globalThis.__nextCommand() : Promise.resolve(null));
+// What the Settings frame reads (tests/mod-render/settings-logs.test.mjs).
+export const themes = () => globalThis.__themes ?? [];
+export const fonts = () => globalThis.__fonts ?? [];
+export const updates = () => globalThis.__updates ?? { app: { version: '0.0.0' }, core: {} };
+export const telemetry = () => globalThis.__telemetry ?? null;
+export const settings = () => globalThis.__settings ?? { zoom: 1 };
+export const playSound = (name) => { (globalThis.__sounds ??= []).push(name); };

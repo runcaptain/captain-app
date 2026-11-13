@@ -38,8 +38,29 @@ fn embed(base: &Path, folder: &str, name: &str, file: &str) {
     std::fs::write(Path::new(&std::env::var("OUT_DIR").unwrap()).join(file), code).unwrap();
 }
 
+/// CAPTAIN: the commit this build was made from, for the log's start line and crash records. A packager may set
+/// CAPTAIN_BUILD_COMMIT; otherwise git says, and a build outside a checkout is "unknown".
+fn build_commit(base: &Path) {
+    println!("cargo:rerun-if-env-changed=CAPTAIN_BUILD_COMMIT");
+    let git = |args: &[&str]| {
+        std::process::Command::new("git").current_dir(base).args(args).output().ok().filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).filter(|s| !s.is_empty())
+    };
+    // Built again when HEAD moves (a commit, a checkout), so the commit in the log is the one that was built.
+    for path in ["HEAD", "logs/HEAD"] {
+        if let Some(p) = git(&["rev-parse", "--path-format=absolute", "--git-path", path]) {
+            println!("cargo:rerun-if-changed={p}");
+        }
+    }
+    let commit = std::env::var("CAPTAIN_BUILD_COMMIT").ok().filter(|c| !c.trim().is_empty())
+        .or_else(|| git(&["rev-parse", "--short=9", "HEAD"]))
+        .unwrap_or_else(|| "unknown".into());
+    println!("cargo:rustc-env=CAPTAIN_BUILD_COMMIT={}", commit.trim());
+}
+
 fn main() {
     let base = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    build_commit(&base);
     embed(&base, "defaults/mods", "DEFAULT_MODS", "default_mods.rs");
     embed(&base, "defaults/icons", "DEFAULT_ICONS", "default_icons.rs");
     embed(&base, "defaults/frame", "FRAME_MODS", "frame_mods.rs");

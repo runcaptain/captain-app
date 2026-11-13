@@ -138,7 +138,7 @@ How soon a change is told:
 | Where the change was made | How soon |
 |---|---|
 | Through the app's service | Under 100 ms |
-| By another process on this computer (`cst` in a terminal, an agent) | About a third of a second: the workspace's folder is looked at three times a second |
+| By another process on this computer (`cst` in a terminal, an agent) | A few hundredths of a second on macOS, where the system says when a folder changes and an idle workspace costs nothing. Elsewhere the folders are looked at about three times a second, within 2 percent of one processor: on a large workspace the looks are further apart, up to 5 seconds, and `partial` names the topics |
 | By another machine, to a workspace in a bucket | 2 to 3 seconds, from the bucket's own listings: projects, datasets, runs, jobs, notebooks, settings and each model's deploy record. Not what a model writes about itself (its request log, its health checks) |
 | In a cloud (a model that stopped by itself, a copy added) | About 1 to 2 seconds, while someone listens to `deployed` or a `deployment:<project>` |
 
