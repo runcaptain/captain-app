@@ -122,6 +122,7 @@ export default class CaptainImport extends View {
     this.note = null;
     this.busy = false;
     this.path = InputState.new({ placeholder: "~/Downloads/catalogs" });
+    this.path.on?.("change", (_e, cx) => cx.notify()); // the Import button follows what is typed
     this.name = InputState.new({ placeholder: "Name the dataset, like products" });
     this.name.on("change", (_e, cx) => { this.allowNewVersion = false; cx.notify(); });
     // SQL for databases (and PostHog's HogQL); JSON for a Google Analytics 4 report spec.
@@ -664,7 +665,8 @@ export default class CaptainImport extends View {
         .children((this.suggestedFolders ?? []).map((f, i) => div().id(`input-sug-${i}`).h(22).px(6).flex().items_center().cursor_pointer().border_1().border_color(c.grey300)
           .text_size(11.5).font_family(MONO).text_color(c.grey900).hover((s) => s.border_color(c.blue)).on_click((_e, cx) => { this.path.set_value(f); cx.notify(); }).child(f))))
       .child(this.modeChoice(c))
-      .child(h_flex().child(Button(c, "input-use-local", this.busy ? "Saving" : `Use as ${this.input.label.toLowerCase()}`, (_e, cx) => go(cx), { kind: "primary", small: true, disabled: this.busy })));
+      .child(h_flex().child(Button(c, "input-use-local", this.busy ? "Saving" : `Use as ${this.input.label.toLowerCase()}`, (_e, cx) => go(cx), { kind: "primary", small: true, disabled: this.busy || !path }))
+        .when(!path, (x) => x.child(div().id("input-use-local-why").pl(8).text_size(11.5).text_color(c.grey500).child("Pick a file or folder first."))));
   }
 
   // ---- drawing ---------------------------------------------------------------------------------------------------
@@ -720,7 +722,8 @@ export default class CaptainImport extends View {
         .child(h_flex().gap(8).items_center()
           .child(h_flex().flex_1().min_w(0).h(28).px(8).items_center().border_1().border_color(c.grey300).child(Input.new(this.path).w_full().text_size(12).text_color(c.navy)))
           .child(Button(c, "file-pick", "Choose a folder", (_e, cx) => cx.spawn(async (cx) => { const p = await pickFolder({ prompt: "Import" }); if (p) this.importFiles(cx, [p]); }), { small: true }))
-          .child(Button(c, "file-go", this.busy ? "Importing" : "Import", (_e, cx) => this.importFiles(cx, [expand(this.path.value())]), { kind: "primary", small: true, disabled: this.busy })))
+          .child(Button(c, "file-go", this.busy ? "Importing" : "Import", (_e, cx) => { if (this.path.value().trim()) this.importFiles(cx, [expand(this.path.value())]); }, { kind: "primary", small: true, disabled: this.busy || !this.path.value().trim() })))
+        .when(!this.path.value().trim(), (x) => x.child(div().id("file-go-why").text_size(11.5).text_color(c.grey500).child("Type a path, or choose a folder.")))
         .child(this.folderPick(c))
         .child(this.destPick(c))
         .child(div().text_size(11.5).text_color(c.grey500).child("You can also drag files from Finder onto Data and signals."))));
