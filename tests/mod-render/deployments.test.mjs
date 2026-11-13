@@ -438,7 +438,9 @@ assert.equal(numberReads(), beforeNumbers, 'the numbers stay on their one-minute
 // list read was switched off while an action ran.
 const { readFileSync, readdirSync } = await import('node:fs');
 for (const f of readdirSync('defaults/mods/captain-deployments').filter((x) => x.endsWith('.js')))
-  assert.ok(!/\bset(Timeout|Interval)\s*\(/.test(readFileSync(`defaults/mods/captain-deployments/${f}`, 'utf8')), `${f} waits on a timer the app does not have`);
+  for (const [what, re] of [['a timer the app does not have', /\b(set|clear)(Timeout|Interval)\s*\(|\b(setImmediate|requestAnimationFrame|queueMicrotask)\s*\(/],
+    ['`require`, which the app does not have', /\brequire\s*\(/], ['a browser object the app does not have', /\b(window|document|localStorage|navigator|process)\./]])
+    assert.ok(!re.test(readFileSync(`defaults/mods/captain-deployments/${f}`, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')), `${f} uses ${what}`);
 const listReads = () => sent.filter((x) => x[1].startsWith('/api/deployed') && !x[1].includes('created')).length;
 const STOPPED = { rows: [{ ...SHOP, state: 'stopped', state_text: 'Stopped by dana, just now.', in_cloud: false, remembered_text: 'Nothing of it is running in AWS and nothing is billing. Captain remembers it so you can start it again.' }, TRAIL],
   asked, text: '1 model running.', stopped_earlier: 1, read_at: '' };
