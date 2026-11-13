@@ -459,6 +459,16 @@ await h.click('dep-open-shop:staging');
 await h.idle(150);
 assert.ok(h.text().includes('Requests a minute') && !h.text().includes('Calls a minute at the endpoint'), 'one count, one name');
 
+// ---- only the refresh control asks the model to write its log ----
+h = await open({ deployed: { rows: [SHOP], asked, text: '1 model running.', read_at: '' }, numbers: { shop: numbers(8640) } });
+await h.click('dep-open-shop:staging');
+await h.idle(150);
+const logReads = () => sent.filter((x) => String(x[1]).includes('/staging/requests'));
+assert.ok(logReads().length > 0 && !logReads().some((x) => String(x[1]).includes('refresh=true')), 'opening the page does not call the model');
+await h.click('model-updated-refresh');
+await h.idle(150);
+assert.ok(logReads().some((x) => String(x[1]).includes('refresh=true')), 'the refresh control does');
+
 // ---- a deploy under way is a row, and counts its own seconds ----
 const started = new Date(Date.now() - 48000).toISOString();
 const going = { label: 'AWS', project: 'gifts', env: 'staging', started_at: new Date(Date.now() - 52000).toISOString(),
