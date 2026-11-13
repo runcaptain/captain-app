@@ -195,7 +195,7 @@ export class ModelPage {
     return this.part === "traffic" ? this.traffic(c) : this.details(c);
   }
 
-  render(c, _cx) {
+  render(c, _cx, card = null) {
     const r = this.row;
     const wrong = r.state === "failed" || r.state === "gone";
     const head = h_flex().h(56).flex_none().px(24).gap(12).items_center().border_b(1).border_color(c.rule)
@@ -206,9 +206,9 @@ export class ModelPage {
       // The page keeps itself current, as the list does: when it was read, or that the cloud could not be reached.
       .child(Updated(c, "model-updated", { readAt: this.readAt, live: Boolean(this.isLive?.()), icon: svg(icon("refresh-cw")).size(14), onRefresh: (_e, cx) => this.refresh(cx),
         problem: this.where && this.where.from_cloud === false && /could not be asked/.test(this.where.text ?? "") ? `${r.cloud_label} could not be reached. Trying again.` : null }));
+    // The page opens with the model's own card, the same one the list shows.
     const top = v_flex().gap(6)
-      .child(div().id("model-state").text_size(14).line_height("20px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
-      .children((r.corrected ?? []).map((x) => div().text_size(12.5).line_height("18px").text_color(c.grey500).child(x)))
+      .child(card ?? div().id("model-state").text_size(14).line_height("20px").text_color(wrong ? c.fail : c.navy).child(r.state_text))
       .when(Boolean(this.busy), (e) => e.child(div().id("model-busy").text_size(13).text_color(c.navy).child(`${this.busy}...`)))
       .when(Boolean(this.note), (e) => e.child(div().id("model-note").text_size(13).line_height("19px").text_color(c.navy).child(this.note)));
     const parts = h_flex().id("model-parts").child(Submenus(c, PARTS, this.part, (id, cx) => { this.part = id; cx.notify(); }));

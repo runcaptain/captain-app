@@ -211,13 +211,17 @@ assert.ok(t.includes('Deployed by dana, 2 h ago') && !t.includes('@example.com')
 // Where it lives, on the row: the address a site calls, to copy, and one line about the system it runs on.
 assert.equal(byId(h, 'dep-address-shop:staging').length, 1);
 assert.ok(t.includes('https://runtime.sagemaker.us-west-1.amazonaws.com/endpoints/captain-shop/invocations') && byId(h, 'dep-copy-shop:staging').length === 1, `the address, with Copy: ${t}`);
-assert.ok(t.includes('AWS, account ending 1234. us-west-1. ml.t2.medium: 2 virtual CPUs, 4 GB memory. 1 copy up now, may run 1 to 3. Deployed by dana, 2 h ago.'), `the system in one line: ${t}`);
-assert.ok(t.includes('8,640 requests in 24 hours, none failed, typically 3.1 ms. $0.07 an hour, about $14.30 this month.'), `its traffic and cost: ${t}`);
+assert.ok(t.includes('AWS, account ending 1234 · us-west-1 · ml.t2.medium: 2 virtual CPUs, 4 GB memory · 1 copy up now, may run 1 to 3 · Deployed by dana, 2 h ago'), `the system in one quiet line: ${t}`);
+// Traffic, Speed and Cost: one large figure each, with a small caption.
+for (const part of ['Traffic', '360', 'requests in the last hour, none failed', 'Speed', '3.1 ms', 'typical response time', 'Cost', '$0.07', 'an hour now, about $14.30 this month'])
+  assert.ok(t.includes(part), `the card says ${part}: ${t}`);
+for (const id of ['dep-dot-shop:staging', 'dep-traffic-shop:staging', 'dep-speed-shop:staging', 'dep-cost-shop:staging', 'dep-copy-request-shop:staging']) assert.equal(byId(h, id).length, 1, `the card has ${id}`);
 await h.click('dep-copy-shop:staging');
-assert.ok(h.text().includes('Copied'), 'Copy says it copied');
+assert.equal(h.mod.copied, 'shop:staging:address', 'Copy marks the address copied (the icon turns to a tick)');
 assert.equal(byId(h, 'dep-spark-shop:staging').length, 1, 'a small chart of the last hour');
-for (const id of ['dep-open-shop:staging', 'dep-stop-shop:staging', 'dep-back-shop:staging']) assert.equal(byId(h, id).length, 1, `a running model has ${id}`);
-assert.ok(t.includes('Go back to an earlier version') && !t.includes('Start again') && !t.includes('Remove from the cloud'), 'a running model is stopped before it is removed');
+// One action that matters now, filled, and everything else behind Details.
+for (const id of ['dep-open-shop:staging', 'dep-stop-shop:staging']) assert.equal(byId(h, id).length, 1, `a running model has ${id}`);
+assert.ok(t.includes('Details') && byId(h, 'dep-back-shop:staging').length === 0 && !t.includes('Start again') && !t.includes('Remove from the cloud'), 'a running model is stopped before it is removed, and the rest is behind Details');
 assert.ok(sent.some((x) => x[1].startsWith('/api/projects/shop/deployed/numbers?range=24h')), 'numbers are read per row');
 await h.click('dep-stop-shop:staging');
 await h.idle(60);
@@ -241,8 +245,9 @@ assert.ok(t.includes("Captain's record said it was running. The cloud says it fa
 assert.ok(t.includes('captain-old-experiment-staging') && t.includes('Found in your AWS account, not linked to a project.'), 'something no project knows is listed');
 assert.ok(t.includes('Link to a project') && byId(h, `dep-remove-${FOUND.id}`).length === 1, 'and can be linked or removed');
 assert.ok(t.includes('Stopped earlier: 1 model.') && byId(h, `dep-start-${OLD.id}`).length === 0, 'the stopped one is behind its line');
-// Something in a cloud that failed: it can be opened and removed from the cloud. Not started "again": it is there.
-assert.ok(byId(h, `dep-open-${BAD.id}`).length === 1 && byId(h, `dep-remove-${BAD.id}`).length === 1 && byId(h, `dep-start-${BAD.id}`).length === 0, 'a failed one in the cloud');
+// Something in a cloud that failed: the card says what happened, and the one thing to do is deploy it again.
+// It can also be looked at and removed from the cloud.
+assert.ok(byId(h, `dep-open-${BAD.id}`).length === 1 && byId(h, `dep-remove-${BAD.id}`).length === 1 && byId(h, `dep-start-${BAD.id}`).length === 1 && h.text().includes('Deploy again'), 'a failed one in the cloud');
 // Two pickers at the right, and no chips for the state. A picker's choices show only once it is opened.
 assert.ok(byId(h, 'dep-pick-cloud').length === 1 && byId(h, 'dep-pick-project').length === 1 && byId(h, 'dep-cloud-aws').length === 0 && byId(h, 'dep-show-all').length === 0, 'two pickers, closed');
 assert.ok(h.text().includes('Every cloud') && h.text().includes('Every project'), 'each says what it shows now');
@@ -350,8 +355,10 @@ assert.deepEqual(sent.find((x) => x[0] === 'POST' && x[1] === '/api/projects/sho
 assert.equal(h.byIdPrefix('model-back-why-').length, 0, 'the question closes once answered');
 await h.click('model-close');
 assert.ok(byId(h, 'dep-updated-refresh').length === 1, 'back to the list');
-// "Go back to an earlier version" on a row opens the page at Details, where the versions are first.
-await h.click('dep-back-shop:staging');
+// Going back to an earlier version is behind Details: the page, then its Details part, where the versions are first.
+await h.click('dep-open-shop:staging');
+await h.idle(120);
+await h.click('submenu-details');
 await h.idle(120);
 assert.ok(h.text().includes('Put this version back') && h.text().indexOf('Earlier versions') < h.text().indexOf('Requests it answered'), 'straight to the versions');
 
@@ -676,8 +683,10 @@ assert.equal(shown(h), 'gifts', 'a deploy under way is in the list from the mome
 assert.ok(t.includes('No models running, 1 deploying.') && !t.includes('No models are running.') && byId(h, 'dep-go-projects').length === 0, `the list is not empty while a model is being made: ${t}`);
 assert.ok(/Deploying to AWS: Building the model's image, (4[89]|5\d) s so far \(usually about a minute and a half\)\./.test(t) && !t.includes('stale text'), `what is being done, how long so far, how long it usually takes, on the page's clock: ${t}`);
 // Each step with its state: what is done and how long it took, what is running now, what comes next and how long it usually takes.
-for (const part of ['Done', 'Checking your account', '1 s', 'Now', "Building the model's image", 'Next', 'Starting the model', 'usually about 2 minutes', 'Checking it answers'])
+// Each step is one line with a mark for its state (a tick, a filled dot, an empty one), not a word.
+for (const part of ['Checking your account', '1 s', "Building the model's image", 'Starting the model', 'usually about 2 minutes', 'Checking it answers'])
   assert.ok(t.includes(part), `the steps say ${part}`);
+assert.ok(byId(h, 'dep-steps-gifts:staging').length === 1 && byId(h, 'dep-dot-gifts:staging').length === 1 && byId(h, 'dep-traffic-gifts:staging').length === 0, 'the same card, with its steps in place of its numbers');
 assert.ok(t.includes('Still building the image: 40 s. Building.') && t.includes('Started by dana'), 'the last thing the job said, and who started it');
 // Nothing is offered that would act on a model still being made.
 for (const id of ['dep-open-gifts:staging', 'dep-stop-gifts:staging', 'dep-remove-gifts:staging', 'dep-start-gifts:staging', 'dep-forget-gifts:staging']) assert.equal(byId(h, id).length, 0, `no ${id} while it deploys`);
@@ -704,7 +713,11 @@ for (const f of ['main.js', 'model.js', 'words.js']) {
 }
 const main = fs.readFileSync(path.join(dir, 'main.js'), 'utf8'), model = fs.readFileSync(path.join(dir, 'model.js'), 'utf8');
 assert.equal((main.match(/font_family\(FONT\)/g) ?? []).length, 1, 'one typeface on the list, set once');
-assert.equal((main.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font on the list only for the address a person copies');
+// The code font is for what a person copies (the address), and for figures: its digits are all one width, so a
+// column of them lines up and a number that ticks does not shake. Nothing else.
+const cardSrc = fs.readFileSync(path.join(dir, 'card.js'), 'utf8');
+assert.equal((main.match(/font_family\(MONO\)/g) ?? []).length, 0, 'no code font in the list itself');
+assert.equal((cardSrc.match(/font_family\(MONO\)/g) ?? []).length, 3, 'on the card: the address, a figure, a step\'s time');
 assert.equal((model.match(/font_family\(MONO\)/g) ?? []).length, 1, 'the code font on the page only for what a person copies');
 assert.ok(!/model-part-/.test(model) && /Submenus\(c, PARTS/.test(model) && (model.match(/\{ id: "[a-z]+", label:/g) ?? []).length === 2, 'the model page declares two submenus');
 assert.equal((main.match(/kind: "primary"/g) ?? []).length, 2, 'two filled buttons in the source, never both on screen: Deploy a model when nothing is answering, and an open question, which hides it');
