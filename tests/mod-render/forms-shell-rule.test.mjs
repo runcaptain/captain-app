@@ -2,7 +2,7 @@
 // fields are checked as the person types, a problem sits under its own field, the main button is off while a field
 // has a problem and says why, a name takes any words, and nothing raw from the services reaches the screen.
 // With a faked backend.
-//   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/forms-rule.test.mjs
+//   node --import ./tests/mod-render/stubs/register.mjs tests/mod-render/forms-shell-rule.test.mjs
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { harness } from './harness.mjs';
@@ -190,5 +190,5 @@ for (const task of TASKS) {
   if (/return \{ ok: false, error:/.test(src)) submitOnly.push(task.id);
 }
 console.log(`  ${TASKS.length} forms checked. Forms whose submit still refuses something by itself: ${submitOnly.join(', ') || 'none'}`);
-console.log('forms rule render test: ok');
+console.log('forms shell rule render test: ok');
 process.exit(0);
